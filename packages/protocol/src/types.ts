@@ -1,0 +1,398 @@
+/**
+ * Core type definitions for AgentBrowser protocol
+ */
+
+/**
+ * Screenshot request options
+ */
+export interface ScreenshotRequest {
+  fullPage?: boolean;
+  maskSensitive?: boolean;
+  format?: 'png' | 'jpeg' | 'webp';
+  quality?: number;
+}
+
+/**
+ * PDF request options
+ */
+export interface PdfRequest {
+  landscape?: boolean;
+  displayHeaderFooter?: boolean;
+  printBackground?: boolean;
+}
+
+/**
+ * Viewport dimensions for browser sessions
+ */
+export interface Viewport {
+  width: number;
+  height: number;
+}
+
+/**
+ * Session creation request
+ */
+export interface SessionRequest {
+  engine: EngineType;
+  ttlMs?: number;
+  idleTimeoutMs?: number;
+  viewport?: Viewport;
+  locale?: string;
+  timezoneId?: string;
+  headless?: boolean;
+  policy?: SessionPolicy;
+}
+
+/**
+ * Engine type selection
+ */
+export type EngineType = 'playwright-chromium' | 'auto';
+
+/**
+ * Session policy configuration
+ */
+export interface SessionPolicy {
+  allowedHosts: string[];
+  blockedHosts?: string[];
+  allowDownloads?: boolean;
+  maxDownloadBytes?: number;
+  approval?: ApprovalPolicy;
+}
+
+/**
+ * Approval policy for actions
+ */
+export interface ApprovalPolicy {
+  transactions?: 'allow' | 'deny' | 'required';
+  externalMessages?: 'allow' | 'deny' | 'required';
+}
+
+/**
+ * Session creation response
+ */
+export interface SessionResponse {
+  sessionId: string;
+  engine: EngineInfo;
+  createdAt: string;
+  ttlMs: number;
+  idleTimeoutMs: number;
+}
+
+/**
+ * Engine information
+ */
+export interface EngineInfo {
+  name: string;
+  version: string;
+  capabilities: EngineCapabilities;
+}
+
+/**
+ * Engine capabilities
+ */
+export interface EngineCapabilities {
+  supportsScreenshots: boolean;
+  supportsPdf: boolean;
+  supportsDownloads: boolean;
+  supportsUploads: boolean;
+  supportsJavascript: boolean;
+  supportsWebgl: boolean;
+  supportsVideo: boolean;
+  supportsPersistentStorage: boolean;
+  supportsAccessibilityTree: boolean;
+  supportsCdp: boolean;
+  supportedObservationModes: ObservationMode[];
+  supportedActionTypes: ActionType[];
+}
+
+/**
+ * Observation mode
+ */
+export type ObservationMode =
+  | 'interactive'
+  | 'content'
+  | 'accessibility'
+  | 'compact_dom'
+  | 'visual';
+
+/**
+ * Action type
+ */
+export type ActionType =
+  | 'navigate'
+  | 'click'
+  | 'hover'
+  | 'fill'
+  | 'type'
+  | 'clear'
+  | 'press'
+  | 'select'
+  | 'check'
+  | 'uncheck'
+  | 'scroll'
+  | 'wait'
+  | 'upload'
+  | 'download'
+  | 'goBack'
+  | 'goForward'
+  | 'reload'
+  | 'dismissDialog'
+  | 'acceptDialog';
+
+/**
+ * Page state response
+ */
+export interface PageState {
+  sessionId: string;
+  pageId: string;
+  revision: number;
+  url: string;
+  title: string;
+  status: PageStatus;
+  focusedRef?: string;
+  summary?: string;
+  elements: PageElement[];
+  text?: string[];
+  changes?: ElementChange[];
+  truncated: boolean;
+  untrustedContent: boolean;
+}
+
+/**
+ * Page load status
+ */
+export type PageStatus = 'loading' | 'interactive' | 'complete';
+
+/**
+ * Page element representation
+ */
+export interface PageElement {
+  ref: string;
+  role: string;
+  name?: string;
+  value?: string;
+  required?: boolean;
+  visible: boolean;
+  enabled: boolean;
+  focused?: boolean;
+  risk?: ActionEffect;
+}
+
+/**
+ * Element change for diffs
+ */
+export interface ElementChange {
+  ref: string;
+  change: 'added' | 'removed' | 'modified';
+  properties: Record<string, { old: unknown; new: unknown }>;
+}
+
+/**
+ * Action effect classification
+ */
+export type ActionEffect =
+  | 'read'
+  | 'write-local'
+  | 'external-message'
+  | 'transaction'
+  | 'account-security'
+  | 'destructive';
+
+/**
+ * Action request
+ */
+export interface ActionRequest {
+  pageId: string;
+  expectedRevision: number;
+  action: SupportedAction;
+  wait?: WaitCondition;
+  observeAfter?: ObservationRequest;
+  approvalToken?: string;
+}
+
+/**
+ * Base action interface
+ */
+export interface Action {
+  type: ActionType;
+}
+
+/**
+ * Navigate action
+ */
+export interface NavigateAction extends Action {
+  type: 'navigate';
+  url: string;
+  waitUntil?: 'load' | 'domcontentloaded' | 'networkidle';
+}
+
+/**
+ * Click action
+ */
+export interface ClickAction extends Action {
+  type: 'click';
+  target: ElementTarget;
+  button?: 'left' | 'right' | 'middle';
+  clickCount?: number;
+  modifiers?: ('Alt' | 'Control' | 'Meta' | 'Shift')[];
+}
+
+/**
+ * Element target
+ */
+export interface ElementTarget {
+  ref: string;
+}
+
+/**
+ * Fill action
+ */
+export interface FillAction extends Action {
+  type: 'fill';
+  target: ElementTarget;
+  value: string;
+  sensitive?: boolean;
+}
+
+/**
+ * Select action
+ */
+export interface SelectAction extends Action {
+  type: 'select';
+  target: ElementTarget;
+  values: string[];
+}
+
+/**
+ * Scroll action
+ */
+export interface ScrollAction extends Action {
+  type: 'scroll';
+  target?: ElementTarget;
+  deltaX?: number;
+  deltaY?: number;
+  direction?: 'up' | 'down' | 'left' | 'right';
+  amount?: number;
+}
+
+/**
+ * Press action
+ */
+export interface PressAction extends Action {
+  type: 'press';
+  target?: ElementTarget;
+  key: string;
+}
+
+/**
+ * Wait action
+ */
+export interface WaitAction extends Action {
+  type: 'wait';
+  condition: WaitCondition;
+}
+
+/**
+ * Tagged union of actions accepted by `ActionRequest`.
+ *
+ * Mirrors `ActionSchema` in schemas.ts so that narrowing on `action.type`
+ * yields the correct per-action parameters.
+ */
+export type SupportedAction =
+  | NavigateAction
+  | ClickAction
+  | FillAction
+  | SelectAction
+  | ScrollAction
+  | PressAction
+  | WaitAction;
+
+/**
+ * Wait condition
+ */
+export interface WaitCondition {
+  until: WaitType;
+  timeoutMs?: number;
+}
+
+/**
+ * Wait type
+ */
+export type WaitType =
+  | 'domcontentloaded'
+  | 'load'
+  | 'networkidle'
+  | 'selector'
+  | 'url'
+  | 'text'
+  | 'function'
+  | 'settled';
+
+/**
+ * Observation request
+ */
+export interface ObservationRequest {
+  mode?: ObservationMode;
+  maxBytes?: number;
+  maxElements?: number;
+  sinceRevision?: number;
+  scope?: 'viewport' | 'full' | 'frame' | 'element';
+  include?: string[];
+}
+
+/**
+ * Action response
+ */
+export interface ActionResult {
+  actionId: string;
+  startTimestamp: string;
+  endTimestamp: string;
+  oldRevision: number;
+  newRevision: number;
+  result: unknown;
+  navigationStatus?: NavigationStatus;
+  targetFingerprint?: string;
+  policyDecision?: PolicyDecision;
+  approvalDecision?: ApprovalDecision;
+  observation?: PageState;
+  artifacts?: ArtifactRef[];
+  error?: import('./errors').ApiErrorDetail;
+}
+
+/**
+ * Navigation status
+ */
+export interface NavigationStatus {
+  status: 'success' | 'timeout' | 'blocked';
+  url: string;
+  redirectChain: string[];
+}
+
+/**
+ * Policy decision
+ */
+export interface PolicyDecision {
+  allowed: boolean;
+  reason: string;
+  ruleMatched?: string;
+}
+
+/**
+ * Approval decision
+ */
+export interface ApprovalDecision {
+  approved: boolean;
+  reason?: string;
+  approvalRequired?: boolean;
+}
+
+/**
+ * Artifact reference
+ */
+export interface ArtifactRef {
+  artifactId: string;
+  type: 'screenshot' | 'pdf' | 'trace' | 'download' | 'html' | 'dom';
+  contentType: string;
+  sizeBytes: number;
+  url: string;
+}

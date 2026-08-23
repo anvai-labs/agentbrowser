@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Pre-push hook for AgentBrowser quality gates
+# Fast checks that catch common CI failures without full test suite
+
+set -euo pipefail
+
+echo "🚀 Running AgentBrowser pre-push checks..."
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32M'
+NC='\033[0m'
+
+print_success() {
+    echo -e "${GREEN}✓ $1${NC}"
+}
+
+print_error() {
+    echo -e "${RED}✗ $1${NC}"
+}
+
+# 1. Type check
+echo ""
+echo "1️⃣  Type checking..."
+if pnpm -r type-check; then
+    print_success "Type checking passed"
+else
+    print_error "Type checking failed. Fix before pushing."
+    exit 1
+fi
+
+# 2. Build check
+echo ""
+echo "2️⃣  Building packages..."
+if pnpm -r build; then
+    print_success "Build successful"
+else
+    print_error "Build failed. Fix before pushing."
+    exit 1
+fi
+
+# 3. Lint check
+echo ""
+echo "3️⃣  Code formatting and linting..."
+if pnpm -r lint; then
+    print_success "Code properly formatted"
+else
+    print_error "Linting failed. Run: pnpm -r lint"
+    exit 1
+fi
+
+# 4. Quick smoke test
+echo ""
+echo "4️⃣  Running smoke tests..."
+if pnpm test --run 2>/dev/null || pnpm -r test --run; then
+    print_success "Smoke tests passed"
+else
+    print_error "Smoke tests failed. Fix before pushing."
+    exit 1
+fi
+
+echo ""
+echo -e "${GREEN}✓ All pre-push checks passed!${NC}"
+echo "Ready to push! 🚀"

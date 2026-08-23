@@ -1,0 +1,37 @@
+{
+  "name": "agentbrowser-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AgentBrowser: Agent-First Headless Browser",
+  "scripts": {
+    "build": "pnpm -r --filter './packages/**' build",
+    "build:apps": "pnpm -r --filter './apps/**' build",
+    "type-check": "pnpm -r type-check",
+    "test": "pnpm -r test",
+    "test:unit": "pnpm -r --filter './packages/**' test",
+    "test:e2e": "pnpm --filter './tests/**' test",
+    "lint": "pnpm -r lint",
+    "format": "pnpm -r format",
+    "clean": "pnpm -r clean && rm -rf node_modules",
+    "ci": "pnpm build && pnpm type-check && pnpm test"
+  },
+  "keywords": [
+    "browser",
+    "automation",
+    "agent",
+    "headless",
+    "playwright"
+  ],
+  "author": "AgentBrowser Team",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  },
+  "packageManager": "pnpm@9.15.0"
+}
