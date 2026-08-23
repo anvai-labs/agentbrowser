@@ -1,11 +1,14 @@
 {
-  "name": "@agentbrowser/api",
+  "name": "@agentbrowser/mcp-server",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Fastify REST API server for AgentBrowser",
+  "description": "MCP server exposing AgentBrowser as high-level, safe, composable tools",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "agentbrowser-mcp": "dist/bin.js"
+  },
   "scripts": {
     "build": "tsc",
     "type-check": "tsc --noEmit",
@@ -13,24 +16,15 @@
     "test:watch": "vitest",
     "lint": "biome check src/",
     "format": "biome format --write src/",
-    "clean": "rm -rf dist *.tsbuildinfo",
-    "openapi": "node dist/emit-openapi.js"
+    "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@agentbrowser/core": "workspace:*",
-    "@agentbrowser/engine": "workspace:*",
-    "@agentbrowser/protocol": "workspace:*",
-    "@fastify/cors": "^10.0.0",
-    "fastify": "^5.2.0"
+    "@agentbrowser/sdk-typescript": "workspace:*"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/node": "^22.10.2",
-    "ajv": "^8.20.0",
     "typescript": "^5.7.2",
     "vitest": "^2.1.9"
-  },
-  "bin": {
-    "agentbrowser-server": "dist/bin.js"
   }
 }

@@ -8,6 +8,7 @@
 import cors from '@fastify/cors';
 import Fastify from 'fastify';
 import type { FastifyError, FastifyInstance } from 'fastify';
+import { buildOpenApiDocument } from './openapi.js';
 
 export interface ServerOptions {
   port?: number;
@@ -85,6 +86,13 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
     };
+  });
+
+  // Machine-readable API description, so polyglot clients can be generated
+  // rather than hand-written.
+  const openApiDocument = buildOpenApiDocument();
+  fastify.get('/openapi.json', async (_request, reply) => {
+    return reply.type('application/json').send(openApiDocument);
   });
 
   fastify.get('/sessions', async (request, reply) => {
@@ -577,11 +585,23 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
 export async function startServer(options: ServerOptions = {}): Promise<FastifyInstance> {
   const server = await buildServer(options);
-  const port = options.port || 3000;
-  const host = options.host || '0.0.0.0';
+  // PORT/HOST let a supervisor (the SDK's managed launcher, containers)
+  // place the server without code changes.
+  const port = options.port ?? envPort() ?? 3000;
+  const host = options.host ?? process.env.HOST ?? '0.0.0.0';
 
   await server.listen({ port, host });
   console.log(`Server listening on ${host}:${port}`);
 
   return server;
+}
+
+/** Parse PORT into a valid integer, ignoring junk rather than crashing. */
+function envPort(): number | undefined {
+  const raw = process.env.PORT;
+  if (raw === undefined) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 65535 ? parsed : undefined;
 }

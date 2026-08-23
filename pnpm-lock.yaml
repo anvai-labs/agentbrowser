@@ -42,6 +42,9 @@ importers:
       '@types/node':
         specifier: ^22.10.2
         version: 22.20.1
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -105,6 +108,25 @@ importers:
       playwright:
         specifier: ^1.49.1
         version: 1.62.1
+    devDependencies:
+      '@biomejs/biome':
+        specifier: ^1.9.4
+        version: 1.9.4
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.20.1)
+
+  packages/mcp-server:
+    dependencies:
+      '@agentbrowser/sdk-typescript':
+        specifier: workspace:*
+        version: link:../sdk-typescript
     devDependencies:
       '@biomejs/biome':
         specifier: ^1.9.4
