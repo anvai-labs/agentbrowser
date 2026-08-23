@@ -25,6 +25,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      # Workspace packages resolve each other through dist/, which does not
+      # exist on a clean checkout. Build first, in topological order.
+      - name: Build workspace dependencies
+        run: pnpm -r build
+
       - name: Type check all packages
         run: pnpm -r type-check
 
@@ -67,10 +72,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      - name: Build workspace dependencies
+        run: pnpm -r build
+
+      # engine-playwright drives a real Chromium.
+      - name: Install Playwright browsers
+        run: pnpm --filter @agentbrowser/engine-playwright exec playwright install --with-deps chromium
+
       - name: Run tests
         run: pnpm -r test
 
       - name: Upload coverage
+        if: hashFiles('coverage/coverage-final.json') != ''
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
