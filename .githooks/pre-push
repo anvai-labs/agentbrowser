@@ -8,7 +8,7 @@ echo "🚀 Running AgentBrowser pre-push checks..."
 
 # Colors for output
 RED='\033[0;31m'
-GREEN='\033[0;32M'
+GREEN='\033[0;32m'
 NC='\033[0m'
 
 print_success() {
@@ -52,7 +52,7 @@ fi
 # 4. Quick smoke test
 echo ""
 echo "4️⃣  Running smoke tests..."
-if pnpm test --run 2>/dev/null || pnpm -r test --run; then
+if pnpm -r test; then
     print_success "Smoke tests passed"
 else
     print_error "Smoke tests failed. Fix before pushing."
