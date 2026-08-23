@@ -18,9 +18,45 @@ Full workspace build and test run, verified end-to-end:
 | sdk-typescript      | 26    |
 | policy              | 28    |
 | cli                 | 27    |
-| **Total**           | **345 passing (100%)** |
+| mcp-server          | 21    |
+| **Total**           | **417 passing (100%)** |
 
-`pnpm -r build` succeeds for all 9 packages.
+`pnpm -r build` succeeds for all 10 packages. CI is green on GitHub
+(type-check, lint, test, build) on a clean checkout.
+
+## Repository
+
+- Remote: https://github.com/vjsingh1984/agentbrowser (private)
+- History begins 2026-08-23; pre-commit/pre-push/commit-msg hooks are
+  active and were exercised on every commit.
+- CI first failed on a clean checkout (missing dist/ for cross-package
+  resolution, and a stale tsbuildinfo trap in `clean`); both were fixed
+  and verified green, not assumed.
+
+## Integration surfaces
+
+All verified end-to-end:
+
+1. **REST + TypeScript SDK + CLI** - `agentbrowser` binary works against a
+   live server.
+2. **OpenAPI 3.1 (TD-026)** - generated from the protocol TypeBox schemas
+   (JSON Schema 2020-12), served at `/openapi.json`, committed as
+   `openapi.json`. Python/polyglot clients can be generated from the spec.
+3. **MCP server (ADR-009)** - `agentbrowser-mcp` binary,
+   newline-delimited JSON-RPC over stdio (protocol 2024-11-05). Six
+   high-level tools: browser_create, browser_close, browser_navigate,
+   browser_observe, browser_act, browser_screenshot. browser_extract and
+   browser_pdf are deferred until the API implements them - listing tools
+   that cannot work would be a silent fallback. Verified against
+   victor-ai's MCP client dialect (../codingagent).
+4. **Managed subprocess (ADR-008)** - `createManagedServer()` in the SDK
+   spawns the API server as a supervised child (health-wait, periodic
+   probe, onExit crash reporting, idempotent stop). Embedded ergonomics
+   without in-process embedding.
+
+In-process FFI/napi embedding was considered and rejected: it contradicts
+ADR-008 and the hostile-page assumption by rendering untrusted content in
+the host process. The managed subprocess provides the ergonomics instead.
 
 ## Completed Tasks
 
@@ -187,7 +223,7 @@ Resolved in favour of the protocol (per CLAUDE.md, protocol is the source of tru
 
 ## Current Status
 
-**Total Tests:** 311/311 passing (100%) - verified end-to-end
+**Total Tests:** 417/417 passing (100%) - verified end-to-end
 **Active Phase:** Phase 1 - Core Functionality
 
 ## Next Critical Path Tasks
