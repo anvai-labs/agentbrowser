@@ -192,7 +192,7 @@ Resolved in favour of the protocol (per CLAUDE.md, protocol is the source of tru
 
 ## Next Critical Path Tasks
 
-### TD-013: CLI ⏳ NEXT
+### Remaining Phase 1 work (supersedes TD-013 as next item)
 **Priority:** P1
 **Estimated:** 8 hours
 **Dependencies:** TD-012 ✅ COMPLETE
