@@ -5,6 +5,7 @@
  * Following TDD principles, tests are written before implementation.
  */
 
+import { FakeEngine } from '@agentbrowser/testkit';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildServer } from './server';
@@ -58,10 +59,10 @@ describe('AgentBrowser REST API', () => {
       expect(data).toMatchObject({
         sessionId: expect.any(String),
         status: 'ready',
-        metadata: {
-          createdAt: expect.any(String),
-          expiresAt: expect.any(String),
-        },
+        engine: { name: expect.any(String), version: expect.any(String) },
+        createdAt: expect.any(String),
+        ttlMs: expect.any(Number),
+        idleTimeoutMs: expect.any(Number),
       });
     });
 
@@ -397,7 +398,8 @@ describe('AgentBrowser REST API', () => {
         return;
       }
 
-      const targetRef = elements[0].ref;
+      const targetRef = elements[0]?.ref;
+      if (!targetRef) throw new Error('no elements observed');
 
       const response = await fetch(`${baseUrl}/sessions/${sessionId}/pages/${pageId}/act`, {
         method: 'POST',
@@ -452,24 +454,59 @@ describe('AgentBrowser REST API', () => {
       expect(data.status).toBe('success');
     });
 
-    it('should handle stale target error', async () => {
+    it('should handle a stale target error', async () => {
+      // Observe to mint refs, move the page on, then act on the old ref.
+      const observeResponse = await fetch(
+        `${baseUrl}/sessions/${sessionId}/pages/${pageId}/observe`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: 'interactive' }),
+        }
+      );
+      const observation = await observeResponse.json();
+      const oldRef = observation.elements[0]?.ref;
+      if (!oldRef) throw new Error('no elements observed');
+
+      await fetch(`${baseUrl}/sessions/${sessionId}/pages/${pageId}/act`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'press', key: 'Enter' }),
+      });
+
       const response = await fetch(`${baseUrl}/sessions/${sessionId}/pages/${pageId}/act`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'click',
-          target: { ref: 'e999_0' }, // Invalid ref
+          target: { ref: oldRef },
         }),
       });
 
-      expect(response.status).toBe(400); // or 409 for conflict
+      expect(response.status).toBe(400);
 
       const data = await response.json();
       expect(data.error).toMatchObject({
-        code: expect.stringMatching(/STALE_TARGET|TARGET_NOT_FOUND/),
+        code: 'STALE_TARGET',
         message: expect.any(String),
-        retryable: expect.any(Boolean),
+        retryable: true,
       });
+    });
+
+    it('should require an observation before acting', async () => {
+      const response = await fetch(`${baseUrl}/sessions/${sessionId}/pages/${pageId}/act`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'click',
+          target: { ref: 'e1_0' },
+        }),
+      });
+
+      expect(response.status).toBe(400);
+      const data = await response.json();
+      expect(data.error.code).toBe('INVALID_REQUEST');
+      expect(data.error.message).toMatch(/observe/i);
     });
   });
 
@@ -551,7 +588,7 @@ describe('AgentBrowser REST API', () => {
 
       const data = await response.json();
       expect(data.error).toMatchObject({
-        code: 'NOT_FOUND',
+        code: 'SESSION_NOT_FOUND',
         message: expect.any(String),
       });
     });
@@ -617,6 +654,213 @@ describe('AgentBrowser REST API', () => {
       const response = await fetch(`${baseUrl}/health`);
 
       expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+    });
+  });
+});
+
+describe('AgentBrowser REST API safety integration', () => {
+  let server: FastifyInstance;
+  let baseUrl: string;
+  let engine: FakeEngine;
+
+  beforeAll(async () => {
+    engine = new FakeEngine();
+    server = await buildServer({ engine });
+    const address = await server.listen({ port: 0, host: '127.0.0.1' });
+    baseUrl = address;
+  });
+
+  afterAll(async () => {
+    await server.close();
+  });
+
+  const setupPage = async () => {
+    const sessionResponse = await fetch(`${baseUrl}/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenantId: 'tenant_1' }),
+    });
+    const { sessionId } = await sessionResponse.json();
+
+    const pageResponse = await fetch(`${baseUrl}/sessions/${sessionId}/pages`, {
+      method: 'POST',
+    });
+    const { pageId } = await pageResponse.json();
+
+    return { sessionId, pageId };
+  };
+
+  describe('network egress policy at the HTTP layer', () => {
+    it('should 403 POLICY_DENIED for loopback navigation', async () => {
+      const { sessionId, pageId } = await setupPage();
+
+      const response = await fetch(`${baseUrl}/sessions/${sessionId}/pages/${pageId}/navigate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: 'http://localhost/admin' }),
+      });
+
+      expect(response.status).toBe(403);
+      const data = await response.json();
+      expect(data.error.code).toBe('POLICY_DENIED');
+    });
+
+    it('should 403 POLICY_DENIED for cloud metadata navigation', async () => {
+      const { sessionId, pageId } = await setupPage();
+
+      const response = await fetch(`${baseUrl}/sessions/${sessionId}/pages/${pageId}/navigate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: 'http://169.254.169.254/latest/meta-data' }),
+      });
+
+      expect(response.status).toBe(403);
+      expect((await response.json()).error.code).toBe('POLICY_DENIED');
+    });
+
+    it('should 403 POLICY_DENIED for a file: URL and 400 for a malformed one', async () => {
+      const { sessionId, pageId } = await setupPage();
+
+      const fileResponse = await fetch(
+        `${baseUrl}/sessions/${sessionId}/pages/${pageId}/navigate`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: 'file:///etc/passwd' }),
+        }
+      );
+      expect(fileResponse.status).toBe(403);
+      expect((await fileResponse.json()).error.code).toBe('POLICY_DENIED');
+
+      const malformedResponse = await fetch(
+        `${baseUrl}/sessions/${sessionId}/pages/${pageId}/navigate`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: 'not-a-valid-url' }),
+        }
+      );
+      expect(malformedResponse.status).toBe(400);
+      expect((await malformedResponse.json()).error.code).toBe('INVALID_REQUEST');
+    });
+  });
+
+  describe('approval gate at the HTTP layer', () => {
+    it('should 403 APPROVAL_REQUIRED for a high-risk element, then accept the token', async () => {
+      const { sessionId, pageId } = await setupPage();
+
+      await fetch(`${baseUrl}/sessions/${sessionId}/pages/${pageId}/navigate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: 'https://shop.example.com' }),
+      });
+
+      // Inject an element classified as a transaction risk.
+      const engineSessionIds = engine.getSessionIds();
+      const enginePage = engineSessionIds[engineSessionIds.length - 1]
+        ? engine.getFakePage(engineSessionIds[engineSessionIds.length - 1]!, pageId)
+        : undefined;
+      enginePage?.setElements([{ role: 'button', name: 'Pay now', risk: 'transaction' }]);
+
+      const observeResponse = await fetch(
+        `${baseUrl}/sessions/${sessionId}/pages/${pageId}/observe`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: 'interactive' }),
+        }
+      );
+      const observation = await observeResponse.json();
+      const ref = observation.elements[0]?.ref;
+      if (!ref) throw new Error('no elements observed');
+
+      const denied = await fetch(`${baseUrl}/sessions/${sessionId}/pages/${pageId}/act`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'click', target: { ref } }),
+      });
+
+      expect(denied.status).toBe(403);
+      const denial = await denied.json();
+      expect(denial.error.code).toBe('APPROVAL_REQUIRED');
+      expect(denial.error.details.tokenId).toEqual(expect.any(String));
+
+      const approved = await fetch(`${baseUrl}/sessions/${sessionId}/pages/${pageId}/act`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'click',
+          target: { ref },
+          approvalToken: denial.error.details.tokenId,
+        }),
+      });
+
+      expect(approved.status).toBe(200);
+      const result = await approved.json();
+      expect(result.status).toBe('success');
+    });
+  });
+
+  describe('real observations over FakeEngine', () => {
+    it('should return engine-derived elements with normalized refs', async () => {
+      const { sessionId, pageId } = await setupPage();
+
+      await fetch(`${baseUrl}/sessions/${sessionId}/pages/${pageId}/navigate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: 'https://example.com' }),
+      });
+
+      const response = await fetch(`${baseUrl}/sessions/${sessionId}/pages/${pageId}/observe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'interactive' }),
+      });
+
+      expect(response.status).toBe(200);
+      const observation = await response.json();
+      expect(observation.url).toBe('https://example.com');
+      expect(observation.revision).toBeGreaterThan(0);
+      expect(observation.elements.length).toBeGreaterThan(0);
+      for (const element of observation.elements) {
+        expect(element.ref).toMatch(/^e\d+_\d+$/);
+      }
+      expect(observation.untrustedContent).toBe(true);
+    });
+
+    it('should act on an observed ref and report the new revision', async () => {
+      const { sessionId, pageId } = await setupPage();
+
+      await fetch(`${baseUrl}/sessions/${sessionId}/pages/${pageId}/navigate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: 'https://example.com' }),
+      });
+
+      const observeResponse = await fetch(
+        `${baseUrl}/sessions/${sessionId}/pages/${pageId}/observe`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        }
+      );
+      const observation = await observeResponse.json();
+
+      const response = await fetch(`${baseUrl}/sessions/${sessionId}/pages/${pageId}/act`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'click',
+          target: { ref: observation.elements[0]?.ref ?? 'e0_0' },
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const result = await response.json();
+      expect(result.status).toBe('success');
+      expect(result.actionId).toEqual(expect.any(String));
+      expect(result.newRevision).toBeGreaterThan(observation.revision);
     });
   });
 });

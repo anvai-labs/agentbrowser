@@ -2,18 +2,50 @@
  * AgentBrowser REST API Server
  *
  * Fastify-based REST API server providing session management, navigation,
- * observation, and action execution endpoints.
+ * observation, and action execution endpoints. Routes are a thin translation
+ * layer over AgentBrowserService; the engine is injected, so tests run
+ * against FakeEngine and production runs PlaywrightChromiumEngine.
  */
 
+import type { BrowserEngine } from '@agentbrowser/engine';
+import { FakeEngine } from '@agentbrowser/testkit';
 import cors from '@fastify/cors';
 import Fastify from 'fastify';
 import type { FastifyError, FastifyInstance } from 'fastify';
 import { buildOpenApiDocument } from './openapi.js';
+import { AgentBrowserService, ServiceError } from './service.js';
 
 export interface ServerOptions {
   port?: number;
   host?: string;
   corsOrigin?: string | string[];
+  /** Browser engine backing the server. Production must inject a real one. */
+  engine?: BrowserEngine;
+}
+
+/** Map protocol error codes onto HTTP statuses. */
+function statusFor(code: string): number {
+  switch (code) {
+    case 'SESSION_NOT_FOUND':
+    case 'NOT_FOUND':
+    case 'PAGE_NOT_FOUND':
+      return 404;
+    case 'POLICY_DENIED':
+    case 'APPROVAL_REQUIRED':
+    case 'FORBIDDEN':
+      return 403;
+    case 'QUOTA_EXCEEDED':
+      return 429;
+    case 'INVALID_REQUEST':
+    case 'STALE_TARGET':
+    case 'TARGET_NOT_FOUND':
+    case 'TARGET_AMBIGUOUS':
+    case 'TARGET_NOT_VISIBLE':
+    case 'TARGET_DISABLED':
+      return 400;
+    default:
+      return 500;
+  }
 }
 
 export async function buildServer(options: ServerOptions = {}): Promise<FastifyInstance> {
@@ -35,46 +67,78 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     reply.header('X-XSS-Protection', '1; mode=block');
   });
 
-  // In-memory session storage for testing
-  const sessions = new Map<string, any>();
-  const pages = new Map<string, any>();
+  // The engine is normally injected (bin.ts passes PlaywrightChromiumEngine).
+  // Falling back to the in-memory engine is recorded loudly, never silent.
+  let engine = options.engine;
+  if (!engine) {
+    console.warn(
+      '[agentbrowser] No engine injected; using the in-memory FakeEngine. ' +
+        'Pass an engine to ServerOptions for real browsing.'
+    );
+    engine = new FakeEngine();
+  }
+  const service = new AgentBrowserService({ engine });
+
+  fastify.addHook('onClose', async () => {
+    await service.shutdown();
+  });
+
+  /** Translate a service failure into the protocol error envelope. */
+  const fail = (reply: import('fastify').FastifyReply, error: unknown) => {
+    if (error instanceof ServiceError) {
+      return reply.status(statusFor(error.code)).send({
+        error: {
+          code: error.code,
+          message: error.message,
+          retryable: error.retryable,
+          ...(error.details !== undefined ? { details: error.details } : {}),
+        },
+      });
+    }
+    return reply.status(500).send({
+      error: {
+        code: 'INTERNAL',
+        message: error instanceof Error ? error.message : 'Unknown error',
+        retryable: false,
+      },
+    });
+  };
+
+  const requireBody = (
+    reply: import('fastify').FastifyReply,
+    body: unknown
+  ): body is Record<string, unknown> => {
+    if (body === undefined || body === null || typeof body !== 'object') {
+      reply.status(400).send({
+        error: {
+          code: 'INVALID_REQUEST',
+          message: 'A JSON request body is required',
+          retryable: false,
+        },
+      });
+      return false;
+    }
+    return true;
+  };
 
   // Session management endpoints
   fastify.post('/sessions', async (request, reply) => {
     try {
-      const body = request.body as any;
+      const body = request.body;
+      if (!requireBody(reply, body)) {
+        return reply;
+      }
 
-      if (!body.tenantId) {
+      if (typeof (body as Record<string, unknown>).tenantId !== 'string') {
         return reply.status(400).send({
-          error: {
-            code: 'INVALID_REQUEST',
-            message: 'tenantId is required',
-            retryable: false,
-          },
+          error: { code: 'INVALID_REQUEST', message: 'tenantId is required', retryable: false },
         });
       }
 
-      const sessionId = `ses_${Date.now()}`;
-      const session = {
-        sessionId,
-        status: 'ready',
-        metadata: {
-          createdAt: new Date().toISOString(),
-          expiresAt: new Date(Date.now() + 900000).toISOString(),
-        },
-      };
-
-      sessions.set(sessionId, session);
-
+      const session = await service.createSession(body as never);
       return reply.status(201).send(session);
     } catch (error) {
-      return reply.status(500).send({
-        error: {
-          code: 'INTERNAL_ERROR',
-          message: error instanceof Error ? error.message : 'Unknown error',
-          retryable: false,
-        },
-      });
+      return fail(reply, error);
     }
   });
 
@@ -97,33 +161,21 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
   fastify.get('/sessions', async (request, reply) => {
     try {
-      return reply.send({
-        sessions: Array.from(sessions.values()).map((session) => ({
-          sessionId: session.sessionId,
-          status: session.status,
-          metadata: session.metadata,
-        })),
-      });
+      return reply.send({ sessions: service.listSessions() });
     } catch (error) {
-      return reply.status(500).send({
-        error: {
-          code: 'INTERNAL_ERROR',
-          message: error instanceof Error ? error.message : 'Unknown error',
-          retryable: false,
-        },
-      });
+      return fail(reply, error);
     }
   });
 
   fastify.get('/sessions/:sessionId', async (request, reply) => {
     try {
       const { sessionId } = request.params as { sessionId: string };
-      const session = sessions.get(sessionId);
+      const session = service.getSession(sessionId);
 
       if (!session) {
         return reply.status(404).send({
           error: {
-            code: 'NOT_FOUND',
+            code: 'SESSION_NOT_FOUND',
             message: `Session ${sessionId} not found`,
             retryable: false,
           },
@@ -132,45 +184,17 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
       return reply.send(session);
     } catch (error) {
-      return reply.status(500).send({
-        error: {
-          code: 'INTERNAL_ERROR',
-          message: error instanceof Error ? error.message : 'Unknown error',
-          retryable: false,
-        },
-      });
+      return fail(reply, error);
     }
   });
 
   fastify.delete('/sessions/:sessionId', async (request, reply) => {
     try {
       const { sessionId } = request.params as { sessionId: string };
-      const session = sessions.get(sessionId);
-
-      if (!session) {
-        return reply.status(404).send({
-          error: {
-            code: 'NOT_FOUND',
-            message: `Session ${sessionId} not found`,
-            retryable: false,
-          },
-        });
-      }
-
-      sessions.delete(sessionId);
-
-      return reply.send({
-        sessionId,
-        status: 'closed',
-      });
+      await service.closeSession(sessionId);
+      return reply.send({ sessionId, status: 'closed' });
     } catch (error) {
-      return reply.status(500).send({
-        error: {
-          code: 'INTERNAL_ERROR',
-          message: error instanceof Error ? error.message : 'Unknown error',
-          retryable: false,
-        },
-      });
+      return fail(reply, error);
     }
   });
 
@@ -178,58 +202,19 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   fastify.post('/sessions/:sessionId/pages', async (request, reply) => {
     try {
       const { sessionId } = request.params as { sessionId: string };
-
-      if (!sessionId) {
-        return reply.status(400).send({
-          error: {
-            code: 'INVALID_REQUEST',
-            message: 'sessionId is required',
-            retryable: false,
-          },
-        });
-      }
-
-      const session = sessions.get(sessionId);
-
-      if (!session) {
-        return reply.status(404).send({
-          error: {
-            code: 'NOT_FOUND',
-            message: `Session ${sessionId} not found`,
-            retryable: false,
-          },
-        });
-      }
-
-      const pageId = `pg_${Date.now()}`;
-      const page = {
-        pageId,
-        sessionId,
-        status: 'ready',
-        url: null,
-        title: null,
-      };
-
-      pages.set(pageId, page);
-
+      const page = await service.createPage(sessionId);
       return reply.status(201).send(page);
     } catch (error) {
-      return reply.status(500).send({
-        error: {
-          code: 'INTERNAL_ERROR',
-          message: error instanceof Error ? error.message : 'Unknown error',
-          retryable: false,
-        },
-      });
+      return fail(reply, error);
     }
   });
 
   fastify.get('/sessions/:sessionId/pages/:pageId', async (request, reply) => {
     try {
       const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
-      const page = pages.get(pageId);
+      const page = service.getPage(sessionId, pageId);
 
-      if (!page || page.sessionId !== sessionId) {
+      if (!page) {
         return reply.status(404).send({
           error: {
             code: 'NOT_FOUND',
@@ -241,235 +226,111 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
       return reply.send(page);
     } catch (error) {
-      return reply.status(500).send({
-        error: {
-          code: 'INTERNAL_ERROR',
-          message: error instanceof Error ? error.message : 'Unknown error',
-          retryable: false,
-        },
-      });
+      return fail(reply, error);
     }
   });
 
   fastify.delete('/sessions/:sessionId/pages/:pageId', async (request, reply) => {
     try {
       const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
-      const page = pages.get(pageId);
-
-      if (!page || page.sessionId !== sessionId) {
-        return reply.status(404).send({
-          error: {
-            code: 'NOT_FOUND',
-            message: `Page ${pageId} not found`,
-            retryable: false,
-          },
-        });
-      }
-
-      pages.delete(pageId);
-
-      return reply.send({
-        pageId,
-        sessionId,
-        status: 'closed',
-      });
+      await service.closePage(sessionId, pageId);
+      return reply.send({ pageId, status: 'closed' });
     } catch (error) {
-      return reply.status(500).send({
-        error: {
-          code: 'INTERNAL_ERROR',
-          message: error instanceof Error ? error.message : 'Unknown error',
-          retryable: false,
-        },
-      });
+      return fail(reply, error);
     }
   });
 
-  // Navigation endpoints
+  // Navigation endpoint
   fastify.post('/sessions/:sessionId/pages/:pageId/navigate', async (request, reply) => {
     try {
       const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
-      const body = request.body as any;
+      const body = request.body;
+      if (!requireBody(reply, body)) {
+        return reply;
+      }
 
-      if (!body.url) {
+      const { url, waitUntil } = body as { url?: string; waitUntil?: string };
+
+      if (typeof url !== 'string' || url.length === 0) {
         return reply.status(400).send({
           error: {
             code: 'INVALID_REQUEST',
-            message: 'URL is required',
+            message: 'url is required and must be a string',
             retryable: false,
           },
         });
       }
 
-      // Validate URL format
-      try {
-        new URL(body.url);
-      } catch {
-        return reply.status(400).send({
-          error: {
-            code: 'INVALID_REQUEST',
-            message: 'Invalid URL format',
-            retryable: false,
-          },
-        });
-      }
-
-      const page = pages.get(pageId);
-      if (!page || page.sessionId !== sessionId) {
-        return reply.status(404).send({
-          error: {
-            code: 'NOT_FOUND',
-            message: `Page ${pageId} not found in session ${sessionId}`,
-            retryable: false,
-          },
-        });
-      }
-
-      // Update page with navigation info
-      page.url = body.url;
-      page.title = 'Page Title';
-      pages.set(pageId, page);
-
-      return reply.send({
-        status: 'success',
-        url: body.url,
-        redirectChain: [],
+      const result = await service.navigate(sessionId, pageId, {
+        url,
+        ...(waitUntil !== undefined
+          ? { waitUntil: waitUntil as 'load' | 'domcontentloaded' | 'networkidle' }
+          : {}),
       });
+      return reply.send(result);
     } catch (error) {
-      return reply.status(500).send({
-        error: {
-          code: 'INTERNAL_ERROR',
-          message: error instanceof Error ? error.message : 'Unknown error',
-          retryable: false,
-        },
-      });
+      return fail(reply, error);
     }
   });
 
-  // Observation endpoints
+  // Observation endpoint
   fastify.post('/sessions/:sessionId/pages/:pageId/observe', async (request, reply) => {
     try {
       const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
-      const body = request.body as any;
-
-      const page = pages.get(pageId);
-      if (!page || page.sessionId !== sessionId) {
-        return reply.status(404).send({
-          error: {
-            code: 'NOT_FOUND',
-            message: `Page ${pageId} not found`,
-            retryable: false,
-          },
-        });
-      }
-
-      // Mock observation result
-      return reply.send({
-        sessionId,
-        pageId,
-        revision: 1,
-        url: 'https://example.com',
-        title: 'Example Page',
-        status: 'interactive',
-        summary: 'Page with 2 buttons, 1 link',
-        elements: [
-          {
-            ref: 'e1_0',
-            role: 'button',
-            name: 'Submit',
-            visible: true,
-            enabled: true,
-          },
-          {
-            ref: 'e1_1',
-            role: 'link',
-            name: 'Home',
-            visible: true,
-            enabled: true,
-          },
-        ],
-        truncated: false,
-        untrustedContent: true,
-      });
+      const observation = await service.observe(sessionId, pageId, (request.body ?? {}) as never);
+      return reply.send(observation);
     } catch (error) {
-      return reply.status(500).send({
-        error: {
-          code: 'INTERNAL_ERROR',
-          message: error instanceof Error ? error.message : 'Unknown error',
-          retryable: false,
-        },
-      });
+      return fail(reply, error);
     }
   });
 
-  // Action execution endpoints
+  // Action execution endpoint
   fastify.post('/sessions/:sessionId/pages/:pageId/act', async (request, reply) => {
     try {
       const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
-      const body = request.body as any;
+      const body = request.body;
+      if (!requireBody(reply, body)) {
+        return reply;
+      }
 
-      // Validate request body
-      if (!body.action || !body.target || !body.target.ref) {
+      const {
+        action,
+        target,
+        value,
+        key,
+        direction,
+        amount,
+        observe,
+        expectedRevision,
+        approvalToken,
+      } = body as Record<string, unknown>;
+
+      if (typeof action !== 'string') {
         return reply.status(400).send({
           error: {
             code: 'INVALID_REQUEST',
-            message: 'Action and target.ref are required',
+            message: 'action is required and must be a string',
             retryable: false,
           },
         });
       }
 
-      const page = pages.get(pageId);
-      if (!page || page.sessionId !== sessionId) {
-        return reply.status(404).send({
-          error: {
-            code: 'NOT_FOUND',
-            message: `Page ${pageId} not found`,
-            retryable: false,
-          },
-        });
-      }
-
-      // Validate ref format (e<revision>_<ordinal>)
-      const refMatch = body.target.ref.match(/^e(\d+)_(\d+)$/);
-      if (!refMatch) {
-        return reply.status(400).send({
-          error: {
-            code: 'INVALID_REQUEST',
-            message: `Invalid element reference format: ${body.target.ref}`,
-            retryable: false,
-          },
-        });
-      }
-
-      const refRevision = Number.parseInt(refMatch[1], 10);
-
-      // Check if ref is stale (revision mismatch with current page state)
-      // For MVP, we assume current revision is 1 for testing
-      const currentRevision = 1;
-      if (refRevision !== currentRevision) {
-        return reply.status(400).send({
-          error: {
-            code: 'STALE_TARGET',
-            message: `Element reference is stale. Expected revision ${refRevision}, but current revision is ${currentRevision}`,
-            retryable: true,
-          },
-        });
-      }
-
-      // Mock action result
-      return reply.send({
-        status: 'success',
-        actionId: `act_${Date.now()}`,
-        newRevision: 2,
+      const result = await service.act(sessionId, pageId, {
+        action,
+        ...(target !== undefined ? { target: target as { ref: string } } : {}),
+        ...(value !== undefined ? { value: value as string } : {}),
+        ...(key !== undefined ? { key: key as string } : {}),
+        ...(direction !== undefined
+          ? { direction: direction as 'up' | 'down' | 'left' | 'right' }
+          : {}),
+        ...(amount !== undefined ? { amount: amount as number } : {}),
+        ...(observe !== undefined ? { observe: observe as 'after' | 'none' } : {}),
+        ...(expectedRevision !== undefined ? { expectedRevision: expectedRevision as number } : {}),
+        ...(approvalToken !== undefined ? { approvalToken: approvalToken as string } : {}),
       });
+      return reply.send(result);
     } catch (error) {
-      return reply.status(500).send({
-        error: {
-          code: 'INTERNAL_ERROR',
-          message: error instanceof Error ? error.message : 'Unknown error',
-          retryable: false,
-        },
-      });
+      return fail(reply, error);
     }
   });
 
@@ -483,17 +344,6 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         quality?: number;
         maskSensitive?: boolean;
       };
-
-      const page = pages.get(pageId);
-      if (!page || page.sessionId !== sessionId) {
-        return reply.status(404).send({
-          error: {
-            code: 'NOT_FOUND',
-            message: `Page ${pageId} not found`,
-            retryable: false,
-          },
-        });
-      }
 
       const format = body.format ?? 'png';
       const contentTypes: Record<string, string> = {
@@ -513,23 +363,15 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         });
       }
 
-      // Mock artifact - real capture arrives with the engine wiring
-      const artifactId = `art_${Date.now()}`;
-      return reply.send({
-        artifactId,
-        type: 'screenshot',
-        contentType,
-        sizeBytes: 1024,
-        url: `/sessions/${sessionId}/artifacts/${artifactId}`,
+      const artifact = await service.screenshot(sessionId, pageId, {
+        ...(body.fullPage !== undefined ? { fullPage: body.fullPage } : {}),
+        format: format as 'png' | 'jpeg' | 'webp',
+        ...(body.quality !== undefined ? { quality: body.quality } : {}),
+        ...(body.maskSensitive !== undefined ? { maskSensitive: body.maskSensitive } : {}),
       });
+      return reply.send(artifact);
     } catch (error) {
-      return reply.status(500).send({
-        error: {
-          code: 'INTERNAL_ERROR',
-          message: error instanceof Error ? error.message : 'Unknown error',
-          retryable: false,
-        },
-      });
+      return fail(reply, error);
     }
   });
 
@@ -559,10 +401,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       });
     }
 
-    // For all other errors, return 500 INTERNAL_ERROR
+    // For all other errors, return 500 INTERNAL
     return reply.status(500).send({
       error: {
-        code: 'INTERNAL_ERROR',
+        code: 'INTERNAL',
         message: 'An unexpected error occurred',
         retryable: false,
       },

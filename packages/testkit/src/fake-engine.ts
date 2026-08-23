@@ -82,6 +82,33 @@ export class FakeEngine implements BrowserEngine {
   getSession(sessionId: string): FakeSession | undefined {
     return this.sessions.get(sessionId);
   }
+
+  /**
+   * Get a page's test handle for injecting state. Test-only surface: real
+   * engines never expose their pages this way. Accepts either the engine's own
+   * page id or a composite id that embeds it (e.g. `pg_1_fake-page-0`).
+   */
+  getFakePage(sessionId: string, pageId: string): FakePage | undefined {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      return undefined;
+    }
+    const direct = session.getFakePage(pageId);
+    if (direct) {
+      return direct;
+    }
+    for (const page of session.getPageHandles()) {
+      if (pageId.endsWith(`_${page.id}`)) {
+        return page;
+      }
+    }
+    return undefined;
+  }
+
+  /** Engine-internal session ids, for tests that need to reach into a page. */
+  getSessionIds(): string[] {
+    return Array.from(this.sessions.keys());
+  }
 }
 
 /**
@@ -130,6 +157,14 @@ class FakeSession implements EngineSession {
 
   isClosed(): boolean {
     return this.closed;
+  }
+
+  getFakePage(pageId: string): FakePage | undefined {
+    return this._pages.get(pageId);
+  }
+
+  getPageHandles(): FakePage[] {
+    return Array.from(this._pages.values());
   }
 }
 
@@ -213,6 +248,10 @@ class FakePage implements EnginePage {
 
         if (el.attributes !== undefined) {
           element.attributes = el.attributes;
+        }
+
+        if (el.risk !== undefined) {
+          element.risk = el.risk;
         }
 
         return element;
@@ -304,9 +343,11 @@ class FakePage implements EnginePage {
   }
 
   async screenshot(request: ScreenshotRequest): Promise<any> {
+    const format = request.format || 'png';
     return {
       artifactId: `screenshot-${Date.now()}`,
-      contentType: 'image/png',
+      type: 'screenshot',
+      contentType: `image/${format}`,
       sizeBytes: 1024,
       url: '/v1/artifacts/screenshot-1',
     };
@@ -352,8 +393,40 @@ class FakePage implements EnginePage {
     return elements;
   }
 
+  /**
+   * Canonical semantic fingerprint required by the engine contract:
+   * `role_name_visible_X_enabled_Y[_value_Z]`. Core compares resolved
+   * fingerprints against this derivation, so engines must match it exactly.
+   */
   private generateFingerprint(element: FakeElement): string {
-    return `${element.role}:${element.name}:${element.visible}:${element.enabled}`;
+    return [
+      element.role,
+      element.name ?? '',
+      `visible_${element.visible}`,
+      `enabled_${element.enabled}`,
+      element.value !== undefined && element.value !== '' ? `value_${element.value}` : '',
+    ]
+      .filter(Boolean)
+      .join('_');
+  }
+
+  /**
+   * Replace the page's elements (test hook for injecting specific state,
+   * including risk classification).
+   */
+  setElements(elements: Array<Partial<FakeElement>>): void {
+    this.elements = elements.map((el, index) => ({
+      ref: el.ref ?? `e${this.revision}_${index + 1}`,
+      role: el.role ?? 'unknown',
+      name: el.name ?? '',
+      value: el.value ?? '',
+      required: el.required ?? false,
+      visible: el.visible ?? true,
+      enabled: el.enabled ?? true,
+      focused: el.focused ?? false,
+      ...(el.risk !== undefined ? { risk: el.risk } : {}),
+      attributes: el.attributes ?? {},
+    }));
   }
 }
 
@@ -369,5 +442,6 @@ interface FakeElement {
   visible: boolean;
   enabled: boolean;
   focused: boolean;
+  risk?: 'read' | 'write-local' | 'external-message' | 'transaction' | 'account-security' | 'destructive';
   attributes: Record<string, string>;
 }

@@ -331,7 +331,7 @@ function fingerprintOf(element: PageElement): string {
     element.name || '',
     `visible_${element.visible}`,
     `enabled_${element.enabled}`,
-    element.value !== undefined ? `value_${element.value}` : '',
+    element.value !== undefined && element.value !== '' ? `value_${element.value}` : '',
   ];
   return parts.filter(Boolean).join('_');
 }

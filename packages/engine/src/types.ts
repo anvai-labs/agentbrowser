@@ -80,6 +80,8 @@ export interface RawPageState {
  * Raw element from engine
  */
 export interface RawElement {
+  /** The engine's own element ref, when the engine keys elements by ref. */
+  ref?: string;
   role: string;
   name?: string;
   value?: string;
@@ -87,6 +89,8 @@ export interface RawElement {
   visible: boolean;
   enabled: boolean;
   focused?: boolean;
+  /** Risk classification carried through to normalized observations. */
+  risk?: 'read' | 'write-local' | 'external-message' | 'transaction' | 'account-security' | 'destructive';
   bounds?: ElementBounds;
   attributes?: Record<string, string>;
 }

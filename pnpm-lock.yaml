@@ -26,6 +26,12 @@ importers:
       '@agentbrowser/engine':
         specifier: workspace:*
         version: link:../engine
+      '@agentbrowser/engine-playwright':
+        specifier: workspace:^
+        version: link:../engine-playwright
+      '@agentbrowser/policy':
+        specifier: workspace:^
+        version: link:../policy
       '@agentbrowser/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -36,6 +42,9 @@ importers:
         specifier: ^5.2.0
         version: 5.12.1
     devDependencies:
+      '@agentbrowser/testkit':
+        specifier: workspace:^
+        version: link:../testkit
       '@biomejs/biome':
         specifier: ^1.9.4
         version: 1.9.4

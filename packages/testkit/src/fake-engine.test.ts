@@ -231,6 +231,56 @@ describe('FakeEngine', () => {
       // Should throw on operations after close
       await expect(page.observe({ mode: 'interactive' })).rejects.toThrow('Page is closed');
     });
+
+    it('should emit the canonical fingerprint format', async () => {
+      const session = await engine.createSession({});
+      const page = await session.newPage();
+
+      await page.navigate({ url: 'https://example.com' });
+      const observation = await page.observe({ mode: 'interactive' });
+
+      // The engine contract requires the canonical semantic fingerprint
+      // (`role_name_visible_X_enabled_Y[_value_Z]`) so that resolved targets
+      // can be compared against normalized observations.
+      const target = observation.elements[0];
+      const resolved = await page.resolve({ ref: target.ref });
+
+      const expected = [
+        target.role,
+        target.name ?? '',
+        `visible_${target.visible}`,
+        `enabled_${target.enabled}`,
+        target.value !== undefined && target.value !== '' ? `value_${target.value}` : '',
+      ]
+        .filter(Boolean)
+        .join('_');
+
+      expect(resolved.fingerprint).toBe(expected);
+    });
+
+    it('should allow tests to inject elements with risk metadata', async () => {
+      const engine2 = new FakeEngine();
+      const session = await engine2.createSession({});
+      const page = await session.newPage();
+
+      const fakePage = engine2.getFakePage(session.id, page.id);
+      expect(fakePage).toBeDefined();
+
+      fakePage!.setElements([
+        {
+          ref: `e${1}_0`,
+          role: 'button',
+          name: 'Pay now',
+          visible: true,
+          enabled: true,
+          risk: 'transaction',
+        },
+      ]);
+
+      const observation = await page.observe({ mode: 'interactive' });
+      expect(observation.elements[0].name).toBe('Pay now');
+      expect(observation.elements[0].risk).toBe('transaction');
+    });
   });
 
   describe('engine cleanup', () => {
