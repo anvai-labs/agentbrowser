@@ -19,7 +19,7 @@ Full workspace build and test run, verified end-to-end:
 | policy              | 28    |
 | cli                 | 27    |
 | mcp-server          | 21    |
-| **Total**           | **417 passing (100%)** |
+| **Total**           | **462 passing (100%)** |
 
 `pnpm -r build` succeeds for all 10 packages. CI is green on GitHub
 (type-check, lint, test, build) on a clean checkout.
@@ -59,6 +59,29 @@ ADR-008 and the hostile-page assumption by rendering untrusted content in
 the host process. The managed subprocess provides the ergonomics instead.
 
 ## Completed Tasks
+
+### API wired to the real stack ✅ COMPLETE
+
+`AgentBrowserService` (packages/api/src/service.ts) is the composition
+root: SessionCoordinator for lifecycle, injected BrowserEngine,
+ObservationNormalizer (normalized refs bridged back to engine refs),
+ActionExecutor (the service is the revision authority and projects engine
+effects into its revision space), NetworkPolicy on navigate (SSRF
+defaults ON: loopback/private/metadata → 403), ApprovalGate on high-risk
+elements (single-use token flow → 403 APPROVAL_REQUIRED with tokenId).
+Routes are a thin translation layer; engine injected — bin.ts runs
+PlaywrightChromiumEngine (verified live: navigate, accessibility
+observation, real screenshot), tests run FakeEngine.
+
+Contract fixes that surfaced: canonical fingerprint
+`role_name_visible_X_enabled_Y[_value_Z]` now emitted by FakeEngine and
+matched by core; `RawElement` carries engine ref + risk; FakeEngine
+honors screenshot format and exposes a test-only element-injection hook.
+
+**Remaining known gap:** PlaywrightEngine.resolve still returns a mock
+fingerprint, so ref actions against real Chromium fail the fingerprint
+gate until the engine keeps a real ref→element store (TD-008 completion).
+
 
 ### TD-013: CLI ✅ COMPLETE
 - **Status:** 27/27 tests passing
