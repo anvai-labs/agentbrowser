@@ -336,6 +336,76 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         },
       },
 
+      '/sessions/{sessionId}/pages/{pageId}/download': {
+        post: {
+          operationId: 'downloadArtifact',
+          summary: 'Download a payload as a stored artifact',
+          description:
+            'Downloads are denied unless the session was created with allowDownloads. ' +
+            'The target passes the same network egress policy as navigation, and the ' +
+            'payload is capped by the session maxDownloadBytes.',
+          tags: ['artifacts'],
+          parameters: [sessionIdParam, pageIdParam],
+          requestBody: {
+            required: true,
+            content: json({
+              type: 'object',
+              required: ['url'],
+              properties: {
+                url: { type: 'string', format: 'uri' },
+                filename: { type: 'string' },
+              },
+            }),
+          },
+          responses: {
+            '200': {
+              description: 'The stored artifact metadata.',
+              content: json(ref('ArtifactRef')),
+            },
+            '400': INVALID_REQUEST,
+            '403': errorResponse(
+              'Downloads are disabled for this session, or the target was denied by policy.'
+            ),
+            '404': NOT_FOUND,
+            '500': INTERNAL,
+          },
+        },
+      },
+
+      '/sessions/{sessionId}/artifacts/{artifactId}': {
+        get: {
+          operationId: 'getArtifact',
+          summary: 'Retrieve a stored artifact',
+          description: 'Returns metadata plus base64 content, scoped to the owning session.',
+          tags: ['artifacts'],
+          parameters: [
+            sessionIdParam,
+            {
+              name: 'artifactId',
+              in: 'path',
+              required: true,
+              description: 'Artifact identifier returned by a download or capture.',
+              schema: { type: 'string' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'The artifact.',
+              content: json({
+                type: 'object',
+                required: ['metadata', 'contentBase64'],
+                properties: {
+                  metadata: ref('ArtifactRef'),
+                  contentBase64: { type: 'string', contentEncoding: 'base64' },
+                },
+              }),
+            },
+            '404': NOT_FOUND,
+            '500': INTERNAL,
+          },
+        },
+      },
+
       '/sessions/{sessionId}/pages/{pageId}/screenshot': {
         post: {
           operationId: 'captureScreenshot',

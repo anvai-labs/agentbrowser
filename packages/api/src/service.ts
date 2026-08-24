@@ -15,10 +15,12 @@
 import {
   ActionExecutor,
   ApprovalGate,
+  ArtifactStore,
   ObservationNormalizer,
   SecretManager,
   SessionCoordinator,
 } from '@agentbrowser/core';
+import type { ArtifactMetadata } from '@agentbrowser/core';
 import type { BrowserEngine, EnginePage } from '@agentbrowser/engine';
 import type { EngineSession, EngineSessionOptions } from '@agentbrowser/engine';
 import { NetworkPolicy } from '@agentbrowser/policy';
@@ -52,6 +54,9 @@ export interface ServiceSessionRequest {
   locale?: string;
   timezoneId?: string;
   headless?: boolean;
+  /** Downloads are denied unless the session explicitly allows them. */
+  allowDownloads?: boolean;
+  maxDownloadBytes?: number;
 }
 
 export interface ServiceSessionView {
@@ -99,6 +104,10 @@ export interface ServiceDependencies {
   approvalGate?: ApprovalGate;
   /** Secret registry; values are redacted from every service output. */
   secretManager?: SecretManager;
+  /** Artifact retention store; defaults to a bounded in-memory store. */
+  artifactStore?: ArtifactStore;
+  /** Payload fetcher for downloads; injectable for tests. */
+  downloader?(url: string): Promise<{ bytes: Uint8Array; contentType: string }>;
 }
 
 /** Risk classes that require an approval token before the action runs. */
@@ -154,6 +163,13 @@ export class AgentBrowserService {
   private readonly networkPolicy: NetworkPolicy;
   private readonly approvalGate: ApprovalGate;
   private readonly secretManager: SecretManager;
+  private readonly artifacts: ArtifactStore;
+  private readonly downloader: NonNullable<ServiceDependencies['downloader']>;
+  /** Per-session download policy, captured at creation (denying by default). */
+  private readonly sessionDownloadPolicy = new Map<
+    string,
+    { allowDownloads: boolean; maxDownloadBytes: number }
+  >();
   private readonly pages = new Map<string, PageContext>();
   private pageCounter = 0;
 
@@ -172,6 +188,8 @@ export class AgentBrowserService {
     // An empty registry redacts nothing; a populated one is enforced at every
     // output boundary (observations, error messages, error details).
     this.secretManager = deps.secretManager ?? new SecretManager();
+    this.artifacts = deps.artifactStore ?? new ArtifactStore();
+    this.downloader = deps.downloader ?? defaultDownloader;
   }
 
   // ---- sessions -----------------------------------------------------------
@@ -196,6 +214,11 @@ export class AgentBrowserService {
     } catch (error) {
       throw this.mapError(error);
     }
+
+    this.sessionDownloadPolicy.set(session.sessionId, {
+      allowDownloads: request.allowDownloads === true,
+      maxDownloadBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
+    });
 
     return {
       sessionId: session.sessionId,
@@ -244,6 +267,7 @@ export class AgentBrowserService {
         this.pages.delete(pageId);
       }
     }
+    this.sessionDownloadPolicy.delete(sessionId);
   }
 
   // ---- pages --------------------------------------------------------------
@@ -576,6 +600,89 @@ export class AgentBrowserService {
     };
   }
 
+  // ---- downloads ----------------------------------------------------------
+
+  /**
+   * Download a payload as a stored artifact. Downloads are denied unless the
+   * session was created with allowDownloads, and every target passes the
+   * network egress policy like navigation does.
+   */
+  async download(
+    sessionId: string,
+    pageId: string,
+    request: { url: string; filename?: string }
+  ): Promise<ArtifactMetadata> {
+    this.requirePage(sessionId, pageId);
+    this.coordinator.updateActivity(sessionId);
+
+    const policy = this.sessionDownloadPolicy.get(sessionId);
+    if (!policy?.allowDownloads) {
+      throw new ServiceError(
+        'DOWNLOAD_BLOCKED',
+        'Downloads are disabled for this session. Create the session with allowDownloads to enable them.',
+        false
+      );
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(request.url);
+    } catch {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `Invalid download URL: ${request.url.slice(0, 100)}`
+      );
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new ServiceError(
+        'POLICY_DENIED',
+        `Downloads accept http(s) URLs only; '${parsed.protocol}' is not permitted.`
+      );
+    }
+
+    try {
+      await this.networkPolicy.checkRequest({ hostname: parsed.hostname, url: request.url });
+    } catch (error) {
+      throw this.mapError(error);
+    }
+
+    const { bytes, contentType } = await this.downloader(request.url);
+
+    if (bytes.length > policy.maxDownloadBytes) {
+      throw new ServiceError(
+        'DOWNLOAD_BLOCKED',
+        `Payload is ${bytes.length} bytes; this session allows at most ${policy.maxDownloadBytes} bytes.`,
+        false,
+        { sizeBytes: bytes.length, maxDownloadBytes: policy.maxDownloadBytes }
+      );
+    }
+
+    try {
+      return this.artifacts.put('download', contentType, bytes, {
+        ...(request.filename !== undefined ? { filename: request.filename } : {}),
+        sessionId,
+      });
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      throw new ServiceError(
+        code === 'ARTIFACT_TOO_LARGE' ? 'DOWNLOAD_BLOCKED' : 'INTERNAL',
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+  }
+
+  /** Retrieve a stored artifact, scoped to its session. */
+  getArtifact(
+    sessionId: string,
+    artifactId: string
+  ): { metadata: ArtifactMetadata; bytes: Uint8Array } | undefined {
+    const entry = this.artifacts.get(artifactId);
+    if (!entry || entry.metadata.sessionId !== sessionId) {
+      return undefined;
+    }
+    return entry;
+  }
+
   // ---- screenshots --------------------------------------------------------
 
   async screenshot(
@@ -754,6 +861,21 @@ export class AgentBrowserService {
     return new ServiceError('INTERNAL', message);
   }
 }
+
+/** Production download fetcher; tests inject their own. */
+const defaultDownloader = async (
+  url: string
+): Promise<{ bytes: Uint8Array; contentType: string }> => {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new ServiceError('INTERNAL', `Download failed: HTTP ${response.status}`);
+  }
+  const buffer = new Uint8Array(await response.arrayBuffer());
+  return {
+    bytes: buffer,
+    contentType: response.headers.get('content-type') ?? 'application/octet-stream',
+  };
+};
 
 /** Redact credentials from a URL before it enters an error payload. */
 function redactUrl(url: string): string {

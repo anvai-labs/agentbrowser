@@ -9,7 +9,7 @@
  * contract implementation.
  */
 
-import { SecretManager } from '@agentbrowser/core';
+import { ArtifactStore, SecretManager } from '@agentbrowser/core';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AgentBrowserService } from './service';
@@ -652,6 +652,121 @@ describe('AgentBrowserService', () => {
       expect(error?.code).toBe('POLICY_DENIED');
       expect(JSON.stringify(error?.details)).not.toContain(SECRET_VALUE);
       expect(error?.message).not.toContain(SECRET_VALUE);
+    });
+  });
+
+  describe('downloads and artifacts', () => {
+    const BYTES = new Uint8Array([104, 101, 108, 108, 111]); // "hello"
+
+    const downloadService = (
+      options: {
+        session?: Record<string, unknown>;
+        store?: ConstructorParameters<typeof import('@agentbrowser/core').ArtifactStore>[0];
+        maxDownloadBytes?: number;
+        downloader?: (url: string) => Promise<{ bytes: Uint8Array; contentType: string }>;
+      } = {}
+    ) => {
+      const engine2 = new FakeEngine();
+      const service2 = new AgentBrowserService({
+        engine: engine2,
+        ...(options.store ? { artifactStore: new ArtifactStore(options.store) } : {}),
+        ...(options.downloader ? { downloader: options.downloader } : {}),
+      });
+      return { engine2, service2 };
+    };
+
+    it('should block downloads unless the session allows them', async () => {
+      const { service2 } = downloadService();
+      const sessionId = (await service2.createSession({ tenantId: 't' })).sessionId;
+      const pageId = (await service2.createPage(sessionId)).pageId;
+
+      const error = await capture(() =>
+        service2.download(sessionId, pageId, { url: 'https://files.example.com/report.csv' })
+      );
+
+      expect(error?.code).toBe('DOWNLOAD_BLOCKED');
+    });
+
+    it('should download and store an artifact when allowed', async () => {
+      const { service2 } = downloadService({
+        downloader: async () => ({ bytes: BYTES, contentType: 'text/csv' }),
+      });
+      const sessionId = (
+        await service2.createSession({
+          tenantId: 't',
+          allowDownloads: true,
+        })
+      ).sessionId;
+      const pageId = (await service2.createPage(sessionId)).pageId;
+
+      const artifact = await service2.download(sessionId, pageId, {
+        url: 'https://files.example.com/report.csv',
+        filename: 'report.csv',
+      });
+
+      expect(artifact.type).toBe('download');
+      expect(artifact.contentType).toBe('text/csv');
+      expect(artifact.sizeBytes).toBe(BYTES.length);
+      expect(artifact.filename).toBe('report.csv');
+
+      const stored = service2.getArtifact(sessionId, artifact.artifactId);
+      expect(stored?.bytes).toEqual(BYTES);
+    });
+
+    it('should enforce the session download size cap', async () => {
+      const { service2 } = downloadService({
+        downloader: async () => ({ bytes: new Uint8Array(2048), contentType: 'text/csv' }),
+      });
+      const sessionId = (
+        await service2.createSession({
+          tenantId: 't',
+          allowDownloads: true,
+          maxDownloadBytes: 1024,
+        })
+      ).sessionId;
+      const pageId = (await service2.createPage(sessionId)).pageId;
+
+      const error = await capture(() =>
+        service2.download(sessionId, pageId, { url: 'https://files.example.com/big.csv' })
+      );
+
+      expect(error?.code).toBe('DOWNLOAD_BLOCKED');
+      expect(error?.message).toMatch(/bytes/i);
+    });
+
+    it('should deny downloads to policy-blocked hosts', async () => {
+      const { service2 } = downloadService({
+        downloader: async () => ({ bytes: BYTES, contentType: 'text/csv' }),
+      });
+      const sessionId = (
+        await service2.createSession({
+          tenantId: 't',
+          allowDownloads: true,
+        })
+      ).sessionId;
+      const pageId = (await service2.createPage(sessionId)).pageId;
+
+      const error = await capture(() =>
+        service2.download(sessionId, pageId, { url: 'http://169.254.169.254/data' })
+      );
+
+      expect(error?.code).toBe('POLICY_DENIED');
+    });
+
+    it('should refuse unknown or cross-session artifacts', async () => {
+      const { service2 } = downloadService({
+        downloader: async () => ({ bytes: BYTES, contentType: 'text/csv' }),
+      });
+      const a = (await service2.createSession({ tenantId: 'a', allowDownloads: true })).sessionId;
+      const b = (await service2.createSession({ tenantId: 'b' })).sessionId;
+      const pageId = (await service2.createPage(a)).pageId;
+
+      const artifact = await service2.download(a, pageId, {
+        url: 'https://files.example.com/report.csv',
+      });
+
+      expect(service2.getArtifact(a, 'art_missing')).toBeUndefined();
+      expect(service2.getArtifact(b, artifact.artifactId)).toBeUndefined();
     });
   });
 

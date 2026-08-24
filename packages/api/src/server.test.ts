@@ -884,6 +884,120 @@ describe('AgentBrowser REST API safety integration', () => {
     });
   });
 
+  describe('downloads and artifacts over HTTP', () => {
+    // Downloads run against an injected fetcher so tests never touch the
+    // network.
+    let previous: { server: FastifyInstance; baseUrl: string };
+
+    beforeAll(async () => {
+      // Capture the outer suite's live server now, not at registration time.
+      previous = { server, baseUrl };
+      engine = new FakeEngine();
+      server = await buildServer({
+        engine,
+        downloader: async () => ({
+          bytes: new Uint8Array([104, 101, 108, 108, 111]), // "hello"
+          contentType: 'text/csv',
+        }),
+      });
+      baseUrl = await server.listen({ port: 0, host: '127.0.0.1' });
+    });
+
+    afterAll(async () => {
+      await server.close();
+      // The outer suite's server stayed listening throughout.
+      server = previous.server;
+      baseUrl = previous.baseUrl;
+    });
+
+    it('should refuse downloads for a session that does not allow them', async () => {
+      const { sessionId, pageId } = await setupPage();
+
+      const response = await fetch(`${baseUrl}/sessions/${sessionId}/pages/${pageId}/download`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: 'https://files.example.com/report.csv' }),
+      });
+
+      expect(response.status).toBe(403);
+      expect((await response.json()).error.code).toBe('DOWNLOAD_BLOCKED');
+    });
+
+    it('should download, store and serve an artifact when allowed', async () => {
+      const sessionResponse = await fetch(`${baseUrl}/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId: 'dl', allowDownloads: true }),
+      });
+      const { sessionId } = await sessionResponse.json();
+      const pageId = (
+        await (await fetch(`${baseUrl}/sessions/${sessionId}/pages`, { method: 'POST' })).json()
+      ).pageId;
+
+      const downloadResponse = await fetch(
+        `${baseUrl}/sessions/${sessionId}/pages/${pageId}/download`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: 'https://files.example.com/report.csv',
+            filename: 'report.csv',
+          }),
+        }
+      );
+
+      expect(downloadResponse.status).toBe(200);
+      const artifact = await downloadResponse.json();
+      expect(artifact.type).toBe('download');
+      expect(artifact.filename).toBe('report.csv');
+
+      const storedResponse = await fetch(
+        `${baseUrl}/sessions/${sessionId}/artifacts/${artifact.artifactId}`
+      );
+      expect(storedResponse.status).toBe(200);
+      const stored = await storedResponse.json();
+      expect(stored.metadata.artifactId).toBe(artifact.artifactId);
+      expect(Buffer.from(stored.contentBase64, 'base64').toString('utf8')).toBe('hello');
+
+      // Cross-session and unknown artifacts are 404.
+      const missing = await fetch(`${baseUrl}/sessions/${sessionId}/artifacts/art_missing`);
+      expect(missing.status).toBe(404);
+    });
+
+    it('should 404 artifacts from another session', async () => {
+      const sessionResponse = await fetch(`${baseUrl}/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId: 'dl-a', allowDownloads: true }),
+      });
+      const a = (await sessionResponse.json()).sessionId;
+      const pageId = (
+        await (await fetch(`${baseUrl}/sessions/${a}/pages`, { method: 'POST' })).json()
+      ).pageId;
+
+      const artifact = await (
+        await fetch(`${baseUrl}/sessions/${a}/pages/${pageId}/download`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: 'https://files.example.com/a.csv' }),
+        })
+      ).json();
+
+      const other = (
+        await (
+          await fetch(`${baseUrl}/sessions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tenantId: 'dl-b' }),
+          })
+        ).json()
+      ).sessionId;
+
+      const cross = await fetch(`${baseUrl}/sessions/${other}/artifacts/${artifact.artifactId}`);
+      expect(cross.status).toBe(404);
+    });
+  });
+
   describe('real observations over FakeEngine', () => {
     it('should return engine-derived elements with normalized refs', async () => {
       const { sessionId, pageId } = await setupPage();

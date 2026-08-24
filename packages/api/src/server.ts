@@ -21,6 +21,8 @@ export interface ServerOptions {
   corsOrigin?: string | string[];
   /** Browser engine backing the server. Production must inject a real one. */
   engine?: BrowserEngine;
+  /** Download payload fetcher; injectable so tests never touch the network. */
+  downloader?(url: string): Promise<{ bytes: Uint8Array; contentType: string }>;
 }
 
 /** Map protocol error codes onto HTTP statuses. */
@@ -33,6 +35,7 @@ function statusFor(code: string): number {
     case 'POLICY_DENIED':
     case 'APPROVAL_REQUIRED':
     case 'FORBIDDEN':
+    case 'DOWNLOAD_BLOCKED':
       return 403;
     case 'QUOTA_EXCEEDED':
       return 429;
@@ -77,7 +80,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     );
     engine = new FakeEngine();
   }
-  const service = new AgentBrowserService({ engine });
+  const service = new AgentBrowserService({
+    engine,
+    ...(options.downloader ? { downloader: options.downloader } : {}),
+  });
 
   fastify.addHook('onClose', async () => {
     await service.shutdown();
@@ -329,6 +335,63 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         ...(approvalToken !== undefined ? { approvalToken: approvalToken as string } : {}),
       });
       return reply.send(result);
+    } catch (error) {
+      return fail(reply, error);
+    }
+  });
+
+  // Download endpoint: policy-gated artifact capture
+  fastify.post('/sessions/:sessionId/pages/:pageId/download', async (request, reply) => {
+    try {
+      const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
+      const body = request.body;
+      if (!requireBody(reply, body)) {
+        return reply;
+      }
+
+      const { url, filename } = body as { url?: string; filename?: string };
+      if (typeof url !== 'string' || url.length === 0) {
+        return reply.status(400).send({
+          error: {
+            code: 'INVALID_REQUEST',
+            message: 'url is required and must be a string',
+            retryable: false,
+          },
+        });
+      }
+
+      const artifact = await service.download(sessionId, pageId, {
+        url,
+        ...(filename !== undefined ? { filename } : {}),
+      });
+      return reply.send(artifact);
+    } catch (error) {
+      return fail(reply, error);
+    }
+  });
+
+  // Artifact retrieval, scoped to the owning session
+  fastify.get('/sessions/:sessionId/artifacts/:artifactId', async (request, reply) => {
+    try {
+      const { sessionId, artifactId } = request.params as {
+        sessionId: string;
+        artifactId: string;
+      };
+      const stored = service.getArtifact(sessionId, artifactId);
+      if (!stored) {
+        return reply.status(404).send({
+          error: {
+            code: 'NOT_FOUND',
+            message: `Artifact ${artifactId} not found`,
+            retryable: false,
+          },
+        });
+      }
+
+      return reply.send({
+        metadata: stored.metadata,
+        contentBase64: Buffer.from(stored.bytes).toString('base64'),
+      });
     } catch (error) {
       return fail(reply, error);
     }
