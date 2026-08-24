@@ -455,6 +455,16 @@ class FakePage implements EnginePage {
       ...(el.risk !== undefined ? { risk: el.risk } : {}),
       attributes: el.attributes ?? {},
     }));
+    // Keep the ref index in sync: resolve() and act() read the Map.
+    this.syncElementIndex();
+  }
+
+  /** Rebuild the ref->element index after this.elements is replaced. */
+  private syncElementIndex(): void {
+    this.elementByRef.clear();
+    for (const element of this.elements) {
+      this.elementByRef.set(element.ref, element);
+    }
   }
 }
 
