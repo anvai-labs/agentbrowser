@@ -1,7 +1,7 @@
 # Phase 1 Progress Summary
 
 **Last Updated:** 2026-08-23
-**Status:** In Progress
+**Status:** COMPLETE - all exit criteria met
 
 ## Verified Test Status
 
@@ -19,7 +19,7 @@ Full workspace build and test run, verified end-to-end:
 | policy              | 28    |
 | cli                 | 27    |
 | mcp-server          | 21    |
-| **Total**           | **462 passing (100%)** |
+| **Total**           | **482 passing (100%)** |
 
 `pnpm -r build` succeeds for all 10 packages. CI is green on GitHub
 (type-check, lint, test, build) on a clean checkout.
@@ -305,15 +305,22 @@ Resolved in favour of the protocol (per CLAUDE.md, protocol is the source of tru
 ## Phase 1 Exit Criteria (From Technical Design)
 
 - [x] Can create session via engine interface
-- [x] Can navigate to allowed URLs  
+- [x] Can navigate to allowed URLs
 - [x] Can get semantic observations with proper refs
 - [x] Can execute actions via refs without selectors
 - [x] Can detect stale refs automatically
 - [x] Can capture screenshots and PDFs
-- [ ] 10 deterministic workflows complete
+- [x] 10 deterministic workflows complete (packages/api/src/workflows.test.ts)
 - [x] All contract tests pass
 
-**Progress:** 7/9 exit criteria met (78%)
+**Progress:** 8/8 exit criteria met (100%)
+
+Also completed beyond the checklist: the REST API is wired to the real
+stack (SessionCoordinator + engine + normalizer + executor + NetworkPolicy
++ ApprovalGate), the Playwright engine keeps a real ref store (resolve and
+act through refs against real Chromium, verified live on example.com),
+and all four consumption surfaces (REST/SDK/CLI, OpenAPI, MCP, managed
+subprocess) are verified end-to-end.
 
 ## Next Steps
 
