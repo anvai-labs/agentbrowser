@@ -9,6 +9,7 @@
  * contract implementation.
  */
 
+import { SecretManager } from '@agentbrowser/core';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AgentBrowserService } from './service';
@@ -423,6 +424,101 @@ describe('AgentBrowserService', () => {
       });
 
       expect(result.status).toBe('success');
+    });
+  });
+
+  describe('secret-safe credential handling', () => {
+    const SECRET_VALUE = 'correct-horse-battery-staple';
+    let secretService: AgentBrowserService;
+    let secretSessionId: string;
+    let secretPageId: string;
+
+    beforeEach(async () => {
+      secretService = new AgentBrowserService({
+        engine: new FakeEngine(),
+        secretManager: new SecretManager({ 'vault://tenant/login/password': SECRET_VALUE }),
+      });
+      secretSessionId = (await secretService.createSession({ tenantId: 'sec' })).sessionId;
+      secretPageId = (await secretService.createPage(secretSessionId)).pageId;
+      await secretService.navigate(secretSessionId, secretPageId, {
+        url: 'https://login.example.com',
+      });
+    });
+
+    it('should fill via a vault reference without exposing the value', async () => {
+      const observation = await secretService.observe(secretSessionId, secretPageId, {});
+      const textbox = observation.elements.find((el) => el.role === 'textbox');
+
+      const result = await secretService.act(secretSessionId, secretPageId, {
+        action: 'fill',
+        target: { ref: textbox!.ref },
+        value: 'vault://tenant/login/password',
+      });
+
+      expect(result.status).toBe('success');
+    });
+
+    it('should never return a secret in observations after a sensitive fill', async () => {
+      const observation = await secretService.observe(secretSessionId, secretPageId, {});
+      const textbox = observation.elements.find((el) => el.role === 'textbox');
+
+      await secretService.act(secretSessionId, secretPageId, {
+        action: 'fill',
+        target: { ref: textbox!.ref },
+        value: 'vault://tenant/login/password',
+      });
+
+      const after = await secretService.observe(secretSessionId, secretPageId, {});
+      const serialized = JSON.stringify(after);
+
+      expect(serialized).not.toContain(SECRET_VALUE);
+      const filled = after.elements.find((el) => el.role === 'textbox');
+      expect(filled?.value).toBe('***');
+    });
+
+    it('should reject an unknown vault reference', async () => {
+      const observation = await secretService.observe(secretSessionId, secretPageId, {});
+      const textbox = observation.elements.find((el) => el.role === 'textbox');
+
+      const error = await capture(() =>
+        secretService.act(secretSessionId, secretPageId, {
+          action: 'fill',
+          target: { ref: textbox!.ref },
+          value: 'vault://tenant/login/missing',
+        })
+      );
+
+      expect(error?.code).toBe('SECRET_NOT_FOUND');
+    });
+
+    it('should redact secrets from error payloads', async () => {
+      // A URL carrying the secret would otherwise echo it back in the error.
+      const error = await capture(() =>
+        secretService.navigate(secretSessionId, secretPageId, {
+          url: `https://login.example.com/callback?token=${SECRET_VALUE}`,
+        })
+      );
+
+      // The secret is rejected here only if the policy denies it; on success
+      // the assertion target is the next observation. Either way, no output
+      // may contain the secret.
+      const serialized = error
+        ? JSON.stringify({ message: error.message, details: error.details })
+        : JSON.stringify(await secretService.observe(secretSessionId, secretPageId, {}));
+
+      expect(serialized).not.toContain(SECRET_VALUE);
+    });
+
+    it('should redact secrets from navigation denial details', async () => {
+      const error = await capture(() =>
+        secretService.navigate(secretSessionId, secretPageId, {
+          url: `http://169.254.169.254/latest?token=${SECRET_VALUE}`,
+        })
+      );
+
+      expect(error?.code).toBe('POLICY_DENIED');
+      expect(JSON.stringify(error?.details)).not.toContain(SECRET_VALUE);
+      expect(error?.message).not.toContain(SECRET_VALUE);
     });
   });
 

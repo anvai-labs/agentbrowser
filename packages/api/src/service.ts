@@ -16,6 +16,7 @@ import {
   ActionExecutor,
   ApprovalGate,
   ObservationNormalizer,
+  SecretManager,
   SessionCoordinator,
 } from '@agentbrowser/core';
 import type { BrowserEngine, EnginePage } from '@agentbrowser/engine';
@@ -96,6 +97,8 @@ export interface ServiceDependencies {
   executor?: ActionExecutor;
   networkPolicy?: NetworkPolicy;
   approvalGate?: ApprovalGate;
+  /** Secret registry; values are redacted from every service output. */
+  secretManager?: SecretManager;
 }
 
 /** Risk classes that require an approval token before the action runs. */
@@ -137,6 +140,7 @@ export class AgentBrowserService {
   private readonly executor: ActionExecutor;
   private readonly networkPolicy: NetworkPolicy;
   private readonly approvalGate: ApprovalGate;
+  private readonly secretManager: SecretManager;
   private readonly pages = new Map<string, PageContext>();
   private pageCounter = 0;
 
@@ -152,6 +156,9 @@ export class AgentBrowserService {
       deps.networkPolicy ??
       new NetworkPolicy({ blockLoopback: true, blockPrivateIPs: true, blockMetadata: true });
     this.approvalGate = deps.approvalGate ?? new ApprovalGate({ cleanupIntervalMs: 3_600_000 });
+    // An empty registry redacts nothing; a populated one is enforced at every
+    // output boundary (observations, error messages, error details).
+    this.secretManager = deps.secretManager ?? new SecretManager();
   }
 
   // ---- sessions -----------------------------------------------------------
@@ -334,7 +341,9 @@ export class AgentBrowserService {
     });
     page.lastObservation = { revision: page.revision, refMap, byRef };
 
-    return observation;
+    // A secret value that reached the page (a sensitive fill) must never be
+    // echoed back to a client.
+    return this.secretManager.redact(observation);
   }
 
   // ---- actions ------------------------------------------------------------
@@ -371,12 +380,32 @@ export class AgentBrowserService {
     // The adapter projects the engine into service revision space: refs are
     // translated before they reach the engine, and action effects come back
     // stamped with the service's revision rather than the engine's counter.
+    // A fill value may be a vault reference: resolve it here, at the last
+    // moment, so only the engine ever sees the raw secret.
+    const actRequest: ServiceActRequest = { ...request };
+    if (
+      actRequest.action === 'fill' &&
+      actRequest.value !== undefined &&
+      this.secretManager.isReference(actRequest.value)
+    ) {
+      try {
+        actRequest.value = await this.secretManager.resolve(actRequest.value);
+      } catch (error) {
+        const secretError = error as { name?: string; code?: string; message?: string };
+        throw this.redactedError(
+          secretError?.name === 'SecretError' && secretError.code
+            ? new ServiceError(secretError.code, secretError.message ?? 'secret error', false)
+            : new ServiceError('INTERNAL', String(error))
+        );
+      }
+    }
+
     const adapter = new RefTranslatingPage(page.enginePage, page);
     const result = await this.executor.execute(
       {
         pageId,
-        expectedRevision: request.expectedRevision ?? page.revision,
-        action: this.toProtocolAction(request),
+        expectedRevision: actRequest.expectedRevision ?? page.revision,
+        action: this.toProtocolAction(actRequest),
       },
       {
         enginePage: adapter,
@@ -386,11 +415,13 @@ export class AgentBrowserService {
     );
 
     if (result.error) {
-      throw new ServiceError(
-        result.error.code,
-        result.error.message,
-        result.error.retryable,
-        result.error.details
+      throw this.redactedError(
+        new ServiceError(
+          result.error.code,
+          result.error.message,
+          result.error.retryable,
+          result.error.details
+        )
       );
     }
 
@@ -554,9 +585,19 @@ export class AgentBrowserService {
     }
   }
 
+  /** Strip registered secret values from an error before it leaves the service. */
+  private redactedError(error: ServiceError): ServiceError {
+    return new ServiceError(
+      error.code,
+      this.secretManager.redact(error.message),
+      error.retryable,
+      error.details !== undefined ? this.secretManager.redact(error.details) : undefined
+    );
+  }
+
   private mapError(error: unknown): ServiceError {
     if (error instanceof ServiceError) {
-      return error;
+      return this.redactedError(error);
     }
     const message = error instanceof Error ? error.message : String(error);
     const code =
