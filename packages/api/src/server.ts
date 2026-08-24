@@ -7,6 +7,7 @@
  * against FakeEngine and production runs PlaywrightChromiumEngine.
  */
 
+import { MetricsRegistry } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
 import { FakeEngine } from '@agentbrowser/testkit';
 import cors from '@fastify/cors';
@@ -23,6 +24,8 @@ export interface ServerOptions {
   engine?: BrowserEngine;
   /** Download payload fetcher; injectable so tests never touch the network. */
   downloader?(url: string): Promise<{ bytes: Uint8Array; contentType: string }>;
+  /** Metrics registry exposed at /metrics; defaults to a fresh registry. */
+  metrics?: MetricsRegistry;
 }
 
 /** Map protocol error codes onto HTTP statuses. */
@@ -80,8 +83,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     );
     engine = new FakeEngine();
   }
+  const metrics = options.metrics ?? new MetricsRegistry();
   const service = new AgentBrowserService({
     engine,
+    metrics,
     ...(options.downloader ? { downloader: options.downloader } : {}),
   });
 
@@ -148,7 +153,33 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     }
   });
 
-  // Health check endpoint
+  // Liveness: is the process serving at all.
+  fastify.get('/health/live', async (request, reply) => {
+    return { status: 'live', timestamp: new Date().toISOString() };
+  });
+
+  // Readiness: can the service actually serve (engine responsive).
+  fastify.get('/health/ready', async (request, reply) => {
+    try {
+      const capabilities = await engine.capabilities();
+      return { status: 'ready', engine: engine.name, version: engine.version, capabilities };
+    } catch (error) {
+      return reply.status(503).send({
+        error: {
+          code: 'ENGINE_CRASHED',
+          message: `Engine is not responding: ${error instanceof Error ? error.message : String(error)}`,
+          retryable: true,
+        },
+      });
+    }
+  });
+
+  // Prometheus exposition.
+  fastify.get('/metrics', async (request, reply) => {
+    return reply.type('text/plain; version=0.0.4; charset=utf-8').send(metrics.render());
+  });
+
+  // Health check endpoint (compat).
   fastify.get('/health', async (request, reply) => {
     return {
       status: 'healthy',

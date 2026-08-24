@@ -25,6 +25,40 @@ describe('AgentBrowser REST API', () => {
   });
 
   describe('health check', () => {
+    it('should expose liveness at /health/live', async () => {
+      const response = await fetch(`${baseUrl}/health/live`);
+      expect(response.status).toBe(200);
+      expect((await response.json()).status).toBe('live');
+    });
+
+    it('should expose readiness at /health/ready', async () => {
+      const response = await fetch(`${baseUrl}/health/ready`);
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.status).toBe('ready');
+      expect(body.engine).toEqual(expect.any(String));
+    });
+
+    it('should expose Prometheus metrics at /metrics', async () => {
+      // Generate some traffic first.
+      const sessionResponse = await fetch(`${baseUrl}/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId: 'metrics' }),
+      });
+      const { sessionId } = await sessionResponse.json();
+      await fetch(`${baseUrl}/sessions/${sessionId}/pages`, { method: 'POST' });
+
+      const response = await fetch(`${baseUrl}/metrics`);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain('text/plain');
+      const body = await response.text();
+      expect(body).toContain('# TYPE operations_total counter');
+      expect(body).toContain('operation="session.create"');
+      expect(body).toContain('sessions_active');
+    });
+
     it('should return health status', async () => {
       const response = await fetch(`${baseUrl}/health`);
 

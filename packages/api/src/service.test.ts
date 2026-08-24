@@ -9,7 +9,13 @@
  * contract implementation.
  */
 
-import { ArtifactStore, InMemoryTracer, SecretManager } from '@agentbrowser/core';
+import {
+  ArtifactStore,
+  InMemoryTracer,
+  MetricsRegistry,
+  SecretManager,
+  StructuredLogger,
+} from '@agentbrowser/core';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AgentBrowserService } from './service';
@@ -745,6 +751,75 @@ describe('AgentBrowserService', () => {
       );
 
       expect(JSON.stringify(tracer.completedSpans())).not.toContain('classified-value');
+    });
+  });
+
+  describe('metrics and logging (TD-021)', () => {
+    it('should record operation counters and latency percentiles', async () => {
+      const metrics = new MetricsRegistry();
+      const measured = new AgentBrowserService({ engine: new FakeEngine(), metrics });
+      const sessionId = (await measured.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await measured.createPage(sessionId)).pageId;
+
+      await measured.navigate(sessionId, pageId, { url: 'https://example.com' });
+      await measured.navigate(sessionId, pageId, { url: 'https://other.example.com' });
+
+      const rendered = metrics.render();
+      expect(rendered).toContain('operations_total{operation="navigate",outcome="ok"} 2');
+      expect(rendered).toContain('# TYPE operation_duration_ms summary');
+      expect(rendered).toContain('operation_duration_ms_count{operation="navigate"} 2');
+    });
+
+    it('should record failures with their error code', async () => {
+      const metrics = new MetricsRegistry();
+      const measured = new AgentBrowserService({ engine: new FakeEngine(), metrics });
+      const sessionId = (await measured.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await measured.createPage(sessionId)).pageId;
+
+      await capture(() => measured.navigate(sessionId, pageId, { url: 'http://localhost/admin' }));
+
+      const rendered = metrics.render();
+      expect(rendered).toContain('operations_total{operation="navigate",outcome="error"} 1');
+      expect(rendered).toContain('errors_total{code="POLICY_DENIED"} 1');
+    });
+
+    it('should track the active-session gauge', async () => {
+      const metrics = new MetricsRegistry();
+      const measured = new AgentBrowserService({ engine: new FakeEngine(), metrics });
+
+      const sessionId = (await measured.createSession({ tenantId: 't1' })).sessionId;
+      expect(metrics.render()).toContain('sessions_active 1');
+
+      await measured.closeSession(sessionId);
+      const rendered = metrics.render();
+      expect(rendered).toContain('sessions_active 0');
+      expect(rendered).toContain('sessions_created_total 1');
+      expect(rendered).toContain('sessions_closed_total 1');
+    });
+
+    it('should log operations as structured entries, redacting secrets', async () => {
+      const lines: string[] = [];
+      const secret = 'classified-value';
+      const logger = new StructuredLogger({
+        sink: (line: string) => lines.push(line),
+        secretManager: new SecretManager({ 'vault://p': secret }),
+      });
+      const logged = new AgentBrowserService({
+        engine: new FakeEngine(),
+        logger,
+        secretManager: new SecretManager({ 'vault://p': secret }),
+      });
+      const sessionId = (await logged.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await logged.createPage(sessionId)).pageId;
+
+      await capture(() =>
+        logged.navigate(sessionId, pageId, { url: `http://169.254.169.254/x?token=${secret}` })
+      );
+
+      const serialized = lines.join('\n');
+      expect(serialized).toContain('"message":"navigate"');
+      expect(serialized).toContain('"code":"POLICY_DENIED"');
+      expect(serialized).not.toContain(secret);
     });
   });
 

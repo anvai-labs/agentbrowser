@@ -22,6 +22,8 @@ import {
 } from '@agentbrowser/core';
 import type { ArtifactMetadata } from '@agentbrowser/core';
 import type { InMemoryTracer, Span } from '@agentbrowser/core';
+import type { MetricsRegistry } from '@agentbrowser/core';
+import type { StructuredLogger } from '@agentbrowser/core';
 import type { BrowserEngine, EnginePage } from '@agentbrowser/engine';
 import type { EngineSession, EngineSessionOptions } from '@agentbrowser/engine';
 import { NetworkPolicy } from '@agentbrowser/policy';
@@ -111,6 +113,10 @@ export interface ServiceDependencies {
   downloader?(url: string): Promise<{ bytes: Uint8Array; contentType: string }>;
   /** Operation tracer; absent means tracing is disabled. */
   tracer?: InMemoryTracer;
+  /** Operation metrics; absent means metrics are disabled. */
+  metrics?: MetricsRegistry;
+  /** Structured operation log; absent means no operation logging. */
+  logger?: StructuredLogger;
 }
 
 /** Risk classes that require an approval token before the action runs. */
@@ -169,6 +175,8 @@ export class AgentBrowserService {
   private readonly artifacts: ArtifactStore;
   private readonly downloader: NonNullable<ServiceDependencies['downloader']>;
   private readonly tracer?: InMemoryTracer;
+  private readonly metrics?: MetricsRegistry;
+  private readonly logger?: StructuredLogger;
   /** Per-session download policy, captured at creation (denying by default). */
   private readonly sessionDownloadPolicy = new Map<
     string,
@@ -194,9 +202,15 @@ export class AgentBrowserService {
     this.secretManager = deps.secretManager ?? new SecretManager();
     this.artifacts = deps.artifactStore ?? new ArtifactStore();
     this.downloader = deps.downloader ?? defaultDownloader;
-    // Tracer is optional - if provided, use it; otherwise leave undefined
+    // Telemetry is opt-in per concern: each is wired only when provided.
     if (deps.tracer !== undefined) {
       this.tracer = deps.tracer;
+    }
+    if (deps.metrics !== undefined) {
+      this.metrics = deps.metrics;
+    }
+    if (deps.logger !== undefined) {
+      this.logger = deps.logger;
     }
   }
 
@@ -210,25 +224,53 @@ export class AgentBrowserService {
     operation: (span: Span | undefined) => Promise<T>
   ): Promise<T> {
     const span = this.tracer?.startSpan(name, attributes);
+    const startedAt = Date.now();
     return operation(span).then(
       (value) => {
+        this.telemetry(name, 'ok', attributes, startedAt, undefined);
         if (span) {
           this.tracer?.endSpan(span, { outcome: 'ok' });
         }
         return value;
       },
       (error) => {
+        const code = error instanceof ServiceError ? error.code : 'INTERNAL';
+        this.telemetry(name, 'error', attributes, startedAt, code);
         if (span) {
-          this.tracer?.failSpan(
-            span,
-            error instanceof ServiceError ? error.code : 'INTERNAL',
-            error instanceof Error ? error.message : String(error)
-          );
+          this.tracer?.failSpan(span, code, error instanceof Error ? error.message : String(error));
           this.tracer?.endSpan(span);
         }
         throw error;
       }
     );
+  }
+
+  /** Record metrics and a structured log line for one completed operation. */
+  private telemetry(
+    operation: string,
+    outcome: 'ok' | 'error',
+    attributes: Record<string, unknown>,
+    startedAt: number,
+    code: string | undefined
+  ): void {
+    if (this.metrics) {
+      this.metrics.incrementCounter('operations_total', { operation, outcome });
+      this.metrics.observe('operation_duration_ms', Date.now() - startedAt, { operation });
+      if (code !== undefined) {
+        this.metrics.incrementCounter('errors_total', { code });
+      }
+    }
+    if (this.logger) {
+      const fields: Record<string, unknown> = { ...attributes, outcome };
+      if (code !== undefined) {
+        fields.code = code;
+      }
+      if (outcome === 'error') {
+        this.logger.warn(operation, fields);
+      } else {
+        this.logger.info(operation, fields);
+      }
+    }
   }
 
   // ---- sessions -----------------------------------------------------------
@@ -256,6 +298,9 @@ export class AgentBrowserService {
       } catch (error) {
         throw this.mapError(error);
       }
+
+      this.metrics?.incrementCounter('sessions_created_total');
+      this.metrics?.setGauge('sessions_active', this.coordinator.getSessionCount());
 
       this.sessionDownloadPolicy.set(session.sessionId, {
         allowDownloads: request.allowDownloads === true,
@@ -311,6 +356,8 @@ export class AgentBrowserService {
       }
     }
     this.sessionDownloadPolicy.delete(sessionId);
+    this.metrics?.incrementCounter('sessions_closed_total');
+    this.metrics?.setGauge('sessions_active', this.coordinator.getSessionCount());
   }
 
   // ---- pages --------------------------------------------------------------
