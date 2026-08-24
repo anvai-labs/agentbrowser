@@ -411,6 +411,53 @@ describe('Schema Validation - Action Request', () => {
   });
 });
 
+describe('Schema Validation - Observation Continuation (TD-019)', () => {
+  it('should allow a continuation cursor on PageState', () => {
+    const state = {
+      sessionId: 'ses_1',
+      pageId: 'pg_1',
+      revision: 1,
+      url: 'https://example.com',
+      title: 'Example',
+      status: 'interactive',
+      elements: [{ ref: 'e1_0', role: 'button', visible: true, enabled: true }],
+      truncated: true,
+      untrustedContent: true,
+      continuation: { nextOrdinal: 1, remaining: 4 },
+    };
+
+    const result = validate(PageStateSchema, state);
+    expect(result.success).toBe(true);
+  });
+
+  it('should reject a malformed continuation', () => {
+    const state = {
+      sessionId: 'ses_1',
+      pageId: 'pg_1',
+      revision: 1,
+      url: 'https://example.com',
+      title: 'Example',
+      status: 'interactive',
+      elements: [],
+      truncated: true,
+      untrustedContent: true,
+      continuation: { nextOrdinal: 'one' },
+    };
+
+    const result = validate(PageStateSchema, state);
+    expect(result.success).toBe(false);
+  });
+
+  it('should accept continueFrom on an observation request', () => {
+    const result = validate(ObservationRequestSchema, {
+      mode: 'interactive',
+      maxElements: 2,
+      continueFrom: 2,
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
 describe('Schema Validation - Observation Request', () => {
   it('should validate basic observation request', () => {
     const validObservation = {

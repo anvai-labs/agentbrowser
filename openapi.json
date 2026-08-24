@@ -2041,6 +2041,23 @@
           },
           "untrustedContent": {
             "type": "boolean"
+          },
+          "continuation": {
+            "type": "object",
+            "required": [
+              "nextOrdinal",
+              "remaining"
+            ],
+            "properties": {
+              "nextOrdinal": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "remaining": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            }
           }
         }
       },
@@ -2157,6 +2174,10 @@
           },
           "sinceRevision": {
             "minimum": 1,
+            "type": "integer"
+          },
+          "continueFrom": {
+            "minimum": 0,
             "type": "integer"
           },
           "scope": {
@@ -2605,6 +2626,10 @@
                 "minimum": 1,
                 "type": "integer"
               },
+              "continueFrom": {
+                "minimum": 0,
+                "type": "integer"
+              },
               "scope": {
                 "anyOf": [
                   {
@@ -2920,6 +2945,23 @@
               },
               "untrustedContent": {
                 "type": "boolean"
+              },
+              "continuation": {
+                "type": "object",
+                "required": [
+                  "nextOrdinal",
+                  "remaining"
+                ],
+                "properties": {
+                  "nextOrdinal": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "remaining": {
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                }
               }
             }
           },

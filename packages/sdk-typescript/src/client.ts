@@ -58,6 +58,10 @@ export interface ObservationRequest {
   mode?: 'interactive' | 'content' | 'accessibility';
   maxElements?: number;
   maxBytes?: number;
+  /** Return only what changed since this revision. */
+  sinceRevision?: number;
+  /** Resume a truncated observation from the cursor's nextOrdinal. */
+  continueFrom?: number;
 }
 
 export interface ObservationResponse {
@@ -78,6 +82,8 @@ export interface ObservationResponse {
   }>;
   truncated: boolean;
   untrustedContent: boolean;
+  /** Present only when the observation is truncated. */
+  continuation?: { nextOrdinal: number; remaining: number };
 }
 
 export interface ActionRequest {

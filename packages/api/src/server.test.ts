@@ -801,6 +801,89 @@ describe('AgentBrowser REST API safety integration', () => {
     });
   });
 
+  describe('diffs and continuation over HTTP', () => {
+    it('should return element changes for sinceRevision', async () => {
+      const { sessionId, pageId } = await setupPage();
+
+      await fetch(`${baseUrl}/sessions/${sessionId}/pages/${pageId}/navigate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: 'https://example.com' }),
+      });
+
+      const before = await (
+        await fetch(`${baseUrl}/sessions/${sessionId}/pages/${pageId}/observe`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        })
+      ).json();
+
+      // Move the page on with a fill so there is something to diff.
+      const textbox = before.elements.find((e: any) => e.role === 'textbox');
+      await fetch(`${baseUrl}/sessions/${sessionId}/pages/${pageId}/act`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'fill',
+          target: { ref: textbox.ref },
+          value: 'diffed@example.com',
+        }),
+      });
+
+      const diffResponse = await fetch(`${baseUrl}/sessions/${sessionId}/pages/${pageId}/observe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sinceRevision: before.revision }),
+      });
+
+      expect(diffResponse.status).toBe(200);
+      const diff = await diffResponse.json();
+      expect(diff.changes.some((c: any) => c.change === 'modified')).toBe(true);
+      expect(diff.revision).toBeGreaterThan(before.revision);
+    });
+
+    it('should paginate observations with a continuation cursor', async () => {
+      const { sessionId, pageId } = await setupPage();
+
+      await fetch(`${baseUrl}/sessions/${sessionId}/pages/${pageId}/navigate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: 'https://example.com' }),
+      });
+
+      const firstResponse = await fetch(
+        `${baseUrl}/sessions/${sessionId}/pages/${pageId}/observe`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ maxElements: 2 }),
+        }
+      );
+      const first = await firstResponse.json();
+
+      expect(first.elements).toHaveLength(2);
+      expect(first.truncated).toBe(true);
+      expect(first.continuation).toEqual({ nextOrdinal: 2, remaining: 3 });
+
+      const secondResponse = await fetch(
+        `${baseUrl}/sessions/${sessionId}/pages/${pageId}/observe`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ maxElements: 2, continueFrom: first.continuation.nextOrdinal }),
+        }
+      );
+      const second = await secondResponse.json();
+
+      expect(second.elements).toHaveLength(2);
+      const firstRefs = first.elements.map((e: any) => e.ref);
+      for (const element of second.elements) {
+        expect(firstRefs).not.toContain(element.ref);
+      }
+    });
+  });
+
   describe('real observations over FakeEngine', () => {
     it('should return engine-derived elements with normalized refs', async () => {
       const { sessionId, pageId } = await setupPage();

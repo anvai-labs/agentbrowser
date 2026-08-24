@@ -124,13 +124,26 @@ interface PageContext {
         byRef: Map<string, PageElement>;
       }
     | undefined;
+  /** Recent observations by revision, for sinceRevision diffs. */
+  history: Map<number, ObservationSnapshot>;
 }
+
+/** A snapshot of one observation, keyed both ways for diffing. */
+interface ObservationSnapshot {
+  byRef: Map<string, PageElement>;
+  byEngineRef: Map<string, PageElement>;
+}
+
+/** How many recent revisions per page are diffable. */
+const HISTORY_LIMIT = 8;
 
 /** Observation options as they arrive from a route body (possibly undefined). */
 export type PartialObservation = {
   mode?: ObservationRequest['mode'] | undefined;
   maxElements?: number | undefined;
   maxBytes?: number | undefined;
+  sinceRevision?: number | undefined;
+  continueFrom?: number | undefined;
 };
 
 export class AgentBrowserService {
@@ -241,7 +254,7 @@ export class AgentBrowserService {
 
     const enginePage = await session.engineSession.newPage();
     const pageId = `pg_${++this.pageCounter}_${enginePage.id}`;
-    this.pages.set(pageId, { sessionId, enginePage, revision: 1 });
+    this.pages.set(pageId, { sessionId, enginePage, revision: 1, history: new Map() });
 
     return { pageId, sessionId, status: 'ready' };
   }
@@ -315,15 +328,15 @@ export class AgentBrowserService {
     const page = this.requirePage(sessionId, pageId);
     this.coordinator.updateActivity(sessionId);
 
+    // Normalize the FULL element list; pagination and diffing are service
+    // concerns so the cursor and changes stay coherent with each other.
     const observationRequest: ObservationRequest = {
       ...(request.mode !== undefined ? { mode: request.mode } : {}),
-      ...(request.maxElements !== undefined ? { maxElements: request.maxElements } : {}),
     };
     const raw = await page.enginePage.observe(observationRequest);
 
     const observation = this.normalizer.normalize(raw, {
       ...(request.mode !== undefined ? { mode: request.mode } : {}),
-      ...(request.maxElements !== undefined ? { maxElements: request.maxElements } : {}),
       revision: page.revision,
       sessionId,
       pageId,
@@ -332,18 +345,139 @@ export class AgentBrowserService {
     // Bridge normalized refs back to engine refs so actions can resolve them.
     const refMap = new Map<string, string>();
     const byRef = new Map<string, PageElement>();
+    const byEngineRef = new Map<string, PageElement>();
     observation.elements.forEach((element, index) => {
       byRef.set(element.ref, element);
       const engineRef = raw.elements[index]?.ref;
       if (engineRef !== undefined) {
         refMap.set(element.ref, engineRef);
+        byEngineRef.set(engineRef, element);
       }
     });
     page.lastObservation = { revision: page.revision, refMap, byRef };
 
-    // A secret value that reached the page (a sensitive fill) must never be
-    // echoed back to a client.
-    return this.secretManager.redact(observation);
+    // Retain the snapshot for sinceRevision diffs (bounded history).
+    page.history.set(page.revision, { byRef, byEngineRef });
+    while (page.history.size > HISTORY_LIMIT) {
+      const oldest = Math.min(...page.history.keys());
+      page.history.delete(oldest);
+    }
+
+    if (request.sinceRevision !== undefined) {
+      return this.secretManager.redact(
+        this.diffObservation(page, observation, request.sinceRevision)
+      );
+    }
+
+    return this.secretManager.redact(this.paginateObservation(observation, request));
+  }
+
+  /**
+   * Diff the current observation against a retained revision. Elements are
+   * matched by engine ref, which is stable across non-navigating mutations;
+   * navigation therefore surfaces as wholesale remove+add.
+   */
+  private diffObservation(page: PageContext, current: PageState, sinceRevision: number): PageState {
+    if (!Number.isInteger(sinceRevision) || sinceRevision < 1) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `Invalid sinceRevision ${sinceRevision}: expected a positive integer.`
+      );
+    }
+
+    const previous = page.history.get(sinceRevision);
+    if (!previous) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `Unknown sinceRevision ${sinceRevision}: no retained observation at that revision. Observe without sinceRevision to get the full page.`
+      );
+    }
+
+    const snapshot = page.history.get(current.revision)!;
+    const changes: import('@agentbrowser/protocol').ElementChange[] = [];
+
+    // Removed: in previous, not in current.
+    for (const [engineRef, element] of previous.byEngineRef) {
+      if (!snapshot.byEngineRef.has(engineRef)) {
+        changes.push({
+          ref: element.ref,
+          change: 'removed',
+          properties: { element: { old: element, new: null } },
+        });
+      }
+    }
+
+    // Added or modified: in current, keyed against previous.
+    for (const [engineRef, element] of snapshot.byEngineRef) {
+      const before = previous.byEngineRef.get(engineRef);
+      if (before === undefined) {
+        changes.push({
+          ref: element.ref,
+          change: 'added',
+          properties: { element: { old: null, new: element } },
+        });
+        continue;
+      }
+
+      const properties: Record<string, { old: unknown; new: unknown }> = {};
+      for (const field of ['role', 'name', 'value', 'visible', 'enabled'] as const) {
+        const old = before[field];
+        const now = element[field];
+        if (JSON.stringify(old) !== JSON.stringify(now)) {
+          properties[field] = { old: old ?? null, new: now ?? null };
+        }
+      }
+      if (Object.keys(properties).length > 0) {
+        changes.push({ ref: element.ref, change: 'modified', properties });
+      }
+    }
+
+    // Token-efficient: the diff carries only what changed.
+    const changedRefs = new Set(changes.map((c) => c.ref));
+    return {
+      ...current,
+      elements: current.elements.filter((el) => changedRefs.has(el.ref)),
+      changes,
+      truncated: false,
+    };
+  }
+
+  /**
+   * Apply element pagination in stable document order, with a continuation
+   * cursor when elements remain.
+   */
+  private paginateObservation(observation: PageState, request: PartialObservation): PageState {
+    const { continueFrom, maxElements } = request;
+    if (continueFrom !== undefined && (!Number.isInteger(continueFrom) || continueFrom < 0)) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `Invalid continueFrom ${continueFrom}: expected a non-negative integer.`
+      );
+    }
+    if (maxElements !== undefined && (!Number.isInteger(maxElements) || maxElements < 1)) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `Invalid maxElements ${maxElements}: expected a positive integer.`
+      );
+    }
+
+    const start = continueFrom ?? 0;
+    if (maxElements === undefined) {
+      return observation;
+    }
+
+    const slice = observation.elements.slice(start, start + maxElements);
+    const remaining = observation.elements.length - (start + slice.length);
+
+    if (remaining <= 0) {
+      return { ...observation, elements: slice, truncated: false };
+    }
+    return {
+      ...observation,
+      elements: slice,
+      truncated: true,
+      continuation: { nextOrdinal: start + slice.length, remaining },
+    };
   }
 
   // ---- actions ------------------------------------------------------------

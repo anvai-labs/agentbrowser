@@ -488,6 +488,64 @@ describe('AgentBrowser SDK', () => {
     });
   });
 
+  describe('observation diffs and continuation', () => {
+    it('should pass sinceRevision and continueFrom through', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          revision: 4,
+          url: 'https://example.com',
+          title: 'Example',
+          status: 'interactive',
+          summary: 's',
+          elements: [{ ref: 'e4_1', role: 'textbox', visible: true, enabled: true }],
+          truncated: false,
+          untrustedContent: true,
+        }),
+      });
+
+      await client.sessions.observe('ses_1', 'pg_1', {
+        sinceRevision: 3,
+        maxElements: 1,
+        continueFrom: 1,
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: JSON.stringify({ sinceRevision: 3, maxElements: 1, continueFrom: 1 }),
+        })
+      );
+    });
+
+    it('should surface a continuation cursor on truncated observations', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          revision: 2,
+          url: 'https://example.com',
+          title: 'Example',
+          status: 'interactive',
+          summary: 's',
+          elements: [],
+          truncated: true,
+          untrustedContent: true,
+          continuation: { nextOrdinal: 2, remaining: 3 },
+        }),
+      });
+
+      const observation = await client.sessions.observe('ses_1', 'pg_1', { maxElements: 2 });
+
+      expect(observation.continuation).toEqual({ nextOrdinal: 2, remaining: 3 });
+    });
+  });
+
   describe('screenshots', () => {
     it('should capture a screenshot artifact', async () => {
       const mockResponse = {

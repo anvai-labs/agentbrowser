@@ -203,6 +203,11 @@ export const ElementChangeSchema = Type.Object({
   ),
 });
 
+export const ContinuationCursorSchema = Type.Object({
+  nextOrdinal: Type.Integer({ minimum: 0 }),
+  remaining: Type.Integer({ minimum: 0 })
+});
+
 export const PageStateSchema = Type.Object({
   sessionId: Type.String(),
   pageId: Type.String(),
@@ -217,6 +222,7 @@ export const PageStateSchema = Type.Object({
   changes: Type.Optional(Type.Array(ElementChangeSchema)),
   truncated: Type.Boolean(),
   untrustedContent: Type.Boolean(),
+  continuation: Type.Optional(ContinuationCursorSchema),
 });
 
 // ============================================================================
@@ -329,6 +335,7 @@ export const ObservationRequestSchema = Type.Object({
   maxBytes: Type.Optional(Type.Integer({ minimum: 0 })),
   maxElements: Type.Optional(Type.Integer({ minimum: 0 })),
   sinceRevision: Type.Optional(Type.Integer({ minimum: 1 })),
+  continueFrom: Type.Optional(Type.Integer({ minimum: 0 })),
   scope: Type.Optional(
     Type.Union([
       Type.Literal('viewport'),

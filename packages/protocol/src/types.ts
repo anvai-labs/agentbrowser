@@ -156,6 +156,20 @@ export interface PageState {
   changes?: ElementChange[];
   truncated: boolean;
   untrustedContent: boolean;
+  /**
+   * Cursor for fetching the rest of a truncated observation, in stable
+   * document order. Present only when truncated.
+   */
+  continuation?: ContinuationCursor;
+}
+
+/**
+ * Points at the next element ordinal of a truncated observation and reports
+ * how many elements remain.
+ */
+export interface ContinuationCursor {
+  nextOrdinal: number;
+  remaining: number;
 }
 
 /**
@@ -336,6 +350,8 @@ export interface ObservationRequest {
   maxBytes?: number;
   maxElements?: number;
   sinceRevision?: number;
+  /** Resume a truncated observation from the cursor's nextOrdinal. */
+  continueFrom?: number;
   scope?: 'viewport' | 'full' | 'frame' | 'element';
   include?: string[];
 }

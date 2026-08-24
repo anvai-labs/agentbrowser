@@ -427,6 +427,139 @@ describe('AgentBrowserService', () => {
     });
   });
 
+  describe('observation diffs (sinceRevision)', () => {
+    let sessionId: string;
+    let pageId: string;
+
+    beforeEach(async () => {
+      sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+      pageId = (await service.createPage(sessionId)).pageId;
+      await service.navigate(sessionId, pageId, { url: 'https://example.com' });
+    });
+
+    it('should report no changes at the current revision', async () => {
+      const observation = await service.observe(sessionId, pageId, {});
+
+      const diff = await service.observe(sessionId, pageId, {
+        sinceRevision: observation.revision,
+      });
+
+      expect(diff.changes).toEqual([]);
+      expect(diff.revision).toBe(observation.revision);
+    });
+
+    it('should report a modified element after a fill', async () => {
+      const before = await service.observe(sessionId, pageId, {});
+      const textbox = before.elements.find((el) => el.role === 'textbox');
+
+      await service.act(sessionId, pageId, {
+        action: 'fill',
+        target: { ref: textbox?.ref },
+        value: 'typed@example.com',
+      });
+
+      const after = await service.observe(sessionId, pageId, {
+        sinceRevision: before.revision,
+      });
+
+      expect(after.revision).toBeGreaterThan(before.revision);
+      const modified = after.changes?.find((c) => c.change === 'modified');
+      expect(modified).toBeDefined();
+      expect(modified?.properties.value).toEqual({
+        old: '',
+        new: 'typed@example.com',
+      });
+    });
+
+    it('should report wholesale add/remove across a navigation', async () => {
+      const before = await service.observe(sessionId, pageId, {});
+
+      await service.navigate(sessionId, pageId, { url: 'https://other.example.com' });
+
+      const after = await service.observe(sessionId, pageId, {
+        sinceRevision: before.revision,
+      });
+
+      const kinds = after.changes?.map((c) => c.change) ?? [];
+      expect(kinds).toContain('removed');
+      expect(kinds).toContain('added');
+      // Nothing can be 'modified' across a full navigation.
+      expect(kinds).not.toContain('modified');
+    });
+
+    it('should reject an unknown sinceRevision', async () => {
+      await service.observe(sessionId, pageId, {});
+
+      const error = await capture(() => service.observe(sessionId, pageId, { sinceRevision: 999 }));
+
+      expect(error?.code).toBe('INVALID_REQUEST');
+      expect(error?.message).toMatch(/sinceRevision/i);
+    });
+  });
+
+  describe('observation continuation (truncated observations)', () => {
+    let sessionId: string;
+    let pageId: string;
+
+    beforeEach(async () => {
+      sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+      pageId = (await service.createPage(sessionId)).pageId;
+      await service.navigate(sessionId, pageId, { url: 'https://example.com' });
+    });
+
+    it('should truncate with a continuation cursor', async () => {
+      const page = await service.observe(sessionId, pageId, { maxElements: 2 });
+
+      expect(page.elements).toHaveLength(2);
+      expect(page.truncated).toBe(true);
+      expect(page.continuation).toEqual({ nextOrdinal: 2, remaining: 3 });
+    });
+
+    it('should continue from the cursor', async () => {
+      const first = await service.observe(sessionId, pageId, { maxElements: 2 });
+      const cursor = first.continuation!;
+
+      const second = await service.observe(sessionId, pageId, {
+        maxElements: 2,
+        continueFrom: cursor.nextOrdinal,
+      });
+
+      expect(second.elements).toHaveLength(2);
+      expect(second.truncated).toBe(true);
+      expect(second.continuation).toEqual({ nextOrdinal: 4, remaining: 1 });
+
+      // Continuation preserves document order: no overlap with the first page.
+      const firstRefs = first.elements.map((el) => el.ref);
+      for (const element of second.elements) {
+        expect(firstRefs).not.toContain(element.ref);
+      }
+    });
+
+    it('should finish without a cursor on the last page', async () => {
+      const first = await service.observe(sessionId, pageId, { maxElements: 2 });
+      const second = await service.observe(sessionId, pageId, {
+        maxElements: 2,
+        continueFrom: first.continuation?.nextOrdinal,
+      });
+
+      const last = await service.observe(sessionId, pageId, {
+        maxElements: 2,
+        continueFrom: second.continuation?.nextOrdinal,
+      });
+
+      expect(last.truncated).toBe(false);
+      expect(last.continuation).toBeUndefined();
+    });
+
+    it('should reject a negative continueFrom', async () => {
+      const error = await capture(() =>
+        service.observe(sessionId, pageId, { maxElements: 2, continueFrom: -1 })
+      );
+
+      expect(error?.code).toBe('INVALID_REQUEST');
+    });
+  });
+
   describe('secret-safe credential handling', () => {
     const SECRET_VALUE = 'correct-horse-battery-staple';
     let secretService: AgentBrowserService;
@@ -451,7 +584,7 @@ describe('AgentBrowserService', () => {
 
       const result = await secretService.act(secretSessionId, secretPageId, {
         action: 'fill',
-        target: { ref: textbox!.ref },
+        target: { ref: textbox?.ref },
         value: 'vault://tenant/login/password',
       });
 
@@ -464,7 +597,7 @@ describe('AgentBrowserService', () => {
 
       await secretService.act(secretSessionId, secretPageId, {
         action: 'fill',
-        target: { ref: textbox!.ref },
+        target: { ref: textbox?.ref },
         value: 'vault://tenant/login/password',
       });
 
@@ -483,7 +616,7 @@ describe('AgentBrowserService', () => {
       const error = await capture(() =>
         secretService.act(secretSessionId, secretPageId, {
           action: 'fill',
-          target: { ref: textbox!.ref },
+          target: { ref: textbox?.ref },
           value: 'vault://tenant/login/missing',
         })
       );
