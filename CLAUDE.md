@@ -88,6 +88,67 @@ pnpm -r format
 pnpm clean
 ```
 
+## Git Workflow
+
+This project uses a **develop + main branch workflow** to ensure stable releases and safe integration:
+
+### Branch Structure
+- **`main`**: Release branch - always stable, releasable code
+- **`develop`**: Integration branch - active development, feature integration
+- **`feature/*`**: Feature branches - isolated work on specific features/tasks
+
+### Workflow Pattern
+```
+develop (integration branch)
+  ├─ feature/phase-2-optimizations
+  ├─ feature/td-020-tracing  
+  └─ feature/td-021-downloads
+
+main (release branch)
+  ← Merge from develop when phase complete
+```
+
+### Development Process
+1. **Create feature branch** from `develop`:
+   ```bash
+   git checkout develop
+   git pull origin develop
+   git checkout -b feature/your-task-name
+   ```
+
+2. **Work on feature branch**: Make commits, run tests locally
+   ```bash
+   pnpm -r type-check && pnpm -r test
+   ```
+
+3. **Push and create PR**:
+   ```bash
+   git push -u origin feature/your-task-name
+   # Create PR: develop ← feature/your-task-name
+   ```
+
+4. **CI runs automatically**: Type-check, lint, tests, build must pass
+
+5. **Merge to develop**: After review, merge to `develop`
+
+6. **Phase complete?** Merge `develop` to `main` with PR:
+   ```bash
+   git checkout main
+   git pull origin main
+   git checkout develop
+   git pull origin develop
+   git checkout main
+   git merge develop
+   git push origin main
+   ```
+
+### CI Configuration
+- **Triggers**: Push and PR to `main` or `develop`
+- **Jobs**: Type-check → Lint → Test → Build (parallel)
+- **Protection**: Main requires PR + passing CI
+
+This workflow ensures `main` is always releasable while allowing active development on `develop`.
+
 ### Running Tests
 
 ```bash
