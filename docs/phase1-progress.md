@@ -36,6 +36,21 @@ Full workspace build and test run, verified end-to-end:
   downloads denied by default, enabled per session with a byte cap;
   artifacts retrievable scoped to their session.
 
+## Phase 3 status (started 2026-08-24)
+
+- TD-020 Tracing ✅ InMemoryTracer (core): OTel-shaped spans, parent
+  links, events, error status, W3C-shaped ids; spans scrubbed by the
+  SecretManager so telemetry cannot leak secrets. Service instruments
+  session.create, navigate (with policy.check child), act (with
+  approval.required/granted events), download, observe; failures carry
+  the protocol code.
+- Branching: develop + main workflow (CI runs both); fixes land on
+  develop. main tracks the last stable merge point.
+
+Remaining Phase 3: TD-021 metrics/logging, TD-022 Docker hardening
+(P0), TD-023 health endpoints + worker pool, TD-024 crash recovery,
+TD-025 benchmarks.
+
 Remaining Phase 2 exit criteria: the 45/50 benchmark suite (deferred with
 Phase 3 benchmarks, TD-025).
 
