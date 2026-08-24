@@ -261,3 +261,108 @@ describe('PlaywrightChromiumEngine', () => {
     });
   });
 });
+
+describe('PlaywrightChromiumEngine ref store', () => {
+  let engine: PlaywrightChromiumEngine;
+
+  // Encoded: the raw fragment would truncate the data URL at the first '#'.
+  const TEST_PAGE = `data:text/html,${encodeURIComponent(
+    '<!DOCTYPE html><html><body><button id="submit">Submit</button>' +
+      '<input aria-label="Email" type="email" /><a href="#next">Next page</a></body></html>'
+  )}`;
+
+  /** Observe the test page and hand back the engine page for interaction. */
+  const observedPage = async () => {
+    const session = await engine.createSession({ headless: true });
+    const page = await session.newPage();
+    await page.navigate({ url: TEST_PAGE });
+    await page.observe({ mode: 'interactive' });
+    return page;
+  };
+
+  beforeEach(() => {
+    engine = new PlaywrightChromiumEngine();
+  });
+
+  afterEach(async () => {
+    await engine.close();
+  });
+
+  it('should expose semantic elements with revision-stamped refs', async () => {
+    const page = await observedPage();
+    const state = await page.observe({ mode: 'interactive' });
+
+    expect(state.url.startsWith('data:')).toBe(true);
+    expect(state.elements.length).toBeGreaterThan(0);
+    for (const element of state.elements) {
+      expect(element.ref).toMatch(/^e\d+_\d+$/);
+    }
+
+    const submit = state.elements.find((el) => el.role === 'button' && el.name === 'Submit');
+    expect(submit).toBeDefined();
+  });
+
+  it('should produce stable refs within a revision', async () => {
+    const page = await observedPage();
+    const first = await page.observe({ mode: 'interactive' });
+    const second = await page.observe({ mode: 'interactive' });
+
+    const a = first.elements.find((el) => el.name === 'Submit')?.ref;
+    const b = second.elements.find((el) => el.name === 'Submit')?.ref;
+
+    expect(a).toBeDefined();
+    expect(a).toBe(b);
+  });
+
+  it('should resolve an observed ref to real element state with the canonical fingerprint', async () => {
+    const page = await observedPage();
+    const state = await page.observe({ mode: 'interactive' });
+
+    const submit = state.elements.find((el) => el.role === 'button' && el.name === 'Submit');
+    const resolved = await page.resolve({ ref: submit!.ref });
+
+    expect(resolved.ref).toBe(submit!.ref);
+    expect(resolved.role).toBe('button');
+    expect(resolved.name).toBe('Submit');
+    expect(resolved.visible).toBe(true);
+    expect(resolved.enabled).toBe(true);
+    expect(resolved.fingerprint).toBe('button_Submit_visible_true_enabled_true');
+  });
+
+  it('should reject an unknown ref', async () => {
+    const page = await observedPage();
+
+    await expect(page.resolve({ ref: 'e1_99' })).rejects.toThrow(/not found/i);
+  });
+
+  it('should click through a ref', async () => {
+    const page = await observedPage();
+    const state = await page.observe({ mode: 'interactive' });
+    const link = state.elements.find((el) => el.role === 'link' && el.name === 'Next page');
+
+    const effect = await page.act({ type: 'click', target: { ref: link!.ref } });
+
+    expect(effect.actionId).toBeDefined();
+    expect(effect.newRevision).toBeGreaterThan(effect.oldRevision);
+  });
+
+  it('should fill through a ref and reflect the value on the next observation', async () => {
+    const page = await observedPage();
+    const state = await page.observe({ mode: 'interactive' });
+    const email = state.elements.find((el) => el.role === 'textbox' && el.name === 'Email');
+
+    await page.act({ type: 'fill', target: { ref: email!.ref }, value: 'agent@example.com' });
+
+    const after = await page.observe({ mode: 'interactive' });
+    const filled = after.elements.find((el) => el.role === 'textbox' && el.name === 'Email');
+    expect(filled?.value).toBe('agent@example.com');
+  });
+
+  it('should reject acting on an unknown ref', async () => {
+    const page = await observedPage();
+
+    await expect(page.act({ type: 'click', target: { ref: 'e1_99' } })).rejects.toThrow(
+      /not found/i
+    );
+  });
+});

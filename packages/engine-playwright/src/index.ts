@@ -29,6 +29,38 @@ import { type Browser, type BrowserContext, Locator, type Page, chromium } from 
 // Re-export engine types
 export * from '@agentbrowser/engine';
 
+/** An element captured at observation time, addressable by ref. */
+interface StoredElement {
+  role: string;
+  name?: string;
+  value?: string;
+  visible: boolean;
+  enabled: boolean;
+}
+
+/** Strip surrounding quotes and unescape from an aria snapshot value. */
+function unquote(value: string): string {
+  const trimmed = value.trim();
+  const match = /^"((?:[^"\\]|\\.)*)"$/.exec(trimmed);
+  return match?.[1] !== undefined ? match[1] : trimmed;
+}
+
+/**
+ * Canonical semantic fingerprint required by the engine contract:
+ * `role_name_visible_X_enabled_Y[_value_Z]`.
+ */
+function canonicalFingerprint(element: StoredElement): string {
+  return [
+    element.role,
+    element.name ?? '',
+    `visible_${element.visible}`,
+    `enabled_${element.enabled}`,
+    element.value !== undefined && element.value !== '' ? `value_${element.value}` : '',
+  ]
+    .filter(Boolean)
+    .join('_');
+}
+
 /**
  * PlaywrightChromiumEngine implements BrowserEngine using Playwright
  */
@@ -171,6 +203,13 @@ class PlaywrightPage implements EnginePage {
   private page: Page;
   private engine: PlaywrightChromiumEngine;
   private eventQueue: EngineEvent[] = [];
+  /**
+   * Ref store: the page's revision counter plus the elements captured at the
+   * last observation. Refs are `e<revision>_<ordinal>` and are stable within a
+   * revision; any mutation bumps the revision and invalidates them.
+   */
+  private revision = 1;
+  private refStore = new Map<string, StoredElement>();
 
   constructor(id: string, page: Page, engine: PlaywrightChromiumEngine) {
     this.id = id;
@@ -205,12 +244,18 @@ class PlaywrightPage implements EnginePage {
   async navigate(request: NavigationRequest): Promise<NavigationResult> {
     const waitUntil = request.waitUntil || 'load';
     await this.page.goto(request.url, { waitUntil: waitUntil as any });
+    this.bumpRevision();
 
     return {
       status: 'success',
       url: this.page.url(),
       redirectChain: [],
     };
+  }
+
+  private bumpRevision(): void {
+    this.revision += 1;
+    this.refStore.clear();
   }
 
   async observe(request: ObservationRequest): Promise<RawPageState> {
@@ -221,16 +266,30 @@ class PlaywrightPage implements EnginePage {
 
     if (mode === 'interactive' || mode === 'accessibility') {
       try {
-        // Type assertion for Playwright's accessibility API
-        const snapshot = await (this.page as any).accessibility.snapshot();
-        elements = this.parseAccessibilityTree(snapshot);
+        // Playwright's accessibility surface is the aria snapshot (YAML).
+        const yaml = await this.page.locator('body').ariaSnapshot();
+        elements = this.parseAriaSnapshot(yaml, this.revision);
       } catch {
-        // Fallback if accessibility tree not available
+        // Fallback if the aria snapshot is not available
         elements = await this.getContentElements();
       }
     } else if (mode === 'content') {
       // Get content-focused elements
       elements = await this.getContentElements();
+    }
+
+    // Rebuild the ref store from this observation: refs are deterministic
+    // within a revision (document order), so the same element maps to the
+    // same ref until the page mutates.
+    this.refStore.clear();
+    for (const element of elements) {
+      this.refStore.set(element.ref, {
+        role: element.role,
+        name: element.name,
+        value: element.value,
+        visible: element.visible,
+        enabled: element.enabled,
+      });
     }
 
     return {
@@ -242,35 +301,62 @@ class PlaywrightPage implements EnginePage {
     };
   }
 
-  private parseAccessibilityTree(node: any, path = ''): any[] {
-    if (!node) return [];
-
+  /**
+   * Parse a Playwright aria snapshot (YAML subset) into raw elements in
+   * document order. Lines look like:
+   *   - button "Submit"
+   *   - textbox "Email":
+   *     - /value: "typed text"
+   * Attribute lines (`/attr: value`) annotate the preceding element.
+   */
+  private parseAriaSnapshot(yaml: string, revision: number): any[] {
     const elements: any[] = [];
+    const lines = yaml.split('\n');
 
-    if (node.role) {
+    for (const line of lines) {
+      if (line.trim() === '' || line.trim() === '-') {
+        continue;
+      }
+
+      const indent = line.length - line.trimStart().length;
+      const text = line.trim().replace(/^-\s*/, '');
+
+      // Attribute line: attach to the last element deeper than this indent.
+      const attrMatch = /^\/(\w+):\s*(.*)$/.exec(text);
+      if (attrMatch?.[1] && attrMatch[2] !== undefined) {
+        const last = elements[elements.length - 1];
+        if (last && attrMatch[1] === 'value') {
+          last.value = unquote(attrMatch[2]);
+        }
+        continue;
+      }
+
+      // Element line: `role`, `role "name"`, `role "name": inline-value`,
+      // or with a trailing bare colon when the node has children.
+      const elementMatch = /^([a-zA-Z][\w-]*)(?:\s+"((?:[^"\\]|\\.)*)")?(?::\s*(.*))?$/.exec(text);
+      if (!elementMatch?.[1]) {
+        continue;
+      }
+
+      const role = elementMatch[1];
+      if (role === 'text' || role === 'StaticText') {
+        continue; // static text is not an interactive element
+      }
+
       const element: any = {
-        ref: this.generateRef(),
-        role: node.role,
-        name: node.name || undefined,
+        ref: `e${revision}_${elements.length}`,
+        role,
         visible: true,
-        enabled: !node.disabled,
+        enabled: true,
       };
-
-      if (node.value !== undefined) {
-        element.value = String(node.value);
+      if (elementMatch[2] !== undefined) {
+        element.name = elementMatch[2];
       }
-
-      if (node.checked !== undefined) {
-        element.value = node.checked ? 'checked' : 'unchecked';
+      const inlineValue = elementMatch[3]?.trim();
+      if (inlineValue) {
+        element.value = unquote(inlineValue);
       }
-
       elements.push(element);
-    }
-
-    if (node.children) {
-      for (const child of node.children) {
-        elements.push(...this.parseAccessibilityTree(child));
-      }
     }
 
     return elements;
@@ -298,7 +384,7 @@ class PlaywrightPage implements EnginePage {
           const isVisible = await node.isVisible().catch(() => false);
           if (isVisible) {
             elements.push({
-              ref: this.generateRef(),
+              ref: `e${this.revision}_${elements.length}`,
               role: selector.replace(/\[.*\]/, '').replace(/[^a-zA-Z]/g, ''),
               visible: true,
               enabled: await node.isEnabled().catch(() => true),
@@ -313,44 +399,78 @@ class PlaywrightPage implements EnginePage {
     return elements;
   }
 
-  private generateRef(): string {
-    const revision = this.engine.incrementRevision();
-    const ordinal = Math.floor(Math.random() * 1000);
-    return `e${revision}_${ordinal}`;
-  }
-
   async resolve(target: EngineTarget): Promise<any> {
-    // In a real implementation, this would resolve the ref to a locator
-    // For now, return a mock resolved target
+    const stored = this.refStore.get(target.ref);
+    if (!stored) {
+      throw new Error(`Element not found: ${target.ref} (observe the page to mint refs)`);
+    }
+
     return {
       ref: target.ref,
-      fingerprint: `fingerprint-${target.ref}`,
-      role: 'unknown',
-      visible: true,
-      enabled: true,
+      fingerprint: canonicalFingerprint(stored),
+      role: stored.role,
+      ...(stored.name !== undefined ? { name: stored.name } : {}),
+      visible: stored.visible,
+      enabled: stored.enabled,
     };
+  }
+
+  /** Locator for a stored element, addressed semantically (never selectors). */
+  private locatorFor(ref: string) {
+    const stored = this.refStore.get(ref);
+    if (!stored) {
+      throw new Error(`Element not found: ${ref} (observe the page to mint refs)`);
+    }
+    return this.page
+      .getByRole(stored.role as never, stored.name !== undefined ? { name: stored.name } : {})
+      .first();
   }
 
   async act(action: EngineAction): Promise<ActionEffect> {
     const actionId = `action-${Date.now()}`;
     const startTimestamp = new Date().toISOString();
-    const oldRevision = 0; // Would track actual revision
-    const newRevision = this.engine.incrementRevision();
+    const oldRevision = this.revision;
 
-    // Execute action based on type
+    // Execute action based on type. Targeted actions go through the ref
+    // store, addressing elements semantically; selectors never appear.
     switch (action.type) {
       case 'navigate':
         await this.navigate({ url: action.url as string });
         break;
-      case 'click':
-        // Would resolve ref and click
-        await this.page.click('body');
+      case 'click': {
+        const locator = this.locatorFor((action.target as EngineTarget).ref);
+        await locator.click();
+        this.bumpRevision();
         break;
-      case 'fill':
-        // Would resolve ref and fill
+      }
+      case 'fill': {
+        const locator = this.locatorFor((action.target as EngineTarget).ref);
+        await locator.fill(String(action.value ?? ''));
+        this.bumpRevision();
         break;
+      }
+      case 'select': {
+        const locator = this.locatorFor((action.target as EngineTarget).ref);
+        await locator.selectOption((action.values as string[]) ?? []);
+        this.bumpRevision();
+        break;
+      }
+      case 'press': {
+        if (action.target) {
+          await this.locatorFor((action.target as EngineTarget).ref).press(String(action.key));
+        } else {
+          await this.page.keyboard.press(String(action.key));
+        }
+        this.bumpRevision();
+        break;
+      }
+      case 'scroll': {
+        await this.page.mouse.wheel(Number(action.deltaX ?? 0), Number(action.deltaY ?? 0));
+        this.bumpRevision();
+        break;
+      }
       default:
-        // Other action types
+        // Other action types are recorded without a revision bump.
         break;
     }
 
@@ -361,7 +481,7 @@ class PlaywrightPage implements EnginePage {
       startTimestamp,
       endTimestamp,
       oldRevision,
-      newRevision,
+      newRevision: this.revision,
       result: { success: true },
     };
   }
