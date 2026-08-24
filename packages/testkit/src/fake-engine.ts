@@ -313,9 +313,30 @@ class FakePage implements EnginePage {
       case 'click':
         this.revision++;
         break;
-      case 'fill':
+      case 'fill': {
+        // A real page keeps the typed value; so does the fake.
+        const target = action.target as EngineTarget | undefined;
+        if (target) {
+          const element = this.elements.find((el) => el.ref === target.ref);
+          if (element && typeof action.value === 'string') {
+            element.value = action.value;
+          }
+        }
         this.revision++;
         break;
+      }
+      case 'select': {
+        const target = action.target as EngineTarget | undefined;
+        if (target) {
+          const element = this.elements.find((el) => el.ref === target.ref);
+          const values = action.values as string[] | undefined;
+          if (element && values && values[0] !== undefined) {
+            element.value = values[0];
+          }
+        }
+        this.revision++;
+        break;
+      }
       case 'navigate':
         await this.navigate({ url: action.url as string });
         break;

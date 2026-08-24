@@ -65,6 +65,14 @@ export class ActionExecutor {
       const target = targetOf(request.action);
       let resolvedTarget: ResolvedTarget | undefined;
 
+      // Staleness is a cheap string check on the ref: run it before touching
+      // the engine, so an old-revision ref reports STALE_TARGET (the
+      // actionable error) rather than TARGET_NOT_FOUND.
+      const staleError = this.checkStaleness(request, target, revision);
+      if (staleError) {
+        return this.failure(staleError, startTimestamp, revision);
+      }
+
       if (target) {
         resolvedTarget = await enginePage.resolve({ ref: target.ref });
 
@@ -91,12 +99,6 @@ export class ActionExecutor {
             revision
           );
         }
-      }
-
-      // Staleness is checked before the action runs and is never auto-retried.
-      const staleError = this.checkStaleness(request, target, revision);
-      if (staleError) {
-        return this.failure(staleError, startTimestamp, revision);
       }
 
       if (target && resolvedTarget) {

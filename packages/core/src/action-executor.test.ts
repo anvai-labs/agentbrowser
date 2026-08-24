@@ -102,16 +102,31 @@ describe('ActionExecutor', () => {
       expect(result.targetFingerprint).toBe('button_Submit_visible_true_enabled_true');
     });
 
-    it('should fail with TARGET_NOT_FOUND for invalid ref', async () => {
+    it('should fail with TARGET_NOT_FOUND for an unknown ref at the current revision', async () => {
       (mockEnginePage.resolve as any).mockRejectedValue(new Error('Element not found'));
 
-      const result = await executor.execute(req({ type: 'click', target: { ref: 'e999_0' } }), {
+      // Same revision as the page, but no such element.
+      const result = await executor.execute(req({ type: 'click', target: { ref: 'e1_999' } }), {
         enginePage: mockEnginePage,
         observation: mockObservation,
       });
 
       expect(result.error?.code).toBe('TARGET_NOT_FOUND');
       expect(result.error?.retryable).toBe(false);
+    });
+
+    it('should fail with STALE_TARGET for a ref from another revision', async () => {
+      (mockEnginePage.resolve as any).mockRejectedValue(new Error('Element not found'));
+
+      // Revision check runs before the engine lookup: an old-revision ref is
+      // stale, not missing - the actionable error for an agent.
+      const result = await executor.execute(req({ type: 'click', target: { ref: 'e999_0' } }), {
+        enginePage: mockEnginePage,
+        observation: mockObservation,
+      });
+
+      expect(result.error?.code).toBe('STALE_TARGET');
+      expect(result.error?.retryable).toBe(true);
     });
   });
 

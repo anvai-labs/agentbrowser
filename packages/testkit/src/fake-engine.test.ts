@@ -258,6 +258,21 @@ describe('FakeEngine', () => {
       expect(resolved.fingerprint).toBe(expected);
     });
 
+    it('should persist fill and select values like a real page', async () => {
+      const session = await engine.createSession({});
+      const page = await session.newPage();
+
+      await page.navigate({ url: 'https://example.com' });
+      const before = await page.observe({ mode: 'interactive' });
+      const textbox = before.elements.find((el) => el.role === 'textbox');
+
+      await page.act({ type: 'fill', target: { ref: textbox!.ref }, value: 'filled@example.com' });
+
+      const after = await page.observe({ mode: 'interactive' });
+      const filled = after.elements.find((el) => el.role === 'textbox');
+      expect(filled?.value).toBe('filled@example.com');
+    });
+
     it('should allow tests to inject elements with risk metadata', async () => {
       const engine2 = new FakeEngine();
       const session = await engine2.createSession({});

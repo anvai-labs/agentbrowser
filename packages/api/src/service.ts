@@ -377,7 +377,6 @@ export class AgentBrowserService {
         pageId,
         expectedRevision: request.expectedRevision ?? page.revision,
         action: this.toProtocolAction(request),
-        ...(request.observe === 'after' ? { observeAfter: { mode: 'interactive' as const } } : {}),
       },
       {
         enginePage: adapter,
@@ -397,11 +396,18 @@ export class AgentBrowserService {
 
     page.revision = result.newRevision;
 
+    // A requested post-action observation goes through the service's own
+    // observe(), so its refs are minted, mapped and immediately actionable.
+    let observation: PageState | undefined;
+    if (request.observe === 'after') {
+      observation = await this.observe(sessionId, pageId, { mode: 'interactive' });
+    }
+
     return {
       status: 'success',
       actionId: result.actionId,
       newRevision: result.newRevision,
-      observation: result.observation,
+      observation,
     };
   }
 

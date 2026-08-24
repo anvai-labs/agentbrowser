@@ -275,14 +275,27 @@ describe('AgentBrowserService', () => {
       expect(error?.retryable).toBe(true);
     });
 
-    it('should reject a ref that was never observed', async () => {
+    it('should reject an unknown ref at the current revision', async () => {
+      const observation = await service.observe(sessionId, pageId, {});
+
+      const error = await capture(() =>
+        service.act(sessionId, pageId, {
+          action: 'click',
+          target: { ref: `e${observation.revision}_99` },
+        })
+      );
+
+      expect(error?.code).toBe('TARGET_NOT_FOUND');
+    });
+
+    it('should classify a ref from another revision as stale, not missing', async () => {
       await service.observe(sessionId, pageId, {});
 
       const error = await capture(() =>
         service.act(sessionId, pageId, { action: 'click', target: { ref: 'e99_0' } })
       );
 
-      expect(error?.code).toBe('TARGET_NOT_FOUND');
+      expect(error?.code).toBe('STALE_TARGET');
     });
 
     it('should require an observation before acting', async () => {
