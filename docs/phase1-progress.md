@@ -1,4 +1,4 @@
-# Phase 1 Progress Summary
+# Phase 2 Progress Summary (Phase 1 complete below)
 
 **Last Updated:** 2026-08-23
 **Status:** COMPLETE - all exit criteria met
@@ -19,7 +19,25 @@ Full workspace build and test run, verified end-to-end:
 | policy              | 28    |
 | cli                 | 27    |
 | mcp-server          | 21    |
-| **Total**           | **482 passing (100%)** |
+| **Total**           | **542 passing (100%)** |
+
+## Phase 2 status (updated 2026-08-24)
+
+- TD-014 Network egress policy ✅ (policy package + service + SSRF workflow)
+- TD-015 Approval gates ✅ (core + service + token workflow)
+- TD-018 MCP server ✅ (packages/mcp-server, verified against victor-ai)
+- TD-016 Secret-safe credentials ✅ SecretManager: vault:// refs resolved
+  at execution time; values redacted from observations, error messages and
+  error details; toJSON renders references only.
+- TD-019 Observation diffs and continuation ✅ sinceRevision returns
+  token-efficient diffs (engine-ref matching); maxElements paginates with a
+  {nextOrdinal, remaining} cursor in stable document order.
+- TD-017 Downloads and artifacts ✅ ArtifactStore (bounded, TTL);
+  downloads denied by default, enabled per session with a byte cap;
+  artifacts retrievable scoped to their session.
+
+Remaining Phase 2 exit criteria: the 45/50 benchmark suite (deferred with
+Phase 3 benchmarks, TD-025).
 
 `pnpm -r build` succeeds for all 10 packages. CI is green on GitHub
 (type-check, lint, test, build) on a clean checkout.
