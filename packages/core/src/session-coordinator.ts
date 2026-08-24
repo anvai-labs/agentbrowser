@@ -257,19 +257,9 @@ export class SessionCoordinator {
    * Run cleanup pass
    */
   private runCleanup(): void {
-    const expiredSessions: string[] = [];
-
-    // Find expired sessions
+    // Clean up expired sessions in a single pass
     for (const [id, session] of this.sessions.entries()) {
       if (this.isSessionExpired(session)) {
-        expiredSessions.push(id);
-      }
-    }
-
-    // Clean up expired sessions
-    for (const id of expiredSessions) {
-      const session = this.sessions.get(id);
-      if (session) {
         session.state = SessionState.EXPIRED;
         // Remove from sessions map first
         this.sessions.delete(id);

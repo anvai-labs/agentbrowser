@@ -5,6 +5,8 @@
  * automatic expiration, validation, and usage tracking.
  */
 
+const LOW_RISK_ACTIONS = new Set<string>(['observe', 'navigate', 'scroll', 'press']);
+
 export interface ApprovalGateOptions {
   tokenTtlMs?: number;
   maxTokens?: number;
@@ -87,9 +89,7 @@ export class ApprovalGate {
    */
   async isApprovalRequired(action: ApprovalActionRequest): Promise<boolean> {
     // Low-risk actions that don't require approval
-    const lowRiskActions = ['observe', 'navigate', 'scroll', 'press'];
-
-    if (lowRiskActions.includes(action.type)) {
+    if (LOW_RISK_ACTIONS.has(action.type)) {
       return false;
     }
 
@@ -259,18 +259,12 @@ export class ApprovalGate {
    */
   private async runCleanup(): Promise<void> {
     const now = Date.now();
-    const expiredTokens: string[] = [];
 
-    // Find expired tokens
+    // Remove expired tokens in a single pass
     for (const [tokenId, token] of this.tokens.entries()) {
       if (now > token.expiresAt || token.status === 'used') {
-        expiredTokens.push(tokenId);
+        this.tokens.delete(tokenId);
       }
-    }
-
-    // Remove expired tokens
-    for (const tokenId of expiredTokens) {
-      this.tokens.delete(tokenId);
     }
   }
 

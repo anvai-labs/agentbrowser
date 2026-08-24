@@ -5,11 +5,29 @@
  * with proper element reference management, revision tracking, and semantic prioritization.
  */
 
-import type { RawPageState } from '@agentbrowser/engine';
-import type { ObservationRequest, PageElement, PageState } from '@agentbrowser/protocol';
+import type { RawPageState, RawElement } from '@agentbrowser/engine';
+import type { ObservationRequest, ObservationMode, PageElement, PageState } from '@agentbrowser/protocol';
+
+const INTERACTIVE_ROLES = new Set<string>([
+  'button',
+  'link',
+  'textbox',
+  'searchbox',
+  'textarea',
+  'combobox',
+  'listbox',
+  'checkbox',
+  'radio',
+  'slider',
+  'spinbutton',
+  'menu',
+  'menubar',
+  'tab',
+  'tablist',
+]);
 
 export interface NormalizationOptions {
-  mode?: 'interactive' | 'content' | 'accessibility' | 'compact_dom' | 'visual';
+  mode?: ObservationMode;
   revision: number;
   maxElements?: number;
   maxBytes?: number;
@@ -72,7 +90,7 @@ export class ObservationNormalizer {
   /**
    * Process elements based on observation mode
    */
-  private processElements(rawElements: any[], mode: string, revision: number): PageElement[] {
+  private processElements(rawElements: RawElement[], mode: ObservationMode, revision: number): PageElement[] {
     return rawElements.map((rawEl, index) => {
       const element: PageElement = {
         ref: this.generateRef(revision, index),
@@ -158,25 +176,7 @@ export class ObservationNormalizer {
    * Check if element is interactive
    */
   private isInteractive(element: PageElement): boolean {
-    const interactiveRoles = [
-      'button',
-      'link',
-      'textbox',
-      'searchbox',
-      'textarea',
-      'combobox',
-      'listbox',
-      'checkbox',
-      'radio',
-      'slider',
-      'spinbutton',
-      'menu',
-      'menubar',
-      'tab',
-      'tablist',
-    ];
-
-    return interactiveRoles.includes(element.role);
+    return INTERACTIVE_ROLES.has(element.role);
   }
 
   /**
@@ -198,11 +198,24 @@ export class ObservationNormalizer {
    * Generate page summary
    */
   private generateSummary(elements: PageElement[], rawState: RawPageState): string {
-    const buttonCount = elements.filter((e) => e.role === 'button').length;
-    const inputCount = elements.filter(
-      (e) => e.role === 'textbox' || e.role === 'searchbox'
-    ).length;
-    const linkCount = elements.filter((e) => e.role === 'link').length;
+    let buttonCount = 0;
+    let inputCount = 0;
+    let linkCount = 0;
+
+    for (const element of elements) {
+      switch (element.role) {
+        case 'button':
+          buttonCount++;
+          break;
+        case 'textbox':
+        case 'searchbox':
+          inputCount++;
+          break;
+        case 'link':
+          linkCount++;
+          break;
+      }
+    }
 
     const parts: string[] = [];
 

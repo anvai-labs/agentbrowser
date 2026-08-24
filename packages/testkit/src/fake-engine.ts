@@ -180,6 +180,7 @@ class FakePage implements EnginePage {
   private pageStatus: 'loading' | 'interactive' | 'complete' = 'loading';
   private revision = 1;
   private elements: FakeElement[] = [];
+  private elementByRef = new Map<string, FakeElement>();
   private closed = false;
 
   constructor(id: string, sessionOptions: EngineSessionOptions, pageOptions?: NewPageOptions) {
@@ -266,8 +267,8 @@ class FakePage implements EnginePage {
       throw new Error('Page is closed');
     }
 
-    // Find element by ref
-    const element = this.elements.find((el) => el.ref === target.ref);
+    // Find element by ref using Map for O(1) lookup
+    const element = this.elementByRef.get(target.ref);
     if (!element) {
       throw new Error('Element not found');
     }
@@ -317,7 +318,7 @@ class FakePage implements EnginePage {
         // A real page keeps the typed value; so does the fake.
         const target = action.target as EngineTarget | undefined;
         if (target) {
-          const element = this.elements.find((el) => el.ref === target.ref);
+          const element = this.elementByRef.get(target.ref);
           if (element && typeof action.value === 'string') {
             element.value = action.value;
           }
@@ -328,7 +329,7 @@ class FakePage implements EnginePage {
       case 'select': {
         const target = action.target as EngineTarget | undefined;
         if (target) {
-          const element = this.elements.find((el) => el.ref === target.ref);
+          const element = this.elementByRef.get(target.ref);
           const values = action.values as string[] | undefined;
           if (element && values && values[0] !== undefined) {
             element.value = values[0];
@@ -409,6 +410,12 @@ class FakePage implements EnginePage {
       };
 
       elements.push(element);
+    }
+
+    // Update the ref->element Map index
+    this.elementByRef.clear();
+    for (const element of elements) {
+      this.elementByRef.set(element.ref, element);
     }
 
     return elements;

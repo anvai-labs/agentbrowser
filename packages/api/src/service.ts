@@ -21,6 +21,7 @@ import {
   SessionCoordinator,
 } from '@agentbrowser/core';
 import type { ArtifactMetadata } from '@agentbrowser/core';
+import type { InMemoryTracer, Span } from '@agentbrowser/core';
 import type { BrowserEngine, EnginePage } from '@agentbrowser/engine';
 import type { EngineSession, EngineSessionOptions } from '@agentbrowser/engine';
 import { NetworkPolicy } from '@agentbrowser/policy';
@@ -108,6 +109,8 @@ export interface ServiceDependencies {
   artifactStore?: ArtifactStore;
   /** Payload fetcher for downloads; injectable for tests. */
   downloader?(url: string): Promise<{ bytes: Uint8Array; contentType: string }>;
+  /** Operation tracer; absent means tracing is disabled. */
+  tracer?: InMemoryTracer;
 }
 
 /** Risk classes that require an approval token before the action runs. */
@@ -165,6 +168,7 @@ export class AgentBrowserService {
   private readonly secretManager: SecretManager;
   private readonly artifacts: ArtifactStore;
   private readonly downloader: NonNullable<ServiceDependencies['downloader']>;
+  private readonly tracer?: InMemoryTracer;
   /** Per-session download policy, captured at creation (denying by default). */
   private readonly sessionDownloadPolicy = new Map<
     string,
@@ -190,44 +194,83 @@ export class AgentBrowserService {
     this.secretManager = deps.secretManager ?? new SecretManager();
     this.artifacts = deps.artifactStore ?? new ArtifactStore();
     this.downloader = deps.downloader ?? defaultDownloader;
+    // Tracer is optional - if provided, use it; otherwise leave undefined
+    if (deps.tracer !== undefined) {
+      this.tracer = deps.tracer;
+    }
+  }
+
+  /**
+   * Run an operation under a span: success ends it with outcome ok, failure
+   * marks it error with the protocol code. Children link to the span.
+   */
+  private traced<T>(
+    name: string,
+    attributes: Record<string, unknown>,
+    operation: (span: Span | undefined) => Promise<T>
+  ): Promise<T> {
+    const span = this.tracer?.startSpan(name, attributes);
+    return operation(span).then(
+      (value) => {
+        if (span) {
+          this.tracer?.endSpan(span, { outcome: 'ok' });
+        }
+        return value;
+      },
+      (error) => {
+        if (span) {
+          this.tracer?.failSpan(
+            span,
+            error instanceof ServiceError ? error.code : 'INTERNAL',
+            error instanceof Error ? error.message : String(error)
+          );
+          this.tracer?.endSpan(span);
+        }
+        throw error;
+      }
+    );
   }
 
   // ---- sessions -----------------------------------------------------------
 
   async createSession(request: ServiceSessionRequest): Promise<ServiceSessionView> {
-    const engineRequest: EngineSessionOptions & { engine: 'auto' } = { engine: 'auto' };
-    if (request.viewport !== undefined) engineRequest.viewport = request.viewport;
-    if (request.locale !== undefined) engineRequest.locale = request.locale;
-    if (request.timezoneId !== undefined) engineRequest.timezoneId = request.timezoneId;
-    if (request.headless !== undefined) engineRequest.headless = request.headless;
+    return this.traced('session.create', { tenantId: request.tenantId ?? '' }, async () => {
+      const engineRequest: EngineSessionOptions & { engine: 'auto' } = { engine: 'auto' };
+      if (request.viewport !== undefined) engineRequest.viewport = request.viewport;
+      if (request.locale !== undefined) engineRequest.locale = request.locale;
+      if (request.timezoneId !== undefined) engineRequest.timezoneId = request.timezoneId;
+      if (request.headless !== undefined) engineRequest.headless = request.headless;
 
-    let session: import('@agentbrowser/protocol').SessionResponse;
-    try {
-      session = await this.coordinator.create(
-        {
-          ...engineRequest,
-          ...(request.ttlMs !== undefined ? { ttlMs: request.ttlMs } : {}),
-          ...(request.idleTimeoutMs !== undefined ? { idleTimeoutMs: request.idleTimeoutMs } : {}),
-        },
-        this.engine
-      );
-    } catch (error) {
-      throw this.mapError(error);
-    }
+      let session: import('@agentbrowser/protocol').SessionResponse;
+      try {
+        session = await this.coordinator.create(
+          {
+            ...engineRequest,
+            ...(request.ttlMs !== undefined ? { ttlMs: request.ttlMs } : {}),
+            ...(request.idleTimeoutMs !== undefined
+              ? { idleTimeoutMs: request.idleTimeoutMs }
+              : {}),
+          },
+          this.engine
+        );
+      } catch (error) {
+        throw this.mapError(error);
+      }
 
-    this.sessionDownloadPolicy.set(session.sessionId, {
-      allowDownloads: request.allowDownloads === true,
-      maxDownloadBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
+      this.sessionDownloadPolicy.set(session.sessionId, {
+        allowDownloads: request.allowDownloads === true,
+        maxDownloadBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
+      });
+
+      return {
+        sessionId: session.sessionId,
+        status: 'ready',
+        engine: { name: session.engine.name, version: session.engine.version },
+        createdAt: session.createdAt,
+        ttlMs: session.ttlMs,
+        idleTimeoutMs: session.idleTimeoutMs,
+      };
     });
-
-    return {
-      sessionId: session.sessionId,
-      status: 'ready',
-      engine: { name: session.engine.name, version: session.engine.version },
-      createdAt: session.createdAt,
-      ttlMs: session.ttlMs,
-      idleTimeoutMs: session.idleTimeoutMs,
-    };
   }
 
   getSession(sessionId: string): ServiceSessionView | undefined {
@@ -306,40 +349,54 @@ export class AgentBrowserService {
     pageId: string,
     request: { url: string; waitUntil?: 'load' | 'domcontentloaded' | 'networkidle' | undefined }
   ): Promise<{ status: string; url: string; redirectChain: string[] }> {
-    const page = this.requirePage(sessionId, pageId);
-    this.coordinator.updateActivity(sessionId);
+    return this.traced('navigate', { sessionId, pageId }, async (span) => {
+      const page = this.requirePage(sessionId, pageId);
+      this.coordinator.updateActivity(sessionId);
 
-    const url = request.url;
-    let parsed: URL;
-    try {
-      parsed = new URL(url);
-    } catch {
-      throw new ServiceError('INVALID_REQUEST', `Invalid URL: ${url.slice(0, 100)}`, false);
-    }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      throw new ServiceError(
-        'POLICY_DENIED',
-        `Navigation accepts http(s) URLs only; '${parsed.protocol}' is not permitted.`,
-        false,
-        { url: redactUrl(url) }
-      );
-    }
+      const url = request.url;
+      let parsed: URL;
+      try {
+        parsed = new URL(url);
+      } catch {
+        throw new ServiceError('INVALID_REQUEST', `Invalid URL: ${url.slice(0, 100)}`, false);
+      }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new ServiceError(
+          'POLICY_DENIED',
+          `Navigation accepts http(s) URLs only; '${parsed.protocol}' is not permitted.`,
+          false,
+          { url: redactUrl(url) }
+        );
+      }
 
-    const hostname = this.hostnameOf(url);
-    try {
-      await this.networkPolicy.checkRequest({ hostname, url });
-    } catch (error) {
-      throw this.mapError(error);
-    }
+      const hostname = this.hostnameOf(url);
+      const policySpan = this.tracer?.startSpan('policy.check', { hostname }, span);
+      try {
+        await this.networkPolicy.checkRequest({ hostname, url });
+        if (policySpan) {
+          this.tracer?.endSpan(policySpan, { allowed: true });
+        }
+      } catch (error) {
+        if (policySpan) {
+          this.tracer?.failSpan(
+            policySpan,
+            'POLICY_DENIED',
+            error instanceof Error ? error.message : String(error)
+          );
+          this.tracer?.endSpan(policySpan);
+        }
+        throw this.mapError(error);
+      }
 
-    const result = await page.enginePage.navigate({
-      url,
-      ...(request.waitUntil !== undefined ? { waitUntil: request.waitUntil } : {}),
+      const result = await page.enginePage.navigate({
+        url,
+        ...(request.waitUntil !== undefined ? { waitUntil: request.waitUntil } : {}),
+      });
+      page.revision += 1;
+      page.lastObservation = undefined;
+
+      return { status: result.status, url: result.url, redirectChain: result.redirectChain };
     });
-    page.revision += 1;
-    page.lastObservation = undefined;
-
-    return { status: result.status, url: result.url, redirectChain: result.redirectChain };
   }
 
   // ---- observation --------------------------------------------------------
@@ -383,8 +440,10 @@ export class AgentBrowserService {
     // Retain the snapshot for sinceRevision diffs (bounded history).
     page.history.set(page.revision, { byRef, byEngineRef });
     while (page.history.size > HISTORY_LIMIT) {
-      const oldest = Math.min(...page.history.keys());
-      page.history.delete(oldest);
+      const oldest = page.history.keys().next().value;
+      if (oldest !== undefined) {
+        page.history.delete(oldest);
+      }
     }
 
     if (request.sinceRevision !== undefined) {
@@ -447,7 +506,7 @@ export class AgentBrowserService {
       for (const field of ['role', 'name', 'value', 'visible', 'enabled'] as const) {
         const old = before[field];
         const now = element[field];
-        if (JSON.stringify(old) !== JSON.stringify(now)) {
+        if (old !== now) {
           properties[field] = { old: old ?? null, new: now ?? null };
         }
       }
@@ -511,93 +570,95 @@ export class AgentBrowserService {
     pageId: string,
     request: ServiceActRequest
   ): Promise<ServiceActResult> {
-    const page = this.requirePage(sessionId, pageId);
-    this.coordinator.updateActivity(sessionId);
+    return this.traced('act', { sessionId, pageId, action: request.action }, async (span) => {
+      const page = this.requirePage(sessionId, pageId);
+      this.coordinator.updateActivity(sessionId);
 
-    const ref = request.target?.ref;
-    if (ref !== undefined) {
-      if (!REF_PATTERN.test(ref)) {
-        throw new ServiceError(
-          'INVALID_REQUEST',
-          `Invalid element reference '${ref}'. Expected e<revision>_<ordinal>, such as e1_0.`,
-          false,
-          { ref }
-        );
+      const ref = request.target?.ref;
+      if (ref !== undefined) {
+        if (!REF_PATTERN.test(ref)) {
+          throw new ServiceError(
+            'INVALID_REQUEST',
+            `Invalid element reference '${ref}'. Expected e<revision>_<ordinal>, such as e1_0.`,
+            false,
+            { ref }
+          );
+        }
+        if (!page.lastObservation) {
+          throw new ServiceError(
+            'INVALID_REQUEST',
+            'Observe the page before acting: element refs are minted by observation.',
+            false
+          );
+        }
       }
-      if (!page.lastObservation) {
-        throw new ServiceError(
-          'INVALID_REQUEST',
-          'Observe the page before acting: element refs are minted by observation.',
-          false
-        );
+
+      await this.checkApproval(sessionId, page, request, span);
+
+      // The adapter projects the engine into service revision space: refs are
+      // translated before they reach the engine, and action effects come back
+      // stamped with the service's revision rather than the engine's counter.
+      // A fill value may be a vault reference: resolve it here, at the last
+      // moment, so only the engine ever sees the raw secret.
+      const actRequest: ServiceActRequest = { ...request };
+      if (
+        actRequest.action === 'fill' &&
+        actRequest.value !== undefined &&
+        this.secretManager.isReference(actRequest.value)
+      ) {
+        try {
+          actRequest.value = await this.secretManager.resolve(actRequest.value);
+        } catch (error) {
+          const secretError = error as { name?: string; code?: string; message?: string };
+          throw this.redactedError(
+            secretError?.name === 'SecretError' && secretError.code
+              ? new ServiceError(secretError.code, secretError.message ?? 'secret error', false)
+              : new ServiceError('INTERNAL', String(error))
+          );
+        }
       }
-    }
 
-    await this.checkApproval(sessionId, page, request);
-
-    // The adapter projects the engine into service revision space: refs are
-    // translated before they reach the engine, and action effects come back
-    // stamped with the service's revision rather than the engine's counter.
-    // A fill value may be a vault reference: resolve it here, at the last
-    // moment, so only the engine ever sees the raw secret.
-    const actRequest: ServiceActRequest = { ...request };
-    if (
-      actRequest.action === 'fill' &&
-      actRequest.value !== undefined &&
-      this.secretManager.isReference(actRequest.value)
-    ) {
-      try {
-        actRequest.value = await this.secretManager.resolve(actRequest.value);
-      } catch (error) {
-        const secretError = error as { name?: string; code?: string; message?: string };
-        throw this.redactedError(
-          secretError?.name === 'SecretError' && secretError.code
-            ? new ServiceError(secretError.code, secretError.message ?? 'secret error', false)
-            : new ServiceError('INTERNAL', String(error))
-        );
-      }
-    }
-
-    const adapter = new RefTranslatingPage(page.enginePage, page);
-    const result = await this.executor.execute(
-      {
-        pageId,
-        expectedRevision: actRequest.expectedRevision ?? page.revision,
-        action: this.toProtocolAction(actRequest),
-      },
-      {
-        enginePage: adapter,
-        observation: this.lastObservationOf(page),
-        currentRevision: page.revision,
-      }
-    );
-
-    if (result.error) {
-      throw this.redactedError(
-        new ServiceError(
-          result.error.code,
-          result.error.message,
-          result.error.retryable,
-          result.error.details
-        )
+      const adapter = new RefTranslatingPage(page.enginePage, page);
+      const result = await this.executor.execute(
+        {
+          pageId,
+          expectedRevision: actRequest.expectedRevision ?? page.revision,
+          action: this.toProtocolAction(actRequest),
+        },
+        {
+          enginePage: adapter,
+          observation: this.lastObservationOf(page),
+          currentRevision: page.revision,
+        }
       );
-    }
 
-    page.revision = result.newRevision;
+      if (result.error) {
+        throw this.redactedError(
+          new ServiceError(
+            result.error.code,
+            result.error.message,
+            result.error.retryable,
+            result.error.details
+          )
+        );
+      }
 
-    // A requested post-action observation goes through the service's own
-    // observe(), so its refs are minted, mapped and immediately actionable.
-    let observation: PageState | undefined;
-    if (request.observe === 'after') {
-      observation = await this.observe(sessionId, pageId, { mode: 'interactive' });
-    }
+      page.revision = result.newRevision;
 
-    return {
-      status: 'success',
-      actionId: result.actionId,
-      newRevision: result.newRevision,
-      observation,
-    };
+      // A requested post-action observation goes through the service's own
+      // observe(), so its refs are minted, mapped and immediately actionable.
+      let observation: PageState | undefined;
+      if (request.observe === 'after') {
+        observation = await this.observe(sessionId, pageId, { mode: 'interactive' });
+      }
+
+      return {
+        status: 'success',
+        actionId: result.actionId,
+        newRevision: result.newRevision,
+        observation,
+      };
+    });
   }
 
   // ---- downloads ----------------------------------------------------------
@@ -734,7 +795,8 @@ export class AgentBrowserService {
   private async checkApproval(
     sessionId: string,
     page: PageContext,
-    request: ServiceActRequest
+    request: ServiceActRequest,
+    span?: import('@agentbrowser/core').Span | undefined
   ): Promise<void> {
     const ref = request.target?.ref;
     if (ref === undefined || !page.lastObservation) {
@@ -764,6 +826,9 @@ export class AgentBrowserService {
       );
       if (valid) {
         await this.approvalGate.useApprovalToken(request.approvalToken);
+        if (span) {
+          this.tracer?.addEvent(span, 'approval.granted', { effect: risk, ref });
+        }
         return;
       }
       // Invalid, expired, burned or mismatched token: fall through to a fresh
@@ -771,6 +836,9 @@ export class AgentBrowserService {
     }
 
     const token = await this.approvalGate.generateApprovalToken(approvalRequest);
+    if (span) {
+      this.tracer?.addEvent(span, 'approval.required', { effect: risk, ref });
+    }
     throw new ServiceError(
       'APPROVAL_REQUIRED',
       `Action targets an element classified '${risk}' and needs an approval token.`,

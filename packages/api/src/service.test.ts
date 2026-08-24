@@ -9,7 +9,7 @@
  * contract implementation.
  */
 
-import { ArtifactStore, SecretManager } from '@agentbrowser/core';
+import { ArtifactStore, InMemoryTracer, SecretManager } from '@agentbrowser/core';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AgentBrowserService } from './service';
@@ -652,6 +652,99 @@ describe('AgentBrowserService', () => {
       expect(error?.code).toBe('POLICY_DENIED');
       expect(JSON.stringify(error?.details)).not.toContain(SECRET_VALUE);
       expect(error?.message).not.toContain(SECRET_VALUE);
+    });
+  });
+
+  describe('tracing (TD-020)', () => {
+    it('should trace session creation', async () => {
+      const tracer = new InMemoryTracer();
+      const traced = new AgentBrowserService({ engine: new FakeEngine(), tracer });
+
+      await traced.createSession({ tenantId: 't1' });
+
+      const spans = tracer.completedSpans();
+      expect(spans.some((s) => s.name === 'session.create')).toBe(true);
+    });
+
+    it('should trace navigation with a policy-check child span', async () => {
+      const tracer = new InMemoryTracer();
+      const traced = new AgentBrowserService({ engine: new FakeEngine(), tracer });
+      const sessionId = (await traced.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await traced.createPage(sessionId)).pageId;
+      tracer.completedSpans().length = 0; // focus on the navigation
+
+      await traced.navigate(sessionId, pageId, { url: 'https://example.com' });
+
+      const spans = tracer.completedSpans();
+      const nav = spans.find((s) => s.name === 'navigate');
+      const policyCheck = spans.find((s) => s.name === 'policy.check');
+
+      expect(nav).toBeDefined();
+      expect(policyCheck).toBeDefined();
+      expect(policyCheck?.parentId).toBe(nav?.spanId);
+      expect(policyCheck?.traceId).toBe(nav?.traceId);
+      expect(nav?.status).toBe('ok');
+    });
+
+    it('should mark denied navigation as an error span', async () => {
+      const tracer = new InMemoryTracer();
+      const traced = new AgentBrowserService({ engine: new FakeEngine(), tracer });
+      const sessionId = (await traced.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await traced.createPage(sessionId)).pageId;
+
+      await capture(() => traced.navigate(sessionId, pageId, { url: 'http://169.254.169.254/x' }));
+
+      const nav = tracer.completedSpans().find((s) => s.name === 'navigate');
+      expect(nav?.status).toBe('error');
+      expect(nav?.attributes.code).toBe('POLICY_DENIED');
+    });
+
+    it('should trace actions and record approval decisions', async () => {
+      const tracer = new InMemoryTracer();
+      const engine2 = new FakeEngine();
+      const traced = new AgentBrowserService({ engine: engine2, tracer });
+      const sessionId = (await traced.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await traced.createPage(sessionId)).pageId;
+      await traced.navigate(sessionId, pageId, { url: 'https://shop.example.com' });
+
+      const engineSessionIds = engine2.getSessionIds();
+      engine2
+        .getFakePage(engineSessionIds[engineSessionIds.length - 1]!, pageId)
+        ?.setElements([{ role: 'button', name: 'Pay now', risk: 'transaction' }]);
+
+      const observation = await traced.observe(sessionId, pageId, {});
+      await capture(() =>
+        traced.act(sessionId, pageId, {
+          action: 'click',
+          target: { ref: observation.elements[0]?.ref ?? 'e2_0' },
+        })
+      );
+
+      const act = tracer.completedSpans().find((s) => s.name === 'act');
+      expect(act).toBeDefined();
+      expect(act?.events.some((e) => e.name === 'approval.required')).toBe(true);
+      expect(act?.attributes.code).toBe('APPROVAL_REQUIRED');
+    });
+
+    it('should never put secret values in spans', async () => {
+      const tracer = new InMemoryTracer({
+        secretManager: new SecretManager({ 'vault://p': 'classified-value' }),
+      });
+      const traced = new AgentBrowserService({
+        engine: new FakeEngine(),
+        tracer,
+        secretManager: new SecretManager({ 'vault://p': 'classified-value' }),
+      });
+      const sessionId = (await traced.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await traced.createPage(sessionId)).pageId;
+
+      await capture(() =>
+        traced.navigate(sessionId, pageId, {
+          url: 'http://169.254.169.254/x?token=classified-value',
+        })
+      );
+
+      expect(JSON.stringify(tracer.completedSpans())).not.toContain('classified-value');
     });
   });
 
