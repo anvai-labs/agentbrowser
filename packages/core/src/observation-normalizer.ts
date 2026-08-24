@@ -5,8 +5,13 @@
  * with proper element reference management, revision tracking, and semantic prioritization.
  */
 
-import type { RawPageState, RawElement } from '@agentbrowser/engine';
-import type { ObservationRequest, ObservationMode, PageElement, PageState } from '@agentbrowser/protocol';
+import type { RawElement, RawPageState } from '@agentbrowser/engine';
+import type {
+  ObservationMode,
+  ObservationRequest,
+  PageElement,
+  PageState,
+} from '@agentbrowser/protocol';
 
 const INTERACTIVE_ROLES = new Set<string>([
   'button',
@@ -90,7 +95,11 @@ export class ObservationNormalizer {
   /**
    * Process elements based on observation mode
    */
-  private processElements(rawElements: RawElement[], mode: ObservationMode, revision: number): PageElement[] {
+  private processElements(
+    rawElements: RawElement[],
+    mode: ObservationMode,
+    revision: number
+  ): PageElement[] {
     return rawElements.map((rawEl, index) => {
       const element: PageElement = {
         ref: this.generateRef(revision, index),

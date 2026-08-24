@@ -49,9 +49,7 @@ export class SecretManager {
     }
 
     // Escape special regex characters in secrets
-    const escaped = this.sortedValues.map((s) =>
-      s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    );
+    const escaped = this.sortedValues.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
     const pattern = escaped.join('|');
     this.redactionPattern = new RegExp(pattern, 'g');
   }

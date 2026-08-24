@@ -19,6 +19,7 @@ import {
   ObservationNormalizer,
   SecretManager,
   SessionCoordinator,
+  SessionState,
 } from '@agentbrowser/core';
 import type { ArtifactMetadata } from '@agentbrowser/core';
 import type { InMemoryTracer, Span } from '@agentbrowser/core';
@@ -184,6 +185,8 @@ export class AgentBrowserService {
   >();
   private readonly pages = new Map<string, PageContext>();
   private pageCounter = 0;
+  /** Audit log of sessions terminated by engine crashes (TD-024). */
+  private readonly crashLog: Array<{ sessionId: string; reason: string; timestamp: string }> = [];
 
   constructor(deps: ServiceDependencies) {
     this.engine = deps.engine;
@@ -271,6 +274,39 @@ export class AgentBrowserService {
         this.logger.info(operation, fields);
       }
     }
+  }
+
+  /** Error messages that indicate the engine itself died. */
+  private static readonly CRASH_PATTERN =
+    /crash|browser (has been )?closed|browser.*disconnect|target (page|context).*closed|context.*closed/i;
+
+  private isCrash(message: string): boolean {
+    return AgentBrowserService.CRASH_PATTERN.test(message);
+  }
+
+  /**
+   * Terminate a session after an engine crash: drop its pages, remove it
+   * from tracking, close the engine session best-effort, and record the
+   * event for the cleanup audit.
+   */
+  private async recoverFromCrash(sessionId: string, reason: string): Promise<void> {
+    for (const [pageId, page] of this.pages) {
+      if (page.sessionId === sessionId) {
+        this.pages.delete(pageId);
+      }
+    }
+    this.sessionDownloadPolicy.delete(sessionId);
+    await this.coordinator.terminate(sessionId, SessionState.ENGINE_CRASHED, reason).catch(() => {
+      // The session may already be gone; the audit entry stands.
+    });
+    this.metrics?.incrementCounter('sessions_crashed_total');
+    this.logger?.error('session.crashed', { sessionId, reason });
+    this.crashLog.push({ sessionId, reason, timestamp: new Date().toISOString() });
+  }
+
+  /** Crash audit: which sessions died, why, and when. */
+  getCrashLog(): ReadonlyArray<{ sessionId: string; reason: string; timestamp: string }> {
+    return this.crashLog;
   }
 
   // ---- sessions -----------------------------------------------------------
@@ -435,10 +471,24 @@ export class AgentBrowserService {
         throw this.mapError(error);
       }
 
-      const result = await page.enginePage.navigate({
-        url,
-        ...(request.waitUntil !== undefined ? { waitUntil: request.waitUntil } : {}),
-      });
+      let result: Awaited<ReturnType<EnginePage['navigate']>>;
+      try {
+        result = await page.enginePage.navigate({
+          url,
+          ...(request.waitUntil !== undefined ? { waitUntil: request.waitUntil } : {}),
+        });
+      } catch (error) {
+        if (this.isCrash(error instanceof Error ? error.message : String(error))) {
+          await this.recoverFromCrash(sessionId, 'navigate: engine crashed');
+          throw new ServiceError(
+            'ENGINE_CRASHED',
+            'The browser engine crashed; the session has been terminated.',
+            false,
+            { sessionId }
+          );
+        }
+        throw error;
+      }
       page.revision += 1;
       page.lastObservation = undefined;
 
@@ -461,7 +511,21 @@ export class AgentBrowserService {
     const observationRequest: ObservationRequest = {
       ...(request.mode !== undefined ? { mode: request.mode } : {}),
     };
-    const raw = await page.enginePage.observe(observationRequest);
+    let raw: Awaited<ReturnType<EnginePage['observe']>>;
+    try {
+      raw = await page.enginePage.observe(observationRequest);
+    } catch (error) {
+      if (this.isCrash(error instanceof Error ? error.message : String(error))) {
+        await this.recoverFromCrash(sessionId, 'observe: engine crashed');
+        throw new ServiceError(
+          'ENGINE_CRASHED',
+          'The browser engine crashed; the session has been terminated.',
+          false,
+          { sessionId }
+        );
+      }
+      throw error;
+    }
 
     const observation = this.normalizer.normalize(raw, {
       ...(request.mode !== undefined ? { mode: request.mode } : {}),
@@ -680,6 +744,19 @@ export class AgentBrowserService {
       );
 
       if (result.error) {
+        // A crash inside the executor surfaces as an INTERNAL whose message
+        // names the crash; recover before rethrowing the typed error.
+        if (result.error.code === 'INTERNAL' && this.isCrash(result.error.message)) {
+          await this.recoverFromCrash(sessionId, 'act: engine crashed');
+          throw this.redactedError(
+            new ServiceError(
+              'ENGINE_CRASHED',
+              'The browser engine crashed; the session has been terminated.',
+              false,
+              { sessionId }
+            )
+          );
+        }
         throw this.redactedError(
           new ServiceError(
             result.error.code,

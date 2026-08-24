@@ -106,9 +106,7 @@ export class MetricsRegistry {
       const labels = renderLabels(entry.labels);
 
       for (const q of QUANTILES) {
-        const qLabels = labels
-          ? `${labels.slice(0, -1)},quantile="${q}"}`
-          : `{quantile="${q}"}`;
+        const qLabels = labels ? `${labels.slice(0, -1)},quantile="${q}"}` : `{quantile="${q}"}`;
         lines.push(`${entry.name}${qLabels} ${percentile(sorted, q)}`);
       }
       lines.push(`${entry.name}_count${labels} ${sorted.length}`);

@@ -182,6 +182,19 @@ class FakePage implements EnginePage {
   private elements: FakeElement[] = [];
   private elementByRef = new Map<string, FakeElement>();
   private closed = false;
+  private crashed = false;
+
+  /** Test hook: simulate a renderer crash. All subsequent ops throw. */
+  crash(): void {
+    this.crashed = true;
+  }
+
+  /** Throws when the page has crashed or been closed by the engine. */
+  private assertNotDead(): void {
+    if (this.crashed) {
+      throw new Error('Page crashed');
+    }
+  }
 
   constructor(id: string, sessionOptions: EngineSessionOptions, pageOptions?: NewPageOptions) {
     this.id = id;
@@ -190,6 +203,7 @@ class FakePage implements EnginePage {
   }
 
   async navigate(request: NavigationRequest): Promise<NavigationResult> {
+    this.assertNotDead();
     if (this.closed) {
       throw new Error('Page is closed');
     }
@@ -213,6 +227,7 @@ class FakePage implements EnginePage {
   }
 
   async observe(request: ObservationRequest): Promise<RawPageState> {
+    this.assertNotDead();
     if (this.closed) {
       throw new Error('Page is closed');
     }
@@ -263,6 +278,7 @@ class FakePage implements EnginePage {
   }
 
   async resolve(target: EngineTarget): Promise<any> {
+    this.assertNotDead();
     if (this.closed) {
       throw new Error('Page is closed');
     }
@@ -301,6 +317,7 @@ class FakePage implements EnginePage {
   }
 
   async act(action: EngineAction): Promise<ActionEffect> {
+    this.assertNotDead();
     if (this.closed) {
       throw new Error('Page is closed');
     }
@@ -480,6 +497,12 @@ interface FakeElement {
   visible: boolean;
   enabled: boolean;
   focused: boolean;
-  risk?: 'read' | 'write-local' | 'external-message' | 'transaction' | 'account-security' | 'destructive';
+  risk?:
+    | 'read'
+    | 'write-local'
+    | 'external-message'
+    | 'transaction'
+    | 'account-security'
+    | 'destructive';
   attributes: Record<string, string>;
 }

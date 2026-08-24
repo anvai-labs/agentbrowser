@@ -104,9 +104,7 @@ export class InMemoryTracer {
   failSpan(span: Span, code: string, message: string): void {
     span.status = 'error';
     span.attributes.code = code;
-    span.attributes.error = this.secretManager
-      ? this.secretManager.redact(message)
-      : message;
+    span.attributes.error = this.secretManager ? this.secretManager.redact(message) : message;
   }
 
   /** Completed, redacted spans in completion order. */

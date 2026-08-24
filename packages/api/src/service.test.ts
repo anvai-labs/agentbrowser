@@ -938,6 +938,78 @@ describe('AgentBrowserService', () => {
     });
   });
 
+  describe('crash recovery (TD-024)', () => {
+    const crashSetup = async () => {
+      const engine2 = new FakeEngine();
+      const service2 = new AgentBrowserService({ engine: engine2 });
+      const sessionId = (await service2.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await service2.createPage(sessionId)).pageId;
+      await service2.navigate(sessionId, pageId, { url: 'https://example.com' });
+      const ids = engine2.getSessionIds();
+      return { engine2, service2, sessionId, pageId, ids };
+    };
+
+    it('should surface a typed ENGINE_CRASHED error when the page dies', async () => {
+      const { engine2, service2, sessionId, pageId, ids } = await crashSetup();
+
+      engine2.getFakePage(ids[ids.length - 1]!, pageId)?.crash();
+
+      const error = await capture(() => service2.observe(sessionId, pageId, {}));
+      expect(error?.code).toBe('ENGINE_CRASHED');
+      expect(error?.retryable).toBe(false);
+    });
+
+    it('should terminate the affected session', async () => {
+      const { engine2, service2, sessionId, pageId, ids } = await crashSetup();
+
+      engine2.getFakePage(ids[ids.length - 1]!, pageId)?.crash();
+      await capture(() => service2.observe(sessionId, pageId, {}));
+
+      expect(service2.getSession(sessionId)).toBeUndefined();
+      expect(service2.listSessions()).toHaveLength(0);
+    });
+
+    it('should record crashes in the audit log', async () => {
+      const { engine2, service2, sessionId, pageId, ids } = await crashSetup();
+
+      engine2.getFakePage(ids[ids.length - 1]!, pageId)?.crash();
+      await capture(() => service2.navigate(sessionId, pageId, { url: 'https://x.example.com' }));
+
+      const log = service2.getCrashLog();
+      expect(log).toHaveLength(1);
+      expect(log[0]).toMatchObject({ sessionId });
+      expect(typeof log[0]?.timestamp).toBe('string');
+    });
+
+    it('should map an act on a crashed page to ENGINE_CRASHED', async () => {
+      const { engine2, service2, sessionId, pageId, ids } = await crashSetup();
+      const observation = await service2.observe(sessionId, pageId, {});
+      const ref = observation.elements[0]?.ref ?? 'e2_0';
+
+      engine2.getFakePage(ids[ids.length - 1]!, pageId)?.crash();
+
+      const error = await capture(() =>
+        service2.act(sessionId, pageId, { action: 'click', target: { ref } })
+      );
+      expect(error?.code).toBe('ENGINE_CRASHED');
+      expect(service2.getSession(sessionId)).toBeUndefined();
+    });
+
+    it('should count crashed sessions in metrics', async () => {
+      const metrics = new MetricsRegistry();
+      const engine2 = new FakeEngine();
+      const service2 = new AgentBrowserService({ engine: engine2, metrics });
+      const sessionId = (await service2.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await service2.createPage(sessionId)).pageId;
+      const ids = engine2.getSessionIds();
+
+      engine2.getFakePage(ids[ids.length - 1]!, pageId)?.crash();
+      await capture(() => service2.observe(sessionId, pageId, {}));
+
+      expect(metrics.render()).toContain('sessions_crashed_total 1');
+    });
+  });
+
   describe('screenshots', () => {
     it('should capture an artifact from the engine', async () => {
       const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;

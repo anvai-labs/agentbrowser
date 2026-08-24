@@ -6,8 +6,8 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { SecretManager } from './secret-manager';
 import { StructuredLogger } from './logger';
+import { SecretManager } from './secret-manager';
 
 /** Collect log lines instead of writing to the console. */
 function collectingLogger(options: ConstructorParameters<typeof StructuredLogger>[0] = {}) {
