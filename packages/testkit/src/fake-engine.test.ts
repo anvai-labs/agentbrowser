@@ -266,11 +266,26 @@ describe('FakeEngine', () => {
       const before = await page.observe({ mode: 'interactive' });
       const textbox = before.elements.find((el) => el.role === 'textbox');
 
-      await page.act({ type: 'fill', target: { ref: textbox!.ref }, value: 'filled@example.com' });
+      await page.act({ type: 'fill', target: { ref: textbox?.ref }, value: 'filled@example.com' });
 
       const after = await page.observe({ mode: 'interactive' });
       const filled = after.elements.find((el) => el.role === 'textbox');
       expect(filled?.value).toBe('filled@example.com');
+    });
+
+    it('should simulate a page crash', async () => {
+      const engine2 = new FakeEngine();
+      const session = await engine2.createSession({});
+      const page = await session.newPage();
+      await page.navigate({ url: 'https://example.com' });
+
+      const fakePage = engine2.getFakePage(session.id, page.id);
+      fakePage?.crash();
+
+      await expect(page.observe({ mode: 'interactive' })).rejects.toThrow(/crashed/i);
+      await expect(page.act({ type: 'click', target: { ref: 'e1_1' } })).rejects.toThrow(
+        /crashed/i
+      );
     });
 
     it('should allow tests to inject elements with risk metadata', async () => {
@@ -281,7 +296,7 @@ describe('FakeEngine', () => {
       const fakePage = engine2.getFakePage(session.id, page.id);
       expect(fakePage).toBeDefined();
 
-      fakePage!.setElements([
+      fakePage?.setElements([
         {
           ref: `e${1}_0`,
           role: 'button',

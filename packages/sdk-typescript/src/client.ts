@@ -342,7 +342,7 @@ export class AgentBrowserClient {
    * Set default headers for all requests
    */
   setHeaders(headers: Record<string, string>): void {
-    this.customHeaders = { ...this.customHeaders, ...headers };
+    Object.assign(this.customHeaders, headers);
   }
 
   /**

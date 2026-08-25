@@ -6,6 +6,7 @@
  */
 
 import { Static, Type } from '@sinclair/typebox';
+import { Value } from '@sinclair/typebox/value';
 
 // Re-export all types for convenience
 export * from './types.js';
@@ -421,19 +422,13 @@ export function validate<T extends object>(
   value: unknown
 ): { success: boolean; errors?: string[] } {
   try {
-    // Import TypeBox types for validation
-    const { Value } = require('@sinclair/typebox/value');
-
-    // Cast schema to proper TypeBox schema type
-    const schemaObj = schema as { type: string };
-
     // Check if value matches schema
-    const isValid = Value.Check(schemaObj, value);
+    const isValid = Value.Check(schema as any, value);
 
     if (!isValid) {
       // Collect validation errors
       const errors: string[] = [];
-      const errorsAny = Value.Errors(schemaObj, value);
+      const errorsAny = Value.Errors(schema as any, value);
 
       for (const error of errorsAny) {
         errors.push(`${error.path}/${error.message}`);
@@ -458,6 +453,9 @@ export function validate<T extends object>(
  * Check if value matches schema type
  */
 export function isValid(schema: object, value: unknown): boolean {
-  const result = validate(schema, value);
-  return result.success;
+  try {
+    return Value.Check(schema as any, value);
+  } catch {
+    return false;
+  }
 }

@@ -6,8 +6,8 @@
  * retention window, and oversize payloads are refused rather than truncated.
  */
 
-import { describe, expect, it, beforeEach } from 'vitest';
-import { ArtifactStore, ArtifactError } from './artifact-store';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { ArtifactError, ArtifactStore } from './artifact-store';
 
 describe('ArtifactStore', () => {
   let clock: { now: number };

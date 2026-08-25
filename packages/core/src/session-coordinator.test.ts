@@ -375,6 +375,39 @@ describe('SessionCoordinator', () => {
     });
   });
 
+  describe('crash termination', () => {
+    it('should terminate a session as ENGINE_CRASHED and release tracking', async () => {
+      const engine = new MockEngine();
+      const coordinator = new SessionCoordinator({ cleanupCheckIntervalMs: 3_600_000 });
+      const created = await coordinator.create({ engine: 'auto', headless: true }, engine);
+
+      await coordinator.terminate(created.sessionId, SessionState.ENGINE_CRASHED, 'page crashed');
+
+      expect(coordinator.get(created.sessionId)).toBeUndefined();
+      expect(coordinator.getAllSessions()).toHaveLength(0);
+    });
+
+    it('should close the engine session best-effort on termination', async () => {
+      const engine = new MockEngine();
+      const coordinator = new SessionCoordinator({ cleanupCheckIntervalMs: 3_600_000 });
+      const created = await coordinator.create({ engine: 'auto', headless: true }, engine);
+
+      const context = coordinator.get(created.sessionId);
+      const engineSession = context?.engineSession as MockEngineSession;
+
+      await coordinator.terminate(created.sessionId, SessionState.ENGINE_CRASHED, 'crash');
+
+      expect(engineSession.closed).toBe(true);
+    });
+
+    it('should reject terminating an unknown session', async () => {
+      const coordinator = new SessionCoordinator({ cleanupCheckIntervalMs: 3_600_000 });
+      await expect(
+        coordinator.terminate('ses_missing', SessionState.ENGINE_CRASHED, 'x')
+      ).rejects.toThrow('SESSION_NOT_FOUND');
+    });
+  });
+
   describe('cleanup', () => {
     it('should shutdown all sessions', async () => {
       const request: SessionRequest = { engine: 'mock-engine' };

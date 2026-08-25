@@ -4,11 +4,17 @@
  * variables or the ServerOptions defaults (3000 on 0.0.0.0).
  */
 
+import { MetricsRegistry, StructuredLogger } from '@agentbrowser/core';
 import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
 import { startServer } from './server.js';
 
 const engine = new PlaywrightChromiumEngine();
-const server = await startServer({ engine });
+const metrics = new MetricsRegistry();
+const logger = new StructuredLogger({
+  level: process.env.AGENTBROWSER_LOG_LEVEL === 'debug' ? 'debug' : 'info',
+});
+
+const server = await startServer({ engine, metrics });
 
 // Ensure the browser process goes down with the server.
 const shutdown = async () => {

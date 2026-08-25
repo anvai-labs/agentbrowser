@@ -36,6 +36,46 @@ Full workspace build and test run, verified end-to-end:
   downloads denied by default, enabled per session with a byte cap;
   artifacts retrievable scoped to their session.
 
+## Phase 3 status (started 2026-08-24)
+
+- TD-020 Tracing ✅ InMemoryTracer (core): OTel-shaped spans, parent
+  links, events, error status, W3C-shaped ids; spans scrubbed by the
+  SecretManager so telemetry cannot leak secrets. Service instruments
+  session.create, navigate (with policy.check child), act (with
+  approval.required/granted events), download, observe; failures carry
+  the protocol code.
+- Branching: develop + main workflow (CI runs both); fixes land on
+  develop. main tracks the last stable merge point.
+
+- TD-021 Metrics + structured logging ✅ MetricsRegistry (Prometheus
+  text exposition: counters, gauges, p50/p95/p99 summaries) and
+  StructuredLogger (JSON lines, child contexts, secret-scrubbed);
+  service instruments every operation via the traced() seam;
+  GET /metrics exposes the registry.
+- TD-023 Health endpoints ✅ /health/live (liveness), /health/ready
+  (readiness probes the engine; 503 ENGINE_CRASHED when down);
+  /health kept for compatibility. Worker-pool scaling is out of scope
+  for the single-process MVP.
+- TD-024 Crash recovery ✅ coordinator.terminate; FakeEngine page.crash()
+  test hook; service detects crash-pattern engine failures, terminates
+  the affected session, returns typed ENGINE_CRASHED, counts
+  sessions_crashed_total, and appends to a crash audit log.
+- TD-022 Docker hardening ✅ multi-stage build (pnpm deploy --prod) on
+  the Playwright runtime base, non-root pwuser, HEALTHCHECK, verified
+  read-only with tmpfs /tmp - locally and in a new CI Docker job that
+  runs the read-only smoke test. The deploy surfaced and fixed a dev
+  dependency leak (FakeEngine fallback now lazily imported).
+
+- TD-025 Benchmarks ✅ packages/benchmarks: latency harness against the
+  spec targets (service dispatch overhead via FakeEngine), 50
+  deterministic agent tasks across ten spec categories - all 50 pass,
+  the 45/50 MVP gate now fails CI on regression - and a 1000-cycle churn
+  soak with a clean cleanup audit (zero leaked sessions/engine
+  sessions/crashes, 13MB RSS growth). CI runs the suite as a release
+  gate; baseline in docs/benchmarks.md.
+
+**Phase 3 complete.** All roadmap tasks (TD-001..TD-026) are done.
+
 Remaining Phase 2 exit criteria: the 45/50 benchmark suite (deferred with
 Phase 3 benchmarks, TD-025).
 

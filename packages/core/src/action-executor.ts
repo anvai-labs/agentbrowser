@@ -34,9 +34,15 @@ export interface ExecutionContext {
 }
 
 /** Actions the MVP executor knows how to run. */
-const SUPPORTED_ACTION_TYPES = ['click', 'fill', 'select', 'scroll', 'press'] as const;
+const SUPPORTED_ACTION_TYPES = new Set<SupportedActionType>([
+  'click',
+  'fill',
+  'select',
+  'scroll',
+  'press',
+]);
 
-type SupportedActionType = (typeof SUPPORTED_ACTION_TYPES)[number];
+type SupportedActionType = 'click' | 'fill' | 'select' | 'scroll' | 'press';
 
 const REF_PATTERN = /^e(\d+)_(\d+)$/;
 
@@ -321,7 +327,7 @@ function targetOf(action: SupportedAction): ElementTarget | undefined {
 }
 
 function isSupportedActionType(type: string): type is SupportedActionType {
-  return (SUPPORTED_ACTION_TYPES as readonly string[]).includes(type);
+  return SUPPORTED_ACTION_TYPES.has(type as SupportedActionType);
 }
 
 /**

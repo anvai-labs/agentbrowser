@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { SecretManager, SecretError } from './secret-manager';
+import { SecretError, SecretManager } from './secret-manager';
 
 describe('SecretManager', () => {
   describe('reference resolution', () => {
@@ -28,9 +28,7 @@ describe('SecretManager', () => {
         'vault://tenant/login/token': 'tok_abc123',
       });
 
-      await expect(manager.resolve('vault://tenant/login/user')).resolves.toBe(
-        'agent@example.com'
-      );
+      await expect(manager.resolve('vault://tenant/login/user')).resolves.toBe('agent@example.com');
       await expect(manager.resolve('vault://tenant/login/token')).resolves.toBe('tok_abc123');
     });
 

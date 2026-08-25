@@ -25,12 +25,33 @@ export class SecretManager {
   private readonly secrets: Map<string, string>;
   /** Values sorted longest-first so overlapping secrets redact fully. */
   private sortedValues: string[] = [];
+  /** Precompiled regex pattern for efficient redaction. */
+  private redactionPattern: RegExp | null = null;
+  /** Cache of already-redacted strings to avoid repeated work. */
+  private redactionCache = new Map<string, string>();
 
   constructor(secrets: Record<string, string> = {}) {
     this.secrets = new Map(Object.entries(secrets));
     this.sortedValues = [...this.secrets.values()]
       .filter((value) => value.length > 0)
       .sort((a, b) => b.length - a.length);
+    this.buildRedactionPattern();
+  }
+
+  /**
+   * Build a precompiled regex pattern for all secrets.
+   * Special regex characters are properly escaped.
+   */
+  private buildRedactionPattern(): void {
+    if (this.sortedValues.length === 0) {
+      this.redactionPattern = null;
+      return;
+    }
+
+    // Escape special regex characters in secrets
+    const escaped = this.sortedValues.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    const pattern = escaped.join('|');
+    this.redactionPattern = new RegExp(pattern, 'g');
   }
 
   /** Whether a value looks like a secret reference. */
@@ -93,12 +114,19 @@ export class SecretManager {
   }
 
   private redactString(text: string): string {
-    let safe = text;
-    for (const secret of this.sortedValues) {
-      if (safe.includes(secret)) {
-        safe = safe.split(secret).join(REDACTED);
-      }
+    // Return cached result if available
+    if (this.redactionCache.has(text)) {
+      return this.redactionCache.get(text)!;
     }
-    return safe;
+
+    // If no pattern, return as-is
+    if (!this.redactionPattern) {
+      return text;
+    }
+
+    // Apply regex replacement
+    const redacted = text.replace(this.redactionPattern, REDACTED);
+    this.redactionCache.set(text, redacted);
+    return redacted;
   }
 }

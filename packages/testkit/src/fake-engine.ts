@@ -180,7 +180,21 @@ class FakePage implements EnginePage {
   private pageStatus: 'loading' | 'interactive' | 'complete' = 'loading';
   private revision = 1;
   private elements: FakeElement[] = [];
+  private elementByRef = new Map<string, FakeElement>();
   private closed = false;
+  private crashed = false;
+
+  /** Test hook: simulate a renderer crash. All subsequent ops throw. */
+  crash(): void {
+    this.crashed = true;
+  }
+
+  /** Throws when the page has crashed or been closed by the engine. */
+  private assertNotDead(): void {
+    if (this.crashed) {
+      throw new Error('Page crashed');
+    }
+  }
 
   constructor(id: string, sessionOptions: EngineSessionOptions, pageOptions?: NewPageOptions) {
     this.id = id;
@@ -189,6 +203,7 @@ class FakePage implements EnginePage {
   }
 
   async navigate(request: NavigationRequest): Promise<NavigationResult> {
+    this.assertNotDead();
     if (this.closed) {
       throw new Error('Page is closed');
     }
@@ -212,6 +227,7 @@ class FakePage implements EnginePage {
   }
 
   async observe(request: ObservationRequest): Promise<RawPageState> {
+    this.assertNotDead();
     if (this.closed) {
       throw new Error('Page is closed');
     }
@@ -262,12 +278,13 @@ class FakePage implements EnginePage {
   }
 
   async resolve(target: EngineTarget): Promise<any> {
+    this.assertNotDead();
     if (this.closed) {
       throw new Error('Page is closed');
     }
 
-    // Find element by ref
-    const element = this.elements.find((el) => el.ref === target.ref);
+    // Find element by ref using Map for O(1) lookup
+    const element = this.elementByRef.get(target.ref);
     if (!element) {
       throw new Error('Element not found');
     }
@@ -300,6 +317,7 @@ class FakePage implements EnginePage {
   }
 
   async act(action: EngineAction): Promise<ActionEffect> {
+    this.assertNotDead();
     if (this.closed) {
       throw new Error('Page is closed');
     }
@@ -317,7 +335,7 @@ class FakePage implements EnginePage {
         // A real page keeps the typed value; so does the fake.
         const target = action.target as EngineTarget | undefined;
         if (target) {
-          const element = this.elements.find((el) => el.ref === target.ref);
+          const element = this.elementByRef.get(target.ref);
           if (element && typeof action.value === 'string') {
             element.value = action.value;
           }
@@ -328,7 +346,7 @@ class FakePage implements EnginePage {
       case 'select': {
         const target = action.target as EngineTarget | undefined;
         if (target) {
-          const element = this.elements.find((el) => el.ref === target.ref);
+          const element = this.elementByRef.get(target.ref);
           const values = action.values as string[] | undefined;
           if (element && values && values[0] !== undefined) {
             element.value = values[0];
@@ -411,6 +429,12 @@ class FakePage implements EnginePage {
       elements.push(element);
     }
 
+    // Update the ref->element Map index
+    this.elementByRef.clear();
+    for (const element of elements) {
+      this.elementByRef.set(element.ref, element);
+    }
+
     return elements;
   }
 
@@ -448,6 +472,16 @@ class FakePage implements EnginePage {
       ...(el.risk !== undefined ? { risk: el.risk } : {}),
       attributes: el.attributes ?? {},
     }));
+    // Keep the ref index in sync: resolve() and act() read the Map.
+    this.syncElementIndex();
+  }
+
+  /** Rebuild the ref->element index after this.elements is replaced. */
+  private syncElementIndex(): void {
+    this.elementByRef.clear();
+    for (const element of this.elements) {
+      this.elementByRef.set(element.ref, element);
+    }
   }
 }
 
@@ -463,6 +497,12 @@ interface FakeElement {
   visible: boolean;
   enabled: boolean;
   focused: boolean;
-  risk?: 'read' | 'write-local' | 'external-message' | 'transaction' | 'account-security' | 'destructive';
+  risk?:
+    | 'read'
+    | 'write-local'
+    | 'external-message'
+    | 'transaction'
+    | 'account-security'
+    | 'destructive';
   attributes: Record<string, string>;
 }

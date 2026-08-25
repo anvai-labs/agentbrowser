@@ -9,7 +9,13 @@
  * contract implementation.
  */
 
-import { ArtifactStore, SecretManager } from '@agentbrowser/core';
+import {
+  ArtifactStore,
+  InMemoryTracer,
+  MetricsRegistry,
+  SecretManager,
+  StructuredLogger,
+} from '@agentbrowser/core';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AgentBrowserService } from './service';
@@ -655,6 +661,168 @@ describe('AgentBrowserService', () => {
     });
   });
 
+  describe('tracing (TD-020)', () => {
+    it('should trace session creation', async () => {
+      const tracer = new InMemoryTracer();
+      const traced = new AgentBrowserService({ engine: new FakeEngine(), tracer });
+
+      await traced.createSession({ tenantId: 't1' });
+
+      const spans = tracer.completedSpans();
+      expect(spans.some((s) => s.name === 'session.create')).toBe(true);
+    });
+
+    it('should trace navigation with a policy-check child span', async () => {
+      const tracer = new InMemoryTracer();
+      const traced = new AgentBrowserService({ engine: new FakeEngine(), tracer });
+      const sessionId = (await traced.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await traced.createPage(sessionId)).pageId;
+      tracer.completedSpans().length = 0; // focus on the navigation
+
+      await traced.navigate(sessionId, pageId, { url: 'https://example.com' });
+
+      const spans = tracer.completedSpans();
+      const nav = spans.find((s) => s.name === 'navigate');
+      const policyCheck = spans.find((s) => s.name === 'policy.check');
+
+      expect(nav).toBeDefined();
+      expect(policyCheck).toBeDefined();
+      expect(policyCheck?.parentId).toBe(nav?.spanId);
+      expect(policyCheck?.traceId).toBe(nav?.traceId);
+      expect(nav?.status).toBe('ok');
+    });
+
+    it('should mark denied navigation as an error span', async () => {
+      const tracer = new InMemoryTracer();
+      const traced = new AgentBrowserService({ engine: new FakeEngine(), tracer });
+      const sessionId = (await traced.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await traced.createPage(sessionId)).pageId;
+
+      await capture(() => traced.navigate(sessionId, pageId, { url: 'http://169.254.169.254/x' }));
+
+      const nav = tracer.completedSpans().find((s) => s.name === 'navigate');
+      expect(nav?.status).toBe('error');
+      expect(nav?.attributes.code).toBe('POLICY_DENIED');
+    });
+
+    it('should trace actions and record approval decisions', async () => {
+      const tracer = new InMemoryTracer();
+      const engine2 = new FakeEngine();
+      const traced = new AgentBrowserService({ engine: engine2, tracer });
+      const sessionId = (await traced.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await traced.createPage(sessionId)).pageId;
+      await traced.navigate(sessionId, pageId, { url: 'https://shop.example.com' });
+
+      const engineSessionIds = engine2.getSessionIds();
+      engine2
+        .getFakePage(engineSessionIds[engineSessionIds.length - 1]!, pageId)
+        ?.setElements([{ role: 'button', name: 'Pay now', risk: 'transaction' }]);
+
+      const observation = await traced.observe(sessionId, pageId, {});
+      await capture(() =>
+        traced.act(sessionId, pageId, {
+          action: 'click',
+          target: { ref: observation.elements[0]?.ref ?? 'e2_0' },
+        })
+      );
+
+      const act = tracer.completedSpans().find((s) => s.name === 'act');
+      expect(act).toBeDefined();
+      expect(act?.events.some((e) => e.name === 'approval.required')).toBe(true);
+      expect(act?.attributes.code).toBe('APPROVAL_REQUIRED');
+    });
+
+    it('should never put secret values in spans', async () => {
+      const tracer = new InMemoryTracer({
+        secretManager: new SecretManager({ 'vault://p': 'classified-value' }),
+      });
+      const traced = new AgentBrowserService({
+        engine: new FakeEngine(),
+        tracer,
+        secretManager: new SecretManager({ 'vault://p': 'classified-value' }),
+      });
+      const sessionId = (await traced.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await traced.createPage(sessionId)).pageId;
+
+      await capture(() =>
+        traced.navigate(sessionId, pageId, {
+          url: 'http://169.254.169.254/x?token=classified-value',
+        })
+      );
+
+      expect(JSON.stringify(tracer.completedSpans())).not.toContain('classified-value');
+    });
+  });
+
+  describe('metrics and logging (TD-021)', () => {
+    it('should record operation counters and latency percentiles', async () => {
+      const metrics = new MetricsRegistry();
+      const measured = new AgentBrowserService({ engine: new FakeEngine(), metrics });
+      const sessionId = (await measured.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await measured.createPage(sessionId)).pageId;
+
+      await measured.navigate(sessionId, pageId, { url: 'https://example.com' });
+      await measured.navigate(sessionId, pageId, { url: 'https://other.example.com' });
+
+      const rendered = metrics.render();
+      expect(rendered).toContain('operations_total{operation="navigate",outcome="ok"} 2');
+      expect(rendered).toContain('# TYPE operation_duration_ms summary');
+      expect(rendered).toContain('operation_duration_ms_count{operation="navigate"} 2');
+    });
+
+    it('should record failures with their error code', async () => {
+      const metrics = new MetricsRegistry();
+      const measured = new AgentBrowserService({ engine: new FakeEngine(), metrics });
+      const sessionId = (await measured.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await measured.createPage(sessionId)).pageId;
+
+      await capture(() => measured.navigate(sessionId, pageId, { url: 'http://localhost/admin' }));
+
+      const rendered = metrics.render();
+      expect(rendered).toContain('operations_total{operation="navigate",outcome="error"} 1');
+      expect(rendered).toContain('errors_total{code="POLICY_DENIED"} 1');
+    });
+
+    it('should track the active-session gauge', async () => {
+      const metrics = new MetricsRegistry();
+      const measured = new AgentBrowserService({ engine: new FakeEngine(), metrics });
+
+      const sessionId = (await measured.createSession({ tenantId: 't1' })).sessionId;
+      expect(metrics.render()).toContain('sessions_active 1');
+
+      await measured.closeSession(sessionId);
+      const rendered = metrics.render();
+      expect(rendered).toContain('sessions_active 0');
+      expect(rendered).toContain('sessions_created_total 1');
+      expect(rendered).toContain('sessions_closed_total 1');
+    });
+
+    it('should log operations as structured entries, redacting secrets', async () => {
+      const lines: string[] = [];
+      const secret = 'classified-value';
+      const logger = new StructuredLogger({
+        sink: (line: string) => lines.push(line),
+        secretManager: new SecretManager({ 'vault://p': secret }),
+      });
+      const logged = new AgentBrowserService({
+        engine: new FakeEngine(),
+        logger,
+        secretManager: new SecretManager({ 'vault://p': secret }),
+      });
+      const sessionId = (await logged.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await logged.createPage(sessionId)).pageId;
+
+      await capture(() =>
+        logged.navigate(sessionId, pageId, { url: `http://169.254.169.254/x?token=${secret}` })
+      );
+
+      const serialized = lines.join('\n');
+      expect(serialized).toContain('"message":"navigate"');
+      expect(serialized).toContain('"code":"POLICY_DENIED"');
+      expect(serialized).not.toContain(secret);
+    });
+  });
+
   describe('downloads and artifacts', () => {
     const BYTES = new Uint8Array([104, 101, 108, 108, 111]); // "hello"
 
@@ -767,6 +935,78 @@ describe('AgentBrowserService', () => {
 
       expect(service2.getArtifact(a, 'art_missing')).toBeUndefined();
       expect(service2.getArtifact(b, artifact.artifactId)).toBeUndefined();
+    });
+  });
+
+  describe('crash recovery (TD-024)', () => {
+    const crashSetup = async () => {
+      const engine2 = new FakeEngine();
+      const service2 = new AgentBrowserService({ engine: engine2 });
+      const sessionId = (await service2.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await service2.createPage(sessionId)).pageId;
+      await service2.navigate(sessionId, pageId, { url: 'https://example.com' });
+      const ids = engine2.getSessionIds();
+      return { engine2, service2, sessionId, pageId, ids };
+    };
+
+    it('should surface a typed ENGINE_CRASHED error when the page dies', async () => {
+      const { engine2, service2, sessionId, pageId, ids } = await crashSetup();
+
+      engine2.getFakePage(ids[ids.length - 1]!, pageId)?.crash();
+
+      const error = await capture(() => service2.observe(sessionId, pageId, {}));
+      expect(error?.code).toBe('ENGINE_CRASHED');
+      expect(error?.retryable).toBe(false);
+    });
+
+    it('should terminate the affected session', async () => {
+      const { engine2, service2, sessionId, pageId, ids } = await crashSetup();
+
+      engine2.getFakePage(ids[ids.length - 1]!, pageId)?.crash();
+      await capture(() => service2.observe(sessionId, pageId, {}));
+
+      expect(service2.getSession(sessionId)).toBeUndefined();
+      expect(service2.listSessions()).toHaveLength(0);
+    });
+
+    it('should record crashes in the audit log', async () => {
+      const { engine2, service2, sessionId, pageId, ids } = await crashSetup();
+
+      engine2.getFakePage(ids[ids.length - 1]!, pageId)?.crash();
+      await capture(() => service2.navigate(sessionId, pageId, { url: 'https://x.example.com' }));
+
+      const log = service2.getCrashLog();
+      expect(log).toHaveLength(1);
+      expect(log[0]).toMatchObject({ sessionId });
+      expect(typeof log[0]?.timestamp).toBe('string');
+    });
+
+    it('should map an act on a crashed page to ENGINE_CRASHED', async () => {
+      const { engine2, service2, sessionId, pageId, ids } = await crashSetup();
+      const observation = await service2.observe(sessionId, pageId, {});
+      const ref = observation.elements[0]?.ref ?? 'e2_0';
+
+      engine2.getFakePage(ids[ids.length - 1]!, pageId)?.crash();
+
+      const error = await capture(() =>
+        service2.act(sessionId, pageId, { action: 'click', target: { ref } })
+      );
+      expect(error?.code).toBe('ENGINE_CRASHED');
+      expect(service2.getSession(sessionId)).toBeUndefined();
+    });
+
+    it('should count crashed sessions in metrics', async () => {
+      const metrics = new MetricsRegistry();
+      const engine2 = new FakeEngine();
+      const service2 = new AgentBrowserService({ engine: engine2, metrics });
+      const sessionId = (await service2.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await service2.createPage(sessionId)).pageId;
+      const ids = engine2.getSessionIds();
+
+      engine2.getFakePage(ids[ids.length - 1]!, pageId)?.crash();
+      await capture(() => service2.observe(sessionId, pageId, {}));
+
+      expect(metrics.render()).toContain('sessions_crashed_total 1');
     });
   });
 

@@ -84,6 +84,65 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
       { name: 'artifacts', description: 'Screenshots and other evidence' },
     ],
     paths: {
+      '/health/live': {
+        get: {
+          operationId: 'getLiveness',
+          summary: 'Report process liveness',
+          tags: ['health'],
+          responses: {
+            '200': {
+              description: 'The process is serving.',
+              content: json({
+                type: 'object',
+                required: ['status'],
+                properties: { status: { type: 'string', examples: ['live'] } },
+              }),
+            },
+          },
+        },
+      },
+
+      '/health/ready': {
+        get: {
+          operationId: 'getReadiness',
+          summary: 'Report service readiness',
+          description: 'Readiness probes the engine; an unresponsive engine yields 503.',
+          tags: ['health'],
+          responses: {
+            '200': {
+              description: 'The service can serve requests.',
+              content: json({
+                type: 'object',
+                required: ['status', 'engine'],
+                properties: {
+                  status: { type: 'string', examples: ['ready'] },
+                  engine: { type: 'string' },
+                  version: { type: 'string' },
+                },
+              }),
+            },
+            '503': errorResponse('The engine is not responding.'),
+          },
+        },
+      },
+
+      '/metrics': {
+        get: {
+          operationId: 'getMetrics',
+          summary: 'Prometheus metrics exposition',
+          description:
+            'Counters (operations, errors, sessions), the active-session gauge and ' +
+            'operation latency percentiles (p50/p95/p99).',
+          tags: ['health'],
+          responses: {
+            '200': {
+              description: 'Metrics in the Prometheus text exposition format.',
+              content: { 'text/plain': { schema: { type: 'string' } } },
+            },
+          },
+        },
+      },
+
       '/health': {
         get: {
           operationId: 'getHealth',

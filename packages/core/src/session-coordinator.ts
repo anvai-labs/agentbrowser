@@ -198,6 +198,26 @@ export class SessionCoordinator {
   }
 
   /**
+   * Terminate a session abnormally (crash, policy violation). The engine
+   * session is closed best-effort: a dead engine must not block cleanup.
+   */
+  async terminate(sessionId: string, state: SessionState, reason: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new Error('SESSION_NOT_FOUND');
+    }
+
+    session.state = state;
+    this.sessions.delete(sessionId);
+
+    try {
+      await session.engineSession.close(`terminated:${reason}`);
+    } catch {
+      // The engine is likely the thing that died; cleanup proceeds.
+    }
+  }
+
+  /**
    * Update session activity
    */
   updateActivity(sessionId: string): void {
@@ -257,19 +277,9 @@ export class SessionCoordinator {
    * Run cleanup pass
    */
   private runCleanup(): void {
-    const expiredSessions: string[] = [];
-
-    // Find expired sessions
+    // Clean up expired sessions in a single pass
     for (const [id, session] of this.sessions.entries()) {
       if (this.isSessionExpired(session)) {
-        expiredSessions.push(id);
-      }
-    }
-
-    // Clean up expired sessions
-    for (const id of expiredSessions) {
-      const session = this.sessions.get(id);
-      if (session) {
         session.state = SessionState.EXPIRED;
         // Remove from sessions map first
         this.sessions.delete(id);
