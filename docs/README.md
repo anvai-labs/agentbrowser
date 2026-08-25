@@ -104,7 +104,7 @@ complete and remains in [technical-design.md](technical-design.md).
 
 - [TD-BROWSER-5](td/TD-BROWSER-5-single-binary-mcp-distribution.md) - Single-binary
   MCP server distribution (Bun `--compile`) + release CI. **Accepted,
-  implementation pending.** (TD-BROWSER-1..4 are reserved names; see the doc.)
+  implemented.** (TD-BROWSER-1..4 are reserved names; see the doc.)
 
 ## Template
 
