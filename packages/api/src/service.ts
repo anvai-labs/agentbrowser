@@ -309,9 +309,63 @@ export class AgentBrowserService {
     return this.crashLog;
   }
 
+  // ---- tenant validation (lightweight security) -------------------------
+
+  /**
+   * Validate tenant ID format (lightweight security check).
+   *
+   * This is format validation only - it rejects obviously invalid or malicious
+   * tenant IDs but does not verify authorization. Full tenant authorization is
+   * tracked as TD-BROWSER-4.
+   *
+   * Rules:
+   * - Must be non-empty if provided
+   * - Must be 1-64 characters
+   * - Must contain only alphanumeric characters, hyphens, and underscores
+   * - Must not start or end with hyphen/underscore
+   *
+   * Examples of valid tenant IDs:
+   * - "default"
+   * - "tenant-123"
+   * - "my_organization"
+   * - "acme-corp_2024"
+   *
+   * Examples of invalid tenant IDs (rejected):
+   * - "" (empty)
+   * - "   " (whitespace)
+   * - "../etc/passwd" (path traversal attempt)
+   * - "<script>alert(1)</script>" (XSS attempt)
+   * - "a".repeat(100) (too long)
+   */
+  private validateTenantId(tenantId: string | undefined): void {
+    if (!tenantId) {
+      // Empty tenant ID is allowed for backward compatibility (defaults to "default")
+      return;
+    }
+
+    // Length check
+    if (tenantId.length < 1 || tenantId.length > 64) {
+      throw new ServiceError(
+        'INVALID_TENANT_ID',
+        `Tenant ID must be 1-64 characters, got ${tenantId.length}`
+      );
+    }
+
+    // Format check: alphanumeric, hyphen, underscore only
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/.test(tenantId)) {
+      throw new ServiceError(
+        'INVALID_TENANT_ID',
+        'Tenant ID must contain only alphanumeric characters, hyphens, and underscores, and must not start or end with hyphen/underscore'
+      );
+    }
+  }
+
   // ---- sessions -----------------------------------------------------------
 
   async createSession(request: ServiceSessionRequest): Promise<ServiceSessionView> {
+    // Validate tenant ID format (lightweight security)
+    this.validateTenantId(request.tenantId);
+
     return this.traced('session.create', { tenantId: request.tenantId ?? '' }, async () => {
       const engineRequest: EngineSessionOptions & { engine: 'auto' } = { engine: 'auto' };
       if (request.viewport !== undefined) engineRequest.viewport = request.viewport;

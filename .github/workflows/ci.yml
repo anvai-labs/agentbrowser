@@ -142,3 +142,28 @@ jobs:
           docker logs agentbrowser-smoke
           docker stop agentbrowser-smoke || true
           exit 1
+
+  benchmarks:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build workspace dependencies
+        run: pnpm -r build
+
+      # Release gates: latency targets, 45/50 deterministic tasks, clean soak.
+      - name: Run benchmark suite
+        run: pnpm --filter @agentbrowser/benchmarks all 1000
