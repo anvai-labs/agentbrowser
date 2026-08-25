@@ -101,7 +101,7 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
       handler: async (args) => {
         const request: SessionRequest = { tenantId: String(args.tenantId) };
         if (typeof args.engine === 'string') request.engine = args.engine;
-        if (args.headless === true) request.headless = true;
+        if (typeof args.headless === 'boolean') request.headless = args.headless;
         if (typeof args.ttlMs === 'number') request.ttlMs = args.ttlMs;
 
         const session = await client.sessions.create(request);
