@@ -66,8 +66,15 @@ Full workspace build and test run, verified end-to-end:
   runs the read-only smoke test. The deploy surfaced and fixed a dev
   dependency leak (FakeEngine fallback now lazily imported).
 
-Remaining Phase 3: TD-025 benchmarks (45/50 tasks criterion, gates the
-ADR-010 Rust-engine decision).
+- TD-025 Benchmarks ✅ packages/benchmarks: latency harness against the
+  spec targets (service dispatch overhead via FakeEngine), 50
+  deterministic agent tasks across ten spec categories - all 50 pass,
+  the 45/50 MVP gate now fails CI on regression - and a 1000-cycle churn
+  soak with a clean cleanup audit (zero leaked sessions/engine
+  sessions/crashes, 13MB RSS growth). CI runs the suite as a release
+  gate; baseline in docs/benchmarks.md.
+
+**Phase 3 complete.** All roadmap tasks (TD-001..TD-026) are done.
 
 Remaining Phase 2 exit criteria: the 45/50 benchmark suite (deferred with
 Phase 3 benchmarks, TD-025).
