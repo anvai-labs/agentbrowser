@@ -9,7 +9,6 @@
 
 import { MetricsRegistry } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
-import { FakeEngine } from '@agentbrowser/testkit';
 import cors from '@fastify/cors';
 import Fastify from 'fastify';
 import type { FastifyError, FastifyInstance } from 'fastify';
@@ -74,13 +73,15 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   });
 
   // The engine is normally injected (bin.ts passes PlaywrightChromiumEngine).
-  // Falling back to the in-memory engine is recorded loudly, never silent.
+  // The in-memory engine is a development fallback, loaded lazily so
+  // production deployments never need the testkit dev dependency.
   let engine = options.engine;
   if (!engine) {
     console.warn(
       '[agentbrowser] No engine injected; using the in-memory FakeEngine. ' +
         'Pass an engine to ServerOptions for real browsing.'
     );
+    const { FakeEngine } = await import('@agentbrowser/testkit');
     engine = new FakeEngine();
   }
   const metrics = options.metrics ?? new MetricsRegistry();

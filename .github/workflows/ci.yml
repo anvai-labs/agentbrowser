@@ -110,3 +110,35 @@ jobs:
 
       - name: Build all packages
         run: pnpm -r build
+
+  docker:
+    name: Docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the production image
+        run: docker build -t agentbrowser:${{ github.sha }} .
+
+      - name: Run read-only smoke test
+        run: |
+          docker run -d --rm \
+            --name agentbrowser-smoke \
+            --read-only \
+            --tmpfs /tmp \
+            -p 3000:3000 \
+            agentbrowser:${{ github.sha }}
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:3000/health/live > /dev/null; then
+              echo "liveness OK"
+              curl -sf http://127.0.0.1:3000/health/ready | head -c 200
+              echo
+              docker stop agentbrowser-smoke
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "container never became live"
+          docker logs agentbrowser-smoke
+          docker stop agentbrowser-smoke || true
+          exit 1
