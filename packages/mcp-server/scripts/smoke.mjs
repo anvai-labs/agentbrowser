@@ -26,6 +26,7 @@ const EXPECTED_TOOLS = [
   'browser_navigate',
   'browser_observe',
   'browser_act',
+  'browser_extract',
   'browser_screenshot',
 ];
 
