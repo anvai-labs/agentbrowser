@@ -20,6 +20,7 @@
     "@agentbrowser/core": "workspace:*",
     "@agentbrowser/engine": "workspace:*",
     "@agentbrowser/engine-playwright": "workspace:^",
+    "@agentbrowser/extraction": "workspace:^",
     "@agentbrowser/policy": "workspace:^",
     "@agentbrowser/protocol": "workspace:*",
     "@fastify/cors": "^10.0.0",

@@ -183,10 +183,16 @@ class FakePage implements EnginePage {
   private elementByRef = new Map<string, FakeElement>();
   private closed = false;
   private crashed = false;
+  private contentOverride: string | undefined;
 
   /** Test hook: simulate a renderer crash. All subsequent ops throw. */
   crash(): void {
     this.crashed = true;
+  }
+
+  /** Test hook: pin the page's HTML content for extraction-style consumers. */
+  setContent(html: string): void {
+    this.contentOverride = html;
   }
 
   /** Throws when the page has crashed or been closed by the engine. */
@@ -237,7 +243,9 @@ class FakePage implements EnginePage {
       url: this.currentUrl,
       title: this.currentTitle,
       status: this.pageStatus,
-      content: `<html><head><title>${this.currentTitle}</title></head><body></body></html>`,
+      content:
+        this.contentOverride ??
+        `<html><head><title>${this.currentTitle}</title></head><body></body></html>`,
       elements: this.elements.map((el) => {
         const element: any = {
           ref: el.ref,

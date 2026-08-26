@@ -1010,6 +1010,106 @@ describe('AgentBrowserService', () => {
     });
   });
 
+  describe('extraction (spec 12)', () => {
+    const CONTENT = `
+      <html><body><main>
+        <h1>Report</h1>
+        <p>Revenue grew <strong>9%</strong>.</p>
+        <a href="/d" rel="next">details</a>
+        <table><thead><tr><th>R</th></tr></thead>
+          <tbody><tr><td>1M</td></tr></tbody></table>
+      </main></body></html>`;
+
+    const extractSetup = async () => {
+      const engine2 = new FakeEngine();
+      const service2 = new AgentBrowserService({ engine: engine2 });
+      const sessionId = (await service2.createSession({ tenantId: 'x' })).sessionId;
+      const pageId = (await service2.createPage(sessionId)).pageId;
+      await service2.navigate(sessionId, pageId, { url: 'https://x.example.com/a' });
+      const ids = engine2.getSessionIds();
+      const page =
+        ids[ids.length - 1] !== undefined
+          ? engine2.getFakePage(ids[ids.length - 1]!, pageId)
+          : undefined;
+      page?.setContent(CONTENT);
+      return { service2, sessionId, pageId };
+    };
+
+    it('should extract visible text with evidence', async () => {
+      const { service2, sessionId, pageId } = await extractSetup();
+
+      const result = await service2.extract(sessionId, pageId, { format: 'text' });
+
+      expect((result.data as { text: string }).text).toContain('Revenue grew 9%.');
+      expect(result.evidence?.[0]).toMatchObject({
+        url: 'https://x.example.com/a',
+        revision: expect.any(Number),
+      });
+      expect(typeof result.evidence?.[0]?.hash).toBe('string');
+    });
+
+    it('should extract markdown, links and tables', async () => {
+      const { service2, sessionId, pageId } = await extractSetup();
+
+      const markdown = await service2.extract(sessionId, pageId, { format: 'markdown' });
+      expect((markdown.data as { markdown: string }).markdown).toContain('# Report');
+      expect((markdown.data as { markdown: string }).markdown).toContain('**9%**');
+
+      const links = await service2.extract(sessionId, pageId, { format: 'links' });
+      expect(links.data).toContainEqual({
+        text: 'details',
+        url: 'https://x.example.com/d',
+        rel: 'next',
+      });
+
+      const tables = await service2.extract(sessionId, pageId, { format: 'tables' });
+      expect(tables.data).toEqual([{ headers: ['R'], rows: [['1M']] }]);
+    });
+
+    it('should extract observed form controls with refs', async () => {
+      const { service2, sessionId, pageId } = await extractSetup();
+      const observation = await service2.observe(sessionId, pageId, {});
+      expect(observation.elements.length).toBeGreaterThan(0);
+
+      const forms = await service2.extract(sessionId, pageId, { format: 'forms' });
+      const controls = (forms.data as Array<{ controls: unknown[] }>)[0]?.controls;
+      const controlRoles = new Set([
+        'textbox',
+        'searchbox',
+        'textarea',
+        'combobox',
+        'listbox',
+        'checkbox',
+        'radio',
+        'slider',
+        'spinbutton',
+        'button',
+      ]);
+      const expected = observation.elements.filter((el) => controlRoles.has(el.role)).length;
+      expect(controls?.length).toBe(expected);
+    });
+
+    it('should reject an unknown format with INVALID_REQUEST', async () => {
+      const { service2, sessionId, pageId } = await extractSetup();
+
+      const error = await capture(() =>
+        service2.extract(sessionId, pageId, { format: 'yaml' as never })
+      );
+
+      expect(error?.code).toBe('INVALID_REQUEST');
+      expect(error?.message).toMatch(/format/i);
+    });
+
+    it('should reject extraction for an unknown page', async () => {
+      const { service2, sessionId } = await extractSetup();
+
+      const error = await capture(() =>
+        service2.extract(sessionId, 'pg_missing', { format: 'text' })
+      );
+      expect(error?.code).toBe('NOT_FOUND');
+    });
+  });
+
   describe('screenshots', () => {
     it('should capture an artifact from the engine', async () => {
       const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;

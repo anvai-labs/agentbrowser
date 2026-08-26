@@ -319,9 +319,9 @@ describe('PlaywrightChromiumEngine ref store', () => {
     const state = await page.observe({ mode: 'interactive' });
 
     const submit = state.elements.find((el) => el.role === 'button' && el.name === 'Submit');
-    const resolved = await page.resolve({ ref: submit!.ref });
+    const resolved = await page.resolve({ ref: submit?.ref });
 
-    expect(resolved.ref).toBe(submit!.ref);
+    expect(resolved.ref).toBe(submit?.ref);
     expect(resolved.role).toBe('button');
     expect(resolved.name).toBe('Submit');
     expect(resolved.visible).toBe(true);
@@ -340,7 +340,7 @@ describe('PlaywrightChromiumEngine ref store', () => {
     const state = await page.observe({ mode: 'interactive' });
     const link = state.elements.find((el) => el.role === 'link' && el.name === 'Next page');
 
-    const effect = await page.act({ type: 'click', target: { ref: link!.ref } });
+    const effect = await page.act({ type: 'click', target: { ref: link?.ref } });
 
     expect(effect.actionId).toBeDefined();
     expect(effect.newRevision).toBeGreaterThan(effect.oldRevision);
@@ -351,7 +351,7 @@ describe('PlaywrightChromiumEngine ref store', () => {
     const state = await page.observe({ mode: 'interactive' });
     const email = state.elements.find((el) => el.role === 'textbox' && el.name === 'Email');
 
-    await page.act({ type: 'fill', target: { ref: email!.ref }, value: 'agent@example.com' });
+    await page.act({ type: 'fill', target: { ref: email?.ref }, value: 'agent@example.com' });
 
     const after = await page.observe({ mode: 'interactive' });
     const filled = after.elements.find((el) => el.role === 'textbox' && el.name === 'Email');

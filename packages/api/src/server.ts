@@ -429,6 +429,34 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     }
   });
 
+  // Extraction endpoint (spec 12): deterministic extractors with evidence
+  fastify.post('/sessions/:sessionId/pages/:pageId/extract', async (request, reply) => {
+    try {
+      const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
+      const body = request.body;
+      if (!requireBody(reply, body)) {
+        return reply;
+      }
+
+      const format = (body as { format?: string }).format;
+      const supported = ['text', 'markdown', 'links', 'tables', 'forms', 'jsonld'];
+      if (typeof format !== 'string' || !supported.includes(format)) {
+        return reply.status(400).send({
+          error: {
+            code: 'INVALID_REQUEST',
+            message: `Unknown format ${String(format)}. Supported: ${supported.join(', ')}`,
+            retryable: false,
+          },
+        });
+      }
+
+      const result = await service.extract(sessionId, pageId, { format: format as never });
+      return reply.send(result);
+    } catch (error) {
+      return fail(reply, error);
+    }
+  });
+
   // Screenshot endpoint
   fastify.post('/sessions/:sessionId/pages/:pageId/screenshot', async (request, reply) => {
     try {

@@ -97,6 +97,15 @@ Planned documentation (to be created):
 - [ ] `engine-contract.md` - Engine implementation contract
 - [ ] `api.md` - API usage documentation
 
+## Task Definitions (post-MVP)
+
+Post-MVP tasks live in [td/](td/). The MVP task series (TD-001..TD-026) is
+complete and remains in [technical-design.md](technical-design.md).
+
+- [TD-BROWSER-5](td/TD-BROWSER-5-single-binary-mcp-distribution.md) - Single-binary
+  MCP server distribution (Bun `--compile`) + release CI. **Accepted,
+  implemented.** (TD-BROWSER-1..4 are reserved names; see the doc.)
+
 ## Template
 
 New ADRs should use the [ADR template](adr/000-template.md).

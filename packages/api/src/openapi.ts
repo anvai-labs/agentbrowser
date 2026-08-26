@@ -465,6 +465,64 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         },
       },
 
+      '/sessions/{sessionId}/pages/{pageId}/extract': {
+        post: {
+          operationId: 'extractPage',
+          summary: 'Extract deterministic structured data from the page',
+          description:
+            'Pure-function extractors over a fresh observation: visible text, ' +
+            'article markdown, links (text/absolute URL/rel), tables (headers ' +
+            'and rows), observed form controls with their refs, or JSON-LD. ' +
+            'Every result carries evidence - source URL, revision and a ' +
+            'content hash - so an extraction can be audited. No model calls.',
+          tags: ['observation'],
+          parameters: [sessionIdParam, pageIdParam],
+          requestBody: {
+            required: true,
+            content: json({
+              type: 'object',
+              required: ['format'],
+              properties: {
+                format: {
+                  type: 'string',
+                  enum: ['text', 'markdown', 'links', 'tables', 'forms', 'jsonld'],
+                },
+              },
+            }),
+          },
+          responses: {
+            '200': {
+              description: 'The extraction with evidence.',
+              content: json({
+                type: 'object',
+                required: ['data', 'evidence'],
+                properties: {
+                  data: {},
+                  evidence: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      required: ['url', 'revision', 'hash'],
+                      properties: {
+                        url: { type: 'string' },
+                        revision: { type: 'integer' },
+                        ref: { type: 'string' },
+                        text: { type: 'string' },
+                        hash: { type: 'string' },
+                      },
+                    },
+                  },
+                  warnings: { type: 'array', items: { type: 'string' } },
+                },
+              }),
+            },
+            '400': INVALID_REQUEST,
+            '404': NOT_FOUND,
+            '500': INTERNAL,
+          },
+        },
+      },
+
       '/sessions/{sessionId}/pages/{pageId}/screenshot': {
         post: {
           operationId: 'captureScreenshot',

@@ -4,6 +4,7 @@ node_modules
 
 # Build outputs
 dist
+dist-bin
 *.tsbuildinfo
 
 # Test coverage
@@ -47,3 +48,6 @@ Thumbs.db
 # Rust
 /target
 Cargo.lock
+
+# Bun compile cache
+*.bun-build

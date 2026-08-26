@@ -57,6 +57,10 @@ describe('AgentBrowser MCP server', () => {
         actionId: 'act_1',
         newRevision: 2,
       }),
+      extract: vi.fn().mockResolvedValue({
+        data: { markdown: '# Report' },
+        evidence: [{ url: 'https://example.com', revision: 2, hash: 'abc12345' }],
+      }),
       screenshot: vi.fn().mockResolvedValue({
         artifactId: 'art_1',
         type: 'screenshot',
@@ -101,6 +105,12 @@ describe('AgentBrowser MCP server', () => {
       expect(names).toContain('browser_observe');
       expect(names).toContain('browser_act');
       expect(names).toContain('browser_screenshot');
+    });
+
+    it('should expose browser_extract', async () => {
+      const response = JSON.parse(await request('3b', 'tools/list'));
+      const names = response.result.tools.map((t: { name: string }) => t.name);
+      expect(names).toContain('browser_extract');
     });
 
     it('should not expose raw engine operations', async () => {
@@ -182,6 +192,34 @@ describe('AgentBrowser MCP server', () => {
         target: { ref: 'e1_0' },
       });
       expect(textOf(response).newRevision).toBe(2);
+    });
+
+    it('should extract through the tool', async () => {
+      const response = JSON.parse(
+        await call('10b', 'browser_extract', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          format: 'markdown',
+        })
+      );
+
+      expect(sessions.extract).toHaveBeenCalledWith('ses_1', 'pg_1', { format: 'markdown' });
+      const extracted = textOf(response);
+      expect(extracted.data.markdown).toBe('# Report');
+      expect(extracted.evidence[0].hash).toBe('abc12345');
+    });
+
+    it('should reject an unknown extract format', async () => {
+      const response = JSON.parse(
+        await call('10c', 'browser_extract', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          format: 'yaml',
+        })
+      );
+
+      expect(response.result.isError).toBe(true);
+      expect(JSON.stringify(response.result.content)).toContain('format');
     });
 
     it('should capture a screenshot', async () => {
