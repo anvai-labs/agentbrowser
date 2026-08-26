@@ -78,6 +78,12 @@ importers:
       '@agentbrowser/engine':
         specifier: workspace:*
         version: link:../engine
+      '@agentbrowser/engine-playwright':
+        specifier: workspace:^
+        version: link:../engine-playwright
+      '@agentbrowser/policy':
+        specifier: workspace:^
+        version: link:../policy
       '@agentbrowser/protocol':
         specifier: workspace:*
         version: link:../protocol

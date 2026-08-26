@@ -6,12 +6,16 @@
  *            overhead, measured against FakeEngine: the "excluding
  *            site/network" targets)
  *   tasks  - 50 deterministic agent tasks (MVP gate: >= 45)
+ *   real   - comparative benchmark: FakeEngine vs real Chromium on local
+ *            fixture pages (ADR-010 gate data)
  *   soak   - session churn with cleanup and RSS audit
  *   all    - everything; exits non-zero if any gate fails
  */
 
 import { AgentBrowserService } from '@agentbrowser/api';
+import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
 import { FakeEngine } from '@agentbrowser/testkit';
+import { comparativeReport, runRealBenchmarks } from './compare.js';
 import { evaluateTarget, sample, summarize } from './harness.js';
 import type { BenchmarkResult } from './harness.js';
 import { runSoak, soakReport } from './soak.js';
@@ -77,7 +81,24 @@ async function soak(cycles: number): Promise<boolean> {
 const command = process.argv[2] ?? 'all';
 const soakCycles = Number.parseInt(process.argv[3] ?? '1000', 10);
 
+async function compareReal(iterations: number): Promise<boolean> {
+  console.log('--- comparative benchmark: FakeEngine vs playwright-chromium ---');
+  const fake = await runRealBenchmarks({ engine: new FakeEngine(), iterations });
+  const real = await runRealBenchmarks({
+    engine: new PlaywrightChromiumEngine(),
+    iterations,
+  });
+  console.log(comparativeReport([fake, real]));
+  // The ADR-010 gate cares about task success on the real engine.
+  return real.refLoop.successes === real.refLoop.attempts;
+}
+
 let ok = true;
+if (command === 'real') {
+  // 50 iterations by default: enough signal without CI noise; pass a count
+  // explicitly for deeper sampling.
+  ok = (await compareReal(process.argv[3] !== undefined ? soakCycles : 50)) && ok;
+}
 if (command === 'bench' || command === 'all') {
   ok = (await benchmarkLatencies()) && ok;
 }
@@ -88,8 +109,8 @@ if (command === 'soak' || command === 'all') {
   ok = (await soak(Number.isInteger(soakCycles) ? soakCycles : 1000)) && ok;
 }
 
-if (!['bench', 'tasks', 'soak', 'all'].includes(command)) {
-  console.error(`unknown command: ${command} (use bench | tasks | soak | all)`);
+if (!['bench', 'tasks', 'soak', 'all', 'real'].includes(command)) {
+  console.error(`unknown command: ${command} (use bench | tasks | soak | real | all)`);
   process.exit(2);
 }
 

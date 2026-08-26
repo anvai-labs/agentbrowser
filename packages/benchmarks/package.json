@@ -17,12 +17,15 @@
     "bench": "node dist/run.js bench",
     "tasks": "node dist/run.js tasks",
     "soak": "node dist/run.js soak",
-    "all": "node dist/run.js all"
+    "all": "node dist/run.js all",
+    "bench:real": "node dist/run.js real"
   },
   "dependencies": {
     "@agentbrowser/api": "workspace:*",
     "@agentbrowser/core": "workspace:*",
     "@agentbrowser/engine": "workspace:*",
+    "@agentbrowser/engine-playwright": "workspace:^",
+    "@agentbrowser/policy": "workspace:^",
     "@agentbrowser/protocol": "workspace:*",
     "@agentbrowser/testkit": "workspace:*"
   },

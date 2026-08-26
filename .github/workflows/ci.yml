@@ -168,6 +168,14 @@ jobs:
       - name: Run benchmark suite
         run: pnpm --filter @agentbrowser/benchmarks all 1000
 
+      - name: Install Playwright browsers
+        run: pnpm --filter @agentbrowser/engine-playwright exec playwright install --with-deps chromium
+
+      # ADR-010 gate data: real Chromium vs the deterministic engine on
+      # local fixture pages. Gates the (deterministic) ref-loop success.
+      - name: Comparative benchmark (real Chromium)
+        run: pnpm bench:real
+
   # TD-BROWSER-5: a change that breaks single-binary bundling (a new dynamic
   # import, a node-only API, a dependency regression) must fail the PR that
   # introduced it, not the release tag.
