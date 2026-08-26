@@ -5,6 +5,8 @@
  * the AgentBrowser REST API.
  */
 
+import type { DELIVERED_ACTION_TYPES } from '@agentbrowser/protocol';
+
 export interface ClientOptions {
   baseUrl?: string;
   timeout?: number;
@@ -86,10 +88,16 @@ export interface ObservationResponse {
   continuation?: { nextOrdinal: number; remaining: number };
 }
 
+/** The delivered action set, derived from the protocol source of truth. */
+export type DeliveredAction = (typeof DELIVERED_ACTION_TYPES)[number];
+
 export interface ActionRequest {
-  action: 'click' | 'fill' | 'select' | 'scroll' | 'press';
-  target: { ref: string };
+  action: DeliveredAction;
+  /** Required for element-targeted actions; omitted for dialog actions. */
+  target?: { ref: string };
   value?: string;
+  /** Prompt answer for acceptDialog. */
+  promptText?: string;
   options?: Record<string, unknown>;
   observe?: 'after' | 'none';
 }

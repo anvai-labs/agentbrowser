@@ -21,6 +21,7 @@
     "clean": "rm -rf dist dist-bin *.tsbuildinfo"
   },
   "dependencies": {
+    "@agentbrowser/protocol": "workspace:*",
     "@agentbrowser/sdk-typescript": "workspace:*"
   },
   "devDependencies": {

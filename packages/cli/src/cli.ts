@@ -381,7 +381,7 @@ async function runAction(
   const result = await ctx.client.sessions.executeAction(sessionId, pageId, request);
 
   ctx.emit(result, () => [
-    `${request.action} ${request.target.ref}: ${result.status ?? 'unknown'}`,
+    `${request.action}${request.target ? ` ${request.target.ref}` : ''}: ${result.status ?? 'unknown'}`,
     `  revision: ${result.newRevision ?? 'unchanged'}`,
   ]);
 }

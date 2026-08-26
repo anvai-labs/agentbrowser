@@ -198,6 +198,9 @@ importers:
 
   packages/mcp-server:
     dependencies:
+      '@agentbrowser/protocol':
+        specifier: workspace:*
+        version: link:../protocol
       '@agentbrowser/sdk-typescript':
         specifier: workspace:*
         version: link:../sdk-typescript

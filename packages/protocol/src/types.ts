@@ -319,7 +319,40 @@ export type SupportedAction =
   | SelectAction
   | ScrollAction
   | PressAction
-  | WaitAction;
+  | WaitAction
+  | AcceptDialogAction
+  | DismissDialogAction;
+
+/**
+ * Accept a pending dialog, optionally answering a prompt.
+ */
+export interface AcceptDialogAction extends Action {
+  type: 'acceptDialog';
+  /** Text to submit when the dialog is a prompt. */
+  promptText?: string;
+}
+
+/**
+ * Dismiss a pending dialog.
+ */
+export interface DismissDialogAction extends Action {
+  type: 'dismissDialog';
+}
+
+/**
+ * The action set the stack DELIVERS today. Single source of truth: the
+ * executor validates against this, engines advertise it in capabilities,
+ * and SDK/MCP/OpenAPI derive their enums from it. `ActionType` above is
+ * the protocol superset - extending DELIVERED_ACTION_TYPES is what turns
+ * a protocol action into a delivered one.
+ */
+export const DELIVERED_ACTION_TYPES = ['click', 'fill', 'select', 'scroll', 'press'] as const;
+
+/**
+ * The observation modes the stack delivers today (see
+ * DELIVERED_ACTION_TYPES for the contract).
+ */
+export const DELIVERED_OBSERVATION_MODES = ['interactive', 'content', 'accessibility'] as const;
 
 /**
  * Wait condition

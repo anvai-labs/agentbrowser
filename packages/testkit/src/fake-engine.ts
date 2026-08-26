@@ -26,6 +26,7 @@ import type {
   RawPageState,
   ScreenshotRequest,
 } from '@agentbrowser/engine';
+import { DELIVERED_ACTION_TYPES, DELIVERED_OBSERVATION_MODES } from '@agentbrowser/protocol';
 
 /**
  * Fake engine for testing
@@ -57,8 +58,8 @@ export class FakeEngine implements BrowserEngine {
       supportsPersistentStorage: true,
       supportsAccessibilityTree: true,
       supportsCdp: false,
-      supportedObservationModes: ['interactive', 'content', 'accessibility'],
-      supportedActionTypes: ['click', 'fill', 'select', 'scroll', 'press'],
+      supportedObservationModes: [...DELIVERED_OBSERVATION_MODES],
+      supportedActionTypes: [...DELIVERED_ACTION_TYPES],
     };
   }
 

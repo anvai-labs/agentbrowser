@@ -7,6 +7,7 @@
  * in lockstep with the protocol by construction.
  */
 
+import { DELIVERED_ACTION_TYPES } from '@agentbrowser/protocol';
 import {
   ActionRequestSchema,
   ActionResultSchema,
@@ -388,13 +389,17 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             required: true,
             content: json({
               type: 'object',
-              required: ['action', 'target'],
+              required: ['action'],
               properties: {
                 action: {
                   type: 'string',
-                  enum: ['click', 'fill', 'select', 'scroll', 'press'],
+                  enum: [...DELIVERED_ACTION_TYPES],
                 },
                 target: ref('ElementTarget'),
+                promptText: {
+                  type: 'string',
+                  description: 'Prompt answer for acceptDialog.',
+                },
                 value: { type: 'string' },
                 observe: { type: 'string', enum: ['after', 'none'] },
               },

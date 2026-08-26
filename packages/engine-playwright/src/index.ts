@@ -24,6 +24,7 @@ import type {
   RawPageState,
   ScreenshotRequest,
 } from '@agentbrowser/engine';
+import { DELIVERED_ACTION_TYPES, DELIVERED_OBSERVATION_MODES } from '@agentbrowser/protocol';
 import { type Browser, type BrowserContext, Locator, type Page, chromium } from 'playwright';
 
 // Re-export engine types
@@ -90,11 +91,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       supportsPersistentStorage: true,
       supportsAccessibilityTree: true,
       supportsCdp: true,
-      supportedObservationModes: ['interactive', 'content', 'accessibility'],
-      // Advertise only what the stack delivers: the executor's supported
-      // action set. Expanding this list without expanding the executor is
-      // a silent capability overclaim.
-      supportedActionTypes: ['click', 'fill', 'select', 'scroll', 'press'],
+      supportedObservationModes: [...DELIVERED_OBSERVATION_MODES],
+      // Derived from the protocol single source of truth: drift is
+      // impossible by construction.
+      supportedActionTypes: [...DELIVERED_ACTION_TYPES],
     };
   }
 
