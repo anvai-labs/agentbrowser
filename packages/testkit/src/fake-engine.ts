@@ -58,7 +58,7 @@ export class FakeEngine implements BrowserEngine {
       supportsAccessibilityTree: true,
       supportsCdp: false,
       supportedObservationModes: ['interactive', 'content', 'accessibility'],
-      supportedActionTypes: ['navigate', 'click', 'fill', 'select', 'scroll', 'press'],
+      supportedActionTypes: ['click', 'fill', 'select', 'scroll', 'press'],
     };
   }
 

@@ -128,6 +128,8 @@ export interface ServiceDependencies {
   metrics?: MetricsRegistry;
   /** Structured operation log; absent means no operation logging. */
   logger?: StructuredLogger;
+  /** How often to reconcile service state with coordinator expiry (ms). */
+  sweepIntervalMs?: number;
 }
 
 /** Risk classes that require an approval token before the action runs. */
@@ -199,6 +201,7 @@ export class AgentBrowserService {
   private readonly crashLog: Array<{ sessionId: string; reason: string; timestamp: string }> = [];
   /** Session -> event listeners, fed by per-page engine event pumps. */
   private readonly eventListeners = new Map<string, Set<(event: EngineEvent) => void>>();
+  private sweepTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(deps: ServiceDependencies) {
     this.engine = deps.engine;
@@ -226,6 +229,34 @@ export class AgentBrowserService {
     }
     if (deps.logger !== undefined) {
       this.logger = deps.logger;
+    }
+    // Reconcile with coordinator expiry so TTL/idle lapses release service
+    // state (page registry, listeners, policies) instead of leaking it.
+    const sweepIntervalMs = deps.sweepIntervalMs ?? 30_000;
+    if (sweepIntervalMs > 0) {
+      this.sweepTimer = setInterval(() => this.sweepExpiredSessions(), sweepIntervalMs);
+      this.sweepTimer.unref?.();
+    }
+  }
+
+  /** Drop service state for sessions the coordinator no longer tracks. */
+  private sweepExpiredSessions(): void {
+    const tracked = new Set<string>([
+      ...this.sessionDownloadPolicy.keys(),
+      ...this.eventListeners.keys(),
+      ...[...this.pages.values()].map((page) => page.sessionId),
+    ]);
+    for (const sessionId of tracked) {
+      // coordinator.get() lazily expires TTL/idle-lapsed sessions.
+      if (this.coordinator.get(sessionId) === undefined) {
+        for (const [pageId, page] of this.pages) {
+          if (page.sessionId === sessionId) {
+            this.pages.delete(pageId);
+          }
+        }
+        this.eventListeners.delete(sessionId);
+        this.sessionDownloadPolicy.delete(sessionId);
+      }
     }
   }
 
@@ -1115,6 +1146,9 @@ export class AgentBrowserService {
   // ---- shutdown -----------------------------------------------------------
 
   async shutdown(): Promise<void> {
+    if (this.sweepTimer !== undefined) {
+      clearInterval(this.sweepTimer);
+    }
     await this.coordinator.shutdown();
     this.pages.clear();
     await this.approvalGate.shutdown();
@@ -1132,6 +1166,11 @@ export class AgentBrowserService {
   }
 
   private requirePage(sessionId: string, pageId: string): PageContext {
+    // Session-level failures outrank page-level ones: an expired session is
+    // SESSION_NOT_FOUND even if the caller also holds a stale page id.
+    if (!this.coordinator.get(sessionId)) {
+      throw new ServiceError('SESSION_NOT_FOUND', `Session ${sessionId} does not exist.`);
+    }
     const page = this.pages.get(pageId);
     if (!page || page.sessionId !== sessionId) {
       throw new ServiceError('NOT_FOUND', `Page ${pageId} does not exist in session ${sessionId}.`);

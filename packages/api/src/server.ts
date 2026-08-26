@@ -8,6 +8,7 @@
  */
 
 import { MetricsRegistry } from '@agentbrowser/core';
+import type { StructuredLogger } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
@@ -26,6 +27,8 @@ export interface ServerOptions {
   downloader?(url: string): Promise<{ bytes: Uint8Array; contentType: string }>;
   /** Metrics registry exposed at /metrics; defaults to a fresh registry. */
   metrics?: MetricsRegistry;
+  /** Structured operation log; when absent, no operation logging. */
+  logger?: StructuredLogger;
 }
 
 /** Map protocol error codes onto HTTP statuses. */
@@ -94,6 +97,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   const service = new AgentBrowserService({
     engine,
     metrics,
+    ...(options.logger ? { logger: options.logger } : {}),
     ...(options.downloader ? { downloader: options.downloader } : {}),
   });
 

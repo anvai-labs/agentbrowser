@@ -90,28 +90,11 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       supportsPersistentStorage: true,
       supportsAccessibilityTree: true,
       supportsCdp: true,
-      supportedObservationModes: ['interactive', 'content', 'accessibility', 'compact_dom'],
-      supportedActionTypes: [
-        'navigate',
-        'click',
-        'hover',
-        'fill',
-        'type',
-        'clear',
-        'press',
-        'select',
-        'check',
-        'uncheck',
-        'scroll',
-        'wait',
-        'upload',
-        'download',
-        'goBack',
-        'goForward',
-        'reload',
-        'dismissDialog',
-        'acceptDialog',
-      ],
+      supportedObservationModes: ['interactive', 'content', 'accessibility'],
+      // Advertise only what the stack delivers: the executor's supported
+      // action set. Expanding this list without expanding the executor is
+      // a silent capability overclaim.
+      supportedActionTypes: ['click', 'fill', 'select', 'scroll', 'press'],
     };
   }
 

@@ -92,9 +92,10 @@ describe('FakeEngine', () => {
     it('should support action types', async () => {
       const capabilities = await engine.capabilities();
 
-      expect(capabilities.supportedActionTypes).toContain('navigate');
+      // Capability truth: exactly the action set the executor delivers.
       expect(capabilities.supportedActionTypes).toContain('click');
       expect(capabilities.supportedActionTypes).toContain('fill');
+      expect(capabilities.supportedActionTypes).not.toContain('navigate');
     });
   });
 

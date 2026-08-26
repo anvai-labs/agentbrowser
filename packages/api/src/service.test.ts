@@ -1110,6 +1110,31 @@ describe('AgentBrowserService', () => {
     });
   });
 
+  describe('expiry cleanup (audit P0-2)', () => {
+    it('should sweep service state when a session expires by TTL', async () => {
+      const engine2 = new FakeEngine();
+      const service2 = new AgentBrowserService({ engine: engine2, sweepIntervalMs: 20 });
+
+      const sessionId = (await service2.createSession({ tenantId: 't1', ttlMs: 30 })).sessionId;
+      const pageId = (await service2.createPage(sessionId)).pageId;
+      const received: unknown[] = [];
+      expect(service2.subscribe(sessionId, (event) => received.push(event))).toBeDefined();
+
+      // Let the TTL lapse and the sweep run.
+      await new Promise((resolve) => setTimeout(resolve, 120));
+
+      expect(service2.getSession(sessionId)).toBeUndefined();
+      expect(service2.listSessions()).toHaveLength(0);
+      // No leaked page registry, listeners, or download policy.
+      expect(service2.getPage(sessionId, pageId)).toBeUndefined();
+      expect(service2.subscribe(sessionId, () => {})).toBeUndefined();
+      await expect(
+        service2.navigate(sessionId, pageId, { url: 'https://x.example.com' })
+      ).rejects.toMatchServiceError('SESSION_NOT_FOUND');
+      await service2.shutdown();
+    });
+  });
+
   describe('event streaming', () => {
     it('should deliver engine events to session subscribers with stamped ids', async () => {
       const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
