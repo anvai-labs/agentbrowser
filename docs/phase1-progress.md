@@ -76,6 +76,17 @@ Full workspace build and test run, verified end-to-end:
 
 **Phase 3 complete.** All roadmap tasks (TD-001..TD-026) are done.
 
+## Beyond the roadmap (2026-08-26)
+
+- Extraction (spec 12) ✅ packages/extraction: deterministic, model-free
+  extractors (text, markdown, links, tables, forms, JSON-LD) with
+  auditable evidence (source URL, revision, content hash) via
+  POST /extract, the SDK, and the MCP browser_extract tool. Verified
+  live against real Chromium.
+- Single-binary MCP distribution (parallel session, TD-BROWSER-5):
+  Bun-compiled agentbrowser-mcp binary with release CI and a stdio
+  smoke test gating the exact tool catalog.
+
 Remaining Phase 2 exit criteria: the 45/50 benchmark suite (deferred with
 Phase 3 benchmarks, TD-025).
 
