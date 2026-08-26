@@ -835,6 +835,46 @@ describe('AgentBrowser REST API safety integration', () => {
     });
   });
 
+  describe('extraction over HTTP', () => {
+    it('should extract markdown from a real page state', async () => {
+      const { sessionId, pageId } = await setupPage();
+
+      await fetch(`${baseUrl}/sessions/${sessionId}/pages/${pageId}/navigate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: 'https://example.com' }),
+      });
+
+      const response = await fetch(`${baseUrl}/sessions/${sessionId}/pages/${pageId}/extract`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ format: 'text' }),
+      });
+
+      expect(response.status).toBe(200);
+      const result = await response.json();
+      expect(result.data.text).toEqual(expect.any(String));
+      expect(result.evidence[0]).toMatchObject({
+        url: 'https://example.com',
+        revision: expect.any(Number),
+      });
+      expect(typeof result.evidence[0].hash).toBe('string');
+    });
+
+    it('should reject an unknown format', async () => {
+      const { sessionId, pageId } = await setupPage();
+
+      const response = await fetch(`${baseUrl}/sessions/${sessionId}/pages/${pageId}/extract`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ format: 'yaml' }),
+      });
+
+      expect(response.status).toBe(400);
+      expect((await response.json()).error.code).toBe('INVALID_REQUEST');
+    });
+  });
+
   describe('diffs and continuation over HTTP', () => {
     it('should return element changes for sinceRevision', async () => {
       const { sessionId, pageId } = await setupPage();

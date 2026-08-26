@@ -27,6 +27,15 @@ import type { MetricsRegistry } from '@agentbrowser/core';
 import type { StructuredLogger } from '@agentbrowser/core';
 import type { BrowserEngine, EnginePage } from '@agentbrowser/engine';
 import type { EngineSession, EngineSessionOptions } from '@agentbrowser/engine';
+import type { RawPageState } from '@agentbrowser/engine';
+import {
+  extractForms,
+  extractJsonLd,
+  extractLinks,
+  extractMarkdown,
+  extractTables,
+  extractVisibleText,
+} from '@agentbrowser/extraction';
 import { NetworkPolicy } from '@agentbrowser/policy';
 import type {
   ArtifactRef,
@@ -920,6 +929,66 @@ export class AgentBrowserService {
       return undefined;
     }
     return entry;
+  }
+
+  // ---- extraction ---------------------------------------------------------
+
+  /**
+   * Deterministic extraction over a fresh observation (spec 12): pure
+   * functions over the raw page state, evidence hashed against the source
+   * content at the service's revision.
+   */
+  async extract(
+    sessionId: string,
+    pageId: string,
+    request: { format: 'text' | 'markdown' | 'links' | 'tables' | 'forms' | 'jsonld' }
+  ): Promise<import('@agentbrowser/engine').ExtractionResult> {
+    return this.traced('extract', { sessionId, pageId, format: request.format }, async () => {
+      const page = this.requirePage(sessionId, pageId);
+      this.coordinator.updateActivity(sessionId);
+
+      let raw: RawPageState;
+      try {
+        raw = await page.enginePage.observe({});
+      } catch (error) {
+        if (this.isCrash(error instanceof Error ? error.message : String(error))) {
+          await this.recoverFromCrash(sessionId, 'extract: engine crashed');
+          throw new ServiceError(
+            'ENGINE_CRASHED',
+            'The browser engine crashed; the session has been terminated.',
+            false,
+            { sessionId }
+          );
+        }
+        throw error;
+      }
+
+      // Evidence attests to the service's revision of the page.
+      const sourced: RawPageState = {
+        ...raw,
+        metadata: { ...(raw.metadata ?? {}), revision: page.revision },
+      };
+
+      switch (request.format) {
+        case 'text':
+          return extractVisibleText(sourced);
+        case 'markdown':
+          return extractMarkdown(sourced);
+        case 'links':
+          return extractLinks(sourced);
+        case 'tables':
+          return extractTables(sourced);
+        case 'forms':
+          return extractForms(sourced);
+        case 'jsonld':
+          return extractJsonLd(sourced);
+        default:
+          throw new ServiceError(
+            'INVALID_REQUEST',
+            `Unknown extraction format: ${String(request.format)}. Supported: text, markdown, links, tables, forms, jsonld.`
+          );
+      }
+    });
   }
 
   // ---- screenshots --------------------------------------------------------

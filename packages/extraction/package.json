@@ -1,0 +1,28 @@
+{
+  "name": "@agentbrowser/extraction",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Deterministic page extractors with evidence provenance (spec 12)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check src/",
+    "format": "biome format --write src/",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@agentbrowser/engine": "workspace:*",
+    "@agentbrowser/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.9"
+  }
+}

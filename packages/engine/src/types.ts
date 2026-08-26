@@ -90,7 +90,13 @@ export interface RawElement {
   enabled: boolean;
   focused?: boolean;
   /** Risk classification carried through to normalized observations. */
-  risk?: 'read' | 'write-local' | 'external-message' | 'transaction' | 'account-security' | 'destructive';
+  risk?:
+    | 'read'
+    | 'write-local'
+    | 'external-message'
+    | 'transaction'
+    | 'account-security'
+    | 'destructive';
   bounds?: ElementBounds;
   attributes?: Record<string, string>;
 }

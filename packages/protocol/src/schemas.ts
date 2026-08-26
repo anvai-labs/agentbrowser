@@ -206,7 +206,7 @@ export const ElementChangeSchema = Type.Object({
 
 export const ContinuationCursorSchema = Type.Object({
   nextOrdinal: Type.Integer({ minimum: 0 }),
-  remaining: Type.Integer({ minimum: 0 })
+  remaining: Type.Integer({ minimum: 0 }),
 });
 
 export const PageStateSchema = Type.Object({

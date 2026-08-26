@@ -101,6 +101,22 @@ export interface ActionResult {
   observation?: ObservationResponse;
 }
 
+export interface ExtractRequest {
+  format: 'text' | 'markdown' | 'links' | 'tables' | 'forms' | 'jsonld';
+}
+
+export interface ExtractResult {
+  data: unknown;
+  evidence: Array<{
+    url: string;
+    revision: number;
+    ref?: string;
+    text?: string;
+    hash: string;
+  }>;
+  warnings?: string[];
+}
+
 export interface ScreenshotRequest {
   fullPage?: boolean;
   format?: 'png' | 'jpeg' | 'webp';
@@ -279,6 +295,26 @@ export class SessionsClient {
   ): Promise<ArtifactRef> {
     const response = await this.requestFn(
       `${this.baseUrl}/sessions/${sessionId}/pages/${pageId}/screenshot`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...this.headers,
+        },
+        body: JSON.stringify(request),
+      }
+    );
+
+    return this.handleResponse(response);
+  }
+
+  async extract(
+    sessionId: string,
+    pageId: string,
+    request: ExtractRequest
+  ): Promise<ExtractResult> {
+    const response = await this.requestFn(
+      `${this.baseUrl}/sessions/${sessionId}/pages/${pageId}/extract`,
       {
         method: 'POST',
         headers: {
