@@ -61,6 +61,13 @@ describe('AgentBrowser MCP server', () => {
         data: { markdown: '# Report' },
         evidence: [{ url: 'https://example.com', revision: 2, hash: 'abc12345' }],
       }),
+      pdf: vi.fn().mockResolvedValue({
+        artifactId: 'pdf_1',
+        type: 'pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 4096,
+        url: '/sessions/ses_1/artifacts/pdf_1',
+      }),
       screenshot: vi.fn().mockResolvedValue({
         artifactId: 'art_1',
         type: 'screenshot',
@@ -105,6 +112,12 @@ describe('AgentBrowser MCP server', () => {
       expect(names).toContain('browser_observe');
       expect(names).toContain('browser_act');
       expect(names).toContain('browser_screenshot');
+    });
+
+    it('should expose browser_pdf', async () => {
+      const response = JSON.parse(await request('3c', 'tools/list'));
+      const names = response.result.tools.map((t: { name: string }) => t.name);
+      expect(names).toContain('browser_pdf');
     });
 
     it('should expose browser_extract', async () => {
@@ -220,6 +233,19 @@ describe('AgentBrowser MCP server', () => {
 
       expect(response.result.isError).toBe(true);
       expect(JSON.stringify(response.result.content)).toContain('format');
+    });
+
+    it('should capture a PDF through the tool', async () => {
+      const response = JSON.parse(
+        await call('10d', 'browser_pdf', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          printBackground: true,
+        })
+      );
+
+      expect(sessions.pdf).toHaveBeenCalledWith('ses_1', 'pg_1', { printBackground: true });
+      expect(textOf(response).artifactId).toBe('pdf_1');
     });
 
     it('should capture a screenshot', async () => {

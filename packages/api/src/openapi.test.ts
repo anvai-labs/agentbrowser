@@ -111,7 +111,8 @@ describe('OpenAPI document', () => {
       for (const item of Object.values(doc.paths) as Json[]) {
         for (const op of Object.values(item) as Json[]) {
           const codes = Object.keys(op.responses ?? {});
-          expect(codes.some((c) => c.startsWith('2'))).toBe(true);
+          // 101 is the success status for WebSocket upgrade routes.
+          expect(codes.some((c) => c.startsWith('2') || c === '101')).toBe(true);
         }
       }
     });

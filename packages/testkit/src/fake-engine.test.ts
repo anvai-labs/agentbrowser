@@ -288,6 +288,21 @@ describe('FakeEngine', () => {
       );
     });
 
+    it('should generate PDF bytes with a PDF header', async () => {
+      const session = await engine.createSession({});
+      const page = await session.newPage();
+      await page.navigate({ url: 'https://report.example.com' });
+
+      const pdf = await page.pdf({ printBackground: true });
+
+      expect(pdf.artifactId).toEqual(expect.any(String));
+      expect(pdf.contentType).toBe('application/pdf');
+      expect(pdf.sizeBytes).toBeGreaterThan(0);
+      expect(Buffer.from(pdf.bytesBase64, 'base64').toString('utf8').startsWith('%PDF-')).toBe(
+        true
+      );
+    });
+
     it('should allow tests to inject elements with risk metadata', async () => {
       const engine2 = new FakeEngine();
       const session = await engine2.createSession({});

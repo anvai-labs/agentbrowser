@@ -126,6 +126,25 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         },
       },
 
+      '/sessions/{sessionId}/events': {
+        get: {
+          operationId: 'streamSessionEvents',
+          summary: 'Stream session events over WebSocket',
+          description:
+            'Upgrades to a WebSocket and streams engine events (page loads, console ' +
+            'output, crashes) as one JSON object per frame, stamped with the ' +
+            'session and page ids. Unknown sessions close with code 4404. ' +
+            'Live-only: events emitted before subscribing are not replayed.',
+          tags: ['sessions'],
+          parameters: [sessionIdParam],
+          'x-websocket': true,
+          responses: {
+            '101': { description: 'Switching Protocols: the event stream.' },
+            '404': NOT_FOUND,
+          },
+        },
+      },
+
       '/metrics': {
         get: {
           operationId: 'getMetrics',
@@ -390,6 +409,39 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             ),
             '403': errorResponse('The action was denied by policy or requires approval.'),
             '404': NOT_FOUND,
+            '500': INTERNAL,
+          },
+        },
+      },
+
+      '/sessions/{sessionId}/pages/{pageId}/pdf': {
+        post: {
+          operationId: 'capturePdf',
+          summary: 'Capture a PDF artifact',
+          description:
+            'Prints the page to PDF and stores it as a session-scoped artifact; ' +
+            'retrieve bytes via the artifact endpoint. Requires an engine that ' +
+            'supports PDF capture (ENGINE_UNSUPPORTED otherwise).',
+          tags: ['artifacts'],
+          parameters: [sessionIdParam, pageIdParam],
+          requestBody: {
+            required: false,
+            content: json({
+              type: 'object',
+              properties: {
+                landscape: { type: 'boolean' },
+                displayHeaderFooter: { type: 'boolean' },
+                printBackground: { type: 'boolean' },
+              },
+            }),
+          },
+          responses: {
+            '200': {
+              description: 'The stored artifact metadata.',
+              content: json(ref('ArtifactRef')),
+            },
+            '404': NOT_FOUND,
+            '422': errorResponse('The engine does not support PDF capture.'),
             '500': INTERNAL,
           },
         },

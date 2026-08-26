@@ -21,6 +21,7 @@ import type {
   ObservationRequest,
   ObservationResponse,
   PageResponse,
+  PdfRequest,
   ScreenshotRequest,
   SessionRequest,
   SessionResponse,
@@ -47,6 +48,7 @@ export interface McpClient {
     executeAction(sessionId: string, pageId: string, request: ActionRequest): Promise<ActionResult>;
     screenshot(sessionId: string, pageId: string, request: ScreenshotRequest): Promise<ArtifactRef>;
     extract(sessionId: string, pageId: string, request: ExtractRequest): Promise<ExtractResult>;
+    pdf(sessionId: string, pageId: string, request: PdfRequest): Promise<ArtifactRef>;
   };
 }
 
@@ -290,6 +292,36 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
         }
         return await client.sessions.extract(sessionId, pageId, {
           format: format as ExtractRequest['format'],
+        });
+      },
+    },
+
+    {
+      name: 'browser_pdf',
+      description:
+        'Print the page to PDF and store it as a session artifact. Evidence, not ' +
+        'the primary observation mode; requires an engine that supports PDF capture.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string' },
+          pageId: { type: 'string' },
+          landscape: { type: 'boolean' },
+          displayHeaderFooter: { type: 'boolean' },
+          printBackground: { type: 'boolean' },
+        },
+        required: ['sessionId', 'pageId'],
+      },
+      handler: async (args) => {
+        const [sessionId, pageId] = sessionAndPage(args);
+        return await client.sessions.pdf(sessionId, pageId, {
+          ...(args.landscape !== undefined ? { landscape: Boolean(args.landscape) } : {}),
+          ...(args.displayHeaderFooter !== undefined
+            ? { displayHeaderFooter: Boolean(args.displayHeaderFooter) }
+            : {}),
+          ...(args.printBackground !== undefined
+            ? { printBackground: Boolean(args.printBackground) }
+            : {}),
         });
       },
     },

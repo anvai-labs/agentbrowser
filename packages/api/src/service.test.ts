@@ -1110,6 +1110,65 @@ describe('AgentBrowserService', () => {
     });
   });
 
+  describe('event streaming', () => {
+    it('should deliver engine events to session subscribers with stamped ids', async () => {
+      const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await service.createPage(sessionId)).pageId;
+      await service.navigate(sessionId, pageId, { url: 'https://example.com' });
+
+      const received: Array<Record<string, unknown>> = [];
+      const unsubscribe = service.subscribe(sessionId, (event) => received.push(event));
+
+      const ids = engine.getSessionIds();
+      engine.getFakePage(ids[ids.length - 1]!, pageId)?.emitEvent('page.loaded', { ms: 12 });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      expect(received).toHaveLength(1);
+      expect(received[0]).toMatchObject({
+        type: 'page.loaded',
+        sessionId,
+        pageId,
+        data: { ms: 12 },
+      });
+      unsubscribe();
+    });
+
+    it('should stop delivery after unsubscribe', async () => {
+      const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await service.createPage(sessionId)).pageId;
+
+      const received: unknown[] = [];
+      const unsubscribe = service.subscribe(sessionId, (event) => received.push(event));
+      unsubscribe();
+
+      const ids = engine.getSessionIds();
+      engine.getFakePage(ids[ids.length - 1]!, pageId)?.emitEvent('page.loaded');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      expect(received).toHaveLength(0);
+    });
+
+    it('should not leak events across sessions', async () => {
+      const a = (await service.createSession({ tenantId: 'a' })).sessionId;
+      const b = (await service.createSession({ tenantId: 'b' })).sessionId;
+      const pageA = (await service.createPage(a)).pageId;
+      await service.createPage(b);
+
+      const receivedB: unknown[] = [];
+      service.subscribe(b, (event) => receivedB.push(event));
+
+      const ids = engine.getSessionIds();
+      engine.getFakePage(ids[0]!, pageA)?.emitEvent('console.log', { text: 'x' });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      expect(receivedB).toHaveLength(0);
+    });
+
+    it('should return no subscription for an unknown session', () => {
+      expect(service.subscribe('ses_missing', () => {})).toBeUndefined();
+    });
+  });
+
   describe('screenshots', () => {
     it('should capture an artifact from the engine', async () => {
       const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
@@ -1121,7 +1180,36 @@ describe('AgentBrowserService', () => {
       expect(artifact.contentType).toBe('image/png');
       expect(artifact.sizeBytes).toBeGreaterThan(0);
       expect(artifact.artifactId).toEqual(expect.any(String));
-      expect(artifact.url).toEqual(expect.any(String));
+
+      // Bytes are retrievable through the artifact store.
+      const stored = service.getArtifact(sessionId, artifact.artifactId);
+      expect(stored?.bytes.length).toBe(artifact.sizeBytes);
+    });
+
+    it('should capture a PDF artifact retrievable through the store', async () => {
+      const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await service.createPage(sessionId)).pageId;
+      await service.navigate(sessionId, pageId, { url: 'https://report.example.com' });
+
+      const artifact = await service.pdf(sessionId, pageId, { printBackground: true });
+
+      expect(artifact.type).toBe('pdf');
+      expect(artifact.contentType).toBe('application/pdf');
+      expect(artifact.sizeBytes).toBeGreaterThan(0);
+
+      const stored = service.getArtifact(sessionId, artifact.artifactId);
+      expect(
+        Buffer.from(stored?.bytes ?? Buffer.alloc(0))
+          .toString('utf8')
+          .startsWith('%PDF-')
+      ).toBe(true);
+    });
+
+    it('should reject a PDF for an unknown page', async () => {
+      const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+
+      const error = await capture(() => service.pdf(sessionId, 'pg_missing', {}));
+      expect(error?.code).toBe('NOT_FOUND');
     });
 
     it('should reject a screenshot for an unknown page', async () => {

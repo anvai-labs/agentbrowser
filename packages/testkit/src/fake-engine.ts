@@ -11,6 +11,7 @@ import type {
   EngineAction,
   EngineCapabilities,
   EngineEvent,
+  EngineEventType,
   EnginePage,
   EngineSession,
   EngineSessionOptions,
@@ -21,6 +22,7 @@ import type {
   NavigationResult,
   NewPageOptions,
   ObservationRequest,
+  PdfRequest,
   RawPageState,
   ScreenshotRequest,
 } from '@agentbrowser/engine';
@@ -184,6 +186,9 @@ class FakePage implements EnginePage {
   private closed = false;
   private crashed = false;
   private contentOverride: string | undefined;
+  private eventQueue: EngineEvent[] = [];
+  private eventWaiters: Array<() => void> = [];
+  private eventsFinished = false;
 
   /** Test hook: simulate a renderer crash. All subsequent ops throw. */
   crash(): void {
@@ -193,6 +198,22 @@ class FakePage implements EnginePage {
   /** Test hook: pin the page's HTML content for extraction-style consumers. */
   setContent(html: string): void {
     this.contentOverride = html;
+  }
+
+  /** Test hook: emit an engine event to subscribers. */
+  emitEvent(type: EngineEventType, data?: Record<string, unknown>): void {
+    this.eventQueue.push({
+      type,
+      timestamp: new Date().toISOString(),
+      sessionId: 'fake-engine',
+      pageId: this.id,
+      ...(data !== undefined ? { data } : {}),
+    });
+    const waiters = this.eventWaiters;
+    this.eventWaiters = [];
+    for (const wake of waiters) {
+      wake();
+    }
   }
 
   /** Throws when the page has crashed or been closed by the engine. */
@@ -389,23 +410,54 @@ class FakePage implements EnginePage {
     };
   }
 
+  async pdf(request: PdfRequest): Promise<any> {
+    const content = `%PDF-1.4\nfake-page:${this.currentUrl}\nprinted:${request.printBackground === true}\n%%EOF`;
+    return {
+      artifactId: `pdf-${Date.now()}`,
+      type: 'pdf',
+      contentType: 'application/pdf',
+      sizeBytes: content.length,
+      url: '/v1/artifacts/pdf-1',
+      bytesBase64: Buffer.from(content, 'utf8').toString('base64'),
+    };
+  }
+
   async screenshot(request: ScreenshotRequest): Promise<any> {
     const format = request.format || 'png';
+    const content = `fake-screenshot:${this.currentUrl}:${format}:full=${request.fullPage === true}`;
+    const bytes = Buffer.from(content, 'utf8');
     return {
       artifactId: `screenshot-${Date.now()}`,
       type: 'screenshot',
       contentType: `image/${format}`,
-      sizeBytes: 1024,
+      sizeBytes: bytes.length,
       url: '/v1/artifacts/screenshot-1',
+      bytesBase64: bytes.toString('base64'),
     };
   }
 
   async *events(): AsyncIterable<EngineEvent> {
-    // No events by default
+    for (;;) {
+      while (this.eventQueue.length > 0) {
+        yield this.eventQueue.shift() as EngineEvent;
+      }
+      if (this.eventsFinished || this.closed) {
+        return;
+      }
+      await new Promise<void>((resolve) => {
+        this.eventWaiters.push(resolve);
+      });
+    }
   }
 
   async close(): Promise<void> {
     this.closed = true;
+    this.eventsFinished = true;
+    const waiters = this.eventWaiters;
+    this.eventWaiters = [];
+    for (const wake of waiters) {
+      wake();
+    }
   }
 
   private generateFakeElements(): FakeElement[] {

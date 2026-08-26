@@ -210,6 +210,8 @@ class PlaywrightPage implements EnginePage {
    */
   private revision = 1;
   private refStore = new Map<string, StoredElement>();
+  private eventWaiters: Array<() => void> = [];
+  private eventsClosed = false;
 
   constructor(id: string, page: Page, engine: PlaywrightChromiumEngine) {
     this.id = id;
@@ -222,23 +224,33 @@ class PlaywrightPage implements EnginePage {
 
   private setupEventListeners(): void {
     this.page.on('load', () => {
-      this.eventQueue.push({
+      this.enqueueEvent({
         type: 'page.loaded',
         timestamp: new Date().toISOString(),
-        sessionId: 'unknown', // Would be set by session
+        sessionId: 'unknown', // Stamped by the service
         pageId: this.id,
       });
     });
 
     this.page.on('console', (msg) => {
-      this.eventQueue.push({
-        type: msg.type() as any,
+      this.enqueueEvent({
+        type: msg.type() as never,
         timestamp: new Date().toISOString(),
         sessionId: 'unknown',
         pageId: this.id,
         data: { text: msg.text() },
       });
     });
+  }
+
+  /** Enqueue an event and wake any iterator waiting for one. */
+  private enqueueEvent(event: EngineEvent): void {
+    this.eventQueue.push(event);
+    const waiters = this.eventWaiters;
+    this.eventWaiters = [];
+    for (const wake of waiters) {
+      wake();
+    }
   }
 
   async navigate(request: NavigationRequest): Promise<NavigationResult> {
@@ -504,9 +516,11 @@ class PlaywrightPage implements EnginePage {
 
     return {
       artifactId: `screenshot-${Date.now()}`,
+      type: 'screenshot',
       contentType: `image/${request.format || 'png'}`,
       sizeBytes: screenshot.length,
       url: `/v1/artifacts/screenshot-${Date.now()}`,
+      bytesBase64: screenshot.toString('base64'),
     };
   }
 
@@ -518,19 +532,35 @@ class PlaywrightPage implements EnginePage {
 
     return {
       artifactId: `pdf-${Date.now()}`,
+      type: 'pdf',
       contentType: 'application/pdf',
       sizeBytes: buffer.length,
       url: `/v1/artifacts/pdf-${Date.now()}`,
+      bytesBase64: buffer.toString('base64'),
     };
   }
 
   async *events(): AsyncIterable<EngineEvent> {
-    while (this.eventQueue.length > 0) {
-      yield this.eventQueue.shift()!;
+    for (;;) {
+      while (this.eventQueue.length > 0) {
+        yield this.eventQueue.shift() as EngineEvent;
+      }
+      if (this.eventsClosed) {
+        return;
+      }
+      await new Promise<void>((resolve) => {
+        this.eventWaiters.push(resolve);
+      });
     }
   }
 
   async close(): Promise<void> {
+    this.eventsClosed = true;
+    const waiters = this.eventWaiters;
+    this.eventWaiters = [];
+    for (const wake of waiters) {
+      wake();
+    }
     await this.page.close();
   }
 }

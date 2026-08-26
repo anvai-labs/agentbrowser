@@ -25,7 +25,7 @@ import type { ArtifactMetadata } from '@agentbrowser/core';
 import type { InMemoryTracer, Span } from '@agentbrowser/core';
 import type { MetricsRegistry } from '@agentbrowser/core';
 import type { StructuredLogger } from '@agentbrowser/core';
-import type { BrowserEngine, EnginePage } from '@agentbrowser/engine';
+import type { BrowserEngine, EngineEvent, EnginePage } from '@agentbrowser/engine';
 import type { EngineSession, EngineSessionOptions } from '@agentbrowser/engine';
 import type { RawPageState } from '@agentbrowser/engine';
 import {
@@ -42,6 +42,7 @@ import type {
   ObservationRequest,
   PageElement,
   PageState,
+  PdfRequest,
   ScreenshotRequest,
 } from '@agentbrowser/protocol';
 
@@ -196,6 +197,8 @@ export class AgentBrowserService {
   private pageCounter = 0;
   /** Audit log of sessions terminated by engine crashes (TD-024). */
   private readonly crashLog: Array<{ sessionId: string; reason: string; timestamp: string }> = [];
+  /** Session -> event listeners, fed by per-page engine event pumps. */
+  private readonly eventListeners = new Map<string, Set<(event: EngineEvent) => void>>();
 
   constructor(deps: ServiceDependencies) {
     this.engine = deps.engine;
@@ -283,6 +286,47 @@ export class AgentBrowserService {
         this.logger.info(operation, fields);
       }
     }
+  }
+
+  /**
+   * Subscribe to a session's engine events (page loads, console output,
+   * crashes). Returns an unsubscribe function, or undefined when the session
+   * does not exist. Events are stamped with the service's session and page
+   * ids before delivery.
+   */
+  subscribe(sessionId: string, listener: (event: EngineEvent) => void): (() => void) | undefined {
+    if (!this.coordinator.get(sessionId)) {
+      return undefined;
+    }
+    const listeners = this.eventListeners.get(sessionId) ?? new Set();
+    listeners.add(listener);
+    this.eventListeners.set(sessionId, listeners);
+    return () => {
+      listeners.delete(listener);
+    };
+  }
+
+  /** Pull a page's engine events forever, dispatching to session listeners. */
+  private pumpEvents(sessionId: string, pageId: string, enginePage: EnginePage): void {
+    void (async () => {
+      try {
+        for await (const event of enginePage.events()) {
+          const stamped: EngineEvent = { ...event, sessionId, pageId };
+          const listeners = this.eventListeners.get(sessionId);
+          if (listeners) {
+            for (const listener of [...listeners]) {
+              try {
+                listener(stamped);
+              } catch {
+                // A misbehaving listener never breaks the stream.
+              }
+            }
+          }
+        }
+      } catch {
+        // The engine page went away; the pump simply ends.
+      }
+    })();
   }
 
   /** Error messages that indicate the engine itself died. */
@@ -455,6 +499,7 @@ export class AgentBrowserService {
       }
     }
     this.sessionDownloadPolicy.delete(sessionId);
+    this.eventListeners.delete(sessionId);
     this.metrics?.incrementCounter('sessions_closed_total');
     this.metrics?.setGauge('sessions_active', this.coordinator.getSessionCount());
   }
@@ -468,6 +513,9 @@ export class AgentBrowserService {
     const enginePage = await session.engineSession.newPage();
     const pageId = `pg_${++this.pageCounter}_${enginePage.id}`;
     this.pages.set(pageId, { sessionId, enginePage, revision: 1, history: new Map() });
+
+    // Stream engine events to session subscribers until the page closes.
+    this.pumpEvents(sessionId, pageId, enginePage);
 
     return { pageId, sessionId, status: 'ready' };
   }
@@ -848,6 +896,47 @@ export class AgentBrowserService {
     });
   }
 
+  // ---- pdf ----------------------------------------------------------------
+
+  /**
+   * Capture a PDF artifact. Like screenshots, PDFs are evidence: the bytes
+   * land in the artifact store scoped to the session.
+   */
+  async pdf(sessionId: string, pageId: string, request: PdfRequest): Promise<ArtifactMetadata> {
+    return this.traced('pdf', { sessionId, pageId }, async () => {
+      const page = this.requirePage(sessionId, pageId);
+      this.coordinator.updateActivity(sessionId);
+
+      if (page.enginePage.pdf === undefined) {
+        throw new ServiceError(
+          'ENGINE_UNSUPPORTED',
+          'The active engine does not support PDF capture.'
+        );
+      }
+
+      let captured: Awaited<ReturnType<NonNullable<EnginePage['pdf']>>>;
+      try {
+        captured = await page.enginePage.pdf(request);
+      } catch (error) {
+        if (this.isCrash(error instanceof Error ? error.message : String(error))) {
+          await this.recoverFromCrash(sessionId, 'pdf: engine crashed');
+          throw new ServiceError(
+            'ENGINE_CRASHED',
+            'The browser engine crashed; the session has been terminated.',
+            false,
+            { sessionId }
+          );
+        }
+        throw error;
+      }
+
+      const bytes = Buffer.from((captured as { bytesBase64?: string }).bytesBase64 ?? '', 'base64');
+      return this.artifacts.put('pdf', 'application/pdf', new Uint8Array(bytes), {
+        sessionId,
+      });
+    });
+  }
+
   // ---- downloads ----------------------------------------------------------
 
   /**
@@ -997,18 +1086,30 @@ export class AgentBrowserService {
     sessionId: string,
     pageId: string,
     request: ScreenshotRequest
-  ): Promise<ArtifactRef> {
+  ): Promise<ArtifactMetadata> {
     const page = this.requirePage(sessionId, pageId);
     this.coordinator.updateActivity(sessionId);
 
-    const artifact = await page.enginePage.screenshot(request);
-    return {
-      artifactId: artifact.artifactId,
-      type: 'screenshot',
-      contentType: artifact.contentType,
-      sizeBytes: artifact.sizeBytes,
-      url: artifact.url,
-    };
+    let captured: Awaited<ReturnType<EnginePage['screenshot']>>;
+    try {
+      captured = await page.enginePage.screenshot(request);
+    } catch (error) {
+      if (this.isCrash(error instanceof Error ? error.message : String(error))) {
+        await this.recoverFromCrash(sessionId, 'screenshot: engine crashed');
+        throw new ServiceError(
+          'ENGINE_CRASHED',
+          'The browser engine crashed; the session has been terminated.',
+          false,
+          { sessionId }
+        );
+      }
+      throw error;
+    }
+
+    const bytes = Buffer.from((captured as { bytesBase64?: string }).bytesBase64 ?? '', 'base64');
+    return this.artifacts.put('screenshot', captured.contentType, new Uint8Array(bytes), {
+      sessionId,
+    });
   }
 
   // ---- shutdown -----------------------------------------------------------

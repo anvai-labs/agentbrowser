@@ -10,6 +10,7 @@
 import { MetricsRegistry } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
 import cors from '@fastify/cors';
+import websocket from '@fastify/websocket';
 import Fastify from 'fastify';
 import type { FastifyError, FastifyInstance } from 'fastify';
 import { buildOpenApiDocument } from './openapi.js';
@@ -41,6 +42,8 @@ function statusFor(code: string): number {
       return 403;
     case 'QUOTA_EXCEEDED':
       return 429;
+    case 'ENGINE_UNSUPPORTED':
+      return 422;
     case 'INVALID_REQUEST':
     case 'STALE_TARGET':
     case 'TARGET_NOT_FOUND':
@@ -64,6 +67,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     preflight: true,
   });
+
+  // WebSocket event streaming (spec 13.1: session events).
+  await fastify.register(websocket);
 
   // Security headers
   fastify.addHook('onSend', async (request, reply) => {
@@ -178,6 +184,26 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   // Prometheus exposition.
   fastify.get('/metrics', async (request, reply) => {
     return reply.type('text/plain; version=0.0.4; charset=utf-8').send(metrics.render());
+  });
+
+  // Session event stream: WebSocket upgrade, JSON per frame.
+  fastify.get('/sessions/:sessionId/events', { websocket: true }, (socket, request) => {
+    const { sessionId } = request.params as { sessionId: string };
+
+    const unsubscribe = service.subscribe(sessionId, (event) => {
+      socket.send(JSON.stringify(event));
+    });
+    if (unsubscribe === undefined) {
+      socket.close(4404, 'session not found');
+      return;
+    }
+
+    socket.on('close', () => {
+      unsubscribe();
+    });
+    socket.on('error', () => {
+      unsubscribe();
+    });
   });
 
   // Health check endpoint (compat).
@@ -424,6 +450,29 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         metadata: stored.metadata,
         contentBase64: Buffer.from(stored.bytes).toString('base64'),
       });
+    } catch (error) {
+      return fail(reply, error);
+    }
+  });
+
+  // PDF capture endpoint
+  fastify.post('/sessions/:sessionId/pages/:pageId/pdf', async (request, reply) => {
+    try {
+      const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
+      const body = (request.body ?? {}) as {
+        landscape?: boolean;
+        displayHeaderFooter?: boolean;
+        printBackground?: boolean;
+      };
+
+      const artifact = await service.pdf(sessionId, pageId, {
+        ...(body.landscape !== undefined ? { landscape: body.landscape } : {}),
+        ...(body.displayHeaderFooter !== undefined
+          ? { displayHeaderFooter: body.displayHeaderFooter }
+          : {}),
+        ...(body.printBackground !== undefined ? { printBackground: body.printBackground } : {}),
+      });
+      return reply.send(artifact);
     } catch (error) {
       return fail(reply, error);
     }

@@ -132,6 +132,12 @@ export interface ArtifactRef {
   url: string;
 }
 
+export interface PdfRequest {
+  landscape?: boolean;
+  displayHeaderFooter?: boolean;
+  printBackground?: boolean;
+}
+
 export interface ApiError {
   code: string;
   message: string;
@@ -315,6 +321,22 @@ export class SessionsClient {
   ): Promise<ExtractResult> {
     const response = await this.requestFn(
       `${this.baseUrl}/sessions/${sessionId}/pages/${pageId}/extract`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...this.headers,
+        },
+        body: JSON.stringify(request),
+      }
+    );
+
+    return this.handleResponse(response);
+  }
+
+  async pdf(sessionId: string, pageId: string, request: PdfRequest = {}): Promise<ArtifactRef> {
+    const response = await this.requestFn(
+      `${this.baseUrl}/sessions/${sessionId}/pages/${pageId}/pdf`,
       {
         method: 'POST',
         headers: {

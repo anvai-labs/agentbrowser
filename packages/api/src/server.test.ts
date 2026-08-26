@@ -577,7 +577,13 @@ describe('AgentBrowser REST API', () => {
       expect(artifact.type).toBe('screenshot');
       expect(artifact.contentType).toBe('image/png');
       expect(artifact.sizeBytes).toBeGreaterThan(0);
-      expect(artifact.url).toEqual(expect.any(String));
+
+      // Bytes are retrievable through the artifact endpoint.
+      const storedResponse = await fetch(
+        `${baseUrl}/sessions/${sessionId}/artifacts/${artifact.artifactId}`
+      );
+      const stored = await storedResponse.json();
+      expect(Buffer.from(stored.contentBase64, 'base64').length).toBe(artifact.sizeBytes);
     });
 
     it('should honour the requested format', async () => {
@@ -589,6 +595,27 @@ describe('AgentBrowser REST API', () => {
 
       const artifact = await response.json();
       expect(artifact.contentType).toBe('image/jpeg');
+    });
+
+    it('should capture a PDF artifact', async () => {
+      const response = await fetch(`${baseUrl}/sessions/${sessionId}/pages/${pageId}/pdf`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ printBackground: true }),
+      });
+
+      expect(response.status).toBe(200);
+      const artifact = await response.json();
+      expect(artifact.type).toBe('pdf');
+      expect(artifact.contentType).toBe('application/pdf');
+
+      const stored = await fetch(
+        `${baseUrl}/sessions/${sessionId}/artifacts/${artifact.artifactId}`
+      );
+      const entry = await stored.json();
+      expect(Buffer.from(entry.contentBase64, 'base64').toString('utf8').startsWith('%PDF-')).toBe(
+        true
+      );
     });
 
     it('should reject an unsupported format', async () => {
@@ -961,11 +988,11 @@ describe('AgentBrowser REST API safety integration', () => {
   describe('downloads and artifacts over HTTP', () => {
     // Downloads run against an injected fetcher so tests never touch the
     // network.
-    let previous: { server: FastifyInstance; baseUrl: string };
+    let previous: { server: FastifyInstance; baseUrl: string; engine: FakeEngine };
 
     beforeAll(async () => {
       // Capture the outer suite's live server now, not at registration time.
-      previous = { server, baseUrl };
+      previous = { server, baseUrl, engine };
       engine = new FakeEngine();
       server = await buildServer({
         engine,
@@ -982,6 +1009,7 @@ describe('AgentBrowser REST API safety integration', () => {
       // The outer suite's server stayed listening throughout.
       server = previous.server;
       baseUrl = previous.baseUrl;
+      engine = previous.engine;
     });
 
     it('should refuse downloads for a session that does not allow them', async () => {
@@ -1069,6 +1097,62 @@ describe('AgentBrowser REST API safety integration', () => {
 
       const cross = await fetch(`${baseUrl}/sessions/${other}/artifacts/${artifact.artifactId}`);
       expect(cross.status).toBe(404);
+    });
+  });
+
+  describe('WebSocket event streaming', () => {
+    /** Read the next websocket message as JSON. */
+    const nextMessage = (socket: WebSocket, timeoutMs = 3000) =>
+      new Promise<Record<string, unknown>>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('no message in time')), timeoutMs);
+        socket.addEventListener('message', (event) => {
+          clearTimeout(timer);
+          resolve(JSON.parse(String(event.data)));
+        });
+        socket.addEventListener('error', (event) => {
+          clearTimeout(timer);
+          reject(new Error(String(event.message ?? 'socket error')));
+        });
+      });
+
+    it('should stream session events as JSON lines', async () => {
+      const sessionResponse = await fetch(`${baseUrl}/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId: 'ws' }),
+      });
+      const { sessionId } = await sessionResponse.json();
+      const pageId = (
+        await (await fetch(`${baseUrl}/sessions/${sessionId}/pages`, { method: 'POST' })).json()
+      ).pageId;
+
+      const wsUrl = `${baseUrl.replace('http', 'ws')}/sessions/${sessionId}/events`;
+      const socket = new WebSocket(wsUrl);
+      const first = nextMessage(socket);
+      await new Promise((resolve) => socket.addEventListener('open', resolve));
+
+      // Emit from the engine; the subscriber should forward it stamped.
+      const ids = engine.getSessionIds();
+      engine.getFakePage(ids[ids.length - 1]!, pageId)?.emitEvent('console.log', { text: 'hello' });
+
+      const received = await first;
+      expect(received).toMatchObject({
+        type: 'console.log',
+        sessionId,
+        pageId,
+        data: { text: 'hello' },
+      });
+      socket.close();
+    });
+
+    it('should reject a stream for an unknown session with 4404', async () => {
+      const wsUrl = `${baseUrl.replace('http', 'ws')}/sessions/ses_missing/events`;
+      const socket = new WebSocket(wsUrl);
+
+      const closed = new Promise<number>((resolve) => {
+        socket.addEventListener('close', (event) => resolve(event.code));
+      });
+      expect(await closed).toBe(4404);
     });
   });
 
