@@ -86,6 +86,15 @@ Full workspace build and test run, verified end-to-end:
 - Single-binary MCP distribution (parallel session, TD-BROWSER-5):
   Bun-compiled agentbrowser-mcp binary with release CI and a stdio
   smoke test gating the exact tool catalog.
+- PDF capture + WebSocket events + comparative benchmarks (2026-08-26):
+  POST /pdf and browser_pdf (the last deferred tool); the engine
+  contract now carries capture bytes so screenshots and PDFs are
+  retrievable through the artifact endpoint; GET /sessions/{id}/events
+  streams stamped engine events over WebSocket; pnpm bench:real runs
+  the ADR-010 comparative benchmark on local fixture pages - real
+  Chromium is inside every spec target with a 100%-success ref loop,
+  so the Rust-engine decision has no latency pressure. CI runs it in
+  the Benchmarks job gated on the deterministic ref-loop success.
 
 Remaining Phase 2 exit criteria: the 45/50 benchmark suite (deferred with
 Phase 3 benchmarks, TD-025).
