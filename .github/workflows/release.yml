@@ -127,7 +127,8 @@ jobs:
 
       - name: Write release notes
         run: |
-          BUN_VERSION="1.4.0"
+          # Single-quoted heredoc: nothing expands, so the bun version below is
+          # written literally. Keep it in sync with the pinned setup-bun above.
           cat > notes.md <<'EOF'
           ## agentbrowser-mcp ${{ github.ref_name }}
 
@@ -167,7 +168,7 @@ jobs:
                 AGENTBROWSER_BASE_URL: http://localhost:3000
           ```
 
-          Built with bun ${BUN_VERSION}.
+          Built with bun 1.4.0.
           EOF
 
       - name: Publish the release

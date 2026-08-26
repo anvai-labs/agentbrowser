@@ -158,3 +158,11 @@ implementation:
    `packages/mcp-server/package.json`.** The binary's `serverInfo.version` is
    stamped from the package file, so a disagreeing tag would ship a
    mislabeled artifact; the guard fails the release before any build.
+
+**Released as `v1.1.0`** — the first tag through this pipeline. The single
+binary distribution is a new capability over the initial `1.0.0` workspace,
+hence a minor bump scoped to `packages/mcp-server` (the only package whose
+bits ship in the release). One release-notes bug was fixed in the release-prep
+commit: the single-quoted heredoc would have shipped a literal
+`${BUN_VERSION}` — unquoting it was not an option because the markdown's
+backticks would become command substitution.
