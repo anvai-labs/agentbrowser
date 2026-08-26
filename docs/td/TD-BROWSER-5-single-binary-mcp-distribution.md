@@ -1,6 +1,6 @@
 # TD-BROWSER-5: Single-Binary MCP Server Distribution (Bun `--compile`) + Release CI
 
-**Status:** Accepted (implementation pending)
+**Status:** Accepted — implemented (see [Implementation record](#implementation-record))
 **Context:** 2026-08-25
 **Related:** [ADR-009](../adr/009-mcp-high-level-tools.md) (MCP exposes high-level safe tools)
 
@@ -103,13 +103,13 @@ mcpServers:
 
 ## Acceptance criteria
 
-- [ ] `pnpm --filter @agentbrowser/mcp-server compile` produces a working binary (requires local bun).
-- [ ] Tagging `v*` produces 5 release artifacts + `sha256sums.txt`.
-- [ ] Each artifact passes the stdio smoke (`initialize` + `tools/list` = 6 tools) on its build runner.
-- [ ] The per-PR `bun-compile` job runs on every PR to `develop`/`main`.
-- [ ] Binary reports the release version in `initialize` `serverInfo.version`.
-- [ ] Victor's `mcp.yaml` example in this repo's docs points at the binary, not a `dist/` path.
-- [ ] Release notes state the scope boundary (server still required).
+- [x] `pnpm --filter @agentbrowser/mcp-server compile` produces a working binary (requires local bun).
+- [x] Tagging `v*` produces 5 release artifacts + `sha256sums.txt`.
+- [x] Each artifact passes the stdio smoke (`initialize` + `tools/list` = 6 tools) on its build runner. **Deviation:** `linux-arm64` cannot execute on any runner this (private) repo has — cross-compiled, smoke explicitly skipped and recorded in the job log and release notes, never silently.
+- [x] The per-PR `bun-compile` job runs on every PR to `develop`/`main`.
+- [x] Binary reports the release version in `initialize` `serverInfo.version`.
+- [x] Victor's `mcp.yaml` example in this repo's docs points at the binary, not a `dist/` path (`packages/mcp-server/README.md`).
+- [x] Release notes state the scope boundary (server still required).
 
 ## Consequences
 
@@ -129,3 +129,32 @@ none were filed as documents. For the record: 1 = approval-token REST
 endpoints, 2 = expose `browser_extract` over MCP, 3 = approval persistence,
 4 = tenant-ID validation (**landed** in commit `b16363b`, no doc needed).
 The names stay reserved to keep this numbering stable.
+
+## Implementation record
+
+**2026-08-25, follow-up PR to the filing PR (#2).** Deviations from the
+original decision text, each forced by an environment fact discovered during
+implementation:
+
+1. **`compile` is a node driver (`scripts/compile.mjs`), not the raw bun
+   command.** Two reasons: the binary must be stamped with the package version
+   (`--define "process.env.AGENTBROWSER_MCP_VERSION=..."`), and the invocation
+   must run unmodified on the Windows runner — `spawnSync` without a shell
+   sidesteps cross-shell quoting of the define value.
+2. **Version stamping uses `--define` + a runtime file read, not a JSON
+   import.** `resolveJsonModule` is on, but the package tsconfig sets
+   `rootDir: src`, and importing `../package.json` reaches outside it
+   (TS6059). Instead `src/version.ts` reads `package.json` at runtime (covers
+   `node dist/bin.js` and vitest) and the compile step stamps the same version
+   at build time (covers the binary, where the file is bundled away).
+   `AGENTBROWSER_MCP_VERSION` in the environment overrides both.
+3. **`darwin-x64` builds on `macos-latest`, not `macos-13`.** GitHub retired
+   the Intel macOS runners; the x64 binary is cross-compiled on the arm64
+   runner and smoke-tested through Rosetta (present on the arm64 images).
+4. **`linux-arm64` smoke is explicitly skipped.** Free arm64 Linux runners are
+   a public-repo feature; this repo is private. The skip is a `::warning::`
+   in the job log and a row in the release notes — never a silent pass.
+5. **A tag guard rejects `v*` tags that don't match
+   `packages/mcp-server/package.json`.** The binary's `serverInfo.version` is
+   stamped from the package file, so a disagreeing tag would ship a
+   mislabeled artifact; the guard fails the release before any build.

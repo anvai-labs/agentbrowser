@@ -9,11 +9,12 @@
 import { createInterface } from 'node:readline';
 import { AgentBrowserClient } from '@agentbrowser/sdk-typescript';
 import { buildMcpServer } from './mcp-server.js';
+import { resolveVersion } from './version.js';
 
 const server = buildMcpServer({
   createClient: (options) => new AgentBrowserClient(options),
   baseUrl: process.env.AGENTBROWSER_BASE_URL,
-  serverInfo: { name: 'agentbrowser', version: '1.0.0' },
+  serverInfo: { name: 'agentbrowser', version: resolveVersion() },
 });
 
 const rl = createInterface({ input: process.stdin });

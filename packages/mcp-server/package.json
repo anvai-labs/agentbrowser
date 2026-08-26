@@ -12,11 +12,13 @@
   "scripts": {
     "build": "tsc",
     "type-check": "tsc --noEmit",
+    "compile": "node scripts/compile.mjs",
+    "smoke": "node scripts/smoke.mjs dist-bin/agentbrowser-mcp",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "biome check src/",
     "format": "biome format --write src/",
-    "clean": "rm -rf dist *.tsbuildinfo"
+    "clean": "rm -rf dist dist-bin *.tsbuildinfo"
   },
   "dependencies": {
     "@agentbrowser/sdk-typescript": "workspace:*"
