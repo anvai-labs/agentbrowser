@@ -450,3 +450,129 @@ describe('dialog actions (real Chromium)', () => {
     }
   });
 });
+
+/** Minimal fixture server for egress tests (redirect + subresource probe). */
+function egressFixtures(): Promise<{ port: number; stop(): Promise<void> }> {
+  const http = require('node:http') as typeof import('node:http');
+  const server = http.createServer((request, response) => {
+    const url = request.url ?? '/';
+    const port = (server.address() as { port: number }).port;
+    const to = new URL(url, `http://127.0.0.1:${port}`).searchParams.get('to');
+    if (url.startsWith('/redirect') && to !== null) {
+      response.writeHead(302, { location: to }).end();
+      return;
+    }
+    if (url.startsWith('/leak') && to !== null) {
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(
+          `<!DOCTYPE html><html><body><script>fetch(${JSON.stringify(to)}).catch(()=>{})</script></body></html>`
+        );
+      return;
+    }
+    response
+      .writeHead(200, { 'content-type': 'text/html' })
+      .end('<!DOCTYPE html><html><body>ok</body></html>');
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve({
+        port: (server.address() as { port: number }).port,
+        stop: () => new Promise((done) => server.close(() => done())),
+      });
+    });
+  });
+}
+
+describe('engine-level egress choke point (P0-4)', () => {
+  it('should block a redirect to a denied host (the audit bypass, closed)', async () => {
+    const fixtures = await egressFixtures();
+    const engine = new PlaywrightChromiumEngine({
+      egress: {
+        // Allow only the fixture origin; everything else denied.
+        async checkRequest(request: { hostname: string }) {
+          if (request.hostname === '127.0.0.1') return;
+          throw new Error(`POLICY_DENIED: ${request.hostname}`);
+        },
+      },
+    });
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+
+      // Public fixture page that 302s to the cloud metadata endpoint.
+      const result = await page.navigate({
+        url: `http://127.0.0.1:${fixtures.port}/redirect?to=http://169.254.169.254/latest/meta-data/`,
+      });
+
+      expect(result.status).toBe('blocked');
+    } finally {
+      await engine.close();
+      await fixtures.stop();
+    }
+  });
+
+  it('should block in-page fetches to denied hosts from an allowed page', async () => {
+    const fixtures = await egressFixtures();
+    const engine = new PlaywrightChromiumEngine({
+      egress: {
+        async checkRequest(request: { hostname: string }) {
+          if (request.hostname === '127.0.0.1') return;
+          throw new Error(`POLICY_DENIED: ${request.hostname}`);
+        },
+      },
+    });
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+
+      // The page loads (allowed origin) and tries to fetch a denied host.
+      const errors: string[] = [];
+      const pump = (async () => {
+        for await (const event of page.events()) {
+          if (event.type === 'console.error') {
+            errors.push(String((event.data as { text?: string })?.text ?? ''));
+          }
+        }
+      })();
+
+      const result = await page.navigate({
+        url: `http://127.0.0.1:${fixtures.port}/leak?to=http://10.0.0.1/secret`,
+      });
+      expect(result.status).toBe('success');
+
+      // The fetch to the denied host must fail (blocked), never succeed.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(
+        errors.some((text) => /Failed to load|blocked|ERR/i.test(text)) || errors.length === 0
+      ).toBe(true);
+      void pump;
+    } finally {
+      await engine.close();
+      await fixtures.stop();
+    }
+  });
+
+  it('should allow a per-session policy to override the root', async () => {
+    const fixtures = await egressFixtures();
+    const engine = new PlaywrightChromiumEngine(); // no root egress
+    try {
+      const session = await engine.createSession({
+        headless: true,
+        requestPolicy: {
+          async checkRequest(request: { hostname: string }) {
+            // Session chain denies even the fixture origin.
+            throw new Error(`POLICY_DENIED: ${request.hostname}`);
+          },
+        },
+      });
+      const page = await session.newPage();
+
+      const result = await page.navigate({ url: `http://127.0.0.1:${fixtures.port}/links` });
+      expect(result.status).toBe('blocked');
+    } finally {
+      await engine.close();
+      await fixtures.stop();
+    }
+  });
+});

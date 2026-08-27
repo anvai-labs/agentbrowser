@@ -28,6 +28,7 @@ import type { StructuredLogger } from '@agentbrowser/core';
 import type { BrowserEngine, EngineEvent, EnginePage } from '@agentbrowser/engine';
 import type { EngineSession, EngineSessionOptions } from '@agentbrowser/engine';
 import type { RawPageState } from '@agentbrowser/engine';
+import type { RequestPolicy } from '@agentbrowser/engine';
 import {
   extractForms,
   extractJsonLd,
@@ -36,7 +37,7 @@ import {
   extractTables,
   extractVisibleText,
 } from '@agentbrowser/extraction';
-import { NetworkPolicy } from '@agentbrowser/policy';
+import { NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
 import type {
   ArtifactRef,
   ObservationRequest,
@@ -71,6 +72,9 @@ export interface ServiceSessionRequest {
   /** Downloads are denied unless the session explicitly allows them. */
   allowDownloads?: boolean;
   maxDownloadBytes?: number;
+  /** Per-session host rules, chained over the SSRF base (restrict-only). */
+  allowedHosts?: string[];
+  blockedHosts?: string[];
 }
 
 export interface ServiceSessionView {
@@ -185,6 +189,7 @@ export class AgentBrowserService {
   private readonly normalizer: ObservationNormalizer;
   private readonly executor: ActionExecutor;
   private readonly networkPolicy: NetworkPolicy;
+  private readonly rootRequestPolicy: RequestPolicy;
   private readonly approvalGate: ApprovalGate;
   private readonly secretManager: SecretManager;
   private readonly artifacts: ArtifactStore;
@@ -197,6 +202,8 @@ export class AgentBrowserService {
     string,
     { allowDownloads: boolean; maxDownloadBytes: number }
   >();
+  /** Per-session egress chain (fast-fail + engine choke point, one verdict). */
+  private readonly sessionPolicies = new Map<string, RequestPolicy>();
   private readonly pages = new Map<string, PageContext>();
   private pageCounter = 0;
   /** Audit log of sessions terminated by engine crashes (TD-024). */
@@ -216,6 +223,9 @@ export class AgentBrowserService {
     this.networkPolicy =
       deps.networkPolicy ??
       new NetworkPolicy({ blockLoopback: true, blockPrivateIPs: true, blockMetadata: true });
+    // The root policy is both the service fast-fail and the engine choke
+    // point's base: one verdict, enforced at both layers.
+    this.rootRequestPolicy = this.networkPolicy;
     this.approvalGate = deps.approvalGate ?? new ApprovalGate({ cleanupIntervalMs: 3_600_000 });
     // An empty registry redacts nothing; a populated one is enforced at every
     // output boundary (observations, error messages, error details).
@@ -258,6 +268,7 @@ export class AgentBrowserService {
         }
         this.eventListeners.delete(sessionId);
         this.sessionDownloadPolicy.delete(sessionId);
+        this.sessionPolicies.delete(sessionId);
       }
     }
   }
@@ -382,6 +393,7 @@ export class AgentBrowserService {
       }
     }
     this.sessionDownloadPolicy.delete(sessionId);
+    this.sessionPolicies.delete(sessionId);
     await this.coordinator.terminate(sessionId, SessionState.ENGINE_CRASHED, reason).catch(() => {
       // The session may already be gone; the audit entry stands.
     });
@@ -532,6 +544,7 @@ export class AgentBrowserService {
       }
     }
     this.sessionDownloadPolicy.delete(sessionId);
+    this.sessionPolicies.delete(sessionId);
     this.eventListeners.delete(sessionId);
     this.metrics?.incrementCounter('sessions_closed_total');
     this.metrics?.setGauge('sessions_active', this.coordinator.getSessionCount());
@@ -1011,7 +1024,8 @@ export class AgentBrowserService {
     }
 
     try {
-      await this.networkPolicy.checkRequest({ hostname: parsed.hostname, url: request.url });
+      const egress = this.sessionPolicies.get(sessionId) ?? this.rootRequestPolicy;
+      await egress.checkRequest({ hostname: parsed.hostname, url: request.url });
     } catch (error) {
       throw this.mapError(error);
     }

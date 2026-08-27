@@ -48,12 +48,15 @@ Baseline (2026-08-26, Apple Silicon dev machine, 50 iterations):
 | Engine               | sessionCreate p50/p95 | observation p50/p95 | action p50/p95 | ref-loop        |
 | -------------------- | --------------------- | ------------------- | -------------- | --------------- |
 | playwright-chromium  | 3.3 / 8.6 ms          | 6.9 / 23.3 ms       | 0.7 / 1.9 ms   | 50/50, ~80 ms/loop |
+| playwright-chromium (engine-level egress on, 2026-08-27) | 4.1 / 6.9 ms | 5.8 / 8.1 ms | 0.9 / 2.3 ms | 50/50, ~102 ms/loop |
 
 Real Chromium sits comfortably inside every spec target (350/1000,
-150/500, 100 ms p50). Session creation is context-only (no page), which
-is why it is far under budget; observation cost is dominated by the aria
-snapshot. The ADR-010 decision therefore has no latency-based pressure:
-any Rust-engine investment must be justified on task success or cost per
-task, not on these dispatch overheads. CI runs `bench:real` in the
-Benchmarks job; the gate is the ref-loop success rate (deterministic),
-latencies are informational.
+150/500, 100 ms p50) - including with the engine-level egress choke
+point active (every request proxied and policy-vetted, redirects
+per-hop), which costs roughly 20% on the full agent loop. Session
+creation is context-only (no page), which is why it is far under budget;
+observation cost is dominated by the aria snapshot. The ADR-010 decision
+therefore has no latency-based pressure: any Rust-engine investment must
+be justified on task success or cost per task, not on these dispatch
+overheads. CI runs `bench:real` in the Benchmarks job; the gate is the
+ref-loop success rate (deterministic), latencies are informational.

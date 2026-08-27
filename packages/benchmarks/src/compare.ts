@@ -59,12 +59,37 @@ export function startFixtureServer(port = 0): Promise<FixtureServer> {
       '/form': FORM_PAGE,
       '/long': LONG_PAGE,
     };
-    const body = pages[url.split('?')[0] ?? '/'];
-    if (body === undefined) {
-      response.writeHead(404).end('not found');
+    const path = url.split('?')[0] ?? '/';
+    const body = pages[path];
+    if (body !== undefined) {
+      response.writeHead(200, { 'content-type': 'text/html' }).end(body);
       return;
     }
-    response.writeHead(200, { 'content-type': 'text/html' }).end(body);
+    // Redirect fixture: /redirect?to=<url> issues a 302 (egress tests).
+    if (path === '/redirect') {
+      const to = new URL(
+        url,
+        `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+      ).searchParams.get('to');
+      if (to !== null) {
+        response.writeHead(302, { location: to }).end();
+        return;
+      }
+    }
+    // Subresource probe: /leak fetches the given URL from inside the page.
+    if (path === '/leak') {
+      const to = new URL(
+        url,
+        `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+      ).searchParams.get('to');
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(
+          `<!DOCTYPE html><html><body><script>fetch(${JSON.stringify(to ?? '')}).catch(()=>{})</script></body></html>`
+        );
+      return;
+    }
+    response.writeHead(404).end('not found');
   });
 
   return new Promise((resolve) => {

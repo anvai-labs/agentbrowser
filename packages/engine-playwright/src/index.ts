@@ -24,6 +24,7 @@ import type {
   RawPageState,
   ScreenshotRequest,
 } from '@agentbrowser/engine';
+import type { RequestPolicy } from '@agentbrowser/engine';
 import { DELIVERED_ACTION_TYPES, DELIVERED_OBSERVATION_MODES } from '@agentbrowser/protocol';
 import { type Browser, type BrowserContext, Locator, type Page, chromium } from 'playwright';
 
@@ -65,9 +66,24 @@ function canonicalFingerprint(element: StoredElement): string {
 /**
  * PlaywrightChromiumEngine implements BrowserEngine using Playwright
  */
+/** Synthetic denial served to the page for policy-blocked requests. */
+const BLOCKED_RESPONSE = {
+  status: 403,
+  headers: { 'x-agentbrowser-blocked': '1' },
+  contentType: 'text/plain',
+  body: 'blocked by egress policy',
+} as const;
+
 export interface PlaywrightEngineOptions {
   /** Held-dialog auto-settle grace in ms (default 5000). */
   dialogGraceMs?: number;
+  /**
+   * Root egress policy: enforced as a network choke point over EVERY
+   * outbound request in every session (documents, redirects,
+   * subresources, fetch/XHR). Sessions may override via
+   * EngineSessionOptions.requestPolicy.
+   */
+  egress?: RequestPolicy;
 }
 
 export class PlaywrightChromiumEngine implements BrowserEngine {
@@ -76,9 +92,11 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   private browser: Browser | undefined;
   private revisionCounter = 1;
   readonly dialogGraceMs: number;
+  private readonly rootEgress: RequestPolicy | undefined;
 
   constructor(options: PlaywrightEngineOptions = {}) {
     this.dialogGraceMs = options.dialogGraceMs ?? 5000;
+    this.rootEgress = options.egress;
   }
 
   get name(): string {
@@ -116,14 +134,84 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       });
     }
 
+    const egress = options.requestPolicy ?? this.rootEgress;
+
     // Create browser context (incognito isolation)
     const context = await this.browser.newContext({
       viewport: options.viewport || { width: 1280, height: 720 },
       locale: options.locale || 'en-US',
       timezoneId: options.timezoneId || 'America/New_York',
+      // Service-worker fetches bypass context.route; a choke point with a
+      // bypass hole is not a choke point.
+      ...(egress !== undefined ? { serviceWorkers: 'block' as const } : {}),
     });
 
+    if (egress !== undefined) {
+      await this.installEgress(context, egress);
+    }
+
     return new PlaywrightSession(context, this);
+  }
+
+  /**
+   * Network choke point. Every request the context makes - documents,
+   * redirect targets, subresources, fetch/XHR - is proxied through the
+   * policy: the engine fetches each request itself with redirects NOT
+   * followed (route.fetch follows them silently otherwise, which would
+   * bypass the choke point - verified empirically), vets every redirect
+   * hop's real target hostname, and fulfills the response. Denied hosts
+   * (direct or as redirect targets) receive a synthetic 403 marked with
+   * x-agentbrowser-blocked, which navigate() maps to `blocked`.
+   *
+   * Verdicts are memoized per host: policies must keep verdicts a pure
+   * function of hostname. Cost: routing disables Chromium's HTTP cache and
+   * adds one in-process hop per request (benchmarks re-baselined).
+   */
+  private async installEgress(context: BrowserContext, egress: RequestPolicy): Promise<void> {
+    const verdicts = new Map<string, 'allow' | 'deny'>();
+
+    const verdictOf = async (hostname: string, url: string): Promise<'allow' | 'deny'> => {
+      const cached = verdicts.get(hostname);
+      if (cached !== undefined) {
+        return cached;
+      }
+      let verdict: 'allow' | 'deny';
+      try {
+        await egress.checkRequest({ hostname, url });
+        verdict = 'allow';
+      } catch {
+        verdict = 'deny';
+      }
+      verdicts.set(hostname, verdict);
+      return verdict;
+    };
+
+    await context.route('**', async (route) => {
+      const request = route.request();
+      const url = request.url();
+      const hostname = new URL(url).hostname;
+
+      if ((await verdictOf(hostname, url)) === 'deny') {
+        await route.fulfill(BLOCKED_RESPONSE);
+        return;
+      }
+
+      try {
+        const response = await route.fetch({ maxRedirects: 0 });
+        const headers = await response.headers();
+        const location = headers.location;
+        if (response.status() >= 300 && response.status() < 400 && location !== undefined) {
+          const absolute = new URL(location, url);
+          if ((await verdictOf(absolute.hostname, absolute.toString())) === 'deny') {
+            await route.fulfill(BLOCKED_RESPONSE);
+            return;
+          }
+        }
+        await route.fulfill({ response });
+      } catch {
+        await route.abort('failed');
+      }
+    });
   }
 
   async close(): Promise<void> {
@@ -217,6 +305,17 @@ class PlaywrightPage implements EnginePage {
   }
 
   private setupEventListeners(): void {
+    // The browser can close pages without PlaywrightPage.close() running
+    // (engine.close()); Playwright's own close event ends the iterator.
+    this.page.on('close', () => {
+      this.eventsClosed = true;
+      const waiters = this.eventWaiters;
+      this.eventWaiters = [];
+      for (const wake of waiters) {
+        wake();
+      }
+    });
+
     this.page.on('dialog', (dialog) => {
       // Hold the dialog so an agent can accept or dismiss it; settle it
       // automatically after the grace (beforeunload auto-accepts because
@@ -280,7 +379,29 @@ class PlaywrightPage implements EnginePage {
 
   async navigate(request: NavigationRequest): Promise<NavigationResult> {
     const waitUntil = request.waitUntil || 'load';
-    await this.page.goto(request.url, { waitUntil: waitUntil as any });
+    let response: import('playwright').Response | null;
+    try {
+      response = await this.page.goto(request.url, { waitUntil: waitUntil as any });
+    } catch (error) {
+      // An aborted navigation is the egress choke point doing its job.
+      if (/ERR_BLOCKED_BY_CLIENT|net::ERR_ABORTED/i.test(String(error))) {
+        return {
+          status: 'blocked',
+          url: request.url,
+          redirectChain: [],
+        };
+      }
+      throw error;
+    }
+    // The choke point serves a marked 403 for denied navigations and
+    // denied redirect targets alike.
+    if (response?.headers()?.['x-agentbrowser-blocked'] === '1') {
+      return {
+        status: 'blocked',
+        url: request.url,
+        redirectChain: [],
+      };
+    }
     this.bumpRevision();
 
     return {

@@ -73,7 +73,10 @@ export class SessionCoordinator {
   /**
    * Create a new session
    */
-  async create(request: SessionRequest, engine: BrowserEngine): Promise<SessionResponse> {
+  async create(
+    request: SessionRequest & { requestPolicy?: import('@agentbrowser/engine').RequestPolicy },
+    engine: BrowserEngine
+  ): Promise<SessionResponse> {
     // Check session limit
     if (this.sessions.size >= this.config.maxSessions) {
       throw new Error('QUOTA_EXCEEDED: Maximum session limit reached');
@@ -101,6 +104,11 @@ export class SessionCoordinator {
       sessionOptions.headless = request.headless;
     } else {
       sessionOptions.headless = true;
+    }
+
+    // Per-session egress policy rides through to the engine untouched.
+    if (request.requestPolicy !== undefined) {
+      sessionOptions.requestPolicy = request.requestPolicy;
     }
 
     const engineSession = await engine.createSession(sessionOptions);
