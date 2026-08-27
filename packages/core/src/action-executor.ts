@@ -290,6 +290,12 @@ export class ActionExecutor {
       return createApiErrorDetail(ErrorCode.ACTION_TIMEOUT, message, { retryable: true });
     }
 
+    // Dialog actions with nothing held are structurally impossible, not
+    // engine failures - the agent-actionable answer is INVALID_REQUEST.
+    if (/no dialog/i.test(message)) {
+      return createApiErrorDetail(ErrorCode.INVALID_REQUEST, message);
+    }
+
     return createApiErrorDetail(ErrorCode.INTERNAL, message);
   }
 

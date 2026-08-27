@@ -190,6 +190,12 @@ class FakePage implements EnginePage {
   private eventQueue: EngineEvent[] = [];
   private eventWaiters: Array<() => void> = [];
   private eventsFinished = false;
+  private pendingDialog:
+    | { type: string; message: string; defaultPrompt: string; timer: NodeJS.Timeout }
+    | undefined;
+  private dialogHandledListener: ((record: Record<string, unknown>) => void) | undefined;
+  /** Held-dialog auto-settle grace (short default suits tests). */
+  private readonly dialogGraceMs = 60;
 
   /** Test hook: simulate a renderer crash. All subsequent ops throw. */
   crash(): void {
@@ -199,6 +205,45 @@ class FakePage implements EnginePage {
   /** Test hook: pin the page's HTML content for extraction-style consumers. */
   setContent(html: string): void {
     this.contentOverride = html;
+  }
+
+  /** Test hook: open a dialog as a page would (held until acted on or grace). */
+  emitDialog(dialog: { type: string; message: string; defaultPrompt?: string }): void {
+    const timer = setTimeout(() => {
+      this.settleDialog('auto', undefined);
+    }, this.dialogGraceMs);
+    this.pendingDialog = {
+      type: dialog.type,
+      message: dialog.message,
+      defaultPrompt: dialog.defaultPrompt ?? '',
+      timer,
+    };
+    this.emitEvent('dialog.opened', {
+      dialogType: dialog.type,
+      message: dialog.message,
+      defaultPrompt: dialog.defaultPrompt ?? '',
+    });
+  }
+
+  /** Test hook: observe how a held dialog was settled. */
+  onDialogHandled(listener: (record: Record<string, unknown>) => void): void {
+    this.dialogHandledListener = listener;
+  }
+
+  private settleDialog(reason: 'auto' | 'accepted' | 'dismissed', promptText?: string): void {
+    const dialog = this.pendingDialog;
+    if (!dialog) {
+      return;
+    }
+    clearTimeout(dialog.timer);
+    this.pendingDialog = undefined;
+    const record: Record<string, unknown> = {
+      dialog: reason,
+      ...(promptText !== undefined ? { promptText } : {}),
+      message: dialog.message,
+    };
+    this.dialogHandledListener?.(record);
+    this.emitEvent('dialog.closed', { reason, ...record });
   }
 
   /** Test hook: emit an engine event to subscribers. */
@@ -358,6 +403,29 @@ class FakePage implements EnginePage {
 
     // Process action
     switch (action.type) {
+      case 'acceptDialog':
+      case 'dismissDialog': {
+        // Dialog actions are non-mutating: no revision bump.
+        if (!this.pendingDialog) {
+          throw new Error('no dialog open');
+        }
+        if (action.type === 'acceptDialog') {
+          this.settleDialog('accepted', action.promptText as string | undefined);
+        } else {
+          this.settleDialog('dismissed');
+        }
+        return {
+          actionId,
+          startTimestamp,
+          endTimestamp: new Date().toISOString(),
+          oldRevision,
+          newRevision: this.revision,
+          result:
+            action.type === 'acceptDialog'
+              ? { dialog: 'accepted', promptText: action.promptText }
+              : { dialog: 'dismissed' },
+        };
+      }
       case 'click':
         this.revision++;
         break;
@@ -454,6 +522,10 @@ class FakePage implements EnginePage {
   async close(): Promise<void> {
     this.closed = true;
     this.eventsFinished = true;
+    if (this.pendingDialog) {
+      clearTimeout(this.pendingDialog.timer);
+      this.pendingDialog = undefined;
+    }
     const waiters = this.eventWaiters;
     this.eventWaiters = [];
     for (const wake of waiters) {

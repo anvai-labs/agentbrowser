@@ -367,3 +367,86 @@ describe('PlaywrightChromiumEngine ref store', () => {
     );
   });
 });
+
+describe('dialog premise (audit P0-3, settle by evidence)', () => {
+  it('should let a subsequent operation succeed after a page alert fires', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      const url = `data:text/html,${encodeURIComponent(
+        '<!DOCTYPE html><html><body>' +
+          '<button id="a" onclick="alert(\'boom\')">Alert</button>' +
+          '<button id="b">After</button>' +
+          '</body></html>'
+      )}`;
+      await page.navigate({ url });
+
+      // Click triggers alert(); with no dialog handler, what happens next?
+      const observation = await page.observe({ mode: 'interactive' });
+      const alertButton = observation.elements.find((el) => el.name === 'Alert');
+
+      const effect = await page.act({ type: 'click', target: { ref: alertButton?.ref } });
+
+      // The premise test: does a subsequent engine operation complete?
+      const after = await Promise.race([
+        page.observe({ mode: 'interactive' }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('DEADLOCKED: observe did not complete')), 8000)
+        ),
+      ]);
+
+      expect(effect.actionId).toBeDefined();
+      expect((after as { url: string }).url).toContain('data:');
+    } finally {
+      await engine.close();
+    }
+  });
+});
+
+describe('dialog actions (real Chromium)', () => {
+  it('should accept a prompt dialog with the provided text', async () => {
+    const engine = new PlaywrightChromiumEngine({ dialogGraceMs: 60_000 });
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      const url = `data:text/html,${encodeURIComponent(
+        '<!DOCTYPE html><html><body>' +
+          '<input id="out" aria-label="Out" readonly />' +
+          "<button id=\"a\" onclick=\"document.getElementById('out').value = prompt('Name?', '') || ''\">Ask</button>" +
+          '</body></html>'
+      )}`;
+      await page.navigate({ url });
+      const observation = await page.observe({ mode: 'interactive' });
+      const ask = observation.elements.find((el) => el.name === 'Ask');
+
+      const events: string[] = [];
+      (async () => {
+        for await (const event of page.events()) {
+          events.push(event.type);
+        }
+      })();
+
+      // Click opens the prompt; the engine holds it. The triggering click
+      // cannot resolve until the dialog settles, so fire it without
+      // awaiting - exactly the stall the design documents.
+      const clickPromise = page.act({ type: 'click', target: { ref: ask?.ref } });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      const effect = await page.act({ type: 'acceptDialog', promptText: 'agent' });
+      await clickPromise;
+      expect(effect.result).toMatchObject({ dialog: 'accepted', promptText: 'agent' });
+      expect(effect.newRevision).toBe(effect.oldRevision); // non-mutating
+
+      // The page received the accepted answer, and dialog events fired.
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const after = await page.observe({ mode: 'interactive' });
+      const out = after.elements.find((el) => el.name === 'Out');
+      expect(out?.value).toBe('agent');
+      expect(events).toContain('dialog.opened');
+      expect(events).toContain('dialog.closed');
+    } finally {
+      await engine.close();
+    }
+  });
+});

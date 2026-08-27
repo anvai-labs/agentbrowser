@@ -50,14 +50,17 @@ explicitly.
 registry against `coordinator.getAllSessions()`, or an expiry callback
 from the coordinator.
 
-### P0-3 Dialogs can deadlock real pages
-No `page.on('dialog')` handler exists in the Playwright engine. Any
-`alert`/`confirm`/`prompt` on a real page blocks all subsequent actions
-until timeout. The protocol has `dismissDialog`/`acceptDialog` actions;
-neither is implemented anywhere.
-**Remedy:** auto-dismiss dialogs into the event stream by default (spec
-default: dismiss), implement the two dialog actions, and surface
-`dialog.opened` events over the WebSocket stream.
+### P0-3 Dialogs are invisible and uncontrollable
+**Premise corrected by evidence (fixture regression test):** with no
+`page.on('dialog')` handler, Playwright auto-dismisses dialogs, so pages
+do NOT deadlock today. The real, verified gaps: dialogs are never
+surfaced (`dialog.opened`/`dialog.closed` events have no producer), a
+confirm/prompt can never be *accepted* (the agent cannot answer), and
+the protocol's `dismissDialog`/`acceptDialog` actions are unimplemented
+everywhere.
+**Remedy:** hold dialogs with an auto-dismiss grace (beforeunload
+auto-accepts), emit dialog events, implement the two actions acting on
+the held dialog.
 
 ### P0-4 Redirects and subresources bypass egress policy — architectural
 The spec's invariant #7 is a network-level **choke point**: main

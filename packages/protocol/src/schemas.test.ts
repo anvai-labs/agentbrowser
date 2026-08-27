@@ -355,7 +355,15 @@ describe('Schema Validation - Page State', () => {
 
 describe('Delivered capability truth (single source)', () => {
   it('should expose the delivered action set as a const tuple', () => {
-    expect(DELIVERED_ACTION_TYPES).toEqual(['click', 'fill', 'select', 'scroll', 'press']);
+    expect(DELIVERED_ACTION_TYPES).toEqual([
+      'click',
+      'fill',
+      'select',
+      'scroll',
+      'press',
+      'acceptDialog',
+      'dismissDialog',
+    ]);
   });
 
   it('should expose the delivered observation modes', () => {

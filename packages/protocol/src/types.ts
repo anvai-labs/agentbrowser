@@ -346,7 +346,15 @@ export interface DismissDialogAction extends Action {
  * the protocol superset - extending DELIVERED_ACTION_TYPES is what turns
  * a protocol action into a delivered one.
  */
-export const DELIVERED_ACTION_TYPES = ['click', 'fill', 'select', 'scroll', 'press'] as const;
+export const DELIVERED_ACTION_TYPES = [
+  'click',
+  'fill',
+  'select',
+  'scroll',
+  'press',
+  'acceptDialog',
+  'dismissDialog',
+] as const;
 
 /**
  * The observation modes the stack delivers today (see

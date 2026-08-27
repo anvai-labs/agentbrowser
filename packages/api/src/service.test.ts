@@ -1194,6 +1194,78 @@ describe('AgentBrowserService', () => {
     });
   });
 
+  describe('dialog actions (P0-3)', () => {
+    it('should accept a held dialog with a prompt answer', async () => {
+      const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await service.createPage(sessionId)).pageId;
+      const ids = engine.getSessionIds();
+
+      engine
+        .getFakePage(ids[ids.length - 1]!, pageId)
+        ?.emitDialog({ type: 'prompt', message: 'Name?' });
+
+      const result = await service.act(sessionId, pageId, {
+        action: 'acceptDialog',
+        promptText: 'agent',
+      });
+
+      expect(result.status).toBe('success');
+      expect(result.newRevision).toBe(1); // non-mutating
+    });
+
+    it('should fail typed when no dialog is held', async () => {
+      const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await service.createPage(sessionId)).pageId;
+
+      const error = await capture(() =>
+        service.act(sessionId, pageId, { action: 'dismissDialog' })
+      );
+
+      expect(error?.code).toBe('INVALID_REQUEST');
+      expect(error?.message).toMatch(/no dialog/i);
+    });
+
+    it('should stream dialog events to session subscribers', async () => {
+      const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await service.createPage(sessionId)).pageId;
+      const received: Array<Record<string, unknown>> = [];
+      service.subscribe(sessionId, (event) => received.push(event));
+
+      const ids = engine.getSessionIds();
+      engine
+        .getFakePage(ids[ids.length - 1]!, pageId)
+        ?.emitDialog({ type: 'confirm', message: 'Proceed?' });
+      await service.act(sessionId, pageId, { action: 'dismissDialog' });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      const types = received.map((event) => event.type);
+      expect(types).toContain('dialog.opened');
+      expect(types).toContain('dialog.closed');
+    });
+
+    it('should not stale-invalidate refs across a dialog action', async () => {
+      const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await service.createPage(sessionId)).pageId;
+      await service.navigate(sessionId, pageId, { url: 'https://example.com' });
+      const observation = await service.observe(sessionId, pageId, {});
+      const ref = observation.elements[0]?.ref;
+      const ids = engine.getSessionIds();
+
+      engine
+        .getFakePage(ids[ids.length - 1]!, pageId)
+        ?.emitDialog({ type: 'alert', message: 'hi' });
+      await service.act(sessionId, pageId, { action: 'dismissDialog' });
+
+      // The ref from before the dialog is still valid: dialogs do not move
+      // the page revision.
+      const result = await service.act(sessionId, pageId, {
+        action: 'click',
+        target: { ref },
+      });
+      expect(result.status).toBe('success');
+    });
+  });
+
   describe('screenshots', () => {
     it('should capture an artifact from the engine', async () => {
       const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;

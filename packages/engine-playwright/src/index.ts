@@ -65,11 +65,21 @@ function canonicalFingerprint(element: StoredElement): string {
 /**
  * PlaywrightChromiumEngine implements BrowserEngine using Playwright
  */
+export interface PlaywrightEngineOptions {
+  /** Held-dialog auto-settle grace in ms (default 5000). */
+  dialogGraceMs?: number;
+}
+
 export class PlaywrightChromiumEngine implements BrowserEngine {
   private _name = 'playwright-chromium';
   private _version = '1.0.0';
   private browser: Browser | undefined;
   private revisionCounter = 1;
+  readonly dialogGraceMs: number;
+
+  constructor(options: PlaywrightEngineOptions = {}) {
+    this.dialogGraceMs = options.dialogGraceMs ?? 5000;
+  }
 
   get name(): string {
     return this._name;
@@ -195,6 +205,7 @@ class PlaywrightPage implements EnginePage {
   private refStore = new Map<string, StoredElement>();
   private eventWaiters: Array<() => void> = [];
   private eventsClosed = false;
+  private pendingDialog: { dialog: import('playwright').Dialog; timer: NodeJS.Timeout } | undefined;
 
   constructor(id: string, page: Page, engine: PlaywrightChromiumEngine) {
     this.id = id;
@@ -206,6 +217,37 @@ class PlaywrightPage implements EnginePage {
   }
 
   private setupEventListeners(): void {
+    this.page.on('dialog', (dialog) => {
+      // Hold the dialog so an agent can accept or dismiss it; settle it
+      // automatically after the grace (beforeunload auto-accepts because
+      // dismissing cancels the navigation).
+      const isBeforeUnload = dialog.type() === 'beforeunload';
+      const timer = setTimeout(() => {
+        void (isBeforeUnload ? dialog.accept().catch(() => {}) : dialog.dismiss().catch(() => {}));
+        this.pendingDialog = undefined;
+        this.enqueueEvent({
+          type: 'dialog.closed',
+          timestamp: new Date().toISOString(),
+          sessionId: 'unknown',
+          pageId: this.id,
+          data: { reason: 'auto', dialogType: dialog.type(), message: dialog.message() },
+        });
+      }, this.engine.dialogGraceMs);
+
+      this.pendingDialog = { dialog, timer };
+      this.enqueueEvent({
+        type: 'dialog.opened',
+        timestamp: new Date().toISOString(),
+        sessionId: 'unknown',
+        pageId: this.id,
+        data: {
+          dialogType: dialog.type(),
+          message: dialog.message(),
+          defaultPrompt: dialog.defaultValue(),
+        },
+      });
+    });
+
     this.page.on('load', () => {
       this.enqueueEvent({
         type: 'page.loaded',
@@ -429,6 +471,43 @@ class PlaywrightPage implements EnginePage {
     // Execute action based on type. Targeted actions go through the ref
     // store, addressing elements semantically; selectors never appear.
     switch (action.type) {
+      case 'acceptDialog':
+      case 'dismissDialog': {
+        // Dialog actions are non-mutating and act on the held Dialog
+        // directly: locators stall while a dialog is open.
+        const held = this.pendingDialog;
+        if (!held) {
+          throw new Error('no dialog open');
+        }
+        clearTimeout(held.timer);
+        this.pendingDialog = undefined;
+        if (action.type === 'acceptDialog') {
+          await held.dialog.accept(action.promptText as string | undefined);
+        } else {
+          await held.dialog.dismiss();
+        }
+        this.enqueueEvent({
+          type: 'dialog.closed',
+          timestamp: new Date().toISOString(),
+          sessionId: 'unknown',
+          pageId: this.id,
+          data: {
+            reason: action.type === 'acceptDialog' ? 'accepted' : 'dismissed',
+            dialogType: held.dialog.type(),
+          },
+        });
+        return {
+          actionId,
+          startTimestamp,
+          endTimestamp: new Date().toISOString(),
+          oldRevision,
+          newRevision: this.revision,
+          result:
+            action.type === 'acceptDialog'
+              ? { dialog: 'accepted', promptText: action.promptText }
+              : { dialog: 'dismissed' },
+        };
+      }
       case 'navigate':
         await this.navigate({ url: action.url as string });
         break;
@@ -539,6 +618,10 @@ class PlaywrightPage implements EnginePage {
 
   async close(): Promise<void> {
     this.eventsClosed = true;
+    if (this.pendingDialog) {
+      clearTimeout(this.pendingDialog.timer);
+      this.pendingDialog = undefined;
+    }
     const waiters = this.eventWaiters;
     this.eventWaiters = [];
     for (const wake of waiters) {

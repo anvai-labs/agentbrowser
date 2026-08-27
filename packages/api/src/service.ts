@@ -100,6 +100,8 @@ export interface ServiceActRequest {
   observe?: 'after' | 'none' | undefined;
   expectedRevision?: number | undefined;
   approvalToken?: string | undefined;
+  /** Prompt answer for acceptDialog. */
+  promptText?: string | undefined;
 }
 
 export interface ServiceActResult {
@@ -1241,6 +1243,7 @@ export class AgentBrowserService {
     if (request.key !== undefined) action.key = request.key;
     if (request.direction !== undefined) action.direction = request.direction;
     if (request.amount !== undefined) action.amount = request.amount;
+    if (request.promptText !== undefined) action.promptText = request.promptText;
     return action as unknown as Parameters<ActionExecutor['execute']>[0]['action'];
   }
 
@@ -1375,7 +1378,13 @@ class RefTranslatingPage implements EnginePage {
       }
     }
     const effect = await this.inner.act(projected);
-    const newRevision = action.type === 'navigate' ? this.page.revision : this.page.revision + 1;
+    // Navigate is handled by navigate(); dialog actions are non-mutating.
+    // Everything else advances the service revision.
+    const nonMutating =
+      action.type === 'navigate' ||
+      action.type === 'acceptDialog' ||
+      action.type === 'dismissDialog';
+    const newRevision = nonMutating ? this.page.revision : this.page.revision + 1;
     return { ...effect, oldRevision, newRevision };
   }
 

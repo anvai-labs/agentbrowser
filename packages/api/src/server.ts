@@ -371,6 +371,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         observe,
         expectedRevision,
         approvalToken,
+        promptText,
       } = body as Record<string, unknown>;
 
       if (typeof action !== 'string') {
@@ -395,6 +396,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         ...(observe !== undefined ? { observe: observe as 'after' | 'none' } : {}),
         ...(expectedRevision !== undefined ? { expectedRevision: expectedRevision as number } : {}),
         ...(approvalToken !== undefined ? { approvalToken: approvalToken as string } : {}),
+        ...(promptText !== undefined ? { promptText: promptText as string } : {}),
       });
       return reply.send(result);
     } catch (error) {
