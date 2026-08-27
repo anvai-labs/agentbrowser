@@ -1364,7 +1364,7 @@ describe('authentication and tenancy (P0-1)', () => {
     expect((await authFetch('/metrics')).status).toBe(200);
   });
 
-  it('should reject a cross-tenant WebSocket with 4403', async () => {
+  it('should reject a WebSocket upgrade without credentials', async () => {
     const created = await authFetch('/v1/sessions', KEY_A, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1372,13 +1372,9 @@ describe('authentication and tenancy (P0-1)', () => {
     });
     const { sessionId } = await created.json();
 
-    const ws = new WebSocket(`${authUrl.replace('http', 'ws')}/v1/sessions/${sessionId}/events`);
-    // A browser WebSocket cannot set Authorization headers; simulate the
-    // authenticated tenant check via a subprotocol-less connect from tenant B
-    // is not possible client-side - assert the 401 path instead: no key.
-    const closed = new Promise<number>((resolve) => {
-      ws.addEventListener('close', (event) => resolve(event.code));
-    });
-    expect(await closed).toBe(1006); // upgrade rejected without credentials
+    // The auth hook runs before the WS handshake: a plain request to the
+    // events route without credentials is rejected 401 before any upgrade.
+    const response = await authFetch(`/v1/sessions/${sessionId}/events`);
+    expect(response.status).toBe(401);
   });
 });
