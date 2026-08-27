@@ -84,6 +84,8 @@ export interface ServiceSessionView {
   createdAt: string;
   ttlMs: number;
   idleTimeoutMs: number;
+  /** Owning tenant, when the session was created under one. */
+  tenantId?: string;
 }
 
 export interface ServicePageView {
@@ -471,15 +473,26 @@ export class AgentBrowserService {
       if (request.timezoneId !== undefined) engineRequest.timezoneId = request.timezoneId;
       if (request.headless !== undefined) engineRequest.headless = request.headless;
 
+      // Per-session chain: session rules restrict; the SSRF base always runs.
+      const sessionPolicy =
+        request.allowedHosts !== undefined || request.blockedHosts !== undefined
+          ? new SessionHostPolicy(this.networkPolicy, {
+              ...(request.allowedHosts !== undefined ? { allowedHosts: request.allowedHosts } : {}),
+              ...(request.blockedHosts !== undefined ? { blockedHosts: request.blockedHosts } : {}),
+            })
+          : this.rootRequestPolicy;
+
       let session: import('@agentbrowser/protocol').SessionResponse;
       try {
         session = await this.coordinator.create(
           {
             ...engineRequest,
+            ...(request.tenantId !== undefined ? { tenantId: request.tenantId } : {}),
             ...(request.ttlMs !== undefined ? { ttlMs: request.ttlMs } : {}),
             ...(request.idleTimeoutMs !== undefined
               ? { idleTimeoutMs: request.idleTimeoutMs }
               : {}),
+            requestPolicy: sessionPolicy,
           },
           this.engine
         );
@@ -494,6 +507,7 @@ export class AgentBrowserService {
         allowDownloads: request.allowDownloads === true,
         maxDownloadBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
       });
+      this.sessionPolicies.set(session.sessionId, sessionPolicy);
 
       return {
         sessionId: session.sessionId,
@@ -502,6 +516,7 @@ export class AgentBrowserService {
         createdAt: session.createdAt,
         ttlMs: session.ttlMs,
         idleTimeoutMs: session.idleTimeoutMs,
+        ...(request.tenantId !== undefined ? { tenantId: request.tenantId } : {}),
       };
     });
   }
@@ -518,6 +533,7 @@ export class AgentBrowserService {
       createdAt: new Date(context.metadata.createdAt).toISOString(),
       ttlMs: context.metadata.ttlMs,
       idleTimeoutMs: context.metadata.idleTimeoutMs,
+      ...(context.metadata.tenantId !== undefined ? { tenantId: context.metadata.tenantId } : {}),
     };
   }
 

@@ -78,6 +78,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .option('--base-url <url>', 'AgentBrowser server base URL', DEFAULT_BASE_URL)
         .option('--timeout <ms>', 'request timeout in milliseconds', '30000')
         .option('--json', 'emit raw JSON instead of formatted output', false)
+        .option('--api-key <key>', 'bearer API key (or AGENTBROWSER_API_KEY env)')
         .exitOverride();
 
       program.configureOutput({

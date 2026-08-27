@@ -36,6 +36,8 @@ export interface SessionMetadata {
   idleTimeoutMs: number;
   engineName: string;
   pageCount: number;
+  /** Owning tenant, for scoping and per-tenant quotas. */
+  tenantId?: string;
 }
 
 /**
@@ -134,6 +136,7 @@ export class SessionCoordinator {
         idleTimeoutMs,
         engineName: engine.name,
         pageCount: 0,
+        ...(request.tenantId !== undefined ? { tenantId: request.tenantId } : {}),
       },
     };
 

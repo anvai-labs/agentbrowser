@@ -43,41 +43,41 @@ describe('deterministic workflows', () => {
 
   /** Create a session + page, already navigated to the work URL. */
   const newBrowsingContext = async (url = 'https://app.example.com') => {
-    const created = await api('POST', '/sessions', { tenantId: 'wf' });
+    const created = await api('POST', '/v1/sessions', { tenantId: 'wf' });
     const sessionId = created.body.sessionId;
-    const page = await api('POST', `/sessions/${sessionId}/pages`);
+    const page = await api('POST', `/v1/sessions/${sessionId}/pages`);
     const pageId = page.body.pageId;
-    await api('POST', `/sessions/${sessionId}/pages/${pageId}/navigate`, { url });
+    await api('POST', `/v1/sessions/${sessionId}/pages/${pageId}/navigate`, { url });
     return { sessionId, pageId };
   };
 
   const observe = (sessionId: string, pageId: string) =>
-    api('POST', `/sessions/${sessionId}/pages/${pageId}/observe`, {});
+    api('POST', `/v1/sessions/${sessionId}/pages/${pageId}/observe`, {});
 
   const act = (sessionId: string, pageId: string, body: unknown) =>
-    api('POST', `/sessions/${sessionId}/pages/${pageId}/act`, body);
+    api('POST', `/v1/sessions/${sessionId}/pages/${pageId}/act`, body);
 
   // 1 -----------------------------------------------------------------------
   it('workflow 1: session lifecycle - create, use, close, and lose access', async () => {
-    const created = await api('POST', '/sessions', { tenantId: 'wf1' });
+    const created = await api('POST', '/v1/sessions', { tenantId: 'wf1' });
     expect(created.status).toBe(201);
 
     const { sessionId } = created.body;
-    const got = await api('GET', `/sessions/${sessionId}`);
+    const got = await api('GET', `/v1/sessions/${sessionId}`);
     expect(got.status).toBe(200);
     expect(got.body.sessionId).toBe(sessionId);
 
-    const listed = await api('GET', '/sessions');
+    const listed = await api('GET', '/v1/sessions');
     expect(listed.body.sessions.some((s: any) => s.sessionId === sessionId)).toBe(true);
 
-    const page = await api('POST', `/sessions/${sessionId}/pages`);
+    const page = await api('POST', `/v1/sessions/${sessionId}/pages`);
     expect(page.status).toBe(201);
 
-    const closed = await api('DELETE', `/sessions/${sessionId}`);
+    const closed = await api('DELETE', `/v1/sessions/${sessionId}`);
     expect(closed.body).toMatchObject({ sessionId, status: 'closed' });
 
     // After close, the session and its pages are gone.
-    const gone = await api('GET', `/sessions/${sessionId}`);
+    const gone = await api('GET', `/v1/sessions/${sessionId}`);
     expect(gone.status).toBe(404);
     const pageGone = await api(
       'POST',
@@ -90,20 +90,20 @@ describe('deterministic workflows', () => {
   // 2 -----------------------------------------------------------------------
   it('workflow 2: page lifecycle within a session', async () => {
     const { sessionId } = await newBrowsingContext();
-    const page = await api('POST', `/sessions/${sessionId}/pages`);
+    const page = await api('POST', `/v1/sessions/${sessionId}/pages`);
     const pageId = page.body.pageId;
 
-    const got = await api('GET', `/sessions/${sessionId}/pages/${pageId}`);
+    const got = await api('GET', `/v1/sessions/${sessionId}/pages/${pageId}`);
     expect(got.status).toBe(200);
     expect(got.body.pageId).toBe(pageId);
 
-    await api('POST', `/sessions/${sessionId}/pages/${pageId}/navigate`, {
+    await api('POST', `/v1/sessions/${sessionId}/pages/${pageId}/navigate`, {
       url: 'https://second.example.com',
     });
     const observed = await observe(sessionId, pageId);
     expect(observed.body.url).toBe('https://second.example.com');
 
-    const closed = await api('DELETE', `/sessions/${sessionId}/pages/${pageId}`);
+    const closed = await api('DELETE', `/v1/sessions/${sessionId}/pages/${pageId}`);
     expect(closed.body).toMatchObject({ pageId, status: 'closed' });
 
     const afterClose = await observe(sessionId, pageId);
@@ -118,7 +118,7 @@ describe('deterministic workflows', () => {
     expect(before.body.url).toBe('https://first.example.com');
     const staleRef = before.body.elements[0].ref;
 
-    await api('POST', `/sessions/${sessionId}/pages/${pageId}/navigate`, {
+    await api('POST', `/v1/sessions/${sessionId}/pages/${pageId}/navigate`, {
       url: 'https://second.example.com',
     });
 
@@ -263,7 +263,7 @@ describe('deterministic workflows', () => {
     ];
 
     for (const url of targets) {
-      const denied = await api('POST', `/sessions/${sessionId}/pages/${pageId}/navigate`, {
+      const denied = await api('POST', `/v1/sessions/${sessionId}/pages/${pageId}/navigate`, {
         url,
       });
       expect(denied.status).toBe(403);
@@ -271,7 +271,7 @@ describe('deterministic workflows', () => {
     }
 
     // Public https still works.
-    const allowed = await api('POST', `/sessions/${sessionId}/pages/${pageId}/navigate`, {
+    const allowed = await api('POST', `/v1/sessions/${sessionId}/pages/${pageId}/navigate`, {
       url: 'https://public.example.com',
     });
     expect(allowed.status).toBe(200);
@@ -283,7 +283,7 @@ describe('deterministic workflows', () => {
     const b = await newBrowsingContext('https://b.example.com');
 
     // A's page is invisible through B's session id.
-    const crossRead = await api('GET', `/sessions/${b.sessionId}/pages/${a.pageId}`);
+    const crossRead = await api('GET', `/v1/sessions/${b.sessionId}/pages/${a.pageId}`);
     expect(crossRead.status).toBe(404);
 
     const crossAct = await act(b.sessionId, a.pageId, {
@@ -293,7 +293,7 @@ describe('deterministic workflows', () => {
     expect(crossAct.status).toBe(404);
 
     // Closing A leaves B fully functional.
-    await api('DELETE', `/sessions/${a.sessionId}`);
+    await api('DELETE', `/v1/sessions/${a.sessionId}`);
     const stillAlive = await observe(b.sessionId, b.pageId);
     expect(stillAlive.status).toBe(200);
     expect(stillAlive.body.url).toBe('https://b.example.com');
@@ -306,7 +306,7 @@ describe('deterministic workflows', () => {
     const observed = await observe(sessionId, pageId);
     expect(observed.body.url).toBe('https://report.example.com');
 
-    const png = await api('POST', `/sessions/${sessionId}/pages/${pageId}/screenshot`, {
+    const png = await api('POST', `/v1/sessions/${sessionId}/pages/${pageId}/screenshot`, {
       format: 'png',
     });
     expect(png.status).toBe(200);
@@ -316,13 +316,13 @@ describe('deterministic workflows', () => {
     });
     expect(png.body.sizeBytes).toBeGreaterThan(0);
 
-    const jpeg = await api('POST', `/sessions/${sessionId}/pages/${pageId}/screenshot`, {
+    const jpeg = await api('POST', `/v1/sessions/${sessionId}/pages/${pageId}/screenshot`, {
       format: 'jpeg',
       fullPage: true,
     });
     expect(jpeg.body.contentType).toBe('image/jpeg');
 
-    const bad = await api('POST', `/sessions/${sessionId}/pages/${pageId}/screenshot`, {
+    const bad = await api('POST', `/v1/sessions/${sessionId}/pages/${pageId}/screenshot`, {
       format: 'bmp',
     });
     expect(bad.status).toBe(400);

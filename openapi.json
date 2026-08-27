@@ -42,6 +42,27 @@
     }
   ],
   "paths": {
+    "/openapi.json": {
+      "get": {
+        "operationId": "getOpenApiDocument",
+        "summary": "This document",
+        "tags": [
+          "health"
+        ],
+        "responses": {
+          "200": {
+            "description": "The OpenAPI 3.1 document describing the API.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health/live": {
       "get": {
         "operationId": "getLiveness",
@@ -124,7 +145,7 @@
         }
       }
     },
-    "/sessions/{sessionId}/events": {
+    "/v1/sessions/{sessionId}/events": {
       "get": {
         "operationId": "streamSessionEvents",
         "summary": "Stream session events over WebSocket",
@@ -224,7 +245,7 @@
         }
       }
     },
-    "/sessions": {
+    "/v1/sessions": {
       "post": {
         "operationId": "createSession",
         "summary": "Create a browser session",
@@ -349,7 +370,7 @@
         }
       }
     },
-    "/sessions/{sessionId}": {
+    "/v1/sessions/{sessionId}": {
       "get": {
         "operationId": "getSession",
         "summary": "Get a session",
@@ -467,7 +488,7 @@
         }
       }
     },
-    "/sessions/{sessionId}/pages": {
+    "/v1/sessions/{sessionId}/pages": {
       "post": {
         "operationId": "createPage",
         "summary": "Create a page in a session",
@@ -519,7 +540,7 @@
         }
       }
     },
-    "/sessions/{sessionId}/pages/{pageId}": {
+    "/v1/sessions/{sessionId}/pages/{pageId}": {
       "get": {
         "operationId": "getPage",
         "summary": "Get a page",
@@ -654,7 +675,7 @@
         }
       }
     },
-    "/sessions/{sessionId}/pages/{pageId}/navigate": {
+    "/v1/sessions/{sessionId}/pages/{pageId}/navigate": {
       "post": {
         "operationId": "navigatePage",
         "summary": "Navigate a page to a URL",
@@ -763,7 +784,7 @@
         }
       }
     },
-    "/sessions/{sessionId}/pages/{pageId}/observe": {
+    "/v1/sessions/{sessionId}/pages/{pageId}/observe": {
       "post": {
         "operationId": "observePage",
         "summary": "Capture a semantic observation",
@@ -845,7 +866,7 @@
         }
       }
     },
-    "/sessions/{sessionId}/pages/{pageId}/act": {
+    "/v1/sessions/{sessionId}/pages/{pageId}/act": {
       "post": {
         "operationId": "executeAction",
         "summary": "Execute an action through an element reference",
@@ -880,8 +901,7 @@
               "schema": {
                 "type": "object",
                 "required": [
-                  "action",
-                  "target"
+                  "action"
                 ],
                 "properties": {
                   "action": {
@@ -891,11 +911,17 @@
                       "fill",
                       "select",
                       "scroll",
-                      "press"
+                      "press",
+                      "acceptDialog",
+                      "dismissDialog"
                     ]
                   },
                   "target": {
                     "$ref": "#/components/schemas/ElementTarget"
+                  },
+                  "promptText": {
+                    "type": "string",
+                    "description": "Prompt answer for acceptDialog."
                   },
                   "value": {
                     "type": "string"
@@ -966,7 +992,7 @@
         }
       }
     },
-    "/sessions/{sessionId}/pages/{pageId}/pdf": {
+    "/v1/sessions/{sessionId}/pages/{pageId}/pdf": {
       "post": {
         "operationId": "capturePdf",
         "summary": "Capture a PDF artifact",
@@ -1059,7 +1085,7 @@
         }
       }
     },
-    "/sessions/{sessionId}/pages/{pageId}/download": {
+    "/v1/sessions/{sessionId}/pages/{pageId}/download": {
       "post": {
         "operationId": "downloadArtifact",
         "summary": "Download a payload as a stored artifact",
@@ -1163,7 +1189,7 @@
         }
       }
     },
-    "/sessions/{sessionId}/artifacts/{artifactId}": {
+    "/v1/sessions/{sessionId}/artifacts/{artifactId}": {
       "get": {
         "operationId": "getArtifact",
         "summary": "Retrieve a stored artifact",
@@ -1238,7 +1264,7 @@
         }
       }
     },
-    "/sessions/{sessionId}/pages/{pageId}/extract": {
+    "/v1/sessions/{sessionId}/pages/{pageId}/extract": {
       "post": {
         "operationId": "extractPage",
         "summary": "Extract deterministic structured data from the page",
@@ -1377,7 +1403,7 @@
         }
       }
     },
-    "/sessions/{sessionId}/pages/{pageId}/screenshot": {
+    "/v1/sessions/{sessionId}/pages/{pageId}/screenshot": {
       "post": {
         "operationId": "captureScreenshot",
         "summary": "Capture a screenshot artifact",
