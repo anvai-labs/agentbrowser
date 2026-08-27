@@ -1,4 +1,13 @@
-# Full audit: vision vs implementation (2026-08-26)
+# Full audit: vision vs implementation (2026-08-26; remediation 2026-08-27)
+
+**Status update (2026-08-27):** all P0s are closed. P0-2 (expiry leak),
+P0-5 (capability truth) and the dead logger were fixed with the audit
+itself; P0-3 (dialogs), P0-4 (engine-level egress with redirect
+enforcement) and P0-1 (authn/tenancy) landed as dedicated commits, along
+with P1-1 (/v1 versioning), P1-2 (per-session allowedHosts/blockedHosts),
+P1-3 (maxBytes observation bound) and P1-8 (threat model:
+docs/threat-model.md). The remaining P1s and P2s are re-prioritized
+below.
 
 Audited against `agentbrowser-mvp-spec.md` (the vision), the technical
 design (TD-001..TD-026, all complete), ADRs 001-010, and the code as of
@@ -140,13 +149,11 @@ extraction (adapter slot is clean), telemetry, or the revision model.
 
 ---
 
-## Recommended order
+## Remaining work (post-remediation priorities)
 
-1. P0-2 expiry sweep, P0-5 capability truth, bin.ts logger (small,
-   immediate).
-2. P0-3 dialogs (correctness on real pages).
-3. P0-4 engine-level egress with redirect enforcement (the architectural
-   shift).
-4. P0-1 authn/tenancy + `/v1` prefix (P1-1) together, since versioning
-   lands once with the auth middleware.
-5. P1 remainder, threat model (P1-8) alongside P0-1.
+P1: wait conditions beyond navigate (`settled`, §11.1); in-page download
+interception (§10); schema-constrained extraction adapter (§12.2);
+`maskSensitive` screenshots; response-cap enforcement; `text[]`/frames.
+P2: CLI `press`/`scroll`/`extract` commands; protocol/SDK SessionRequest
+reconciliation; expiry events on the stream; artifact time-boxed
+authorization (tenant scoping landed with P0-1).

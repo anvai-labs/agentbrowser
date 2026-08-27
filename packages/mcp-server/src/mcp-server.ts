@@ -181,6 +181,10 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
             description: 'Observation mode (default: interactive).',
           },
           maxElements: { type: 'number', description: 'Maximum elements to return.' },
+          maxBytes: {
+            type: 'number',
+            description: 'Serialized observation budget in bytes.',
+          },
         },
         required: ['sessionId', 'pageId'],
       },
@@ -193,6 +197,9 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
         }
         if (typeof args.maxElements === 'number') {
           request.maxElements = args.maxElements;
+        }
+        if (typeof args.maxBytes === 'number') {
+          request.maxBytes = args.maxBytes;
         }
 
         return await client.sessions.observe(sessionId, pageId, request);

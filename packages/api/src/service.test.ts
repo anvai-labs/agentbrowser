@@ -566,6 +566,50 @@ describe('AgentBrowserService', () => {
     });
   });
 
+  describe('byte-budget truncation (spec 10)', () => {
+    let sessionId: string;
+    let pageId: string;
+
+    beforeEach(async () => {
+      sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+      pageId = (await service.createPage(sessionId)).pageId;
+      await service.navigate(sessionId, pageId, { url: 'https://example.com' });
+    });
+
+    it('should truncate an observation to fit maxBytes', async () => {
+      const full = await service.observe(sessionId, pageId, {});
+      const fullBytes = JSON.stringify(full).length;
+
+      const trimmed = await service.observe(sessionId, pageId, { maxBytes: fullBytes - 400 });
+
+      expect(JSON.stringify(trimmed).length).toBeLessThanOrEqual(fullBytes - 400);
+      expect(trimmed.truncated).toBe(true);
+      expect(trimmed.elements.length).toBeLessThan(full.elements.length);
+    });
+
+    it('should leave a fitting observation untruncated', async () => {
+      const full = await service.observe(sessionId, pageId, {});
+      const generous = await service.observe(sessionId, pageId, {
+        maxBytes: JSON.stringify(full).length + 1000,
+      });
+
+      expect(generous.truncated).toBe(false);
+      expect(generous.elements.length).toBe(full.elements.length);
+    });
+
+    it('should keep every returned ref actionable (positional bridging intact)', async () => {
+      const trimmed = await service.observe(sessionId, pageId, { maxBytes: 900 });
+
+      if (trimmed.elements.length > 0) {
+        const result = await service.act(sessionId, pageId, {
+          action: 'click',
+          target: { ref: trimmed.elements[0]?.ref },
+        });
+        expect(result.status).toBe('success');
+      }
+    });
+  });
+
   describe('secret-safe credential handling', () => {
     const SECRET_VALUE = 'correct-horse-battery-staple';
     let secretService: AgentBrowserService;

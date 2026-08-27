@@ -828,16 +828,42 @@ export class AgentBrowserService {
       );
     }
 
-    const start = continueFrom ?? 0;
-    if (maxElements === undefined) {
-      return observation;
+    // Byte budget first (spec 10): trim serialized size while keeping
+    // document order, then apply the element-count budget. Truncation must
+    // happen AFTER ref bridging (which is positional), which is why this
+    // lives here and not in the normalizer.
+    let elements = observation.elements;
+    let truncated = false;
+    if (request.maxBytes !== undefined) {
+      const budget = request.maxBytes;
+      let low = 0;
+      let high = elements.length;
+      // Binary search for the largest prefix fitting the byte budget.
+      while (low < high) {
+        const mid = Math.ceil((low + high) / 2);
+        const size = JSON.stringify({ ...observation, elements: elements.slice(0, mid) }).length;
+        if (size <= budget) {
+          low = mid;
+        } else {
+          high = mid - 1;
+        }
+      }
+      if (low < elements.length) {
+        elements = elements.slice(0, low);
+        truncated = true;
+      }
     }
 
-    const slice = observation.elements.slice(start, start + maxElements);
-    const remaining = observation.elements.length - (start + slice.length);
+    const start = continueFrom ?? 0;
+    if (maxElements === undefined) {
+      return truncated ? { ...observation, elements, truncated } : observation;
+    }
+
+    const slice = elements.slice(start, start + maxElements);
+    const remaining = elements.length - (start + slice.length);
 
     if (remaining <= 0) {
-      return { ...observation, elements: slice, truncated: false };
+      return { ...observation, elements: slice, truncated };
     }
     return {
       ...observation,
