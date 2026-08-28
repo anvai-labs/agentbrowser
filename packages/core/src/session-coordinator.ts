@@ -113,6 +113,12 @@ export class SessionCoordinator {
       sessionOptions.requestPolicy = request.requestPolicy;
     }
 
+    // Seed cookies ride through to the engine (reuse an authenticated session).
+    if (request.cookies !== undefined) {
+      sessionOptions.cookies =
+        request.cookies as NonNullable<import('@agentbrowser/engine').EngineSessionOptions['cookies']>;
+    }
+
     const engineSession = await engine.createSession(sessionOptions);
 
     // Calculate expiration times

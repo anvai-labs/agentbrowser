@@ -128,6 +128,32 @@ describe('PlaywrightChromiumEngine', () => {
       expect(seeded?.value).toBe('reused-auth-value');
       expect(seeded?.domain).toContain('example.com');
     });
+
+    it('should seed a __Host- cookie as host-only (Chromium rejects it otherwise)', async () => {
+      // Regression: `__Host-`-prefixed cookies must be host-only + Secure, which
+      // Playwright expresses via `url` (not `domain`). Passing `domain` makes
+      // Chromium silently drop the cookie, so the reused session was anonymous.
+      const session = await engine.createSession({
+        cookies: [
+          {
+            name: '__Host-databricksapps',
+            value: 'host-only-auth',
+            domain: 'app.example.com',
+            path: '/',
+            httpOnly: true,
+            secure: true,
+            sameSite: 'Lax',
+          },
+        ],
+      });
+
+      const seeded = (await session.cookies()).find((c) => c.name === '__Host-databricksapps');
+      expect(seeded).toBeDefined();
+      expect(seeded?.value).toBe('host-only-auth');
+      // Host-only: the domain is the bare host with no leading dot.
+      expect(seeded?.domain).toBe('app.example.com');
+      expect(seeded?.secure).toBe(true);
+    });
   });
 
   describe('session lifecycle', () => {
