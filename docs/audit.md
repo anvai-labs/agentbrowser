@@ -151,9 +151,15 @@ extraction (adapter slot is clean), telemetry, or the revision model.
 
 ## Remaining work (post-remediation priorities)
 
-P1: wait conditions beyond navigate (`settled`, §11.1); in-page download
-interception (§10); schema-constrained extraction adapter (§12.2);
-`maskSensitive` screenshots; response-cap enforcement; `text[]`/frames.
-P2: CLI `press`/`scroll`/`extract` commands; protocol/SDK SessionRequest
-reconciliation; expiry events on the stream; artifact time-boxed
-authorization (tenant scoping landed with P0-1).
+**All P1 and P2 items are closed (2026-08-28).** Landed: wait conditions
+with deadlines and completion reasons (§11.1); in-page download
+interception with bytes, events and collect endpoint (§10);
+schema-constrained extraction with a deterministic default and pluggable
+model adapter (§12.2); maskSensitive honest-warning; response-cap
+enforcement at the choke point; `text[]` content mode; CLI parity
+(press/scroll/dialogs/extract); protocol/SDK SessionRequest
+reconciliation; expiry events on the stream; time-boxed artifact tokens.
+
+Residuals (named, deferred by design - see docs/threat-model.md): frames
+observation, DNS-rebinding pinning, WebSocket upgrade interception,
+pixel-level screenshot masking, process-per-session isolation.

@@ -15,6 +15,7 @@ import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import Fastify from 'fastify';
 import type { FastifyError, FastifyInstance, FastifyRequest } from 'fastify';
+import { ArtifactAuthorizer } from './artifact-auth.js';
 import { buildOpenApiDocument } from './openapi.js';
 import { AgentBrowserService, ServiceError } from './service.js';
 
@@ -223,6 +224,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   // keys are configured. Infra planes (health/metrics/openapi) stay
   // unversioned and unauthenticated by design.
   // ------------------------------------------------------------------
+  const artifactAuth = new ArtifactAuthorizer({
+    key: process.env.AGENTBROWSER_ARTIFACT_KEY ?? 'dev-artifact-key',
+  });
+
   const apiKeys = options.apiKeys ?? apiKeysFromEnv();
   if (apiKeys === undefined || apiKeys.size === 0) {
     console.warn(
@@ -519,6 +524,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             expectedRevision,
             approvalToken,
             promptText,
+            wait,
           } = body as Record<string, unknown>;
 
           if (typeof action !== 'string') {
@@ -546,6 +552,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               : {}),
             ...(approvalToken !== undefined ? { approvalToken: approvalToken as string } : {}),
             ...(promptText !== undefined ? { promptText: promptText as string } : {}),
+            ...(wait !== undefined ? { wait: wait as { until: string; timeoutMs?: number } } : {}),
           });
           return reply.send(result);
         } catch (error) {
@@ -593,7 +600,12 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             sessionId: string;
             artifactId: string;
           };
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+          // Access granted by session ownership OR a short-lived signed
+          // token minted when the artifact was created (spec 13.1).
+          const query = request.query as { token?: string };
+          const tokenValid =
+            query.token !== undefined && artifactAuth.verify(artifactId, query.token);
+          if (!tokenValid && !requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
           const stored = service.getArtifact(sessionId, artifactId);
@@ -611,6 +623,25 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             metadata: stored.metadata,
             contentBase64: Buffer.from(stored.bytes).toString('base64'),
           });
+        } catch (error) {
+          return fail(reply, error);
+        }
+      });
+
+      // Collect an intercepted in-page download (spec 10)
+      v1.post('/sessions/:sessionId/pages/:pageId/downloads/:filename', async (request, reply) => {
+        try {
+          const { sessionId, pageId, filename } = request.params as {
+            sessionId: string;
+            pageId: string;
+            filename: string;
+          };
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+            return reply;
+          }
+
+          const artifact = await service.collectDownload(sessionId, pageId, filename);
+          return reply.send(artifact);
         } catch (error) {
           return fail(reply, error);
         }
@@ -657,7 +688,8 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           }
 
           const format = (body as { format?: string }).format;
-          const supported = ['text', 'markdown', 'links', 'tables', 'forms', 'jsonld'];
+          const schema = (body as { schema?: Record<string, unknown> }).schema;
+          const supported = ['text', 'markdown', 'links', 'tables', 'forms', 'jsonld', 'schema'];
           if (typeof format !== 'string' || !supported.includes(format)) {
             return reply.status(400).send({
               error: {
@@ -668,7 +700,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             });
           }
 
-          const result = await service.extract(sessionId, pageId, { format: format as never });
+          const result = await service.extract(sessionId, pageId, {
+            format: format as never,
+            ...(schema !== undefined ? { schema } : {}),
+          });
           return reply.send(result);
         } catch (error) {
           return fail(reply, error);

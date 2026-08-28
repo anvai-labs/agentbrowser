@@ -16,6 +16,7 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
+    "@agentbrowser/core": "workspace:^",
     "@agentbrowser/engine": "workspace:*",
     "@agentbrowser/protocol": "workspace:*"
   },

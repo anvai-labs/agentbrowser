@@ -354,6 +354,13 @@ export class SessionHostPolicy {
     this.hasAllowList = this.allowedExact.size > 0 || this.allowedSuffixes.size > 0;
   }
 
+  async checkResponse(response: { headers?: Record<string, string> }): Promise<void> {
+    // Session rules are host-scoped; response caps come from the base.
+    await this.base.checkResponse({
+      ...(response.headers !== undefined ? { headers: response.headers } : {}),
+    });
+  }
+
   async checkRequest(request: { hostname: string; url?: string }): Promise<void> {
     const hostname = request.hostname.toLowerCase();
 

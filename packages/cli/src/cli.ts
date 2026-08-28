@@ -44,6 +44,11 @@ export interface CliClient {
     ): Promise<ObservationResponse>;
     executeAction(sessionId: string, pageId: string, request: ActionRequest): Promise<ActionResult>;
     screenshot(sessionId: string, pageId: string, request: ScreenshotRequest): Promise<ArtifactRef>;
+    extract(
+      sessionId: string,
+      pageId: string,
+      request: { format: string }
+    ): Promise<{ data?: unknown; evidence?: unknown[]; warnings?: string[] }>;
   };
 }
 
@@ -314,6 +319,84 @@ export function buildCli(deps: CliDependencies): Cli {
               target: refTarget(ref),
               value,
             });
+          })
+        );
+
+      act
+        .command('press')
+        .description('press a key')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('<key>')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string, key: string) => {
+            await runAction(ctx, sessionId, pageId, {
+              action: 'press',
+              key,
+            } as never);
+          })
+        );
+
+      act
+        .command('scroll')
+        .description('scroll the page')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('<direction>', 'up | down | left | right')
+        .argument('<amount>')
+        .action(
+          action(
+            async (ctx, sessionId: string, pageId: string, direction: string, amount: string) => {
+              await runAction(ctx, sessionId, pageId, {
+                action: 'scroll',
+                direction,
+                amount: Number.parseInt(amount, 10),
+              } as never);
+            }
+          )
+        );
+
+      act
+        .command('dismissDialog')
+        .description('dismiss a pending dialog')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string) => {
+            await runAction(ctx, sessionId, pageId, { action: 'dismissDialog' } as never);
+          })
+        );
+
+      act
+        .command('acceptDialog')
+        .description('accept a pending dialog, optionally answering a prompt')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('[promptText]')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string, promptText?: string) => {
+            await runAction(ctx, sessionId, pageId, {
+              action: 'acceptDialog',
+              ...(promptText !== undefined ? { promptText } : {}),
+            } as never);
+          })
+        );
+
+      // ---- extract ----------------------------------------------------------
+      program
+        .command('extract')
+        .description('extract deterministic structured data from a page')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .option('--format <format>', 'text | markdown | links | tables | forms | jsonld')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string, options: { format?: string }) => {
+            const result = (await ctx.client.sessions.extract(sessionId, pageId, {
+              format: (options.format ?? 'text') as never,
+            })) as unknown;
+            ctx.emit(result, () => [
+              JSON.stringify((result as { data?: unknown }).data, null, 2).slice(0, 4000),
+            ]);
           })
         );
 

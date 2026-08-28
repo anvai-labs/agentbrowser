@@ -17,6 +17,8 @@ export interface ArtifactMetadata {
   expiresAt: number;
   filename?: string;
   sessionId?: string;
+  /** Honest-capability warnings attached by the producing layer. */
+  warnings?: string[];
 }
 
 export interface StoredArtifact {

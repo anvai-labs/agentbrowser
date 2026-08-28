@@ -62,6 +62,11 @@ export interface EngineSessionOptions {
  */
 export interface RequestPolicy {
   checkRequest(request: { hostname: string; url: string }): Promise<void>;
+  /**
+   * Optional response-size gate enforced at the choke point (bytes).
+   * Implementations throw to block an oversized response.
+   */
+  checkResponse?(response: { headers: Record<string, string> }): Promise<void>;
 }
 
 /**

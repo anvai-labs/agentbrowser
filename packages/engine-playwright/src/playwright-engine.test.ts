@@ -128,6 +128,32 @@ describe('PlaywrightChromiumEngine', () => {
       expect(seeded?.value).toBe('reused-auth-value');
       expect(seeded?.domain).toContain('example.com');
     });
+
+    it('should seed a __Host- cookie as host-only (Chromium rejects it otherwise)', async () => {
+      // Regression: `__Host-`-prefixed cookies must be host-only + Secure, which
+      // Playwright expresses via `url` (not `domain`). Passing `domain` makes
+      // Chromium silently drop the cookie, so the reused session was anonymous.
+      const session = await engine.createSession({
+        cookies: [
+          {
+            name: '__Host-databricksapps',
+            value: 'host-only-auth',
+            domain: 'app.example.com',
+            path: '/',
+            httpOnly: true,
+            secure: true,
+            sameSite: 'Lax',
+          },
+        ],
+      });
+
+      const seeded = (await session.cookies()).find((c) => c.name === '__Host-databricksapps');
+      expect(seeded).toBeDefined();
+      expect(seeded?.value).toBe('host-only-auth');
+      // Host-only: the domain is the bare host with no leading dot.
+      expect(seeded?.domain).toBe('app.example.com');
+      expect(seeded?.secure).toBe(true);
+    });
   });
 
   describe('session lifecycle', () => {
@@ -492,9 +518,13 @@ function egressFixtures(): Promise<{ port: number; stop(): Promise<void> }> {
         );
       return;
     }
+    const body = '<!DOCTYPE html><html><body>ok</body></html>';
     response
-      .writeHead(200, { 'content-type': 'text/html' })
-      .end('<!DOCTYPE html><html><body>ok</body></html>');
+      .writeHead(200, {
+        'content-type': 'text/html',
+        'content-length': String(body.length),
+      })
+      .end(body);
   });
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => {
@@ -575,6 +605,33 @@ describe('engine-level egress choke point (P0-4)', () => {
     }
   });
 
+  it('should block an oversized response at the choke point', async () => {
+    const fixtures = await egressFixtures();
+    const engine = new PlaywrightChromiumEngine({
+      egress: {
+        async checkRequest() {
+          return; // allow all hosts
+        },
+        async checkResponse(response: { headers: Record<string, string> }) {
+          const length = Number.parseInt(response.headers['content-length'] ?? '0', 10);
+          if (length > 10) {
+            throw new Error('RESPONSE_TOO_LARGE');
+          }
+        },
+      },
+    });
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      // The fixture body is ~40 bytes: over the 10-byte cap.
+      const result = await page.navigate({ url: `http://127.0.0.1:${fixtures.port}/links` });
+      expect(result.status).toBe('blocked');
+    } finally {
+      await engine.close();
+      await fixtures.stop();
+    }
+  });
+
   it('should allow a per-session policy to override the root', async () => {
     const fixtures = await egressFixtures();
     const engine = new PlaywrightChromiumEngine(); // no root egress
@@ -595,6 +652,74 @@ describe('engine-level egress choke point (P0-4)', () => {
     } finally {
       await engine.close();
       await fixtures.stop();
+    }
+  });
+});
+
+describe('in-page download interception (spec 10)', () => {
+  it('should capture a page-initiated download with bytes and events', async () => {
+    // Fixture page serving a download via Content-Disposition.
+    const http = require('node:http') as typeof import('node:http');
+    const server = http.createServer((request, response) => {
+      const payload = 'col1,col2\n1,2\n';
+      response.writeHead(200, {
+        'content-type': 'text/csv',
+        'content-length': String(payload.length),
+        'content-disposition': 'attachment; filename="report.csv"',
+      });
+      response.end(payload);
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+
+    const engine = new PlaywrightChromiumEngine({
+      egress: {
+        async checkRequest(request: { hostname: string }) {
+          if (request.hostname === '127.0.0.1') return;
+          throw new Error('denied');
+        },
+      },
+    });
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+
+      const events: string[] = [];
+      (async () => {
+        for await (const event of page.events()) {
+          events.push(`${event.type}:${(event.data as { filename?: string })?.filename ?? ''}`);
+        }
+      })();
+
+      // A top-level navigation to an attachment throws "Download is
+      // starting" - the download still fires. Trigger it in-page instead.
+      const anchor = `http://127.0.0.1:${port}/`;
+      await page.navigate({ url: `data:text/html,<a href="${anchor}" download>get</a>` });
+      const observation = await page.observe({ mode: 'interactive' });
+      const link = observation.elements.find((el) => el.name === 'get');
+      await page.act({ type: 'click', target: { ref: link?.ref } }).catch(() => {
+        // The click may not resolve until the download lands; either way the
+        // download handler captures the file.
+      });
+
+      // Chromium downloads the "attachment" body; the engine holds it.
+      // Poll briefly for the finished event.
+      for (let i = 0; i < 20 && !events.some((e) => e.startsWith('download.finished')); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+
+      expect(events.some((e) => e.startsWith('download.created:report.csv'))).toBe(true);
+      expect(events.some((e) => e.startsWith('download.finished:report.csv'))).toBe(true);
+
+      const bytes = await (
+        session as unknown as {
+          downloadBytes(pageId: string, filename: string): Promise<Uint8Array | undefined>;
+        }
+      ).downloadBytes(page.id, 'report.csv');
+      expect(bytes && Buffer.from(bytes).toString('utf8')).toContain('col1,col2');
+    } finally {
+      await engine.close();
+      await new Promise((done) => server.close(() => done()));
     }
   });
 });

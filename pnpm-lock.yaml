@@ -176,6 +176,9 @@ importers:
 
   packages/extraction:
     dependencies:
+      '@agentbrowser/core':
+        specifier: workspace:^
+        version: link:../core
       '@agentbrowser/engine':
         specifier: workspace:*
         version: link:../engine

@@ -83,6 +83,16 @@ export class ObservationNormalizer {
       untrustedContent: true, // All web content is untrusted
     };
 
+    // Content mode carries the page text as an array (spec 10): visible
+    // text split into paragraphs, so consumers get readable content without
+    // markup.
+    if (mode === 'content') {
+      const paragraphs = this.paragraphsOf(rawState.content);
+      if (paragraphs.length > 0) {
+        observation.text = paragraphs;
+      }
+    }
+
     // Add focusedRef only if there is a focused element
     const focusedRef = this.getFocusedRef(prioritizedElements);
     if (focusedRef !== undefined) {
@@ -201,6 +211,21 @@ export class ObservationNormalizer {
   private getFocusedRef(elements: PageElement[]): string | undefined {
     const focused = elements.find((el) => el.focused);
     return focused?.ref;
+  }
+
+  /**
+   * Split cleaned HTML into non-empty text paragraphs (spec 10 content
+   * mode): readable text without markup, one entry per block.
+   */
+  private paragraphsOf(content: string): string[] {
+    return content
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<(p|div|li|h[1-6]|tr)[^>]*>/gi, '\n')
+      .replace(/<[^>]+>/g, ' ')
+      .split('\n')
+      .map((line) => line.replace(/\s+/g, ' ').trim())
+      .filter((line) => line.length > 0);
   }
 
   /**
