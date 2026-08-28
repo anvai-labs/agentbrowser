@@ -5,7 +5,12 @@
  * Written following TDD principles before implementation.
  */
 
-import type { BrowserEngine, EngineCapabilities, EngineSession } from '@agentbrowser/engine';
+import type {
+  BrowserEngine,
+  EngineCapabilities,
+  EngineSession,
+  EngineSessionOptions,
+} from '@agentbrowser/engine';
 import type { SessionRequest } from '@agentbrowser/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionCoordinator, SessionState } from './session-coordinator';
@@ -32,7 +37,11 @@ class MockEngine implements BrowserEngine {
     };
   }
 
-  async createSession(): Promise<EngineSession> {
+  /** Captures the options the coordinator forwarded, for assertions. */
+  lastOptions?: EngineSessionOptions;
+
+  async createSession(options?: EngineSessionOptions): Promise<EngineSession> {
+    this.lastOptions = options;
     return new MockEngineSession();
   }
 
@@ -95,6 +104,31 @@ describe('SessionCoordinator', () => {
       expect(session).toBeDefined();
       expect(session?.state).toBe(SessionState.READY);
       expect(session?.metadata.state).toBe(SessionState.READY);
+    });
+
+    it('should forward seed cookies to the engine', async () => {
+      // Regression: the coordinator built sessionOptions but dropped `cookies`,
+      // so an authenticated-session reuse silently created an anonymous context.
+      const cookies = [
+        {
+          name: '__Host-databricksapps',
+          value: 'reused-auth-value',
+          domain: 'app.example.com',
+          path: '/',
+          httpOnly: true,
+          secure: true,
+          sameSite: 'Lax' as const,
+        },
+      ];
+      const request: SessionRequest = {
+        engine: 'mock-engine',
+        ttlMs: 900000,
+        cookies,
+      };
+
+      await coordinator.create(request, mockEngine);
+
+      expect(mockEngine.lastOptions?.cookies).toEqual(cookies);
     });
 
     it('should generate unique session IDs', async () => {

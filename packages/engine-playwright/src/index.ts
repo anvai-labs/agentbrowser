@@ -152,10 +152,25 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
 
     // Seed cookies so a caller can reuse an already-authenticated session
     // (e.g. to skip an SSO / device-trust login the headless browser cannot
-    // satisfy). Playwright's Cookie shape is a structural superset of
-    // NormalizedCookie, so the array is accepted as-is.
+    // satisfy). `__Host-`/`__Secure-`-prefixed cookies MUST be host-only and
+    // Secure or Chromium silently rejects them; Playwright expresses host-only
+    // cookies via `url` (not `domain`/`path`), so convert those here.
     if (options.cookies !== undefined && options.cookies.length > 0) {
-      await context.addCookies(options.cookies);
+      const toAdd = options.cookies.map((c) => {
+        if (c.name.startsWith('__Host-')) {
+          return {
+            name: c.name,
+            value: c.value,
+            url: `https://${c.domain}/`,
+            secure: true,
+            ...(c.httpOnly !== undefined ? { httpOnly: c.httpOnly } : {}),
+            ...(c.sameSite !== undefined ? { sameSite: c.sameSite } : {}),
+            ...(c.expires !== undefined ? { expires: c.expires } : {}),
+          };
+        }
+        return c;
+      });
+      await context.addCookies(toAdd as Parameters<typeof context.addCookies>[0]);
     }
 
     return new PlaywrightSession(context, this);
