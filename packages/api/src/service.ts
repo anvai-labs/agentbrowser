@@ -25,9 +25,10 @@ import type { ArtifactMetadata } from '@agentbrowser/core';
 import type { InMemoryTracer, Span } from '@agentbrowser/core';
 import type { MetricsRegistry } from '@agentbrowser/core';
 import type { StructuredLogger } from '@agentbrowser/core';
-import type { BrowserEngine, EnginePage } from '@agentbrowser/engine';
+import type { BrowserEngine, EngineEvent, EnginePage } from '@agentbrowser/engine';
 import type { EngineSession, EngineSessionOptions } from '@agentbrowser/engine';
 import type { RawPageState } from '@agentbrowser/engine';
+import type { RequestPolicy } from '@agentbrowser/engine';
 import {
   extractForms,
   extractJsonLd,
@@ -36,12 +37,13 @@ import {
   extractTables,
   extractVisibleText,
 } from '@agentbrowser/extraction';
-import { NetworkPolicy } from '@agentbrowser/policy';
+import { NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
 import type {
   ArtifactRef,
   ObservationRequest,
   PageElement,
   PageState,
+  PdfRequest,
   ScreenshotRequest,
 } from '@agentbrowser/protocol';
 
@@ -70,6 +72,9 @@ export interface ServiceSessionRequest {
   /** Downloads are denied unless the session explicitly allows them. */
   allowDownloads?: boolean;
   maxDownloadBytes?: number;
+  /** Per-session host rules, chained over the SSRF base (restrict-only). */
+  allowedHosts?: string[];
+  blockedHosts?: string[];
 }
 
 export interface ServiceSessionView {
@@ -79,6 +84,8 @@ export interface ServiceSessionView {
   createdAt: string;
   ttlMs: number;
   idleTimeoutMs: number;
+  /** Owning tenant, when the session was created under one. */
+  tenantId?: string;
 }
 
 export interface ServicePageView {
@@ -99,6 +106,8 @@ export interface ServiceActRequest {
   observe?: 'after' | 'none' | undefined;
   expectedRevision?: number | undefined;
   approvalToken?: string | undefined;
+  /** Prompt answer for acceptDialog. */
+  promptText?: string | undefined;
 }
 
 export interface ServiceActResult {
@@ -127,6 +136,8 @@ export interface ServiceDependencies {
   metrics?: MetricsRegistry;
   /** Structured operation log; absent means no operation logging. */
   logger?: StructuredLogger;
+  /** How often to reconcile service state with coordinator expiry (ms). */
+  sweepIntervalMs?: number;
 }
 
 /** Risk classes that require an approval token before the action runs. */
@@ -180,6 +191,7 @@ export class AgentBrowserService {
   private readonly normalizer: ObservationNormalizer;
   private readonly executor: ActionExecutor;
   private readonly networkPolicy: NetworkPolicy;
+  private readonly rootRequestPolicy: RequestPolicy;
   private readonly approvalGate: ApprovalGate;
   private readonly secretManager: SecretManager;
   private readonly artifacts: ArtifactStore;
@@ -192,10 +204,15 @@ export class AgentBrowserService {
     string,
     { allowDownloads: boolean; maxDownloadBytes: number }
   >();
+  /** Per-session egress chain (fast-fail + engine choke point, one verdict). */
+  private readonly sessionPolicies = new Map<string, RequestPolicy>();
   private readonly pages = new Map<string, PageContext>();
   private pageCounter = 0;
   /** Audit log of sessions terminated by engine crashes (TD-024). */
   private readonly crashLog: Array<{ sessionId: string; reason: string; timestamp: string }> = [];
+  /** Session -> event listeners, fed by per-page engine event pumps. */
+  private readonly eventListeners = new Map<string, Set<(event: EngineEvent) => void>>();
+  private sweepTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(deps: ServiceDependencies) {
     this.engine = deps.engine;
@@ -208,6 +225,9 @@ export class AgentBrowserService {
     this.networkPolicy =
       deps.networkPolicy ??
       new NetworkPolicy({ blockLoopback: true, blockPrivateIPs: true, blockMetadata: true });
+    // The root policy is both the service fast-fail and the engine choke
+    // point's base: one verdict, enforced at both layers.
+    this.rootRequestPolicy = this.networkPolicy;
     this.approvalGate = deps.approvalGate ?? new ApprovalGate({ cleanupIntervalMs: 3_600_000 });
     // An empty registry redacts nothing; a populated one is enforced at every
     // output boundary (observations, error messages, error details).
@@ -223,6 +243,35 @@ export class AgentBrowserService {
     }
     if (deps.logger !== undefined) {
       this.logger = deps.logger;
+    }
+    // Reconcile with coordinator expiry so TTL/idle lapses release service
+    // state (page registry, listeners, policies) instead of leaking it.
+    const sweepIntervalMs = deps.sweepIntervalMs ?? 30_000;
+    if (sweepIntervalMs > 0) {
+      this.sweepTimer = setInterval(() => this.sweepExpiredSessions(), sweepIntervalMs);
+      this.sweepTimer.unref?.();
+    }
+  }
+
+  /** Drop service state for sessions the coordinator no longer tracks. */
+  private sweepExpiredSessions(): void {
+    const tracked = new Set<string>([
+      ...this.sessionDownloadPolicy.keys(),
+      ...this.eventListeners.keys(),
+      ...[...this.pages.values()].map((page) => page.sessionId),
+    ]);
+    for (const sessionId of tracked) {
+      // coordinator.get() lazily expires TTL/idle-lapsed sessions.
+      if (this.coordinator.get(sessionId) === undefined) {
+        for (const [pageId, page] of this.pages) {
+          if (page.sessionId === sessionId) {
+            this.pages.delete(pageId);
+          }
+        }
+        this.eventListeners.delete(sessionId);
+        this.sessionDownloadPolicy.delete(sessionId);
+        this.sessionPolicies.delete(sessionId);
+      }
     }
   }
 
@@ -285,6 +334,47 @@ export class AgentBrowserService {
     }
   }
 
+  /**
+   * Subscribe to a session's engine events (page loads, console output,
+   * crashes). Returns an unsubscribe function, or undefined when the session
+   * does not exist. Events are stamped with the service's session and page
+   * ids before delivery.
+   */
+  subscribe(sessionId: string, listener: (event: EngineEvent) => void): (() => void) | undefined {
+    if (!this.coordinator.get(sessionId)) {
+      return undefined;
+    }
+    const listeners = this.eventListeners.get(sessionId) ?? new Set();
+    listeners.add(listener);
+    this.eventListeners.set(sessionId, listeners);
+    return () => {
+      listeners.delete(listener);
+    };
+  }
+
+  /** Pull a page's engine events forever, dispatching to session listeners. */
+  private pumpEvents(sessionId: string, pageId: string, enginePage: EnginePage): void {
+    void (async () => {
+      try {
+        for await (const event of enginePage.events()) {
+          const stamped: EngineEvent = { ...event, sessionId, pageId };
+          const listeners = this.eventListeners.get(sessionId);
+          if (listeners) {
+            for (const listener of [...listeners]) {
+              try {
+                listener(stamped);
+              } catch {
+                // A misbehaving listener never breaks the stream.
+              }
+            }
+          }
+        }
+      } catch {
+        // The engine page went away; the pump simply ends.
+      }
+    })();
+  }
+
   /** Error messages that indicate the engine itself died. */
   private static readonly CRASH_PATTERN =
     /crash|browser (has been )?closed|browser.*disconnect|target (page|context).*closed|context.*closed/i;
@@ -305,6 +395,7 @@ export class AgentBrowserService {
       }
     }
     this.sessionDownloadPolicy.delete(sessionId);
+    this.sessionPolicies.delete(sessionId);
     await this.coordinator.terminate(sessionId, SessionState.ENGINE_CRASHED, reason).catch(() => {
       // The session may already be gone; the audit entry stands.
     });
@@ -382,15 +473,26 @@ export class AgentBrowserService {
       if (request.timezoneId !== undefined) engineRequest.timezoneId = request.timezoneId;
       if (request.headless !== undefined) engineRequest.headless = request.headless;
 
+      // Per-session chain: session rules restrict; the SSRF base always runs.
+      const sessionPolicy =
+        request.allowedHosts !== undefined || request.blockedHosts !== undefined
+          ? new SessionHostPolicy(this.networkPolicy, {
+              ...(request.allowedHosts !== undefined ? { allowedHosts: request.allowedHosts } : {}),
+              ...(request.blockedHosts !== undefined ? { blockedHosts: request.blockedHosts } : {}),
+            })
+          : this.rootRequestPolicy;
+
       let session: import('@agentbrowser/protocol').SessionResponse;
       try {
         session = await this.coordinator.create(
           {
             ...engineRequest,
+            ...(request.tenantId !== undefined ? { tenantId: request.tenantId } : {}),
             ...(request.ttlMs !== undefined ? { ttlMs: request.ttlMs } : {}),
             ...(request.idleTimeoutMs !== undefined
               ? { idleTimeoutMs: request.idleTimeoutMs }
               : {}),
+            requestPolicy: sessionPolicy,
           },
           this.engine
         );
@@ -405,6 +507,7 @@ export class AgentBrowserService {
         allowDownloads: request.allowDownloads === true,
         maxDownloadBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
       });
+      this.sessionPolicies.set(session.sessionId, sessionPolicy);
 
       return {
         sessionId: session.sessionId,
@@ -413,6 +516,7 @@ export class AgentBrowserService {
         createdAt: session.createdAt,
         ttlMs: session.ttlMs,
         idleTimeoutMs: session.idleTimeoutMs,
+        ...(request.tenantId !== undefined ? { tenantId: request.tenantId } : {}),
       };
     });
   }
@@ -429,6 +533,7 @@ export class AgentBrowserService {
       createdAt: new Date(context.metadata.createdAt).toISOString(),
       ttlMs: context.metadata.ttlMs,
       idleTimeoutMs: context.metadata.idleTimeoutMs,
+      ...(context.metadata.tenantId !== undefined ? { tenantId: context.metadata.tenantId } : {}),
     };
   }
 
@@ -455,6 +560,8 @@ export class AgentBrowserService {
       }
     }
     this.sessionDownloadPolicy.delete(sessionId);
+    this.sessionPolicies.delete(sessionId);
+    this.eventListeners.delete(sessionId);
     this.metrics?.incrementCounter('sessions_closed_total');
     this.metrics?.setGauge('sessions_active', this.coordinator.getSessionCount());
   }
@@ -468,6 +575,9 @@ export class AgentBrowserService {
     const enginePage = await session.engineSession.newPage();
     const pageId = `pg_${++this.pageCounter}_${enginePage.id}`;
     this.pages.set(pageId, { sessionId, enginePage, revision: 1, history: new Map() });
+
+    // Stream engine events to session subscribers until the page closes.
+    this.pumpEvents(sessionId, pageId, enginePage);
 
     return { pageId, sessionId, status: 'ready' };
   }
@@ -718,16 +828,42 @@ export class AgentBrowserService {
       );
     }
 
-    const start = continueFrom ?? 0;
-    if (maxElements === undefined) {
-      return observation;
+    // Byte budget first (spec 10): trim serialized size while keeping
+    // document order, then apply the element-count budget. Truncation must
+    // happen AFTER ref bridging (which is positional), which is why this
+    // lives here and not in the normalizer.
+    let elements = observation.elements;
+    let truncated = false;
+    if (request.maxBytes !== undefined) {
+      const budget = request.maxBytes;
+      let low = 0;
+      let high = elements.length;
+      // Binary search for the largest prefix fitting the byte budget.
+      while (low < high) {
+        const mid = Math.ceil((low + high) / 2);
+        const size = JSON.stringify({ ...observation, elements: elements.slice(0, mid) }).length;
+        if (size <= budget) {
+          low = mid;
+        } else {
+          high = mid - 1;
+        }
+      }
+      if (low < elements.length) {
+        elements = elements.slice(0, low);
+        truncated = true;
+      }
     }
 
-    const slice = observation.elements.slice(start, start + maxElements);
-    const remaining = observation.elements.length - (start + slice.length);
+    const start = continueFrom ?? 0;
+    if (maxElements === undefined) {
+      return truncated ? { ...observation, elements, truncated } : observation;
+    }
+
+    const slice = elements.slice(start, start + maxElements);
+    const remaining = elements.length - (start + slice.length);
 
     if (remaining <= 0) {
-      return { ...observation, elements: slice, truncated: false };
+      return { ...observation, elements: slice, truncated };
     }
     return {
       ...observation,
@@ -848,6 +984,47 @@ export class AgentBrowserService {
     });
   }
 
+  // ---- pdf ----------------------------------------------------------------
+
+  /**
+   * Capture a PDF artifact. Like screenshots, PDFs are evidence: the bytes
+   * land in the artifact store scoped to the session.
+   */
+  async pdf(sessionId: string, pageId: string, request: PdfRequest): Promise<ArtifactMetadata> {
+    return this.traced('pdf', { sessionId, pageId }, async () => {
+      const page = this.requirePage(sessionId, pageId);
+      this.coordinator.updateActivity(sessionId);
+
+      if (page.enginePage.pdf === undefined) {
+        throw new ServiceError(
+          'ENGINE_UNSUPPORTED',
+          'The active engine does not support PDF capture.'
+        );
+      }
+
+      let captured: Awaited<ReturnType<NonNullable<EnginePage['pdf']>>>;
+      try {
+        captured = await page.enginePage.pdf(request);
+      } catch (error) {
+        if (this.isCrash(error instanceof Error ? error.message : String(error))) {
+          await this.recoverFromCrash(sessionId, 'pdf: engine crashed');
+          throw new ServiceError(
+            'ENGINE_CRASHED',
+            'The browser engine crashed; the session has been terminated.',
+            false,
+            { sessionId }
+          );
+        }
+        throw error;
+      }
+
+      const bytes = Buffer.from((captured as { bytesBase64?: string }).bytesBase64 ?? '', 'base64');
+      return this.artifacts.put('pdf', 'application/pdf', new Uint8Array(bytes), {
+        sessionId,
+      });
+    });
+  }
+
   // ---- downloads ----------------------------------------------------------
 
   /**
@@ -889,7 +1066,8 @@ export class AgentBrowserService {
     }
 
     try {
-      await this.networkPolicy.checkRequest({ hostname: parsed.hostname, url: request.url });
+      const egress = this.sessionPolicies.get(sessionId) ?? this.rootRequestPolicy;
+      await egress.checkRequest({ hostname: parsed.hostname, url: request.url });
     } catch (error) {
       throw this.mapError(error);
     }
@@ -997,23 +1175,38 @@ export class AgentBrowserService {
     sessionId: string,
     pageId: string,
     request: ScreenshotRequest
-  ): Promise<ArtifactRef> {
+  ): Promise<ArtifactMetadata> {
     const page = this.requirePage(sessionId, pageId);
     this.coordinator.updateActivity(sessionId);
 
-    const artifact = await page.enginePage.screenshot(request);
-    return {
-      artifactId: artifact.artifactId,
-      type: 'screenshot',
-      contentType: artifact.contentType,
-      sizeBytes: artifact.sizeBytes,
-      url: artifact.url,
-    };
+    let captured: Awaited<ReturnType<EnginePage['screenshot']>>;
+    try {
+      captured = await page.enginePage.screenshot(request);
+    } catch (error) {
+      if (this.isCrash(error instanceof Error ? error.message : String(error))) {
+        await this.recoverFromCrash(sessionId, 'screenshot: engine crashed');
+        throw new ServiceError(
+          'ENGINE_CRASHED',
+          'The browser engine crashed; the session has been terminated.',
+          false,
+          { sessionId }
+        );
+      }
+      throw error;
+    }
+
+    const bytes = Buffer.from((captured as { bytesBase64?: string }).bytesBase64 ?? '', 'base64');
+    return this.artifacts.put('screenshot', captured.contentType, new Uint8Array(bytes), {
+      sessionId,
+    });
   }
 
   // ---- shutdown -----------------------------------------------------------
 
   async shutdown(): Promise<void> {
+    if (this.sweepTimer !== undefined) {
+      clearInterval(this.sweepTimer);
+    }
     await this.coordinator.shutdown();
     this.pages.clear();
     await this.approvalGate.shutdown();
@@ -1031,6 +1224,11 @@ export class AgentBrowserService {
   }
 
   private requirePage(sessionId: string, pageId: string): PageContext {
+    // Session-level failures outrank page-level ones: an expired session is
+    // SESSION_NOT_FOUND even if the caller also holds a stale page id.
+    if (!this.coordinator.get(sessionId)) {
+      throw new ServiceError('SESSION_NOT_FOUND', `Session ${sessionId} does not exist.`);
+    }
     const page = this.pages.get(pageId);
     if (!page || page.sessionId !== sessionId) {
       throw new ServiceError('NOT_FOUND', `Page ${pageId} does not exist in session ${sessionId}.`);
@@ -1101,6 +1299,7 @@ export class AgentBrowserService {
     if (request.key !== undefined) action.key = request.key;
     if (request.direction !== undefined) action.direction = request.direction;
     if (request.amount !== undefined) action.amount = request.amount;
+    if (request.promptText !== undefined) action.promptText = request.promptText;
     return action as unknown as Parameters<ActionExecutor['execute']>[0]['action'];
   }
 
@@ -1235,7 +1434,13 @@ class RefTranslatingPage implements EnginePage {
       }
     }
     const effect = await this.inner.act(projected);
-    const newRevision = action.type === 'navigate' ? this.page.revision : this.page.revision + 1;
+    // Navigate is handled by navigate(); dialog actions are non-mutating.
+    // Everything else advances the service revision.
+    const nonMutating =
+      action.type === 'navigate' ||
+      action.type === 'acceptDialog' ||
+      action.type === 'dismissDialog';
+    const newRevision = nonMutating ? this.page.revision : this.page.revision + 1;
     return { ...effect, oldRevision, newRevision };
   }
 

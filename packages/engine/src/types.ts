@@ -38,6 +38,24 @@ export interface EngineSessionOptions {
   locale?: string;
   timezoneId?: string;
   headless?: boolean;
+  /**
+   * Per-session egress policy (overrides the engine's root policy). Engines
+   * that can intercept network traffic enforce it as a choke point over
+   * every outbound request, redirects and subresources included.
+   */
+  requestPolicy?: RequestPolicy;
+}
+
+/**
+ * Egress policy port for engines. Satisfied structurally by the policy
+ * package's NetworkPolicy and SessionHostPolicy - engines stay
+ * dependency-free (dependency inversion).
+ *
+ * Implementations MUST treat the verdict as a pure function of hostname:
+ * engines memoize verdicts per host.
+ */
+export interface RequestPolicy {
+  checkRequest(request: { hostname: string; url: string }): Promise<void>;
 }
 
 /**

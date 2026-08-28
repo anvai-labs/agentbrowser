@@ -566,6 +566,50 @@ describe('AgentBrowserService', () => {
     });
   });
 
+  describe('byte-budget truncation (spec 10)', () => {
+    let sessionId: string;
+    let pageId: string;
+
+    beforeEach(async () => {
+      sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+      pageId = (await service.createPage(sessionId)).pageId;
+      await service.navigate(sessionId, pageId, { url: 'https://example.com' });
+    });
+
+    it('should truncate an observation to fit maxBytes', async () => {
+      const full = await service.observe(sessionId, pageId, {});
+      const fullBytes = JSON.stringify(full).length;
+
+      const trimmed = await service.observe(sessionId, pageId, { maxBytes: fullBytes - 400 });
+
+      expect(JSON.stringify(trimmed).length).toBeLessThanOrEqual(fullBytes - 400);
+      expect(trimmed.truncated).toBe(true);
+      expect(trimmed.elements.length).toBeLessThan(full.elements.length);
+    });
+
+    it('should leave a fitting observation untruncated', async () => {
+      const full = await service.observe(sessionId, pageId, {});
+      const generous = await service.observe(sessionId, pageId, {
+        maxBytes: JSON.stringify(full).length + 1000,
+      });
+
+      expect(generous.truncated).toBe(false);
+      expect(generous.elements.length).toBe(full.elements.length);
+    });
+
+    it('should keep every returned ref actionable (positional bridging intact)', async () => {
+      const trimmed = await service.observe(sessionId, pageId, { maxBytes: 900 });
+
+      if (trimmed.elements.length > 0) {
+        const result = await service.act(sessionId, pageId, {
+          action: 'click',
+          target: { ref: trimmed.elements[0]?.ref },
+        });
+        expect(result.status).toBe('success');
+      }
+    });
+  });
+
   describe('secret-safe credential handling', () => {
     const SECRET_VALUE = 'correct-horse-battery-staple';
     let secretService: AgentBrowserService;
@@ -1110,6 +1154,162 @@ describe('AgentBrowserService', () => {
     });
   });
 
+  describe('expiry cleanup (audit P0-2)', () => {
+    it('should sweep service state when a session expires by TTL', async () => {
+      const engine2 = new FakeEngine();
+      const service2 = new AgentBrowserService({ engine: engine2, sweepIntervalMs: 20 });
+
+      const sessionId = (await service2.createSession({ tenantId: 't1', ttlMs: 30 })).sessionId;
+      const pageId = (await service2.createPage(sessionId)).pageId;
+      const received: unknown[] = [];
+      expect(service2.subscribe(sessionId, (event) => received.push(event))).toBeDefined();
+
+      // Let the TTL lapse and the sweep run.
+      await new Promise((resolve) => setTimeout(resolve, 120));
+
+      expect(service2.getSession(sessionId)).toBeUndefined();
+      expect(service2.listSessions()).toHaveLength(0);
+      // No leaked page registry, listeners, or download policy.
+      expect(service2.getPage(sessionId, pageId)).toBeUndefined();
+      expect(service2.subscribe(sessionId, () => {})).toBeUndefined();
+      await expect(
+        service2.navigate(sessionId, pageId, { url: 'https://x.example.com' })
+      ).rejects.toMatchServiceError('SESSION_NOT_FOUND');
+      await service2.shutdown();
+    });
+  });
+
+  describe('event streaming', () => {
+    it('should deliver engine events to session subscribers with stamped ids', async () => {
+      const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await service.createPage(sessionId)).pageId;
+      await service.navigate(sessionId, pageId, { url: 'https://example.com' });
+
+      const received: Array<Record<string, unknown>> = [];
+      const unsubscribe = service.subscribe(sessionId, (event) => received.push(event));
+
+      const ids = engine.getSessionIds();
+      engine.getFakePage(ids[ids.length - 1]!, pageId)?.emitEvent('page.loaded', { ms: 12 });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      expect(received).toHaveLength(1);
+      expect(received[0]).toMatchObject({
+        type: 'page.loaded',
+        sessionId,
+        pageId,
+        data: { ms: 12 },
+      });
+      unsubscribe();
+    });
+
+    it('should stop delivery after unsubscribe', async () => {
+      const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await service.createPage(sessionId)).pageId;
+
+      const received: unknown[] = [];
+      const unsubscribe = service.subscribe(sessionId, (event) => received.push(event));
+      unsubscribe();
+
+      const ids = engine.getSessionIds();
+      engine.getFakePage(ids[ids.length - 1]!, pageId)?.emitEvent('page.loaded');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      expect(received).toHaveLength(0);
+    });
+
+    it('should not leak events across sessions', async () => {
+      const a = (await service.createSession({ tenantId: 'a' })).sessionId;
+      const b = (await service.createSession({ tenantId: 'b' })).sessionId;
+      const pageA = (await service.createPage(a)).pageId;
+      await service.createPage(b);
+
+      const receivedB: unknown[] = [];
+      service.subscribe(b, (event) => receivedB.push(event));
+
+      const ids = engine.getSessionIds();
+      engine.getFakePage(ids[0]!, pageA)?.emitEvent('console.log', { text: 'x' });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      expect(receivedB).toHaveLength(0);
+    });
+
+    it('should return no subscription for an unknown session', () => {
+      expect(service.subscribe('ses_missing', () => {})).toBeUndefined();
+    });
+  });
+
+  describe('dialog actions (P0-3)', () => {
+    it('should accept a held dialog with a prompt answer', async () => {
+      const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await service.createPage(sessionId)).pageId;
+      const ids = engine.getSessionIds();
+
+      engine
+        .getFakePage(ids[ids.length - 1]!, pageId)
+        ?.emitDialog({ type: 'prompt', message: 'Name?' });
+
+      const result = await service.act(sessionId, pageId, {
+        action: 'acceptDialog',
+        promptText: 'agent',
+      });
+
+      expect(result.status).toBe('success');
+      expect(result.newRevision).toBe(1); // non-mutating
+    });
+
+    it('should fail typed when no dialog is held', async () => {
+      const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await service.createPage(sessionId)).pageId;
+
+      const error = await capture(() =>
+        service.act(sessionId, pageId, { action: 'dismissDialog' })
+      );
+
+      expect(error?.code).toBe('INVALID_REQUEST');
+      expect(error?.message).toMatch(/no dialog/i);
+    });
+
+    it('should stream dialog events to session subscribers', async () => {
+      const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await service.createPage(sessionId)).pageId;
+      const received: Array<Record<string, unknown>> = [];
+      service.subscribe(sessionId, (event) => received.push(event));
+
+      const ids = engine.getSessionIds();
+      engine
+        .getFakePage(ids[ids.length - 1]!, pageId)
+        ?.emitDialog({ type: 'confirm', message: 'Proceed?' });
+      await service.act(sessionId, pageId, { action: 'dismissDialog' });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      const types = received.map((event) => event.type);
+      expect(types).toContain('dialog.opened');
+      expect(types).toContain('dialog.closed');
+    });
+
+    it('should not stale-invalidate refs across a dialog action', async () => {
+      const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await service.createPage(sessionId)).pageId;
+      await service.navigate(sessionId, pageId, { url: 'https://example.com' });
+      const observation = await service.observe(sessionId, pageId, {});
+      const ref = observation.elements[0]?.ref;
+      const ids = engine.getSessionIds();
+
+      engine
+        .getFakePage(ids[ids.length - 1]!, pageId)
+        ?.emitDialog({ type: 'alert', message: 'hi' });
+      await service.act(sessionId, pageId, { action: 'dismissDialog' });
+
+      // The ref from before the dialog is still valid: dialogs do not move
+      // the page revision.
+      const result = await service.act(sessionId, pageId, {
+        action: 'click',
+        target: { ref },
+      });
+      expect(result.status).toBe('success');
+    });
+  });
+
   describe('screenshots', () => {
     it('should capture an artifact from the engine', async () => {
       const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
@@ -1121,7 +1321,36 @@ describe('AgentBrowserService', () => {
       expect(artifact.contentType).toBe('image/png');
       expect(artifact.sizeBytes).toBeGreaterThan(0);
       expect(artifact.artifactId).toEqual(expect.any(String));
-      expect(artifact.url).toEqual(expect.any(String));
+
+      // Bytes are retrievable through the artifact store.
+      const stored = service.getArtifact(sessionId, artifact.artifactId);
+      expect(stored?.bytes.length).toBe(artifact.sizeBytes);
+    });
+
+    it('should capture a PDF artifact retrievable through the store', async () => {
+      const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await service.createPage(sessionId)).pageId;
+      await service.navigate(sessionId, pageId, { url: 'https://report.example.com' });
+
+      const artifact = await service.pdf(sessionId, pageId, { printBackground: true });
+
+      expect(artifact.type).toBe('pdf');
+      expect(artifact.contentType).toBe('application/pdf');
+      expect(artifact.sizeBytes).toBeGreaterThan(0);
+
+      const stored = service.getArtifact(sessionId, artifact.artifactId);
+      expect(
+        Buffer.from(stored?.bytes ?? Buffer.alloc(0))
+          .toString('utf8')
+          .startsWith('%PDF-')
+      ).toBe(true);
+    });
+
+    it('should reject a PDF for an unknown page', async () => {
+      const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+
+      const error = await capture(() => service.pdf(sessionId, 'pg_missing', {}));
+      expect(error?.code).toBe('NOT_FOUND');
     });
 
     it('should reject a screenshot for an unknown page', async () => {

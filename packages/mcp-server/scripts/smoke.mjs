@@ -27,6 +27,7 @@ const EXPECTED_TOOLS = [
   'browser_observe',
   'browser_act',
   'browser_extract',
+  'browser_pdf',
   'browser_screenshot',
 ];
 

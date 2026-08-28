@@ -9,6 +9,7 @@
  * JSON-RPC line (or null for notifications), so any transport can drive it.
  */
 
+import { DELIVERED_ACTION_TYPES } from '@agentbrowser/protocol';
 import type {
   ActionRequest,
   ActionResult,
@@ -21,6 +22,7 @@ import type {
   ObservationRequest,
   ObservationResponse,
   PageResponse,
+  PdfRequest,
   ScreenshotRequest,
   SessionRequest,
   SessionResponse,
@@ -47,6 +49,7 @@ export interface McpClient {
     executeAction(sessionId: string, pageId: string, request: ActionRequest): Promise<ActionResult>;
     screenshot(sessionId: string, pageId: string, request: ScreenshotRequest): Promise<ArtifactRef>;
     extract(sessionId: string, pageId: string, request: ExtractRequest): Promise<ExtractResult>;
+    pdf(sessionId: string, pageId: string, request: PdfRequest): Promise<ArtifactRef>;
   };
 }
 
@@ -178,6 +181,10 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
             description: 'Observation mode (default: interactive).',
           },
           maxElements: { type: 'number', description: 'Maximum elements to return.' },
+          maxBytes: {
+            type: 'number',
+            description: 'Serialized observation budget in bytes.',
+          },
         },
         required: ['sessionId', 'pageId'],
       },
@@ -190,6 +197,9 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
         }
         if (typeof args.maxElements === 'number') {
           request.maxElements = args.maxElements;
+        }
+        if (typeof args.maxBytes === 'number') {
+          request.maxBytes = args.maxBytes;
         }
 
         return await client.sessions.observe(sessionId, pageId, request);
@@ -210,7 +220,7 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
           pageId: { type: 'string' },
           action: {
             type: 'string',
-            enum: ['click', 'fill', 'select', 'scroll', 'press'],
+            enum: [...DELIVERED_ACTION_TYPES],
           },
           target: {
             type: 'object',
@@ -228,14 +238,20 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
           direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] },
           amount: { type: 'number' },
         },
-        required: ['sessionId', 'pageId', 'action', 'target'],
+        required: ['sessionId', 'pageId', 'action'],
       },
       handler: async (args) => {
         const [sessionId, pageId] = sessionAndPage(args);
 
         const target = (args.target ?? {}) as { ref?: unknown };
+        // Dialog actions carry no target; validation applies only when one
+        // is present.
+        const isDialogAction = args.action === 'acceptDialog' || args.action === 'dismissDialog';
         const ref = target.ref;
-        if (typeof ref !== 'string' || !new RegExp(`^${REF_PATTERN}$`).test(ref)) {
+        if (
+          !isDialogAction &&
+          (typeof ref !== 'string' || !new RegExp(`^${REF_PATTERN}$`).test(ref))
+        ) {
           throw new UsageError(
             `Invalid element reference '${String(ref)}'. Expected a ref of the form e<revision>_<ordinal>, such as e1_0. Call browser_observe to list current refs.`
           );
@@ -290,6 +306,36 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
         }
         return await client.sessions.extract(sessionId, pageId, {
           format: format as ExtractRequest['format'],
+        });
+      },
+    },
+
+    {
+      name: 'browser_pdf',
+      description:
+        'Print the page to PDF and store it as a session artifact. Evidence, not ' +
+        'the primary observation mode; requires an engine that supports PDF capture.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string' },
+          pageId: { type: 'string' },
+          landscape: { type: 'boolean' },
+          displayHeaderFooter: { type: 'boolean' },
+          printBackground: { type: 'boolean' },
+        },
+        required: ['sessionId', 'pageId'],
+      },
+      handler: async (args) => {
+        const [sessionId, pageId] = sessionAndPage(args);
+        return await client.sessions.pdf(sessionId, pageId, {
+          ...(args.landscape !== undefined ? { landscape: Boolean(args.landscape) } : {}),
+          ...(args.displayHeaderFooter !== undefined
+            ? { displayHeaderFooter: Boolean(args.displayHeaderFooter) }
+            : {}),
+          ...(args.printBackground !== undefined
+            ? { printBackground: Boolean(args.printBackground) }
+            : {}),
         });
       },
     },

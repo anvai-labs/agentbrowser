@@ -8,8 +8,11 @@
 import { describe, expect, it } from 'vitest';
 import { ErrorCode } from './errors';
 import {
+  ACTION_TYPE_LITERALS,
   ActionRequestSchema,
   ApiErrorSchema,
+  DELIVERED_ACTION_TYPES,
+  DELIVERED_OBSERVATION_MODES,
   EngineCapabilitiesSchema,
   ErrorCodeEnum,
   ObservationRequestSchema,
@@ -19,6 +22,7 @@ import {
   ViewportSchema,
   validate,
 } from './schemas';
+import type { SupportedAction } from './types';
 
 describe('Schema Validation - Session Request', () => {
   it('should validate valid session request', () => {
@@ -346,6 +350,37 @@ describe('Schema Validation - Page State', () => {
 
     const result = validate(PageStateSchema, invalidPageState);
     expect(result.success).toBe(false);
+  });
+});
+
+describe('Delivered capability truth (single source)', () => {
+  it('should expose the delivered action set as a const tuple', () => {
+    expect(DELIVERED_ACTION_TYPES).toEqual([
+      'click',
+      'fill',
+      'select',
+      'scroll',
+      'press',
+      'acceptDialog',
+      'dismissDialog',
+    ]);
+  });
+
+  it('should expose the delivered observation modes', () => {
+    expect(DELIVERED_OBSERVATION_MODES).toEqual(['interactive', 'content', 'accessibility']);
+  });
+
+  it('should keep every delivered action inside the protocol superset', () => {
+    for (const action of DELIVERED_ACTION_TYPES) {
+      expect(ACTION_TYPE_LITERALS).toContain(action);
+    }
+  });
+
+  it('should include dialog action variants in SupportedAction', () => {
+    const accept: SupportedAction = { type: 'acceptDialog', promptText: 'yes' };
+    const dismiss: SupportedAction = { type: 'dismissDialog' };
+    expect(accept.type).toBe('acceptDialog');
+    expect(dismiss.type).toBe('dismissDialog');
   });
 });
 

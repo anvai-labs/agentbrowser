@@ -5,10 +5,14 @@
  * the AgentBrowser REST API.
  */
 
+import type { DELIVERED_ACTION_TYPES } from '@agentbrowser/protocol';
+
 export interface ClientOptions {
   baseUrl?: string;
   timeout?: number;
   headers?: Record<string, string>;
+  /** Bearer API key; sent as Authorization on every request. */
+  apiKey?: string;
 }
 
 export interface SessionRequest {
@@ -86,10 +90,16 @@ export interface ObservationResponse {
   continuation?: { nextOrdinal: number; remaining: number };
 }
 
+/** The delivered action set, derived from the protocol source of truth. */
+export type DeliveredAction = (typeof DELIVERED_ACTION_TYPES)[number];
+
 export interface ActionRequest {
-  action: 'click' | 'fill' | 'select' | 'scroll' | 'press';
-  target: { ref: string };
+  action: DeliveredAction;
+  /** Required for element-targeted actions; omitted for dialog actions. */
+  target?: { ref: string };
   value?: string;
+  /** Prompt answer for acceptDialog. */
+  promptText?: string;
   options?: Record<string, unknown>;
   observe?: 'after' | 'none';
 }
@@ -132,6 +142,12 @@ export interface ArtifactRef {
   url: string;
 }
 
+export interface PdfRequest {
+  landscape?: boolean;
+  displayHeaderFooter?: boolean;
+  printBackground?: boolean;
+}
+
 export interface ApiError {
   code: string;
   message: string;
@@ -161,7 +177,7 @@ export class SessionsClient {
   ) {}
 
   async create(request: SessionRequest): Promise<SessionResponse> {
-    const response = await this.requestFn(`${this.baseUrl}/sessions`, {
+    const response = await this.requestFn(`${this.baseUrl}/v1/sessions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -174,7 +190,7 @@ export class SessionsClient {
   }
 
   async get(sessionId: string): Promise<SessionResponse> {
-    const response = await this.requestFn(`${this.baseUrl}/sessions/${sessionId}`, {
+    const response = await this.requestFn(`${this.baseUrl}/v1/sessions/${sessionId}`, {
       method: 'GET',
       headers: this.headers,
     });
@@ -183,7 +199,7 @@ export class SessionsClient {
   }
 
   async list(): Promise<SessionResponse[]> {
-    const response = await this.requestFn(`${this.baseUrl}/sessions`, {
+    const response = await this.requestFn(`${this.baseUrl}/v1/sessions`, {
       method: 'GET',
       headers: this.headers,
     });
@@ -193,7 +209,7 @@ export class SessionsClient {
   }
 
   async close(sessionId: string): Promise<void> {
-    const response = await this.requestFn(`${this.baseUrl}/sessions/${sessionId}`, {
+    const response = await this.requestFn(`${this.baseUrl}/v1/sessions/${sessionId}`, {
       method: 'DELETE',
       headers: this.headers,
     });
@@ -202,7 +218,7 @@ export class SessionsClient {
   }
 
   async createPage(sessionId: string): Promise<PageResponse> {
-    const response = await this.requestFn(`${this.baseUrl}/sessions/${sessionId}/pages`, {
+    const response = await this.requestFn(`${this.baseUrl}/v1/sessions/${sessionId}/pages`, {
       method: 'POST',
       headers: this.headers,
     });
@@ -211,19 +227,25 @@ export class SessionsClient {
   }
 
   async getPage(sessionId: string, pageId: string): Promise<PageResponse> {
-    const response = await this.requestFn(`${this.baseUrl}/sessions/${sessionId}/pages/${pageId}`, {
-      method: 'GET',
-      headers: this.headers,
-    });
+    const response = await this.requestFn(
+      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}`,
+      {
+        method: 'GET',
+        headers: this.headers,
+      }
+    );
 
     return this.handleResponse(response);
   }
 
   async closePage(sessionId: string, pageId: string): Promise<void> {
-    const response = await this.requestFn(`${this.baseUrl}/sessions/${sessionId}/pages/${pageId}`, {
-      method: 'DELETE',
-      headers: this.headers,
-    });
+    const response = await this.requestFn(
+      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}`,
+      {
+        method: 'DELETE',
+        headers: this.headers,
+      }
+    );
 
     await this.handleResponse(response);
   }
@@ -234,7 +256,7 @@ export class SessionsClient {
     request: NavigationRequest
   ): Promise<NavigationResponse> {
     const response = await this.requestFn(
-      `${this.baseUrl}/sessions/${sessionId}/pages/${pageId}/navigate`,
+      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/navigate`,
       {
         method: 'POST',
         headers: {
@@ -254,7 +276,7 @@ export class SessionsClient {
     request: ObservationRequest = {}
   ): Promise<ObservationResponse> {
     const response = await this.requestFn(
-      `${this.baseUrl}/sessions/${sessionId}/pages/${pageId}/observe`,
+      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/observe`,
       {
         method: 'POST',
         headers: {
@@ -274,7 +296,7 @@ export class SessionsClient {
     request: ActionRequest
   ): Promise<ActionResult> {
     const response = await this.requestFn(
-      `${this.baseUrl}/sessions/${sessionId}/pages/${pageId}/act`,
+      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/act`,
       {
         method: 'POST',
         headers: {
@@ -294,7 +316,7 @@ export class SessionsClient {
     request: ScreenshotRequest = {}
   ): Promise<ArtifactRef> {
     const response = await this.requestFn(
-      `${this.baseUrl}/sessions/${sessionId}/pages/${pageId}/screenshot`,
+      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/screenshot`,
       {
         method: 'POST',
         headers: {
@@ -314,7 +336,23 @@ export class SessionsClient {
     request: ExtractRequest
   ): Promise<ExtractResult> {
     const response = await this.requestFn(
-      `${this.baseUrl}/sessions/${sessionId}/pages/${pageId}/extract`,
+      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/extract`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...this.headers,
+        },
+        body: JSON.stringify(request),
+      }
+    );
+
+    return this.handleResponse(response);
+  }
+
+  async pdf(sessionId: string, pageId: string, request: PdfRequest = {}): Promise<ArtifactRef> {
+    const response = await this.requestFn(
+      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/pdf`,
       {
         method: 'POST',
         headers: {
@@ -364,7 +402,10 @@ export class AgentBrowserClient {
   constructor(options: ClientOptions = {}) {
     this.baseUrl = options.baseUrl || 'http://localhost:3000';
     this.timeout = options.timeout || 30000;
-    this.customHeaders = options.headers || {};
+    this.customHeaders = {
+      ...(options.apiKey !== undefined ? { Authorization: `Bearer ${options.apiKey}` } : {}),
+      ...options.headers,
+    };
 
     this.sessions = new SessionsClient(
       this.baseUrl,

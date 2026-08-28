@@ -106,27 +106,32 @@ export const ObservationModeSchema = Type.Union([
   Type.Literal('visual'),
 ]);
 
-export const ActionTypeSchema = Type.Union([
-  Type.Literal('navigate'),
-  Type.Literal('click'),
-  Type.Literal('hover'),
-  Type.Literal('fill'),
-  Type.Literal('type'),
-  Type.Literal('clear'),
-  Type.Literal('press'),
-  Type.Literal('select'),
-  Type.Literal('check'),
-  Type.Literal('uncheck'),
-  Type.Literal('scroll'),
-  Type.Literal('wait'),
-  Type.Literal('upload'),
-  Type.Literal('download'),
-  Type.Literal('goBack'),
-  Type.Literal('goForward'),
-  Type.Literal('reload'),
-  Type.Literal('dismissDialog'),
-  Type.Literal('acceptDialog'),
-]);
+/** The ActionType literal tuple, derived from the schema (never hand-listed). */
+export const ACTION_TYPE_LITERALS = [
+  'navigate',
+  'click',
+  'hover',
+  'fill',
+  'type',
+  'clear',
+  'press',
+  'select',
+  'check',
+  'uncheck',
+  'scroll',
+  'wait',
+  'upload',
+  'download',
+  'goBack',
+  'goForward',
+  'reload',
+  'dismissDialog',
+  'acceptDialog',
+] as const;
+
+export const ActionTypeSchema = Type.Union(
+  ACTION_TYPE_LITERALS.map((literal) => Type.Literal(literal))
+);
 
 export const EngineCapabilitiesSchema = Type.Object({
   supportsScreenshots: Type.Boolean(),

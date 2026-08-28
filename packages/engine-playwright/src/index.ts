@@ -24,6 +24,8 @@ import type {
   RawPageState,
   ScreenshotRequest,
 } from '@agentbrowser/engine';
+import type { RequestPolicy } from '@agentbrowser/engine';
+import { DELIVERED_ACTION_TYPES, DELIVERED_OBSERVATION_MODES } from '@agentbrowser/protocol';
 import { type Browser, type BrowserContext, Locator, type Page, chromium } from 'playwright';
 
 // Re-export engine types
@@ -64,11 +66,38 @@ function canonicalFingerprint(element: StoredElement): string {
 /**
  * PlaywrightChromiumEngine implements BrowserEngine using Playwright
  */
+/** Synthetic denial served to the page for policy-blocked requests. */
+const BLOCKED_RESPONSE = {
+  status: 403,
+  headers: { 'x-agentbrowser-blocked': '1' },
+  contentType: 'text/plain',
+  body: 'blocked by egress policy',
+} as const;
+
+export interface PlaywrightEngineOptions {
+  /** Held-dialog auto-settle grace in ms (default 5000). */
+  dialogGraceMs?: number;
+  /**
+   * Root egress policy: enforced as a network choke point over EVERY
+   * outbound request in every session (documents, redirects,
+   * subresources, fetch/XHR). Sessions may override via
+   * EngineSessionOptions.requestPolicy.
+   */
+  egress?: RequestPolicy;
+}
+
 export class PlaywrightChromiumEngine implements BrowserEngine {
   private _name = 'playwright-chromium';
   private _version = '1.0.0';
   private browser: Browser | undefined;
   private revisionCounter = 1;
+  readonly dialogGraceMs: number;
+  private readonly rootEgress: RequestPolicy | undefined;
+
+  constructor(options: PlaywrightEngineOptions = {}) {
+    this.dialogGraceMs = options.dialogGraceMs ?? 5000;
+    this.rootEgress = options.egress;
+  }
 
   get name(): string {
     return this._name;
@@ -90,28 +119,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       supportsPersistentStorage: true,
       supportsAccessibilityTree: true,
       supportsCdp: true,
-      supportedObservationModes: ['interactive', 'content', 'accessibility', 'compact_dom'],
-      supportedActionTypes: [
-        'navigate',
-        'click',
-        'hover',
-        'fill',
-        'type',
-        'clear',
-        'press',
-        'select',
-        'check',
-        'uncheck',
-        'scroll',
-        'wait',
-        'upload',
-        'download',
-        'goBack',
-        'goForward',
-        'reload',
-        'dismissDialog',
-        'acceptDialog',
-      ],
+      supportedObservationModes: [...DELIVERED_OBSERVATION_MODES],
+      // Derived from the protocol single source of truth: drift is
+      // impossible by construction.
+      supportedActionTypes: [...DELIVERED_ACTION_TYPES],
     };
   }
 
@@ -123,14 +134,84 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       });
     }
 
+    const egress = options.requestPolicy ?? this.rootEgress;
+
     // Create browser context (incognito isolation)
     const context = await this.browser.newContext({
       viewport: options.viewport || { width: 1280, height: 720 },
       locale: options.locale || 'en-US',
       timezoneId: options.timezoneId || 'America/New_York',
+      // Service-worker fetches bypass context.route; a choke point with a
+      // bypass hole is not a choke point.
+      ...(egress !== undefined ? { serviceWorkers: 'block' as const } : {}),
     });
 
+    if (egress !== undefined) {
+      await this.installEgress(context, egress);
+    }
+
     return new PlaywrightSession(context, this);
+  }
+
+  /**
+   * Network choke point. Every request the context makes - documents,
+   * redirect targets, subresources, fetch/XHR - is proxied through the
+   * policy: the engine fetches each request itself with redirects NOT
+   * followed (route.fetch follows them silently otherwise, which would
+   * bypass the choke point - verified empirically), vets every redirect
+   * hop's real target hostname, and fulfills the response. Denied hosts
+   * (direct or as redirect targets) receive a synthetic 403 marked with
+   * x-agentbrowser-blocked, which navigate() maps to `blocked`.
+   *
+   * Verdicts are memoized per host: policies must keep verdicts a pure
+   * function of hostname. Cost: routing disables Chromium's HTTP cache and
+   * adds one in-process hop per request (benchmarks re-baselined).
+   */
+  private async installEgress(context: BrowserContext, egress: RequestPolicy): Promise<void> {
+    const verdicts = new Map<string, 'allow' | 'deny'>();
+
+    const verdictOf = async (hostname: string, url: string): Promise<'allow' | 'deny'> => {
+      const cached = verdicts.get(hostname);
+      if (cached !== undefined) {
+        return cached;
+      }
+      let verdict: 'allow' | 'deny';
+      try {
+        await egress.checkRequest({ hostname, url });
+        verdict = 'allow';
+      } catch {
+        verdict = 'deny';
+      }
+      verdicts.set(hostname, verdict);
+      return verdict;
+    };
+
+    await context.route('**', async (route) => {
+      const request = route.request();
+      const url = request.url();
+      const hostname = new URL(url).hostname;
+
+      if ((await verdictOf(hostname, url)) === 'deny') {
+        await route.fulfill(BLOCKED_RESPONSE);
+        return;
+      }
+
+      try {
+        const response = await route.fetch({ maxRedirects: 0 });
+        const headers = await response.headers();
+        const location = headers.location;
+        if (response.status() >= 300 && response.status() < 400 && location !== undefined) {
+          const absolute = new URL(location, url);
+          if ((await verdictOf(absolute.hostname, absolute.toString())) === 'deny') {
+            await route.fulfill(BLOCKED_RESPONSE);
+            return;
+          }
+        }
+        await route.fulfill({ response });
+      } catch {
+        await route.abort('failed');
+      }
+    });
   }
 
   async close(): Promise<void> {
@@ -210,6 +291,9 @@ class PlaywrightPage implements EnginePage {
    */
   private revision = 1;
   private refStore = new Map<string, StoredElement>();
+  private eventWaiters: Array<() => void> = [];
+  private eventsClosed = false;
+  private pendingDialog: { dialog: import('playwright').Dialog; timer: NodeJS.Timeout } | undefined;
 
   constructor(id: string, page: Page, engine: PlaywrightChromiumEngine) {
     this.id = id;
@@ -221,18 +305,60 @@ class PlaywrightPage implements EnginePage {
   }
 
   private setupEventListeners(): void {
+    // The browser can close pages without PlaywrightPage.close() running
+    // (engine.close()); Playwright's own close event ends the iterator.
+    this.page.on('close', () => {
+      this.eventsClosed = true;
+      const waiters = this.eventWaiters;
+      this.eventWaiters = [];
+      for (const wake of waiters) {
+        wake();
+      }
+    });
+
+    this.page.on('dialog', (dialog) => {
+      // Hold the dialog so an agent can accept or dismiss it; settle it
+      // automatically after the grace (beforeunload auto-accepts because
+      // dismissing cancels the navigation).
+      const isBeforeUnload = dialog.type() === 'beforeunload';
+      const timer = setTimeout(() => {
+        void (isBeforeUnload ? dialog.accept().catch(() => {}) : dialog.dismiss().catch(() => {}));
+        this.pendingDialog = undefined;
+        this.enqueueEvent({
+          type: 'dialog.closed',
+          timestamp: new Date().toISOString(),
+          sessionId: 'unknown',
+          pageId: this.id,
+          data: { reason: 'auto', dialogType: dialog.type(), message: dialog.message() },
+        });
+      }, this.engine.dialogGraceMs);
+
+      this.pendingDialog = { dialog, timer };
+      this.enqueueEvent({
+        type: 'dialog.opened',
+        timestamp: new Date().toISOString(),
+        sessionId: 'unknown',
+        pageId: this.id,
+        data: {
+          dialogType: dialog.type(),
+          message: dialog.message(),
+          defaultPrompt: dialog.defaultValue(),
+        },
+      });
+    });
+
     this.page.on('load', () => {
-      this.eventQueue.push({
+      this.enqueueEvent({
         type: 'page.loaded',
         timestamp: new Date().toISOString(),
-        sessionId: 'unknown', // Would be set by session
+        sessionId: 'unknown', // Stamped by the service
         pageId: this.id,
       });
     });
 
     this.page.on('console', (msg) => {
-      this.eventQueue.push({
-        type: msg.type() as any,
+      this.enqueueEvent({
+        type: msg.type() as never,
         timestamp: new Date().toISOString(),
         sessionId: 'unknown',
         pageId: this.id,
@@ -241,9 +367,41 @@ class PlaywrightPage implements EnginePage {
     });
   }
 
+  /** Enqueue an event and wake any iterator waiting for one. */
+  private enqueueEvent(event: EngineEvent): void {
+    this.eventQueue.push(event);
+    const waiters = this.eventWaiters;
+    this.eventWaiters = [];
+    for (const wake of waiters) {
+      wake();
+    }
+  }
+
   async navigate(request: NavigationRequest): Promise<NavigationResult> {
     const waitUntil = request.waitUntil || 'load';
-    await this.page.goto(request.url, { waitUntil: waitUntil as any });
+    let response: import('playwright').Response | null;
+    try {
+      response = await this.page.goto(request.url, { waitUntil: waitUntil as any });
+    } catch (error) {
+      // An aborted navigation is the egress choke point doing its job.
+      if (/ERR_BLOCKED_BY_CLIENT|net::ERR_ABORTED/i.test(String(error))) {
+        return {
+          status: 'blocked',
+          url: request.url,
+          redirectChain: [],
+        };
+      }
+      throw error;
+    }
+    // The choke point serves a marked 403 for denied navigations and
+    // denied redirect targets alike.
+    if (response?.headers()?.['x-agentbrowser-blocked'] === '1') {
+      return {
+        status: 'blocked',
+        url: request.url,
+        redirectChain: [],
+      };
+    }
     this.bumpRevision();
 
     return {
@@ -434,6 +592,43 @@ class PlaywrightPage implements EnginePage {
     // Execute action based on type. Targeted actions go through the ref
     // store, addressing elements semantically; selectors never appear.
     switch (action.type) {
+      case 'acceptDialog':
+      case 'dismissDialog': {
+        // Dialog actions are non-mutating and act on the held Dialog
+        // directly: locators stall while a dialog is open.
+        const held = this.pendingDialog;
+        if (!held) {
+          throw new Error('no dialog open');
+        }
+        clearTimeout(held.timer);
+        this.pendingDialog = undefined;
+        if (action.type === 'acceptDialog') {
+          await held.dialog.accept(action.promptText as string | undefined);
+        } else {
+          await held.dialog.dismiss();
+        }
+        this.enqueueEvent({
+          type: 'dialog.closed',
+          timestamp: new Date().toISOString(),
+          sessionId: 'unknown',
+          pageId: this.id,
+          data: {
+            reason: action.type === 'acceptDialog' ? 'accepted' : 'dismissed',
+            dialogType: held.dialog.type(),
+          },
+        });
+        return {
+          actionId,
+          startTimestamp,
+          endTimestamp: new Date().toISOString(),
+          oldRevision,
+          newRevision: this.revision,
+          result:
+            action.type === 'acceptDialog'
+              ? { dialog: 'accepted', promptText: action.promptText }
+              : { dialog: 'dismissed' },
+        };
+      }
       case 'navigate':
         await this.navigate({ url: action.url as string });
         break;
@@ -504,9 +699,11 @@ class PlaywrightPage implements EnginePage {
 
     return {
       artifactId: `screenshot-${Date.now()}`,
+      type: 'screenshot',
       contentType: `image/${request.format || 'png'}`,
       sizeBytes: screenshot.length,
       url: `/v1/artifacts/screenshot-${Date.now()}`,
+      bytesBase64: screenshot.toString('base64'),
     };
   }
 
@@ -518,19 +715,39 @@ class PlaywrightPage implements EnginePage {
 
     return {
       artifactId: `pdf-${Date.now()}`,
+      type: 'pdf',
       contentType: 'application/pdf',
       sizeBytes: buffer.length,
       url: `/v1/artifacts/pdf-${Date.now()}`,
+      bytesBase64: buffer.toString('base64'),
     };
   }
 
   async *events(): AsyncIterable<EngineEvent> {
-    while (this.eventQueue.length > 0) {
-      yield this.eventQueue.shift()!;
+    for (;;) {
+      while (this.eventQueue.length > 0) {
+        yield this.eventQueue.shift() as EngineEvent;
+      }
+      if (this.eventsClosed) {
+        return;
+      }
+      await new Promise<void>((resolve) => {
+        this.eventWaiters.push(resolve);
+      });
     }
   }
 
   async close(): Promise<void> {
+    this.eventsClosed = true;
+    if (this.pendingDialog) {
+      clearTimeout(this.pendingDialog.timer);
+      this.pendingDialog = undefined;
+    }
+    const waiters = this.eventWaiters;
+    this.eventWaiters = [];
+    for (const wake of waiters) {
+      wake();
+    }
     await this.page.close();
   }
 }

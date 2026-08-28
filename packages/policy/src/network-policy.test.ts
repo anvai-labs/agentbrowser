@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { NetworkPolicy, NetworkPolicyError } from './network-policy';
+import { NetworkPolicy, NetworkPolicyError, SessionHostPolicy } from './network-policy';
 
 describe('Network Policy', () => {
   describe('loopback protection', () => {
@@ -356,5 +356,63 @@ describe('Network Policy', () => {
         );
       }
     });
+  });
+});
+
+describe('SessionHostPolicy (per-session composite)', () => {
+  it('should allow only listed hosts when an allow-list is set', async () => {
+    const base = new NetworkPolicy({ blockLoopback: true, blockMetadata: true });
+    const chain = new SessionHostPolicy(base, {
+      allowedHosts: ['api.example.com', '.trusted.example.com'],
+    });
+
+    await expect(
+      chain.checkRequest({ hostname: 'api.example.com', url: 'https://api.example.com/' })
+    ).resolves.toBeUndefined();
+    await expect(
+      chain.checkRequest({
+        hostname: 'sub.trusted.example.com',
+        url: 'https://sub.trusted.example.com/',
+      })
+    ).resolves.toBeUndefined();
+
+    // A globally public host is denied: the allow-list is exhaustive.
+    await expect(
+      chain.checkRequest({ hostname: 'other.example.com', url: 'https://other.example.com/' })
+    ).rejects.toThrow(/not in the session allow-list/);
+  });
+
+  it('should deny blocked hosts on top of the base policy', async () => {
+    const base = new NetworkPolicy({ blockLoopback: false });
+    const chain = new SessionHostPolicy(base, { blockedHosts: ['ads.example.com'] });
+
+    await expect(
+      chain.checkRequest({ hostname: 'ok.example.com', url: 'https://ok.example.com/' })
+    ).resolves.toBeUndefined();
+    await expect(
+      chain.checkRequest({ hostname: 'ads.example.com', url: 'https://ads.example.com/' })
+    ).rejects.toThrow(/blocked by the session/);
+  });
+
+  it('should still enforce the base SSRF policy', async () => {
+    const base = new NetworkPolicy({ blockLoopback: true, blockMetadata: true });
+    const chain = new SessionHostPolicy(base, { allowedHosts: ['localhost', '169.254.169.254'] });
+
+    // The session allow-list cannot weaken the base SSRF defenses.
+    await expect(
+      chain.checkRequest({ hostname: 'localhost', url: 'http://localhost/' })
+    ).rejects.toThrow();
+    await expect(
+      chain.checkRequest({ hostname: '169.254.169.254', url: 'http://169.254.169.254/' })
+    ).rejects.toThrow();
+  });
+
+  it('should be a no-op wrapper with no session lists', async () => {
+    const base = new NetworkPolicy({});
+    const chain = new SessionHostPolicy(base, {});
+
+    await expect(
+      chain.checkRequest({ hostname: 'any.example.com', url: 'https://any.example.com/' })
+    ).resolves.toBeUndefined();
   });
 });

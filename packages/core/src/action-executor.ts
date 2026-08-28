@@ -8,7 +8,7 @@
  */
 
 import type { ActionEffect, EngineAction, EnginePage, ResolvedTarget } from '@agentbrowser/engine';
-import { ErrorCode, createApiErrorDetail } from '@agentbrowser/protocol';
+import { DELIVERED_ACTION_TYPES, ErrorCode, createApiErrorDetail } from '@agentbrowser/protocol';
 import type {
   ActionRequest,
   ActionResult,
@@ -33,16 +33,8 @@ export interface ExecutionContext {
   currentRevision?: number;
 }
 
-/** Actions the MVP executor knows how to run. */
-const SUPPORTED_ACTION_TYPES = new Set<SupportedActionType>([
-  'click',
-  'fill',
-  'select',
-  'scroll',
-  'press',
-]);
-
-type SupportedActionType = 'click' | 'fill' | 'select' | 'scroll' | 'press';
+/** Delivered actions, derived from the protocol single source of truth. */
+const SUPPORTED_ACTION_TYPES: ReadonlySet<string> = new Set(DELIVERED_ACTION_TYPES);
 
 const REF_PATTERN = /^e(\d+)_(\d+)$/;
 
@@ -298,6 +290,12 @@ export class ActionExecutor {
       return createApiErrorDetail(ErrorCode.ACTION_TIMEOUT, message, { retryable: true });
     }
 
+    // Dialog actions with nothing held are structurally impossible, not
+    // engine failures - the agent-actionable answer is INVALID_REQUEST.
+    if (/no dialog/i.test(message)) {
+      return createApiErrorDetail(ErrorCode.INVALID_REQUEST, message);
+    }
+
     return createApiErrorDetail(ErrorCode.INTERNAL, message);
   }
 
@@ -326,8 +324,8 @@ function targetOf(action: SupportedAction): ElementTarget | undefined {
   return 'target' in action ? action.target : undefined;
 }
 
-function isSupportedActionType(type: string): type is SupportedActionType {
-  return SUPPORTED_ACTION_TYPES.has(type as SupportedActionType);
+function isSupportedActionType(type: string): type is string {
+  return SUPPORTED_ACTION_TYPES.has(type);
 }
 
 /**

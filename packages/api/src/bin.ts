@@ -14,7 +14,7 @@ const logger = new StructuredLogger({
   level: process.env.AGENTBROWSER_LOG_LEVEL === 'debug' ? 'debug' : 'info',
 });
 
-const server = await startServer({ engine, metrics });
+const server = await startServer({ engine, metrics, logger });
 
 // Ensure the browser process goes down with the server.
 const shutdown = async () => {

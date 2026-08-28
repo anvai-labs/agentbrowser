@@ -308,3 +308,90 @@ export class NetworkPolicy {
     Object.assign(this.options, options);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Per-session host policy (composite over the base NetworkPolicy)
+// ---------------------------------------------------------------------------
+
+export interface SessionHostRules {
+  /** Exact hosts and domain suffixes (".example.com") the session may reach.
+   * When set, the list is exhaustive: everything else is denied. */
+  allowedHosts?: string[];
+  /** Hosts denied on top of the base policy. */
+  blockedHosts?: string[];
+}
+
+/**
+ * Chains per-session allow/blocked host rules over the base NetworkPolicy.
+ * Session rules can only RESTRICT, never weaken: the base policy always
+ * runs. Satisfies the engine RequestPolicy port structurally.
+ */
+export class SessionHostPolicy {
+  private readonly allowedExact = new Set<string>();
+  private readonly allowedSuffixes = new Set<string>();
+  private readonly blockedExact = new Set<string>();
+  private readonly blockedSuffixes = new Set<string>();
+  private readonly hasAllowList: boolean;
+
+  constructor(
+    private readonly base: NetworkPolicy,
+    rules: SessionHostRules
+  ) {
+    for (const host of rules.allowedHosts ?? []) {
+      if (host.startsWith('.')) {
+        this.allowedSuffixes.add(host.toLowerCase());
+      } else {
+        this.allowedExact.add(host.toLowerCase());
+      }
+    }
+    for (const host of rules.blockedHosts ?? []) {
+      if (host.startsWith('.')) {
+        this.blockedSuffixes.add(host.toLowerCase());
+      } else {
+        this.blockedExact.add(host.toLowerCase());
+      }
+    }
+    this.hasAllowList = this.allowedExact.size > 0 || this.allowedSuffixes.size > 0;
+  }
+
+  async checkRequest(request: { hostname: string; url?: string }): Promise<void> {
+    const hostname = request.hostname.toLowerCase();
+
+    if (this.blockedExact.has(hostname) || this.matchesSuffix(this.blockedSuffixes, hostname)) {
+      throw new NetworkPolicyError(
+        'POLICY_DENIED',
+        `Host ${hostname} is blocked by the session policy`,
+        false,
+        { hostname, rule: 'sessionBlockedHosts' }
+      );
+    }
+
+    if (this.hasAllowList) {
+      const allowed =
+        this.allowedExact.has(hostname) || this.matchesSuffix(this.allowedSuffixes, hostname);
+      if (!allowed) {
+        throw new NetworkPolicyError(
+          'POLICY_DENIED',
+          `Host ${hostname} is not in the session allow-list`,
+          false,
+          { hostname, rule: 'sessionAllowedHosts' }
+        );
+      }
+    }
+
+    // The base SSRF policy always runs last: sessions cannot weaken it.
+    await this.base.checkRequest({
+      hostname,
+      ...(request.url !== undefined ? { url: request.url } : {}),
+    });
+  }
+
+  private matchesSuffix(suffixes: Set<string>, hostname: string): boolean {
+    for (const suffix of suffixes) {
+      if (hostname.endsWith(suffix)) {
+        return true;
+      }
+    }
+    return false;
+  }
+}

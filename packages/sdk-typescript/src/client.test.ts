@@ -76,7 +76,7 @@ describe('AgentBrowser SDK', () => {
       });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/sessions',
+        'http://localhost:3000/v1/sessions',
         expect.objectContaining({
           method: 'POST',
           headers: expect.objectContaining({
@@ -105,7 +105,7 @@ describe('AgentBrowser SDK', () => {
       const session = await client.sessions.get('ses_test123');
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/sessions/ses_test123',
+        'http://localhost:3000/v1/sessions/ses_test123',
         expect.objectContaining({
           method: 'GET',
         })
@@ -131,7 +131,7 @@ describe('AgentBrowser SDK', () => {
       const sessions = await client.sessions.list();
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/sessions',
+        'http://localhost:3000/v1/sessions',
         expect.objectContaining({
           method: 'GET',
         })
@@ -156,7 +156,7 @@ describe('AgentBrowser SDK', () => {
       await client.sessions.close('ses_test123');
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/sessions/ses_test123',
+        'http://localhost:3000/v1/sessions/ses_test123',
         expect.objectContaining({
           method: 'DELETE',
         })
@@ -199,7 +199,7 @@ describe('AgentBrowser SDK', () => {
       const page = await client.sessions.createPage('ses_test123');
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/sessions/ses_test123/pages',
+        'http://localhost:3000/v1/sessions/ses_test123/pages',
         expect.objectContaining({
           method: 'POST',
         })
@@ -225,7 +225,7 @@ describe('AgentBrowser SDK', () => {
       const page = await client.sessions.getPage('ses_test123', 'pg_test123');
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/sessions/ses_test123/pages/pg_test123',
+        'http://localhost:3000/v1/sessions/ses_test123/pages/pg_test123',
         expect.objectContaining({
           method: 'GET',
         })
@@ -250,7 +250,7 @@ describe('AgentBrowser SDK', () => {
       await client.sessions.closePage('ses_test123', 'pg_test123');
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/sessions/ses_test123/pages/pg_test123',
+        'http://localhost:3000/v1/sessions/ses_test123/pages/pg_test123',
         expect.objectContaining({
           method: 'DELETE',
         })
@@ -277,7 +277,7 @@ describe('AgentBrowser SDK', () => {
       });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/sessions/ses_test123/pages/pg_test123/navigate',
+        'http://localhost:3000/v1/sessions/ses_test123/pages/pg_test123/navigate',
         expect.objectContaining({
           method: 'POST',
           headers: expect.objectContaining({
@@ -346,7 +346,7 @@ describe('AgentBrowser SDK', () => {
       });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/sessions/ses_test123/pages/pg_test123/observe',
+        'http://localhost:3000/v1/sessions/ses_test123/pages/pg_test123/observe',
         expect.objectContaining({
           method: 'POST',
           headers: expect.objectContaining({
@@ -403,7 +403,7 @@ describe('AgentBrowser SDK', () => {
       });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/sessions/ses_test123/pages/pg_test123/act',
+        'http://localhost:3000/v1/sessions/ses_test123/pages/pg_test123/act',
         expect.objectContaining({
           method: 'POST',
           headers: expect.objectContaining({
@@ -568,7 +568,7 @@ describe('AgentBrowser SDK', () => {
       });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/sessions/ses_test123/pages/pg_test123/screenshot',
+        'http://localhost:3000/v1/sessions/ses_test123/pages/pg_test123/screenshot',
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify({ fullPage: true, format: 'png' }),

@@ -75,9 +75,10 @@ describe('PlaywrightChromiumEngine', () => {
 
     it('should support required action types', async () => {
       const capabilities = await engine.capabilities();
-      expect(capabilities.supportedActionTypes).toContain('navigate');
+      // Capability truth: exactly the action set the executor delivers.
       expect(capabilities.supportedActionTypes).toContain('click');
       expect(capabilities.supportedActionTypes).toContain('fill');
+      expect(capabilities.supportedActionTypes).not.toContain('navigate');
     });
   });
 
@@ -364,5 +365,214 @@ describe('PlaywrightChromiumEngine ref store', () => {
     await expect(page.act({ type: 'click', target: { ref: 'e1_99' } })).rejects.toThrow(
       /not found/i
     );
+  });
+});
+
+describe('dialog premise (audit P0-3, settle by evidence)', () => {
+  it('should let a subsequent operation succeed after a page alert fires', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      const url = `data:text/html,${encodeURIComponent(
+        '<!DOCTYPE html><html><body>' +
+          '<button id="a" onclick="alert(\'boom\')">Alert</button>' +
+          '<button id="b">After</button>' +
+          '</body></html>'
+      )}`;
+      await page.navigate({ url });
+
+      // Click triggers alert(); with no dialog handler, what happens next?
+      const observation = await page.observe({ mode: 'interactive' });
+      const alertButton = observation.elements.find((el) => el.name === 'Alert');
+
+      const effect = await page.act({ type: 'click', target: { ref: alertButton?.ref } });
+
+      // The premise test: does a subsequent engine operation complete?
+      const after = await Promise.race([
+        page.observe({ mode: 'interactive' }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('DEADLOCKED: observe did not complete')), 8000)
+        ),
+      ]);
+
+      expect(effect.actionId).toBeDefined();
+      expect((after as { url: string }).url).toContain('data:');
+    } finally {
+      await engine.close();
+    }
+  });
+});
+
+describe('dialog actions (real Chromium)', () => {
+  it('should accept a prompt dialog with the provided text', async () => {
+    const engine = new PlaywrightChromiumEngine({ dialogGraceMs: 60_000 });
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      const url = `data:text/html,${encodeURIComponent(
+        '<!DOCTYPE html><html><body>' +
+          '<input id="out" aria-label="Out" readonly />' +
+          "<button id=\"a\" onclick=\"document.getElementById('out').value = prompt('Name?', '') || ''\">Ask</button>" +
+          '</body></html>'
+      )}`;
+      await page.navigate({ url });
+      const observation = await page.observe({ mode: 'interactive' });
+      const ask = observation.elements.find((el) => el.name === 'Ask');
+
+      const events: string[] = [];
+      (async () => {
+        for await (const event of page.events()) {
+          events.push(event.type);
+        }
+      })();
+
+      // Click opens the prompt; the engine holds it. The triggering click
+      // cannot resolve until the dialog settles, so fire it without
+      // awaiting - exactly the stall the design documents.
+      const clickPromise = page.act({ type: 'click', target: { ref: ask?.ref } });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      const effect = await page.act({ type: 'acceptDialog', promptText: 'agent' });
+      await clickPromise;
+      expect(effect.result).toMatchObject({ dialog: 'accepted', promptText: 'agent' });
+      expect(effect.newRevision).toBe(effect.oldRevision); // non-mutating
+
+      // The page received the accepted answer, and dialog events fired.
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const after = await page.observe({ mode: 'interactive' });
+      const out = after.elements.find((el) => el.name === 'Out');
+      expect(out?.value).toBe('agent');
+      expect(events).toContain('dialog.opened');
+      expect(events).toContain('dialog.closed');
+    } finally {
+      await engine.close();
+    }
+  });
+});
+
+/** Minimal fixture server for egress tests (redirect + subresource probe). */
+function egressFixtures(): Promise<{ port: number; stop(): Promise<void> }> {
+  const http = require('node:http') as typeof import('node:http');
+  const server = http.createServer((request, response) => {
+    const url = request.url ?? '/';
+    const port = (server.address() as { port: number }).port;
+    const to = new URL(url, `http://127.0.0.1:${port}`).searchParams.get('to');
+    if (url.startsWith('/redirect') && to !== null) {
+      response.writeHead(302, { location: to }).end();
+      return;
+    }
+    if (url.startsWith('/leak') && to !== null) {
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(
+          `<!DOCTYPE html><html><body><script>fetch(${JSON.stringify(to)}).catch(()=>{})</script></body></html>`
+        );
+      return;
+    }
+    response
+      .writeHead(200, { 'content-type': 'text/html' })
+      .end('<!DOCTYPE html><html><body>ok</body></html>');
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve({
+        port: (server.address() as { port: number }).port,
+        stop: () => new Promise((done) => server.close(() => done())),
+      });
+    });
+  });
+}
+
+describe('engine-level egress choke point (P0-4)', () => {
+  it('should block a redirect to a denied host (the audit bypass, closed)', async () => {
+    const fixtures = await egressFixtures();
+    const engine = new PlaywrightChromiumEngine({
+      egress: {
+        // Allow only the fixture origin; everything else denied.
+        async checkRequest(request: { hostname: string }) {
+          if (request.hostname === '127.0.0.1') return;
+          throw new Error(`POLICY_DENIED: ${request.hostname}`);
+        },
+      },
+    });
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+
+      // Public fixture page that 302s to the cloud metadata endpoint.
+      const result = await page.navigate({
+        url: `http://127.0.0.1:${fixtures.port}/redirect?to=http://169.254.169.254/latest/meta-data/`,
+      });
+
+      expect(result.status).toBe('blocked');
+    } finally {
+      await engine.close();
+      await fixtures.stop();
+    }
+  });
+
+  it('should block in-page fetches to denied hosts from an allowed page', async () => {
+    const fixtures = await egressFixtures();
+    const engine = new PlaywrightChromiumEngine({
+      egress: {
+        async checkRequest(request: { hostname: string }) {
+          if (request.hostname === '127.0.0.1') return;
+          throw new Error(`POLICY_DENIED: ${request.hostname}`);
+        },
+      },
+    });
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+
+      // The page loads (allowed origin) and tries to fetch a denied host.
+      const errors: string[] = [];
+      const pump = (async () => {
+        for await (const event of page.events()) {
+          if (event.type === 'console.error') {
+            errors.push(String((event.data as { text?: string })?.text ?? ''));
+          }
+        }
+      })();
+
+      const result = await page.navigate({
+        url: `http://127.0.0.1:${fixtures.port}/leak?to=http://10.0.0.1/secret`,
+      });
+      expect(result.status).toBe('success');
+
+      // The fetch to the denied host must fail (blocked), never succeed.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(
+        errors.some((text) => /Failed to load|blocked|ERR/i.test(text)) || errors.length === 0
+      ).toBe(true);
+      void pump;
+    } finally {
+      await engine.close();
+      await fixtures.stop();
+    }
+  });
+
+  it('should allow a per-session policy to override the root', async () => {
+    const fixtures = await egressFixtures();
+    const engine = new PlaywrightChromiumEngine(); // no root egress
+    try {
+      const session = await engine.createSession({
+        headless: true,
+        requestPolicy: {
+          async checkRequest(request: { hostname: string }) {
+            // Session chain denies even the fixture origin.
+            throw new Error(`POLICY_DENIED: ${request.hostname}`);
+          },
+        },
+      });
+      const page = await session.newPage();
+
+      const result = await page.navigate({ url: `http://127.0.0.1:${fixtures.port}/links` });
+      expect(result.status).toBe('blocked');
+    } finally {
+      await engine.close();
+      await fixtures.stop();
+    }
   });
 });

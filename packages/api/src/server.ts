@@ -7,11 +7,14 @@
  * against FakeEngine and production runs PlaywrightChromiumEngine.
  */
 
+import { createHash } from 'node:crypto';
 import { MetricsRegistry } from '@agentbrowser/core';
+import type { StructuredLogger } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
 import cors from '@fastify/cors';
+import websocket from '@fastify/websocket';
 import Fastify from 'fastify';
-import type { FastifyError, FastifyInstance } from 'fastify';
+import type { FastifyError, FastifyInstance, FastifyRequest } from 'fastify';
 import { buildOpenApiDocument } from './openapi.js';
 import { AgentBrowserService, ServiceError } from './service.js';
 
@@ -25,11 +28,50 @@ export interface ServerOptions {
   downloader?(url: string): Promise<{ bytes: Uint8Array; contentType: string }>;
   /** Metrics registry exposed at /metrics; defaults to a fresh registry. */
   metrics?: MetricsRegistry;
+  /** Structured operation log; when absent, no operation logging. */
+  logger?: StructuredLogger;
+  /**
+   * Bearer-key authentication: SHA-256(key) -> tenantId. When absent (and no
+   * AGENTBROWSER_API_KEYS env), auth is disabled with a loud warning -
+   * the spec's trusted single-tenant local mode.
+   */
+  apiKeys?: Map<string, string>;
+}
+
+/** SHA-256 hex digest. */
+function sha256Hex(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+/**
+ * Parse AGENTBROWSER_API_KEYS ("key:tenant,key:tenant,...") into a
+ * hash-keyed map; undefined when the variable is unset.
+ */
+function apiKeysFromEnv(): Map<string, string> | undefined {
+  const raw = process.env.AGENTBROWSER_API_KEYS;
+  if (raw === undefined || raw.trim() === '') {
+    return undefined;
+  }
+  const keys = new Map<string, string>();
+  for (const pair of raw.split(',')) {
+    const separator = pair.lastIndexOf(':');
+    if (separator <= 0) {
+      continue;
+    }
+    const key = pair.slice(0, separator).trim();
+    const tenant = pair.slice(separator + 1).trim();
+    if (key.length > 0 && tenant.length > 0) {
+      keys.set(sha256Hex(key), tenant);
+    }
+  }
+  return keys;
 }
 
 /** Map protocol error codes onto HTTP statuses. */
 function statusFor(code: string): number {
   switch (code) {
+    case 'UNAUTHORIZED':
+      return 401;
     case 'SESSION_NOT_FOUND':
     case 'NOT_FOUND':
     case 'PAGE_NOT_FOUND':
@@ -41,6 +83,8 @@ function statusFor(code: string): number {
       return 403;
     case 'QUOTA_EXCEEDED':
       return 429;
+    case 'ENGINE_UNSUPPORTED':
+      return 422;
     case 'INVALID_REQUEST':
     case 'STALE_TARGET':
     case 'TARGET_NOT_FOUND':
@@ -65,6 +109,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     preflight: true,
   });
 
+  // WebSocket event streaming (spec 13.1: session events).
+  await fastify.register(websocket);
+
   // Security headers
   fastify.addHook('onSend', async (request, reply) => {
     reply.header('X-Content-Type-Options', 'nosniff');
@@ -88,6 +135,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   const service = new AgentBrowserService({
     engine,
     metrics,
+    ...(options.logger ? { logger: options.logger } : {}),
     ...(options.downloader ? { downloader: options.downloader } : {}),
   });
 
@@ -133,33 +181,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     return true;
   };
 
-  // Session management endpoints
-  fastify.post('/sessions', async (request, reply) => {
-    try {
-      const body = request.body;
-      if (!requireBody(reply, body)) {
-        return reply;
-      }
-
-      if (typeof (body as Record<string, unknown>).tenantId !== 'string') {
-        return reply.status(400).send({
-          error: { code: 'INVALID_REQUEST', message: 'tenantId is required', retryable: false },
-        });
-      }
-
-      const session = await service.createSession(body as never);
-      return reply.status(201).send(session);
-    } catch (error) {
-      return fail(reply, error);
-    }
-  });
-
-  // Liveness: is the process serving at all.
   fastify.get('/health/live', async (request, reply) => {
     return { status: 'live', timestamp: new Date().toISOString() };
   });
 
-  // Readiness: can the service actually serve (engine responsive).
   fastify.get('/health/ready', async (request, reply) => {
     try {
       const capabilities = await engine.capabilities();
@@ -175,12 +200,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     }
   });
 
-  // Prometheus exposition.
   fastify.get('/metrics', async (request, reply) => {
     return reply.type('text/plain; version=0.0.4; charset=utf-8').send(metrics.render());
   });
 
-  // Health check endpoint (compat).
   fastify.get('/health', async (request, reply) => {
     return {
       status: 'healthy',
@@ -190,313 +213,514 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     };
   });
 
-  // Machine-readable API description, so polyglot clients can be generated
-  // rather than hand-written.
   const openApiDocument = buildOpenApiDocument();
   fastify.get('/openapi.json', async (_request, reply) => {
     return reply.type('application/json').send(openApiDocument);
   });
 
-  fastify.get('/sessions', async (request, reply) => {
-    try {
-      return reply.send({ sessions: service.listSessions() });
-    } catch (error) {
-      return fail(reply, error);
-    }
-  });
+  // ------------------------------------------------------------------
+  // /v1 resource routes: versioned per spec 13.1, authenticated when API
+  // keys are configured. Infra planes (health/metrics/openapi) stay
+  // unversioned and unauthenticated by design.
+  // ------------------------------------------------------------------
+  const apiKeys = options.apiKeys ?? apiKeysFromEnv();
+  if (apiKeys === undefined || apiKeys.size === 0) {
+    console.warn(
+      '[agentbrowser] No API keys configured; /v1 is UNAUTHENTICATED. ' +
+        'Set AGENTBROWSER_API_KEYS=key:tenant[,key:tenant...] for multi-tenant use.'
+    );
+  }
 
-  fastify.get('/sessions/:sessionId', async (request, reply) => {
-    try {
-      const { sessionId } = request.params as { sessionId: string };
-      const session = service.getSession(sessionId);
-
-      if (!session) {
-        return reply.status(404).send({
-          error: {
-            code: 'SESSION_NOT_FOUND',
-            message: `Session ${sessionId} not found`,
-            retryable: false,
-          },
+  await fastify.register(
+    async (v1) => {
+      if (apiKeys !== undefined && apiKeys.size > 0) {
+        v1.addHook('onRequest', async (request, reply) => {
+          const header = request.headers.authorization ?? '';
+          const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+          const tenant = token.length > 0 ? apiKeys.get(sha256Hex(token)) : undefined;
+          if (tenant === undefined) {
+            return reply.status(401).send({
+              error: {
+                code: 'UNAUTHORIZED',
+                message: 'A valid Authorization: Bearer <apiKey> header is required.',
+                retryable: false,
+              },
+            });
+          }
+          (request as FastifyRequest & { tenant?: string }).tenant = tenant;
         });
       }
 
-      return reply.send(session);
-    } catch (error) {
-      return fail(reply, error);
-    }
-  });
+      const tenantOf = (request: FastifyRequest): string | undefined =>
+        (request as FastifyRequest & { tenant?: string }).tenant;
 
-  fastify.delete('/sessions/:sessionId', async (request, reply) => {
-    try {
-      const { sessionId } = request.params as { sessionId: string };
-      await service.closeSession(sessionId);
-      return reply.send({ sessionId, status: 'closed' });
-    } catch (error) {
-      return fail(reply, error);
-    }
-  });
-
-  // Page management endpoints
-  fastify.post('/sessions/:sessionId/pages', async (request, reply) => {
-    try {
-      const { sessionId } = request.params as { sessionId: string };
-      const page = await service.createPage(sessionId);
-      return reply.status(201).send(page);
-    } catch (error) {
-      return fail(reply, error);
-    }
-  });
-
-  fastify.get('/sessions/:sessionId/pages/:pageId', async (request, reply) => {
-    try {
-      const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
-      const page = service.getPage(sessionId, pageId);
-
-      if (!page) {
-        return reply.status(404).send({
-          error: {
-            code: 'NOT_FOUND',
-            message: `Page ${pageId} not found`,
-            retryable: false,
-          },
-        });
-      }
-
-      return reply.send(page);
-    } catch (error) {
-      return fail(reply, error);
-    }
-  });
-
-  fastify.delete('/sessions/:sessionId/pages/:pageId', async (request, reply) => {
-    try {
-      const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
-      await service.closePage(sessionId, pageId);
-      return reply.send({ pageId, status: 'closed' });
-    } catch (error) {
-      return fail(reply, error);
-    }
-  });
-
-  // Navigation endpoint
-  fastify.post('/sessions/:sessionId/pages/:pageId/navigate', async (request, reply) => {
-    try {
-      const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
-      const body = request.body;
-      if (!requireBody(reply, body)) {
-        return reply;
-      }
-
-      const { url, waitUntil } = body as { url?: string; waitUntil?: string };
-
-      if (typeof url !== 'string' || url.length === 0) {
-        return reply.status(400).send({
-          error: {
-            code: 'INVALID_REQUEST',
-            message: 'url is required and must be a string',
-            retryable: false,
-          },
-        });
-      }
-
-      const result = await service.navigate(sessionId, pageId, {
-        url,
-        ...(waitUntil !== undefined
-          ? { waitUntil: waitUntil as 'load' | 'domcontentloaded' | 'networkidle' }
-          : {}),
-      });
-      return reply.send(result);
-    } catch (error) {
-      return fail(reply, error);
-    }
-  });
-
-  // Observation endpoint
-  fastify.post('/sessions/:sessionId/pages/:pageId/observe', async (request, reply) => {
-    try {
-      const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
-      const observation = await service.observe(sessionId, pageId, (request.body ?? {}) as never);
-      return reply.send(observation);
-    } catch (error) {
-      return fail(reply, error);
-    }
-  });
-
-  // Action execution endpoint
-  fastify.post('/sessions/:sessionId/pages/:pageId/act', async (request, reply) => {
-    try {
-      const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
-      const body = request.body;
-      if (!requireBody(reply, body)) {
-        return reply;
-      }
-
-      const {
-        action,
-        target,
-        value,
-        key,
-        direction,
-        amount,
-        observe,
-        expectedRevision,
-        approvalToken,
-      } = body as Record<string, unknown>;
-
-      if (typeof action !== 'string') {
-        return reply.status(400).send({
-          error: {
-            code: 'INVALID_REQUEST',
-            message: 'action is required and must be a string',
-            retryable: false,
-          },
-        });
-      }
-
-      const result = await service.act(sessionId, pageId, {
-        action,
-        ...(target !== undefined ? { target: target as { ref: string } } : {}),
-        ...(value !== undefined ? { value: value as string } : {}),
-        ...(key !== undefined ? { key: key as string } : {}),
-        ...(direction !== undefined
-          ? { direction: direction as 'up' | 'down' | 'left' | 'right' }
-          : {}),
-        ...(amount !== undefined ? { amount: amount as number } : {}),
-        ...(observe !== undefined ? { observe: observe as 'after' | 'none' } : {}),
-        ...(expectedRevision !== undefined ? { expectedRevision: expectedRevision as number } : {}),
-        ...(approvalToken !== undefined ? { approvalToken: approvalToken as string } : {}),
-      });
-      return reply.send(result);
-    } catch (error) {
-      return fail(reply, error);
-    }
-  });
-
-  // Download endpoint: policy-gated artifact capture
-  fastify.post('/sessions/:sessionId/pages/:pageId/download', async (request, reply) => {
-    try {
-      const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
-      const body = request.body;
-      if (!requireBody(reply, body)) {
-        return reply;
-      }
-
-      const { url, filename } = body as { url?: string; filename?: string };
-      if (typeof url !== 'string' || url.length === 0) {
-        return reply.status(400).send({
-          error: {
-            code: 'INVALID_REQUEST',
-            message: 'url is required and must be a string',
-            retryable: false,
-          },
-        });
-      }
-
-      const artifact = await service.download(sessionId, pageId, {
-        url,
-        ...(filename !== undefined ? { filename } : {}),
-      });
-      return reply.send(artifact);
-    } catch (error) {
-      return fail(reply, error);
-    }
-  });
-
-  // Artifact retrieval, scoped to the owning session
-  fastify.get('/sessions/:sessionId/artifacts/:artifactId', async (request, reply) => {
-    try {
-      const { sessionId, artifactId } = request.params as {
-        sessionId: string;
-        artifactId: string;
-      };
-      const stored = service.getArtifact(sessionId, artifactId);
-      if (!stored) {
-        return reply.status(404).send({
-          error: {
-            code: 'NOT_FOUND',
-            message: `Artifact ${artifactId} not found`,
-            retryable: false,
-          },
-        });
-      }
-
-      return reply.send({
-        metadata: stored.metadata,
-        contentBase64: Buffer.from(stored.bytes).toString('base64'),
-      });
-    } catch (error) {
-      return fail(reply, error);
-    }
-  });
-
-  // Extraction endpoint (spec 12): deterministic extractors with evidence
-  fastify.post('/sessions/:sessionId/pages/:pageId/extract', async (request, reply) => {
-    try {
-      const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
-      const body = request.body;
-      if (!requireBody(reply, body)) {
-        return reply;
-      }
-
-      const format = (body as { format?: string }).format;
-      const supported = ['text', 'markdown', 'links', 'tables', 'forms', 'jsonld'];
-      if (typeof format !== 'string' || !supported.includes(format)) {
-        return reply.status(400).send({
-          error: {
-            code: 'INVALID_REQUEST',
-            message: `Unknown format ${String(format)}. Supported: ${supported.join(', ')}`,
-            retryable: false,
-          },
-        });
-      }
-
-      const result = await service.extract(sessionId, pageId, { format: format as never });
-      return reply.send(result);
-    } catch (error) {
-      return fail(reply, error);
-    }
-  });
-
-  // Screenshot endpoint
-  fastify.post('/sessions/:sessionId/pages/:pageId/screenshot', async (request, reply) => {
-    try {
-      const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
-      const body = (request.body ?? {}) as {
-        fullPage?: boolean;
-        format?: string;
-        quality?: number;
-        maskSensitive?: boolean;
+      /** 403 unless the session belongs to the caller's tenant. */
+      const requireOwnership = (
+        reply: import('fastify').FastifyReply,
+        sessionId: string,
+        tenant: string | undefined
+      ): boolean => {
+        if (tenant === undefined) {
+          return true; // unauthenticated local mode: no tenancy to enforce
+        }
+        const session = service.getSession(sessionId);
+        if (session === undefined) {
+          return true; // let the route's own 404 handle missing sessions
+        }
+        const owner = (session as { tenantId?: string }).tenantId;
+        if (owner !== undefined && owner !== tenant) {
+          reply.status(403).send({
+            error: {
+              code: 'FORBIDDEN',
+              message: `Session ${sessionId} belongs to another tenant.`,
+              retryable: false,
+            },
+          });
+          return false;
+        }
+        return true;
       };
 
-      const format = body.format ?? 'png';
-      const contentTypes: Record<string, string> = {
-        png: 'image/png',
-        jpeg: 'image/jpeg',
-        webp: 'image/webp',
-      };
-      const contentType = contentTypes[format];
+      // Session management endpoints
+      v1.post('/sessions', async (request, reply) => {
+        try {
+          const body = request.body;
+          if (!requireBody(reply, body)) {
+            return reply;
+          }
 
-      if (!contentType) {
-        return reply.status(400).send({
-          error: {
-            code: 'INVALID_REQUEST',
-            message: `Unsupported screenshot format: ${format}. Supported: png, jpeg, webp`,
-            retryable: false,
-          },
-        });
-      }
+          const authenticatedTenant = tenantOf(request);
+          if (authenticatedTenant !== undefined) {
+            // With keys configured, the key's tenant wins; a mismatching body
+            // tenant is a cross-tenant attempt.
+            const bodyTenant = (body as Record<string, unknown>).tenantId;
+            if (bodyTenant !== undefined && bodyTenant !== authenticatedTenant) {
+              return reply.status(403).send({
+                error: {
+                  code: 'FORBIDDEN',
+                  message: `API key belongs to tenant ${authenticatedTenant}.`,
+                  retryable: false,
+                },
+              });
+            }
+            (body as Record<string, unknown>).tenantId = authenticatedTenant;
+          } else if (typeof (body as Record<string, unknown>).tenantId !== 'string') {
+            return reply.status(400).send({
+              error: { code: 'INVALID_REQUEST', message: 'tenantId is required', retryable: false },
+            });
+          }
 
-      const artifact = await service.screenshot(sessionId, pageId, {
-        ...(body.fullPage !== undefined ? { fullPage: body.fullPage } : {}),
-        format: format as 'png' | 'jpeg' | 'webp',
-        ...(body.quality !== undefined ? { quality: body.quality } : {}),
-        ...(body.maskSensitive !== undefined ? { maskSensitive: body.maskSensitive } : {}),
+          const session = await service.createSession(body as never);
+          return reply.status(201).send(session);
+        } catch (error) {
+          return fail(reply, error);
+        }
       });
-      return reply.send(artifact);
-    } catch (error) {
-      return fail(reply, error);
-    }
-  });
+
+      // Session event stream: WebSocket upgrade, JSON per frame.
+      v1.get('/sessions/:sessionId/events', { websocket: true }, (socket, request) => {
+        const { sessionId } = request.params as { sessionId: string };
+        const tenant = (request as FastifyRequest & { tenant?: string }).tenant;
+        if (tenant !== undefined) {
+          const session = service.getSession(sessionId);
+          const owner = session && (session as { tenantId?: string }).tenantId;
+          if (owner !== undefined && owner !== tenant) {
+            socket.close(4403, 'forbidden');
+            return;
+          }
+        }
+
+        const unsubscribe = service.subscribe(sessionId, (event) => {
+          socket.send(JSON.stringify(event));
+        });
+        if (unsubscribe === undefined) {
+          socket.close(4404, 'session not found');
+          return;
+        }
+
+        socket.on('close', () => {
+          unsubscribe();
+        });
+        socket.on('error', () => {
+          unsubscribe();
+        });
+      });
+
+      v1.get('/sessions', async (request, reply) => {
+        try {
+          return reply.send({ sessions: service.listSessions() });
+        } catch (error) {
+          return fail(reply, error);
+        }
+      });
+
+      v1.get('/sessions/:sessionId', async (request, reply) => {
+        try {
+          const { sessionId } = request.params as { sessionId: string };
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+            return reply;
+          }
+          const session = service.getSession(sessionId);
+
+          if (!session) {
+            return reply.status(404).send({
+              error: {
+                code: 'SESSION_NOT_FOUND',
+                message: `Session ${sessionId} not found`,
+                retryable: false,
+              },
+            });
+          }
+
+          return reply.send(session);
+        } catch (error) {
+          return fail(reply, error);
+        }
+      });
+
+      v1.delete('/sessions/:sessionId', async (request, reply) => {
+        try {
+          const { sessionId } = request.params as { sessionId: string };
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+            return reply;
+          }
+          await service.closeSession(sessionId);
+          return reply.send({ sessionId, status: 'closed' });
+        } catch (error) {
+          return fail(reply, error);
+        }
+      });
+
+      // Page management endpoints
+      v1.post('/sessions/:sessionId/pages', async (request, reply) => {
+        try {
+          const { sessionId } = request.params as { sessionId: string };
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+            return reply;
+          }
+          const page = await service.createPage(sessionId);
+          return reply.status(201).send(page);
+        } catch (error) {
+          return fail(reply, error);
+        }
+      });
+
+      v1.get('/sessions/:sessionId/pages/:pageId', async (request, reply) => {
+        try {
+          const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+            return reply;
+          }
+          const page = service.getPage(sessionId, pageId);
+
+          if (!page) {
+            return reply.status(404).send({
+              error: {
+                code: 'NOT_FOUND',
+                message: `Page ${pageId} not found`,
+                retryable: false,
+              },
+            });
+          }
+
+          return reply.send(page);
+        } catch (error) {
+          return fail(reply, error);
+        }
+      });
+
+      v1.delete('/sessions/:sessionId/pages/:pageId', async (request, reply) => {
+        try {
+          const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+            return reply;
+          }
+          await service.closePage(sessionId, pageId);
+          return reply.send({ pageId, status: 'closed' });
+        } catch (error) {
+          return fail(reply, error);
+        }
+      });
+
+      // Navigation endpoint
+      v1.post('/sessions/:sessionId/pages/:pageId/navigate', async (request, reply) => {
+        try {
+          const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+            return reply;
+          }
+          const body = request.body;
+          if (!requireBody(reply, body)) {
+            return reply;
+          }
+
+          const { url, waitUntil } = body as { url?: string; waitUntil?: string };
+
+          if (typeof url !== 'string' || url.length === 0) {
+            return reply.status(400).send({
+              error: {
+                code: 'INVALID_REQUEST',
+                message: 'url is required and must be a string',
+                retryable: false,
+              },
+            });
+          }
+
+          const result = await service.navigate(sessionId, pageId, {
+            url,
+            ...(waitUntil !== undefined
+              ? { waitUntil: waitUntil as 'load' | 'domcontentloaded' | 'networkidle' }
+              : {}),
+          });
+          return reply.send(result);
+        } catch (error) {
+          return fail(reply, error);
+        }
+      });
+
+      // Observation endpoint
+      v1.post('/sessions/:sessionId/pages/:pageId/observe', async (request, reply) => {
+        try {
+          const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+            return reply;
+          }
+          const observation = await service.observe(
+            sessionId,
+            pageId,
+            (request.body ?? {}) as never
+          );
+          return reply.send(observation);
+        } catch (error) {
+          return fail(reply, error);
+        }
+      });
+
+      // Action execution endpoint
+      v1.post('/sessions/:sessionId/pages/:pageId/act', async (request, reply) => {
+        try {
+          const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+            return reply;
+          }
+          const body = request.body;
+          if (!requireBody(reply, body)) {
+            return reply;
+          }
+
+          const {
+            action,
+            target,
+            value,
+            key,
+            direction,
+            amount,
+            observe,
+            expectedRevision,
+            approvalToken,
+            promptText,
+          } = body as Record<string, unknown>;
+
+          if (typeof action !== 'string') {
+            return reply.status(400).send({
+              error: {
+                code: 'INVALID_REQUEST',
+                message: 'action is required and must be a string',
+                retryable: false,
+              },
+            });
+          }
+
+          const result = await service.act(sessionId, pageId, {
+            action,
+            ...(target !== undefined ? { target: target as { ref: string } } : {}),
+            ...(value !== undefined ? { value: value as string } : {}),
+            ...(key !== undefined ? { key: key as string } : {}),
+            ...(direction !== undefined
+              ? { direction: direction as 'up' | 'down' | 'left' | 'right' }
+              : {}),
+            ...(amount !== undefined ? { amount: amount as number } : {}),
+            ...(observe !== undefined ? { observe: observe as 'after' | 'none' } : {}),
+            ...(expectedRevision !== undefined
+              ? { expectedRevision: expectedRevision as number }
+              : {}),
+            ...(approvalToken !== undefined ? { approvalToken: approvalToken as string } : {}),
+            ...(promptText !== undefined ? { promptText: promptText as string } : {}),
+          });
+          return reply.send(result);
+        } catch (error) {
+          return fail(reply, error);
+        }
+      });
+
+      // Download endpoint: policy-gated artifact capture
+      v1.post('/sessions/:sessionId/pages/:pageId/download', async (request, reply) => {
+        try {
+          const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+            return reply;
+          }
+          const body = request.body;
+          if (!requireBody(reply, body)) {
+            return reply;
+          }
+
+          const { url, filename } = body as { url?: string; filename?: string };
+          if (typeof url !== 'string' || url.length === 0) {
+            return reply.status(400).send({
+              error: {
+                code: 'INVALID_REQUEST',
+                message: 'url is required and must be a string',
+                retryable: false,
+              },
+            });
+          }
+
+          const artifact = await service.download(sessionId, pageId, {
+            url,
+            ...(filename !== undefined ? { filename } : {}),
+          });
+          return reply.send(artifact);
+        } catch (error) {
+          return fail(reply, error);
+        }
+      });
+
+      // Artifact retrieval, scoped to the owning session
+      v1.get('/sessions/:sessionId/artifacts/:artifactId', async (request, reply) => {
+        try {
+          const { sessionId, artifactId } = request.params as {
+            sessionId: string;
+            artifactId: string;
+          };
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+            return reply;
+          }
+          const stored = service.getArtifact(sessionId, artifactId);
+          if (!stored) {
+            return reply.status(404).send({
+              error: {
+                code: 'NOT_FOUND',
+                message: `Artifact ${artifactId} not found`,
+                retryable: false,
+              },
+            });
+          }
+
+          return reply.send({
+            metadata: stored.metadata,
+            contentBase64: Buffer.from(stored.bytes).toString('base64'),
+          });
+        } catch (error) {
+          return fail(reply, error);
+        }
+      });
+
+      // PDF capture endpoint
+      v1.post('/sessions/:sessionId/pages/:pageId/pdf', async (request, reply) => {
+        try {
+          const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+            return reply;
+          }
+          const body = (request.body ?? {}) as {
+            landscape?: boolean;
+            displayHeaderFooter?: boolean;
+            printBackground?: boolean;
+          };
+
+          const artifact = await service.pdf(sessionId, pageId, {
+            ...(body.landscape !== undefined ? { landscape: body.landscape } : {}),
+            ...(body.displayHeaderFooter !== undefined
+              ? { displayHeaderFooter: body.displayHeaderFooter }
+              : {}),
+            ...(body.printBackground !== undefined
+              ? { printBackground: body.printBackground }
+              : {}),
+          });
+          return reply.send(artifact);
+        } catch (error) {
+          return fail(reply, error);
+        }
+      });
+
+      // Extraction endpoint (spec 12): deterministic extractors with evidence
+      v1.post('/sessions/:sessionId/pages/:pageId/extract', async (request, reply) => {
+        try {
+          const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+            return reply;
+          }
+          const body = request.body;
+          if (!requireBody(reply, body)) {
+            return reply;
+          }
+
+          const format = (body as { format?: string }).format;
+          const supported = ['text', 'markdown', 'links', 'tables', 'forms', 'jsonld'];
+          if (typeof format !== 'string' || !supported.includes(format)) {
+            return reply.status(400).send({
+              error: {
+                code: 'INVALID_REQUEST',
+                message: `Unknown format ${String(format)}. Supported: ${supported.join(', ')}`,
+                retryable: false,
+              },
+            });
+          }
+
+          const result = await service.extract(sessionId, pageId, { format: format as never });
+          return reply.send(result);
+        } catch (error) {
+          return fail(reply, error);
+        }
+      });
+
+      // Screenshot endpoint
+      v1.post('/sessions/:sessionId/pages/:pageId/screenshot', async (request, reply) => {
+        try {
+          const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+            return reply;
+          }
+          const body = (request.body ?? {}) as {
+            fullPage?: boolean;
+            format?: string;
+            quality?: number;
+            maskSensitive?: boolean;
+          };
+
+          const format = body.format ?? 'png';
+          const contentTypes: Record<string, string> = {
+            png: 'image/png',
+            jpeg: 'image/jpeg',
+            webp: 'image/webp',
+          };
+          const contentType = contentTypes[format];
+
+          if (!contentType) {
+            return reply.status(400).send({
+              error: {
+                code: 'INVALID_REQUEST',
+                message: `Unsupported screenshot format: ${format}. Supported: png, jpeg, webp`,
+                retryable: false,
+              },
+            });
+          }
+
+          const artifact = await service.screenshot(sessionId, pageId, {
+            ...(body.fullPage !== undefined ? { fullPage: body.fullPage } : {}),
+            format: format as 'png' | 'jpeg' | 'webp',
+            ...(body.quality !== undefined ? { quality: body.quality } : {}),
+            ...(body.maskSensitive !== undefined ? { maskSensitive: body.maskSensitive } : {}),
+          });
+          return reply.send(artifact);
+        } catch (error) {
+          return fail(reply, error);
+        }
+      });
+    },
+    { prefix: '/v1' }
+  );
 
   // Error handler
   fastify.setErrorHandler((error: FastifyError, _request, reply) => {

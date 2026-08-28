@@ -92,9 +92,10 @@ describe('FakeEngine', () => {
     it('should support action types', async () => {
       const capabilities = await engine.capabilities();
 
-      expect(capabilities.supportedActionTypes).toContain('navigate');
+      // Capability truth: exactly the action set the executor delivers.
       expect(capabilities.supportedActionTypes).toContain('click');
       expect(capabilities.supportedActionTypes).toContain('fill');
+      expect(capabilities.supportedActionTypes).not.toContain('navigate');
     });
   });
 
@@ -288,6 +289,84 @@ describe('FakeEngine', () => {
       );
     });
 
+    it('should generate PDF bytes with a PDF header', async () => {
+      const session = await engine.createSession({});
+      const page = await session.newPage();
+      await page.navigate({ url: 'https://report.example.com' });
+
+      const pdf = await page.pdf({ printBackground: true });
+
+      expect(pdf.artifactId).toEqual(expect.any(String));
+      expect(pdf.contentType).toBe('application/pdf');
+      expect(pdf.sizeBytes).toBeGreaterThan(0);
+      expect(Buffer.from(pdf.bytesBase64, 'base64').toString('utf8').startsWith('%PDF-')).toBe(
+        true
+      );
+    });
+
+    it('should hold a dialog and auto-dismiss it after the grace', async () => {
+      const engine2 = new FakeEngine();
+      const session = await engine2.createSession({});
+      const page = await session.newPage();
+      await page.navigate({ url: 'https://example.com' });
+      const fakePage = engine2.getFakePage(session.id, page.id)!;
+
+      const events: Array<{ type: string; reason?: unknown }> = [];
+      (async () => {
+        for await (const event of page.events()) {
+          events.push({ type: event.type, reason: (event.data as { reason?: string })?.reason });
+        }
+      })();
+
+      fakePage.emitDialog({ type: 'confirm', message: 'Proceed?', defaultPrompt: '' });
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      const dismissed = await captureAct(page, { type: 'dismissDialog' });
+      expect(dismissed).toMatch(/no dialog/i);
+      expect(events.some((e) => e.type === 'dialog.opened')).toBe(true);
+      expect(events.some((e) => e.type === 'dialog.closed' && e.reason === 'auto')).toBe(true);
+      await session.close();
+    });
+
+    it('should accept a held dialog with a prompt answer', async () => {
+      const engine2 = new FakeEngine();
+      const session = await engine2.createSession({});
+      const page = await session.newPage();
+      const fakePage = engine2.getFakePage(session.id, page.id)!;
+
+      const accepted: Array<Record<string, unknown>> = [];
+      fakePage.onDialogHandled((record) => accepted.push(record));
+      fakePage.emitDialog({ type: 'prompt', message: 'Name?', defaultPrompt: 'x' });
+
+      const effect = await page.act({ type: 'acceptDialog', promptText: 'agent' });
+      expect(effect.result).toMatchObject({ dialog: 'accepted', promptText: 'agent' });
+      expect(accepted[0]).toMatchObject({ dialog: 'accepted', promptText: 'agent' });
+      await session.close();
+    });
+
+    it('should reject dialog actions when nothing is held', async () => {
+      const session = await engine.createSession({});
+      const page = await session.newPage();
+
+      await expect(page.act({ type: 'acceptDialog' })).rejects.toThrow(/no dialog/i);
+      await expect(page.act({ type: 'dismissDialog' })).rejects.toThrow(/no dialog/i);
+    });
+
+    it('should treat dialog actions as non-mutating for revisions', async () => {
+      const engine2 = new FakeEngine();
+      const session = await engine2.createSession({});
+      const page = await session.newPage();
+      await page.navigate({ url: 'https://example.com' });
+      const fakePage = engine2.getFakePage(session.id, page.id)!;
+
+      fakePage.emitDialog({ type: 'alert', message: 'hi', defaultPrompt: '' });
+
+      // A click WOULD bump the engine revision; a dialog action must not.
+      const effect = await page.act({ type: 'dismissDialog' });
+      expect(effect.newRevision).toBe(effect.oldRevision);
+      await session.close();
+    });
+
     it('should allow tests to inject elements with risk metadata', async () => {
       const engine2 = new FakeEngine();
       const session = await engine2.createSession({});
@@ -414,3 +493,13 @@ describe('FakeEngine Integration', () => {
     }
   });
 });
+
+/** Capture an act() rejection message. */
+async function captureAct(page: any, action: unknown): Promise<string> {
+  try {
+    await page.act(action as never);
+    return 'NO_ERROR';
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}

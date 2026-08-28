@@ -42,6 +42,27 @@
     }
   ],
   "paths": {
+    "/openapi.json": {
+      "get": {
+        "operationId": "getOpenApiDocument",
+        "summary": "This document",
+        "tags": [
+          "health"
+        ],
+        "responses": {
+          "200": {
+            "description": "The OpenAPI 3.1 document describing the API.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health/live": {
       "get": {
         "operationId": "getLiveness",
@@ -124,6 +145,43 @@
         }
       }
     },
+    "/v1/sessions/{sessionId}/events": {
+      "get": {
+        "operationId": "streamSessionEvents",
+        "summary": "Stream session events over WebSocket",
+        "description": "Upgrades to a WebSocket and streams engine events (page loads, console output, crashes) as one JSON object per frame, stamped with the session and page ids. Unknown sessions close with code 4404. Live-only: events emitted before subscribing are not replayed.",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-websocket": true,
+        "responses": {
+          "101": {
+            "description": "Switching Protocols: the event stream."
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/metrics": {
       "get": {
         "operationId": "getMetrics",
@@ -187,7 +245,7 @@
         }
       }
     },
-    "/sessions": {
+    "/v1/sessions": {
       "post": {
         "operationId": "createSession",
         "summary": "Create a browser session",
@@ -312,7 +370,7 @@
         }
       }
     },
-    "/sessions/{sessionId}": {
+    "/v1/sessions/{sessionId}": {
       "get": {
         "operationId": "getSession",
         "summary": "Get a session",
@@ -430,7 +488,7 @@
         }
       }
     },
-    "/sessions/{sessionId}/pages": {
+    "/v1/sessions/{sessionId}/pages": {
       "post": {
         "operationId": "createPage",
         "summary": "Create a page in a session",
@@ -482,7 +540,7 @@
         }
       }
     },
-    "/sessions/{sessionId}/pages/{pageId}": {
+    "/v1/sessions/{sessionId}/pages/{pageId}": {
       "get": {
         "operationId": "getPage",
         "summary": "Get a page",
@@ -617,7 +675,7 @@
         }
       }
     },
-    "/sessions/{sessionId}/pages/{pageId}/navigate": {
+    "/v1/sessions/{sessionId}/pages/{pageId}/navigate": {
       "post": {
         "operationId": "navigatePage",
         "summary": "Navigate a page to a URL",
@@ -726,7 +784,7 @@
         }
       }
     },
-    "/sessions/{sessionId}/pages/{pageId}/observe": {
+    "/v1/sessions/{sessionId}/pages/{pageId}/observe": {
       "post": {
         "operationId": "observePage",
         "summary": "Capture a semantic observation",
@@ -808,7 +866,7 @@
         }
       }
     },
-    "/sessions/{sessionId}/pages/{pageId}/act": {
+    "/v1/sessions/{sessionId}/pages/{pageId}/act": {
       "post": {
         "operationId": "executeAction",
         "summary": "Execute an action through an element reference",
@@ -843,8 +901,7 @@
               "schema": {
                 "type": "object",
                 "required": [
-                  "action",
-                  "target"
+                  "action"
                 ],
                 "properties": {
                   "action": {
@@ -854,11 +911,17 @@
                       "fill",
                       "select",
                       "scroll",
-                      "press"
+                      "press",
+                      "acceptDialog",
+                      "dismissDialog"
                     ]
                   },
                   "target": {
                     "$ref": "#/components/schemas/ElementTarget"
+                  },
+                  "promptText": {
+                    "type": "string",
+                    "description": "Prompt answer for acceptDialog."
                   },
                   "value": {
                     "type": "string"
@@ -929,7 +992,100 @@
         }
       }
     },
-    "/sessions/{sessionId}/pages/{pageId}/download": {
+    "/v1/sessions/{sessionId}/pages/{pageId}/pdf": {
+      "post": {
+        "operationId": "capturePdf",
+        "summary": "Capture a PDF artifact",
+        "description": "Prints the page to PDF and stores it as a session-scoped artifact; retrieve bytes via the artifact endpoint. Requires an engine that supports PDF capture (ENGINE_UNSUPPORTED otherwise).",
+        "tags": [
+          "artifacts"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pageId",
+            "in": "path",
+            "required": true,
+            "description": "Page identifier returned by createPage.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "landscape": {
+                    "type": "boolean"
+                  },
+                  "displayHeaderFooter": {
+                    "type": "boolean"
+                  },
+                  "printBackground": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The stored artifact metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactRef"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The engine does not support PDF capture.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected server error occurred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{sessionId}/pages/{pageId}/download": {
       "post": {
         "operationId": "downloadArtifact",
         "summary": "Download a payload as a stored artifact",
@@ -1033,7 +1189,7 @@
         }
       }
     },
-    "/sessions/{sessionId}/artifacts/{artifactId}": {
+    "/v1/sessions/{sessionId}/artifacts/{artifactId}": {
       "get": {
         "operationId": "getArtifact",
         "summary": "Retrieve a stored artifact",
@@ -1108,7 +1264,146 @@
         }
       }
     },
-    "/sessions/{sessionId}/pages/{pageId}/screenshot": {
+    "/v1/sessions/{sessionId}/pages/{pageId}/extract": {
+      "post": {
+        "operationId": "extractPage",
+        "summary": "Extract deterministic structured data from the page",
+        "description": "Pure-function extractors over a fresh observation: visible text, article markdown, links (text/absolute URL/rel), tables (headers and rows), observed form controls with their refs, or JSON-LD. Every result carries evidence - source URL, revision and a content hash - so an extraction can be audited. No model calls.",
+        "tags": [
+          "observation"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pageId",
+            "in": "path",
+            "required": true,
+            "description": "Page identifier returned by createPage.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "format"
+                ],
+                "properties": {
+                  "format": {
+                    "type": "string",
+                    "enum": [
+                      "text",
+                      "markdown",
+                      "links",
+                      "tables",
+                      "forms",
+                      "jsonld"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The extraction with evidence.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "evidence"
+                  ],
+                  "properties": {
+                    "data": {},
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "url",
+                          "revision",
+                          "hash"
+                        ],
+                        "properties": {
+                          "url": {
+                            "type": "string"
+                          },
+                          "revision": {
+                            "type": "integer"
+                          },
+                          "ref": {
+                            "type": "string"
+                          },
+                          "text": {
+                            "type": "string"
+                          },
+                          "hash": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was malformed or failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected server error occurred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{sessionId}/pages/{pageId}/screenshot": {
       "post": {
         "operationId": "captureScreenshot",
         "summary": "Capture a screenshot artifact",

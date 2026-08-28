@@ -14,7 +14,8 @@
     "format": "pnpm -r format",
     "clean": "pnpm -r clean && rm -rf node_modules",
     "ci": "pnpm build && pnpm type-check && pnpm test",
-    "bench": "pnpm --filter @agentbrowser/benchmarks all"
+    "bench": "pnpm --filter @agentbrowser/benchmarks all",
+    "bench:real": "pnpm --filter @agentbrowser/benchmarks bench:real"
   },
   "keywords": [
     "browser",

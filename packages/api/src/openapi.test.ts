@@ -40,18 +40,26 @@ describe('OpenAPI document', () => {
 
   describe('paths', () => {
     const expectedPaths = [
-      ['/health', 'get'],
-      ['/sessions', 'post'],
-      ['/sessions', 'get'],
-      ['/sessions/{sessionId}', 'get'],
-      ['/sessions/{sessionId}', 'delete'],
-      ['/sessions/{sessionId}/pages', 'post'],
-      ['/sessions/{sessionId}/pages/{pageId}', 'get'],
-      ['/sessions/{sessionId}/pages/{pageId}', 'delete'],
-      ['/sessions/{sessionId}/pages/{pageId}/navigate', 'post'],
-      ['/sessions/{sessionId}/pages/{pageId}/observe', 'post'],
-      ['/sessions/{sessionId}/pages/{pageId}/act', 'post'],
-      ['/sessions/{sessionId}/pages/{pageId}/screenshot', 'post'],
+      ['/health/live', 'get'],
+      ['/health/ready', 'get'],
+      ['/metrics', 'get'],
+      ['/openapi.json', 'get'],
+      ['/v1/sessions', 'post'],
+      ['/v1/sessions', 'get'],
+      ['/v1/sessions/{sessionId}', 'get'],
+      ['/v1/sessions/{sessionId}', 'delete'],
+      ['/v1/sessions/{sessionId}/pages', 'post'],
+      ['/v1/sessions/{sessionId}/pages/{pageId}', 'get'],
+      ['/v1/sessions/{sessionId}/pages/{pageId}', 'delete'],
+      ['/v1/sessions/{sessionId}/pages/{pageId}/navigate', 'post'],
+      ['/v1/sessions/{sessionId}/pages/{pageId}/observe', 'post'],
+      ['/v1/sessions/{sessionId}/pages/{pageId}/act', 'post'],
+      ['/v1/sessions/{sessionId}/pages/{pageId}/screenshot', 'post'],
+      ['/v1/sessions/{sessionId}/pages/{pageId}/pdf', 'post'],
+      ['/v1/sessions/{sessionId}/pages/{pageId}/extract', 'post'],
+      ['/v1/sessions/{sessionId}/pages/{pageId}/download', 'post'],
+      ['/v1/sessions/{sessionId}/artifacts/{artifactId}', 'get'],
+      ['/v1/sessions/{sessionId}/events', 'get'],
     ] as const;
 
     it.each(expectedPaths)('should document %s %s', (path, method) => {
@@ -111,7 +119,8 @@ describe('OpenAPI document', () => {
       for (const item of Object.values(doc.paths) as Json[]) {
         for (const op of Object.values(item) as Json[]) {
           const codes = Object.keys(op.responses ?? {});
-          expect(codes.some((c) => c.startsWith('2'))).toBe(true);
+          // 101 is the success status for WebSocket upgrade routes.
+          expect(codes.some((c) => c.startsWith('2') || c === '101')).toBe(true);
         }
       }
     });
@@ -150,7 +159,7 @@ describe('OpenAPI document', () => {
     });
 
     it('should document STALE_TARGET as a possible outcome of act', () => {
-      const act = doc.paths['/sessions/{sessionId}/pages/{pageId}/act'].post;
+      const act = doc.paths['/v1/sessions/{sessionId}/pages/{pageId}/act'].post;
       expect(JSON.stringify(act)).toContain('STALE_TARGET');
     });
   });
@@ -280,7 +289,7 @@ describe('OpenAPI endpoint', () => {
 
     const served = response.json();
     expect(served.openapi).toBe('3.1.0');
-    expect(served.paths['/sessions'].post).toBeDefined();
+    expect(served.paths['/v1/sessions'].post).toBeDefined();
   });
 
   it('should serve a document covering every registered route', async () => {

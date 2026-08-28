@@ -12,7 +12,13 @@ import { buildMcpServer } from './mcp-server.js';
 import { resolveVersion } from './version.js';
 
 const server = buildMcpServer({
-  createClient: (options) => new AgentBrowserClient(options),
+  createClient: (options) =>
+    new AgentBrowserClient({
+      ...options,
+      ...(process.env.AGENTBROWSER_API_KEY !== undefined
+        ? { apiKey: process.env.AGENTBROWSER_API_KEY }
+        : {}),
+    }),
   baseUrl: process.env.AGENTBROWSER_BASE_URL,
   serverInfo: { name: 'agentbrowser', version: resolveVersion() },
 });
