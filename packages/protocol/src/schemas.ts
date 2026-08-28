@@ -85,7 +85,7 @@ export const SessionPolicySchema = Type.Object({
 });
 
 export const SessionRequestSchema = Type.Object({
-  engine: EngineTypeSchema,
+  engine: Type.Optional(EngineTypeSchema),
   ttlMs: Type.Optional(Type.Number({ minimum: 1000, maximum: 86400000 })),
   idleTimeoutMs: Type.Optional(Type.Number({ minimum: 1000, maximum: 3600000 })),
   viewport: Type.Optional(ViewportSchema),

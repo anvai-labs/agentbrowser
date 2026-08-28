@@ -5,3 +5,4 @@
  */
 
 export * from './extractors.js';
+export * from './schema-extraction.js';

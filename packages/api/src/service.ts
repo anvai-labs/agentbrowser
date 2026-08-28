@@ -29,6 +29,7 @@ import type { BrowserEngine, EngineEvent, EnginePage } from '@agentbrowser/engin
 import type { EngineSession, EngineSessionOptions, NormalizedCookie } from '@agentbrowser/engine';
 import type { RawPageState } from '@agentbrowser/engine';
 import type { RequestPolicy } from '@agentbrowser/engine';
+import { SchemaExtractor } from '@agentbrowser/extraction';
 import {
   extractForms,
   extractJsonLd,
@@ -272,6 +273,24 @@ export class AgentBrowserService {
     for (const sessionId of tracked) {
       // coordinator.get() lazily expires TTL/idle-lapsed sessions.
       if (this.coordinator.get(sessionId) === undefined) {
+        // Notify subscribers once: the session expired (spec: expiry events
+        // on the stream), then drop the listeners with the session.
+        const listeners = this.eventListeners.get(sessionId);
+        if (listeners !== undefined) {
+          const expiredEvent: EngineEvent = {
+            type: 'page.destroyed',
+            timestamp: new Date().toISOString(),
+            sessionId,
+            data: { reason: 'session-expired' },
+          };
+          for (const listener of [...listeners]) {
+            try {
+              listener(expiredEvent);
+            } catch {
+              // A misbehaving listener never blocks the sweep.
+            }
+          }
+        }
         for (const [pageId, page] of this.pages) {
           if (page.sessionId === sessionId) {
             this.pages.delete(pageId);
@@ -1253,7 +1272,10 @@ export class AgentBrowserService {
   async extract(
     sessionId: string,
     pageId: string,
-    request: { format: 'text' | 'markdown' | 'links' | 'tables' | 'forms' | 'jsonld' }
+    request: {
+      format?: 'text' | 'markdown' | 'links' | 'tables' | 'forms' | 'jsonld' | 'schema';
+      schema?: Record<string, unknown>;
+    }
   ): Promise<import('@agentbrowser/engine').ExtractionResult> {
     return this.traced('extract', { sessionId, pageId, format: request.format }, async () => {
       const page = this.requirePage(sessionId, pageId);
@@ -1294,6 +1316,18 @@ export class AgentBrowserService {
           return extractForms(sourced);
         case 'jsonld':
           return extractJsonLd(sourced);
+        case 'schema': {
+          if (request.schema === undefined) {
+            throw new ServiceError(
+              'INVALID_REQUEST',
+              "format 'schema' requires a schema (JSON Schema object)."
+            );
+          }
+          const extractor = new SchemaExtractor({
+            ...(this.secretManager !== undefined ? { secretManager: this.secretManager } : {}),
+          });
+          return await extractor.extract(sourced, request.schema);
+        }
         default:
           throw new ServiceError(
             'INVALID_REQUEST',
@@ -1330,9 +1364,30 @@ export class AgentBrowserService {
     }
 
     const bytes = Buffer.from((captured as { bytesBase64?: string }).bytesBase64 ?? '', 'base64');
-    return this.artifacts.put('screenshot', captured.contentType, new Uint8Array(bytes), {
+    // maskSensitive honesty (spec 12/16): pixel masking needs element
+    // geometry the engines do not expose yet. When values may be on
+    // screen and masking was requested, the artifact carries a recorded
+    // warning instead of silently implying a masked image.
+    const warnings: string[] = [];
+    if (request.maskSensitive === true) {
+      const observation = page.lastObservation;
+      const sensitiveOnPage =
+        observation !== undefined &&
+        [...observation.byRef.values()].some(
+          (element) => element.value !== undefined && element.value !== ''
+        );
+      if (sensitiveOnPage) {
+        warnings.push(
+          'maskSensitive requested but pixel masking is not implemented; the screenshot may contain on-screen values. Prefer redacted observations.'
+        );
+        this.logger?.warn('screenshot.mask-sensitive-unavailable', { sessionId, pageId });
+      }
+    }
+
+    const metadata = this.artifacts.put('screenshot', captured.contentType, new Uint8Array(bytes), {
       sessionId,
     });
+    return warnings.length > 0 ? { ...metadata, warnings } : metadata;
   }
 
   // ---- shutdown -----------------------------------------------------------

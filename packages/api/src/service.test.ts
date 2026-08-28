@@ -1217,6 +1217,32 @@ describe('AgentBrowserService', () => {
       expect(controls?.length).toBe(expected);
     });
 
+    it('should extract against a JSON schema deterministically', async () => {
+      const { service2, sessionId, pageId } = await extractSetup();
+
+      const result = await service2.extract(sessionId, pageId, {
+        format: 'schema',
+        schema: {
+          type: 'object',
+          properties: { title: { type: 'string' } },
+          required: ['title'],
+        },
+      });
+
+      expect(result.data).toMatchObject({ title: expect.any(String) });
+      expect(result.evidence?.[0]?.hash).toEqual(expect.any(String));
+      expect(result.modelUsed).toBeUndefined(); // deterministic: no LLM
+    });
+
+    it('should require a schema for format schema', async () => {
+      const { service2, sessionId, pageId } = await extractSetup();
+
+      const error = await capture(() => service2.extract(sessionId, pageId, { format: 'schema' }));
+
+      expect(error?.code).toBe('INVALID_REQUEST');
+      expect(error?.message).toMatch(/schema/);
+    });
+
     it('should reject an unknown format with INVALID_REQUEST', async () => {
       const { service2, sessionId, pageId } = await extractSetup();
 
@@ -1259,6 +1285,12 @@ describe('AgentBrowserService', () => {
       await expect(
         service2.navigate(sessionId, pageId, { url: 'https://x.example.com' })
       ).rejects.toMatchServiceError('SESSION_NOT_FOUND');
+      // The subscriber was notified of the expiry before cleanup.
+      expect(
+        received.some(
+          (event) => (event as { data?: { reason?: string } }).data?.reason === 'session-expired'
+        )
+      ).toBe(true);
       await service2.shutdown();
     });
   });
@@ -1448,6 +1480,26 @@ describe('AgentBrowserService', () => {
 
       const error = await capture(() => service.pdf(sessionId, 'pg_missing', {}));
       expect(error?.code).toBe('NOT_FOUND');
+    });
+
+    it('should warn when maskSensitive is requested but values are on screen', async () => {
+      const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await service.createPage(sessionId)).pageId;
+      await service.navigate(sessionId, pageId, { url: 'https://form.example.com' });
+
+      // Put a filled (non-empty) value on the page, then observe so the
+      // service knows values exist.
+      const ids = engine.getSessionIds();
+      const fakePage = engine.getFakePage(ids[ids.length - 1] ?? 'x', pageId);
+      fakePage?.setElements([{ role: 'textbox', name: 'Card', value: '4242' }]);
+      await service.observe(sessionId, pageId, {});
+
+      const artifact = await service.screenshot(sessionId, pageId, {
+        format: 'png',
+        maskSensitive: true,
+      });
+
+      expect(artifact.warnings?.some((w) => /maskSensitive/i.test(w))).toBe(true);
     });
 
     it('should reject a screenshot for an unknown page', async () => {

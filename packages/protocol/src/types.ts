@@ -33,7 +33,8 @@ export interface Viewport {
  * Session creation request
  */
 export interface SessionRequest {
-  engine: EngineType;
+  /** Engine selection; omitted = server default. */
+  engine?: EngineType;
   /** Owning tenant; stamped onto the session for scoping and quotas. */
   tenantId?: string;
   ttlMs?: number;
