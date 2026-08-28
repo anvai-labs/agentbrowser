@@ -39,6 +39,12 @@ export interface EngineSessionOptions {
   timezoneId?: string;
   headless?: boolean;
   /**
+   * Seed cookies injected into the session's context before first navigation.
+   * Lets a caller reuse an already-authenticated session (e.g. to skip an
+   * SSO / device-trust login the automation browser cannot satisfy itself).
+   */
+  cookies?: NormalizedCookie[];
+  /**
    * Per-session egress policy (overrides the engine's root policy). Engines
    * that can intercept network traffic enforce it as a choke point over
    * every outbound request, redirects and subresources included.

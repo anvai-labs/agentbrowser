@@ -106,6 +106,28 @@ describe('PlaywrightChromiumEngine', () => {
 
       expect(session1.id).not.toBe(session2.id);
     });
+
+    it('should seed cookies into the session context', async () => {
+      const session = await engine.createSession({
+        cookies: [
+          {
+            name: 'session_token',
+            value: 'reused-auth-value',
+            domain: 'example.com',
+            path: '/',
+            httpOnly: true,
+            secure: true,
+            sameSite: 'Lax',
+          },
+        ],
+      });
+
+      const cookies = await session.cookies();
+      const seeded = cookies.find((c) => c.name === 'session_token');
+      expect(seeded).toBeDefined();
+      expect(seeded?.value).toBe('reused-auth-value');
+      expect(seeded?.domain).toContain('example.com');
+    });
   });
 
   describe('session lifecycle', () => {

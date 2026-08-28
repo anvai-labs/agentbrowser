@@ -42,7 +42,27 @@ export interface SessionRequest {
   locale?: string;
   timezoneId?: string;
   headless?: boolean;
+  /**
+   * Seed cookies injected into the session before first navigation, to reuse
+   * an already-authenticated session (e.g. bypass an SSO / device-trust login
+   * the automation browser cannot satisfy itself).
+   */
+  cookies?: SessionCookie[];
   policy?: SessionPolicy;
+}
+
+/**
+ * A cookie to seed into a new session's browser context.
+ */
+export interface SessionCookie {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  expires?: number;
+  httpOnly?: boolean;
+  secure?: boolean;
+  sameSite?: 'Strict' | 'Lax' | 'None';
 }
 
 /**
