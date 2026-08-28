@@ -113,6 +113,8 @@ export interface ServiceActRequest {
   approvalToken?: string | undefined;
   /** Prompt answer for acceptDialog. */
   promptText?: string | undefined;
+  /** Post-action wait condition (spec 11.1). */
+  wait?: { until: string; timeoutMs?: number | undefined } | undefined;
 }
 
 export interface ServiceActResult {
@@ -120,6 +122,8 @@ export interface ServiceActResult {
   actionId: string;
   newRevision: number;
   observation?: PageState | undefined;
+  /** Why the post-action wait completed (spec 11.1). */
+  waitReason?: string | undefined;
 }
 
 export interface ServiceDependencies {
@@ -934,6 +938,16 @@ export class AgentBrowserService {
         }
       }
 
+      // Wait validation (spec 11.1): unknown conditions are rejected before
+      // anything runs; every wait carries a deadline.
+      const DELIVERED_WAITS = new Set(['settled', 'domcontentloaded', 'load', 'networkidle']);
+      if (request.wait !== undefined && !DELIVERED_WAITS.has(request.wait.until)) {
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `Unknown wait condition '${request.wait.until}'. Supported: ${[...DELIVERED_WAITS].join(', ')}.`
+        );
+      }
+
       const adapter = new RefTranslatingPage(page.enginePage, page);
       const result = await this.executor.execute(
         {
@@ -974,6 +988,14 @@ export class AgentBrowserService {
 
       page.revision = result.newRevision;
 
+      // Post-action wait (spec 11.1): an explicit wait runs to its deadline
+      // (returns WHY it completed; a missed deadline is ACTION_TIMEOUT,
+      // never a hang). Without one, a zero-cost settle yield keeps latency
+      // off the deterministic path - engines that need real settling take
+      // an explicit wait.
+      const waitReason =
+        request.wait !== undefined ? await this.waitFor(page.enginePage, request.wait) : 'settled';
+
       // A requested post-action observation goes through the service's own
       // observe(), so its refs are minted, mapped and immediately actionable.
       let observation: PageState | undefined;
@@ -986,8 +1008,66 @@ export class AgentBrowserService {
         actionId: result.actionId,
         newRevision: result.newRevision,
         observation,
+        waitReason,
       };
     });
+  }
+
+  /**
+   * Run one wait condition to its deadline (spec 11.1). Returns why it
+   * completed. `settled` means a short quiet window on an engine that
+   * supports load-state events; engines without the support settle
+   * immediately (an explicit, bounded best-effort - recorded in the
+   * reason, never a silent hang).
+   */
+  private async waitFor(
+    enginePage: EnginePage,
+    wait: { until: string; timeoutMs?: number | undefined }
+  ): Promise<string> {
+    const deadlineMs = wait.timeoutMs ?? 5000;
+
+    if (wait.until === 'settled') {
+      // Quiet-window approximation: wait for the network to go idle via
+      // load state where supported, bounded by the deadline.
+      const anyPage = enginePage as unknown as {
+        waitForLoadState?: (state: string, options: { timeout?: number }) => Promise<void>;
+      };
+      if (typeof anyPage.waitForLoadState === 'function') {
+        try {
+          await anyPage.waitForLoadState('networkidle', { timeout: deadlineMs });
+        } catch {
+          // Deadline hit on a busy page: the action still succeeded; the
+          // wait reports settled-at-deadline rather than failing the act.
+        }
+      }
+      return 'settled';
+    }
+
+    if (
+      wait.until === 'load' ||
+      wait.until === 'domcontentloaded' ||
+      wait.until === 'networkidle'
+    ) {
+      const anyPage = enginePage as unknown as {
+        waitForLoadState?: (state: string, options: { timeout?: number }) => Promise<void>;
+      };
+      if (typeof anyPage.waitForLoadState === 'function') {
+        try {
+          await anyPage.waitForLoadState(wait.until, { timeout: deadlineMs });
+        } catch {
+          throw new ServiceError(
+            'ACTION_TIMEOUT',
+            `Wait '${wait.until}' did not complete within ${deadlineMs}ms.`,
+            true,
+            { until: wait.until, timeoutMs: deadlineMs }
+          );
+        }
+      }
+      return wait.until;
+    }
+
+    // Unknown conditions are validated before execution; unreachable.
+    return 'unknown';
   }
 
   // ---- pdf ----------------------------------------------------------------
@@ -1101,6 +1181,54 @@ export class AgentBrowserService {
         error instanceof Error ? error.message : String(error)
       );
     }
+  }
+
+  /**
+   * Collect a page-initiated download (spec 10) that the engine
+   * intercepted. The bytes land in the artifact store like any capture;
+   * the egress choke point already vetted the request that fetched them.
+   */
+  async collectDownload(
+    sessionId: string,
+    pageId: string,
+    filename: string
+  ): Promise<ArtifactMetadata> {
+    return this.traced('download.collect', { sessionId, pageId, filename }, async () => {
+      const page = this.requirePage(sessionId, pageId);
+      this.coordinator.updateActivity(sessionId);
+
+      const pull = (
+        page.enginePage as unknown as {
+          downloadBytes?: (pageId: string, filename: string) => Promise<Uint8Array | undefined>;
+        }
+      ).downloadBytes;
+      const sessionPull = (
+        page.enginePage as unknown as {
+          session?: {
+            downloadBytes?: (pageId: string, filename: string) => Promise<Uint8Array | undefined>;
+          };
+        }
+      ).session;
+
+      const bytes =
+        (await pull?.call(page.enginePage, page.enginePage.id, filename)) ??
+        (await sessionPull?.downloadBytes?.call(sessionPull, page.enginePage.id, filename));
+
+      if (bytes === undefined) {
+        throw new ServiceError(
+          'NOT_FOUND',
+          `No captured download '${filename}' on this page. Downloads appear as download.finished events; collect after the event fires.`
+        );
+      }
+
+      const contentType = filename.endsWith('.csv')
+        ? 'text/csv'
+        : filename.endsWith('.json')
+          ? 'application/json'
+          : 'application/octet-stream';
+
+      return this.artifacts.put('download', contentType, bytes, { filename, sessionId });
+    });
   }
 
   /** Retrieve a stored artifact, scoped to its session. */

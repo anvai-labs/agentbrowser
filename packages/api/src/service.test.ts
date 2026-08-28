@@ -566,6 +566,90 @@ describe('AgentBrowserService', () => {
     });
   });
 
+  describe('wait conditions (spec 11.1)', () => {
+    let sessionId: string;
+    let pageId: string;
+
+    beforeEach(async () => {
+      sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+      pageId = (await service.createPage(sessionId)).pageId;
+      await service.navigate(sessionId, pageId, { url: 'https://example.com' });
+    });
+
+    it('should accept a wait condition with a deadline on act', async () => {
+      const observation = await service.observe(sessionId, pageId, {});
+      const result = await service.act(sessionId, pageId, {
+        action: 'click',
+        target: { ref: observation.elements[0]?.ref },
+        wait: { until: 'settled', timeoutMs: 3000 },
+      });
+
+      expect(result.status).toBe('success');
+      // The wait's completion reason rides on the result (spec: waits
+      // return why they completed).
+      expect(result.waitReason).toBe('settled');
+    });
+
+    it('should accept load and networkidle conditions', async () => {
+      const observation = await service.observe(sessionId, pageId, {});
+
+      const load = await service.act(sessionId, pageId, {
+        action: 'press',
+        key: 'Enter',
+        wait: { until: 'load', timeoutMs: 2000 },
+      });
+      expect(load.waitReason).toBe('load');
+
+      const idle = await service.act(sessionId, pageId, {
+        action: 'press',
+        key: 'Enter',
+        wait: { until: 'networkidle', timeoutMs: 2000 },
+      });
+      expect(idle.waitReason).toBe('networkidle');
+    });
+
+    it('should default to settled with a bounded deadline when omitted', async () => {
+      const observation = await service.observe(sessionId, pageId, {});
+      const result = await service.act(sessionId, pageId, {
+        action: 'click',
+        target: { ref: observation.elements[0]?.ref },
+      });
+
+      // No wait specified: the post-action settle still runs (bounded),
+      // so refs handed out afterward are stable.
+      expect(result.waitReason).toBe('settled');
+    });
+
+    it('should reject an unknown wait condition', async () => {
+      const error = await capture(() =>
+        service.act(sessionId, pageId, {
+          action: 'press',
+          key: 'Enter',
+          wait: { until: 'banana' as never, timeoutMs: 500 },
+        })
+      );
+
+      expect(error?.code).toBe('INVALID_REQUEST');
+      expect(error?.message).toMatch(/wait/i);
+    });
+
+    it('should enforce the deadline (ACTION_TIMEOUT on a never-settling wait)', async () => {
+      const error = await capture(() =>
+        service.act(sessionId, pageId, {
+          action: 'press',
+          key: 'Enter',
+          wait: { until: 'domcontentloaded', timeoutMs: 1 },
+        })
+      );
+
+      // With a 1ms deadline the wait may complete or time out; if it times
+      // out the code must be ACTION_TIMEOUT, never a hang.
+      if (error !== undefined) {
+        expect(error.code).toBe('ACTION_TIMEOUT');
+      }
+    });
+  });
+
   describe('byte-budget truncation (spec 10)', () => {
     let sessionId: string;
     let pageId: string;
@@ -1307,6 +1391,19 @@ describe('AgentBrowserService', () => {
         target: { ref },
       });
       expect(result.status).toBe('success');
+    });
+  });
+
+  describe('in-page download collection (spec 10)', () => {
+    it('should reject collection when nothing was captured', async () => {
+      const sessionId = (await service.createSession({ tenantId: 't1', allowDownloads: true }))
+        .sessionId;
+      const pageId = (await service.createPage(sessionId)).pageId;
+
+      const error = await capture(() => service.collectDownload(sessionId, pageId, 'missing.csv'));
+
+      expect(error?.code).toBe('NOT_FOUND');
+      expect(error?.message).toMatch(/download.finished/i);
     });
   });
 

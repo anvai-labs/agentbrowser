@@ -207,6 +207,18 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       try {
         const response = await route.fetch({ maxRedirects: 0 });
         const headers = await response.headers();
+
+        // Response-cap enforcement (spec 17): oversized responses are
+        // blocked at the choke point, not merely observed.
+        if (egress.checkResponse !== undefined) {
+          try {
+            await egress.checkResponse({ headers });
+          } catch {
+            await route.fulfill(BLOCKED_RESPONSE);
+            return;
+          }
+        }
+
         const location = headers.location;
         if (response.status() >= 300 && response.status() < 400 && location !== undefined) {
           const absolute = new URL(location, url);
@@ -242,6 +254,8 @@ class PlaywrightSession implements EngineSession {
   private context: BrowserContext;
   private engine: PlaywrightChromiumEngine;
   private pageMap: Map<string, PlaywrightPage> = new Map();
+  /** Completed in-page downloads by suggested filename, per page id. */
+  private readonly downloads = new Map<string, Map<string, () => Promise<Buffer>>>();
   private pageCounter = 0;
 
   constructor(context: BrowserContext, engine: PlaywrightChromiumEngine) {
@@ -260,6 +274,28 @@ class PlaywrightSession implements EngineSession {
     const pageId = `page-${this.pageCounter++}`;
     const page = new PlaywrightPage(pageId, playwrightPage, this.engine);
     this.pageMap.set(pageId, page);
+    this.downloads.set(pageId, new Map());
+
+    // In-page download interception (spec 10): accept the download, hold
+    // its bytes, and surface created/finished events on the page stream.
+    playwrightPage.on('download', (download) => {
+      const held = this.downloads.get(pageId);
+      if (held === undefined) {
+        return;
+      }
+      page.notifyDownloadCreated(download.suggestedFilename());
+      const saver = async () => {
+        const path = await download.path();
+        const { readFile } = await import('node:fs/promises');
+        const bytes = path !== null ? await readFile(path) : Buffer.alloc(0);
+        held.set(download.suggestedFilename(), () => Promise.resolve(bytes));
+        return bytes;
+      };
+      void saver().then(
+        () => page.notifyDownloadFinished(download.suggestedFilename()),
+        () => page.notifyDownloadFinished(download.suggestedFilename())
+      );
+    });
 
     return page;
   }
@@ -270,6 +306,15 @@ class PlaywrightSession implements EngineSession {
 
   async cookies(): Promise<any[]> {
     return await this.context.cookies();
+  }
+
+  /** Bytes of a completed in-page download (by suggested filename). */
+  async downloadBytes(pageId: string, filename: string): Promise<Uint8Array | undefined> {
+    const held = this.downloads.get(pageId)?.get(filename);
+    if (held === undefined) {
+      return undefined;
+    }
+    return new Uint8Array(await held());
   }
 
   async close(reason?: string): Promise<void> {
@@ -743,6 +788,40 @@ class PlaywrightPage implements EnginePage {
         this.eventWaiters.push(resolve);
       });
     }
+  }
+
+  /** Emit download.created/finished into the event stream. */
+  notifyDownloadCreated(filename: string): void {
+    this.enqueueEvent({
+      type: 'download.created',
+      timestamp: new Date().toISOString(),
+      sessionId: 'unknown',
+      pageId: this.id,
+      data: { filename },
+    });
+  }
+
+  notifyDownloadFinished(filename: string): void {
+    this.enqueueEvent({
+      type: 'download.finished',
+      timestamp: new Date().toISOString(),
+      sessionId: 'unknown',
+      pageId: this.id,
+      data: { filename },
+    });
+  }
+
+  /**
+   * Wait for a browser load state (spec 11.1). Real waits on the real
+   * engine; the service maps missed deadlines to ACTION_TIMEOUT.
+   */
+  async waitForLoadState(
+    state: 'load' | 'domcontentloaded' | 'networkidle',
+    options: { timeout?: number | undefined } = {}
+  ): Promise<void> {
+    await this.page.waitForLoadState(state, {
+      ...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
+    });
   }
 
   async close(): Promise<void> {

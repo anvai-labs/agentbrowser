@@ -519,6 +519,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             expectedRevision,
             approvalToken,
             promptText,
+            wait,
           } = body as Record<string, unknown>;
 
           if (typeof action !== 'string') {
@@ -546,6 +547,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               : {}),
             ...(approvalToken !== undefined ? { approvalToken: approvalToken as string } : {}),
             ...(promptText !== undefined ? { promptText: promptText as string } : {}),
+            ...(wait !== undefined ? { wait: wait as { until: string; timeoutMs?: number } } : {}),
           });
           return reply.send(result);
         } catch (error) {
@@ -611,6 +613,25 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             metadata: stored.metadata,
             contentBase64: Buffer.from(stored.bytes).toString('base64'),
           });
+        } catch (error) {
+          return fail(reply, error);
+        }
+      });
+
+      // Collect an intercepted in-page download (spec 10)
+      v1.post('/sessions/:sessionId/pages/:pageId/downloads/:filename', async (request, reply) => {
+        try {
+          const { sessionId, pageId, filename } = request.params as {
+            sessionId: string;
+            pageId: string;
+            filename: string;
+          };
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+            return reply;
+          }
+
+          const artifact = await service.collectDownload(sessionId, pageId, filename);
+          return reply.send(artifact);
         } catch (error) {
           return fail(reply, error);
         }
