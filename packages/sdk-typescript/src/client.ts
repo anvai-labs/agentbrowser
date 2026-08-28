@@ -24,6 +24,19 @@ export interface SessionRequest {
   headless?: boolean;
   ttlMs?: number;
   idleTimeoutMs?: number;
+  /** Seed cookies to reuse an already-authenticated session (skip SSO login). */
+  cookies?: SessionCookie[];
+}
+
+export interface SessionCookie {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  expires?: number;
+  httpOnly?: boolean;
+  secure?: boolean;
+  sameSite?: 'Strict' | 'Lax' | 'None';
 }
 
 export interface SessionResponse {

@@ -101,6 +101,27 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
           engine: { type: 'string', description: 'Engine to use, e.g. playwright-chromium.' },
           headless: { type: 'boolean' },
           ttlMs: { type: 'number' },
+          cookies: {
+            type: 'array',
+            description:
+              'Seed cookies to reuse an already-authenticated session (skip an SSO / ' +
+              'device-trust login the browser cannot pass). Each: {name, value, domain, path, ' +
+              'expires?, httpOnly?, secure?, sameSite?}.',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                value: { type: 'string' },
+                domain: { type: 'string' },
+                path: { type: 'string' },
+                expires: { type: 'number' },
+                httpOnly: { type: 'boolean' },
+                secure: { type: 'boolean' },
+                sameSite: { type: 'string', enum: ['Strict', 'Lax', 'None'] },
+              },
+              required: ['name', 'value', 'domain', 'path'],
+            },
+          },
         },
         required: ['tenantId'],
       },
@@ -109,6 +130,8 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
         if (typeof args.engine === 'string') request.engine = args.engine;
         if (typeof args.headless === 'boolean') request.headless = args.headless;
         if (typeof args.ttlMs === 'number') request.ttlMs = args.ttlMs;
+        if (Array.isArray(args.cookies))
+          request.cookies = args.cookies as NonNullable<SessionRequest['cookies']>;
 
         const session = await client.sessions.create(request);
 
