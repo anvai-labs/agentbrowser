@@ -26,7 +26,7 @@ import type { InMemoryTracer, Span } from '@agentbrowser/core';
 import type { MetricsRegistry } from '@agentbrowser/core';
 import type { StructuredLogger } from '@agentbrowser/core';
 import type { BrowserEngine, EngineEvent, EnginePage } from '@agentbrowser/engine';
-import type { EngineSession, EngineSessionOptions } from '@agentbrowser/engine';
+import type { EngineSession, EngineSessionOptions, NormalizedCookie } from '@agentbrowser/engine';
 import type { RawPageState } from '@agentbrowser/engine';
 import type { RequestPolicy } from '@agentbrowser/engine';
 import {
@@ -69,6 +69,11 @@ export interface ServiceSessionRequest {
   locale?: string;
   timezoneId?: string;
   headless?: boolean;
+  /**
+   * Seed cookies for the session's context, to reuse an already-authenticated
+   * session (e.g. bypass an SSO / device-trust login the browser can't pass).
+   */
+  cookies?: NormalizedCookie[];
   /** Downloads are denied unless the session explicitly allows them. */
   allowDownloads?: boolean;
   maxDownloadBytes?: number;
@@ -472,6 +477,7 @@ export class AgentBrowserService {
       if (request.locale !== undefined) engineRequest.locale = request.locale;
       if (request.timezoneId !== undefined) engineRequest.timezoneId = request.timezoneId;
       if (request.headless !== undefined) engineRequest.headless = request.headless;
+      if (request.cookies !== undefined) engineRequest.cookies = request.cookies;
 
       // Per-session chain: session rules restrict; the SSRF base always runs.
       const sessionPolicy =

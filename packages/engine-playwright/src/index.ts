@@ -150,6 +150,14 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       await this.installEgress(context, egress);
     }
 
+    // Seed cookies so a caller can reuse an already-authenticated session
+    // (e.g. to skip an SSO / device-trust login the headless browser cannot
+    // satisfy). Playwright's Cookie shape is a structural superset of
+    // NormalizedCookie, so the array is accepted as-is.
+    if (options.cookies !== undefined && options.cookies.length > 0) {
+      await context.addCookies(options.cookies);
+    }
+
     return new PlaywrightSession(context, this);
   }
 
