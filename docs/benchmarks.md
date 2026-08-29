@@ -60,3 +60,29 @@ therefore has no latency-based pressure: any Rust-engine investment must
 be justified on task success or cost per task, not on these dispatch
 overheads. CI runs `bench:real` in the Benchmarks job; the gate is the
 ref-loop success rate (deterministic), latencies are informational.
+
+### Obscura row (spec §17.2 backend #3, informational)
+
+`bench:real` adds an Obscura row when the pinned binary is present
+(`node packages/engine-obscura/scripts/fetch.mjs`); CI's Benchmarks job
+runs without the binary, so the row appears in local runs only and the
+gate stays Chromium-only.
+
+Obscura v0.2.1 (2026-08-29, Apple Silicon dev machine, 5 iterations;
+the 30 s-per-observation cost makes deeper sampling impractical):
+
+| Engine  | sessionCreate p50/p95 | observation p50/p95 | action p50/p95 | ref-loop |
+| ------- | --------------------- | ------------------- | -------------- | -------- |
+| obscura | 1.2 / 1.7 ms          | 30247 / 30866 ms    | 0.4 / 0.5 ms   | 0/5      |
+
+The numbers are the honest §17.2 finding, and the root cause is a
+single upstream gap, not service overhead: the service always installs
+a request policy, and under Obscura's Fetch interception (a)
+`ariaSnapshot` times out at Playwright's 30 s default every call - the
+observation then falls back to a name-less scrape (hence 0/5: the loop
+selects fields by name) - and (b) denials are not enforced at all. With
+no interception, raw Obscura navigations load in ~10 ms and aria
+snapshots take 30-50 ms. Full probe details and the gap list:
+`docs/engines.md`. Verdict for ADR-010: **no task-success case for
+Obscura v0.2.1 today**; re-evaluate when upstream fixes Fetch
+interception (the CI truth guard will flag it).

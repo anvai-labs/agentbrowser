@@ -176,6 +176,48 @@ jobs:
       - name: Comparative benchmark (real Chromium)
         run: pnpm bench:real
 
+  # Spec §17.2 backend #3: Obscura (experimental). The pinned binary is
+  # fetched with SHA-256 verification, which activates the env-gated
+  # suites. Smoke + contract gate our launcher/adapter; the egress suite
+  # encodes the probe-verified v0.2.1 network gap (denials not enforced:
+  # two tests skip with the gap named, and a truth guard asserts the
+  # current behavior - it flips red if upstream starts honoring
+  # Fetch.fulfillRequest, prompting the skips' removal). The comparative
+  # benchmark stays Chromium-gated; Obscura rows are informational and
+  # appear in local bench:real runs when the binary is present.
+  obscura:
+    name: Obscura (experimental)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build workspace dependencies
+        run: pnpm -r build
+
+      - name: Cache Obscura binary
+        uses: actions/cache@v4
+        with:
+          path: .cache/obscura
+          key: obscura-v0.2.1-linux-x64
+
+      - name: Fetch pinned Obscura binary (SHA-256 verified)
+        run: node packages/engine-obscura/scripts/fetch.mjs
+
+      - name: Smoke + contract + egress suites
+        run: pnpm --filter @agentbrowser/engine-obscura test
+
   # TD-BROWSER-5: a change that breaks single-binary bundling (a new dynamic
   # import, a node-only API, a dependency regression) must fail the PR that
   # introduced it, not the release tag.

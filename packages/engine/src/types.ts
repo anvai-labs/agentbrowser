@@ -67,6 +67,19 @@ export interface RequestPolicy {
    * Implementations throw to block an oversized response.
    */
   checkResponse?(response: { headers: Record<string, string> }): Promise<void>;
+  /**
+   * Optional actual-byte gate for responses without content-length
+   * (chunked/streamed): the choke point buffers the body (bounded by the
+   * policy's own cap) and reports the true size. Throw to block.
+   */
+  checkBodySize?(bytes: number): Promise<void>;
+  /**
+   * Optional DNS-rebinding gate: engines that resolve hostnames call this
+   * with EVERY resolved address before connecting. Verdict caches must key
+   * on the resolved set so a changed resolution re-validates. Throw to
+   * block.
+   */
+  checkResolvedAddresses?(addresses: string[]): Promise<void>;
 }
 
 /**

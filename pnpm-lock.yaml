@@ -78,6 +78,9 @@ importers:
       '@agentbrowser/engine':
         specifier: workspace:*
         version: link:../engine
+      '@agentbrowser/engine-obscura':
+        specifier: workspace:^
+        version: link:../engine-obscura
       '@agentbrowser/engine-playwright':
         specifier: workspace:^
         version: link:../engine-playwright
@@ -149,18 +152,18 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.1)
 
-  packages/engine-playwright:
+  packages/engine-obscura:
     dependencies:
       '@agentbrowser/engine':
         specifier: workspace:*
         version: link:../engine
-      '@agentbrowser/protocol':
+      '@agentbrowser/engine-playwright':
         specifier: workspace:*
-        version: link:../protocol
-      playwright:
-        specifier: ^1.49.1
-        version: 1.62.1
+        version: link:../engine-playwright
     devDependencies:
+      '@agentbrowser/testkit':
+        specifier: workspace:*
+        version: link:../testkit
       '@biomejs/biome':
         specifier: ^1.9.4
         version: 1.9.4
@@ -173,6 +176,37 @@ importers:
       vitest:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@22.20.1)
+
+  packages/engine-playwright:
+    dependencies:
+      '@agentbrowser/engine':
+        specifier: workspace:*
+        version: link:../engine
+      '@agentbrowser/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      playwright:
+        specifier: ^1.49.1
+        version: 1.62.1
+    devDependencies:
+      '@agentbrowser/testkit':
+        specifier: workspace:^
+        version: link:../testkit
+      '@biomejs/biome':
+        specifier: ^1.9.4
+        version: 1.9.4
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.20.1)
+      ws:
+        specifier: ^8.21.3
+        version: 8.21.3
 
   packages/extraction:
     dependencies:

@@ -138,6 +138,7 @@ class FakeSession implements EngineSession {
     const pageOptions = options ? { ...options } : undefined;
     const page = new FakePage(pageId, this.options, pageOptions);
     this._pages.set(pageId, page);
+    page.registerRemoval(() => this._pages.delete(pageId));
     return page;
   }
 
@@ -176,6 +177,7 @@ class FakeSession implements EngineSession {
  */
 class FakePage implements EnginePage {
   readonly id: string;
+  private removeSelf: () => void = () => {};
   private sessionOptions: EngineSessionOptions;
   private pageOptions: NewPageOptions | undefined;
   private currentUrl = 'about:blank';
@@ -273,6 +275,11 @@ class FakePage implements EnginePage {
     this.id = id;
     this.sessionOptions = sessionOptions;
     this.pageOptions = pageOptions ? { ...pageOptions } : undefined;
+  }
+
+  /** Registered by the owning session so close() removes it from the map. */
+  registerRemoval(remove: () => void): void {
+    this.removeSelf = remove;
   }
 
   async navigate(request: NavigationRequest): Promise<NavigationResult> {
@@ -526,6 +533,7 @@ class FakePage implements EnginePage {
       clearTimeout(this.pendingDialog.timer);
       this.pendingDialog = undefined;
     }
+    this.removeSelf();
     const waiters = this.eventWaiters;
     this.eventWaiters = [];
     for (const wake of waiters) {

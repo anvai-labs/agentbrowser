@@ -510,6 +510,15 @@ function egressFixtures(): Promise<{ port: number; stop(): Promise<void> }> {
       response.writeHead(302, { location: to }).end();
       return;
     }
+    if (url.startsWith('/chunked') && to !== null) {
+      // Chunked response: no content-length, size from `to` suffix.
+      const size = Number.parseInt(to, 10) || 10;
+      const payload = 'x'.repeat(size);
+      response.writeHead(200, { 'content-type': 'text/plain' });
+      response.write(payload.slice(0, Math.ceil(size / 2)));
+      setTimeout(() => response.end(payload.slice(Math.ceil(size / 2))), 10);
+      return;
+    }
     if (url.startsWith('/leak') && to !== null) {
       response
         .writeHead(200, { 'content-type': 'text/html' })
@@ -632,6 +641,62 @@ describe('engine-level egress choke point (P0-4)', () => {
     }
   });
 
+  it('should block an oversized chunked response by actual bytes', async () => {
+    const fixtures = await egressFixtures();
+    const engine = new PlaywrightChromiumEngine({
+      egress: {
+        async checkRequest(request: { hostname: string }) {
+          if (request.hostname === '127.0.0.1') return;
+          throw new Error('denied');
+        },
+        async checkResponse() {
+          return; // header check passes (no content-length)
+        },
+        async checkBodySize(bytes: number) {
+          if (bytes > 50) throw new Error('RESPONSE_TOO_LARGE');
+        },
+      },
+    });
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      // 500-byte chunked body, no content-length: actual-byte cap blocks.
+      const result = await page.navigate({
+        url: `http://127.0.0.1:${fixtures.port}/chunked?to=500`,
+      });
+      expect(result.status).toBe('blocked');
+    } finally {
+      await engine.close();
+      await fixtures.stop();
+    }
+  });
+
+  it('should pass a small chunked response through actual-byte checks', async () => {
+    const fixtures = await egressFixtures();
+    const engine = new PlaywrightChromiumEngine({
+      egress: {
+        async checkRequest(request: { hostname: string }) {
+          if (request.hostname === '127.0.0.1') return;
+          throw new Error('denied');
+        },
+        async checkBodySize(bytes: number) {
+          if (bytes > 50) throw new Error('RESPONSE_TOO_LARGE');
+        },
+      },
+    });
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      const result = await page.navigate({
+        url: `http://127.0.0.1:${fixtures.port}/chunked?to=10`,
+      });
+      expect(result.status).toBe('success');
+    } finally {
+      await engine.close();
+      await fixtures.stop();
+    }
+  });
+
   it('should allow a per-session policy to override the root', async () => {
     const fixtures = await egressFixtures();
     const engine = new PlaywrightChromiumEngine(); // no root egress
@@ -722,4 +787,193 @@ describe('in-page download interception (spec 10)', () => {
       await new Promise((done) => server.close(() => done()));
     }
   });
+});
+
+describe('WebSocket upgrade interception (residual R2)', () => {
+  const probeServer = async () => {
+    const http = await import('node:http');
+    const { WebSocketServer } = await import('ws');
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' }).end('<html><body>ws probe</body></html>');
+    });
+    const wss = new WebSocketServer({ server });
+    wss.on('connection', (ws) => {
+      ws.on('message', () => ws.send('pong'));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    return {
+      port: (server.address() as { port: number }).port,
+      async stop() {
+        wss.close();
+        await new Promise((done) => server.close(() => done()));
+      },
+    };
+  };
+
+  const probe = (page: unknown, port: number) =>
+    (page as unknown as { page: import('playwright').Page }).page.evaluate(
+      async (wsUrl: string) =>
+        new Promise<string>((resolve) => {
+          const ws = new WebSocket(wsUrl);
+          const timer = setTimeout(() => resolve('timeout'), 4000);
+          ws.onopen = () => {
+            ws.send('ping');
+          };
+          ws.onmessage = (event) => {
+            if (String(event.data) === 'pong') {
+              clearTimeout(timer);
+              ws.close();
+              resolve('echo');
+            }
+          };
+          ws.onclose = () => {
+            clearTimeout(timer);
+            resolve('closed');
+          };
+          ws.onerror = () => {
+            clearTimeout(timer);
+            resolve('error');
+          };
+        }),
+      `ws://127.0.0.1:${port}/`
+    );
+
+  it('should leave WebSockets untouched with no egress policy', async () => {
+    const fixture = await probeServer();
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({ url: `http://127.0.0.1:${fixture.port}/` });
+      expect(await probe(page, fixture.port)).toBe('echo');
+    } finally {
+      await engine.close();
+      await fixture.stop();
+    }
+  });
+
+  it('should close upgrades cleanly when egress is on (default deny-all)', async () => {
+    const fixture = await probeServer();
+    const engine = new PlaywrightChromiumEngine({
+      egress: {
+        async checkRequest(request: { hostname: string }) {
+          if (request.hostname === '127.0.0.1') return;
+          throw new Error('denied');
+        },
+      },
+    });
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({ url: `http://127.0.0.1:${fixture.port}/` });
+      // The fetch/fulfill choke point breaks WS outright (upstream
+      // limitation); deny-all at least closes the upgrade cleanly.
+      expect(await probe(page, fixture.port)).toBe('closed');
+    } finally {
+      await engine.close();
+      await fixture.stop();
+    }
+  });
+
+  it('should close every upgrade under deny-all (exfiltration gate)', async () => {
+    const fixture = await probeServer();
+    const engine = new PlaywrightChromiumEngine({
+      webSocketPolicy: 'deny-all',
+      egress: {
+        async checkRequest(request: { hostname: string }) {
+          if (request.hostname === '127.0.0.1') return;
+          throw new Error('denied');
+        },
+      },
+    });
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({ url: `http://127.0.0.1:${fixture.port}/` });
+      // Even the ALLOWED host's upgrade closes: deny-all is the honest
+      // semantic given the upstream forwarding bug.
+      expect(await probe(page, fixture.port)).toBe('closed');
+    } finally {
+      await engine.close();
+      await fixture.stop();
+    }
+  });
+});
+
+describe('DNS-rebinding defense (resolved-address validation)', () => {
+  it('should block a public hostname that resolves to loopback', async () => {
+    // localtest.me is a public DNS wildcard resolving to 127.0.0.1 - the
+    // canonical real-world rebinding shape: hostname looks public, the
+    // resolution is loopback.
+    const engine = new PlaywrightChromiumEngine({
+      egress: {
+        async checkRequest(request: { hostname: string }) {
+          if (request.hostname === '127.0.0.1') {
+            throw new Error('denied');
+          }
+          return; // localtest.me passes hostname checks
+        },
+        async checkResolvedAddresses(addresses: string[]) {
+          for (const address of addresses) {
+            if (address === '127.0.0.1' || address.startsWith('127.')) {
+              throw new Error(`resolved loopback: ${address}`);
+            }
+          }
+        },
+      },
+    });
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      const result = await page.navigate({ url: 'http://localtest.me:8080/' });
+      expect(result.status).toBe('blocked');
+    } finally {
+      await engine.close();
+    }
+  });
+});
+
+describe('engine contract suite (the any-engine guarantee)', () => {
+  it('playwright-chromium passes the same suite as FakeEngine', async () => {
+    const { runEngineContractSuite } = await import('@agentbrowser/testkit');
+    const engine = new PlaywrightChromiumEngine();
+    // The suite runs the full contract: capabilities, lifecycle, refs,
+    // actions, artifacts, close audit. data: URL navigation works.
+    await expect(runEngineContractSuite(engine)).resolves.toBeUndefined();
+  }, 60_000);
+});
+
+describe('multi-browser and remote CDP options', () => {
+  it('reports the browser family in engine.name', () => {
+    expect(new PlaywrightChromiumEngine().name).toBe('playwright-chromium');
+    expect(new PlaywrightChromiumEngine({ browser: 'firefox' }).name).toBe('playwright-firefox');
+    expect(new PlaywrightChromiumEngine({ browser: 'webkit' }).name).toBe('playwright-webkit');
+    expect(new PlaywrightChromiumEngine({ cdpEndpoint: 'ws://localhost:9222' }).name).toBe(
+      'playwright-chromium-remote'
+    );
+  });
+
+  it('rejects cdpEndpoint on non-chromium families', async () => {
+    const engine = new PlaywrightChromiumEngine({
+      browser: 'firefox',
+      cdpEndpoint: 'ws://localhost:9222',
+    });
+    await expect(engine.createSession({ headless: true })).rejects.toThrow(/chromium/);
+    await engine.close();
+  });
+
+  it('runs the contract suite on firefox when binaries are installed', async () => {
+    const { firefox } = await import('playwright');
+    const available = await firefox
+      .launch({ headless: true })
+      .then((b) => b.close().then(() => true))
+      .catch(() => false);
+    if (!available) {
+      console.warn('firefox binaries not installed; skipping');
+      return;
+    }
+    const { runEngineContractSuite } = await import('@agentbrowser/testkit');
+    const engine = new PlaywrightChromiumEngine({ browser: 'firefox' });
+    await expect(runEngineContractSuite(engine)).resolves.toBeUndefined();
+  }, 60_000);
 });

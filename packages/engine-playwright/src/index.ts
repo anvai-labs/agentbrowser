@@ -77,6 +77,24 @@ const BLOCKED_RESPONSE = {
 export interface PlaywrightEngineOptions {
   /** Held-dialog auto-settle grace in ms (default 5000). */
   dialogGraceMs?: number;
+  /** Browser family: chromium (default), firefox, or webkit. */
+  browser?: 'chromium' | 'firefox' | 'webkit';
+  /**
+   * Remote Chromium over CDP (ws:// or http:// endpoint). When set, the
+   * engine connects instead of launching - the spec's RemoteCdpEngine
+   * path (browser pools, container isolation). Requires chromium.
+   */
+  cdpEndpoint?: string;
+  /**
+   * WebSocket handling. With no egress policy the default is 'off'
+   * (upgrades untouched). With egress installed the default becomes
+   * 'deny-all': the http choke point's fetch/fulfill proxy breaks page
+   * WebSocket connections outright (upstream Playwright limitation,
+   * verified empirically), so upgrades are closed cleanly instead of
+   * failing opaquely. Selective forwarding (connectToServer) is likewise
+   * broken under the proxy - deny-all is the honest shippable gate.
+   */
+  webSocketPolicy?: 'off' | 'deny-all';
   /**
    * Root egress policy: enforced as a network choke point over EVERY
    * outbound request in every session (documents, redirects,
@@ -93,14 +111,26 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   private revisionCounter = 1;
   readonly dialogGraceMs: number;
   private readonly rootEgress: RequestPolicy | undefined;
+  private readonly webSocketPolicy: 'off' | 'deny-all';
+  private readonly browserFamily: 'chromium' | 'firefox' | 'webkit';
+  private readonly cdpEndpoint: string | undefined;
 
   constructor(options: PlaywrightEngineOptions = {}) {
     this.dialogGraceMs = options.dialogGraceMs ?? 5000;
     this.rootEgress = options.egress;
+    this.webSocketPolicy =
+      options.webSocketPolicy ?? (options.egress !== undefined ? 'deny-all' : 'off');
+    this.browserFamily = options.browser ?? 'chromium';
+    this.cdpEndpoint = options.cdpEndpoint;
   }
 
   get name(): string {
-    return this._name;
+    if (this.cdpEndpoint !== undefined) {
+      return 'playwright-chromium-remote';
+    }
+    return this._name === 'playwright-chromium' && this.browserFamily !== 'chromium'
+      ? `playwright-${this.browserFamily}`
+      : this._name;
   }
 
   get version(): string {
@@ -127,11 +157,24 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   }
 
   async createSession(options: EngineSessionOptions = {}): Promise<EngineSession> {
-    // Launch browser if not already launched
+    // Launch (or connect) the browser family if not already active.
     if (!this.browser) {
-      this.browser = await chromium.launch({
-        headless: options.headless !== false,
-      });
+      if (this.cdpEndpoint !== undefined) {
+        if (this.browserFamily !== 'chromium') {
+          throw new Error('cdpEndpoint requires the chromium family');
+        }
+        this.browser = await chromium.connectOverCDP(this.cdpEndpoint);
+      } else {
+        const launcher =
+          this.browserFamily === 'firefox'
+            ? (await import('playwright')).firefox
+            : this.browserFamily === 'webkit'
+              ? (await import('playwright')).webkit
+              : chromium;
+        this.browser = await launcher.launch({
+          headless: options.headless !== false,
+        });
+      }
     }
 
     const egress = options.requestPolicy ?? this.rootEgress;
@@ -191,7 +234,34 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
    * adds one in-process hop per request (benchmarks re-baselined).
    */
   private async installEgress(context: BrowserContext, egress: RequestPolicy): Promise<void> {
+    // Verdict cache keys on hostname + resolved-IP set: a changed DNS
+    // resolution (rebinding) re-validates instead of replaying a stale
+    // allow.
     const verdicts = new Map<string, 'allow' | 'deny'>();
+    const resolutionCache = new Map<string, string[]>();
+    const dns = await import('node:dns/promises');
+
+    const resolveOf = async (hostname: string): Promise<string[]> => {
+      // IP literals resolve to themselves.
+      if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname) || hostname.includes(':')) {
+        return [hostname];
+      }
+      try {
+        const result = await dns.lookup(hostname, { all: true });
+        const addresses = result.map((entry) => entry.address).sort();
+        const cached = resolutionCache.get(hostname);
+        const key = addresses.join(',');
+        if (cached !== undefined && cached.join(',') === key) {
+          return cached;
+        }
+        resolutionCache.set(hostname, addresses);
+        // Address-set change invalidates the memoized verdict.
+        verdicts.delete(hostname);
+        return addresses;
+      } catch {
+        return []; // resolution failure: hostname checks still apply
+      }
+    };
 
     const verdictOf = async (hostname: string, url: string): Promise<'allow' | 'deny'> => {
       const cached = verdicts.get(hostname);
@@ -201,6 +271,12 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       let verdict: 'allow' | 'deny';
       try {
         await egress.checkRequest({ hostname, url });
+        if (egress.checkResolvedAddresses !== undefined) {
+          const addresses = await resolveOf(hostname);
+          if (addresses.length > 0) {
+            await egress.checkResolvedAddresses(addresses);
+          }
+        }
         verdict = 'allow';
       } catch {
         verdict = 'deny';
@@ -208,6 +284,31 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       verdicts.set(hostname, verdict);
       return verdict;
     };
+
+    // WebSocket upgrades bypass context.route entirely. Selective
+    // routeWebSocket forwarding (connectToServer) is broken when the http
+    // choke point uses route.fetch - verified empirically: ANY fetch/fulfill
+    // in context.route makes allowed-WS forwarding fail (upstream Playwright
+    // coexistence bug, 1.62.1). The honest, shippable gate is deny-all:
+    // when enabled, every upgrade is closed before connecting, closing the
+    // WS-based exfiltration residual at the cost of legitimate WebSockets.
+    if (this.webSocketPolicy === 'deny-all') {
+      const routeWebSocket = (
+        context as unknown as {
+          routeWebSocket?: (
+            pattern: string,
+            handler: (ws: {
+              close(options?: { code?: number; reason?: string }): Promise<void>;
+            }) => void
+          ) => Promise<void>;
+        }
+      ).routeWebSocket;
+      if (routeWebSocket !== undefined) {
+        await routeWebSocket.call(context, '**', (ws) => {
+          void ws.close({ code: 1014, reason: 'blocked by egress policy' });
+        });
+      }
+    }
 
     await context.route('**', async (route) => {
       const request = route.request();
@@ -232,6 +333,21 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             await route.fulfill(BLOCKED_RESPONSE);
             return;
           }
+        }
+
+        // Actual-byte cap when the size is not declared (chunked/streamed):
+        // buffer the body - bounded by the policy's own cap accessor when
+        // available - and enforce the true size.
+        if (egress.checkBodySize !== undefined && headers['content-length'] === undefined) {
+          const body = await response.body();
+          try {
+            await egress.checkBodySize(body.byteLength);
+          } catch {
+            await route.fulfill(BLOCKED_RESPONSE);
+            return;
+          }
+          await route.fulfill({ response, body: body.toString('base64') });
+          return;
         }
 
         const location = headers.location;
@@ -272,6 +388,7 @@ class PlaywrightSession implements EngineSession {
   /** Completed in-page downloads by suggested filename, per page id. */
   private readonly downloads = new Map<string, Map<string, () => Promise<Buffer>>>();
   private pageCounter = 0;
+  private closed = false;
 
   constructor(context: BrowserContext, engine: PlaywrightChromiumEngine) {
     this.id = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -280,6 +397,10 @@ class PlaywrightSession implements EngineSession {
   }
 
   async newPage(options?: NewPageOptions): Promise<EnginePage> {
+    if (this.closed) {
+      throw new Error('Session is closed');
+    }
+
     const playwrightPage = await this.context.newPage();
 
     if (options?.viewport) {
@@ -289,6 +410,7 @@ class PlaywrightSession implements EngineSession {
     const pageId = `page-${this.pageCounter++}`;
     const page = new PlaywrightPage(pageId, playwrightPage, this.engine);
     this.pageMap.set(pageId, page);
+    page.registerRemoval(() => this.pageMap.delete(pageId));
     this.downloads.set(pageId, new Map());
 
     // In-page download interception (spec 10): accept the download, hold
@@ -333,6 +455,10 @@ class PlaywrightSession implements EngineSession {
   }
 
   async close(reason?: string): Promise<void> {
+    if (this.closed) {
+      return;
+    }
+    this.closed = true;
     // Close all pages
     for (const page of this.pageMap.values()) {
       await page.close();
@@ -361,7 +487,13 @@ class PlaywrightPage implements EnginePage {
   private refStore = new Map<string, StoredElement>();
   private eventWaiters: Array<() => void> = [];
   private eventsClosed = false;
+  private removeSelf: () => void = () => {};
   private pendingDialog: { dialog: import('playwright').Dialog; timer: NodeJS.Timeout } | undefined;
+
+  /** Registered by the owning session so close() removes it from the map. */
+  registerRemoval(remove: () => void): void {
+    this.removeSelf = remove;
+  }
 
   constructor(id: string, page: Page, engine: PlaywrightChromiumEngine) {
     this.id = id;
@@ -841,6 +973,7 @@ class PlaywrightPage implements EnginePage {
 
   async close(): Promise<void> {
     this.eventsClosed = true;
+    this.removeSelf();
     if (this.pendingDialog) {
       clearTimeout(this.pendingDialog.timer);
       this.pendingDialog = undefined;

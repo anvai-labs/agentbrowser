@@ -7,12 +7,15 @@
  *            site/network" targets)
  *   tasks  - 50 deterministic agent tasks (MVP gate: >= 45)
  *   real   - comparative benchmark: FakeEngine vs real Chromium on local
- *            fixture pages (ADR-010 gate data)
+ *            fixture pages (ADR-010 gate data), plus an informational
+ *            Obscura row when the pinned binary is present (spec §17.2)
  *   soak   - session churn with cleanup and RSS audit
  *   all    - everything; exits non-zero if any gate fails
  */
 
+import { existsSync } from 'node:fs';
 import { AgentBrowserService } from '@agentbrowser/api';
+import { createObscuraEngine } from '@agentbrowser/engine-obscura';
 import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { comparativeReport, runRealBenchmarks } from './compare.js';
@@ -81,6 +84,18 @@ async function soak(cycles: number): Promise<boolean> {
 const command = process.argv[2] ?? 'all';
 const soakCycles = Number.parseInt(process.argv[3] ?? '1000', 10);
 
+/** Locate the pinned Obscura binary (same layout as engine-obscura tests). */
+function resolveObscuraBinary(): string | undefined {
+  const override = process.env.OBSCURA_BIN;
+  if (override !== undefined && override !== '' && existsSync(override)) {
+    return override;
+  }
+  const version = process.env.OBSCURA_VERSION ?? 'v0.2.1';
+  const binName = process.platform === 'win32' ? 'obscura.exe' : 'obscura';
+  const cached = new URL(`../../../.cache/obscura/${version}/${binName}`, import.meta.url).pathname;
+  return existsSync(cached) ? cached : undefined;
+}
+
 async function compareReal(iterations: number): Promise<boolean> {
   console.log('--- comparative benchmark: FakeEngine vs playwright-chromium ---');
   const fake = await runRealBenchmarks({ engine: new FakeEngine(), iterations });
@@ -88,7 +103,30 @@ async function compareReal(iterations: number): Promise<boolean> {
     engine: new PlaywrightChromiumEngine(),
     iterations,
   });
-  console.log(comparativeReport([fake, real]));
+  const rows = [fake, real];
+
+  // Obscura row (spec §17.2 backend #3): informational only, and only
+  // when the pinned binary is present. The ADR-010 gate stays Chromium.
+  // --allow-private-network: Obscura blocks loopback by default and the
+  // fixtures live on loopback; the service-layer network policy still
+  // constrains what pages may reach.
+  const obscuraBinary = resolveObscuraBinary();
+  if (obscuraBinary !== undefined) {
+    const obscura = await createObscuraEngine({
+      launch: { binary: obscuraBinary, args: ['--allow-private-network'] },
+    });
+    try {
+      rows.push(await runRealBenchmarks({ engine: obscura.engine, iterations, label: 'obscura' }));
+    } finally {
+      await obscura.shutdown();
+    }
+  } else {
+    console.log(
+      '(obscura binary not found - run engine-obscura/scripts/fetch.mjs for the §17.2 row)'
+    );
+  }
+
+  console.log(comparativeReport(rows));
   // The ADR-010 gate cares about task success on the real engine.
   return real.refLoop.successes === real.refLoop.attempts;
 }

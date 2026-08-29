@@ -1358,10 +1358,33 @@ describe('authentication and tenancy (P0-1)', () => {
     expect(own.status).toBe(200);
   });
 
-  it('should keep health and metrics open', async () => {
-    expect((await authFetch('/health/live')).status).toBe(200);
-    expect((await authFetch('/health/ready')).status).toBe(200);
-    expect((await authFetch('/metrics')).status).toBe(200);
+  it('should keep liveness open but gate metrics and trim readiness', async () => {
+    // Liveness is probe-safe: open, no info disclosure.
+    const live = await authFetch('/health/live');
+    expect(live.status).toBe(200);
+    expect(await live.json()).toEqual({ status: 'live', timestamp: expect.any(String) });
+
+    // Metrics are operational data: 401 without credentials.
+    const metrics = await authFetch('/metrics');
+    expect(metrics.status).toBe(401);
+
+    // Readiness answers unauthenticated (probe-safe) but discloses no
+    // engine details; the authenticated view keeps the full payload.
+    const ready = await authFetch('/health/ready');
+    expect(ready.status).toBe(200);
+    const minimal = await ready.json();
+    expect(minimal).toEqual({ status: 'ready' });
+    expect(minimal.engine).toBeUndefined();
+    expect(minimal.capabilities).toBeUndefined();
+
+    const full = await authFetch('/health/ready', KEY_A);
+    expect(full.status).toBe(200);
+    const detailed = await full.json();
+    expect(detailed.engine).toEqual(expect.any(String));
+    expect(detailed.capabilities).toEqual(expect.any(Object));
+
+    const authedMetrics = await authFetch('/metrics', KEY_A);
+    expect(authedMetrics.status).toBe(200);
   });
 
   it('should reject a WebSocket upgrade without credentials', async () => {
