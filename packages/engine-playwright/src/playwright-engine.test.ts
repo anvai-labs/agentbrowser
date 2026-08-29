@@ -932,3 +932,48 @@ describe('DNS-rebinding defense (resolved-address validation)', () => {
     }
   });
 });
+
+describe('engine contract suite (the any-engine guarantee)', () => {
+  it('playwright-chromium passes the same suite as FakeEngine', async () => {
+    const { runEngineContractSuite } = await import('@agentbrowser/testkit');
+    const engine = new PlaywrightChromiumEngine();
+    // The suite runs the full contract: capabilities, lifecycle, refs,
+    // actions, artifacts, close audit. data: URL navigation works.
+    await expect(runEngineContractSuite(engine)).resolves.toBeUndefined();
+  }, 60_000);
+});
+
+describe('multi-browser and remote CDP options', () => {
+  it('reports the browser family in engine.name', () => {
+    expect(new PlaywrightChromiumEngine().name).toBe('playwright-chromium');
+    expect(new PlaywrightChromiumEngine({ browser: 'firefox' }).name).toBe('playwright-firefox');
+    expect(new PlaywrightChromiumEngine({ browser: 'webkit' }).name).toBe('playwright-webkit');
+    expect(new PlaywrightChromiumEngine({ cdpEndpoint: 'ws://localhost:9222' }).name).toBe(
+      'playwright-chromium-remote'
+    );
+  });
+
+  it('rejects cdpEndpoint on non-chromium families', async () => {
+    const engine = new PlaywrightChromiumEngine({
+      browser: 'firefox',
+      cdpEndpoint: 'ws://localhost:9222',
+    });
+    await expect(engine.createSession({ headless: true })).rejects.toThrow(/chromium/);
+    await engine.close();
+  });
+
+  it('runs the contract suite on firefox when binaries are installed', async () => {
+    const { firefox } = await import('playwright');
+    const available = await firefox
+      .launch({ headless: true })
+      .then((b) => b.close().then(() => true))
+      .catch(() => false);
+    if (!available) {
+      console.warn('firefox binaries not installed; skipping');
+      return;
+    }
+    const { runEngineContractSuite } = await import('@agentbrowser/testkit');
+    const engine = new PlaywrightChromiumEngine({ browser: 'firefox' });
+    await expect(runEngineContractSuite(engine)).resolves.toBeUndefined();
+  }, 60_000);
+});

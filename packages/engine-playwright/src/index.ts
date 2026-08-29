@@ -77,6 +77,14 @@ const BLOCKED_RESPONSE = {
 export interface PlaywrightEngineOptions {
   /** Held-dialog auto-settle grace in ms (default 5000). */
   dialogGraceMs?: number;
+  /** Browser family: chromium (default), firefox, or webkit. */
+  browser?: 'chromium' | 'firefox' | 'webkit';
+  /**
+   * Remote Chromium over CDP (ws:// or http:// endpoint). When set, the
+   * engine connects instead of launching - the spec's RemoteCdpEngine
+   * path (browser pools, container isolation). Requires chromium.
+   */
+  cdpEndpoint?: string;
   /**
    * WebSocket handling. With no egress policy the default is 'off'
    * (upgrades untouched). With egress installed the default becomes
@@ -104,16 +112,25 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   readonly dialogGraceMs: number;
   private readonly rootEgress: RequestPolicy | undefined;
   private readonly webSocketPolicy: 'off' | 'deny-all';
+  private readonly browserFamily: 'chromium' | 'firefox' | 'webkit';
+  private readonly cdpEndpoint: string | undefined;
 
   constructor(options: PlaywrightEngineOptions = {}) {
     this.dialogGraceMs = options.dialogGraceMs ?? 5000;
     this.rootEgress = options.egress;
     this.webSocketPolicy =
       options.webSocketPolicy ?? (options.egress !== undefined ? 'deny-all' : 'off');
+    this.browserFamily = options.browser ?? 'chromium';
+    this.cdpEndpoint = options.cdpEndpoint;
   }
 
   get name(): string {
-    return this._name;
+    if (this.cdpEndpoint !== undefined) {
+      return 'playwright-chromium-remote';
+    }
+    return this._name === 'playwright-chromium' && this.browserFamily !== 'chromium'
+      ? `playwright-${this.browserFamily}`
+      : this._name;
   }
 
   get version(): string {
@@ -140,11 +157,24 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   }
 
   async createSession(options: EngineSessionOptions = {}): Promise<EngineSession> {
-    // Launch browser if not already launched
+    // Launch (or connect) the browser family if not already active.
     if (!this.browser) {
-      this.browser = await chromium.launch({
-        headless: options.headless !== false,
-      });
+      if (this.cdpEndpoint !== undefined) {
+        if (this.browserFamily !== 'chromium') {
+          throw new Error('cdpEndpoint requires the chromium family');
+        }
+        this.browser = await chromium.connectOverCDP(this.cdpEndpoint);
+      } else {
+        const launcher =
+          this.browserFamily === 'firefox'
+            ? (await import('playwright')).firefox
+            : this.browserFamily === 'webkit'
+              ? (await import('playwright')).webkit
+              : chromium;
+        this.browser = await launcher.launch({
+          headless: options.headless !== false,
+        });
+      }
     }
 
     const egress = options.requestPolicy ?? this.rootEgress;
@@ -375,6 +405,7 @@ class PlaywrightSession implements EngineSession {
     const pageId = `page-${this.pageCounter++}`;
     const page = new PlaywrightPage(pageId, playwrightPage, this.engine);
     this.pageMap.set(pageId, page);
+    page.registerRemoval(() => this.pageMap.delete(pageId));
     this.downloads.set(pageId, new Map());
 
     // In-page download interception (spec 10): accept the download, hold
@@ -447,7 +478,13 @@ class PlaywrightPage implements EnginePage {
   private refStore = new Map<string, StoredElement>();
   private eventWaiters: Array<() => void> = [];
   private eventsClosed = false;
+  private removeSelf: () => void = () => {};
   private pendingDialog: { dialog: import('playwright').Dialog; timer: NodeJS.Timeout } | undefined;
+
+  /** Registered by the owning session so close() removes it from the map. */
+  registerRemoval(remove: () => void): void {
+    this.removeSelf = remove;
+  }
 
   constructor(id: string, page: Page, engine: PlaywrightChromiumEngine) {
     this.id = id;
@@ -927,6 +964,7 @@ class PlaywrightPage implements EnginePage {
 
   async close(): Promise<void> {
     this.eventsClosed = true;
+    this.removeSelf();
     if (this.pendingDialog) {
       clearTimeout(this.pendingDialog.timer);
       this.pendingDialog = undefined;
