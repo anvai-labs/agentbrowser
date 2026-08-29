@@ -40,8 +40,9 @@ proves the control works. Residual risks are named, not hidden.
   pass. Mitigation path: controlled resolution + IP pinning (deferred).
 - **WebSocket upgrades** are not intercepted by `context.route`
   (`routeWebSocket` exists as a follow-up).
-- **Response-size caps** are observed (headers), not enforced per byte;
-  navigation-level fast-fail covers the document case.
+- **Response-size caps** are enforced at the choke point via
+  content-length headers (RequestPolicy.checkResponse, with a
+  real-Chromium test); streamed-body byte counting remains deferred.
 - **Unauthenticated infra planes**: `/health/ready` discloses the engine
   name/version by design (probe surface); `/metrics` exposes counters.
   Acceptable on a trusted network, documented for hardening.
