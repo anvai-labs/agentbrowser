@@ -1,0 +1,24 @@
+{
+  "v0.2.1": {
+    "darwin-arm64": {
+      "file": "obscura-aarch64-macos.tar.gz",
+      "sha256": "5233da6426ec16667d7e4374b824189c6dfb3b325e5cf3fb5f04c7bc48b52a0f"
+    },
+    "darwin-x64": {
+      "file": "obscura-x86_64-macos.tar.gz",
+      "sha256": "e6d0f8719998fa4460bccc712b20a1e524717d5c54e943f345227bd893ec9620"
+    },
+    "linux-x64": {
+      "file": "obscura-x86_64-linux.tar.gz",
+      "sha256": "6a1a66b3f1ab118fa7d31330894a868617aea68c06d75436d851356c39df1ed3"
+    },
+    "linux-arm64": {
+      "file": "obscura-aarch64-linux.tar.gz",
+      "sha256": "0297c26d583f598f0126a7271cc40750598a9a9cbd86d1d6f79b2b99097d5244"
+    },
+    "win32-x64": {
+      "file": "obscura-x86_64-windows.zip",
+      "sha256": "202e7705c30b00026dcc3d493e1d5ef4ffb436767aaf84baaec11c7ff15a1a09"
+    }
+  }
+}

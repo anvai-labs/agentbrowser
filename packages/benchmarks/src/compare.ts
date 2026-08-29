@@ -122,6 +122,8 @@ export interface EngineBenchmark {
 
 export interface RealBenchmarkOptions {
   engine: BrowserEngine;
+  /** Report label override (default: engine.name) - e.g. 'obscura'. */
+  label?: string;
   iterations?: number;
   fixturePort?: number;
   /** Start a fixture server when no port is given. */
@@ -222,7 +224,7 @@ export async function runRealBenchmarks(options: RealBenchmarkOptions): Promise<
     await service.shutdown();
 
     return {
-      engineName: options.engine.name,
+      engineName: options.label ?? options.engine.name,
       sessionCreate: evaluateTarget('sessionCreateWarm', sessionSamples),
       observation: evaluateTarget('observation', observationSamples),
       action: evaluateTarget('actionDispatch', actionSamples),

@@ -51,3 +51,4 @@ Cargo.lock
 
 # Bun compile cache
 *.bun-build
+.cache/obscura/

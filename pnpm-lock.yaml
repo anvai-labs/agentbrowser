@@ -78,6 +78,9 @@ importers:
       '@agentbrowser/engine':
         specifier: workspace:*
         version: link:../engine
+      '@agentbrowser/engine-obscura':
+        specifier: workspace:^
+        version: link:../engine-obscura
       '@agentbrowser/engine-playwright':
         specifier: workspace:^
         version: link:../engine-playwright
@@ -147,6 +150,31 @@ importers:
     devDependencies:
       vitest:
         specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.1)
+
+  packages/engine-obscura:
+    dependencies:
+      '@agentbrowser/engine':
+        specifier: workspace:*
+        version: link:../engine
+      '@agentbrowser/engine-playwright':
+        specifier: workspace:*
+        version: link:../engine-playwright
+    devDependencies:
+      '@agentbrowser/testkit':
+        specifier: workspace:*
+        version: link:../testkit
+      '@biomejs/biome':
+        specifier: ^1.9.4
+        version: 1.9.4
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
         version: 2.1.9(@types/node@22.20.1)
 
   packages/engine-playwright:

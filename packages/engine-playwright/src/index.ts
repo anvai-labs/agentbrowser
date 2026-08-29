@@ -388,6 +388,7 @@ class PlaywrightSession implements EngineSession {
   /** Completed in-page downloads by suggested filename, per page id. */
   private readonly downloads = new Map<string, Map<string, () => Promise<Buffer>>>();
   private pageCounter = 0;
+  private closed = false;
 
   constructor(context: BrowserContext, engine: PlaywrightChromiumEngine) {
     this.id = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -396,6 +397,10 @@ class PlaywrightSession implements EngineSession {
   }
 
   async newPage(options?: NewPageOptions): Promise<EnginePage> {
+    if (this.closed) {
+      throw new Error('Session is closed');
+    }
+
     const playwrightPage = await this.context.newPage();
 
     if (options?.viewport) {
@@ -450,6 +455,10 @@ class PlaywrightSession implements EngineSession {
   }
 
   async close(reason?: string): Promise<void> {
+    if (this.closed) {
+      return;
+    }
+    this.closed = true;
     // Close all pages
     for (const page of this.pageMap.values()) {
       await page.close();

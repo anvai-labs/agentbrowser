@@ -24,6 +24,7 @@
     "@agentbrowser/api": "workspace:*",
     "@agentbrowser/core": "workspace:*",
     "@agentbrowser/engine": "workspace:*",
+    "@agentbrowser/engine-obscura": "workspace:^",
     "@agentbrowser/engine-playwright": "workspace:^",
     "@agentbrowser/policy": "workspace:^",
     "@agentbrowser/protocol": "workspace:*",
