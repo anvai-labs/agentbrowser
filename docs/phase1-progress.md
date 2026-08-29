@@ -104,7 +104,7 @@ Phase 3 benchmarks, TD-025).
 
 ## Repository
 
-- Remote: https://github.com/vjsingh1984/agentbrowser (private)
+- Remote: https://github.com/anvai-labs/agentbrowser (private, migrated from vjsingh1984)
 - History begins 2026-08-23; pre-commit/pre-push/commit-msg hooks are
   active and were exercised on every commit.
 - CI first failed on a clean checkout (missing dist/ for cross-package
