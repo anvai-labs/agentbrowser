@@ -35,17 +35,30 @@ proves the control works. Residual risks are named, not hidden.
 
 ## Residual risks (accepted for the MVP, named honestly)
 
-- **DNS rebinding**: the choke point resolves via Chromium's resolver; a
-  hostname resolving to a blocked IP after the verdict is memoized would
-  pass. Mitigation path: controlled resolution + IP pinning (deferred).
-- **WebSocket upgrades** are not intercepted by `context.route`
-  (`routeWebSocket` exists as a follow-up).
-- **Response-size caps** are enforced at the choke point via
-  content-length headers (RequestPolicy.checkResponse, with a
-  real-Chromium test); streamed-body byte counting remains deferred.
-- **Unauthenticated infra planes**: `/health/ready` discloses the engine
-  name/version by design (probe surface); `/metrics` exposes counters.
-  Acceptable on a trusted network, documented for hardening.
+- **DNS rebinding (MITIGATED)**: the choke point now resolves every
+  hostname (dns.lookup, all addresses) and validates each resolved IP
+  against the SSRF rules (`RequestPolicy.checkResolvedAddresses`); the
+  verdict cache keys on the resolved set, so a changed resolution
+  re-validates. Proven against a real public rebinding-shaped DNS name
+  (localtest.me -> 127.0.0.1). IPv6/pinning hardening remains future
+  work.
+- **WebSocket upgrades (MITIGATED, with an upstream caveat)**: the http
+  choke point's fetch/fulfill proxy breaks page WebSocket connections
+  outright (upstream Playwright limitation, verified empirically); under
+  egress the engine therefore defaults to deny-all - every upgrade is
+  closed cleanly with code 1014. Selective forwarding
+  (routeWebSocket.connectToServer) is broken by the same coexistence
+  bug; without an egress policy WebSockets pass through untouched.
+- **Response-size caps (ENFORCED)**: content-length headers are checked
+  at the choke point, and responses without content-length (chunked) are
+  buffered - bounded by the policy cap - with actual bytes enforced
+  (`RequestPolicy.checkBodySize`). Both paths carry real-Chromium
+  blocking tests.
+- **Unauthenticated infra planes (HARDENED)**: `/metrics` requires
+  bearer auth when keys are configured; `/health/ready` answers
+  unauthenticated probes with a minimal `{status}` (no engine/version
+  disclosure) and returns the full payload only when authenticated;
+  `/health/live` stays open (liveness must never depend on auth).
 - **No-keys local mode** is trusted single-tenant by spec; the startup
   warning is the contract with the operator.
 - **In-memory secrets**: the SecretManager registry lives in process

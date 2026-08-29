@@ -186,8 +186,36 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     return { status: 'live', timestamp: new Date().toISOString() };
   });
 
+  const apiKeys = options.apiKeys ?? apiKeysFromEnv();
+  if (apiKeys === undefined || apiKeys.size === 0) {
+    console.warn(
+      '[agentbrowser] No API keys configured; /v1 is UNAUTHENTICATED. ' +
+        'Set AGENTBROWSER_API_KEYS=key:tenant[,key:tenant...] for multi-tenant use.'
+    );
+  }
+
+  /** Bearer check for infra planes; undefined tenant when unauthenticated. */
+  const infraTenantOf = (request: FastifyRequest): string | undefined => {
+    if (apiKeys === undefined || apiKeys.size === 0) {
+      return undefined; // no-keys local mode: everything open, loudly warned
+    }
+    const header = request.headers.authorization ?? '';
+    const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+    return token.length > 0 ? apiKeys.get(sha256Hex(token)) : undefined;
+  };
+
   fastify.get('/health/ready', async (request, reply) => {
     try {
+      // Unauthenticated probes get a minimal, disclosure-free answer.
+      const tenant = infraTenantOf(request);
+      if (tenant === undefined && apiKeys !== undefined && apiKeys.size > 0) {
+        return {
+          status: await engine.capabilities().then(
+            () => 'ready',
+            () => 'unavailable'
+          ),
+        };
+      }
       const capabilities = await engine.capabilities();
       return { status: 'ready', engine: engine.name, version: engine.version, capabilities };
     } catch (error) {
@@ -201,7 +229,17 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     }
   });
 
+  // Metrics are operational data: authenticated when keys are configured.
   fastify.get('/metrics', async (request, reply) => {
+    if (infraTenantOf(request) === undefined && apiKeys !== undefined && apiKeys.size > 0) {
+      return reply.status(401).send({
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'A valid Authorization: Bearer <apiKey> header is required.',
+          retryable: false,
+        },
+      });
+    }
     return reply.type('text/plain; version=0.0.4; charset=utf-8').send(metrics.render());
   });
 
@@ -227,14 +265,6 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   const artifactAuth = new ArtifactAuthorizer({
     key: process.env.AGENTBROWSER_ARTIFACT_KEY ?? 'dev-artifact-key',
   });
-
-  const apiKeys = options.apiKeys ?? apiKeysFromEnv();
-  if (apiKeys === undefined || apiKeys.size === 0) {
-    console.warn(
-      '[agentbrowser] No API keys configured; /v1 is UNAUTHENTICATED. ' +
-        'Set AGENTBROWSER_API_KEYS=key:tenant[,key:tenant...] for multi-tenant use.'
-    );
-  }
 
   await fastify.register(
     async (v1) => {

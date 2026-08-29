@@ -157,6 +157,39 @@ export class NetworkPolicy {
   }
 
   /**
+   * DNS-rebinding gate: validate every resolved address against the
+   * loopback/private/metadata IP checks, regardless of the hostname.
+   */
+  async checkResolvedAddresses(addresses: string[]): Promise<void> {
+    for (const address of addresses) {
+      if (this.options.blockLoopback && this.isLoopback(address)) {
+        throw new NetworkPolicyError(
+          'POLICY_DENIED',
+          `Resolved address is loopback (DNS rebinding): ${address}`,
+          false,
+          { address, rule: 'resolvedLoopback' }
+        );
+      }
+      if (this.options.blockPrivateIPs && this.isPrivateIP(address)) {
+        throw new NetworkPolicyError(
+          'POLICY_DENIED',
+          `Resolved address is private (DNS rebinding): ${address}`,
+          false,
+          { address, rule: 'resolvedPrivate' }
+        );
+      }
+      if (this.options.blockMetadata && this.isMetadataEndpoint(address)) {
+        throw new NetworkPolicyError(
+          'POLICY_DENIED',
+          `Resolved address is a metadata endpoint: ${address}`,
+          false,
+          { address, rule: 'resolvedMetadata' }
+        );
+      }
+    }
+  }
+
+  /**
    * Check if response size is within limits
    */
   async checkResponse(response: NetworkResponse): Promise<void> {
@@ -327,6 +360,7 @@ export interface SessionHostRules {
  * runs. Satisfies the engine RequestPolicy port structurally.
  */
 export class SessionHostPolicy {
+  private readonly maxResponseSizeBytes: number;
   private readonly allowedExact = new Set<string>();
   private readonly allowedSuffixes = new Set<string>();
   private readonly blockedExact = new Set<string>();
@@ -352,6 +386,7 @@ export class SessionHostPolicy {
       }
     }
     this.hasAllowList = this.allowedExact.size > 0 || this.allowedSuffixes.size > 0;
+    this.maxResponseSizeBytes = base.getConfig().maxResponseSize ?? 10 * 1024 * 1024;
   }
 
   async checkResponse(response: { headers?: Record<string, string> }): Promise<void> {
