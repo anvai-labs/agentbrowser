@@ -20,6 +20,7 @@ ADRs capture significant architectural decisions, their context, and consequence
 | [ADR-008](adr/008-process-container-isolation.md) | Process/Container Isolation for Hostile Multi-Tenancy | Accepted | Process isolation minimum for hosted multi-tenant |
 | [ADR-009](adr/009-mcp-high-level-tools.md) | MCP Exposes High-Level Safe Tools, Not Raw Playwright | Accepted | Small set of composable tools, dangerous operations excluded |
 | [ADR-010](adr/010-rust-engine-gated-by-benchmarks.md) | Rust Engine Investment Gated by Benchmarks | Accepted | Invest only when metrics prove Chromium is bottleneck |
+| [ADR-011](adr/011-cross-package-contract-single-source-of-truth.md) | Single Source of Truth for Cross-Package Contract Primitives | Proposed | Contract primitives (ref grammar, validators, shared errors, types) live once in `protocol`; surfaces import, never re-derive |
 
 ## Technical Design
 
@@ -105,6 +106,18 @@ complete and remains in [technical-design.md](technical-design.md).
 - [TD-BROWSER-5](td/TD-BROWSER-5-single-binary-mcp-distribution.md) - Single-binary
   MCP server distribution (Bun `--compile`) + release CI. **Accepted,
   implemented.** (TD-BROWSER-1..4 are reserved names; see the doc.)
+- [TD-BROWSER-6](td/TD-BROWSER-6-bounded-in-memory-collections.md) - Bounded
+  in-memory collections & eviction discipline (shared `BoundedCache`/`RingBuffer`,
+  indexed hot-path lookups). **Proposed.** Addresses `hygiene-audit.md` Theme A.
+
+## Audits
+
+- [audit.md](audit.md) - Vision-vs-implementation / security-and-spec audit
+  (2026-08-26). **Closed** — all P0/P1/P2 landed.
+- [hygiene-audit.md](hygiene-audit.md) - Engineering-hygiene audit (2026-08-31):
+  design patterns, data structures, cross-package contracts, dead code, resource
+  lifecycle. Findings grouped A–G, each grep-verified with an adversarial
+  rationalization; drives [ADR-011] and [TD-BROWSER-6].
 
 ## Template
 
