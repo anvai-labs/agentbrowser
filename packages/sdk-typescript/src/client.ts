@@ -179,6 +179,22 @@ export class AgentBrowserError extends Error {
 }
 
 /**
+ * TD-BROWSER-6: a cookie as exported by the service's scoped cookie export.
+ * Structurally the wire shape of NormalizedCookie (engine package), kept
+ * local so the SDK does not depend on the engine package.
+ */
+export interface ExportedCookie {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  expires?: number;
+  httpOnly?: boolean;
+  secure?: boolean;
+  sameSite?: 'Strict' | 'Lax' | 'None';
+}
+
+/**
  * Sessions API client
  */
 export class SessionsClient {
@@ -261,6 +277,15 @@ export class SessionsClient {
     );
 
     await this.handleResponse(response);
+  }
+
+  /** TD-BROWSER-6: scoped cookie export — the read half of the credential handoff loop. */
+  async cookies(sessionId: string): Promise<ExportedCookie[]> {
+    const response = await this.requestFn(`${this.baseUrl}/v1/sessions/${sessionId}/cookies`, {
+      headers: this.headers,
+    });
+    const body = (await this.handleResponse(response)) as { cookies: ExportedCookie[] };
+    return body.cookies;
   }
 
   async navigate(

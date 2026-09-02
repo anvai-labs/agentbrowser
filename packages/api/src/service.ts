@@ -595,6 +595,17 @@ export class AgentBrowserService {
     this.metrics?.setGauge('sessions_active', this.coordinator.getSessionCount());
   }
 
+  /** TD-BROWSER-6: scoped cookie export (ADR-005) for the credential handoff loop. */
+  async getSessionCookies(
+    sessionId: string
+  ): Promise<import('@agentbrowser/engine').NormalizedCookie[]> {
+    try {
+      return await this.coordinator.cookies(sessionId);
+    } catch (error) {
+      throw this.mapError(error);
+    }
+  }
+
   // ---- pages --------------------------------------------------------------
 
   async createPage(sessionId: string): Promise<ServicePageView> {

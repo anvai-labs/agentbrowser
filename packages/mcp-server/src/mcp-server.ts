@@ -15,6 +15,7 @@ import type {
   ActionResult,
   ArtifactRef,
   ClientOptions,
+  ExportedCookie,
   ExtractRequest,
   ExtractResult,
   NavigationRequest,
@@ -28,13 +29,15 @@ import type {
   SessionResponse,
 } from '@agentbrowser/sdk-typescript';
 
-export type { ClientOptions };
+export type { ClientOptions, ExportedCookie };
 
 /** The slice of the SDK the MCP server depends on. */
 export interface McpClient {
   sessions: {
     create(request: SessionRequest): Promise<SessionResponse>;
     close(sessionId: string): Promise<void>;
+    /** TD-BROWSER-6: scoped cookie export for the credential handoff loop. */
+    cookies(sessionId: string): Promise<ExportedCookie[]>;
     createPage(sessionId: string): Promise<PageResponse>;
     navigate(
       sessionId: string,
@@ -139,6 +142,23 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
         // next tool call can be navigate or observe.
         const page = await client.sessions.createPage(session.sessionId);
         return { ...session, pageId: page.pageId };
+      },
+    },
+
+    {
+      name: 'browser_cookies',
+      description:
+        'Export the session context cookies (TD-BROWSER-6). Persist them and pass them back ' +
+        'via browser_create `cookies` to re-enter an authenticated session without re-login.',
+      inputSchema: {
+        type: 'object',
+        properties: { sessionId: { type: 'string' } },
+        required: ['sessionId'],
+      },
+      handler: async (args) => {
+        const sessionId = String(args.sessionId);
+        const cookies = await client.sessions.cookies(sessionId);
+        return { sessionId, cookies };
       },
     },
 

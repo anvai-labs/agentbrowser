@@ -164,6 +164,19 @@ export class SessionCoordinator {
   }
 
   /**
+   * TD-BROWSER-6: scoped cookie export (ADR-005) — the read half of the
+   * credential handoff loop: log in once, then seed future sessions via the
+   * create request's `cookies`.
+   */
+  async cookies(sessionId: string): Promise<import('@agentbrowser/engine').NormalizedCookie[]> {
+    const session = this.get(sessionId);
+    if (!session) {
+      throw new Error('SESSION_NOT_FOUND');
+    }
+    return session.engineSession.cookies();
+  }
+
+  /**
    * Get session by ID
    */
   get(sessionId: string): SessionContext | undefined {

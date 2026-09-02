@@ -32,6 +32,9 @@ describe('AgentBrowser MCP server', () => {
         createdAt: '2026-08-23T10:00:00Z',
       }),
       close: vi.fn().mockResolvedValue(undefined),
+      cookies: vi
+        .fn()
+        .mockResolvedValue([{ name: 'sid', value: 'abc', domain: 'example.com', path: '/' }]),
       createPage: vi
         .fn()
         .mockResolvedValue({ pageId: 'pg_1', sessionId: 'ses_1', status: 'ready' }),
@@ -98,6 +101,27 @@ describe('AgentBrowser MCP server', () => {
       expect(response.result.protocolVersion).toBe('2024-11-05');
       expect(response.result.serverInfo.name).toBe('agentbrowser');
       expect(response.result.capabilities.tools).toBeDefined();
+    });
+  });
+
+  describe('browser_cookies (TD-BROWSER-6)', () => {
+    it('lists the tool', async () => {
+      const response = JSON.parse(await request('td1', 'tools/list'));
+      const names = response.result.tools.map((tool: { name: string }) => tool.name);
+      expect(names).toContain('browser_cookies');
+    });
+
+    it('exports cookies through the service client', async () => {
+      const response = JSON.parse(
+        await request('td2', 'tools/call', {
+          name: 'browser_cookies',
+          arguments: { sessionId: 'ses_1' },
+        })
+      );
+      expect(sessions.cookies).toHaveBeenCalledWith('ses_1');
+      const inner = JSON.parse(response.result.content[0].text);
+      expect(inner.sessionId).toBe('ses_1');
+      expect(inner.cookies[0]).toMatchObject({ name: 'sid', value: 'abc' });
     });
   });
 

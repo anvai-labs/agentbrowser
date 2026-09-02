@@ -77,6 +77,20 @@ describe('AgentBrowserService', () => {
     });
   });
 
+  describe('cookie export (TD-BROWSER-6)', () => {
+    it('exports an array for a live session', async () => {
+      const session = await service.createSession({ tenantId: 't1' });
+      const result = await service.getSessionCookies(session.sessionId);
+      expect(Array.isArray(result)).toBe(true);
+    });
+
+    it('rejects unknown sessions', async () => {
+      await expect(service.getSessionCookies('ses_missing')).rejects.toThrow(
+        /Session does not exist/i
+      );
+    });
+  });
+
   describe('page lifecycle', () => {
     let sessionId: string;
 
