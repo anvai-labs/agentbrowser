@@ -129,6 +129,11 @@ export interface ServiceActResult {
 
 export interface ServiceDependencies {
   engine: BrowserEngine;
+  /**
+   * TD-BROWSER-7 Phase 1: named auxiliary engines. createSession routes by
+   * the request's `engine` field; unknown names fail loudly.
+   */
+  engines?: Record<string, BrowserEngine>;
   coordinator?: SessionCoordinator;
   normalizer?: ObservationNormalizer;
   executor?: ActionExecutor;
@@ -197,6 +202,7 @@ export type PartialObservation = {
 
 export class AgentBrowserService {
   private readonly engine: BrowserEngine;
+  private readonly engines: Map<string, BrowserEngine> = new Map();
   private readonly coordinator: SessionCoordinator;
   private readonly normalizer: ObservationNormalizer;
   private readonly executor: ActionExecutor;
@@ -226,6 +232,9 @@ export class AgentBrowserService {
 
   constructor(deps: ServiceDependencies) {
     this.engine = deps.engine;
+    for (const [name, engine] of Object.entries(deps.engines ?? {})) {
+      this.engines.set(name, engine);
+    }
     this.coordinator =
       deps.coordinator ?? new SessionCoordinator({ cleanupCheckIntervalMs: 3_600_000 });
     this.normalizer = deps.normalizer ?? new ObservationNormalizer();
@@ -496,6 +505,7 @@ export class AgentBrowserService {
 
     return this.traced('session.create', { tenantId: request.tenantId ?? '' }, async () => {
       const engineRequest: EngineSessionOptions & { engine: 'auto' } = { engine: 'auto' };
+      const engine = this.resolveEngine(request.engine);
       if (request.viewport !== undefined) engineRequest.viewport = request.viewport;
       if (request.locale !== undefined) engineRequest.locale = request.locale;
       if (request.timezoneId !== undefined) engineRequest.timezoneId = request.timezoneId;
@@ -523,7 +533,7 @@ export class AgentBrowserService {
               : {}),
             requestPolicy: sessionPolicy,
           },
-          this.engine
+          engine
         );
       } catch (error) {
         throw this.mapError(error);
@@ -604,6 +614,25 @@ export class AgentBrowserService {
     } catch (error) {
       throw this.mapError(error);
     }
+  }
+
+  /**
+   * TD-BROWSER-7 Phase 1: route sessions by engine name. Default/absent/"auto"
+   * resolves to the primary engine; unknown names fail loudly - a session must
+   * never silently run on a different engine than the one requested.
+   */
+  private resolveEngine(name?: string): BrowserEngine {
+    if (name === undefined || name === 'auto' || name === this.engine.name) {
+      return this.engine;
+    }
+    const engine = this.engines.get(name);
+    if (engine === undefined) {
+      const registered = ['auto', this.engine.name, ...this.engines.keys()].join(', ');
+      throw new Error(
+        `ENGINE_NOT_FOUND: no engine registered as "${name}". Registered: ${registered}`
+      );
+    }
+    return engine;
   }
 
   // ---- pages --------------------------------------------------------------

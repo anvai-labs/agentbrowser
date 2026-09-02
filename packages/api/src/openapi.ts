@@ -216,7 +216,11 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               required: ['tenantId'],
               properties: {
                 tenantId: { type: 'string', description: 'Tenant that owns the session.' },
-                engine: { type: 'string', description: 'Engine to use, e.g. playwright-chromium.' },
+                engine: {
+                  type: 'string',
+                  description:
+                    'Engine to use. Absent/"auto" selects the primary engine; other names must be registered (TD-BROWSER-7 registry). e.g. playwright-chromium.',
+                },
                 headless: { type: 'boolean' },
                 viewport: ref('Viewport'),
                 locale: { type: 'string' },

@@ -16,6 +16,15 @@ worked around silently.
 | Firefox / WebKit | `engine-playwright` (`browser:`) | Supported (availability-gated in CI where browsers are installed) | Pass | Enforced |
 | FakeEngine | `testkit` | Deterministic reference | Pass (reference) | N/A (no network) |
 | Obscura v0.2.1 | `engine-obscura` | **Experimental, benchmark-only** (spec §17.2 backend #3) | Pass (data: URLs) | **NOT enforceable** - see below |
+| Safari (real, via safaridriver) | `engine-safari` (TD-BROWSER-7 Phase 2) | **Planned** - macOS only, always headed, `safaridriver --enable` required | Planned (gated on macOS + enablement) | **NOT enforceable** - requests with a policy fail loudly (`EGRESS_UNSUPPORTED`) |
+
+## Engine registry (TD-BROWSER-7 Phase 1)
+
+`AgentBrowserService` accepts named auxiliary engines
+(`ServiceDependencies.engines`); `createSession` routes by the request's
+`engine` field. Absent/`"auto"` resolves to the primary engine; an unknown
+name fails loudly (`ENGINE_NOT_FOUND`) - a session never silently runs on a
+different engine than the one requested.
 
 ## Obscura (experimental)
 
