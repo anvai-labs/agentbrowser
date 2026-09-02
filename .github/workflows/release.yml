@@ -168,12 +168,20 @@ jobs:
           chmod +x out/server/agentbrowser-server
 
       - name: Tar
-        run: tar -czf "agentbrowser-server-${{ matrix.target }}.tar.gz" -C out server
+        # matrix.target carries a server- prefix (it names the artifact);
+        # strip it so the published file is agentbrowser-server-<target>.
+        run: |
+          FILE="agentbrowser-server-${{ matrix.target }}.tar.gz"
+          FILE="${FILE/agentbrowser-server-server-/agentbrowser-server-}"
+          echo "FILE=$FILE" >> "$GITHUB_ENV"
+          tar -czf "$FILE" -C out server
 
       - name: Smoke — real browser session from the extracted tarball
+        env:
+          FILE: ${{ env.FILE }}
         run: |
           rm -rf /tmp/abserver && mkdir -p /tmp/abserver
-          tar -xzf "agentbrowser-server-${{ matrix.target }}.tar.gz" -C /tmp/abserver
+          tar -xzf "$FILE" -C /tmp/abserver
           export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/browsers"
           # pnpm deploy keeps transitive deps under .pnpm; resolve the CLI there.
           PW_CLI="$(echo /tmp/abserver/server/node_modules/.pnpm/playwright@*/node_modules/playwright/cli.js)"
@@ -195,7 +203,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: agentbrowser-server-${{ matrix.target }}.tar.gz
+          path: ${{ env.FILE }}
           if-no-files-found: error
 
   release:
