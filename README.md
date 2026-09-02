@@ -35,8 +35,16 @@ runtime, no repo checkout. Distribution design:
 
 Tool calls drive an **AgentBrowser service** (default `http://localhost:3000`;
 override with `AGENTBROWSER_BASE_URL`, authenticate with
-`AGENTBROWSER_API_KEY`). Run the service from a repo checkout until a service
-distribution ships (the Homebrew package covers the MCP binary only).
+`AGENTBROWSER_API_KEY`). Since v1.5.0 the same Homebrew formula ships the
+service too — one install, both halves:
+
+```bash
+brew services start anvai-labs/tap/agentbrowser   # service on 127.0.0.1:3000
+```
+
+(First start bootstraps Chromium into `$(brew --prefix)/var/agentbrowser/browsers`.
+Without Homebrew, use the `agentbrowser-server-<target>.tar.gz` release assets —
+they need only `node` on PATH.)
 
 ## Status
 
