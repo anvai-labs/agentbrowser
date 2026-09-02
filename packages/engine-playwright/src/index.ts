@@ -19,6 +19,7 @@ import type {
   NavigationRequest,
   NavigationResult,
   NewPageOptions,
+  NormalizedCookie,
   ObservationRequest,
   PdfRequest,
   RawPageState,
@@ -158,29 +159,35 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
 
   async createSession(options: EngineSessionOptions = {}): Promise<EngineSession> {
     // Launch (or connect) the browser family if not already active.
-    if (!this.browser) {
-      if (this.cdpEndpoint !== undefined) {
-        if (this.browserFamily !== 'chromium') {
-          throw new Error('cdpEndpoint requires the chromium family');
-        }
-        this.browser = await chromium.connectOverCDP(this.cdpEndpoint);
-      } else {
-        const launcher =
-          this.browserFamily === 'firefox'
-            ? (await import('playwright')).firefox
-            : this.browserFamily === 'webkit'
-              ? (await import('playwright')).webkit
-              : chromium;
-        this.browser = await launcher.launch({
-          headless: options.headless !== false,
-        });
+    // TD-BROWSER-6: an explicitly headed session gets a DEDICATED browser.
+    // The shared browser is the throughput story for the (default) headless
+    // pool; a headed session is an interactive, user-visible artifact whose
+    // mode must never be silently overridden by — or override — the shared
+    // instance (the old singleton silently launched every later session
+    // headless). The dedicated browser is owned by the session and closed
+    // with it, so an interactive crash cannot take the pool down.
+    let browser: Browser;
+    if (this.cdpEndpoint !== undefined) {
+      if (this.browserFamily !== 'chromium') {
+        throw new Error('cdpEndpoint requires the chromium family');
       }
+      if (!this.browser) {
+        this.browser = await chromium.connectOverCDP(this.cdpEndpoint);
+      }
+      browser = this.browser;
+    } else if (options.headless === false) {
+      browser = await this.launchBrowser(false);
+    } else {
+      if (!this.browser) {
+        this.browser = await this.launchBrowser(true);
+      }
+      browser = this.browser;
     }
 
     const egress = options.requestPolicy ?? this.rootEgress;
 
     // Create browser context (incognito isolation)
-    const context = await this.browser.newContext({
+    const context = await browser.newContext({
       viewport: options.viewport || { width: 1280, height: 720 },
       locale: options.locale || 'en-US',
       timezoneId: options.timezoneId || 'America/New_York',
@@ -216,7 +223,22 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       await context.addCookies(toAdd as Parameters<typeof context.addCookies>[0]);
     }
 
-    return new PlaywrightSession(context, this);
+    return new PlaywrightSession(context, this, options.headless === false ? browser : undefined);
+  }
+
+  /**
+   * Launch a browser of the configured family. TD-BROWSER-6: factored out of
+   * createSession so headed (dedicated) and headless (shared) launches share
+   * one code path.
+   */
+  private async launchBrowser(headless: boolean): Promise<Browser> {
+    const launcher =
+      this.browserFamily === 'firefox'
+        ? (await import('playwright')).firefox
+        : this.browserFamily === 'webkit'
+          ? (await import('playwright')).webkit
+          : chromium;
+    return launcher.launch({ headless });
   }
 
   /**
@@ -390,10 +412,13 @@ class PlaywrightSession implements EngineSession {
   private pageCounter = 0;
   private closed = false;
 
-  constructor(context: BrowserContext, engine: PlaywrightChromiumEngine) {
+  private ownedBrowser: Browser | undefined;
+
+  constructor(context: BrowserContext, engine: PlaywrightChromiumEngine, ownedBrowser?: Browser) {
     this.id = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     this.context = context;
     this.engine = engine;
+    this.ownedBrowser = ownedBrowser;
   }
 
   async newPage(options?: NewPageOptions): Promise<EnginePage> {
@@ -441,8 +466,8 @@ class PlaywrightSession implements EngineSession {
     return Array.from(this.pageMap.values());
   }
 
-  async cookies(): Promise<any[]> {
-    return await this.context.cookies();
+  async cookies(): Promise<NormalizedCookie[]> {
+    return (await this.context.cookies()) as NormalizedCookie[];
   }
 
   /** Bytes of a completed in-page download (by suggested filename). */
@@ -467,6 +492,17 @@ class PlaywrightSession implements EngineSession {
 
     // Close context
     await this.context.close();
+
+    // TD-BROWSER-6: a headed session owns its browser; dispose it. Failure to
+    // close must not fail the session close (the OS reaps the process).
+    if (this.ownedBrowser !== undefined) {
+      try {
+        await this.ownedBrowser.close();
+      } catch {
+        // already gone or unresponsive; nothing further to release
+      }
+      this.ownedBrowser = undefined;
+    }
   }
 }
 

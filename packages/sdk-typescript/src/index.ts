@@ -6,3 +6,5 @@
 
 export * from './client.js';
 export * from './subprocess.js';
+
+export type { ExportedCookie } from './client';
