@@ -123,7 +123,10 @@ jobs:
           - target: server-darwin-arm64
             os: macos-latest
           - target: server-darwin-x64
-            os: macos-13
+            # The fat tarball is pure JS plus a universal optional fsevents —
+            # no arch-specific build step — and macos-13 runners starve
+            # (see sandhi's release.yml). Build x64 on the arm64 runner.
+            os: macos-latest
           - target: server-linux-x64
             os: ubuntu-latest
           - target: server-linux-arm64
