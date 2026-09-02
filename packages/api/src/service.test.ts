@@ -24,10 +24,17 @@ import { ServiceError } from './service';
 describe('AgentBrowserService', () => {
   let engine: FakeEngine;
   let service: AgentBrowserService;
+  let serviceB: AgentBrowserService;
 
   beforeEach(() => {
     engine = new FakeEngine();
+    const engineB = new FakeEngine();
+    (engineB as unknown as { _name: string })._name = 'fake-engine-b';
     service = new AgentBrowserService({ engine });
+    serviceB = new AgentBrowserService({
+      engine,
+      engines: { 'fake-engine-b': engineB },
+    });
   });
 
   describe('session lifecycle', () => {
@@ -74,6 +81,24 @@ describe('AgentBrowserService', () => {
 
     it('should reject closing an unknown session', async () => {
       await expect(service.closeSession('ses_missing')).rejects.toThrow(ServiceError);
+    });
+  });
+
+  describe('engine registry (TD-BROWSER-7 Phase 1)', () => {
+    it('routes by engine name to a registered auxiliary engine', async () => {
+      const result = await serviceB.createSession({ tenantId: 't1', engine: 'fake-engine-b' });
+      expect(result.engine.name).toBe('fake-engine-b');
+    });
+
+    it('defaults to the primary engine', async () => {
+      const result = await service.createSession({ tenantId: 't1' });
+      expect(result.engine.name).toBe('fake-engine');
+    });
+
+    it('fails loudly on an unknown engine name', async () => {
+      await expect(service.createSession({ tenantId: 't1', engine: 'safari' })).rejects.toThrow(
+        /ENGINE_NOT_FOUND/
+      );
     });
   });
 

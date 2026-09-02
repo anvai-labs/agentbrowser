@@ -20,6 +20,7 @@ ADRs capture significant architectural decisions, their context, and consequence
 | [ADR-008](adr/008-process-container-isolation.md) | Process/Container Isolation for Hostile Multi-Tenancy | Accepted | Process isolation minimum for hosted multi-tenant |
 | [ADR-009](adr/009-mcp-high-level-tools.md) | MCP Exposes High-Level Safe Tools, Not Raw Playwright | Accepted | Small set of composable tools, dangerous operations excluded |
 | [ADR-010](adr/010-rust-engine-gated-by-benchmarks.md) | Rust Engine Investment Gated by Benchmarks | Accepted | Invest only when metrics prove Chromium is bottleneck |
+| [ADR-011](adr/011-safari-via-safaridriver-webdriver.md) | Real Safari via Safaridriver (WebDriver), Not Playwright WebKit | Accepted | Real-Safari login flows via macOS safaridriver; always headed; egress unenforceable (loud) |
 
 ## Technical Design
 
