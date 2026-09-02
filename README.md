@@ -4,6 +4,48 @@
 
 AgentBrowser is an agent-native browser service designed for AI agents to safely and reliably operate authorized websites through a compact, deterministic interface.
 
+## Install (Homebrew)
+
+```bash
+brew install anvai-labs/tap/agentbrowser
+```
+
+Installs the self-contained MCP server binary (`agentbrowser-mcp`) — no Node
+runtime, no repo checkout. Distribution design:
+[TD-BROWSER-5](docs/td/TD-BROWSER-5-single-binary-mcp-distribution.md).
+
+### Consuming as an MCP server
+
+`agentbrowser-mcp` speaks newline-delimited JSON-RPC over stdio (MCP
+2024-11-05). Point an MCP client at the binary — it takes no arguments:
+
+- **Claude Code**: `claude mcp add agentbrowser -- $(brew --prefix)/opt/agentbrowser/bin/agentbrowser-mcp`
+- **Claude Desktop** (`claude_desktop_config.json`):
+  ```json
+  {"mcpServers": {"agentbrowser": {"command": "/opt/homebrew/opt/agentbrowser/bin/agentbrowser-mcp"}}}
+  ```
+- **Codex** (`~/.codex/config.toml`):
+  ```toml
+  [mcp_servers.agentbrowser]
+  command = "/opt/homebrew/opt/agentbrowser/bin/agentbrowser-mcp"
+  ```
+- **Victor** (`~/.victor/mcp.yaml`): replace the checkout-bound
+  `["node", ".../mcp-server/dist/bin.js"]` invocation with
+  `command: /opt/homebrew/opt/agentbrowser/bin/agentbrowser-mcp`.
+
+Tool calls drive an **AgentBrowser service** (default `http://localhost:3000`;
+override with `AGENTBROWSER_BASE_URL`, authenticate with
+`AGENTBROWSER_API_KEY`). Since v1.5.0 the same Homebrew formula ships the
+service too — one install, both halves:
+
+```bash
+brew services start anvai-labs/tap/agentbrowser   # service on 127.0.0.1:3000
+```
+
+(First start bootstraps Chromium into `$(brew --prefix)/var/agentbrowser/browsers`.
+Without Homebrew, use the `agentbrowser-server-<target>.tar.gz` release assets —
+they need only `node` on PATH.)
+
 ## Status
 
 🚧 **Under Active Development** - This is the MVP implementation following the [technical design](docs/technical-design.md) and [ADR documentation](docs/adr/).
