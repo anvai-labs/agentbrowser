@@ -216,7 +216,11 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               required: ['tenantId'],
               properties: {
                 tenantId: { type: 'string', description: 'Tenant that owns the session.' },
-                engine: { type: 'string', description: 'Engine to use, e.g. playwright-chromium.' },
+                engine: {
+                  type: 'string',
+                  description:
+                    'Engine to use. Absent/"auto" selects the primary engine; other names must be registered (TD-BROWSER-7 registry). e.g. playwright-chromium.',
+                },
                 headless: { type: 'boolean' },
                 viewport: ref('Viewport'),
                 locale: { type: 'string' },
@@ -282,6 +286,48 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             },
             '404': NOT_FOUND,
             '500': INTERNAL,
+          },
+        },
+      },
+
+      '/v1/sessions/{sessionId}/cookies': {
+        get: {
+          operationId: 'getSessionCookies',
+          summary: 'Export session cookies',
+          description:
+            'Scoped credential export (ADR-005, TD-BROWSER-6): read the session context ' +
+            'cookies so a caller can re-seed future sessions via the create request ' +
+            '`cookies` option. Ownership required.',
+          tags: ['sessions'],
+          parameters: [sessionIdParam],
+          responses: {
+            '200': {
+              description: 'The session context cookies.',
+              content: json({
+                type: 'object',
+                required: ['cookies'],
+                properties: {
+                  cookies: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      required: ['name', 'value', 'domain', 'path'],
+                      properties: {
+                        name: { type: 'string' },
+                        value: { type: 'string' },
+                        domain: { type: 'string' },
+                        path: { type: 'string' },
+                        expires: { type: 'number' },
+                        httpOnly: { type: 'boolean' },
+                        secure: { type: 'boolean' },
+                        sameSite: { type: 'string', enum: ['Strict', 'Lax', 'None'] },
+                      },
+                    },
+                  },
+                },
+              }),
+            },
+            '404': NOT_FOUND,
           },
         },
       },

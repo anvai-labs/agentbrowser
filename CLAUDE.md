@@ -339,3 +339,12 @@ const session = await engine.createSession({});
 - **docs/implementation-roadmap.md**: Progress tracking
 - **docs/adr/*.md**: Architecture decision records
 - **agentbrowser-mvp-spec.md**: Complete MVP specification with principles and invariants
+
+## Distributed binary (Homebrew)
+
+The MCP server ships as a self-contained binary via `anvai-labs/tap/agentbrowser`
+(see [TD-BROWSER-5](docs/td/TD-BROWSER-5-single-binary-mcp-distribution.md) and
+the release workflow's target matrix). Consumer wiring instructions live in the
+README's "Consuming as an MCP server" section and are printed as brew caveats
+by the tap's formula — keep all three in sync when the server's env contract
+(`AGENTBROWSER_BASE_URL`, `AGENTBROWSER_API_KEY`) changes.

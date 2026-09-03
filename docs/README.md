@@ -20,7 +20,8 @@ ADRs capture significant architectural decisions, their context, and consequence
 | [ADR-008](adr/008-process-container-isolation.md) | Process/Container Isolation for Hostile Multi-Tenancy | Accepted | Process isolation minimum for hosted multi-tenant |
 | [ADR-009](adr/009-mcp-high-level-tools.md) | MCP Exposes High-Level Safe Tools, Not Raw Playwright | Accepted | Small set of composable tools, dangerous operations excluded |
 | [ADR-010](adr/010-rust-engine-gated-by-benchmarks.md) | Rust Engine Investment Gated by Benchmarks | Accepted | Invest only when metrics prove Chromium is bottleneck |
-| [ADR-011](adr/011-cross-package-contract-single-source-of-truth.md) | Single Source of Truth for Cross-Package Contract Primitives | Proposed | Contract primitives (ref grammar, validators, shared errors, types) live once in `protocol`; surfaces import, never re-derive |
+| [ADR-011](adr/011-safari-via-safaridriver-webdriver.md) | Real Safari via Safaridriver (WebDriver), Not Playwright WebKit | Accepted | Real-Safari login flows via macOS safaridriver; always headed; egress unenforceable (loud) |
+| [ADR-011 (develop)](adr/011-cross-package-contract-single-source-of-truth.md) | Single Source of Truth for Cross-Package Contract Primitives | Proposed | NUMBERING COLLISION with main's ADR-011 — renumber to the next free slot; both docs kept until then |
 
 ## Technical Design
 

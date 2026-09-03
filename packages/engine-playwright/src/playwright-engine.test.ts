@@ -19,6 +19,61 @@ describe('PlaywrightChromiumEngine', () => {
     await engine.close();
   });
 
+  // TD-BROWSER-6: headed sessions get a dedicated browser; the shared
+  // headless browser must be untouched by them. Headed needs a display, so
+  // the headed pair runs on darwin only (linux CI has no window server).
+  describe('headed sessions (TD-BROWSER-6)', () => {
+    const headedSupported = process.platform === 'darwin';
+    type Ctx = { context: import('playwright').BrowserContext };
+
+    it.runIf(headedSupported)(
+      'gives a headed session its own browser, not the shared one',
+      async () => {
+        const headless = await engine.createSession({ headless: true });
+        const headed = await engine.createSession({ headless: false });
+        const headlessBrowser = (headless as unknown as Ctx).context.browser();
+        const headedBrowser = (headed as unknown as Ctx).context.browser();
+        expect(headedBrowser).toBeDefined();
+        expect(headlessBrowser).toBeDefined();
+        expect(headedBrowser).not.toBe(headlessBrowser);
+        await headed.close();
+        await headless.close();
+      }
+    );
+
+    it.runIf(headedSupported)(
+      'closing a headed session disposes its browser but not the shared one',
+      async () => {
+        const headless = await engine.createSession({ headless: true });
+        const headed = await engine.createSession({ headless: false });
+        const headlessBrowser = (headless as unknown as Ctx).context.browser();
+        const headedBrowser = (headed as unknown as Ctx).context.browser();
+        await headed.close();
+        expect(headedBrowser?.isConnected()).toBe(false);
+        expect(headlessBrowser?.isConnected()).toBe(true);
+        await headless.close();
+      }
+    );
+
+    it('headless sessions still share one browser (performance anchor)', async () => {
+      const a = await engine.createSession({ headless: true });
+      const b = await engine.createSession({ headless: true });
+      expect((a as unknown as Ctx).context.browser()).toBe((b as unknown as Ctx).context.browser());
+      await a.close();
+      await b.close();
+    });
+
+    it('seeds and exports cookies for the credential handoff loop', async () => {
+      const session = await engine.createSession({
+        headless: true,
+        cookies: [{ name: 'sid', value: 'abc', domain: 'example.com', path: '/' }],
+      });
+      const cookies = await session.cookies();
+      expect(cookies.some((c) => c.name === 'sid' && c.value === 'abc')).toBe(true);
+      await session.close();
+    });
+  });
+
   describe('engine properties', () => {
     it('should have engine name as playwright-chromium', () => {
       expect(engine.name).toBe('playwright-chromium');

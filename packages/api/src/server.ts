@@ -413,6 +413,18 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         }
       });
 
+      v1.get('/sessions/:sessionId/cookies', async (request, reply) => {
+        try {
+          const { sessionId } = request.params as { sessionId: string };
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+            return reply;
+          }
+          return reply.send({ cookies: await service.getSessionCookies(sessionId) });
+        } catch (error) {
+          return fail(reply, error);
+        }
+      });
+
       v1.delete('/sessions/:sessionId', async (request, reply) => {
         try {
           const { sessionId } = request.params as { sessionId: string };

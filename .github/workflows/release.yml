@@ -107,10 +107,113 @@ jobs:
           path: packages/mcp-server/dist-bin/${{ matrix.artifact }}
           if-no-files-found: error
 
+  server-packages:
+    # TD-BROWSER-5 shipped only the MCP adapter; consumers still needed a repo
+    # checkout for the service it drives. Each target is a self-contained
+    # "fat tarball": the built API server plus its pruned production
+    # node_modules (Playwright is bundler-hostile — its package tree must ship
+    # intact, so no esbuild/bun single-file trick here). All four targets are
+    # native builds, so every tarball gets the full browser smoke.
+    name: Server ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: server-darwin-arm64
+            os: macos-latest
+          - target: server-darwin-x64
+            # The fat tarball is pure JS plus a universal optional fsevents —
+            # no arch-specific build step — and macos-13 runners starve
+            # (see sandhi's release.yml). Build x64 on the arm64 runner.
+            os: macos-latest
+          - target: server-linux-x64
+            os: ubuntu-latest
+          - target: server-linux-arm64
+            os: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages
+        run: pnpm -r build
+
+      - name: Deploy the API server with pruned production dependencies
+        run: pnpm --filter @agentbrowser/api deploy --prod out/server
+
+      - name: Stamp version and commit
+        run: |
+          node -p "JSON.stringify({ version: require('./packages/mcp-server/package.json').version, commit: process.env.GITHUB_SHA }, null, 2)" > out/server/VERSION.json
+
+      - name: Bundle the generic launcher
+        run: |
+          # For non-Homebrew consumers: keeps the Playwright browser cache out
+          # of the package tree and requires only `node` on PATH.
+          cat > out/server/agentbrowser-server <<'LAUNCH'
+          #!/bin/sh
+          set -eu
+          HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+          : "${PLAYWRIGHT_BROWSERS_PATH:=${XDG_CACHE_HOME:-$HOME/.cache}/agentbrowser/browsers}"
+          export PLAYWRIGHT_BROWSERS_PATH
+          exec node "$HERE/dist/bin.js" "$@"
+          LAUNCH
+          chmod +x out/server/agentbrowser-server
+
+      - name: Tar
+        # matrix.target carries a server- prefix (it names the artifact);
+        # strip it so the published file is agentbrowser-server-<target>.
+        run: |
+          FILE="agentbrowser-server-${{ matrix.target }}.tar.gz"
+          FILE="${FILE/agentbrowser-server-server-/agentbrowser-server-}"
+          echo "FILE=$FILE" >> "$GITHUB_ENV"
+          tar -czf "$FILE" -C out server
+
+      - name: Smoke — real browser session from the extracted tarball
+        env:
+          FILE: ${{ env.FILE }}
+        run: |
+          rm -rf /tmp/abserver && mkdir -p /tmp/abserver
+          tar -xzf "$FILE" -C /tmp/abserver
+          export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/browsers"
+          # pnpm deploy keeps transitive deps under .pnpm; resolve the CLI there.
+          PW_CLI="$(echo /tmp/abserver/server/node_modules/.pnpm/playwright@*/node_modules/playwright/cli.js)"
+          node "$PW_CLI" install chromium
+          /tmp/abserver/server/agentbrowser-server &
+          SERVER_PID=$!
+          for i in $(seq 1 30); do
+            curl -fsS -o /dev/null http://127.0.0.1:3000/openapi.json && break
+            sleep 1
+          done
+          curl -fsS -o /dev/null http://127.0.0.1:3000/openapi.json
+          SID="$(curl -fsS -X POST http://127.0.0.1:3000/v1/sessions -H 'content-type: application/json' -d '{"tenantId":"release-smoke"}' | node -e "process.stdin.on('data',d=>process.stdout.write(JSON.parse(d).sessionId))")"
+          PID="$(curl -fsS -X POST http://127.0.0.1:3000/v1/sessions/$SID/pages -H 'content-type: application/json' -d '{}' | node -e "process.stdin.on('data',d=>process.stdout.write(JSON.parse(d).pageId))")"
+          curl -fsS -X POST http://127.0.0.1:3000/v1/sessions/$SID/pages/$PID/navigate -H 'content-type: application/json' -d '{"url":"https://example.com"}' >/dev/null
+          OBS="$(curl -fsS -X POST http://127.0.0.1:3000/v1/sessions/$SID/pages/$PID/observe -H 'content-type: application/json' -d '{}')"
+          echo "$OBS" | grep -q '"title":"Example Domain"' || { echo "::error::observe did not return the expected page"; exit 1; }
+          kill $SERVER_PID
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ env.FILE }}
+          if-no-files-found: error
+
   release:
     name: Checksums and GitHub Release
     runs-on: ubuntu-latest
-    needs: binaries
+    # The server tarballs are part of the release: wait for them too.
+    needs: [binaries, server-packages]
     steps:
       - uses: actions/checkout@v4
 
@@ -122,7 +225,7 @@ jobs:
       - name: Compute checksums
         run: |
           cd release-assets
-          sha256sum agentbrowser-mcp-* > sha256sums.txt
+          sha256sum agentbrowser-mcp-* agentbrowser-server-* > sha256sums.txt
           cat sha256sums.txt
 
       - name: Write release notes
@@ -133,10 +236,24 @@ jobs:
           ## agentbrowser-mcp ${{ github.ref_name }}
 
           Single-binary MCP server distribution (TD-BROWSER-5). The binary is
-          **only the MCP stdio adapter**: it still requires a reachable
-          AgentBrowser server for anything beyond the protocol handshake.
-          Deploy the server once (Docker image or `node packages/api/dist/bin.js`);
-          every consumer process spawns the lightweight binary.
+          **only the MCP stdio adapter**: point it at a reachable AgentBrowser
+          service via `AGENTBROWSER_BASE_URL` (default `http://localhost:3000`).
+
+          The service is now installable too: `agentbrowser-server-<target>.tar.gz`
+          is a self-contained server build (pruned production `node_modules` +
+          compiled `dist/`) whose every artifact passed a real-browser smoke —
+          create a session, navigate to example.com, observe semantic elements.
+
+          ```sh
+          tar -xzf agentbrowser-server-<target>.tar.gz && ./server/agentbrowser-server
+          # needs node on PATH; browsers bootstrap on first run into
+          # ${XDG_CACHE_HOME:-$HOME/.cache}/agentbrowser/browsers
+          # (override with PLAYWRIGHT_BROWSERS_PATH)
+          ```
+
+          Homebrew users get both halves in one command:
+          `brew install anvai-labs/tap/agentbrowser`
+          (`brew services start anvai-labs/tap/agentbrowser` runs the service).
 
           ### Smoke coverage
 
