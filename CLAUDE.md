@@ -129,18 +129,29 @@ main (release branch)
 
 4. **CI runs automatically**: Type-check, lint, tests, build must pass
 
-5. **Merge to develop**: After review, merge to `develop`
+5. **Adversarial review**: substantive PRs (code, workflow, protocol surface) get an independent
+   adversarial review pass before merge — the reviewer's job is to falsify the PR's claims, and
+   confirmed findings are fixed pre-merge. (This has been the documentation discipline all along —
+   every audit finding carries a rationalization "so an adversarial reviewer can independently
+   confirm"; it is also the merge norm.)
 
-6. **Phase complete?** Merge `develop` to `main` with PR:
+6. **Merge to develop**: After review, merge to `develop`
+
+7. **Phase complete?** Merge `develop` to `main` **with a PR** (never a direct local merge-push):
    ```bash
-   git checkout main
-   git pull origin main
-   git checkout develop
-   git pull origin develop
-   git checkout main
-   git merge develop
-   git push origin main
+   gh pr create --base main --head develop
    ```
+
+8. **After EVERY merge to `main`, sync main back into develop**:
+   ```bash
+   git checkout develop && git pull && git merge origin/main && git push origin develop
+   ```
+   The main-side merge commit exists only on main; without the back-sync, parallel work on develop
+   and main diverges silently. This is not theoretical: parallel branch activity around #15–#24
+   produced TWO decision-record numbering collisions (ADR-011 ×2, TD-BROWSER-6 ×2) because the two
+   branches independently allocated the same numbers — resolved 2026-09-03, and the reason
+   pre-announcing ADR numbers is retired. The back-sync after every main merge is what prevents a
+   third.
 
 ### CI Configuration
 - **Triggers**: Push and PR to `main` or `develop`

@@ -19,12 +19,12 @@ polish. **On-vision** = intentional per spec/ADRs; listed only to pre-empt re-fl
 
 **Two workstreams are split into their own design docs** because they need a
 decision, not just a patch:
-- **[ADR-011](adr/011-cross-package-contract-single-source-of-truth.md)** — where shared contract primitives live (Theme B).
-- **[TD-BROWSER-6](td/TD-BROWSER-6-bounded-in-memory-collections.md)** — eviction discipline for long-lived in-memory collections (Theme A).
+- **[ADR-012](adr/012-cross-package-contract-single-source-of-truth.md)** — where shared contract primitives live (Theme B).
+- **[TD-BROWSER-8](td/TD-BROWSER-8-bounded-in-memory-collections.md)** — eviction discipline for long-lived in-memory collections (Theme A).
 
 ---
 
-## Theme A — Unbounded / inefficient in-memory data structures → [TD-BROWSER-6]
+## Theme A — Unbounded / inefficient in-memory data structures → [TD-BROWSER-8]
 
 The service is single-node with in-memory state, which is **on-vision** (the spec
 makes no HA claim). What is *not* on-vision: several of those in-memory
@@ -47,7 +47,7 @@ observation multi-pass normalization at ≤300 elements (A-adjacent, `observatio
 
 ---
 
-## Theme B — Cross-package contract single-source-of-truth & type drift → [ADR-011]
+## Theme B — Cross-package contract single-source-of-truth & type drift → [ADR-012]
 
 The protocol-over-implementation principle (ADR-002) says the contract is the
 source of truth. Several primitives that *are* contract have been re-declared per
@@ -148,6 +148,6 @@ are sound — the findings against them are bounds and guards, not redesigns.
 ## Suggested remediation order
 
 1. **C3** (SSRF range gap — security-adjacent, cheap), **E1** (deterministic-first regression), **A1/A2** (unbounded caches most exposed to uptime).
-2. **B1/B2/B8** (name collision + SDK drift + event typo — small, high-confusion), then the rest of **Theme B** behind [ADR-011].
-3. **Theme A** remainder behind [TD-BROWSER-6]; **G2** (logger injection).
+2. **B1/B2/B8** (name collision + SDK drift + event typo — small, high-confusion), then the rest of **Theme B** behind [ADR-012].
+3. **Theme A** remainder behind [TD-BROWSER-8]; **G2** (logger injection).
 4. Polish: **Theme C** deletions, **Theme F** refactors, **G1** build config, remaining L items.

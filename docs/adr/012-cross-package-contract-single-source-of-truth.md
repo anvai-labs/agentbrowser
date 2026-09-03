@@ -1,4 +1,4 @@
-# ADR-011: Single source of truth for cross-package contract primitives
+# ADR-012: Single source of truth for cross-package contract primitives
 
 **Status:** Proposed
 **Context:** 2026-08-31

@@ -1,4 +1,4 @@
-# TD-BROWSER-6: Bounded in-memory collections & eviction discipline
+# TD-BROWSER-8: Bounded in-memory collections & eviction discipline
 
 **Status:** Proposed
 **Context:** 2026-08-31
