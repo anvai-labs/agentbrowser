@@ -11,6 +11,11 @@
       "description": "Local server"
     }
   ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
   "tags": [
     {
       "name": "health",
@@ -269,10 +274,55 @@
                   },
                   "engine": {
                     "type": "string",
-                    "description": "Engine to use, e.g. playwright-chromium."
+                    "description": "Engine to use. Absent/\"auto\" selects the primary engine; other names must be registered (TD-BROWSER-7 registry). e.g. playwright-chromium."
                   },
                   "headless": {
-                    "type": "boolean"
+                    "type": "boolean",
+                    "description": "Absent defaults to true (headless-first, ADR-003). false = headed: a visible window for human-in-the-loop flows; the session gets a dedicated browser."
+                  },
+                  "cookies": {
+                    "type": "array",
+                    "description": "Seed cookies so the session starts from an authenticated state (the credential handoff — ADR-005/TD-BROWSER-6; the prescribed route for logins the browser cannot satisfy, incl. turnstile-class walls per ADR-013). Export a session's cookies via GET /v1/sessions/{id}/cookies to re-seed future ones.",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "name",
+                        "value",
+                        "domain",
+                        "path"
+                      ],
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "value": {
+                          "type": "string"
+                        },
+                        "domain": {
+                          "type": "string"
+                        },
+                        "path": {
+                          "type": "string"
+                        },
+                        "expires": {
+                          "type": "number"
+                        },
+                        "httpOnly": {
+                          "type": "boolean"
+                        },
+                        "secure": {
+                          "type": "boolean"
+                        },
+                        "sameSite": {
+                          "type": "string",
+                          "enum": [
+                            "Strict",
+                            "Lax",
+                            "None"
+                          ]
+                        }
+                      }
+                    }
                   },
                   "viewport": {
                     "$ref": "#/components/schemas/Viewport"
@@ -477,6 +527,97 @@
           },
           "500": {
             "description": "An unexpected server error occurred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{sessionId}/cookies": {
+      "get": {
+        "operationId": "getSessionCookies",
+        "summary": "Export session cookies",
+        "description": "Scoped credential export (ADR-005, TD-BROWSER-6): read the session context cookies so a caller can re-seed future sessions via the create request `cookies` option. Ownership required.",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The session context cookies.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "cookies"
+                  ],
+                  "properties": {
+                    "cookies": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "name",
+                          "value",
+                          "domain",
+                          "path"
+                        ],
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "value": {
+                            "type": "string"
+                          },
+                          "domain": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "expires": {
+                            "type": "number"
+                          },
+                          "httpOnly": {
+                            "type": "boolean"
+                          },
+                          "secure": {
+                            "type": "boolean"
+                          },
+                          "sameSite": {
+                            "type": "string",
+                            "enum": [
+                              "Strict",
+                              "Lax",
+                              "None"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1508,6 +1649,13 @@
     }
   },
   "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "API key from AGENTBROWSER_API_KEYS (key:tenant). Sessions are scoped to the key tenant; cross-tenant access is 403."
+      }
+    },
     "schemas": {
       "ApiError": {
         "type": "object",
@@ -1778,9 +1926,6 @@
       },
       "SessionRequest": {
         "type": "object",
-        "required": [
-          "engine"
-        ],
         "properties": {
           "engine": {
             "anyOf": [
