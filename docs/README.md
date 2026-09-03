@@ -23,6 +23,7 @@ ADRs capture significant architectural decisions, their context, and consequence
 | [ADR-011](adr/011-safari-via-safaridriver-webdriver.md) | Real Safari via Safaridriver (WebDriver), Not Playwright WebKit | Accepted | Real-Safari login flows via macOS safaridriver; always headed; egress unenforceable (loud) |
 | [ADR-012](adr/012-cross-package-contract-single-source-of-truth.md) | Single Source of Truth for Cross-Package Contract Primitives | Proposed | Renumbered from a colliding 011 (parallel branches took the number twice; resolved 2026-09-03) |
 | [ADR-013](adr/013-headed-sessions-and-walled-logins.md) | Headed Sessions, De-fingerprinting, and Walled Logins | Accepted | De-fingerprint headed only; no CDP arms race — cookie-seeding handoff is the prescribed route for turnstile-class walls |
+| [ADR-014](adr/014-npm-distribution.md) | npm Distribution for the MCP Server (Trusted Publishing, @anvailabs scope) | Accepted | npm = @anvailabs/agentbrowser-mcp via OIDC trusted publishing; server stays tarballs+Docker; verify enforced not token-keyed |
 
 ## Technical Design
 

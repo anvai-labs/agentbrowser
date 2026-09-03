@@ -1,4 +1,13 @@
-# @agentbrowser/mcp-server
+# @anvailabs/agentbrowser-mcp
+
+The MCP server for [AgentBrowser](https://github.com/anvai-labs/agentbrowser). Two install paths, one source:
+
+```sh
+npm i -g @anvailabs/agentbrowser-mcp   # Node >= 18
+# or: download the bun-compiled standalone binary from the GitHub Releases
+```
+
+The package is **only the MCP stdio adapter** — it proxies to an AgentBrowser service. Point it at one with `AGENTBROWSER_BASE_URL` (default `http://localhost:3000`).
 
 Exposes AgentBrowser as a small set of high-level, safe, composable MCP tools
 (ADR-009). Raw engine operations — evaluate, routing, selectors, low-level
@@ -40,7 +49,7 @@ beyond the protocol handshake. Deploy the server once (Docker image or
 ### Development: from the workspace
 
 ```sh
-pnpm --filter @agentbrowser/mcp-server build
+pnpm --filter @anvailabs/agentbrowser-mcp build
 node packages/mcp-server/dist/bin.js
 ```
 
@@ -54,8 +63,8 @@ node packages/mcp-server/dist/bin.js
 ## Building and gating the binary
 
 ```sh
-pnpm --filter @agentbrowser/mcp-server compile   # -> dist-bin/agentbrowser-mcp (needs bun)
-pnpm --filter @agentbrowser/mcp-server smoke     # stdio handshake + 9-tool catalog gate
+pnpm --filter @anvailabs/agentbrowser-mcp compile   # -> dist-bin/agentbrowser-mcp (needs bun)
+pnpm --filter @anvailabs/agentbrowser-mcp smoke     # stdio handshake + 9-tool catalog gate
 ```
 
 Cross-compile with `node scripts/compile.mjs --target=bun-linux-arm64 --outfile=...`.
