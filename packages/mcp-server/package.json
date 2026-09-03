@@ -9,7 +9,7 @@
     "agentbrowser-mcp": "dist/bin.js"
   },
   "scripts": {
-    "build": "tsc && esbuild dist/bin.js --bundle --platform=node --format=esm --outfile=dist/bin.bundled.js && mv dist/bin.bundled.js dist/bin.js",
+    "build": "tsc && esbuild dist/bin.js --bundle --platform=node --format=esm --outfile=dist/bin.bundled.js && mv dist/bin.bundled.js dist/bin.js && esbuild dist/index.js --bundle --platform=node --format=esm --outfile=dist/index.bundled.js && mv dist/index.bundled.js dist/index.js",
     "type-check": "tsc --noEmit",
     "compile": "node scripts/compile.mjs",
     "smoke": "node scripts/smoke.mjs dist-bin/agentbrowser-mcp",
@@ -18,7 +18,7 @@
     "lint": "biome check src/",
     "format": "biome format --write src/",
     "clean": "rm -rf dist dist-bin *.tsbuildinfo",
-    "prepublishOnly": "tsc"
+    "prepublishOnly": "pnpm build"
   },
   "dependencies": {},
   "devDependencies": {

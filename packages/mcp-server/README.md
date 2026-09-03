@@ -49,7 +49,7 @@ beyond the protocol handshake. Deploy the server once (Docker image or
 ### Development: from the workspace
 
 ```sh
-pnpm --filter @agentbrowser/mcp-server build
+pnpm --filter @anvailabs/agentbrowser-mcp build
 node packages/mcp-server/dist/bin.js
 ```
 
@@ -63,8 +63,8 @@ node packages/mcp-server/dist/bin.js
 ## Building and gating the binary
 
 ```sh
-pnpm --filter @agentbrowser/mcp-server compile   # -> dist-bin/agentbrowser-mcp (needs bun)
-pnpm --filter @agentbrowser/mcp-server smoke     # stdio handshake + 9-tool catalog gate
+pnpm --filter @anvailabs/agentbrowser-mcp compile   # -> dist-bin/agentbrowser-mcp (needs bun)
+pnpm --filter @anvailabs/agentbrowser-mcp smoke     # stdio handshake + 9-tool catalog gate
 ```
 
 Cross-compile with `node scripts/compile.mjs --target=bun-linux-arm64 --outfile=...`.

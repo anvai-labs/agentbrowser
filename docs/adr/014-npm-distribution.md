@@ -49,7 +49,7 @@ already ships as `@anvailabs/sandhi`).
    it never consults a token's existence to decide whether to look.
 7. **Publishing hygiene**: `files: ["dist"]` whitelist (an unlisted package tree once swallowed
    a 1.8 GB build dir in the sibling repo — never again, anywhere), `publishConfig.access:
-   public`, `prepublishOnly` = type-check-and-build.
+   public`, `prepublishOnly` = the full build (type-check + bundle; inert for CI tarball publishes, live for directory-context publishes like the bootstrap).
 
 ## Consequences
 

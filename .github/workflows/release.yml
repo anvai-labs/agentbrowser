@@ -232,11 +232,13 @@ jobs:
       - name: Build (package + its workspace dependencies)
         run: pnpm install --frozen-lockfile && pnpm --filter @anvailabs/agentbrowser-mcp... build
       - name: Pack with pnpm (resolves workspace:* into real versions)
-        run: |
-          cd packages/mcp-server
-          pnpm pack --pack-destination ../../
+        working-directory: packages/mcp-server
+        run: pnpm pack --pack-destination ../..
+      # Each step starts fresh at the workspace root; the tarball lands at the
+      # root via --pack-destination, so reference it root-relative (an earlier
+      # draft's ../../ here escaped the workspace entirely — review finding).
       - name: Publish with npm (OIDC)
-        run: npm publish ../../anvailabs-agentbrowser-mcp-*.tgz --access public
+        run: npm publish anvailabs-agentbrowser-mcp-*.tgz --access public
       - name: Verify the registry actually has this version
         # Enforced, never token-keyed (the sibling repo's lesson): check the
         # artifact, not the job's exit code.

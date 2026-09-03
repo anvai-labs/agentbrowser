@@ -234,14 +234,13 @@ importers:
         version: 2.1.9(@types/node@22.20.1)
 
   packages/mcp-server:
-    dependencies:
+    devDependencies:
       '@agentbrowser/protocol':
         specifier: workspace:*
         version: link:../protocol
       '@agentbrowser/sdk-typescript':
         specifier: workspace:*
         version: link:../sdk-typescript
-    devDependencies:
       '@biomejs/biome':
         specifier: ^1.9.4
         version: 1.9.4
