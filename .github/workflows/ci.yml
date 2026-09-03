@@ -1,7 +1,12 @@
 name: CI
 
+# Thrift: docs-only changes skip CI entirely (no compute burned on prose).
 on:
   push:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '**/LICENSE' 
     branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
