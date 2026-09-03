@@ -131,6 +131,17 @@ describe('SessionCoordinator', () => {
       expect(mockEngine.lastOptions?.cookies).toEqual(cookies);
     });
 
+    it('defaults headless to true when the request omits it (pinned: the pool stays honest)', async () => {
+      // The headless-first default (ADR-003) lives HERE, not in callers — a
+      // request that omits `headless` must land on the engine as an explicit
+      // `true`, never as `undefined` (which some engines could read as headed).
+      await coordinator.create({ engine: 'mock-engine' }, mockEngine);
+      expect(mockEngine.lastOptions?.headless).toBe(true);
+
+      await coordinator.create({ engine: 'mock-engine', headless: false }, mockEngine);
+      expect(mockEngine.lastOptions?.headless).toBe(false);
+    });
+
     it('should generate unique session IDs', async () => {
       const request: SessionRequest = { engine: 'mock-engine' };
 
