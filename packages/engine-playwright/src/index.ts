@@ -134,7 +134,9 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     this.browserFamily = options.browser ?? 'chromium';
     this.cdpEndpoint = options.cdpEndpoint;
     this.chromeBinaryPath =
-      options.chromeBinaryPath ?? process.env.AGENTBROWSER_CHROME_PATH ?? '/opt/google/chrome/chrome';
+      options.chromeBinaryPath ??
+      process.env.AGENTBROWSER_CHROME_PATH ??
+      '/opt/google/chrome/chrome';
   }
 
   get name(): string {
@@ -211,7 +213,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       // Second half of the headed de-fingerprinting (see launchBrowser):
       // navigator.webdriver=true is the single most-checked automation signal.
       await context.addInitScript(
-        "Object.defineProperty(navigator, 'webdriver', { get: () => false });",
+        "Object.defineProperty(navigator, 'webdriver', { get: () => false });"
       );
     }
 
@@ -264,9 +266,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       // those challenges loop even with a real display and real clicks — observed
       // live against npmjs.com's turnstile. De-fingerprint headed only (ADR-013):
       // the headless pool keeps its defaults (detection there is honest).
-      ...(headless
-        ? {}
-        : await this.headedChromiumOptions()),
+      ...(headless ? {} : await this.headedChromiumOptions()),
     });
   }
 
@@ -298,7 +298,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       .then((fs) => fs.access(this.chromeBinaryPath))
       .then(
         () => true,
-        () => false,
+        () => false
       );
     return hasChrome ? { ...base, executablePath: this.chromeBinaryPath } : base;
   }

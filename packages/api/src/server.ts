@@ -25,6 +25,11 @@ export interface ServerOptions {
   corsOrigin?: string | string[];
   /** Browser engine backing the server. Production must inject a real one. */
   engine?: BrowserEngine;
+  /**
+   * TD-BROWSER-7 Phase 1/2: named auxiliary engines for per-session routing
+   * (e.g. `safari` -> SafaridriverEngine). Unknown names fail loudly.
+   */
+  engines?: Record<string, BrowserEngine>;
   /** Download payload fetcher; injectable so tests never touch the network. */
   downloader?(url: string): Promise<{ bytes: Uint8Array; contentType: string }>;
   /** Metrics registry exposed at /metrics; defaults to a fresh registry. */
@@ -135,6 +140,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   const metrics = options.metrics ?? new MetricsRegistry();
   const service = new AgentBrowserService({
     engine,
+    ...(options.engines ? { engines: options.engines } : {}),
     metrics,
     ...(options.logger ? { logger: options.logger } : {}),
     ...(options.downloader ? { downloader: options.downloader } : {}),

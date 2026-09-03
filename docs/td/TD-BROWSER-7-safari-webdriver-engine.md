@@ -55,6 +55,25 @@ Enablement: `safaridriver --enable` (one-time, user-authorized). The engine's
 first launch probes the driver and fails with `SAFARIDRIVER_DISABLED` plus the
 exact command, per the loud-failure principle.
 
+## Implementation record (Phase 2)
+
+- `packages/engine-safari`: `SafaridriverEngine` over a minimal W3C WebDriver
+  client (`src/webdriver.ts`) that spawns one `safaridriver --port <ephemeral>`
+  process per session (process-per-session isolation per the robustness
+  anchor; safaridriver prints no port, so readiness is polled over /status).
+- Always-headed is declared via `capabilities.alwaysHeaded` (protocol
+  extension); the contract suite requests accordingly. Loud refusals:
+  `EGRESS_UNSUPPORTED` (policy on create), `SAFARI_PDF_UNSUPPORTED`
+  (not implemented), `SAFARIDRIVER_DISABLED` (enablement, with hint).
+- Cookie seeding defers to the first navigation (WebDriver can only set
+  cookies for the active document's origin) and re-queues unmatched domains.
+- Service wiring: `bin.ts` registers the engine as `safari` on darwin;
+  the service rejects explicit `headless: true` on always-headed engines
+  (`SAFARI_HEADLESS_UNSUPPORTED`) and defaults them to headed.
+- Tests gated on `SafaridriverEngine.available()` (macOS + enablement):
+  contract suite against real Safari, cookie round-trip, egress refusal,
+  capability declarations. Everything skips honestly where Safari cannot run.
+
 ## Test plan
 
 - Registry (Phase 1, in this change set): routing to named engines, default

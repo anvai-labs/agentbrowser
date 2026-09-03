@@ -1,0 +1,29 @@
+{
+  "name": "@agentbrowser/engine-safari",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Real Safari engine via macOS safaridriver (W3C WebDriver) - TD-BROWSER-7 Phase 2. Always headed, macOS only.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check src/",
+    "format": "biome format --write src/",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@agentbrowser/engine": "workspace:*",
+    "@agentbrowser/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@agentbrowser/testkit": "workspace:*",
+    "@biomejs/biome": "^1.9.4",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.9"
+  }
+}

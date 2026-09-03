@@ -126,6 +126,13 @@ export interface EngineCapabilities {
   supportsCdp: boolean;
   supportedObservationModes: ObservationMode[];
   supportedActionTypes: ActionType[];
+  /**
+   * TD-BROWSER-7: the engine's browser cannot run headless (real Safari via
+   * safaridriver). Sessions created with `headless: true` still run headed;
+   * service-level callers must reject explicit headless requests loudly
+   * instead of relying on the engine.
+   */
+  alwaysHeaded?: boolean;
 }
 
 /**
