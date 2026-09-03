@@ -237,8 +237,20 @@ jobs:
       # Each step starts fresh at the workspace root; the tarball lands at the
       # root via --pack-destination, so reference it root-relative (an earlier
       # draft's ../../ here escaped the workspace entirely — review finding).
-      - name: Publish with npm (OIDC)
-        run: npm publish anvailabs-agentbrowser-mcp-*.tgz --access public
+      - name: Publish with npm (OIDC) — skip if this version is already on the registry
+        # The bootstrap publish (bridging the Trusted-Publisher chicken-and-egg)
+        # puts the first version up from a local token; a re-run or subsequent
+        # release flow must not die on "already published" (same idempotency as
+        # the crates job in the sibling repo).
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if curl -sf -A "agentbrowser-release" \
+            "https://registry.npmjs.org/@anvailabs%2fagentbrowser-mcp" \
+            | grep -q "\"${VERSION}\""; then
+            echo "::notice::$VERSION already on npm — skipping publish (verify still runs)"
+          else
+            npm publish anvailabs-agentbrowser-mcp-*.tgz --access public
+          fi
       - name: Verify the registry actually has this version
         # Enforced, never token-keyed (the sibling repo's lesson): check the
         # artifact, not the job's exit code.
