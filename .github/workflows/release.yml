@@ -209,11 +209,57 @@ jobs:
           path: ${{ env.FILE }}
           if-no-files-found: error
 
+  npm-publish:
+    name: npm (@anvailabs/agentbrowser-mcp)
+    runs-on: ubuntu-latest
+    # OIDC Trusted Publishing (ADR-014): the npm binding pins (repository
+    # anvai-labs/agentbrowser, workflow release.yml, environment npm) — no
+    # publish token exists anywhere to leak or rotate. id-token: write mints
+    # the assertion; npm >= 11 speaks OIDC natively. The tarball is packed
+    # with pnpm because the package carries workspace:* internal deps that
+    # plain npm cannot resolve at pack time.
+    environment: npm
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Build (package + its workspace dependencies)
+        run: pnpm install --frozen-lockfile && pnpm --filter @anvailabs/agentbrowser-mcp... build
+      - name: Pack with pnpm (resolves workspace:* into real versions)
+        run: |
+          cd packages/mcp-server
+          pnpm pack --pack-destination ../../
+      - name: Publish with npm (OIDC)
+        run: npm publish ../../anvailabs-agentbrowser-mcp-*.tgz --access public
+      - name: Verify the registry actually has this version
+        # Enforced, never token-keyed (the sibling repo's lesson): check the
+        # artifact, not the job's exit code.
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          for attempt in 1 2 3 4 5 6; do
+            if curl -sf -A "agentbrowser-release" \
+              "https://registry.npmjs.org/@anvailabs%2fagentbrowser-mcp" \
+              | grep -q "\"${VERSION}\""; then
+              echo "npm: @anvailabs/agentbrowser-mcp ${VERSION} live"
+              exit 0
+            fi
+            echo "not visible yet (attempt ${attempt}/6); registry indexing lag"
+            sleep 20
+          done
+          echo "::error::npm publish reported success but ${VERSION} is not on the registry"
+          exit 1
+
   release:
     name: Checksums and GitHub Release
     runs-on: ubuntu-latest
     # The server tarballs are part of the release: wait for them too.
-    needs: [binaries, server-packages]
+    needs: [binaries, server-packages, npm-publish]
     steps:
       - uses: actions/checkout@v4
 
