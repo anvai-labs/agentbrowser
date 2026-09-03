@@ -31,13 +31,20 @@ device-trust login the headless browser cannot satisfy."
 Three scoped rules:
 
 1. **De-fingerprint headed launches only.** When `headless === false`, the Playwright
-   engine launches with the stripped-flags base (`--disable-blink-features=
-   AutomationControlled`, `ignoreDefaultArgs: ['--enable-automation']`) and an init
-   script scrubbing `navigator.webdriver`, and prefers **real Google Chrome**
-   (`channel: 'chrome'`) when the configured binary path exists
-   (`AGENTBROWSER_CHROME_PATH`, default `/opt/google/chrome/chrome`). The **headless
+   engine launches with `--disable-blink-features=AutomationControlled` and an init
+   script rewriting `navigator.webdriver` to **`false`** — the value a real
+   non-automated browser reports (`undefined` would itself be an anomalous state no
+   genuine Chrome produces; review finding). When the configured binary path exists
+   (`AGENTBROWSER_CHROME_PATH`, default `/opt/google/chrome/chrome`), the engine
+   launches **that exact binary** via `executablePath` (not `channel`, which resolves
+   through Playwright's own registry and ignores the configured path — review
+   finding). Playwright 1.62 does not pass `--enable-automation` (verified against
+   its default switch list), so no `ignoreDefaultArgs` is needed. The **headless
    pool keeps stock Playwright defaults** — detection there is honest and desired; a
-   headless agent SHOULD be identifiable as automation.
+   headless agent SHOULD be identifiable as automation. The webdriver rewrite is
+   context-level and therefore also applies to CDP-attached headed sessions
+   (attached browsers may themselves be automated; the scrub is cheap and
+   intentional).
 
 2. **No arms race against CDP-fingerprinting walls.** The branded binary + stripped
    flags is the strongest launch we will field, offered as best-effort. When a wall

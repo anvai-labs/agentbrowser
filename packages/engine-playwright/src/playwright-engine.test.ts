@@ -83,12 +83,11 @@ describe('PlaywrightChromiumEngine', () => {
     const opts = async (engine: PlaywrightChromiumEngine) =>
       (engine as unknown as { headedChromiumOptions(): Promise<Record<string, unknown>> }).headedChromiumOptions();
 
-    it('headed chromium gets the stripped-flags base plus channel chrome when the probe path exists', async () => {
+    it('headed chromium gets the stripped-flags base plus executablePath when the probe path exists', async () => {
       const probed = new PlaywrightChromiumEngine({ chromeBinaryPath: import.meta.url.replace('file://', '') });
       const options = await opts(probed);
       expect(options.args).toContain('--disable-blink-features=AutomationControlled');
-      expect(options.ignoreDefaultArgs).toContain('--enable-automation');
-      expect(options.channel).toBe('chrome');
+      expect(options.executablePath).toBe(import.meta.url.replace('file://', ''));
     });
 
     it('headed chromium falls back to bundled chromium (no channel) when the probe path is absent', async () => {
@@ -97,17 +96,16 @@ describe('PlaywrightChromiumEngine', () => {
       });
       const options = await opts(probed);
       expect(options.args).toContain('--disable-blink-features=AutomationControlled');
-      expect(options.ignoreDefaultArgs).toContain('--enable-automation');
-      expect(options.channel).toBeUndefined();
+      expect(options.executablePath).toBeUndefined();
     });
 
-    it('non-chromium families never get the channel even with chrome present', async () => {
+    it('non-chromium families never get executablePath even with chrome present', async () => {
       const probed = new PlaywrightChromiumEngine({
         browser: 'firefox',
         chromeBinaryPath: import.meta.url.replace('file://', ''),
       });
       const options = await opts(probed);
-      expect(options.channel).toBeUndefined();
+      expect(options.executablePath).toBeUndefined();
       expect(options.args).toContain('--disable-blink-features=AutomationControlled');
     });
 

@@ -211,7 +211,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       // Second half of the headed de-fingerprinting (see launchBrowser):
       // navigator.webdriver=true is the single most-checked automation signal.
       await context.addInitScript(
-        "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });",
+        "Object.defineProperty(navigator, 'webdriver', { get: () => false });",
       );
     }
 
@@ -260,10 +260,9 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     return launcher.launch({
       headless,
       // Headed sessions exist for human-in-the-loop flows (logins, SSO, Cloudflare
-      // turnstiles). Playwright's default launch carries automation fingerprints
-      // (--enable-automation, the AutomationControlled blink feature) that make
-      // those challenges loop forever even with a real display and real clicks —
-      // observed live against npmjs.com's turnstile. Strip them for headed only:
+      // turnstiles). Playwright's bundled build + navigator.webdriver=true make
+      // those challenges loop even with a real display and real clicks — observed
+      // live against npmjs.com's turnstile. De-fingerprint headed only (ADR-013):
       // the headless pool keeps its defaults (detection there is honest).
       ...(headless
         ? {}
@@ -272,23 +271,27 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   }
 
   /**
-   * Headed-chromium launch options: prefer REAL Google Chrome (`channel:
-   * 'chrome'`) when the configured binary path exists, falling back to the
-   * bundled Chromium. Anti-bot walls flag Playwright's bundled build +
-   * automation flags even headful with real clicks — the branded binary plus
-   * the stripped flags below is the strongest pass we can field. NOT a
-   * guarantee: walls that fingerprint the CDP connection itself (Cloudflare
-   * turnstile, observed live 2026-09-03: even real Chrome + these flags
-   * failed) are handled by cookie-seeding instead — see ADR-013.
+   * Headed-chromium launch options: when the configured binary path exists,
+   * launch THAT exact binary via `executablePath` (the API for "use this
+   * file" — `channel` resolves through Playwright's own registry and would
+   * ignore the path, adversarial-review finding); otherwise fall back to the
+   * bundled Chromium. Anti-bot walls flag Playwright's bundled build even
+   * headful with real clicks — the branded binary plus the
+   * AutomationControlled-disabled flag below is the strongest pass we field.
+   * NOT a guarantee: walls that fingerprint the CDP connection itself
+   * (Cloudflare turnstile, observed live 2026-09-03: even real Chrome failed)
+   * are handled by cookie-seeding instead — see ADR-013.
    */
   private async headedChromiumOptions(): Promise<{
     args: string[];
-    ignoreDefaultArgs: string[];
-    channel?: string;
+    executablePath?: string;
   }> {
     const base = {
+      // Playwright 1.62 does NOT pass --enable-automation (verified against
+      // its default switch list), so there is nothing to ignoreDefaultArgs —
+      // the live detectable signal was navigator.webdriver, which the init
+      // script rewrites to a real browser's `false`.
       args: ['--disable-blink-features=AutomationControlled'],
-      ignoreDefaultArgs: ['--enable-automation'],
     };
     if (this.browserFamily !== 'chromium') return base;
     const hasChrome = await import('node:fs/promises')
@@ -297,7 +300,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         () => true,
         () => false,
       );
-    return hasChrome ? { ...base, channel: 'chrome' } : base;
+    return hasChrome ? { ...base, executablePath: this.chromeBinaryPath } : base;
   }
 
   /**
