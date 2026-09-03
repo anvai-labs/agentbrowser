@@ -55,7 +55,7 @@ node packages/mcp-server/dist/bin.js
 
 ```sh
 pnpm --filter @agentbrowser/mcp-server compile   # -> dist-bin/agentbrowser-mcp (needs bun)
-pnpm --filter @agentbrowser/mcp-server smoke     # stdio handshake + 6-tool catalog gate
+pnpm --filter @agentbrowser/mcp-server smoke     # stdio handshake + 9-tool catalog gate
 ```
 
 Cross-compile with `node scripts/compile.mjs --target=bun-linux-arm64 --outfile=...`.

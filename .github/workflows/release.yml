@@ -266,7 +266,7 @@ jobs:
           | agentbrowser-mcp-windows-x64.exe | run natively on the build runner |
 
           Each smoke ran `initialize` + `tools/list` against the compiled
-          artifact and required the full 6-tool catalog and a release version
+          artifact and required the full 9-tool catalog and a release version
           in `serverInfo`.
 
           ### Install

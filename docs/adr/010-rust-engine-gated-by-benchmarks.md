@@ -278,7 +278,7 @@ Before starting Rust engine:
 4. **Risk assessment**: What could go wrong
 5. **Fallback plan**: Keep Chromium as backup
 
-Create ADR-011 when criteria met: "Begin Rust Engine Development"
+Create an ADR at the next free number when criteria met: "Begin Rust Engine Development" (011 was consumed twice by parallel branches — resolved 2026-09-03 — so pre-announcing numbers is retired)
 
 ### Validation criteria
 
