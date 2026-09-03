@@ -81,10 +81,14 @@ describe('PlaywrightChromiumEngine', () => {
   // is needed to test the selection logic.
   describe('headed de-fingerprinting (ADR-013)', () => {
     const opts = async (engine: PlaywrightChromiumEngine) =>
-      (engine as unknown as { headedChromiumOptions(): Promise<Record<string, unknown>> }).headedChromiumOptions();
+      (
+        engine as unknown as { headedChromiumOptions(): Promise<Record<string, unknown>> }
+      ).headedChromiumOptions();
 
     it('headed chromium gets the stripped-flags base plus executablePath when the probe path exists', async () => {
-      const probed = new PlaywrightChromiumEngine({ chromeBinaryPath: import.meta.url.replace('file://', '') });
+      const probed = new PlaywrightChromiumEngine({
+        chromeBinaryPath: import.meta.url.replace('file://', ''),
+      });
       const options = await opts(probed);
       expect(options.args).toContain('--disable-blink-features=AutomationControlled');
       expect(options.executablePath).toBe(import.meta.url.replace('file://', ''));
