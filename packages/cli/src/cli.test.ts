@@ -120,6 +120,13 @@ describe('AgentBrowser CLI', () => {
       );
     });
 
+    it('should treat --headless --no-headless as last-one-wins (false), pinning the truth table', async () => {
+      await run('session', 'create', '--tenant', 'tenant_1', '--headless', '--no-headless');
+      expect(sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({ tenantId: 'tenant_1', headless: false })
+      );
+    });
+
     it('should omit headless entirely when neither flag is given (server default applies)', async () => {
       await run('session', 'create', '--tenant', 'tenant_1');
 
