@@ -5,7 +5,7 @@
  * Following TDD principles, tests are written before implementation.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PlaywrightChromiumEngine } from './index';
 
 describe('PlaywrightChromiumEngine', () => {
@@ -70,6 +70,55 @@ describe('PlaywrightChromiumEngine', () => {
       });
       const cookies = await session.cookies();
       expect(cookies.some((c) => c.name === 'sid' && c.value === 'abc')).toBe(true);
+      await session.close();
+    });
+  });
+
+  // ADR-013: headed sessions strip automation fingerprints (they exist for
+  // human-in-the-loop flows); the headless pool keeps stock Playwright
+  // defaults — detection there is honest and desired. All cases run on any
+  // platform: the Chrome probe path is injectable, so no real Chrome install
+  // is needed to test the selection logic.
+  describe('headed de-fingerprinting (ADR-013)', () => {
+    const opts = async (engine: PlaywrightChromiumEngine) =>
+      (engine as unknown as { headedChromiumOptions(): Promise<Record<string, unknown>> }).headedChromiumOptions();
+
+    it('headed chromium gets the stripped-flags base plus channel chrome when the probe path exists', async () => {
+      const probed = new PlaywrightChromiumEngine({ chromeBinaryPath: import.meta.url.replace('file://', '') });
+      const options = await opts(probed);
+      expect(options.args).toContain('--disable-blink-features=AutomationControlled');
+      expect(options.ignoreDefaultArgs).toContain('--enable-automation');
+      expect(options.channel).toBe('chrome');
+    });
+
+    it('headed chromium falls back to bundled chromium (no channel) when the probe path is absent', async () => {
+      const probed = new PlaywrightChromiumEngine({
+        chromeBinaryPath: '/nonexistent/chrome-for-tests',
+      });
+      const options = await opts(probed);
+      expect(options.args).toContain('--disable-blink-features=AutomationControlled');
+      expect(options.ignoreDefaultArgs).toContain('--enable-automation');
+      expect(options.channel).toBeUndefined();
+    });
+
+    it('non-chromium families never get the channel even with chrome present', async () => {
+      const probed = new PlaywrightChromiumEngine({
+        browser: 'firefox',
+        chromeBinaryPath: import.meta.url.replace('file://', ''),
+      });
+      const options = await opts(probed);
+      expect(options.channel).toBeUndefined();
+      expect(options.args).toContain('--disable-blink-features=AutomationControlled');
+    });
+
+    it('headless launches never consult the headed options (pinned: the pool stays honest)', async () => {
+      const spied = new PlaywrightChromiumEngine();
+      const headedOptions = vi.spyOn(
+        spied as unknown as { headedChromiumOptions(): Promise<unknown> },
+        'headedChromiumOptions'
+      );
+      const session = await spied.createSession({ headless: true });
+      expect(headedOptions).not.toHaveBeenCalled();
       await session.close();
     });
   });

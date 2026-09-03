@@ -103,6 +103,15 @@ export interface PlaywrightEngineOptions {
    * EngineSessionOptions.requestPolicy.
    */
   egress?: RequestPolicy;
+  /**
+   * Where a real (branded) Google Chrome binary lives, preferred for HEADED
+   * sessions when present (see ADR-013: anti-bot walls flag Playwright's
+   * bundled Chromium harder than the branded binary). Defaults to
+   * /opt/google/chrome/chrome, overridable via AGENTBROWSER_CHROME_PATH or
+   * this option (the option exists mainly so tests can point the probe at a
+   * file they control). Headless sessions never consult it.
+   */
+  chromeBinaryPath?: string;
 }
 
 export class PlaywrightChromiumEngine implements BrowserEngine {
@@ -115,6 +124,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   private readonly webSocketPolicy: 'off' | 'deny-all';
   private readonly browserFamily: 'chromium' | 'firefox' | 'webkit';
   private readonly cdpEndpoint: string | undefined;
+  private readonly chromeBinaryPath: string;
 
   constructor(options: PlaywrightEngineOptions = {}) {
     this.dialogGraceMs = options.dialogGraceMs ?? 5000;
@@ -123,6 +133,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       options.webSocketPolicy ?? (options.egress !== undefined ? 'deny-all' : 'off');
     this.browserFamily = options.browser ?? 'chromium';
     this.cdpEndpoint = options.cdpEndpoint;
+    this.chromeBinaryPath =
+      options.chromeBinaryPath ?? process.env.AGENTBROWSER_CHROME_PATH ?? '/opt/google/chrome/chrome';
   }
 
   get name(): string {
@@ -195,6 +207,13 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       // bypass hole is not a choke point.
       ...(egress !== undefined ? { serviceWorkers: 'block' as const } : {}),
     });
+    if (options.headless === false) {
+      // Second half of the headed de-fingerprinting (see launchBrowser):
+      // navigator.webdriver=true is the single most-checked automation signal.
+      await context.addInitScript(
+        "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });",
+      );
+    }
 
     if (egress !== undefined) {
       await this.installEgress(context, egress);
@@ -238,7 +257,47 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         : this.browserFamily === 'webkit'
           ? (await import('playwright')).webkit
           : chromium;
-    return launcher.launch({ headless });
+    return launcher.launch({
+      headless,
+      // Headed sessions exist for human-in-the-loop flows (logins, SSO, Cloudflare
+      // turnstiles). Playwright's default launch carries automation fingerprints
+      // (--enable-automation, the AutomationControlled blink feature) that make
+      // those challenges loop forever even with a real display and real clicks —
+      // observed live against npmjs.com's turnstile. Strip them for headed only:
+      // the headless pool keeps its defaults (detection there is honest).
+      ...(headless
+        ? {}
+        : await this.headedChromiumOptions()),
+    });
+  }
+
+  /**
+   * Headed-chromium launch options: prefer REAL Google Chrome (`channel:
+   * 'chrome'`) when the configured binary path exists, falling back to the
+   * bundled Chromium. Anti-bot walls flag Playwright's bundled build +
+   * automation flags even headful with real clicks — the branded binary plus
+   * the stripped flags below is the strongest pass we can field. NOT a
+   * guarantee: walls that fingerprint the CDP connection itself (Cloudflare
+   * turnstile, observed live 2026-09-03: even real Chrome + these flags
+   * failed) are handled by cookie-seeding instead — see ADR-013.
+   */
+  private async headedChromiumOptions(): Promise<{
+    args: string[];
+    ignoreDefaultArgs: string[];
+    channel?: string;
+  }> {
+    const base = {
+      args: ['--disable-blink-features=AutomationControlled'],
+      ignoreDefaultArgs: ['--enable-automation'],
+    };
+    if (this.browserFamily !== 'chromium') return base;
+    const hasChrome = await import('node:fs/promises')
+      .then((fs) => fs.access(this.chromeBinaryPath))
+      .then(
+        () => true,
+        () => false,
+      );
+    return hasChrome ? { ...base, channel: 'chrome' } : base;
   }
 
   /**
