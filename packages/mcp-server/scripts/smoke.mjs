@@ -4,7 +4,7 @@
  *
  * A binary that compiles but cannot speak the protocol must not ship: this
  * drives the artifact itself over stdio and requires the full MCP handshake
- * plus the complete 6-tool catalog. No AgentBrowser server is needed — the
+ * plus the complete 9-tool catalog. No AgentBrowser server is needed — the
  * gate is deliberately protocol-level so it runs on any build runner.
  *
  * Usage: node scripts/smoke.mjs <path-to-binary>
@@ -119,7 +119,7 @@ try {
     process.exit(1);
   }
 
-  console.log(`smoke: PASS - 6 tools, serverInfo.version=${initVersion}`);
+  console.log(`smoke: PASS - 9 tools, serverInfo.version=${initVersion}`);
   process.exit(0);
 } catch (error) {
   clearTimeout(timer);

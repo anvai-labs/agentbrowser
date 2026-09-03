@@ -130,7 +130,11 @@ export function buildCli(deps: CliDependencies): Cli {
         .description('create a new session')
         .requiredOption('--tenant <id>', 'tenant identifier')
         .option('--engine <name>', 'engine to use')
-        .option('--headless', 'run headless')
+        .option('--headless', 'run headless (the server default; explicit)')
+        .option(
+          '--no-headless',
+          'run HEADED — a visible window for human-in-the-loop flows (logins, SSO); the session gets a dedicated browser'
+        )
         .option('--viewport <WxH>', 'viewport size, e.g. 1280x720')
         .option('--ttl <ms>', 'session TTL in milliseconds')
         .action(
@@ -140,8 +144,10 @@ export function buildCli(deps: CliDependencies): Cli {
             if (options.engine) {
               request.engine = String(options.engine);
             }
-            if (options.headless) {
-              request.headless = true;
+            // Neither flag: omit the field entirely so the SERVER default
+            // (headless) applies — the CLI must not shadow service policy.
+            if (options.headless !== undefined) {
+              request.headless = Boolean(options.headless);
             }
             if (options.viewport) {
               request.viewport = parseViewport(String(options.viewport));

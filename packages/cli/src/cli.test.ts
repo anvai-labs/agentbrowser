@@ -112,6 +112,31 @@ describe('AgentBrowser CLI', () => {
       );
     });
 
+    it('should send headless:false for --no-headless (the flag that was missing live)', async () => {
+      await run('session', 'create', '--tenant', 'tenant_1', '--no-headless');
+
+      expect(sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({ tenantId: 'tenant_1', headless: false })
+      );
+    });
+
+    it('should treat --headless --no-headless as last-one-wins (false), pinning the truth table', async () => {
+      await run('session', 'create', '--tenant', 'tenant_1', '--headless', '--no-headless');
+      expect(sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({ tenantId: 'tenant_1', headless: false })
+      );
+    });
+
+    it('should omit headless entirely when neither flag is given (server default applies)', async () => {
+      await run('session', 'create', '--tenant', 'tenant_1');
+
+      const call = (sessions.create as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<
+        string,
+        unknown
+      >;
+      expect('headless' in call).toBe(false);
+    });
+
     it('should reject a malformed viewport', async () => {
       const code = await run('session', 'create', '--tenant', 't', '--viewport', 'wide');
 
