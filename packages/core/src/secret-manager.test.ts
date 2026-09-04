@@ -151,4 +151,38 @@ describe('SecretManager', () => {
       expect(JSON.stringify(manager)).not.toContain('swordfish');
     });
   });
+
+  describe('redaction cache (TD-BROWSER-9, A1)', () => {
+    it('should redact correctly with the cache disabled (maxEntries: 0)', () => {
+      const manager = new SecretManager(
+        { 'vault://p': 'swordfish' },
+        { redactionCacheMaxEntries: 0 }
+      );
+
+      // Repeat the same string to exercise the cache-miss path every time.
+      expect(manager.redact('login failed for swordfish')).not.toContain('swordfish');
+      expect(manager.redact('login failed for swordfish')).not.toContain('swordfish');
+    });
+
+    it('should evict the least-recently-used entry once the cap is hit', () => {
+      const manager = new SecretManager(
+        { 'vault://p': 'swordfish' },
+        { redactionCacheMaxEntries: 2 }
+      );
+
+      // Three distinct strings through a cache capped at two entries: this
+      // must never throw and must keep redacting correctly regardless of
+      // which entries were evicted.
+      const inputs = [
+        'contains swordfish once',
+        'contains swordfish twice',
+        'contains swordfish thrice',
+      ];
+      for (const input of inputs) {
+        expect(manager.redact(input)).not.toContain('swordfish');
+      }
+      // Re-redacting the first (likely evicted) input must still be correct.
+      expect(manager.redact(inputs[0] as string)).not.toContain('swordfish');
+    });
+  });
 });

@@ -324,6 +324,13 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     // Verdict cache keys on hostname + resolved-IP set: a changed DNS
     // resolution (rebinding) re-validates instead of replaying a stale
     // allow.
+    //
+    // Bounded by construction (TD-BROWSER-9, A5): both maps below are local
+    // to one installEgress() call, and installEgress() runs once per
+    // BrowserContext (one per session). They grow only with the distinct
+    // hostnames one session visits and are garbage the moment the context
+    // closes - not a general-purpose cache, so no eviction policy is added
+    // here on top of the session lifetime bound.
     const verdicts = new Map<string, 'allow' | 'deny'>();
     const resolutionCache = new Map<string, string[]>();
     const dns = await import('node:dns/promises');

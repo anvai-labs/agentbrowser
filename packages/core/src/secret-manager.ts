@@ -7,6 +7,8 @@
  * observations, or their serialized forms. redact() enforces that boundary.
  */
 
+import { BoundedCache } from './bounded-cache.js';
+
 /** Raised for reference resolution failures. */
 export class SecretError extends Error {
   constructor(
@@ -21,6 +23,15 @@ export class SecretError extends Error {
 const REDACTED = '***';
 const REFERENCE_PREFIX = 'vault://';
 
+export interface SecretManagerOptions {
+  /**
+   * Bound on the redaction memo (TD-BROWSER-9, A1): without a cap it grows
+   * with every distinct string ever redacted over process uptime. `0`
+   * disables the cache entirely - redaction stays correct, just uncached.
+   */
+  redactionCacheMaxEntries?: number;
+}
+
 export class SecretManager {
   private readonly secrets: Map<string, string>;
   /** Values sorted longest-first so overlapping secrets redact fully. */
@@ -28,9 +39,12 @@ export class SecretManager {
   /** Precompiled regex pattern for efficient redaction. */
   private redactionPattern: RegExp | null = null;
   /** Cache of already-redacted strings to avoid repeated work. */
-  private redactionCache = new Map<string, string>();
+  private readonly redactionCache: BoundedCache<string, string>;
 
-  constructor(secrets: Record<string, string> = {}) {
+  constructor(secrets: Record<string, string> = {}, options: SecretManagerOptions = {}) {
+    this.redactionCache = new BoundedCache({
+      maxEntries: options.redactionCacheMaxEntries ?? 10_000,
+    });
     this.secrets = new Map(Object.entries(secrets));
     this.sortedValues = [...this.secrets.values()]
       .filter((value) => value.length > 0)
@@ -115,8 +129,9 @@ export class SecretManager {
 
   private redactString(text: string): string {
     // Return cached result if available
-    if (this.redactionCache.has(text)) {
-      return this.redactionCache.get(text)!;
+    const cached = this.redactionCache.get(text);
+    if (cached !== undefined) {
+      return cached;
     }
 
     // If no pattern, return as-is

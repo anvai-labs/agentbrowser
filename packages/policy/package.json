@@ -15,7 +15,9 @@
     "format": "biome format --write src/",
     "clean": "rm -rf dist *.tsbuildinfo"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@agentbrowser/core": "workspace:*"
+  },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/node": "^22.10.2",

@@ -7,6 +7,7 @@
  * never become a secret exfiltration channel.
  */
 
+import { RingBuffer } from './ring-buffer.js';
 import type { SecretManager } from './secret-manager.js';
 
 export interface SpanContext {
@@ -53,7 +54,7 @@ function hexId(length: number): string {
 }
 
 export class InMemoryTracer {
-  private readonly spans: Span[] = [];
+  private readonly spans: RingBuffer<Span>;
   private readonly secretManager: SecretManager | undefined;
   private readonly maxSpans: number;
   private readonly onSpan: ((span: Span) => void) | undefined;
@@ -62,6 +63,7 @@ export class InMemoryTracer {
     this.secretManager = options.secretManager;
     this.maxSpans = options.maxSpans ?? DEFAULT_MAX_SPANS;
     this.onSpan = options.onSpan;
+    this.spans = new RingBuffer({ capacity: this.maxSpans });
   }
 
   /**
@@ -89,11 +91,9 @@ export class InMemoryTracer {
     span.endTime = Date.now();
     Object.assign(span.attributes, attributes);
 
-    this.spans.push(this.scrub(span));
-    while (this.spans.length > this.maxSpans) {
-      this.spans.shift();
-    }
-    this.onSpan?.(this.spans[this.spans.length - 1] as Span);
+    const scrubbed = this.scrub(span);
+    this.spans.push(scrubbed);
+    this.onSpan?.(scrubbed);
   }
 
   addEvent(span: Span, name: string, attributes: Record<string, unknown> = {}): void {
@@ -109,7 +109,7 @@ export class InMemoryTracer {
 
   /** Completed, redacted spans in completion order. */
   completedSpans(): readonly Span[] {
-    return this.spans;
+    return this.spans.toArray();
   }
 
   private scrub(span: Span): Span {
