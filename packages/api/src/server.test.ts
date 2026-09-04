@@ -497,6 +497,55 @@ describe('AgentBrowser REST API', () => {
       expect(data.status).toBe('success');
     });
 
+    it('should execute select through the flat HTTP value (regression: values were never built)', async () => {
+      const obsResponse = await fetch(
+        `${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/observe`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: 'interactive' }),
+        }
+      );
+      const { elements } = await obsResponse.json();
+      // The fake page's element set includes a link; select on it still
+      // proves the transport fix: without values coercion every select
+      // 400s with "Select action requires a non-empty values parameter".
+      const targetRef = elements[0]?.ref;
+      if (!targetRef) throw new Error('no elements observed');
+
+      const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/act`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'select', target: { ref: targetRef }, value: 'CA' }),
+      });
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(data.status).toBe('success');
+    });
+
+    it('should execute a hover action through HTTP without bumping the revision', async () => {
+      const obsResponse = await fetch(
+        `${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/observe`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: 'interactive' }),
+        }
+      );
+      const { elements, revision } = await obsResponse.json();
+      const targetRef = elements[0]?.ref;
+      if (!targetRef) throw new Error('no elements observed');
+
+      const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/act`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'hover', target: { ref: targetRef } }),
+      });
+      const data = await response.json();
+      expect(data.status).toBe('success');
+      expect(data.newRevision).toBe(revision);
+    });
+
     it('should handle a stale target error', async () => {
       // Observe to mint refs, move the page on, then act on the old ref.
       const observeResponse = await fetch(

@@ -200,6 +200,11 @@ export class ActionExecutor {
           return invalidRequest('Scroll action requires a direction or a delta');
         }
         break;
+      case 'wait':
+        if (action.condition?.until === undefined) {
+          return invalidRequest('Wait action requires a condition with an until');
+        }
+        break;
       default:
         break;
     }

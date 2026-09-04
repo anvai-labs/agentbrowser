@@ -69,7 +69,6 @@ export interface Cli {
   run(argv: string[]): Promise<number>;
 }
 
-
 const DEFAULT_BASE_URL = 'http://localhost:3000';
 
 export function buildCli(deps: CliDependencies): Cli {
@@ -326,6 +325,128 @@ export function buildCli(deps: CliDependencies): Cli {
               target: refTarget(ref),
               value,
             });
+          })
+        );
+
+      act
+        .command('dblclick')
+        .description('double-click an element')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('<ref>')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string, ref: string) => {
+            await runAction(ctx, sessionId, pageId, { action: 'dblclick', target: refTarget(ref) });
+          })
+        );
+
+      act
+        .command('hover')
+        .description('hover an element (non-mutating)')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('<ref>')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string, ref: string) => {
+            await runAction(ctx, sessionId, pageId, { action: 'hover', target: refTarget(ref) });
+          })
+        );
+
+      act
+        .command('clear')
+        .description('clear an input')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('<ref>')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string, ref: string) => {
+            await runAction(ctx, sessionId, pageId, { action: 'clear', target: refTarget(ref) });
+          })
+        );
+
+      act
+        .command('check')
+        .description('tick a checkbox or radio')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('<ref>')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string, ref: string) => {
+            await runAction(ctx, sessionId, pageId, { action: 'check', target: refTarget(ref) });
+          })
+        );
+
+      act
+        .command('uncheck')
+        .description('untick a checkbox')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('<ref>')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string, ref: string) => {
+            await runAction(ctx, sessionId, pageId, { action: 'uncheck', target: refTarget(ref) });
+          })
+        );
+
+      act
+        .command('wait')
+        .description('wait for a load condition (non-mutating)')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('<until>', 'settled | domcontentloaded | load | networkidle')
+        .option('--timeout-ms <ms>', 'timeout in milliseconds')
+        .action(
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              pageId: string,
+              until: string,
+              options: { timeoutMs?: string }
+            ) => {
+              await runAction(ctx, sessionId, pageId, {
+                action: 'wait',
+                condition: {
+                  until,
+                  ...(options.timeoutMs !== undefined
+                    ? { timeoutMs: Number.parseInt(options.timeoutMs, 10) }
+                    : {}),
+                },
+              } as never);
+            }
+          )
+        );
+
+      act
+        .command('goBack')
+        .description('navigate back in history')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string) => {
+            await runAction(ctx, sessionId, pageId, { action: 'goBack' } as never);
+          })
+        );
+
+      act
+        .command('goForward')
+        .description('navigate forward in history')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string) => {
+            await runAction(ctx, sessionId, pageId, { action: 'goForward' } as never);
+          })
+        );
+
+      act
+        .command('reload')
+        .description('reload the current page')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string) => {
+            await runAction(ctx, sessionId, pageId, { action: 'reload' } as never);
           })
         );
 

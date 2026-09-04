@@ -9,17 +9,22 @@
 
 import { createHash } from 'node:crypto';
 import { MetricsRegistry } from '@agentbrowser/core';
-import { DELIVERED_EXTRACT_FORMATS, validateSessionRequest } from '@agentbrowser/protocol';
-import type { SessionPolicy } from '@agentbrowser/protocol';
 import type { StructuredLogger } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
+import { DELIVERED_EXTRACT_FORMATS, validateSessionRequest } from '@agentbrowser/protocol';
+import type { SessionPolicy } from '@agentbrowser/protocol';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import Fastify from 'fastify';
 import type { FastifyError, FastifyInstance, FastifyRequest } from 'fastify';
 import { ArtifactAuthorizer } from './artifact-auth.js';
 import { buildOpenApiDocument } from './openapi.js';
-import { ServiceSessionRequest, AgentBrowserService, type ServiceActRequest, ServiceError } from './service.js';
+import {
+  AgentBrowserService,
+  type ServiceActRequest,
+  ServiceError,
+  type ServiceSessionRequest,
+} from './service.js';
 
 export interface ServerOptions {
   port?: number;
@@ -660,6 +665,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             approvalToken,
             promptText,
             wait,
+            condition,
           } = body as Record<string, unknown>;
 
           if (typeof action !== 'string') {
@@ -688,6 +694,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             ...(approvalToken !== undefined ? { approvalToken: approvalToken as string } : {}),
             ...(promptText !== undefined ? { promptText: promptText as string } : {}),
             ...(wait !== undefined ? { wait: wait as { until: string; timeoutMs?: number } } : {}),
+            ...(condition !== undefined
+              ? { condition: condition as { until: string; timeoutMs?: number } }
+              : {}),
           });
           return reply.send(result);
         } catch (error) {

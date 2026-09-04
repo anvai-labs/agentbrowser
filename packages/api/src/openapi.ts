@@ -506,7 +506,31 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                   description: 'Prompt answer for acceptDialog.',
                 },
                 value: { type: 'string' },
+                key: { type: 'string', description: 'Key for press.' },
+                direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] },
+                amount: { type: 'number' },
                 observe: { type: 'string', enum: ['after', 'none'] },
+                wait: {
+                  type: 'object',
+                  description: 'Post-action wait condition.',
+                  properties: {
+                    until: { type: 'string' },
+                    timeoutMs: { type: 'number' },
+                  },
+                  required: ['until'],
+                },
+                condition: {
+                  type: 'object',
+                  description: 'Wait-action condition (action: "wait" only).',
+                  properties: {
+                    until: {
+                      type: 'string',
+                      enum: ['settled', 'domcontentloaded', 'load', 'networkidle'],
+                    },
+                    timeoutMs: { type: 'number' },
+                  },
+                  required: ['until'],
+                },
               },
             }),
           },

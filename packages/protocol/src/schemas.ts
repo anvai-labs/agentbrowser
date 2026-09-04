@@ -93,11 +93,9 @@ export const SessionCookieSchema = Type.Object({
   expires: Type.Optional(Type.Number()),
   httpOnly: Type.Optional(Type.Boolean()),
   secure: Type.Optional(Type.Boolean()),
-  sameSite: Type.Optional(Type.Union([
-    Type.Literal('Strict'),
-    Type.Literal('Lax'),
-    Type.Literal('None'),
-  ])),
+  sameSite: Type.Optional(
+    Type.Union([Type.Literal('Strict'), Type.Literal('Lax'), Type.Literal('None')])
+  ),
 });
 
 export const SessionRequestSchema = Type.Object({

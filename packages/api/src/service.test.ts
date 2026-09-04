@@ -523,6 +523,58 @@ describe('AgentBrowserService', () => {
       expect(result.newRevision).toBeGreaterThan(observation.revision);
     });
 
+    it('should execute select through the flat value transport (regression: values were never built)', async () => {
+      const engineSessionId = engine.getSessionIds()[0];
+      engine
+        .getFakePage(engineSessionId as string, pageId)
+        ?.setElements([{ role: 'combobox', name: 'Country' }]);
+      const observation = await service.observe(sessionId, pageId, {});
+      const combobox = observation.elements.find((el) => el.role === 'combobox');
+      expect(combobox).toBeDefined();
+
+      const result = await service.act(sessionId, pageId, {
+        action: 'select',
+        target: { ref: combobox?.ref },
+        value: 'Canada',
+      });
+
+      // Before the fix, the executor rejected every HTTP select with
+      // "Select action requires a non-empty values parameter".
+      expect(result.status).toBe('success');
+    });
+
+    it('should deliver hover and wait as non-mutating (revision unchanged)', async () => {
+      const observation = await service.observe(sessionId, pageId, {});
+      const ref = observation.elements[0]?.ref;
+
+      const hover = await service.act(sessionId, pageId, { action: 'hover', target: { ref } });
+      expect(hover.newRevision).toBe(observation.revision);
+
+      const wait = await service.act(sessionId, pageId, {
+        action: 'wait',
+        condition: { until: 'load' },
+      });
+      expect(wait.newRevision).toBe(observation.revision);
+    });
+
+    it('should deliver the mutating Phase-1 actions and reject a bad wait condition', async () => {
+      // Mutating actions invalidate refs, so observe fresh per action.
+      for (const action of ['dblclick', 'clear', 'check', 'uncheck', 'reload', 'goBack'] as const) {
+        const observation = await service.observe(sessionId, pageId, {});
+        const ref = observation.elements[0]?.ref;
+        const result = await service.act(sessionId, pageId, {
+          action,
+          ...(action === 'reload' || action === 'goBack' ? {} : { target: { ref } }),
+        });
+        expect(result.status).toBe('success');
+        expect(result.newRevision).toBeGreaterThan(0);
+      }
+
+      await expect(
+        service.act(sessionId, pageId, { action: 'wait', condition: { until: 'bogus' } })
+      ).rejects.toThrow(/Unknown wait condition/);
+    });
+
     it('should execute fill with a value', async () => {
       const observation = await service.observe(sessionId, pageId, {});
       const textbox = observation.elements.find((el) => el.role === 'textbox');

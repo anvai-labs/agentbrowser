@@ -501,10 +501,19 @@ export interface DismissDialogAction extends Action {
  */
 export const DELIVERED_ACTION_TYPES = [
   'click',
+  'dblclick',
+  'hover',
   'fill',
+  'clear',
+  'check',
+  'uncheck',
   'select',
   'scroll',
   'press',
+  'wait',
+  'goBack',
+  'goForward',
+  'reload',
   'acceptDialog',
   'dismissDialog',
 ] as const;

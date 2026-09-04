@@ -9,8 +9,8 @@
  */
 
 import { TypeCompiler } from '@sinclair/typebox/compiler';
-import type { SessionRequest, SupportedAction } from './types.js';
 import { ActionSchema, SessionRequestSchema } from './schemas.js';
+import type { SessionRequest, SupportedAction } from './types.js';
 
 /** One validation failure, addressed by pointer path. */
 export interface ValidationIssue {
@@ -18,9 +18,7 @@ export interface ValidationIssue {
   message: string;
 }
 
-export type Validated<T> =
-  | { ok: true; value: T }
-  | { ok: false; issues: ValidationIssue[] };
+export type Validated<T> = { ok: true; value: T } | { ok: false; issues: ValidationIssue[] };
 
 const sessionRequest = TypeCompiler.Compile(SessionRequestSchema);
 

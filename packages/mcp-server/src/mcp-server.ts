@@ -84,7 +84,6 @@ export interface McpServer {
 
 const PROTOCOL_VERSION = '2024-11-05';
 
-
 interface ToolDefinition {
   name: string;
   description: string;
@@ -333,7 +332,9 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
     {
       name: 'browser_act',
       description:
-        'Perform an action on an element by ref: click, fill, select, scroll or press. ' +
+        'Perform an action on an element by ref: click, dblclick, hover, fill, clear, ' +
+        'check, uncheck, select, scroll, press, wait, goBack, goForward, reload, or ' +
+        'handle a dialog. ' +
         'Elements are addressed by the ref from browser_observe, never by CSS selector or ' +
         'XPath. If the page changed since the observation, the action fails with ' +
         'STALE_TARGET: call browser_observe again and use the new refs; do not retry the old one.',
@@ -361,6 +362,18 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
           key: { type: 'string', description: 'Key for press.' },
           direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] },
           amount: { type: 'number' },
+          condition: {
+            type: 'object',
+            description: 'Wait-action condition (action: "wait" only).',
+            properties: {
+              until: {
+                type: 'string',
+                enum: ['settled', 'domcontentloaded', 'load', 'networkidle'],
+              },
+              timeoutMs: { type: 'number' },
+            },
+            required: ['until'],
+          },
         },
         required: ['sessionId', 'pageId', 'action'],
       },
@@ -368,12 +381,19 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
         const [sessionId, pageId] = sessionAndPage(args);
 
         const target = (args.target ?? {}) as { ref?: unknown };
-        // Dialog actions carry no target; validation applies only when one
-        // is present.
-        const isDialogAction = args.action === 'acceptDialog' || args.action === 'dismissDialog';
+        // These actions carry no target; ref validation applies only when
+        // a target is expected.
+        const UNTARGETED_ACTIONS = new Set([
+          'acceptDialog',
+          'dismissDialog',
+          'wait',
+          'goBack',
+          'goForward',
+          'reload',
+        ]);
         const ref = target.ref;
         if (
-          !isDialogAction &&
+          !UNTARGETED_ACTIONS.has(String(args.action)) &&
           (typeof ref !== 'string' || !REF_PATTERN.test(ref))
         ) {
           throw new UsageError(
@@ -389,6 +409,9 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
         if (typeof args.key === 'string') request.key = args.key;
         if (typeof args.direction === 'string') request.direction = args.direction;
         if (typeof args.amount === 'number') request.amount = args.amount;
+        if (args.condition !== undefined && typeof args.condition === 'object') {
+          request.condition = args.condition as { until: string; timeoutMs?: number };
+        }
 
         return await client.sessions.executeAction(
           sessionId,

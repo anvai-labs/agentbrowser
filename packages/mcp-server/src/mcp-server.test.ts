@@ -337,6 +337,48 @@ describe('AgentBrowser MCP server', () => {
       expect(textOf(response).newRevision).toBe(2);
     });
 
+    it('should forward the wait action condition', async () => {
+      const response = JSON.parse(
+        await call('9w', 'browser_act', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          action: 'wait',
+          condition: { until: 'networkidle', timeoutMs: 5000 },
+        })
+      );
+      expect(response.result.isError).toBeUndefined();
+      expect(sessions.executeAction).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        action: 'wait',
+        target: { ref: undefined },
+        condition: { until: 'networkidle', timeoutMs: 5000 },
+      });
+    });
+
+    it('should accept untargeted Phase-1 actions without a ref', async () => {
+      for (const action of ['goBack', 'goForward', 'reload']) {
+        const response = JSON.parse(
+          await call(`9u-${action}`, 'browser_act', {
+            sessionId: 'ses_1',
+            pageId: 'pg_1',
+            action,
+          })
+        );
+        expect(response.result.isError).toBeUndefined();
+      }
+    });
+
+    it('should still require a ref for targeted Phase-1 actions', async () => {
+      const response = JSON.parse(
+        await call('9t', 'browser_act', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          action: 'hover',
+        })
+      );
+      expect(response.result.isError).toBe(true);
+      expect(sessions.executeAction).not.toHaveBeenCalled();
+    });
+
     it('should extract through the tool', async () => {
       const response = JSON.parse(
         await call('10b', 'browser_extract', {

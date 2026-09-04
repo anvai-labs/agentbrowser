@@ -1078,10 +1078,19 @@
                     "type": "string",
                     "enum": [
                       "click",
+                      "dblclick",
+                      "hover",
                       "fill",
+                      "clear",
+                      "check",
+                      "uncheck",
                       "select",
                       "scroll",
                       "press",
+                      "wait",
+                      "goBack",
+                      "goForward",
+                      "reload",
                       "acceptDialog",
                       "dismissDialog"
                     ]
@@ -1096,11 +1105,63 @@
                   "value": {
                     "type": "string"
                   },
+                  "key": {
+                    "type": "string",
+                    "description": "Key for press."
+                  },
+                  "direction": {
+                    "type": "string",
+                    "enum": [
+                      "up",
+                      "down",
+                      "left",
+                      "right"
+                    ]
+                  },
+                  "amount": {
+                    "type": "number"
+                  },
                   "observe": {
                     "type": "string",
                     "enum": [
                       "after",
                       "none"
+                    ]
+                  },
+                  "wait": {
+                    "type": "object",
+                    "description": "Post-action wait condition.",
+                    "properties": {
+                      "until": {
+                        "type": "string"
+                      },
+                      "timeoutMs": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "until"
+                    ]
+                  },
+                  "condition": {
+                    "type": "object",
+                    "description": "Wait-action condition (action: \"wait\" only).",
+                    "properties": {
+                      "until": {
+                        "type": "string",
+                        "enum": [
+                          "settled",
+                          "domcontentloaded",
+                          "load",
+                          "networkidle"
+                        ]
+                      },
+                      "timeoutMs": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "until"
                     ]
                   }
                 }
@@ -2258,6 +2319,10 @@
                           "type": "string"
                         },
                         {
+                          "const": "dblclick",
+                          "type": "string"
+                        },
+                        {
                           "const": "hover",
                           "type": "string"
                         },
@@ -2448,6 +2513,10 @@
                       "type": "string"
                     },
                     {
+                      "const": "dblclick",
+                      "type": "string"
+                    },
+                    {
                       "const": "hover",
                       "type": "string"
                     },
@@ -2608,6 +2677,10 @@
                 },
                 {
                   "const": "click",
+                  "type": "string"
+                },
+                {
+                  "const": "dblclick",
                   "type": "string"
                 },
                 {
@@ -3152,6 +3225,56 @@
                 "type": "object",
                 "required": [
                   "type",
+                  "target"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "dblclick",
+                    "type": "string"
+                  },
+                  "target": {
+                    "type": "object",
+                    "required": [
+                      "ref"
+                    ],
+                    "properties": {
+                      "ref": {
+                        "pattern": "^e\\d+_\\d+$",
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type",
+                  "target"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "hover",
+                    "type": "string"
+                  },
+                  "target": {
+                    "type": "object",
+                    "required": [
+                      "ref"
+                    ],
+                    "properties": {
+                      "ref": {
+                        "pattern": "^e\\d+_\\d+$",
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type",
                   "target",
                   "value"
                 ],
@@ -3177,6 +3300,81 @@
                   },
                   "sensitive": {
                     "type": "boolean"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type",
+                  "target"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "clear",
+                    "type": "string"
+                  },
+                  "target": {
+                    "type": "object",
+                    "required": [
+                      "ref"
+                    ],
+                    "properties": {
+                      "ref": {
+                        "pattern": "^e\\d+_\\d+$",
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type",
+                  "target"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "check",
+                    "type": "string"
+                  },
+                  "target": {
+                    "type": "object",
+                    "required": [
+                      "ref"
+                    ],
+                    "properties": {
+                      "ref": {
+                        "pattern": "^e\\d+_\\d+$",
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type",
+                  "target"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "uncheck",
+                    "type": "string"
+                  },
+                  "target": {
+                    "type": "object",
+                    "required": [
+                      "ref"
+                    ],
+                    "properties": {
+                      "ref": {
+                        "pattern": "^e\\d+_\\d+$",
+                        "type": "string"
+                      }
+                    }
                   }
                 }
               },
@@ -3354,6 +3552,69 @@
                         "type": "integer"
                       }
                     }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "goBack",
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "goForward",
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "reload",
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "acceptDialog",
+                    "type": "string"
+                  },
+                  "promptText": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "dismissDialog",
+                    "type": "string"
                   }
                 }
               }

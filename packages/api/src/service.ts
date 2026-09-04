@@ -49,9 +49,9 @@ import type {
 } from '@agentbrowser/protocol';
 import {
   DELIVERED_EXTRACT_FORMATS,
+  type DeliveredExtractFormat,
   REF_PATTERN,
   validateAction,
-  type DeliveredExtractFormat,
 } from '@agentbrowser/protocol';
 
 /** Typed failure carrying a protocol error code. */
@@ -122,6 +122,8 @@ export interface ServiceActRequest {
   promptText?: string | undefined;
   /** Post-action wait condition (spec 11.1). */
   wait?: { until: string; timeoutMs?: number | undefined } | undefined;
+  /** Wait-action condition (the `wait` ACTION; distinct from post-action wait). */
+  condition?: { until: string; timeoutMs?: number | undefined } | undefined;
 }
 
 export interface ServiceActResult {
@@ -168,7 +170,6 @@ const HIGH_RISK_EFFECTS = new Set([
   'external-message',
   'destructive',
 ]);
-
 
 interface PageContext {
   sessionId: string;
@@ -1202,6 +1203,14 @@ export class AgentBrowserService {
           `Unknown wait condition '${request.wait.until}'. Supported: ${[...DELIVERED_WAITS].join(', ')}.`
         );
       }
+      // The wait ACTION shares the delivered condition set (schema checks
+      // the shape; this checks the semantics).
+      if (request.condition !== undefined && !DELIVERED_WAITS.has(request.condition.until)) {
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `Unknown wait condition '${request.condition.until}'. Supported: ${[...DELIVERED_WAITS].join(', ')}.`
+        );
+      }
 
       // ADR-015 B4b: construct-then-validate. The wire body is flat, so
       // validation happens on the constructed protocol action - one gate
@@ -1214,12 +1223,9 @@ export class AgentBrowserService {
         const details = actionValidation.issues
           .map((issue) => `${issue.path || '(root)'}: ${issue.message}`)
           .join('; ');
-        throw new ServiceError(
-          'INVALID_REQUEST',
-          `Invalid action: ${details}`,
-          false,
-          { issues: actionValidation.issues }
-        );
+        throw new ServiceError('INVALID_REQUEST', `Invalid action: ${details}`, false, {
+          issues: actionValidation.issues,
+        });
       }
 
       const adapter = new RefTranslatingPage(page.enginePage, page);
@@ -1749,6 +1755,15 @@ export class AgentBrowserService {
     if (request.direction !== undefined) action.direction = request.direction;
     if (request.amount !== undefined) action.amount = request.amount;
     if (request.promptText !== undefined) action.promptText = request.promptText;
+    if (request.condition !== undefined) action.condition = request.condition;
+    // The flat transport carries a single `value`; the protocol's select
+    // takes `values`. Coerce here - without it every HTTP select was
+    // rejected by the executor (SelectAction requires non-empty values),
+    // a latent bug since select shipped.
+    if (request.action === 'select' && request.value !== undefined) {
+      action.values = [request.value];
+      delete action.value;
+    }
     return action as unknown as Parameters<ActionExecutor['execute']>[0]['action'];
   }
 
@@ -1883,10 +1898,13 @@ class RefTranslatingPage implements EnginePage {
       }
     }
     const effect = await this.inner.act(projected);
-    // Navigate is handled by navigate(); dialog actions are non-mutating.
-    // Everything else advances the service revision.
+    // Navigate is handled by navigate(); dialog actions, hover and the
+    // wait action are non-mutating. Everything else advances the service
+    // revision.
     const nonMutating =
       action.type === 'navigate' ||
+      action.type === 'hover' ||
+      action.type === 'wait' ||
       action.type === 'acceptDialog' ||
       action.type === 'dismissDialog';
     const newRevision = nonMutating ? this.page.revision : this.page.revision + 1;

@@ -22,10 +22,10 @@ import {
   ViewportSchema,
   validate,
 } from './schemas';
-import { DELIVERED_EXTRACT_FORMATS, REF_PATTERN, parseRef } from './types';
 import { ActionSchema } from './schemas';
-import { validateAction, validateSessionRequest } from './validators';
+import { DELIVERED_EXTRACT_FORMATS, REF_PATTERN, parseRef } from './types';
 import type { SupportedAction } from './types';
+import { validateAction, validateSessionRequest } from './validators';
 
 describe('Schema Validation - Session Request', () => {
   it('should validate valid session request', () => {
@@ -362,10 +362,19 @@ describe('Delivered capability truth (single source)', () => {
   it('should expose the delivered action set as a const tuple', () => {
     expect(DELIVERED_ACTION_TYPES).toEqual([
       'click',
+      'dblclick',
+      'hover',
       'fill',
+      'clear',
+      'check',
+      'uncheck',
       'select',
       'scroll',
       'press',
+      'wait',
+      'goBack',
+      'goForward',
+      'reload',
       'acceptDialog',
       'dismissDialog',
     ]);
