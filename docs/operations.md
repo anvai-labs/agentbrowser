@@ -74,8 +74,8 @@ Port and bind address default to `3000` on `0.0.0.0`
 
 The metrics surface is counters (`sessions_created_total`,
 `sessions_closed_total`, `sessions_crashed_total`, …), gauges
-(`sessions_active`), and per-operation latency summaries. As of the
-upcoming 1.7.1 release, summary quantiles are computed over a bounded window of the most recent
+(`sessions_active`), and per-operation latency summaries. As of 1.7.1,
+summary quantiles are computed over a bounded window of the most recent
 samples per series (default 1,000, configurable via
 `MetricsRegistryOptions.maxSamplesPerSummary`) while `_count` and `_sum`
 stay exact over all time — alert on `count`/`sum` rates; treat
