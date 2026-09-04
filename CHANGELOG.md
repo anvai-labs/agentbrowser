@@ -7,6 +7,36 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed
+
+- **The two decision-record numbering collisions introduced while "resolving" the prior pair are
+  now actually resolved.** 1.7.0's changelog entry below claimed the ADR/TD-BROWSER-8 collisions
+  were closed; the renumbering picked 012 and TD-BROWSER-8, which — unnoticed at the time — were
+  *already* taken by the Accepted, shipped snapshot/plan-batching work (ADR-012, TD-BROWSER-8).
+  The Proposed, not-yet-implemented docs move again: the cross-package-contract ADR is now
+  **ADR-015**, and the bounded-in-memory-collections TD is now **TD-BROWSER-9**. `docs/README.md`'s
+  index is corrected to list all four documents (the two Accepted/shipped ones were previously
+  missing from it entirely).
+- **`browser_plan`'s MCP schema didn't declare `sessionId`/`pageId`**, so a caller that omitted
+  them got the literal string `"undefined"` sent to the service instead of a validation error.
+  Fixed alongside a new `browser_snapshot` MCP tool (TD-BROWSER-8's snapshot half had a server
+  route and service method but no SDK or MCP path — unreachable from any real client until now).
+- A leftover debug `console.log` in the plan executor's stale-ref remap path is removed, the
+  `churn` tracking map (introduced with TD-BROWSER-8) is now cleaned up on session/page teardown
+  instead of leaking one entry per session:page pair for the life of the process, and `verified`
+  mode (raised after repeated ref churn) now requires a role+label match before accepting a
+  remapped ref — previously it changed nothing behaviorally and could silently rebind an action to
+  the wrong element on a reordering page.
+
+### Added
+
+- Bounded-collection eviction discipline (TD-BROWSER-9, née TD-BROWSER-8): `BoundedCache`/
+  `RingBuffer` primitives in `@agentbrowser/core`, applied to the redaction cache, span buffer, and
+  network-policy request log (previously **fully unbounded**, not just large); indexed lookups for
+  approval-token-by-session and element-by-ref replace per-call linear scans.
+
+## [1.7.0] — 2026-09-03
+
 ### Added
 
 - **npm distribution** (ADR-014): the MCP server ships to npm as `@anvailabs/agentbrowser-mcp`
@@ -27,6 +57,7 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   ADR-012; TD-BROWSER-6 ×2 → the bounded-collections TD became TD-BROWSER-8), and the branch-flow
   rule that caused them (main merges must be followed by a main→develop back-sync) is now in
   CLAUDE.md. Stale "6-tool catalog" counts corrected to the enforced 9.
+  ⚠️ **Corrected in 1.7.1** — see Unreleased above: this renumbering collided a second time.
 
 ## [1.6.1] — 2026-09-02
 

@@ -21,9 +21,10 @@ ADRs capture significant architectural decisions, their context, and consequence
 | [ADR-009](adr/009-mcp-high-level-tools.md) | MCP Exposes High-Level Safe Tools, Not Raw Playwright | Accepted | Small set of composable tools, dangerous operations excluded |
 | [ADR-010](adr/010-rust-engine-gated-by-benchmarks.md) | Rust Engine Investment Gated by Benchmarks | Accepted | Invest only when metrics prove Chromium is bottleneck |
 | [ADR-011](adr/011-safari-via-safaridriver-webdriver.md) | Real Safari via Safaridriver (WebDriver), Not Playwright WebKit | Accepted | Real-Safari login flows via macOS safaridriver; always headed; egress unenforceable (loud) |
-| [ADR-012](adr/012-cross-package-contract-single-source-of-truth.md) | Single Source of Truth for Cross-Package Contract Primitives | Proposed | Renumbered from a colliding 011 (parallel branches took the number twice; resolved 2026-09-03) |
+| [ADR-012](adr/012-snapshot-plan-interaction-model.md) | Snapshot-Plan Interaction Model with Adaptive Modes | Accepted | Batched action plans (`browser_plan`) + self-contained page snapshots (`browser_snapshot`), one round trip each; adaptive stable/verified remap mode driven by observed ref churn |
 | [ADR-013](adr/013-headed-sessions-and-walled-logins.md) | Headed Sessions, De-fingerprinting, and Walled Logins | Accepted | De-fingerprint headed only; no CDP arms race — cookie-seeding handoff is the prescribed route for turnstile-class walls |
 | [ADR-014](adr/014-npm-distribution.md) | npm Distribution for the MCP Server (Trusted Publishing, @anvailabs scope) | Accepted | npm = @anvailabs/agentbrowser-mcp via OIDC trusted publishing; server stays tarballs+Docker; verify enforced not token-keyed |
+| [ADR-015](adr/015-cross-package-contract-single-source-of-truth.md) | Single Source of Truth for Cross-Package Contract Primitives | Proposed | Renumbered twice (011→012→015): 012 collided a second time with the Accepted snapshot-plan ADR above; resolved 2026-09-03 |
 
 ## Technical Design
 
@@ -109,7 +110,16 @@ complete and remains in [technical-design.md](technical-design.md).
 - [TD-BROWSER-5](td/TD-BROWSER-5-single-binary-mcp-distribution.md) - Single-binary
   MCP server distribution (Bun `--compile`) + release CI. **Accepted,
   implemented.** (TD-BROWSER-1..4 are reserved names; see the doc.)
-- [TD-BROWSER-8](td/TD-BROWSER-8-bounded-in-memory-collections.md) - Bounded
+- [TD-BROWSER-6](td/TD-BROWSER-6-headed-sessions-and-credential-handoff.md) -
+  Headed sessions and credential handoff (dedicated per-session browsers, cookie
+  export/import). **Accepted, implemented.**
+- [TD-BROWSER-7](td/TD-BROWSER-7-safari-webdriver-engine.md) - Real Safari via
+  `safaridriver`/WebDriver, engine registry. **Accepted, implemented.**
+- [TD-BROWSER-8](td/TD-BROWSER-8-batched-snapshots-and-action-plans.md) -
+  Batched action plans (`browser_plan`) and self-contained page snapshots
+  (`browser_snapshot`), adaptive stable/verified remap mode. **Accepted, Phase 1
+  implemented.**
+- [TD-BROWSER-9](td/TD-BROWSER-9-bounded-in-memory-collections.md) - Bounded
   in-memory collections & eviction discipline (shared `BoundedCache`/`RingBuffer`,
   indexed hot-path lookups). **Proposed.** Addresses `hygiene-audit.md` Theme A.
 
@@ -120,7 +130,7 @@ complete and remains in [technical-design.md](technical-design.md).
 - [hygiene-audit.md](hygiene-audit.md) - Engineering-hygiene audit (2026-08-31):
   design patterns, data structures, cross-package contracts, dead code, resource
   lifecycle. Findings grouped A–G, each grep-verified with an adversarial
-  rationalization; drives [ADR-012] and [TD-BROWSER-8].
+  rationalization; drives [ADR-015] and [TD-BROWSER-9].
 
 ## Template
 
