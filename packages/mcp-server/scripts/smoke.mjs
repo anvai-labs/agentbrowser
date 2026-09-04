@@ -24,6 +24,7 @@ const EXPECTED_TOOLS = [
   'browser_create',
   'browser_close',
   'browser_cookies',
+  'browser_plan',
   'browser_navigate',
   'browser_observe',
   'browser_act',

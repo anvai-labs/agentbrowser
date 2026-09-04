@@ -6,6 +6,7 @@
 
 import type {
   ActionEffect,
+  ArtifactRef,
   BrowserEngine,
   EngineAction,
   EngineCapabilities,
@@ -23,6 +24,7 @@ import type {
   ObservationRequest,
   PdfRequest,
   RawPageState,
+  ResolvedTarget,
   ScreenshotRequest,
 } from '@agentbrowser/engine';
 import type { RequestPolicy } from '@agentbrowser/engine';
@@ -802,7 +804,7 @@ class PlaywrightPage implements EnginePage {
         continue; // static text is not an interactive element
       }
 
-      const element: any = {
+      const element: StoredElement = {
         ref: `e${revision}_${elements.length}`,
         role,
         visible: true,
@@ -821,7 +823,7 @@ class PlaywrightPage implements EnginePage {
     return elements;
   }
 
-  private async getContentElements(): Promise<any[]> {
+  private async getContentElements(): Promise<StoredElement[]> {
     // Get interactive elements using query selectors
     const selectors = [
       'button',
@@ -858,7 +860,7 @@ class PlaywrightPage implements EnginePage {
     return elements;
   }
 
-  async resolve(target: EngineTarget): Promise<any> {
+  async resolve(target: EngineTarget): Promise<ResolvedTarget> {
     const stored = this.refStore.get(target.ref);
     if (!stored) {
       throw new Error(`Element not found: ${target.ref} (observe the page to mint refs)`);
@@ -992,7 +994,7 @@ class PlaywrightPage implements EnginePage {
     };
   }
 
-  async screenshot(request: ScreenshotRequest): Promise<any> {
+  async screenshot(request: ScreenshotRequest): Promise<ArtifactRef> {
     const screenshot = await this.page.screenshot({
       fullPage: request.fullPage || false,
       type: request.format || 'png',
@@ -1004,11 +1006,10 @@ class PlaywrightPage implements EnginePage {
       contentType: `image/${request.format || 'png'}`,
       sizeBytes: screenshot.length,
       url: `/v1/artifacts/screenshot-${Date.now()}`,
-      bytesBase64: screenshot.toString('base64'),
     };
   }
 
-  async pdf(request: PdfRequest): Promise<any> {
+  async pdf(request: PdfRequest): Promise<ArtifactRef> {
     const buffer = await this.page.pdf({
       landscape: request.landscape || false,
       printBackground: request.printBackground || false,
@@ -1020,7 +1021,6 @@ class PlaywrightPage implements EnginePage {
       contentType: 'application/pdf',
       sizeBytes: buffer.length,
       url: `/v1/artifacts/pdf-${Date.now()}`,
-      bytesBase64: buffer.toString('base64'),
     };
   }
 

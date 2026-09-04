@@ -59,10 +59,10 @@ suite('Obscura engine (binary available)', () => {
 
     const target = observation.elements[0];
     expect(target).toBeDefined();
-    const resolved = await page.resolve({ ref: target!.ref });
+    const resolved = await page.resolve({ ref: target?.ref });
     expect(resolved.fingerprint.length).toBeGreaterThan(0);
 
-    const effect = await page.act({ type: 'click', target: { ref: target!.ref } });
+    const effect = await page.act({ type: 'click', target: { ref: target?.ref } });
     expect(effect.actionId.length).toBeGreaterThan(0);
     expect(effect.newRevision).toBeGreaterThanOrEqual(effect.oldRevision);
 

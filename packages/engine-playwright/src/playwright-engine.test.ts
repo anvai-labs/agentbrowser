@@ -142,7 +142,7 @@ describe('PlaywrightChromiumEngine', () => {
       expect(engine.name).toBe('playwright-chromium');
 
       expect(() => {
-        (engine as any).version = '2.0.0';
+        (engine as unknown as { version: string }).version = '2.0.0';
       }).toThrow();
     });
   });

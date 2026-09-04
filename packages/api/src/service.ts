@@ -673,7 +673,7 @@ export class AgentBrowserService {
           );
           let remapped: string | undefined;
           for (const e of elements) {
-            if (typeof e.ref === 'string' && e.ref.endsWith('_' + ordinal)) {
+            if (typeof e.ref === 'string' && e.ref.endsWith(`_${ordinal}`)) {
               remapped = e.ref;
               break;
             }

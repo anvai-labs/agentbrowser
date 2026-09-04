@@ -13,7 +13,7 @@ global.fetch = vi.fn() as Record<string, unknown>;
 
 describe('AgentBrowser SDK', () => {
   let client: AgentBrowserClient;
-  let mockFetch: any;
+  let mockFetch: unknown;
 
   beforeEach(() => {
     // Clear all mocks before each test
