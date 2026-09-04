@@ -1,8 +1,15 @@
-# ADR-012: Single source of truth for cross-package contract primitives
+# ADR-015: Single source of truth for cross-package contract primitives
 
 **Status:** Proposed
 **Context:** 2026-08-31
 **Superseded by:** N/A
+
+> Renumbered 2026-09-03 (v1.7.1 docs hygiene): landed as ADR-012, but that
+> number was independently taken by
+> [ADR-012: Snapshot-Plan Interaction Model](012-snapshot-plan-interaction-model.md)
+> (Accepted, backs shipped code) before this one shipped. This doc — still
+> Proposed, not load-bearing for any merged code — takes the new number so the
+> Accepted one keeps 012.
 
 ## Context
 
@@ -15,30 +22,32 @@ concrete divergences; the ones that force this decision:
 
 1. **Name collision.** `ActionEffect` is exported as a classification *union* in
    `protocol/types.ts:230` and as an unrelated *result interface* in
-   `engine/types.ts:162`. A module importing both silently keeps whichever it
+   `engine/types.ts:175`. A module importing both silently keeps whichever it
    imported last. The engine's shape also duplicates protocol's existing
-   `ActionResult` (`protocol/types.ts:426`) — so the name is simultaneously a
+   `ActionResult` (`protocol/types.ts:433`) — so the name is simultaneously a
    collision and a synonym.
 
 2. **The `e<rev>_<ord>` ref grammar** (an ADR-004 protocol concept) is declared
    **four times in three incompatible forms**: capture-group regexes in
-   `core/action-executor.ts:39` and `api/service.ts:161`, a capture-less regex in
-   `cli/cli.ts:67`, and a **string** in `mcp-server.ts:71` that gets re-wrapped as
+   `core/action-executor.ts:46` and `api/service.ts:166`, a capture-less regex in
+   `cli/cli.ts:67`, and a **string** in `mcp-server.ts:87` that gets re-wrapped as
    ``new RegExp(`^${REF_PATTERN}$`)`` (double-anchored).
 
 3. **Validation is hand-rolled per surface** (`typeof x !== 'string'` checks in
    `api/server.ts`, MCP, CLI) even though `protocol/schemas.ts` already defines
-   `SessionRequestSchema`/`NavigationRequestSchema`/etc. with the real min/max/enum
+   `SessionRequestSchema`/`NavigationStatusSchema`/etc. with the real min/max/enum
    constraints. The TypeBox schemas are never invoked at runtime.
 
-4. **The SDK types have drifted from the protocol** despite `docs/audit.md`
-   recording `SessionRequest` as "reconciled": SDK `SessionRequest` has a
-   *required* `tenantId` (protocol: optional), a loose `engine?: string`
-   (protocol: `EngineType`), and is missing `policy`, `ttlMs`, `idleTimeoutMs`,
-   and `cookies`. SDK clients therefore cannot express per-session policy at all.
+4. **The SDK types have drifted from the protocol**, as `docs/audit.md` (P2)
+   records: SDK `SessionRequest` has a *required* `tenantId` (protocol:
+   optional) and a loose `engine?: string` (protocol: `EngineType`). It has
+   since gained `ttlMs`, `idleTimeoutMs`, and `cookies` (TD-BROWSER-6), but
+   is still missing `policy` - SDK clients cannot express per-session
+   policy at all.
 
-5. **Utility taxonomy is copy-pasted**: `UsageError` (mcp + cli), `formatError`
-   (mcp + cli, already diverged on the `STALE_TARGET` hint), and the
+5. **Utility taxonomy is copy-pasted**: `UsageError` (mcp + cli),
+   `formatToolError` (mcp) / `formatError` (cli, already diverged on the
+   `STALE_TARGET` hint), and the
    supported-format list (5 places, only one includes `'schema'`).
 
 The common failure mode is not "it's broken today" — it's that each of these

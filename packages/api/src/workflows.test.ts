@@ -31,7 +31,7 @@ describe('deterministic workflows', () => {
     method: string,
     path: string,
     body?: unknown
-  ): Promise<{ status: number; body: any }> => {
+  ): Promise<{ status: number; body: Record<string, unknown> }> => {
     const response = await fetch(`${baseUrl}${path}`, {
       method,
       ...(body !== undefined
@@ -68,7 +68,9 @@ describe('deterministic workflows', () => {
     expect(got.body.sessionId).toBe(sessionId);
 
     const listed = await api('GET', '/v1/sessions');
-    expect(listed.body.sessions.some((s: any) => s.sessionId === sessionId)).toBe(true);
+    expect(
+      (listed.body.sessions as Array<{ sessionId: string }>).some((s) => s.sessionId === sessionId)
+    ).toBe(true);
 
     const page = await api('POST', `/v1/sessions/${sessionId}/pages`);
     expect(page.status).toBe(201);
@@ -167,7 +169,7 @@ describe('deterministic workflows', () => {
     const { sessionId, pageId } = await newBrowsingContext();
 
     const page = await observe(sessionId, pageId);
-    const email = page.body.elements.find((e: any) => e.role === 'textbox');
+    const email = (page.body.elements as Array<{ role: string }>).find((e) => e.role === 'textbox');
     expect(email).toBeDefined();
 
     const filled = await act(sessionId, pageId, {

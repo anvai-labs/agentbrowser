@@ -1,5 +1,10 @@
 # Phase 0 Completion Summary
 
+> **Historical record** — Phase 0 snapshot (doc-dated 2025-01-23; committed
+> 2026-08-23). Phases 1-3 and post-MVP work have since shipped; the threat
+> model now exists at `docs/threat-model.md`. Current status:
+> `docs/README.md`, `CHANGELOG.md`.
+
 **Status:** ✅ COMPLETE  
 **Completion Date:** 2025-01-23  
 **Total Tests:** 138/138 passing

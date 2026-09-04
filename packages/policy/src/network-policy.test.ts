@@ -297,6 +297,33 @@ describe('Network Policy', () => {
       policy.clearLogs();
       expect(policy.getLogs()).toHaveLength(0);
     });
+
+    it('should cap retained logs at the configured maxLogEntries (TD-BROWSER-9, A4)', () => {
+      const policy = new NetworkPolicy({ enableLogging: true, maxLogEntries: 3 });
+
+      for (let i = 0; i < 10; i++) {
+        policy.logRequest({ hostname: `host-${i}.example.com` });
+      }
+
+      const logs = policy.getLogs();
+      expect(logs).toHaveLength(3);
+      // Oldest entries evicted first: the retained set is the most recent three.
+      expect(logs.map((entry) => entry.hostname)).toEqual([
+        'host-7.example.com',
+        'host-8.example.com',
+        'host-9.example.com',
+      ]);
+    });
+
+    it('should default maxLogEntries rather than growing without bound', () => {
+      const policy = new NetworkPolicy({ enableLogging: true });
+
+      for (let i = 0; i < 10_005; i++) {
+        policy.logRequest({ hostname: `host-${i}.example.com` });
+      }
+
+      expect(policy.getLogs().length).toBeLessThanOrEqual(10_000);
+    });
   });
 
   describe('policy configuration', () => {

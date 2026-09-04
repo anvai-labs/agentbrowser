@@ -4,7 +4,7 @@
 **Context:** 2026-09-03
 **Related:** [ADR-003](003-headless-first-semantic-observations.md) (headless-first),
 [ADR-005](005-ephemeral-sessions-explicit-persistence.md) (credential handoff / cookie seeding),
-[TD-BROWSER-6](TD-BROWSER-6-headed-sessions-and-credential-handoff.md) (headed sessions + handoff)
+[TD-BROWSER-6](../td/TD-BROWSER-6-headed-sessions-and-credential-handoff.md) (headed sessions + handoff)
 
 ## Context
 

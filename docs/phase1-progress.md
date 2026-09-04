@@ -1,7 +1,13 @@
 # Phase 2 Progress Summary (Phase 1 complete below)
 
-**Last Updated:** 2026-08-23
+**Last Updated:** 2026-08-28
 **Status:** COMPLETE - all exit criteria met
+
+> **Historical progress log, appended top-down:** later-dated sections above
+> supersede the older snapshots below (which still say "Active Phase:
+> Phase 1", 417 tests, "implement TD-011", etc.). All TD-001..TD-026
+> completed 2026-08-24; post-MVP work continued in `docs/td/` and
+> `CHANGELOG.md`.
 
 ## Verified Test Status
 
@@ -96,8 +102,9 @@ Full workspace build and test run, verified end-to-end:
   so the Rust-engine decision has no latency pressure. CI runs it in
   the Benchmarks job gated on the deterministic ref-loop success.
 
-Remaining Phase 2 exit criteria: the 45/50 benchmark suite (deferred with
-Phase 3 benchmarks, TD-025).
+(Superseded — TD-025 above closed this: all 50 tasks pass and the gate runs
+in CI.) Remaining Phase 2 exit criteria at the time: the 45/50 benchmark
+suite (deferred with Phase 3 benchmarks, TD-025).
 
 `pnpm -r build` succeeds for all 10 packages. CI is green on GitHub
 (type-check, lint, test, build) on a clean checkout.
@@ -122,10 +129,13 @@ All verified end-to-end:
    `openapi.json`. Python/polyglot clients can be generated from the spec.
 3. **MCP server (ADR-009)** - `agentbrowser-mcp` binary,
    newline-delimited JSON-RPC over stdio (protocol 2024-11-05). Six
-   high-level tools: browser_create, browser_close, browser_navigate,
-   browser_observe, browser_act, browser_screenshot. browser_extract and
-   browser_pdf are deferred until the API implements them - listing tools
-   that cannot work would be a silent fallback. Verified against
+   high-level tools at this snapshot (2026-08-24): browser_create,
+   browser_close, browser_navigate, browser_observe, browser_act,
+   browser_screenshot. browser_extract and browser_pdf were deferred until
+   the API implemented them - listing tools that cannot work would be a
+   silent fallback. (Both shipped 2026-08-26 — see "Beyond the roadmap"
+   below — and the catalog has since grown to eleven; see
+   `packages/mcp-server`.) Verified against
    victor-ai's MCP client dialect (../codingagent).
 4. **Managed subprocess (ADR-008)** - `createManagedServer()` in the SDK
    spawns the API server as a supervised child (health-wait, periodic
@@ -156,9 +166,10 @@ Contract fixes that surfaced: canonical fingerprint
 matched by core; `RawElement` carries engine ref + risk; FakeEngine
 honors screenshot format and exposes a test-only element-injection hook.
 
-**Remaining known gap:** PlaywrightEngine.resolve still returns a mock
-fingerprint, so ref actions against real Chromium fail the fingerprint
-gate until the engine keeps a real ref→element store (TD-008 completion).
+(Superseded — the engine now keeps a real ref→element store; see the TD-008
+✅ COMPLETE entry above.) Remaining known gap at the time:
+PlaywrightEngine.resolve still returned a mock fingerprint, so ref actions
+against real Chromium failed the fingerprint gate.
 
 
 ### TD-013: CLI ✅ COMPLETE

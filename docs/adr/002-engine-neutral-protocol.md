@@ -112,8 +112,8 @@ interface EngineCapabilities {
 ```
 
 ### Protocol versioning
-- Schema files in `packages/protocol/schemas/v1/`
-- OpenAPI generated from schemas
+- Schema definitions (TypeBox) in `packages/protocol/src/schemas.ts`
+- OpenAPI generated from those schemas (`packages/api/src/emit-openapi.ts`)
 - Breaking changes create `/v2/` with both supported during transition
 - Deprecation period minimum 6 months for major versions
 
@@ -121,7 +121,7 @@ interface EngineCapabilities {
 ```json
 POST /v1/sessions
 {
-  "engine": "auto",  // or "playwright-chromium", "obscura", etc.
+  "engine": "auto",  // or "playwright-chromium", "safari" (registered auxiliary engines), etc.
   "requireCapabilities": ["accessibilityTree", "screenshots"]
 }
 ```
@@ -140,7 +140,7 @@ Response includes what engine was selected and its capabilities:
 ```
 
 ### Contract test requirements
-- Every engine must pass `@testkit/contract` suite
+- Every engine must pass the `@agentbrowser/testkit` contract suite
 - Tests use only `BrowserEngine` interface, never concrete types
 - Fixture sites verify: navigation, observation, actions, extraction, crashes
 - No engine-specific workarounds in test suite

@@ -17,18 +17,28 @@ input — are deliberately not exposed.
 
 | Tool | Purpose |
 |---|---|
-| `browser_create` | Create an isolated session (also creates the first page) |
+| `browser_create` | Create an isolated session (also creates the first page; accepts seed cookies for authenticated re-entry) |
 | `browser_close` | Close a session, invalidating its refs |
 | `browser_navigate` | Navigate a page to an http(s) URL |
-| `browser_observe` | Semantic snapshot with stable element refs (`e<revision>_<ordinal>`) |
-| `browser_act` | click / fill / select / scroll / press — by ref, never by selector |
+| `browser_observe` | Semantic observation with stable element refs (`e<revision>_<ordinal>`) |
+| `browser_snapshot` | Self-contained page payload (url, title, revision, mode, `fields`) — one call to plan a whole form |
+| `browser_plan` | Execute an ordered batch of fill/click/press/scroll steps in one call; stale refs self-heal, with a role+label guard under churn |
+| `browser_act` | click / fill / select / scroll / press / dialogs — by ref, never by selector |
+| `browser_extract` | Structured page extraction |
 | `browser_screenshot` | Capture optional visual evidence |
+| `browser_pdf` | Page-to-PDF capture |
+| `browser_cookies` | Export session cookies — persist and seed `browser_create` to re-enter an authenticated session |
+
+The fast path for multi-field forms is `browser_snapshot` → `browser_plan`:
+one call to read the page, one call to act on it — see the
+[main README](../../README.md#the-fast-path-for-forms-snapshot-then-plan).
 
 ## Running it
 
 ### Release consumers: the single binary (recommended)
 
-Download `agentbrowser-mcp-<target>` from the [GitHub releases](../../releases)
+Download `agentbrowser-mcp-<target>` from the
+[GitHub releases](https://github.com/anvai-labs/agentbrowser/releases)
 (verify against `sha256sums.txt`), then point any MCP client at it — no Node,
 no pnpm, no repo checkout:
 
@@ -43,7 +53,7 @@ mcpServers:
 
 The binary is **only the MCP adapter** (TD-BROWSER-5 scope boundary): it needs
 a reachable AgentBrowser server over `AGENTBROWSER_BASE_URL` for anything
-beyond the protocol handshake. Deploy the server once (Docker image or
+beyond the protocol handshake. Deploy the server once (release tarball, or
 `node packages/api/dist/bin.js`); every consumer process spawns the binary.
 
 ### Development: from the workspace
@@ -58,13 +68,14 @@ node packages/mcp-server/dist/bin.js
 | Variable | Meaning |
 |---|---|
 | `AGENTBROWSER_BASE_URL` | AgentBrowser server to proxy to (default `http://localhost:3000`) |
+| `AGENTBROWSER_API_KEY` | Bearer key for the service, when it has `AGENTBROWSER_API_KEYS` configured |
 | `AGENTBROWSER_MCP_VERSION` | Override the reported `serverInfo.version` (debugging; the binary is otherwise stamped at build time from `package.json`) |
 
 ## Building and gating the binary
 
 ```sh
 pnpm --filter @anvailabs/agentbrowser-mcp compile   # -> dist-bin/agentbrowser-mcp (needs bun)
-pnpm --filter @anvailabs/agentbrowser-mcp smoke     # stdio handshake + 9-tool catalog gate
+pnpm --filter @anvailabs/agentbrowser-mcp smoke     # stdio handshake + full tool-catalog gate
 ```
 
 Cross-compile with `node scripts/compile.mjs --target=bun-linux-arm64 --outfile=...`.

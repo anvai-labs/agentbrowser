@@ -19,8 +19,8 @@ polish. **On-vision** = intentional per spec/ADRs; listed only to pre-empt re-fl
 
 **Two workstreams are split into their own design docs** because they need a
 decision, not just a patch:
-- **[ADR-012](adr/012-cross-package-contract-single-source-of-truth.md)** — where shared contract primitives live (Theme B).
-- **[TD-BROWSER-8](td/TD-BROWSER-8-bounded-in-memory-collections.md)** — eviction discipline for long-lived in-memory collections (Theme A).
+- **[ADR-015](adr/015-cross-package-contract-single-source-of-truth.md)** — where shared contract primitives live (Theme B).
+- **[TD-BROWSER-9](td/TD-BROWSER-9-bounded-in-memory-collections.md)** — eviction discipline for long-lived in-memory collections (Theme A).
 
 ---
 
@@ -47,7 +47,7 @@ observation multi-pass normalization at ≤300 elements (A-adjacent, `observatio
 
 ---
 
-## Theme B — Cross-package contract single-source-of-truth & type drift → [ADR-012]
+## Theme B — Cross-package contract single-source-of-truth & type drift → [ADR-015]
 
 The protocol-over-implementation principle (ADR-002) says the contract is the
 source of truth. Several primitives that *are* contract have been re-declared per
@@ -56,9 +56,9 @@ divergence evidence — not a hypothetical.
 
 | # | Finding | Location | Sev | Rationalization (verify this) |
 |---|---------|----------|-----|-------------------------------|
-| B1 | **`ActionEffect` name collision across packages** — a classification union in protocol, an unrelated result object in engine | `protocol/types.ts:230` (`export type`) vs `engine/types.ts:162` (`export interface`) | **H** | Two exports share the name for different concepts; a module importing both silently keeps the last. Worse, the engine's shape duplicates protocol's existing `ActionResult` (`protocol/types.ts:426`) — the name is both a collision and a synonym. |
+| B1 | **`ActionEffect` name collision across packages** — a classification union in protocol, an unrelated result object in engine | `protocol/types.ts:230` (`export type`) vs `engine/types.ts:175` (`export interface`) | **H** | Two exports share the name for different concepts; a module importing both silently keeps the last. Worse, the engine's shape duplicates protocol's existing `ActionResult` (`protocol/types.ts:433`) — the name is both a collision and a synonym. |
 | B2 | **SDK `SessionRequest` drift** — contradicts `docs/audit.md`'s "reconciled" claim | `sdk-typescript/client.ts` vs `protocol/types.ts:35` | **H** | SDK has `tenantId: string` (required; protocol optional), `engine?: string` (protocol `engine?: EngineType`), and is **missing** `policy`, `ttlMs`, `idleTimeoutMs`, `cookies`. So SDK clients cannot set per-session policy at all — they must drop to raw JSON. |
-| B3 | `REF_PATTERN` defined 4× in 3 incompatible forms | `core/action-executor.ts:39`, `api/service.ts:161` (capture groups); `cli/cli.ts:67` (no groups); `mcp-server/mcp-server.ts:71` (**string**, re-wrapped as ``new RegExp(`^${REF_PATTERN}$`)`` → double-anchored) | **M** | The ref grammar `e<rev>_<ord>` is protocol (ADR-004). Four copies means a grammar change (e.g. tenant prefix) is a 4-file edit with no guarantee they stay equal — and they already differ in capture-group shape. |
+| B3 | `REF_PATTERN` defined 4× in 3 incompatible forms | `core/action-executor.ts:46`, `api/service.ts:166` (capture groups); `cli/cli.ts:67` (no groups); `mcp-server/mcp-server.ts:87` (**string**, re-wrapped as ``new RegExp(`^${REF_PATTERN}$`)`` → double-anchored) | **M** | The ref grammar `e<rev>_<ord>` is protocol (ADR-004). Four copies means a grammar change (e.g. tenant prefix) is a 4-file edit with no guarantee they stay equal — and they already differ in capture-group shape. |
 | B4 | Ad-hoc request validation instead of the TypeBox schemas that already exist | `api/server.ts:464-471,530-537,576-583,693-701`; duplicated in MCP/CLI/SDK | **M** | `protocol/schemas.ts` defines `SessionRequestSchema`/`NavigationRequestSchema` etc. with min/max/enum rules; the surfaces hand-roll `typeof x !== 'string'` checks and never invoke the schemas. Constraint drift is guaranteed. |
 | B5 | Supported-format list duplicated in 5 places, already divergent | `api/server.ts:692`, `mcp-server.ts:324`, `cli.ts:391`, `sdk client.ts:128`, `api/openapi.ts:561` | **M** | Grep the five lists: only the server's includes `'schema'`. A format added in one place is silently unsupported in the others. |
 | B6 | `formatError`/`formatToolError` duplicated, already diverged | `mcp-server.ts:489-503` vs `cli.ts:539-551` | **M** | ~90% identical; the MCP copy has a `STALE_TARGET` remediation hint the CLI copy lacks — same error, different guidance depending on surface. |
@@ -148,6 +148,6 @@ are sound — the findings against them are bounds and guards, not redesigns.
 ## Suggested remediation order
 
 1. **C3** (SSRF range gap — security-adjacent, cheap), **E1** (deterministic-first regression), **A1/A2** (unbounded caches most exposed to uptime).
-2. **B1/B2/B8** (name collision + SDK drift + event typo — small, high-confusion), then the rest of **Theme B** behind [ADR-012].
-3. **Theme A** remainder behind [TD-BROWSER-8]; **G2** (logger injection).
+2. **B1/B2/B8** (name collision + SDK drift + event typo — small, high-confusion), then the rest of **Theme B** behind [ADR-015].
+3. **Theme A** remainder behind [TD-BROWSER-9]; **G2** (logger injection).
 4. Polish: **Theme C** deletions, **Theme F** refactors, **G1** build config, remaining L items.

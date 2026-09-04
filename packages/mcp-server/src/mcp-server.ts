@@ -23,6 +23,7 @@ import type {
   ObservationRequest,
   ObservationResponse,
   PageResponse,
+  PageSnapshot,
   PdfRequest,
   ScreenshotRequest,
   SessionRequest,
@@ -38,6 +39,18 @@ export interface McpClient {
     close(sessionId: string): Promise<void>;
     /** TD-BROWSER-6: scoped cookie export for the credential handoff loop. */
     cookies(sessionId: string): Promise<ExportedCookie[]>;
+    plan(
+      sessionId: string,
+      pageId: string,
+      actions: Array<Record<string, unknown>>
+    ): Promise<{
+      ok: boolean;
+      completed: number;
+      results: Array<{ step: number; ok: boolean; error?: string }>;
+      mode?: string;
+    }>;
+    /** TD-BROWSER-8: self-contained snapshot payload for one-shot LLM reasoning. */
+    snapshot(sessionId: string, pageId: string): Promise<PageSnapshot>;
     createPage(sessionId: string): Promise<PageResponse>;
     navigate(
       sessionId: string,
@@ -88,7 +101,13 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
   const serverInfo = deps.serverInfo ?? { name: 'agentbrowser', version: '1.0.0' };
 
   const sessionAndPage = (args: Record<string, unknown>): [string, string] => {
-    return [String(args.sessionId), String(args.pageId)];
+    if (typeof args.sessionId !== 'string' || args.sessionId.length === 0) {
+      throw new UsageError('sessionId is required and must be a non-empty string.');
+    }
+    if (typeof args.pageId !== 'string' || args.pageId.length === 0) {
+      throw new UsageError('pageId is required and must be a non-empty string.');
+    }
+    return [args.sessionId, args.pageId];
   };
 
   const tools: ToolDefinition[] = [
@@ -129,7 +148,10 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
         required: ['tenantId'],
       },
       handler: async (args) => {
-        const request: SessionRequest = { tenantId: String(args.tenantId) };
+        if (typeof args.tenantId !== 'string' || args.tenantId.length === 0) {
+          throw new UsageError('tenantId is required and must be a non-empty string.');
+        }
+        const request: SessionRequest = { tenantId: args.tenantId };
         if (typeof args.engine === 'string') request.engine = args.engine;
         if (typeof args.headless === 'boolean') request.headless = args.headless;
         if (typeof args.ttlMs === 'number') request.ttlMs = args.ttlMs;
@@ -156,9 +178,66 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
         required: ['sessionId'],
       },
       handler: async (args) => {
-        const sessionId = String(args.sessionId);
-        const cookies = await client.sessions.cookies(sessionId);
-        return { sessionId, cookies };
+        if (typeof args.sessionId !== 'string' || args.sessionId.length === 0) {
+          throw new UsageError('sessionId is required and must be a non-empty string.');
+        }
+        const cookies = await client.sessions.cookies(args.sessionId);
+        return { sessionId: args.sessionId, cookies };
+      },
+    },
+
+    {
+      name: 'browser_snapshot',
+      description:
+        'Get a self-contained page snapshot for one-shot plan construction (TD-BROWSER-8): ' +
+        'url, title, revision, an adaptive `mode` (stable|verified - verified means recent ' +
+        'ref churn was detected and browser_plan will require a stricter role+label match ' +
+        'before self-healing a stale ref), and fields ({ref, role, label}) to address in a ' +
+        'browser_plan call. Prefer browser_snapshot + browser_plan over repeated ' +
+        'browser_observe/browser_act round-trips when filling multi-field forms.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string' },
+          pageId: { type: 'string' },
+        },
+        required: ['sessionId', 'pageId'],
+      },
+      handler: async (args) => {
+        const [sessionId, pageId] = sessionAndPage(args);
+        return await client.sessions.snapshot(sessionId, pageId);
+      },
+    },
+
+    {
+      name: 'browser_plan',
+      description:
+        'Execute a batched action plan in one call (TD-BROWSER-8). Each action: ' +
+        '{action: fill|click|press|scroll, target?: {ref}, value?, key?}. Steps run ' +
+        'sequentially; the first hard failure aborts with per-step results. Best paired ' +
+        'with browser_snapshot: address refs from its `fields` in one round trip.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string' },
+          pageId: { type: 'string' },
+          actions: {
+            type: 'array',
+            description: 'Ordered plan steps: {action, target?: {ref}, value?, key?}',
+            items: { type: 'object' },
+          },
+        },
+        required: ['sessionId', 'pageId', 'actions'],
+      },
+      handler: async (args) => {
+        const [sessionId, pageId] = sessionAndPage(args);
+        // Schema-only validation is not enforcement: a client that ignores
+        // inputSchema must still get a usage error, not a silently empty
+        // plan that reports ok with zero steps executed.
+        if (!Array.isArray(args.actions)) {
+          throw new UsageError('actions is required and must be an array of plan steps.');
+        }
+        return await client.sessions.plan(sessionId, pageId, args.actions);
       },
     },
 
@@ -172,8 +251,11 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
         required: ['sessionId'],
       },
       handler: async (args) => {
-        await client.sessions.close(String(args.sessionId));
-        return { sessionId: String(args.sessionId), closed: true };
+        if (typeof args.sessionId !== 'string' || args.sessionId.length === 0) {
+          throw new UsageError('sessionId is required and must be a non-empty string.');
+        }
+        await client.sessions.close(args.sessionId);
+        return { sessionId: args.sessionId, closed: true };
       },
     },
 

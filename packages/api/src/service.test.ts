@@ -102,6 +102,237 @@ describe('AgentBrowserService', () => {
     });
   });
 
+  describe('action plans (TD-BROWSER-8)', () => {
+    it('executes a multi-step plan in one call', async () => {
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+      const obs = (await service.observe(session.sessionId, pageId, {
+        mode: 'interactive',
+      })) as unknown as { elements: Array<{ ref: string }> };
+      const ref = obs.elements[0].ref;
+
+      const result = await service.executePlan(session.sessionId, pageId, [
+        { action: 'click', target: { ref } },
+        { action: 'click', target: { ref } },
+      ]);
+      expect(result.ok).toBe(true);
+      expect(result.results).toHaveLength(2);
+      expect(result.results.every((r) => r.ok)).toBe(true);
+    });
+
+    it('aborts on the first failing step and reports progress', async () => {
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      const result = await service.executePlan(session.sessionId, pageId, [
+        { action: 'click', target: { ref: 'e999999_999' } },
+        { action: 'click', target: { ref: 'e1_0' } },
+      ]);
+      expect(result.ok).toBe(false);
+      expect(result.completed).toBe(0);
+      expect(result.error).toBeDefined();
+    });
+
+    it('does not leak a churn-tracking entry after page/session teardown (TD-BROWSER-9, A8)', async () => {
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+      const obs = (await service.observe(session.sessionId, pageId, {
+        mode: 'interactive',
+      })) as unknown as { elements: Array<{ ref: string }> };
+      const ref = obs.elements[0].ref;
+
+      // Reusing the same ref across two steps forces the second step's ref
+      // to go stale after the first step advances the revision, exercising
+      // the self-heal remap path that bumps churn for this session:page.
+      await service.executePlan(session.sessionId, pageId, [
+        { action: 'click', target: { ref } },
+        { action: 'click', target: { ref } },
+      ]);
+
+      const churn = (service as unknown as { churn: Map<string, number> }).churn;
+      const churnKey = `${session.sessionId}:${pageId}`;
+      expect(churn.has(churnKey)).toBe(true);
+
+      await service.closePage(session.sessionId, pageId);
+      expect(churn.has(churnKey)).toBe(false);
+
+      // Same check via closeSession, on a fresh page.
+      const pageId2 = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId2, { url: 'https://example.com/' });
+      const obs2 = (await service.observe(session.sessionId, pageId2, {
+        mode: 'interactive',
+      })) as unknown as { elements: Array<{ ref: string }> };
+      await service.executePlan(session.sessionId, pageId2, [
+        { action: 'click', target: { ref: obs2.elements[0].ref } },
+        { action: 'click', target: { ref: obs2.elements[0].ref } },
+      ]);
+      const churnKey2 = `${session.sessionId}:${pageId2}`;
+      expect(churn.has(churnKey2)).toBe(true);
+
+      await service.closeSession(session.sessionId);
+      expect(churn.has(churnKey2)).toBe(false);
+    });
+
+    it('self-heals under verified mode when the ordinal-matched element still matches role+label', async () => {
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+
+      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
+      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
+      fakePage?.setElements([{ role: 'button', name: 'Submit' }]);
+      const obs = (await service.observe(session.sessionId, pageId, {
+        mode: 'interactive',
+      })) as unknown as { elements: Array<{ ref: string }> };
+      const ref = obs.elements[0].ref;
+
+      // Force verified mode directly - this test is about the
+      // disambiguation logic itself, not the churn-accumulation mechanics
+      // (covered separately above).
+      const churn = (service as unknown as { churn: Map<string, number> }).churn;
+      churn.set(`${session.sessionId}:${pageId}`, 3);
+
+      // Advance the revision without touching lastObservation (mirrors a
+      // real multi-step plan where an earlier step's action moves the page
+      // past a still-unused ref from the same original observation).
+      await service.act(session.sessionId, pageId, { action: 'scroll', direction: 'down' });
+
+      const result = await service.executePlan(session.sessionId, pageId, [
+        { action: 'click', target: { ref } },
+      ]);
+
+      expect(result.mode).toBe('verified');
+      expect(result.ok).toBe(true);
+    });
+
+    it('refuses to guess-remap under verified mode when a different element now occupies the ordinal', async () => {
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+
+      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
+      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
+      fakePage?.setElements([{ role: 'button', name: 'Submit' }]);
+      const obs = (await service.observe(session.sessionId, pageId, {
+        mode: 'interactive',
+      })) as unknown as { elements: Array<{ ref: string }> };
+      const ref = obs.elements[0].ref;
+
+      const churn = (service as unknown as { churn: Map<string, number> }).churn;
+      churn.set(`${session.sessionId}:${pageId}`, 3);
+
+      await service.act(session.sessionId, pageId, { action: 'scroll', direction: 'down' });
+
+      // The page reordered: a semantically different element now sits at
+      // the same ordinal position. lastObservation (the baseline) still
+      // remembers the old button - captured above, before this replaces the
+      // live element - so the role/label check must catch this.
+      fakePage?.setElements([{ role: 'checkbox', name: 'Agree to terms' }]);
+
+      const result = await service.executePlan(session.sessionId, pageId, [
+        { action: 'click', target: { ref } },
+      ]);
+
+      expect(result.ok).toBe(false);
+      expect(result.error?.code).toBe('AMBIGUOUS_REMAP');
+    });
+
+    it('remaps later stale refs of a plan from their mint-time revision, not just the first (regression: self-heal re-observe used to invalidate the baseline)', async () => {
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+
+      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
+      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
+      fakePage?.setElements([{ role: 'button', name: 'Submit' }]);
+      const obs = (await service.observe(session.sessionId, pageId, {
+        mode: 'interactive',
+      })) as unknown as { elements: Array<{ ref: string }> };
+      const ref = obs.elements[0].ref;
+
+      const churn = (service as unknown as { churn: Map<string, number> }).churn;
+      churn.set(`${session.sessionId}:${pageId}`, 3);
+
+      await service.act(session.sessionId, pageId, { action: 'scroll', direction: 'down' });
+
+      // The exact flow browser_snapshot + browser_plan recommend: one plan
+      // addressing the same stale ref twice. Step 1's self-heal re-observes,
+      // replacing lastObservation - step 2's baseline must come from the
+      // mint-time revision history, or verified mode aborts a plan that
+      // stable mode completes.
+      const result = await service.executePlan(session.sessionId, pageId, [
+        { action: 'click', target: { ref } },
+        { action: 'click', target: { ref } },
+      ]);
+
+      expect(result.ok).toBe(true);
+      expect(result.mode).toBe('verified');
+      expect(result.results.every((r) => r.ok)).toBe(true);
+    });
+
+    it('matches remap candidates on the redacted form of the baseline so secret-bearing labels still match', async () => {
+      const secreted = new AgentBrowserService({
+        engine,
+        secretManager: new SecretManager({ 'vault://p': 'hunter2' }),
+      });
+      const session = await secreted.createSession({ tenantId: 't1' });
+      const pageId = (await secreted.createPage(session.sessionId)).pageId;
+      await secreted.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+
+      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
+      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
+      fakePage?.setElements([{ role: 'button', name: 'Submit hunter2' }]);
+      const obs = (await secreted.observe(session.sessionId, pageId, {
+        mode: 'interactive',
+      })) as unknown as { elements: Array<{ ref: string }> };
+      const ref = obs.elements[0].ref;
+
+      const churn = (secreted as unknown as { churn: Map<string, number> }).churn;
+      churn.set(`${session.sessionId}:${pageId}`, 3);
+
+      await secreted.act(session.sessionId, pageId, { action: 'scroll', direction: 'down' });
+
+      // The remap candidates arrive redacted ("Submit ***"); the history
+      // baseline is unredacted ("Submit hunter2"). Comparing raw would never
+      // match the element to itself.
+      const result = await secreted.executePlan(session.sessionId, pageId, [
+        { action: 'click', target: { ref } },
+      ]);
+
+      expect(result.ok).toBe(true);
+      expect(result.mode).toBe('verified');
+    });
+
+    it('reports PLAN_STEP_FAILED, not AMBIGUOUS_REMAP, when the element is gone in verified mode', async () => {
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+
+      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
+      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
+      fakePage?.setElements([{ role: 'button', name: 'Submit' }]);
+      const obs = (await service.observe(session.sessionId, pageId, {
+        mode: 'interactive',
+      })) as unknown as { elements: Array<{ ref: string }> };
+      const ref = obs.elements[0].ref;
+
+      const churn = (service as unknown as { churn: Map<string, number> }).churn;
+      churn.set(`${session.sessionId}:${pageId}`, 3);
+
+      // The element is removed outright: no candidate exists at any ordinal.
+      fakePage?.setElements([]);
+
+      const result = await service.executePlan(session.sessionId, pageId, [
+        { action: 'click', target: { ref } },
+      ]);
+
+      expect(result.ok).toBe(false);
+      expect(result.error?.code).toBe('PLAN_STEP_FAILED');
+      expect(result.error?.message).not.toContain('AMBIGUOUS_REMAP');
+    });
+  });
+
   describe('cookie export (TD-BROWSER-6)', () => {
     it('exports an array for a live session', async () => {
       const session = await service.createSession({ tenantId: 't1' });
@@ -844,11 +1075,14 @@ describe('AgentBrowserService', () => {
       const traced = new AgentBrowserService({ engine: new FakeEngine(), tracer });
       const sessionId = (await traced.createSession({ tenantId: 't1' })).sessionId;
       const pageId = (await traced.createPage(sessionId)).pageId;
-      tracer.completedSpans().length = 0; // focus on the navigation
+      // Focus on the navigation: spans already recorded (session.create etc.)
+      // stay in the tracer - completedSpans() is a copy, so truncating it
+      // would silently no-op - so slice by count instead.
+      const spanCountBefore = tracer.completedSpans().length;
 
       await traced.navigate(sessionId, pageId, { url: 'https://example.com' });
 
-      const spans = tracer.completedSpans();
+      const spans = tracer.completedSpans().slice(spanCountBefore);
       const nav = spans.find((s) => s.name === 'navigate');
       const policyCheck = spans.find((s) => s.name === 'policy.check');
 

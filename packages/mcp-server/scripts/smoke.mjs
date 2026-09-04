@@ -4,7 +4,7 @@
  *
  * A binary that compiles but cannot speak the protocol must not ship: this
  * drives the artifact itself over stdio and requires the full MCP handshake
- * plus the complete 9-tool catalog. No AgentBrowser server is needed — the
+ * plus the complete tool catalog. No AgentBrowser server is needed — the
  * gate is deliberately protocol-level so it runs on any build runner.
  *
  * Usage: node scripts/smoke.mjs <path-to-binary>
@@ -24,6 +24,8 @@ const EXPECTED_TOOLS = [
   'browser_create',
   'browser_close',
   'browser_cookies',
+  'browser_snapshot',
+  'browser_plan',
   'browser_navigate',
   'browser_observe',
   'browser_act',
@@ -105,7 +107,9 @@ try {
   if (tools?.error) {
     failures.push(`tools/list failed: ${JSON.stringify(tools.error)}`);
   } else if (JSON.stringify(names) !== JSON.stringify(expected)) {
-    failures.push(`tool catalog mismatch:\n  expected: ${expected.join(', ')}\n  actual:   ${names.join(', ')}`);
+    failures.push(
+      `tool catalog mismatch:\n  expected: ${expected.join(', ')}\n  actual:   ${names.join(', ')}`
+    );
   }
 
   clearTimeout(timer);
@@ -119,7 +123,7 @@ try {
     process.exit(1);
   }
 
-  console.log(`smoke: PASS - 9 tools, serverInfo.version=${initVersion}`);
+  console.log(`smoke: PASS - ${names.length} tools, serverInfo.version=${initVersion}`);
   process.exit(0);
 } catch (error) {
   clearTimeout(timer);

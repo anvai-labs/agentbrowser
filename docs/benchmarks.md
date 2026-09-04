@@ -1,7 +1,7 @@
 # Benchmarks (TD-025)
 
 Run with `pnpm bench` (or `pnpm --filter @agentbrowser/benchmarks <bench|tasks|soak|all>`).
-CI runs the full suite as a release gate on every push.
+CI runs the full suite as a release gate on every push to `main`/`develop` and every pull request.
 
 ## What is measured
 

@@ -11,3 +11,5 @@ export * from './artifact-store.js';
 export * from './tracing.js';
 export * from './logger.js';
 export * from './metrics.js';
+export * from './bounded-cache.js';
+export * from './ring-buffer.js';

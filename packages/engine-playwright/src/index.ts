@@ -6,6 +6,7 @@
 
 import type {
   ActionEffect,
+  ArtifactRef,
   BrowserEngine,
   EngineAction,
   EngineCapabilities,
@@ -23,6 +24,7 @@ import type {
   ObservationRequest,
   PdfRequest,
   RawPageState,
+  ResolvedTarget,
   ScreenshotRequest,
 } from '@agentbrowser/engine';
 import type { RequestPolicy } from '@agentbrowser/engine';
@@ -34,6 +36,7 @@ export * from '@agentbrowser/engine';
 
 /** An element captured at observation time, addressable by ref. */
 interface StoredElement {
+  ref?: string;
   role: string;
   name?: string;
   value?: string;
@@ -321,6 +324,13 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     // Verdict cache keys on hostname + resolved-IP set: a changed DNS
     // resolution (rebinding) re-validates instead of replaying a stale
     // allow.
+    //
+    // Bounded by construction (TD-BROWSER-9, A5): both maps below are local
+    // to one installEgress() call, and installEgress() runs once per
+    // BrowserContext (one per session). They grow only with the distinct
+    // hostnames one session visits and are garbage the moment the context
+    // closes - not a general-purpose cache, so no eviction policy is added
+    // here on top of the session lifetime bound.
     const verdicts = new Map<string, 'allow' | 'deny'>();
     const resolutionCache = new Map<string, string[]>();
     const dns = await import('node:dns/promises');
@@ -679,7 +689,9 @@ class PlaywrightPage implements EnginePage {
     const waitUntil = request.waitUntil || 'load';
     let response: import('playwright').Response | null;
     try {
-      response = await this.page.goto(request.url, { waitUntil: waitUntil as any });
+      response = await this.page.goto(request.url, {
+        waitUntil: waitUntil as 'load' | 'domcontentloaded' | 'networkidle',
+      });
     } catch (error) {
       // An aborted navigation is the egress choke point doing its job.
       if (/ERR_BLOCKED_BY_CLIENT|net::ERR_ABORTED/i.test(String(error))) {
@@ -718,7 +730,7 @@ class PlaywrightPage implements EnginePage {
     const mode = request.mode || 'interactive';
 
     // Get accessibility tree if requested
-    let elements: any[] = [];
+    let elements: StoredElement[] = [];
 
     if (mode === 'interactive' || mode === 'accessibility') {
       try {
@@ -738,11 +750,11 @@ class PlaywrightPage implements EnginePage {
     // within a revision (document order), so the same element maps to the
     // same ref until the page mutates.
     this.refStore.clear();
-    for (const element of elements) {
-      this.refStore.set(element.ref, {
+    for (const [index, element] of elements.entries()) {
+      this.refStore.set(element.ref ?? `e${this.revision}_${index}`, {
         role: element.role,
-        name: element.name,
-        value: element.value,
+        ...(element.name !== undefined ? { name: element.name } : {}),
+        ...(element.value !== undefined ? { value: element.value } : {}),
         visible: element.visible,
         enabled: element.enabled,
       });
@@ -765,8 +777,8 @@ class PlaywrightPage implements EnginePage {
    *     - /value: "typed text"
    * Attribute lines (`/attr: value`) annotate the preceding element.
    */
-  private parseAriaSnapshot(yaml: string, revision: number): any[] {
-    const elements: any[] = [];
+  private parseAriaSnapshot(yaml: string, revision: number): StoredElement[] {
+    const elements: StoredElement[] = [];
     const lines = yaml.split('\n');
 
     for (const line of lines) {
@@ -799,7 +811,7 @@ class PlaywrightPage implements EnginePage {
         continue; // static text is not an interactive element
       }
 
-      const element: any = {
+      const element: StoredElement = {
         ref: `e${revision}_${elements.length}`,
         role,
         visible: true,
@@ -818,7 +830,7 @@ class PlaywrightPage implements EnginePage {
     return elements;
   }
 
-  private async getContentElements(): Promise<any[]> {
+  private async getContentElements(): Promise<StoredElement[]> {
     // Get interactive elements using query selectors
     const selectors = [
       'button',
@@ -831,7 +843,7 @@ class PlaywrightPage implements EnginePage {
       '[role="textbox"]',
     ];
 
-    const elements: any[] = [];
+    const elements: StoredElement[] = [];
 
     for (const selector of selectors) {
       try {
@@ -855,7 +867,7 @@ class PlaywrightPage implements EnginePage {
     return elements;
   }
 
-  async resolve(target: EngineTarget): Promise<any> {
+  async resolve(target: EngineTarget): Promise<ResolvedTarget> {
     const stored = this.refStore.get(target.ref);
     if (!stored) {
       throw new Error(`Element not found: ${target.ref} (observe the page to mint refs)`);
@@ -989,7 +1001,7 @@ class PlaywrightPage implements EnginePage {
     };
   }
 
-  async screenshot(request: ScreenshotRequest): Promise<any> {
+  async screenshot(request: ScreenshotRequest): Promise<ArtifactRef> {
     const screenshot = await this.page.screenshot({
       fullPage: request.fullPage || false,
       type: request.format || 'png',
@@ -1001,11 +1013,10 @@ class PlaywrightPage implements EnginePage {
       contentType: `image/${request.format || 'png'}`,
       sizeBytes: screenshot.length,
       url: `/v1/artifacts/screenshot-${Date.now()}`,
-      bytesBase64: screenshot.toString('base64'),
     };
   }
 
-  async pdf(request: PdfRequest): Promise<any> {
+  async pdf(request: PdfRequest): Promise<ArtifactRef> {
     const buffer = await this.page.pdf({
       landscape: request.landscape || false,
       printBackground: request.printBackground || false,
@@ -1017,7 +1028,6 @@ class PlaywrightPage implements EnginePage {
       contentType: 'application/pdf',
       sizeBytes: buffer.length,
       url: `/v1/artifacts/pdf-${Date.now()}`,
-      bytesBase64: buffer.toString('base64'),
     };
   }
 

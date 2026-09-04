@@ -83,4 +83,52 @@ describe('MetricsRegistry', () => {
 
     expect(metrics.render()).toBe('');
   });
+
+  describe('summary sample window (TD-BROWSER-9, A2)', () => {
+    it('computes quantiles over the recent window while count/sum stay all-time exact', () => {
+      const metrics = new MetricsRegistry({ maxSamplesPerSummary: 10 });
+      // Samples 1..20: all-time count=20 sum=210; the window retains 11..20.
+      for (let ms = 1; ms <= 20; ms++) {
+        metrics.observe('op_ms', ms);
+      }
+
+      const rendered = metrics.render();
+      // Nearest-rank over the sorted window [11..20]: p50 rank 5 -> 15,
+      // p95/p99 rank 10 -> 20.
+      expect(rendered).toContain('op_ms{quantile="0.5"} 15');
+      expect(rendered).toContain('op_ms{quantile="0.95"} 20');
+      expect(rendered).toContain('op_ms{quantile="0.99"} 20');
+      // Unbounded all-time totals, unaffected by window eviction.
+      expect(rendered).toContain('op_ms_count 20');
+      expect(rendered).toContain('op_ms_sum 210');
+    });
+
+    it('bounds retained samples at maxSamplesPerSummary regardless of observe() volume', () => {
+      const metrics = new MetricsRegistry({ maxSamplesPerSummary: 25 });
+      for (let i = 0; i < 5000; i++) {
+        metrics.observe('op_ms', i);
+      }
+
+      const series = (
+        metrics as unknown as {
+          samples: Map<string, { window: { length: number } }>;
+        }
+      ).samples.get('op_ms')?.window;
+      expect(series?.length).toBe(25);
+    });
+
+    it('keeps exact all-history quantiles while samples fit within the window', () => {
+      // Default window (1000) > sample count: quantiles identical to the
+      // pre-window behavior (the existing percentile test asserts values).
+      const metrics = new MetricsRegistry();
+      for (let ms = 1; ms <= 100; ms++) {
+        metrics.observe('op_ms', ms);
+      }
+
+      const rendered = metrics.render();
+      expect(rendered).toContain('op_ms{quantile="0.5"} 50');
+      expect(rendered).toContain('op_ms_count 100');
+      expect(rendered).toContain('op_ms_sum 5050');
+    });
+  });
 });

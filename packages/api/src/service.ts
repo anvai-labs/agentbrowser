@@ -300,16 +300,26 @@ export class AgentBrowserService {
             }
           }
         }
-        for (const [pageId, page] of this.pages) {
-          if (page.sessionId === sessionId) {
-            this.pages.delete(pageId);
-          }
-        }
-        this.eventListeners.delete(sessionId);
-        this.sessionDownloadPolicy.delete(sessionId);
-        this.sessionPolicies.delete(sessionId);
+        this.deleteSessionState(sessionId);
       }
     }
+  }
+
+  /**
+   * Drop every per-session/page tracked resource for a session. The one
+   * place the teardown set is expressed, so a new tracked map cannot
+   * reintroduce the leak class TD-BROWSER-9 (A8) closed.
+   */
+  private deleteSessionState(sessionId: string): void {
+    for (const [pageId, page] of this.pages) {
+      if (page.sessionId === sessionId) {
+        this.pages.delete(pageId);
+        this.churn.delete(this.churnKey(sessionId, pageId));
+      }
+    }
+    this.eventListeners.delete(sessionId);
+    this.sessionDownloadPolicy.delete(sessionId);
+    this.sessionPolicies.delete(sessionId);
   }
 
   /**
@@ -426,13 +436,7 @@ export class AgentBrowserService {
    * event for the cleanup audit.
    */
   private async recoverFromCrash(sessionId: string, reason: string): Promise<void> {
-    for (const [pageId, page] of this.pages) {
-      if (page.sessionId === sessionId) {
-        this.pages.delete(pageId);
-      }
-    }
-    this.sessionDownloadPolicy.delete(sessionId);
-    this.sessionPolicies.delete(sessionId);
+    this.deleteSessionState(sessionId);
     await this.coordinator.terminate(sessionId, SessionState.ENGINE_CRASHED, reason).catch(() => {
       // The session may already be gone; the audit entry stands.
     });
@@ -593,14 +597,7 @@ export class AgentBrowserService {
     } catch (error) {
       throw this.mapError(error);
     }
-    for (const [pageId, page] of this.pages) {
-      if (page.sessionId === sessionId) {
-        this.pages.delete(pageId);
-      }
-    }
-    this.sessionDownloadPolicy.delete(sessionId);
-    this.sessionPolicies.delete(sessionId);
-    this.eventListeners.delete(sessionId);
+    this.deleteSessionState(sessionId);
     this.metrics?.incrementCounter('sessions_closed_total');
     this.metrics?.setGauge('sessions_active', this.coordinator.getSessionCount());
   }
@@ -635,6 +632,199 @@ export class AgentBrowserService {
     return engine;
   }
 
+  /**
+   * TD-BROWSER-8: execute a batched action plan in one call. Steps run
+   * sequentially; a STALE_TARGET failure self-heals once by re-observing and
+   * remapping the ref by ordinal (deterministic on stable forms). Once churn
+   * crosses into `verified` mode, a remap candidate must also match the
+   * pre-failure element's role+label - on a reordering/dynamic page, ordinal
+   * position alone can silently land on the wrong element, so under
+   * detected churn the executor requires the stronger match or refuses to
+   * guess (AMBIGUOUS_REMAP) rather than risk acting on the wrong target. The
+   * first hard failure aborts the plan with the completed prefix reported.
+   */
+  async executePlan(
+    sessionId: string,
+    pageId: string,
+    steps: ServiceActRequest[]
+  ): Promise<{
+    ok: boolean;
+    completed: number;
+    results: Array<{ step: number; ok: boolean; actionId?: string; error?: string }>;
+    mode: 'stable' | 'verified';
+    error?: { code: string; message: string };
+  }> {
+    const results: Array<{ step: number; ok: boolean; actionId?: string; error?: string }> = [];
+    const churnKey = this.churnKey(sessionId, pageId);
+    for (const [index, step] of steps.entries()) {
+      try {
+        const effect = await this.act(sessionId, pageId, step);
+        this.decayChurn(churnKey);
+        results.push({ step: index, ok: true, actionId: effect.actionId });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const ordinal = /(?:^|e\d+)_(\d+)$/.exec(step.target?.ref ?? '')?.[1];
+        if (ordinal !== undefined && /STALE_TARGET|revision|fingerprint/i.test(message)) {
+          this.bumpChurn(churnKey);
+          const mode = this.churnMode(churnKey);
+          // The observation the failing ref was minted from, looked up by the
+          // ref's own revision prefix: executePlan's self-heal (and any
+          // observe-after step) replaces lastObservation mid-plan, so the
+          // CURRENT observation no longer holds a ref minted earlier. The
+          // per-revision history is where the mint-time element lives; fall
+          // back to lastObservation only if that revision was evicted.
+          let baseline: PageElement | undefined;
+          const page = this.pages.get(pageId);
+          if (step.target?.ref !== undefined && page) {
+            const refRevision = /(?:^|e)(\d+)_/.exec(step.target.ref)?.[1];
+            baseline =
+              (refRevision !== undefined
+                ? page.history.get(Number.parseInt(refRevision, 10))?.byRef.get(step.target.ref)
+                : undefined) ?? page.lastObservation?.byRef.get(step.target.ref);
+          }
+
+          const observed = await this.observe(sessionId, pageId, { mode: 'interactive' });
+          const elements =
+            (
+              observed as unknown as {
+                elements?: Array<{ ref: string; role?: string; name?: string }>;
+              }
+            ).elements ?? [];
+          this.logger?.debug('plan.remap', {
+            ordinal,
+            stepRef: step.target?.ref,
+            count: elements.length,
+            mode,
+          });
+
+          const candidates = elements.filter(
+            (e) => typeof e.ref === 'string' && e.ref.endsWith(`_${ordinal}`)
+          );
+          let remapped: string | undefined;
+          let ambiguous = false;
+          if (mode === 'verified') {
+            // Candidates arrive redacted (observe() output); the history
+            // baseline is not redacted, so compare on the redacted form or
+            // an element whose label embeds a secret can never match itself.
+            const redactedBaseline = baseline
+              ? {
+                  role: baseline.role,
+                  name: this.secretManager.redact(baseline.name ?? ''),
+                }
+              : undefined;
+            const matches = redactedBaseline
+              ? candidates.filter(
+                  (e) => e.role === redactedBaseline.role && e.name === redactedBaseline.name
+                )
+              : [];
+            if (matches.length === 1) {
+              remapped = matches[0]?.ref;
+            } else if (candidates.length > 0) {
+              // Candidates exist but none (or several) match: refuse to
+              // guess. An empty candidate list is not ambiguity - the
+              // element is gone - so that falls through to the honest
+              // STALE_TARGET failure below.
+              ambiguous = true;
+            }
+          } else {
+            remapped = candidates[0]?.ref;
+          }
+
+          if (remapped !== undefined) {
+            // The retry can still fail (e.g. a single-use approval token was
+            // already burned by the failed attempt, or the step pinned
+            // expectedRevision). A failure must surface as the plan
+            // envelope, not as a thrown error escaping the catch.
+            try {
+              const retry = await this.act(sessionId, pageId, {
+                ...step,
+                target: { ref: remapped },
+              });
+              results.push({ step: index, ok: true, actionId: retry.actionId });
+              continue;
+            } catch (retryError) {
+              const retryMessage =
+                retryError instanceof Error ? retryError.message : String(retryError);
+              results.push({ step: index, ok: false, error: retryMessage });
+              return {
+                ok: false,
+                completed: index,
+                results,
+                mode: this.churnMode(churnKey),
+                error: { code: 'PLAN_STEP_FAILED', message: retryMessage },
+              };
+            }
+          }
+          if (ambiguous) {
+            const ambiguousMessage = `AMBIGUOUS_REMAP: ${candidates.length} candidate(s) at ordinal ${ordinal} but none matched the pre-failure role/label; refusing to guess under high churn.`;
+            results.push({ step: index, ok: false, error: ambiguousMessage });
+            return {
+              ok: false,
+              completed: index,
+              results,
+              mode,
+              error: { code: 'AMBIGUOUS_REMAP', message: ambiguousMessage },
+            };
+          }
+        }
+        results.push({ step: index, ok: false, error: message });
+        return {
+          ok: false,
+          completed: index,
+          results,
+          mode: this.churnMode(churnKey),
+          error: { code: 'PLAN_STEP_FAILED', message },
+        };
+      }
+    }
+    return { ok: true, completed: steps.length, results, mode: this.churnMode(churnKey) };
+  }
+
+  private churn = new Map<string, number>();
+  private churnKey(sessionId: string, pageId: string): string {
+    return `${sessionId}:${pageId}`;
+  }
+  private bumpChurn(key: string): void {
+    this.churn.set(key, (this.churn.get(key) ?? 0) + 1);
+  }
+  private decayChurn(key: string): void {
+    this.churn.set(key, Math.max(0, (this.churn.get(key) ?? 0) - 1));
+  }
+  private churnMode(key: string): 'stable' | 'verified' {
+    return (this.churn.get(key) ?? 0) >= 3 ? 'verified' : 'stable';
+  }
+
+  /** TD-BROWSER-8: self-contained snapshot payload for one-shot LLM reasoning. */
+  async getSnapshot(
+    sessionId: string,
+    pageId: string
+  ): Promise<{
+    url: string;
+    title: string;
+    revision: number;
+    mode: 'stable' | 'verified';
+    fields: Array<{ ref: string; role: string; label: string }>;
+  }> {
+    const state = await this.observe(sessionId, pageId, { mode: 'interactive' });
+    const view = state as unknown as {
+      url?: string;
+      title?: string;
+      revision?: number;
+      elements?: Array<{ ref: string; role?: string; name?: string }>;
+    };
+    return {
+      url: view.url ?? '',
+      title: view.title ?? '',
+      revision: view.revision ?? 0,
+      mode: this.churnMode(`${sessionId}:${pageId}`),
+      fields: (view.elements ?? []).map((e) => ({
+        ref: e.ref,
+        role: e.role ?? '',
+        label: e.name ?? '',
+      })),
+    };
+  }
+
   // ---- pages --------------------------------------------------------------
 
   async createPage(sessionId: string): Promise<ServicePageView> {
@@ -665,6 +855,7 @@ export class AgentBrowserService {
 
     await page.enginePage.close();
     this.pages.delete(pageId);
+    this.churn.delete(this.churnKey(sessionId, pageId));
   }
 
   // ---- navigation ---------------------------------------------------------
@@ -1018,6 +1209,11 @@ export class AgentBrowserService {
           enginePage: adapter,
           observation: this.lastObservationOf(page),
           currentRevision: page.revision,
+          // TD-BROWSER-9, A7: reuse the map already built in observe() rather
+          // than let the executor re-scan observation.elements per action.
+          ...(page.lastObservation !== undefined
+            ? { elementIndex: page.lastObservation.byRef }
+            : {}),
         }
       );
 

@@ -204,16 +204,14 @@ async executeAction(sessionId, pageId, expectedRevision, action) {
 }
 ```
 
-This is:
-- Only for expert use cases
-- Not exposed in SDK convenience methods
-- Not used by MCP tools
-- Clearly marked as unsafe in docs
+> **Planned escape hatch — not implemented.** The public contract is
+> ref-only today: `ElementTarget` is `{ ref: string }` on every surface
+> (protocol, REST, MCP), and no `selector`/`strategy` fields exist.
 
 ### Validation criteria
 
 - Refs work across same revision
 - Refs fail predictably after page revision changes
-- STALE_TARGET error includes new observation
+- STALE_TARGET error reports expected vs current revision; the client re-observes
 - Never clicks wrong element due to ref staleness
 - Can implement agent that only uses refs, no selectors

@@ -195,6 +195,21 @@ export interface ExportedCookie {
 }
 
 /**
+ * TD-BROWSER-8 self-contained snapshot payload: everything a caller needs to
+ * build one browser_plan call without further round-trips. `mode` is the
+ * page's adaptive mode - `verified` means recent ref churn was detected and
+ * plan self-heal will require a stricter role+label match. Shared by the SDK,
+ * MCP server and REST surface; declare it once, here.
+ */
+export interface PageSnapshot {
+  url: string;
+  title: string;
+  revision: number;
+  mode: 'stable' | 'verified';
+  fields: Array<{ ref: string; role: string; label: string }>;
+}
+
+/**
  * Sessions API client
  */
 export class SessionsClient {
@@ -286,6 +301,41 @@ export class SessionsClient {
     });
     const body = (await this.handleResponse(response)) as { cookies: ExportedCookie[] };
     return body.cookies;
+  }
+
+  /** TD-BROWSER-8: execute a batched action plan; returns per-step results. */
+  async plan(
+    sessionId: string,
+    pageId: string,
+    actions: Array<Record<string, unknown>>
+  ): Promise<{
+    ok: boolean;
+    completed: number;
+    results: Array<{ step: number; ok: boolean; error?: string }>;
+    mode?: string;
+    error?: { code: string; message: string };
+  }> {
+    const response = await this.requestFn(
+      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/plan`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...this.headers,
+        },
+        body: JSON.stringify({ actions }),
+      }
+    );
+    return this.handleResponse(response);
+  }
+
+  /** TD-BROWSER-8: self-contained snapshot payload for one-shot LLM reasoning. */
+  async snapshot(sessionId: string, pageId: string): Promise<PageSnapshot> {
+    const response = await this.requestFn(
+      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/snapshot`,
+      { headers: this.headers }
+    );
+    return this.handleResponse(response);
   }
 
   async navigate(

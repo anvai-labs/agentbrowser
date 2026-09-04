@@ -26,7 +26,9 @@ The system must balance: agent efficiency with human debugging needs.
 1. **Headless in production**: No browser chrome, tabs, or visible windows
 2. **Semantic first**: Default observation = structured element tree with accessibility roles
 3. **Pixels on demand**: Screenshots only when explicitly requested or for evidence
-4. **Debug mode only**: Headed mode exists solely for local development
+4. **Human-in-the-loop mode**: headed sessions exist for interactive
+   logins and approvals (superseded in detail by ADR-013 / TD-BROWSER-6);
+   headless remains the default for agent workloads
 
 ### Observation modes
 
@@ -125,12 +127,11 @@ type ObservationMode =
 ### Screenshot as evidence
 
 ```json
-POST /v1/sessions/{sessionId}/screenshots
+POST /v1/sessions/{sessionId}/pages/{pageId}/screenshot
 {
   "pageId": "pg_01...",
   "options": {
-    "fullPage": true,
-    "maskSensitive": true
+    "fullPage": true
   }
 }
 
@@ -146,30 +147,32 @@ Response:
 ### Observation defaults
 
 - `mode`: `"interactive"` unless otherwise specified
-- `maxBytes`: `32768` (32 KiB) default
-- `maxElements`: `300` default
+- `maxBytes`: accepted on requests, not yet enforced
+- `maxElements`: `300` default (`observation-normalizer.ts`)
 - Truncate deterministically: dialogs/focused first, then interactive, then content
 
-### Headed debug mode
+### Headed sessions (human-in-the-loop)
+
+Headed mode is a per-session property, not a server-wide flag (no
+`AGENTBROWSER_HEADED` env var exists):
 
 ```bash
-# Local development only
-AGENTBROWSER_HEADED=true agentbrowser server
+# CLI
+agentbrowser session create --tenant t1 --no-headless
 
-# Or per-session
-POST /v1/sessions
-{
-  "options": {
-    "headed": true,  // Rejected in production mode
-    "debugHost": "localhost:5900"  // VNC for remote debugging
-  }
-}
+# REST / MCP
+POST /v1/sessions { "tenantId": "t1", "headless": false }
 ```
+
+A headed session receives a dedicated browser instance owned by that
+session (TD-BROWSER-6); the headless pool is unaffected. See ADR-013 for
+the de-fingerprinting posture on headed sessions.
 
 ### Validation criteria
 
 - Default observation from e-commerce site ≤ 32 KiB
 - Screenshots are optional and explicitly requested
 - All agent workflows complete successfully without screenshots
-- Headed mode only works when `NODE_ENV=development`
-- Mask sensitive fields in screenshots by default
+- Headed sessions receive a dedicated browser instance (TD-BROWSER-6)
+- Screenshots are not pixel-masked; `maskSensitive: true` fails loudly -
+  prefer redacted semantic observations
