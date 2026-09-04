@@ -5,7 +5,7 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
-## [Unreleased]
+## [1.7.1] — 2026-09-04
 
 ### Added
 
@@ -28,6 +28,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   `docs/engines.md` — outside the rule (unregistered, unreachable by `createSession`,
   benchmark-only), and barred from the engine registry until a follow-up ADR closes its tested
   egress-enforcement gap.
+- **A `check-doc-links.mjs` CI check** (`scripts/`) validates every relative markdown link and
+  heading anchor across the repo; wired into the lint job.
+- **Documentation audit and reconciliation**: `CLAUDE.md` no longer claims the project is in
+  "Phase 0" (the MVP and five post-MVP TDs have shipped since); the MVP planning docs
+  (`technical-design.md`, `implementation-roadmap.md`, the phase progress summaries) carry
+  historical-record banners instead of presenting a completed plan as still-open work; 11 of 15
+  ADRs are reconciled against current code (isolation-tier honesty in ADR-008, the real 11-tool
+  MCP surface in ADR-009, the real approval-token flow in ADR-007, real egress defaults in
+  ADR-006, and more).
 
 ### Fixed
 
@@ -85,7 +94,7 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   ADR-012; TD-BROWSER-6 ×2 → the bounded-collections TD became TD-BROWSER-8), and the branch-flow
   rule that caused them (main merges must be followed by a main→develop back-sync) is now in
   CLAUDE.md. Stale "6-tool catalog" counts corrected to the enforced 9.
-  ⚠️ **Corrected in 1.7.1** — see Unreleased above: this renumbering collided a second time.
+  ⚠️ **Corrected in [1.7.1](#171-2026-09-04) above**: this renumbering collided a second time.
 
 ## [1.6.1] — 2026-09-02
 
