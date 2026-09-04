@@ -34,7 +34,7 @@ export interface Viewport {
  */
 export interface SessionRequest {
   /** Engine selection; omitted = server default. */
-  engine?: EngineType;
+  engine?: EngineSelection;
   /** Owning tenant; stamped onto the session for scoping and quotas. */
   tenantId?: string;
   ttlMs?: number;
@@ -67,9 +67,16 @@ export interface SessionCookie {
 }
 
 /**
- * Engine type selection
+ * Engine selection. The two literals are the protocol-known names; the
+ * registry (TD-BROWSER-7) also routes arbitrary registered engine names
+ * (e.g. 'safari'), so the request field accepts any string while keeping
+ * autocomplete for the known ones. Unknown names fail loudly at the
+ * service (ENGINE_NOT_FOUND).
  */
 export type EngineType = 'playwright-chromium' | 'auto';
+
+/** Request-facing engine selection: known names or a registered name. */
+export type EngineSelection = EngineType | (string & {});
 
 /**
  * Session policy configuration
