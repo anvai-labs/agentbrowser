@@ -1,8 +1,15 @@
-# ADR-012: Single source of truth for cross-package contract primitives
+# ADR-015: Single source of truth for cross-package contract primitives
 
 **Status:** Proposed
 **Context:** 2026-08-31
 **Superseded by:** N/A
+
+> Renumbered 2026-09-03 (v1.7.1 docs hygiene): landed as ADR-012, but that
+> number was independently taken by
+> [ADR-012: Snapshot-Plan Interaction Model](012-snapshot-plan-interaction-model.md)
+> (Accepted, backs shipped code) before this one shipped. This doc — still
+> Proposed, not load-bearing for any merged code — takes the new number so the
+> Accepted one keeps 012.
 
 ## Context
 

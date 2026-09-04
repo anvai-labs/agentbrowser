@@ -1,8 +1,15 @@
-# TD-BROWSER-8: Bounded in-memory collections & eviction discipline
+# TD-BROWSER-9: Bounded in-memory collections & eviction discipline
 
 **Status:** Proposed
 **Context:** 2026-08-31
 **Related:** [ADR-005](../adr/005-ephemeral-sessions-explicit-persistence.md) (ephemeral sessions), [ADR-008](../adr/008-process-container-isolation.md) (isolation), `docs/hygiene-audit.md` Theme A
+
+> Renumbered 2026-09-03 (v1.7.1 docs hygiene): landed as TD-BROWSER-8, but that
+> number was independently taken by
+> [TD-BROWSER-8: Batched Snapshots and Action Plans](TD-BROWSER-8-batched-snapshots-and-action-plans.md)
+> (Accepted, Phase 1 implemented) before this one shipped. This doc — still
+> Proposed, not yet implemented — takes the new number so the Accepted one
+> keeps 8.
 
 ## Context
 

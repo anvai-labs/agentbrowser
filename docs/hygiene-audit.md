@@ -19,8 +19,8 @@ polish. **On-vision** = intentional per spec/ADRs; listed only to pre-empt re-fl
 
 **Two workstreams are split into their own design docs** because they need a
 decision, not just a patch:
-- **[ADR-012](adr/012-cross-package-contract-single-source-of-truth.md)** — where shared contract primitives live (Theme B).
-- **[TD-BROWSER-8](td/TD-BROWSER-8-bounded-in-memory-collections.md)** — eviction discipline for long-lived in-memory collections (Theme A).
+- **[ADR-015](adr/015-cross-package-contract-single-source-of-truth.md)** — where shared contract primitives live (Theme B).
+- **[TD-BROWSER-9](td/TD-BROWSER-9-bounded-in-memory-collections.md)** — eviction discipline for long-lived in-memory collections (Theme A).
 
 ---
 
@@ -47,7 +47,7 @@ observation multi-pass normalization at ≤300 elements (A-adjacent, `observatio
 
 ---
 
-## Theme B — Cross-package contract single-source-of-truth & type drift → [ADR-012]
+## Theme B — Cross-package contract single-source-of-truth & type drift → [ADR-015]
 
 The protocol-over-implementation principle (ADR-002) says the contract is the
 source of truth. Several primitives that *are* contract have been re-declared per
@@ -148,6 +148,6 @@ are sound — the findings against them are bounds and guards, not redesigns.
 ## Suggested remediation order
 
 1. **C3** (SSRF range gap — security-adjacent, cheap), **E1** (deterministic-first regression), **A1/A2** (unbounded caches most exposed to uptime).
-2. **B1/B2/B8** (name collision + SDK drift + event typo — small, high-confusion), then the rest of **Theme B** behind [ADR-012].
-3. **Theme A** remainder behind [TD-BROWSER-8]; **G2** (logger injection).
+2. **B1/B2/B8** (name collision + SDK drift + event typo — small, high-confusion), then the rest of **Theme B** behind [ADR-015].
+3. **Theme A** remainder behind [TD-BROWSER-9]; **G2** (logger injection).
 4. Polish: **Theme C** deletions, **Theme F** refactors, **G1** build config, remaining L items.
