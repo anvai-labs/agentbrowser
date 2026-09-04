@@ -340,6 +340,35 @@
                   "idleTimeoutMs": {
                     "type": "integer",
                     "minimum": 0
+                  },
+                  "policy": {
+                    "type": "object",
+                    "description": "Per-session policy, mapped onto the session at creation. allowedHosts is an exhaustive allow-list; blockedHosts denies on top of the base policy; downloads stay denied unless allowDownloads is true. (The flat top-level spellings of these fields keep working.)",
+                    "required": [
+                      "allowedHosts"
+                    ],
+                    "properties": {
+                      "allowedHosts": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "minItems": 1
+                      },
+                      "blockedHosts": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "allowDownloads": {
+                        "type": "boolean"
+                      },
+                      "maxDownloadBytes": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    }
                   }
                 }
               }
@@ -1928,14 +1957,26 @@
       "SessionRequest": {
         "type": "object",
         "properties": {
+          "tenantId": {
+            "minLength": 1,
+            "type": "string"
+          },
           "engine": {
             "anyOf": [
               {
-                "const": "playwright-chromium",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "const": "playwright-chromium",
+                    "type": "string"
+                  },
+                  {
+                    "const": "auto",
+                    "type": "string"
+                  }
+                ]
               },
               {
-                "const": "auto",
+                "minLength": 1,
                 "type": "string"
               }
             ]
@@ -1975,6 +2016,62 @@
           },
           "timezoneId": {
             "type": "string"
+          },
+          "headless": {
+            "type": "boolean"
+          },
+          "cookies": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "value",
+                "domain",
+                "path"
+              ],
+              "properties": {
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                },
+                "domain": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "expires": {
+                  "type": "number"
+                },
+                "httpOnly": {
+                  "type": "boolean"
+                },
+                "secure": {
+                  "type": "boolean"
+                },
+                "sameSite": {
+                  "anyOf": [
+                    {
+                      "const": "Strict",
+                      "type": "string"
+                    },
+                    {
+                      "const": "Lax",
+                      "type": "string"
+                    },
+                    {
+                      "const": "None",
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            }
           },
           "policy": {
             "type": "object",

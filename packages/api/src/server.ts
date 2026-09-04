@@ -9,7 +9,8 @@
 
 import { createHash } from 'node:crypto';
 import { MetricsRegistry } from '@agentbrowser/core';
-import { DELIVERED_EXTRACT_FORMATS } from '@agentbrowser/protocol';
+import { DELIVERED_EXTRACT_FORMATS, validateSessionRequest } from '@agentbrowser/protocol';
+import type { SessionPolicy } from '@agentbrowser/protocol';
 import type { StructuredLogger } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
 import cors from '@fastify/cors';
@@ -18,7 +19,7 @@ import Fastify from 'fastify';
 import type { FastifyError, FastifyInstance, FastifyRequest } from 'fastify';
 import { ArtifactAuthorizer } from './artifact-auth.js';
 import { buildOpenApiDocument } from './openapi.js';
-import { AgentBrowserService, type ServiceActRequest, ServiceError } from './service.js';
+import { ServiceSessionRequest, AgentBrowserService, type ServiceActRequest, ServiceError } from './service.js';
 
 export interface ServerOptions {
   port?: number;
@@ -352,7 +353,46 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             });
           }
 
-          const session = await service.createSession(body as never);
+          // ADR-015 B4: schema validation (compiled from the protocol's
+          // SessionRequestSchema) replaces the hand-rolled checks; the
+          // nested `policy` object maps onto the service's flat fields at
+          // this boundary (flat fields keep working - validation passes
+          // them through untouched, and explicit nested policy wins).
+          const validated = validateSessionRequest(body);
+          if (!validated.ok) {
+            const details = validated.issues
+              .map((issue) => `${issue.path || '(root)'}: ${issue.message}`)
+              .join('; ');
+            return reply.status(400).send({
+              error: {
+                code: 'INVALID_REQUEST',
+                message: `Invalid session request: ${details}`,
+                retryable: false,
+              },
+            });
+          }
+          const { cookies, ...validatedRequest } = validated.value;
+          const policy = (body as { policy?: SessionPolicy }).policy;
+          const createRequest: ServiceSessionRequest = { ...validatedRequest };
+          // Structurally identical wire shapes; the protocol type's stricter
+          // optionals (no | undefined) need explicit casts under
+          // exactOptionalPropertyTypes - hence assignments, not spreads.
+          if (cookies !== undefined) {
+            createRequest.cookies = cookies as NonNullable<ServiceSessionRequest['cookies']>;
+          }
+          if (policy?.allowedHosts !== undefined) {
+            createRequest.allowedHosts = policy.allowedHosts;
+          }
+          if (policy?.blockedHosts !== undefined) {
+            createRequest.blockedHosts = policy.blockedHosts;
+          }
+          if (policy?.allowDownloads !== undefined) {
+            createRequest.allowDownloads = policy.allowDownloads;
+          }
+          if (policy?.maxDownloadBytes !== undefined) {
+            createRequest.maxDownloadBytes = policy.maxDownloadBytes;
+          }
+          const session = await service.createSession(createRequest as never);
           return reply.status(201).send(session);
         } catch (error) {
           return fail(reply, error);

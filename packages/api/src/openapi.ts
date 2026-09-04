@@ -250,6 +250,26 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                 timezoneId: { type: 'string' },
                 ttlMs: { type: 'integer', minimum: 0 },
                 idleTimeoutMs: { type: 'integer', minimum: 0 },
+                policy: {
+                  type: 'object',
+                  description:
+                    'Per-session policy, mapped onto the session at creation. ' +
+                    'allowedHosts is an exhaustive allow-list; blockedHosts denies ' +
+                    'on top of the base policy; downloads stay denied unless ' +
+                    'allowDownloads is true. (The flat top-level spellings of ' +
+                    'these fields keep working.)',
+                  required: ['allowedHosts'],
+                  properties: {
+                    allowedHosts: {
+                      type: 'array',
+                      items: { type: 'string' },
+                      minItems: 1,
+                    },
+                    blockedHosts: { type: 'array', items: { type: 'string' } },
+                    allowDownloads: { type: 'boolean' },
+                    maxDownloadBytes: { type: 'number', minimum: 0 },
+                  },
+                },
               },
             }),
           },

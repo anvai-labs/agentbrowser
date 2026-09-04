@@ -85,13 +85,33 @@ export const SessionPolicySchema = Type.Object({
   approval: Type.Optional(ApprovalPolicySchema),
 });
 
+export const SessionCookieSchema = Type.Object({
+  name: Type.String({ minLength: 1 }),
+  value: Type.String(),
+  domain: Type.String({ minLength: 1 }),
+  path: Type.String(),
+  expires: Type.Optional(Type.Number()),
+  httpOnly: Type.Optional(Type.Boolean()),
+  secure: Type.Optional(Type.Boolean()),
+  sameSite: Type.Optional(Type.Union([
+    Type.Literal('Strict'),
+    Type.Literal('Lax'),
+    Type.Literal('None'),
+  ])),
+});
+
 export const SessionRequestSchema = Type.Object({
-  engine: Type.Optional(EngineTypeSchema),
+  tenantId: Type.Optional(Type.String({ minLength: 1 })),
+  // Known engine names plus any registered engine name (TD-BROWSER-7
+  // registry routes arbitrary names; unknown names fail at the service).
+  engine: Type.Optional(Type.Union([EngineTypeSchema, Type.String({ minLength: 1 })])),
   ttlMs: Type.Optional(Type.Number({ minimum: 1000, maximum: 86400000 })),
   idleTimeoutMs: Type.Optional(Type.Number({ minimum: 1000, maximum: 3600000 })),
   viewport: Type.Optional(ViewportSchema),
   locale: Type.Optional(Type.String({ pattern: '^[a-z]{2}-[A-Z]{2}$' })),
   timezoneId: Type.Optional(Type.String()),
+  headless: Type.Optional(Type.Boolean()),
+  cookies: Type.Optional(Type.Array(SessionCookieSchema)),
   policy: Type.Optional(SessionPolicySchema),
 });
 

@@ -23,6 +23,7 @@ import {
   validate,
 } from './schemas';
 import { DELIVERED_EXTRACT_FORMATS, REF_PATTERN, parseRef } from './types';
+import { validateSessionRequest } from './validators';
 import type { SupportedAction } from './types';
 
 describe('Schema Validation - Session Request', () => {
@@ -66,16 +67,18 @@ describe('Schema Validation - Session Request', () => {
     expect(result.success).toBe(false);
   });
 
-  it('should reject invalid engine type', () => {
-    const invalidRequest = {
-      engine: 'invalid-engine', // Invalid: not in enum
+  it('should pass non-enum engine names to the registry, reject only empty strings', () => {
+    // TD-BROWSER-7: the registry routes arbitrary engine names and the
+    // service fails loudly (ENGINE_NOT_FOUND) on unknown ones - the schema
+    // validates shape, not registration.
+    const registryName = {
+      engine: 'safari',
       policy: {
         allowedHosts: ['example.com'],
       },
     };
-
-    const result = validate(SessionRequestSchema, invalidRequest);
-    expect(result.success).toBe(false);
+    expect(validate(SessionRequestSchema, registryName).success).toBe(true);
+    expect(validate(SessionRequestSchema, { engine: '' }).success).toBe(false);
   });
 
   it('should accept minimal session request', () => {
@@ -571,5 +574,47 @@ describe('ADR-015 single-source-of-truth exports', () => {
       'jsonld',
       'schema',
     ]);
+  });
+});
+
+describe('validateSessionRequest (compiled, ADR-015 B4)', () => {
+  it('accepts a minimal valid body', () => {
+    const result = validateSessionRequest({ tenantId: 't1' });
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts the full field set including nested policy', () => {
+    const result = validateSessionRequest({
+      tenantId: 't1',
+      engine: 'safari',
+      headless: false,
+      ttlMs: 60000,
+      idleTimeoutMs: 60000,
+      viewport: { width: 1280, height: 720 },
+      locale: 'en-US',
+      timezoneId: 'UTC',
+      cookies: [{ name: 'sid', value: 'v', domain: 'example.com', path: '/' }],
+      policy: { allowedHosts: ['example.com'], allowDownloads: true, maxDownloadBytes: 1024 },
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects constraint violations with addressed issues', () => {
+    const result = validateSessionRequest({ tenantId: '', ttlMs: 5, locale: 'english' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const paths = result.issues.map((issue) => issue.path).sort();
+      expect(paths).toContain('/tenantId');
+      expect(paths).toContain('/ttlMs');
+      expect(paths).toContain('/locale');
+    }
+  });
+
+  it('passes additional (flat) properties through untouched', () => {
+    const result = validateSessionRequest({ tenantId: 't1', allowedHosts: ['a.com'] });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect((result.value as { allowedHosts?: string[] }).allowedHosts).toEqual(['a.com']);
+    }
   });
 });
