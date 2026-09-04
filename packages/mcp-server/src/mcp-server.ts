@@ -46,6 +46,18 @@ export interface McpClient {
       ok: boolean;
       completed: number;
       results: Array<{ step: number; ok: boolean; error?: string }>;
+      mode?: string;
+    }>;
+    /** TD-BROWSER-8: self-contained snapshot payload for one-shot LLM reasoning. */
+    snapshot(
+      sessionId: string,
+      pageId: string
+    ): Promise<{
+      url: string;
+      title: string;
+      revision: number;
+      mode: string;
+      fields: Array<{ ref: string; role: string; label: string }>;
     }>;
     createPage(sessionId: string): Promise<PageResponse>;
     navigate(
@@ -97,7 +109,13 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
   const serverInfo = deps.serverInfo ?? { name: 'agentbrowser', version: '1.0.0' };
 
   const sessionAndPage = (args: Record<string, unknown>): [string, string] => {
-    return [String(args.sessionId), String(args.pageId)];
+    if (typeof args.sessionId !== 'string' || args.sessionId.length === 0) {
+      throw new UsageError('sessionId is required and must be a non-empty string.');
+    }
+    if (typeof args.pageId !== 'string' || args.pageId.length === 0) {
+      throw new UsageError('pageId is required and must be a non-empty string.');
+    }
+    return [args.sessionId, args.pageId];
   };
 
   const tools: ToolDefinition[] = [
@@ -172,25 +190,52 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
     },
 
     {
+      name: 'browser_snapshot',
+      description:
+        'Get a self-contained page snapshot for one-shot plan construction (TD-BROWSER-8): ' +
+        'url, title, revision, an adaptive `mode` (stable|verified - verified means recent ' +
+        'ref churn was detected and browser_plan will require a stricter role+label match ' +
+        'before self-healing a stale ref), and fields ({ref, role, label}) to address in a ' +
+        'browser_plan call. Prefer browser_snapshot + browser_plan over repeated ' +
+        'browser_observe/browser_act round-trips when filling multi-field forms.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string' },
+          pageId: { type: 'string' },
+        },
+        required: ['sessionId', 'pageId'],
+      },
+      handler: async (args) => {
+        const [sessionId, pageId] = sessionAndPage(args);
+        return await client.sessions.snapshot(sessionId, pageId);
+      },
+    },
+
+    {
       name: 'browser_plan',
       description:
         'Execute a batched action plan in one call (TD-BROWSER-8). Each action: ' +
         '{action: fill|click|press|scroll, target?: {ref}, value?, key?}. Steps run ' +
-        'sequentially; the first hard failure aborts with per-step results.',
+        'sequentially; the first hard failure aborts with per-step results. Best paired ' +
+        'with browser_snapshot: address refs from its `fields` in one round trip.',
       inputSchema: {
         type: 'object',
         properties: {
+          sessionId: { type: 'string' },
+          pageId: { type: 'string' },
           actions: {
             type: 'array',
             description: 'Ordered plan steps: {action, target?: {ref}, value?, key?}',
             items: { type: 'object' },
           },
         },
-        required: ['actions'],
+        required: ['sessionId', 'pageId', 'actions'],
       },
       handler: async (args) => {
+        const [sessionId, pageId] = sessionAndPage(args);
         const actions = Array.isArray(args.actions) ? args.actions : [];
-        return await client.sessions.plan(String(args.sessionId), String(args.pageId), actions);
+        return await client.sessions.plan(sessionId, pageId, actions);
       },
     },
 

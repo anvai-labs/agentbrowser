@@ -641,8 +641,13 @@ export class AgentBrowserService {
   /**
    * TD-BROWSER-8: execute a batched action plan in one call. Steps run
    * sequentially; a STALE_TARGET failure self-heals once by re-observing and
-   * remapping the ref by ordinal (deterministic on stable forms). The first
-   * hard failure aborts the plan with the completed prefix reported.
+   * remapping the ref by ordinal (deterministic on stable forms). Once churn
+   * crosses into `verified` mode, a remap candidate must also match the
+   * pre-failure element's role+label - on a reordering/dynamic page, ordinal
+   * position alone can silently land on the wrong element, so under
+   * detected churn the executor requires the stronger match or refuses to
+   * guess (AMBIGUOUS_REMAP) rather than risk acting on the wrong target. The
+   * first hard failure aborts the plan with the completed prefix reported.
    */
   async executePlan(
     sessionId: string,
@@ -667,25 +672,62 @@ export class AgentBrowserService {
         const ordinal = /(?:^|e\d+)_(\d+)$/.exec(step.target?.ref ?? '')?.[1];
         if (ordinal !== undefined && /STALE_TARGET|revision|fingerprint/i.test(message)) {
           this.bumpChurn(churnKey);
+          const mode = this.churnMode(churnKey);
+          // The observation the failing ref was minted from, captured before
+          // the re-observe below overwrites it - the basis for verified
+          // mode's role+label match.
+          const baseline =
+            step.target?.ref !== undefined
+              ? this.pages.get(pageId)?.lastObservation?.byRef.get(step.target.ref)
+              : undefined;
+
           const observed = await this.observe(sessionId, pageId, { mode: 'interactive' });
           const elements =
-            (observed as unknown as { elements?: Array<{ ref: string }> }).elements ?? [];
+            (observed as unknown as {
+              elements?: Array<{ ref: string; role?: string; name?: string }>;
+            }).elements ?? [];
           this.logger?.debug('plan.remap', {
             ordinal,
             stepRef: step.target?.ref,
             count: elements.length,
+            mode,
           });
+
+          const candidates = elements.filter(
+            (e) => typeof e.ref === 'string' && e.ref.endsWith(`_${ordinal}`)
+          );
           let remapped: string | undefined;
-          for (const e of elements) {
-            if (typeof e.ref === 'string' && e.ref.endsWith(`_${ordinal}`)) {
-              remapped = e.ref;
-              break;
+          let ambiguous = false;
+          if (mode === 'verified') {
+            const matches = baseline
+              ? candidates.filter((e) => e.role === baseline.role && e.name === baseline.name)
+              : [];
+            if (matches.length === 1) {
+              remapped = matches[0]?.ref;
+            } else {
+              ambiguous = true;
             }
+          } else {
+            remapped = candidates[0]?.ref;
           }
+
           if (remapped !== undefined) {
             const retry = await this.act(sessionId, pageId, { ...step, target: { ref: remapped } });
             results.push({ step: index, ok: true, actionId: retry.actionId });
             continue;
+          }
+          if (ambiguous) {
+            const ambiguousMessage =
+              `AMBIGUOUS_REMAP: ${candidates.length} candidate(s) at ordinal ${ordinal} but none ` +
+              'matched the pre-failure role/label; refusing to guess under high churn.';
+            results.push({ step: index, ok: false, error: ambiguousMessage });
+            return {
+              ok: false,
+              completed: index,
+              results,
+              mode,
+              error: { code: 'AMBIGUOUS_REMAP', message: ambiguousMessage },
+            };
           }
         }
         results.push({ step: index, ok: false, error: message });

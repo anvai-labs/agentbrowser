@@ -35,6 +35,19 @@ describe('AgentBrowser MCP server', () => {
       cookies: vi
         .fn()
         .mockResolvedValue([{ name: 'sid', value: 'abc', domain: 'example.com', path: '/' }]),
+      plan: vi.fn().mockResolvedValue({
+        ok: true,
+        completed: 1,
+        results: [{ step: 0, ok: true, actionId: 'act_1' }],
+        mode: 'stable',
+      }),
+      snapshot: vi.fn().mockResolvedValue({
+        url: 'https://example.com',
+        title: 'Example',
+        revision: 1,
+        mode: 'stable',
+        fields: [{ ref: 'e1_0', role: 'button', label: 'Submit' }],
+      }),
       createPage: vi
         .fn()
         .mockResolvedValue({ pageId: 'pg_1', sessionId: 'ses_1', status: 'ready' }),
@@ -122,6 +135,71 @@ describe('AgentBrowser MCP server', () => {
       const inner = JSON.parse(response.result.content[0].text);
       expect(inner.sessionId).toBe('ses_1');
       expect(inner.cookies[0]).toMatchObject({ name: 'sid', value: 'abc' });
+    });
+  });
+
+  describe('browser_plan and browser_snapshot (TD-BROWSER-8)', () => {
+    it('lists both tools', async () => {
+      const response = JSON.parse(await request('td3', 'tools/list'));
+      const names = response.result.tools.map((tool: { name: string }) => tool.name);
+      expect(names).toContain('browser_plan');
+      expect(names).toContain('browser_snapshot');
+    });
+
+    it('declares sessionId and pageId as required on browser_plan', async () => {
+      const response = JSON.parse(await request('td4', 'tools/list'));
+      const plan = response.result.tools.find((t: { name: string }) => t.name === 'browser_plan');
+      expect(plan.inputSchema.required).toEqual(
+        expect.arrayContaining(['sessionId', 'pageId', 'actions'])
+      );
+    });
+
+    it('executes a plan through the service client', async () => {
+      const response = JSON.parse(
+        await call('td5', 'browser_plan', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          actions: [{ action: 'click', target: { ref: 'e1_0' } }],
+        })
+      );
+      expect(sessions.plan).toHaveBeenCalledWith('ses_1', 'pg_1', [
+        { action: 'click', target: { ref: 'e1_0' } },
+      ]);
+      expect(textOf(response).ok).toBe(true);
+    });
+
+    it('rejects a browser_plan call missing sessionId or pageId instead of proxying "undefined"', async () => {
+      const response = JSON.parse(
+        await call('td6', 'browser_plan', { actions: [{ action: 'click' }] })
+      );
+      expect(response.result.isError).toBe(true);
+      expect(response.result.content[0].text).toMatch(/sessionId/);
+      expect(sessions.plan).not.toHaveBeenCalled();
+    });
+
+    it('returns a self-contained snapshot payload usable as browser_plan targets', async () => {
+      const response = JSON.parse(
+        await call('td7', 'browser_snapshot', { sessionId: 'ses_1', pageId: 'pg_1' })
+      );
+      expect(sessions.snapshot).toHaveBeenCalledWith('ses_1', 'pg_1');
+      const snapshot = textOf(response);
+      expect(snapshot).toMatchObject({ url: 'https://example.com', mode: 'stable' });
+      const ref = snapshot.fields[0].ref;
+
+      const planResponse = JSON.parse(
+        await call('td8', 'browser_plan', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          actions: [{ action: 'click', target: { ref } }],
+        })
+      );
+      expect(textOf(planResponse).ok).toBe(true);
+    });
+
+    it('rejects a browser_snapshot call missing sessionId or pageId', async () => {
+      const response = JSON.parse(await call('td9', 'browser_snapshot', {}));
+      expect(response.result.isError).toBe(true);
+      expect(sessions.snapshot).not.toHaveBeenCalled();
     });
   });
 

@@ -173,6 +173,70 @@ describe('AgentBrowserService', () => {
       await service.closeSession(session.sessionId);
       expect(churn.has(churnKey2)).toBe(false);
     });
+
+    it('self-heals under verified mode when the ordinal-matched element still matches role+label', async () => {
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+
+      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
+      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
+      fakePage?.setElements([{ role: 'button', name: 'Submit' }]);
+      const obs = (await service.observe(session.sessionId, pageId, {
+        mode: 'interactive',
+      })) as unknown as { elements: Array<{ ref: string }> };
+      const ref = obs.elements[0].ref;
+
+      // Force verified mode directly - this test is about the
+      // disambiguation logic itself, not the churn-accumulation mechanics
+      // (covered separately above).
+      const churn = (service as unknown as { churn: Map<string, number> }).churn;
+      churn.set(`${session.sessionId}:${pageId}`, 3);
+
+      // Advance the revision without touching lastObservation (mirrors a
+      // real multi-step plan where an earlier step's action moves the page
+      // past a still-unused ref from the same original observation).
+      await service.act(session.sessionId, pageId, { action: 'scroll', direction: 'down' });
+
+      const result = await service.executePlan(session.sessionId, pageId, [
+        { action: 'click', target: { ref } },
+      ]);
+
+      expect(result.mode).toBe('verified');
+      expect(result.ok).toBe(true);
+    });
+
+    it('refuses to guess-remap under verified mode when a different element now occupies the ordinal', async () => {
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+
+      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
+      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
+      fakePage?.setElements([{ role: 'button', name: 'Submit' }]);
+      const obs = (await service.observe(session.sessionId, pageId, {
+        mode: 'interactive',
+      })) as unknown as { elements: Array<{ ref: string }> };
+      const ref = obs.elements[0].ref;
+
+      const churn = (service as unknown as { churn: Map<string, number> }).churn;
+      churn.set(`${session.sessionId}:${pageId}`, 3);
+
+      await service.act(session.sessionId, pageId, { action: 'scroll', direction: 'down' });
+
+      // The page reordered: a semantically different element now sits at
+      // the same ordinal position. lastObservation (the baseline) still
+      // remembers the old button - captured above, before this replaces the
+      // live element - so the role/label check must catch this.
+      fakePage?.setElements([{ role: 'checkbox', name: 'Agree to terms' }]);
+
+      const result = await service.executePlan(session.sessionId, pageId, [
+        { action: 'click', target: { ref } },
+      ]);
+
+      expect(result.ok).toBe(false);
+      expect(result.error?.code).toBe('AMBIGUOUS_REMAP');
+    });
   });
 
   describe('cookie export (TD-BROWSER-6)', () => {

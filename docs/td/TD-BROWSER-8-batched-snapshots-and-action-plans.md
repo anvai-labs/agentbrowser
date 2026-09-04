@@ -83,3 +83,12 @@ different element: a refused act is loud.
 - `GET /v1/sessions/:sessionId/pages/:pageId/snapshot`,
   `POST /v1/sessions/:sessionId/pages/:pid/plan` routes; MCP `browser_plan`
   tool; SDK `SessionsClient.plan`.
+- v1.7.1 additions: MCP `browser_snapshot` tool (the snapshot was
+  service/route-only before — an MCP client had no way to reach it, breaking
+  the snapshot→plan loop the TD is built around); `browser_plan` now declares
+  `sessionId`/`pageId` as required schema fields (previously a call missing
+  them proxied the literal string `"undefined"` to the REST API and failed
+  there with a confusing 404); verified-mode remap now enforces the
+  "never silently substitutes a different element" rule from the modes table
+  above — a remap candidate must match the pre-failure element's role+label,
+  else the plan aborts with `AMBIGUOUS_REMAP` instead of guessing.

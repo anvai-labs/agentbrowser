@@ -314,6 +314,24 @@ export class SessionsClient {
     return this.handleResponse(response);
   }
 
+  /** TD-BROWSER-8: self-contained snapshot payload for one-shot LLM reasoning. */
+  async snapshot(
+    sessionId: string,
+    pageId: string
+  ): Promise<{
+    url: string;
+    title: string;
+    revision: number;
+    mode: string;
+    fields: Array<{ ref: string; role: string; label: string }>;
+  }> {
+    const response = await this.requestFn(
+      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/snapshot`,
+      { headers: this.headers }
+    );
+    return this.handleResponse(response);
+  }
+
   async navigate(
     sessionId: string,
     pageId: string,
