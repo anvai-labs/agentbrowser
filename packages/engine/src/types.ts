@@ -219,7 +219,7 @@ export interface ExtractionEvidence {
 export type EngineEventType =
   | 'page.created'
   | 'page.destroyed'
-  | 'page navigated'
+  | 'page.navigated'
   | 'page.loaded'
   | 'page.crashed'
   | 'console.log'
