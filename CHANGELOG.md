@@ -5,6 +5,49 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [Unreleased]
+
+### Added
+
+- **Nine new delivered actions** (spec §5.1 parity): `hover`, `dblclick`,
+  `clear`, `check`, `uncheck`, `wait`, `goBack`, `goForward`, `reload` — across
+  REST, MCP (`browser_act`), CLI, and SDK; `hover`/`wait` are non-mutating
+  (refs survive them). `upload` (needs file transport + size policy) and
+  `download`-as-action (already first-class policy-gated endpoints) are
+  deliberately excluded.
+- **Working per-session policy from every client**: the nested `policy` object
+  on session create is validated and mapped onto the session (previously
+  silently ignored outside REST flat fields); the SDK type surface now mirrors
+  the protocol's.
+- `browser_extract` gains the `schema` argument (format `schema` was
+  REST-only); the MCP tool's format list had omitted it.
+
+### Fixed
+
+- **Every HTTP `select` was rejected** — the flat transport's single `value`
+  was never coerced into the protocol action's `values` array (latent since
+  select shipped; regression-tested end-to-end).
+- **maxBytes hardened**: measured in real UTF-8 bytes (was UTF-16 units —
+  multibyte pages could exceed the budget ~3x), the text field and diff
+  `changes` are now budgeted (previously only the element list), the
+  sinceRevision diff path and post-action observations no longer bypass the
+  budget, and non-integer/zero values are rejected.
+
+### Changed
+
+- **ADR-015 implemented** (Proposed → Accepted): contract primitives live once
+  in `@agentbrowser/protocol` — the `e<rev>_<ord>` grammar (`REF_PATTERN`/
+  `parseRef`, replacing four divergent copies), the extract-format list
+  (seven copies had drifted on whether `schema` exists), `UsageError` + one
+  user-facing error formatter (the copies had diverged on the STALE_TARGET
+  hint), `ActionEffectType`/`EngineTarget` aliases (a latent same-name type
+  collision between protocol and engine), and compiled TypeBox request/action
+  validation replacing per-surface `typeof` checks — with type-level contract
+  tests so schema/type drift fails `type-check`.
+- `SessionRequest.engine` accepts registered engine names (the registry
+  routes arbitrary names and fails loudly on unknown ones; the old
+  two-literal enum couldn't express the shipped semantics).
+
 ## [1.7.1] — 2026-09-04
 
 ### Added

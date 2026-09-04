@@ -1097,7 +1097,10 @@ export class AgentBrowserService {
         `Invalid maxElements ${maxElements}: expected a positive integer.`
       );
     }
-    if (request.maxBytes !== undefined && (!Number.isInteger(request.maxBytes) || request.maxBytes < 1)) {
+    if (
+      request.maxBytes !== undefined &&
+      (!Number.isInteger(request.maxBytes) || request.maxBytes < 1)
+    ) {
       throw new ServiceError(
         'INVALID_REQUEST',
         `Invalid maxBytes ${request.maxBytes}: expected a positive integer.`
@@ -1157,9 +1160,7 @@ export class AgentBrowserService {
         }
         if (keep > 0) {
           working = { ...working, text: text.slice(0, keep), truncated: true };
-        } else if (
-          Buffer.byteLength(JSON.stringify({ ...working, text: [] }), 'utf8') <= budget
-        ) {
+        } else if (Buffer.byteLength(JSON.stringify({ ...working, text: [] }), 'utf8') <= budget) {
           working = { ...working, text: [], truncated: true };
         }
       }

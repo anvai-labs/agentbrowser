@@ -1917,9 +1917,11 @@ describe('maxBytes hardening (Phase 1, A4)', () => {
     const pageId = (await service.createPage(session.sessionId)).pageId;
     // Multibyte name: each CJK char is 3 UTF-8 bytes but 1 UTF-16 unit.
     const engineSessionId = engine.getSessionIds()[0];
-    engine.getFakePage(engineSessionId as string, pageId)?.setElements(
-      Array.from({ length: 40 }, (_, i) => ({ role: 'button', name: `按钮编号${i}` }))
-    );
+    engine
+      .getFakePage(engineSessionId as string, pageId)
+      ?.setElements(
+        Array.from({ length: 40 }, (_, i) => ({ role: 'button', name: `按钮编号${i}` }))
+      );
     const observation = await service.observe(session.sessionId, pageId, {});
     expect(observation.truncated).toBe(false);
 
@@ -1938,9 +1940,9 @@ describe('maxBytes hardening (Phase 1, A4)', () => {
     await expect(
       service.observe(session.sessionId, pageId, { maxBytes: 1.5 as number })
     ).rejects.toThrow(/Invalid maxBytes/);
-    await expect(
-      service.observe(session.sessionId, pageId, { maxBytes: 0 })
-    ).rejects.toThrow(/Invalid maxBytes/);
+    await expect(service.observe(session.sessionId, pageId, { maxBytes: 0 })).rejects.toThrow(
+      /Invalid maxBytes/
+    );
   });
 
   it('applies the byte budget to sinceRevision diffs too', async () => {
