@@ -119,3 +119,22 @@ adapter and benchmark target feeding §17.2 comparative data (see
 required. Re-evaluate when upstream honors `Fetch.fulfillRequest` and
 `maxRedirects` under interception - the CI job (`obscura`) will surface
 that change through the truth guard.
+
+### Scope relative to ADR-013
+
+[ADR-013](adr/013-headed-sessions-and-walled-logins.md) rules out
+"stealth plugin stacks, CDP-hiding shims, or similar evasion machinery."
+Obscura is not an exception to that rule; it sits outside its scope: it
+is a separate adapter that is **not registered** in the service's engine
+registry, is never selected by a real session (`createSession` cannot
+reach it - only an explicit programmatic `createObscuraEngine(...)`
+call in tests and benchmarks can), and exists to produce comparative
+benchmark data. Its purpose is measurement, not evasion: nothing about
+it is designed to defeat a bot wall, and the ADR's de-fingerprinting
+posture (branded binary, cookie-seeding handoff) is unaffected. This
+exclusion holds only while it stays unregistered: **obscura must not be
+wired into the engine registry or any shipped binary until a follow-up
+ADR closes the tested egress-enforcement gap above** (denied requests
+still reaching their target, redirect targets escaping policy). Until
+that ADR exists, the unregistered state is the correct and intended
+one - not an oversight to be completed.
