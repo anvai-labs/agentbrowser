@@ -137,7 +137,7 @@ describe('PlaywrightChromiumEngine', () => {
 
     it('should have name and version as readonly at runtime', () => {
       expect(() => {
-        (engine as any).name = 'modified';
+        (engine as unknown as { name: string }).name = 'modified';
       }).toThrow();
       expect(engine.name).toBe('playwright-chromium');
 

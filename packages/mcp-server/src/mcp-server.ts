@@ -38,6 +38,15 @@ export interface McpClient {
     close(sessionId: string): Promise<void>;
     /** TD-BROWSER-6: scoped cookie export for the credential handoff loop. */
     cookies(sessionId: string): Promise<ExportedCookie[]>;
+    plan(
+      sessionId: string,
+      pageId: string,
+      actions: Array<Record<string, unknown>>
+    ): Promise<{
+      ok: boolean;
+      completed: number;
+      results: Array<{ step: number; ok: boolean; error?: string }>;
+    }>;
     createPage(sessionId: string): Promise<PageResponse>;
     navigate(
       sessionId: string,
@@ -159,6 +168,29 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
         const sessionId = String(args.sessionId);
         const cookies = await client.sessions.cookies(sessionId);
         return { sessionId, cookies };
+      },
+    },
+
+    {
+      name: 'browser_plan',
+      description:
+        'Execute a batched action plan in one call (TD-BROWSER-8). Each action: ' +
+        '{action: fill|click|press|scroll, target?: {ref}, value?, key?}. Steps run ' +
+        'sequentially; the first hard failure aborts with per-step results.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          actions: {
+            type: 'array',
+            description: 'Ordered plan steps: {action, target?: {ref}, value?, key?}',
+            items: { type: 'object' },
+          },
+        },
+        required: ['actions'],
+      },
+      handler: async (args) => {
+        const actions = Array.isArray(args.actions) ? args.actions : [];
+        return await client.sessions.plan(String(args.sessionId), String(args.pageId), actions);
       },
     },
 

@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentBrowserClient } from './client';
 
 // Mock fetch globally
-global.fetch = vi.fn() as any;
+global.fetch = vi.fn() as Record<string, unknown>;
 
 describe('AgentBrowser SDK', () => {
   let client: AgentBrowserClient;
@@ -18,7 +18,7 @@ describe('AgentBrowser SDK', () => {
   beforeEach(() => {
     // Clear all mocks before each test
     vi.clearAllMocks();
-    mockFetch = global.fetch as any;
+    mockFetch = global.fetch as Record<string, unknown>;
 
     client = new AgentBrowserClient({
       baseUrl: 'http://localhost:3000',
