@@ -9,6 +9,7 @@ import type {
   ActionRequest,
   ActionResult,
   ArtifactRef,
+  ElementTarget,
   EngineCapabilities,
   ObservationRequest,
   PageState,
@@ -154,11 +155,10 @@ export interface ElementBounds {
 }
 
 /**
- * Engine element target
+ * Engine element target - ADR-015: the protocol's ElementTarget is the
+ * single declaration; this alias keeps the engine-facing name.
  */
-export interface EngineTarget {
-  ref: string;
-}
+export type EngineTarget = ElementTarget;
 
 /**
  * Engine action (unified type)
@@ -170,15 +170,11 @@ export interface EngineAction {
 }
 
 /**
- * Action effect from engine
+ * Action effect from engine - ADR-015: the protocol's ActionResult is the
+ * single declaration of the result shape; the engine interface extends it
+ * with the engine-only `effect` tag instead of redeclaring the fields.
  */
-export interface ActionEffect {
-  actionId: string;
-  startTimestamp: string;
-  endTimestamp: string;
-  oldRevision: number;
-  newRevision: number;
-  result: unknown;
+export interface ActionEffect extends ActionResult {
   effect?: string;
 }
 

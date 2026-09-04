@@ -243,6 +243,14 @@ export type ActionEffect =
   | 'destructive';
 
 /**
+ * ADR-015: the engine package's result interface used to carry this same
+ * name with a completely different shape. The risk classification keeps
+ * the union; engines (and anything else that needs the classification
+ * name) use this alias so a module importing both cannot collide.
+ */
+export type ActionEffectType = ActionEffect;
+
+/**
  * Action request
  */
 export interface ActionRequest {
