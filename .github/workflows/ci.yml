@@ -59,6 +59,11 @@ jobs:
       - name: Run Biome
         run: pnpm -r lint
 
+      # Prose rots quietly: every relative link in every markdown file must
+      # resolve to a real file and a real heading (GitHub-slugified).
+      - name: Check documentation links
+        run: node scripts/check-doc-links.mjs .
+
   test:
     name: Test
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}

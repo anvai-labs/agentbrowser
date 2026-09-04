@@ -37,7 +37,8 @@ one call to read the page, one call to act on it — see the
 
 ### Release consumers: the single binary (recommended)
 
-Download `agentbrowser-mcp-<target>` from the [GitHub releases](../../releases)
+Download `agentbrowser-mcp-<target>` from the
+[GitHub releases](https://github.com/anvai-labs/agentbrowser/releases)
 (verify against `sha256sums.txt`), then point any MCP client at it — no Node,
 no pnpm, no repo checkout:
 
