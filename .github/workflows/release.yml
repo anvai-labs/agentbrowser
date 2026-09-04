@@ -248,10 +248,16 @@ jobs:
         # the workflow (repo/env/org secret lists are empty; the runner shows
         # it masked in every step). npm prefers an .npmrc token over the OIDC
         # assertion, so that dead token made the publish PUT fail E404 on
-        # v1.7.1 — the first release to exercise this path. Force the token
-        # empty for this step so npm falls through to OIDC.
+        # v1.7.1 — the first release to exercise this path. Emptying the
+        # variable alone was not enough (v1.7.1 take 2): setup-node's
+        # generated .npmrc still carries an `_authToken=${NODE_AUTH_TOKEN}`
+        # line, and a configured-but-empty token makes npm fail ENEEDAUTH
+        # instead of attempting the OIDC flow. Point the userconfig at
+        # /dev/null so no token auth is configured AT ALL for this step —
+        # only then does npm 11.x fall through to trusted publishing.
         env:
           NODE_AUTH_TOKEN: ''
+          NPM_CONFIG_USERCONFIG: /dev/null
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           if curl -sf -A "agentbrowser-release" \
