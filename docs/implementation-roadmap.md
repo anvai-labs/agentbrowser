@@ -1,5 +1,10 @@
 # AgentBrowser Implementation Roadmap
 
+> **Historical planning record** (initial commit 2026-08-23). All 26 tasks
+> shipped; "Immediate Actions" and "Questions to Address Before
+> Implementation" below are preserved for the record only. Current status:
+> `docs/README.md` and `CHANGELOG.md`.
+
 ## Summary
 
 I've reviewed the AgentBrowser MVP specification and created a comprehensive implementation foundation with:
@@ -190,6 +195,6 @@ docs/
 
 ---
 
-**Status**: 🟢 Ready for implementation
-**Estimated Duration**: 12-17 days (following critical path)
+**Status**: Historical planning record — implemented in full (TD-001..TD-026); see CHANGELOG.md
+**Estimated Duration**: 12-17 days (following critical path) — actual: ~4 days (2026-08-23 → 2026-08-27)
 **Approach**: TDD with vertical slices, contract-first, safety-invariant tests

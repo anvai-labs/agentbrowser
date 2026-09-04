@@ -12,7 +12,7 @@ brew install anvai-labs/tap/agentbrowser
 brew services start anvai-labs/tap/agentbrowser   # the service, on 127.0.0.1:3000
 ```
 
-One install ships both halves: the **MCP server binary** (`agentbrowser-mcp`, no Node runtime needed) and the **browser service** (first start bootstraps Chromium into `$(brew --prefix)/var/agentbrowser/browsers`). Without Homebrew, use the `agentbrowser-server-<target>.tar.gz` and `agentbrowser-mcp-<target>` release assets — they need only `node` on PATH.
+One install ships both halves: the **MCP server binary** (`agentbrowser-mcp`, no Node runtime needed) and the **browser service** (first start bootstraps Chromium into `$(brew --prefix)/var/agentbrowser/browsers`). Without Homebrew, grab the release assets: the `agentbrowser-mcp-<target>` binary needs no Node at all, and the `agentbrowser-server-<target>.tar.gz` needs only `node` on PATH.
 
 ### Consuming as an MCP server
 
@@ -151,4 +151,4 @@ Apache-2.0
 
 - [Cloudflare Kitesurf](https://blog.cloudflare.com/kitesurf/) - stateless browser architecture
 - [Playwright](https://playwright.dev/) - browser automation foundation
-- [Obscura](https://github.com/h4ckf0rday/obscura) - Rust headless engine reference
+- [Obscura](https://github.com/h4ckf0r0day/obscura) - Rust headless engine reference

@@ -1,8 +1,13 @@
 # AgentBrowser Technical Design and Implementation Plan
 
 **Version:** 1.0
-**Status:** Ready for implementation
-**Last Updated:** 2025-01-23
+**Status:** Historical planning record — implemented in full (TD-001..TD-026, 2026-08)
+**Last Updated:** 2025-01-23 (plan date; committed 2026-08-23)
+
+> **Historical record.** Every task, checkbox and exit criterion below has
+> since been implemented and audited (`docs/audit.md`); unchecked boxes
+> reflect the plan as written, not outstanding work. Current status:
+> `docs/README.md` and `CHANGELOG.md`.
 
 ## Overview
 
