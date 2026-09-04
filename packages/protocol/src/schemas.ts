@@ -7,6 +7,7 @@
 
 import { Static, Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
+import { REF_PATTERN } from './types.js';
 
 // Re-export all types for convenience
 export * from './types.js';
@@ -84,13 +85,31 @@ export const SessionPolicySchema = Type.Object({
   approval: Type.Optional(ApprovalPolicySchema),
 });
 
+export const SessionCookieSchema = Type.Object({
+  name: Type.String({ minLength: 1 }),
+  value: Type.String(),
+  domain: Type.String({ minLength: 1 }),
+  path: Type.String(),
+  expires: Type.Optional(Type.Number()),
+  httpOnly: Type.Optional(Type.Boolean()),
+  secure: Type.Optional(Type.Boolean()),
+  sameSite: Type.Optional(
+    Type.Union([Type.Literal('Strict'), Type.Literal('Lax'), Type.Literal('None')])
+  ),
+});
+
 export const SessionRequestSchema = Type.Object({
-  engine: Type.Optional(EngineTypeSchema),
+  tenantId: Type.Optional(Type.String({ minLength: 1 })),
+  // Known engine names plus any registered engine name (TD-BROWSER-7
+  // registry routes arbitrary names; unknown names fail at the service).
+  engine: Type.Optional(Type.Union([EngineTypeSchema, Type.String({ minLength: 1 })])),
   ttlMs: Type.Optional(Type.Number({ minimum: 1000, maximum: 86400000 })),
   idleTimeoutMs: Type.Optional(Type.Number({ minimum: 1000, maximum: 3600000 })),
   viewport: Type.Optional(ViewportSchema),
   locale: Type.Optional(Type.String({ pattern: '^[a-z]{2}-[A-Z]{2}$' })),
   timezoneId: Type.Optional(Type.String()),
+  headless: Type.Optional(Type.Boolean()),
+  cookies: Type.Optional(Type.Array(SessionCookieSchema)),
   policy: Type.Optional(SessionPolicySchema),
 });
 
@@ -110,6 +129,7 @@ export const ObservationModeSchema = Type.Union([
 export const ACTION_TYPE_LITERALS = [
   'navigate',
   'click',
+  'dblclick',
   'hover',
   'fill',
   'type',
@@ -186,7 +206,7 @@ export const PageStatusSchema = Type.Union([
 ]);
 
 export const PageElementSchema = Type.Object({
-  ref: Type.String({ pattern: '^e\\d+_\\d+$' }),
+  ref: Type.String({ pattern: REF_PATTERN.source }),
   role: Type.String(),
   name: Type.Optional(Type.String()),
   value: Type.Optional(Type.String()),
@@ -236,7 +256,7 @@ export const PageStateSchema = Type.Object({
 // ============================================================================
 
 export const ElementTargetSchema = Type.Object({
-  ref: Type.String({ pattern: '^e\\d+_\\d+$' }),
+  ref: Type.String({ pattern: REF_PATTERN.source }),
 });
 
 export const NavigateActionSchema = Type.Object({
@@ -326,14 +346,73 @@ export const WaitActionSchema = Type.Object({
   condition: WaitConditionSchema,
 });
 
+export const HoverActionSchema = Type.Object({
+  type: Type.Literal('hover'),
+  target: ElementTargetSchema,
+});
+
+export const DblClickActionSchema = Type.Object({
+  type: Type.Literal('dblclick'),
+  target: ElementTargetSchema,
+});
+
+export const ClearActionSchema = Type.Object({
+  type: Type.Literal('clear'),
+  target: ElementTargetSchema,
+});
+
+export const CheckActionSchema = Type.Object({
+  type: Type.Literal('check'),
+  target: ElementTargetSchema,
+});
+
+export const UncheckActionSchema = Type.Object({
+  type: Type.Literal('uncheck'),
+  target: ElementTargetSchema,
+});
+
+export const GoBackActionSchema = Type.Object({
+  type: Type.Literal('goBack'),
+});
+
+export const GoForwardActionSchema = Type.Object({
+  type: Type.Literal('goForward'),
+});
+
+export const ReloadActionSchema = Type.Object({
+  type: Type.Literal('reload'),
+});
+
+export const AcceptDialogActionSchema = Type.Object({
+  type: Type.Literal('acceptDialog'),
+  promptText: Type.Optional(Type.String()),
+});
+
+export const DismissDialogActionSchema = Type.Object({
+  type: Type.Literal('dismissDialog'),
+});
+
+// ADR-015: this union MUST mirror the TS SupportedAction union exactly -
+// a runtime drift-coverage test asserts the two sets are equal (they had
+// drifted: dialogs existed only in the TS union, navigate/wait only here).
 export const ActionSchema = Type.Union([
   NavigateActionSchema,
   ClickActionSchema,
+  DblClickActionSchema,
+  HoverActionSchema,
   FillActionSchema,
+  ClearActionSchema,
+  CheckActionSchema,
+  UncheckActionSchema,
   SelectActionSchema,
   ScrollActionSchema,
   PressActionSchema,
   WaitActionSchema,
+  GoBackActionSchema,
+  GoForwardActionSchema,
+  ReloadActionSchema,
+  AcceptDialogActionSchema,
+  DismissDialogActionSchema,
 ]);
 
 export const ObservationRequestSchema = Type.Object({

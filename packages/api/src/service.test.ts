@@ -523,6 +523,58 @@ describe('AgentBrowserService', () => {
       expect(result.newRevision).toBeGreaterThan(observation.revision);
     });
 
+    it('should execute select through the flat value transport (regression: values were never built)', async () => {
+      const engineSessionId = engine.getSessionIds()[0];
+      engine
+        .getFakePage(engineSessionId as string, pageId)
+        ?.setElements([{ role: 'combobox', name: 'Country' }]);
+      const observation = await service.observe(sessionId, pageId, {});
+      const combobox = observation.elements.find((el) => el.role === 'combobox');
+      expect(combobox).toBeDefined();
+
+      const result = await service.act(sessionId, pageId, {
+        action: 'select',
+        target: { ref: combobox?.ref },
+        value: 'Canada',
+      });
+
+      // Before the fix, the executor rejected every HTTP select with
+      // "Select action requires a non-empty values parameter".
+      expect(result.status).toBe('success');
+    });
+
+    it('should deliver hover and wait as non-mutating (revision unchanged)', async () => {
+      const observation = await service.observe(sessionId, pageId, {});
+      const ref = observation.elements[0]?.ref;
+
+      const hover = await service.act(sessionId, pageId, { action: 'hover', target: { ref } });
+      expect(hover.newRevision).toBe(observation.revision);
+
+      const wait = await service.act(sessionId, pageId, {
+        action: 'wait',
+        condition: { until: 'load' },
+      });
+      expect(wait.newRevision).toBe(observation.revision);
+    });
+
+    it('should deliver the mutating Phase-1 actions and reject a bad wait condition', async () => {
+      // Mutating actions invalidate refs, so observe fresh per action.
+      for (const action of ['dblclick', 'clear', 'check', 'uncheck', 'reload', 'goBack'] as const) {
+        const observation = await service.observe(sessionId, pageId, {});
+        const ref = observation.elements[0]?.ref;
+        const result = await service.act(sessionId, pageId, {
+          action,
+          ...(action === 'reload' || action === 'goBack' ? {} : { target: { ref } }),
+        });
+        expect(result.status).toBe('success');
+        expect(result.newRevision).toBeGreaterThan(0);
+      }
+
+      await expect(
+        service.act(sessionId, pageId, { action: 'wait', condition: { until: 'bogus' } })
+      ).rejects.toThrow(/Unknown wait condition/);
+    });
+
     it('should execute fill with a value', async () => {
       const observation = await service.observe(sessionId, pageId, {});
       const textbox = observation.elements.find((el) => el.role === 'textbox');
@@ -1849,4 +1901,79 @@ expect.extend({
       message: () => `expected ServiceError code ${code}, got ${actualCode}`,
     };
   },
+});
+
+describe('maxBytes hardening (Phase 1, A4)', () => {
+  let engine: FakeEngine;
+  let service: AgentBrowserService;
+
+  beforeEach(() => {
+    engine = new FakeEngine();
+    service = new AgentBrowserService({ engine });
+  });
+
+  it('measures real UTF-8 bytes, not UTF-16 code units', async () => {
+    const session = await service.createSession({ tenantId: 't1' });
+    const pageId = (await service.createPage(session.sessionId)).pageId;
+    // Multibyte name: each CJK char is 3 UTF-8 bytes but 1 UTF-16 unit.
+    const engineSessionId = engine.getSessionIds()[0];
+    engine
+      .getFakePage(engineSessionId as string, pageId)
+      ?.setElements(
+        Array.from({ length: 40 }, (_, i) => ({ role: 'button', name: `按钮编号${i}` }))
+      );
+    const observation = await service.observe(session.sessionId, pageId, {});
+    expect(observation.truncated).toBe(false);
+
+    const budget = Buffer.byteLength(JSON.stringify(observation), 'utf8') - 300;
+    const bounded = (await service.observe(session.sessionId, pageId, {
+      maxBytes: budget,
+    })) as unknown as { truncated: boolean };
+    expect(bounded.truncated).toBe(true);
+    const size = Buffer.byteLength(JSON.stringify(bounded), 'utf8');
+    expect(size).toBeLessThanOrEqual(budget);
+  });
+
+  it('rejects invalid maxBytes instead of trimming everything', async () => {
+    const session = await service.createSession({ tenantId: 't1' });
+    const pageId = (await service.createPage(session.sessionId)).pageId;
+    await expect(
+      service.observe(session.sessionId, pageId, { maxBytes: 1.5 as number })
+    ).rejects.toThrow(/Invalid maxBytes/);
+    await expect(service.observe(session.sessionId, pageId, { maxBytes: 0 })).rejects.toThrow(
+      /Invalid maxBytes/
+    );
+  });
+
+  it('applies the byte budget to sinceRevision diffs too', async () => {
+    const session = await service.createSession({ tenantId: 't1' });
+    const pageId = (await service.createPage(session.sessionId)).pageId;
+    await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+    const base = await service.observe(session.sessionId, pageId, {});
+    // A fill produces a real diff entry (old/new value pair).
+    const textbox = base.elements.find((el) => el.role === 'textbox');
+    await service.act(session.sessionId, pageId, {
+      action: 'fill',
+      target: { ref: textbox?.ref },
+      value: 'a-value-that-changes-the-diff-payload',
+    });
+    await service.observe(session.sessionId, pageId, {});
+
+    const diff = (await service.observe(session.sessionId, pageId, {
+      sinceRevision: base.revision,
+    })) as unknown as { changes?: unknown[] };
+
+    const full = Buffer.byteLength(JSON.stringify(diff), 'utf8');
+    const budget = full - 100;
+    const bounded = (await service.observe(session.sessionId, pageId, {
+      sinceRevision: base.revision,
+      maxBytes: budget,
+    })) as unknown as { truncated?: boolean; changes?: unknown[] };
+    // Diffs previously bypassed the budget entirely (same size back). Now
+    // the payload shrinks toward the budget; the floor is the fixed
+    // envelope (session/page/url/title), which is never dropped.
+    const size = Buffer.byteLength(JSON.stringify(bounded), 'utf8');
+    expect(size).toBeLessThan(full);
+    expect(bounded.truncated).toBe(true);
+  });
 });

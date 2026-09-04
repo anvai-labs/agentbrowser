@@ -35,7 +35,6 @@ export interface NormalizationOptions {
   mode?: ObservationMode;
   revision: number;
   maxElements?: number;
-  maxBytes?: number;
   sessionId?: string;
   pageId?: string;
   sinceRevision?: number;

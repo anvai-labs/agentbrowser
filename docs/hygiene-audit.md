@@ -1,5 +1,13 @@
 # Engineering-hygiene audit (2026-08-31)
 
+> **Status (2026-09-04): Themes A and B are remediated.** Theme A landed
+> as TD-BROWSER-9 (BoundedCache/RingBuffer, bounded quantile window,
+> indexed lookups). Theme B landed as ADR-015 (SSOT ref grammar + extract
+> formats, ActionEffect/EngineTarget aliases, shared UsageError/formatter,
+> SDK type mirror, compiled schema validation with type-level contract
+> tests). Themes C-G remain open. Findings below are as audited (12
+> packages; 14 now).
+
 A **maintenance-and-design** audit, distinct from `docs/audit.md` (which was a
 vision-vs-implementation / security-and-spec audit, now closed). This pass looks
 only at software-engineering hygiene: **design patterns, data-structure choice,

@@ -5,7 +5,7 @@
  * the AgentBrowser REST API.
  */
 
-import type { DELIVERED_ACTION_TYPES } from '@agentbrowser/protocol';
+import type { DELIVERED_ACTION_TYPES, SessionRequest } from '@agentbrowser/protocol';
 
 export interface ClientOptions {
   baseUrl?: string;
@@ -15,29 +15,15 @@ export interface ClientOptions {
   apiKey?: string;
 }
 
-export interface SessionRequest {
-  tenantId: string;
-  engine?: string;
-  viewport?: { width: number; height: number };
-  locale?: string;
-  timezoneId?: string;
-  headless?: boolean;
-  ttlMs?: number;
-  idleTimeoutMs?: number;
-  /** Seed cookies to reuse an already-authenticated session (skip SSO login). */
-  cookies?: SessionCookie[];
-}
-
-export interface SessionCookie {
-  name: string;
-  value: string;
-  domain: string;
-  path: string;
-  expires?: number;
-  httpOnly?: boolean;
-  secure?: boolean;
-  sameSite?: 'Strict' | 'Lax' | 'None';
-}
+// ADR-015 (B2/B7): the SDK mirrors the protocol's request types instead of
+// redeclaring them - the drift this replaces had already made tenantId
+// required here but optional in the protocol, engine a loose string here
+// but EngineType there, and per-session policy inexpressible from SDK
+// clients entirely. Type-level only: tenantId stays REQUIRED at runtime on
+// every real surface (the MCP tool schema, the server's validator, and the
+// no-keys-mode fallback), so relaxing it here is a widening that breaks
+// no caller.
+export type { SessionCookie, SessionRequest } from '@agentbrowser/protocol';
 
 export interface SessionResponse {
   sessionId: string;
@@ -125,8 +111,16 @@ export interface ActionResult {
 }
 
 export interface ExtractRequest {
-  format: 'text' | 'markdown' | 'links' | 'tables' | 'forms' | 'jsonld';
+  format: 'text' | 'markdown' | 'links' | 'tables' | 'forms' | 'jsonld' | 'schema';
+  /** JSON Schema constraining the extraction (format: 'schema' only). */
+  schema?: Record<string, unknown>;
 }
+
+// ADR-015 single-source-of-truth re-exports: surfaces (CLI, MCP) import
+// these from the SDK rather than redeclaring them.
+export { DELIVERED_EXTRACT_FORMATS, REF_PATTERN, parseRef } from '@agentbrowser/protocol';
+export type { DeliveredExtractFormat } from '@agentbrowser/protocol';
+export { UsageError, formatErrorForUser } from '@agentbrowser/protocol';
 
 export interface ExtractResult {
   data: unknown;

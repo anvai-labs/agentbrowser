@@ -9,7 +9,7 @@
  * JSON-RPC line (or null for notifications), so any transport can drive it.
  */
 
-import { DELIVERED_ACTION_TYPES } from '@agentbrowser/protocol';
+import { DELIVERED_ACTION_TYPES, UsageError, formatErrorForUser } from '@agentbrowser/protocol';
 import type {
   ActionRequest,
   ActionResult,
@@ -29,6 +29,7 @@ import type {
   SessionRequest,
   SessionResponse,
 } from '@agentbrowser/sdk-typescript';
+import { DELIVERED_EXTRACT_FORMATS, REF_PATTERN } from '@agentbrowser/sdk-typescript';
 
 export type { ClientOptions, ExportedCookie };
 
@@ -82,9 +83,6 @@ export interface McpServer {
 }
 
 const PROTOCOL_VERSION = '2024-11-05';
-
-/** Element refs are the only interaction handle - selectors are never accepted. */
-const REF_PATTERN = '^e\\d+_\\d+$';
 
 interface ToolDefinition {
   name: string;
@@ -334,7 +332,9 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
     {
       name: 'browser_act',
       description:
-        'Perform an action on an element by ref: click, fill, select, scroll or press. ' +
+        'Perform an action on an element by ref: click, dblclick, hover, fill, clear, ' +
+        'check, uncheck, select, scroll, press, wait, goBack, goForward, reload, or ' +
+        'handle a dialog. ' +
         'Elements are addressed by the ref from browser_observe, never by CSS selector or ' +
         'XPath. If the page changed since the observation, the action fails with ' +
         'STALE_TARGET: call browser_observe again and use the new refs; do not retry the old one.',
@@ -352,7 +352,7 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
             properties: {
               ref: {
                 type: 'string',
-                pattern: REF_PATTERN,
+                pattern: REF_PATTERN.source,
                 description: 'Element ref from browser_observe, e.g. e1_0.',
               },
             },
@@ -362,6 +362,18 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
           key: { type: 'string', description: 'Key for press.' },
           direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] },
           amount: { type: 'number' },
+          condition: {
+            type: 'object',
+            description: 'Wait-action condition (action: "wait" only).',
+            properties: {
+              until: {
+                type: 'string',
+                enum: ['settled', 'domcontentloaded', 'load', 'networkidle'],
+              },
+              timeoutMs: { type: 'number' },
+            },
+            required: ['until'],
+          },
         },
         required: ['sessionId', 'pageId', 'action'],
       },
@@ -369,13 +381,20 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
         const [sessionId, pageId] = sessionAndPage(args);
 
         const target = (args.target ?? {}) as { ref?: unknown };
-        // Dialog actions carry no target; validation applies only when one
-        // is present.
-        const isDialogAction = args.action === 'acceptDialog' || args.action === 'dismissDialog';
+        // These actions carry no target; ref validation applies only when
+        // a target is expected.
+        const UNTARGETED_ACTIONS = new Set([
+          'acceptDialog',
+          'dismissDialog',
+          'wait',
+          'goBack',
+          'goForward',
+          'reload',
+        ]);
         const ref = target.ref;
         if (
-          !isDialogAction &&
-          (typeof ref !== 'string' || !new RegExp(`^${REF_PATTERN}$`).test(ref))
+          !UNTARGETED_ACTIONS.has(String(args.action)) &&
+          (typeof ref !== 'string' || !REF_PATTERN.test(ref))
         ) {
           throw new UsageError(
             `Invalid element reference '${String(ref)}'. Expected a ref of the form e<revision>_<ordinal>, such as e1_0. Call browser_observe to list current refs.`
@@ -390,6 +409,9 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
         if (typeof args.key === 'string') request.key = args.key;
         if (typeof args.direction === 'string') request.direction = args.direction;
         if (typeof args.amount === 'number') request.amount = args.amount;
+        if (args.condition !== undefined && typeof args.condition === 'object') {
+          request.condition = args.condition as { until: string; timeoutMs?: number };
+        }
 
         return await client.sessions.executeAction(
           sessionId,
@@ -414,8 +436,14 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
           pageId: { type: 'string' },
           format: {
             type: 'string',
-            enum: ['text', 'markdown', 'links', 'tables', 'forms', 'jsonld'],
+            enum: [...DELIVERED_EXTRACT_FORMATS],
             description: 'What to extract (default: text).',
+          },
+          schema: {
+            type: 'object',
+            description:
+              'JSON Schema constraining the extraction (format: "schema" only): ' +
+              'properties to pick, with type/description/enum constraints.',
           },
         },
         required: ['sessionId', 'pageId', 'format'],
@@ -423,15 +451,17 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
       handler: async (args) => {
         const [sessionId, pageId] = sessionAndPage(args);
         const format = args.format;
-        const supported = ['text', 'markdown', 'links', 'tables', 'forms', 'jsonld'];
+        const supported: readonly string[] = DELIVERED_EXTRACT_FORMATS;
         if (typeof format !== 'string' || !supported.includes(format)) {
           throw new UsageError(
             `Unknown extraction format '${String(format)}'. Supported: ${supported.join(', ')}.`
           );
         }
-        return await client.sessions.extract(sessionId, pageId, {
-          format: format as ExtractRequest['format'],
-        });
+        const request: ExtractRequest = { format: format as ExtractRequest['format'] };
+        if (args.schema !== undefined && typeof args.schema === 'object') {
+          request.schema = args.schema as Record<string, unknown>;
+        }
+        return await client.sessions.extract(sessionId, pageId, request);
       },
     },
 
@@ -562,9 +592,6 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
   };
 }
 
-/** Raised for input the server can reject before touching the API. */
-class UsageError extends Error {}
-
 function requireHttpUrl(value: unknown): string {
   const url = typeof value === 'string' ? value : '';
   if (!/^https?:\/\//.test(url)) {
@@ -589,19 +616,10 @@ function errorResult(message: string) {
 }
 
 function formatToolError(error: unknown): string {
-  if (error instanceof UsageError) {
-    return error.message;
-  }
-
-  if (error instanceof Error) {
-    const code = (error as { code?: string }).code;
-    if (code === 'STALE_TARGET') {
-      return `${error.message}\n\nThe element ref is stale. Call browser_observe to get fresh refs at the current revision, then act on the new ref. Do not retry the old one.`;
-    }
-    return code && !error.message.startsWith(code) ? `${code}: ${error.message}` : error.message;
-  }
-
-  return String(error);
+  return formatErrorForUser(
+    error,
+    'The element ref is stale. Call browser_observe to get fresh refs at the current revision, then act on the new ref. Do not retry the old one.'
+  );
 }
 
 function ok(id: string | number, result: unknown): string {

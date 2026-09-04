@@ -22,7 +22,10 @@ import {
   ViewportSchema,
   validate,
 } from './schemas';
+import { ActionSchema } from './schemas';
+import { DELIVERED_EXTRACT_FORMATS, REF_PATTERN, parseRef } from './types';
 import type { SupportedAction } from './types';
+import { validateAction, validateSessionRequest } from './validators';
 
 describe('Schema Validation - Session Request', () => {
   it('should validate valid session request', () => {
@@ -65,16 +68,18 @@ describe('Schema Validation - Session Request', () => {
     expect(result.success).toBe(false);
   });
 
-  it('should reject invalid engine type', () => {
-    const invalidRequest = {
-      engine: 'invalid-engine', // Invalid: not in enum
+  it('should pass non-enum engine names to the registry, reject only empty strings', () => {
+    // TD-BROWSER-7: the registry routes arbitrary engine names and the
+    // service fails loudly (ENGINE_NOT_FOUND) on unknown ones - the schema
+    // validates shape, not registration.
+    const registryName = {
+      engine: 'safari',
       policy: {
         allowedHosts: ['example.com'],
       },
     };
-
-    const result = validate(SessionRequestSchema, invalidRequest);
-    expect(result.success).toBe(false);
+    expect(validate(SessionRequestSchema, registryName).success).toBe(true);
+    expect(validate(SessionRequestSchema, { engine: '' }).success).toBe(false);
   });
 
   it('should accept minimal session request', () => {
@@ -357,10 +362,19 @@ describe('Delivered capability truth (single source)', () => {
   it('should expose the delivered action set as a const tuple', () => {
     expect(DELIVERED_ACTION_TYPES).toEqual([
       'click',
+      'dblclick',
+      'hover',
       'fill',
+      'clear',
+      'check',
+      'uncheck',
       'select',
       'scroll',
       'press',
+      'wait',
+      'goBack',
+      'goForward',
+      'reload',
       'acceptDialog',
       'dismissDialog',
     ]);
@@ -543,5 +557,139 @@ describe('Schema Structure', () => {
   it('should export validate function', () => {
     expect(validate).toBeDefined();
     expect(typeof validate).toBe('function');
+  });
+});
+
+describe('ADR-015 single-source-of-truth exports', () => {
+  it('REF_PATTERN.source stays byte-for-byte stable (embedded in OpenAPI/MCP schemas)', () => {
+    expect(REF_PATTERN.source).toBe('^e\\d+_\\d+$');
+  });
+
+  it('parseRef extracts revision and ordinal, rejects malformed refs', () => {
+    expect(parseRef('e3_12')).toEqual({ revision: 3, ordinal: 12 });
+    expect(parseRef('e0_0')).toEqual({ revision: 0, ordinal: 0 });
+    expect(parseRef('x3_12')).toBeNull();
+    expect(parseRef('e3_')).toBeNull();
+    expect(parseRef('e3_12x')).toBeNull();
+    expect(parseRef('')).toBeNull();
+  });
+
+  it('DELIVERED_EXTRACT_FORMATS is the canonical format list, including schema', () => {
+    expect([...DELIVERED_EXTRACT_FORMATS]).toEqual([
+      'text',
+      'markdown',
+      'links',
+      'tables',
+      'forms',
+      'jsonld',
+      'schema',
+    ]);
+  });
+});
+
+describe('validateSessionRequest (compiled, ADR-015 B4)', () => {
+  it('accepts a minimal valid body', () => {
+    const result = validateSessionRequest({ tenantId: 't1' });
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts the full field set including nested policy', () => {
+    const result = validateSessionRequest({
+      tenantId: 't1',
+      engine: 'safari',
+      headless: false,
+      ttlMs: 60000,
+      idleTimeoutMs: 60000,
+      viewport: { width: 1280, height: 720 },
+      locale: 'en-US',
+      timezoneId: 'UTC',
+      cookies: [{ name: 'sid', value: 'v', domain: 'example.com', path: '/' }],
+      policy: { allowedHosts: ['example.com'], allowDownloads: true, maxDownloadBytes: 1024 },
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects constraint violations with addressed issues', () => {
+    const result = validateSessionRequest({ tenantId: '', ttlMs: 5, locale: 'english' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const paths = result.issues.map((issue) => issue.path).sort();
+      expect(paths).toContain('/tenantId');
+      expect(paths).toContain('/ttlMs');
+      expect(paths).toContain('/locale');
+    }
+  });
+
+  it('passes additional (flat) properties through untouched', () => {
+    const result = validateSessionRequest({ tenantId: 't1', allowedHosts: ['a.com'] });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect((result.value as { allowedHosts?: string[] }).allowedHosts).toEqual(['a.com']);
+    }
+  });
+});
+
+describe('ADR-015 action-union drift coverage', () => {
+  it('ActionSchema and SupportedAction declare the same action types', () => {
+    // Would have caught the pre-unification drift: dialogs only in the TS
+    // union, navigate/wait only in the TypeBox union.
+    const schemaTypes = ActionSchema.anyOf.map(
+      (entry) => (entry as { properties?: { type?: { const?: string } } }).properties?.type?.const
+    );
+    const expected = [
+      'navigate',
+      'click',
+      'dblclick',
+      'hover',
+      'fill',
+      'clear',
+      'check',
+      'uncheck',
+      'select',
+      'scroll',
+      'press',
+      'wait',
+      'goBack',
+      'goForward',
+      'reload',
+      'acceptDialog',
+      'dismissDialog',
+    ];
+    expect(schemaTypes).toEqual(expected);
+  });
+
+  it('validateAction accepts a well-formed action of each delivered type', () => {
+    const samples: unknown[] = [
+      { type: 'navigate', url: 'https://example.com' },
+      { type: 'click', target: { ref: 'e1_0' } },
+      { type: 'dblclick', target: { ref: 'e1_0' } },
+      { type: 'hover', target: { ref: 'e1_0' } },
+      { type: 'fill', target: { ref: 'e1_0' }, value: 'x' },
+      { type: 'clear', target: { ref: 'e1_0' } },
+      { type: 'check', target: { ref: 'e1_0' } },
+      { type: 'uncheck', target: { ref: 'e1_0' } },
+      { type: 'select', target: { ref: 'e1_0' }, values: ['a'] },
+      { type: 'scroll', direction: 'down' },
+      { type: 'press', key: 'Enter' },
+      { type: 'wait', condition: { until: 'load' } },
+      { type: 'goBack' },
+      { type: 'goForward' },
+      { type: 'reload' },
+      { type: 'acceptDialog' },
+      { type: 'dismissDialog' },
+    ];
+    for (const sample of samples) {
+      const result = validateAction(sample);
+      expect({ sample, ok: result.ok }).toEqual({ sample, ok: true });
+    }
+  });
+
+  it('validateAction rejects structural violations', () => {
+    expect(validateAction({ type: 'click' }).ok).toBe(false); // missing target
+    expect(validateAction({ type: 'hover', target: { ref: 'not-a-ref' } }).ok).toBe(false);
+    expect(validateAction({ type: 'fill', target: { ref: 'e1_0' } }).ok).toBe(false); // missing value
+    expect(validateAction({ type: 'wait' }).ok).toBe(false); // missing condition
+    expect(validateAction({ type: 'nope' }).ok).toBe(false);
+    expect(validateAction('click').ok).toBe(false);
   });
 });
