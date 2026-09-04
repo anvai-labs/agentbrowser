@@ -134,6 +134,7 @@ export interface ExtractRequest {
 // these from the SDK rather than redeclaring them.
 export { DELIVERED_EXTRACT_FORMATS, REF_PATTERN, parseRef } from '@agentbrowser/protocol';
 export type { DeliveredExtractFormat } from '@agentbrowser/protocol';
+export { UsageError, formatErrorForUser } from '@agentbrowser/protocol';
 
 export interface ExtractResult {
   data: unknown;

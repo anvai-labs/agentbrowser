@@ -9,7 +9,7 @@
  * JSON-RPC line (or null for notifications), so any transport can drive it.
  */
 
-import { DELIVERED_ACTION_TYPES } from '@agentbrowser/protocol';
+import { DELIVERED_ACTION_TYPES, UsageError, formatErrorForUser } from '@agentbrowser/protocol';
 import type {
   ActionRequest,
   ActionResult,
@@ -569,9 +569,6 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
   };
 }
 
-/** Raised for input the server can reject before touching the API. */
-class UsageError extends Error {}
-
 function requireHttpUrl(value: unknown): string {
   const url = typeof value === 'string' ? value : '';
   if (!/^https?:\/\//.test(url)) {
@@ -596,19 +593,10 @@ function errorResult(message: string) {
 }
 
 function formatToolError(error: unknown): string {
-  if (error instanceof UsageError) {
-    return error.message;
-  }
-
-  if (error instanceof Error) {
-    const code = (error as { code?: string }).code;
-    if (code === 'STALE_TARGET') {
-      return `${error.message}\n\nThe element ref is stale. Call browser_observe to get fresh refs at the current revision, then act on the new ref. Do not retry the old one.`;
-    }
-    return code && !error.message.startsWith(code) ? `${code}: ${error.message}` : error.message;
-  }
-
-  return String(error);
+  return formatErrorForUser(
+    error,
+    'The element ref is stale. Call browser_observe to get fresh refs at the current revision, then act on the new ref. Do not retry the old one.'
+  );
 }
 
 function ok(id: string | number, result: unknown): string {

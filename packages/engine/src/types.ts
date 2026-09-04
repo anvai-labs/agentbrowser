@@ -60,6 +60,11 @@ export interface EngineSessionOptions {
  *
  * Implementations MUST treat the verdict as a pure function of hostname:
  * engines memoize verdicts per host.
+ *
+ * Throw contract (ADR-015 B9): every gate blocks by THROWING - the thrown
+ * error should carry the policy's code (e.g. POLICY_DENIED) and the rule
+ * that fired, so engines can surface a typed refusal. Returning without
+ * throwing means ALLOW.
  */
 export interface RequestPolicy {
   checkRequest(request: { hostname: string; url: string }): Promise<void>;

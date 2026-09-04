@@ -142,3 +142,37 @@ export function isApiError(response: unknown): response is ApiError {
     typeof (errorObj as { retryable: unknown }).retryable === 'boolean'
   );
 }
+
+/**
+ * ADR-015: raised by any surface (MCP tool handlers, CLI commands) for
+ * input it can reject before touching the service - one declaration
+ * instead of per-surface copies.
+ */
+export class UsageError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UsageError';
+  }
+}
+
+/**
+ * ADR-015: one user-facing error formatter shared by the MCP server and
+ * the CLI (the copies had already diverged - only the MCP one carried the
+ * STALE_TARGET remediation hint). `staleHint` is a surface-appropriate
+ * "how to recover" line appended for STALE_TARGET errors.
+ */
+export function formatErrorForUser(error: unknown, staleHint?: string): string {
+  if (error instanceof UsageError) {
+    return error.message;
+  }
+
+  if (error instanceof Error) {
+    const code = (error as { code?: string }).code;
+    if (code === 'STALE_TARGET' && staleHint) {
+      return `${error.message}\n\n${staleHint}`;
+    }
+    return code && !error.message.startsWith(code) ? `${code}: ${error.message}` : error.message;
+  }
+
+  return String(error);
+}

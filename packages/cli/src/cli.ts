@@ -20,7 +20,12 @@ import type {
   SessionRequest,
   SessionResponse,
 } from '@agentbrowser/sdk-typescript';
-import { DELIVERED_EXTRACT_FORMATS, REF_PATTERN } from '@agentbrowser/sdk-typescript';
+import {
+  DELIVERED_EXTRACT_FORMATS,
+  REF_PATTERN,
+  UsageError,
+  formatErrorForUser,
+} from '@agentbrowser/sdk-typescript';
 import { Command } from 'commander';
 
 /**
@@ -66,9 +71,6 @@ export interface Cli {
 
 
 const DEFAULT_BASE_URL = 'http://localhost:3000';
-
-/** Raised for input the CLI can reject before touching the network. */
-class UsageError extends Error {}
 
 export function buildCli(deps: CliDependencies): Cli {
   return {
@@ -542,15 +544,8 @@ function renderObservation(observation: ObservationResponse): string[] {
 }
 
 function formatError(error: unknown): string {
-  if (error instanceof UsageError) {
-    return error.message;
-  }
-
-  if (error instanceof Error) {
-    const code = (error as { code?: string }).code;
-    // SDK errors already carry "CODE: message"
-    return code && !error.message.startsWith(code) ? `${code}: ${error.message}` : error.message;
-  }
-
-  return String(error);
+  return formatErrorForUser(
+    error,
+    'The element ref is stale. Run observe again to get fresh refs at the current revision, then act on the new ref. Do not retry the old one.'
+  );
 }
