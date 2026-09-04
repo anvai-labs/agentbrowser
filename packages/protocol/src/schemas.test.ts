@@ -23,7 +23,8 @@ import {
   validate,
 } from './schemas';
 import { DELIVERED_EXTRACT_FORMATS, REF_PATTERN, parseRef } from './types';
-import { validateSessionRequest } from './validators';
+import { ActionSchema } from './schemas';
+import { validateAction, validateSessionRequest } from './validators';
 import type { SupportedAction } from './types';
 
 describe('Schema Validation - Session Request', () => {
@@ -616,5 +617,70 @@ describe('validateSessionRequest (compiled, ADR-015 B4)', () => {
     if (result.ok) {
       expect((result.value as { allowedHosts?: string[] }).allowedHosts).toEqual(['a.com']);
     }
+  });
+});
+
+describe('ADR-015 action-union drift coverage', () => {
+  it('ActionSchema and SupportedAction declare the same action types', () => {
+    // Would have caught the pre-unification drift: dialogs only in the TS
+    // union, navigate/wait only in the TypeBox union.
+    const schemaTypes = ActionSchema.anyOf.map(
+      (entry) => (entry as { properties?: { type?: { const?: string } } }).properties?.type?.const
+    );
+    const expected = [
+      'navigate',
+      'click',
+      'dblclick',
+      'hover',
+      'fill',
+      'clear',
+      'check',
+      'uncheck',
+      'select',
+      'scroll',
+      'press',
+      'wait',
+      'goBack',
+      'goForward',
+      'reload',
+      'acceptDialog',
+      'dismissDialog',
+    ];
+    expect(schemaTypes).toEqual(expected);
+  });
+
+  it('validateAction accepts a well-formed action of each delivered type', () => {
+    const samples: unknown[] = [
+      { type: 'navigate', url: 'https://example.com' },
+      { type: 'click', target: { ref: 'e1_0' } },
+      { type: 'dblclick', target: { ref: 'e1_0' } },
+      { type: 'hover', target: { ref: 'e1_0' } },
+      { type: 'fill', target: { ref: 'e1_0' }, value: 'x' },
+      { type: 'clear', target: { ref: 'e1_0' } },
+      { type: 'check', target: { ref: 'e1_0' } },
+      { type: 'uncheck', target: { ref: 'e1_0' } },
+      { type: 'select', target: { ref: 'e1_0' }, values: ['a'] },
+      { type: 'scroll', direction: 'down' },
+      { type: 'press', key: 'Enter' },
+      { type: 'wait', condition: { until: 'load' } },
+      { type: 'goBack' },
+      { type: 'goForward' },
+      { type: 'reload' },
+      { type: 'acceptDialog' },
+      { type: 'dismissDialog' },
+    ];
+    for (const sample of samples) {
+      const result = validateAction(sample);
+      expect({ sample, ok: result.ok }).toEqual({ sample, ok: true });
+    }
+  });
+
+  it('validateAction rejects structural violations', () => {
+    expect(validateAction({ type: 'click' }).ok).toBe(false); // missing target
+    expect(validateAction({ type: 'hover', target: { ref: 'not-a-ref' } }).ok).toBe(false);
+    expect(validateAction({ type: 'fill', target: { ref: 'e1_0' } }).ok).toBe(false); // missing value
+    expect(validateAction({ type: 'wait' }).ok).toBe(false); // missing condition
+    expect(validateAction({ type: 'nope' }).ok).toBe(false);
+    expect(validateAction('click').ok).toBe(false);
   });
 });

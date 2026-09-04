@@ -158,6 +158,7 @@ export type ObservationMode =
 export type ActionType =
   | 'navigate'
   | 'click'
+  | 'dblclick'
   | 'hover'
   | 'fill'
   | 'type'
@@ -398,13 +399,82 @@ export interface WaitAction extends Action {
 export type SupportedAction =
   | NavigateAction
   | ClickAction
+  | DblClickAction
+  | HoverAction
   | FillAction
+  | ClearAction
+  | CheckAction
+  | UncheckAction
   | SelectAction
   | ScrollAction
   | PressAction
   | WaitAction
+  | GoBackAction
+  | GoForwardAction
+  | ReloadAction
   | AcceptDialogAction
   | DismissDialogAction;
+
+/**
+ * Hover an element (non-mutating).
+ */
+export interface HoverAction extends Action {
+  type: 'hover';
+  target: ElementTarget;
+}
+
+/**
+ * Double-click an element.
+ */
+export interface DblClickAction extends Action {
+  type: 'dblclick';
+  target: ElementTarget;
+}
+
+/**
+ * Clear an input's value.
+ */
+export interface ClearAction extends Action {
+  type: 'clear';
+  target: ElementTarget;
+}
+
+/**
+ * Tick a checkbox or radio.
+ */
+export interface CheckAction extends Action {
+  type: 'check';
+  target: ElementTarget;
+}
+
+/**
+ * Untick a checkbox.
+ */
+export interface UncheckAction extends Action {
+  type: 'uncheck';
+  target: ElementTarget;
+}
+
+/**
+ * Navigate back in history.
+ */
+export interface GoBackAction extends Action {
+  type: 'goBack';
+}
+
+/**
+ * Navigate forward in history.
+ */
+export interface GoForwardAction extends Action {
+  type: 'goForward';
+}
+
+/**
+ * Reload the current page.
+ */
+export interface ReloadAction extends Action {
+  type: 'reload';
+}
 
 /**
  * Accept a pending dialog, optionally answering a prompt.

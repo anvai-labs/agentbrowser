@@ -131,6 +131,7 @@ export const ObservationModeSchema = Type.Union([
 export const ACTION_TYPE_LITERALS = [
   'navigate',
   'click',
+  'dblclick',
   'hover',
   'fill',
   'type',
@@ -347,14 +348,73 @@ export const WaitActionSchema = Type.Object({
   condition: WaitConditionSchema,
 });
 
+export const HoverActionSchema = Type.Object({
+  type: Type.Literal('hover'),
+  target: ElementTargetSchema,
+});
+
+export const DblClickActionSchema = Type.Object({
+  type: Type.Literal('dblclick'),
+  target: ElementTargetSchema,
+});
+
+export const ClearActionSchema = Type.Object({
+  type: Type.Literal('clear'),
+  target: ElementTargetSchema,
+});
+
+export const CheckActionSchema = Type.Object({
+  type: Type.Literal('check'),
+  target: ElementTargetSchema,
+});
+
+export const UncheckActionSchema = Type.Object({
+  type: Type.Literal('uncheck'),
+  target: ElementTargetSchema,
+});
+
+export const GoBackActionSchema = Type.Object({
+  type: Type.Literal('goBack'),
+});
+
+export const GoForwardActionSchema = Type.Object({
+  type: Type.Literal('goForward'),
+});
+
+export const ReloadActionSchema = Type.Object({
+  type: Type.Literal('reload'),
+});
+
+export const AcceptDialogActionSchema = Type.Object({
+  type: Type.Literal('acceptDialog'),
+  promptText: Type.Optional(Type.String()),
+});
+
+export const DismissDialogActionSchema = Type.Object({
+  type: Type.Literal('dismissDialog'),
+});
+
+// ADR-015: this union MUST mirror the TS SupportedAction union exactly -
+// a runtime drift-coverage test asserts the two sets are equal (they had
+// drifted: dialogs existed only in the TS union, navigate/wait only here).
 export const ActionSchema = Type.Union([
   NavigateActionSchema,
   ClickActionSchema,
+  DblClickActionSchema,
+  HoverActionSchema,
   FillActionSchema,
+  ClearActionSchema,
+  CheckActionSchema,
+  UncheckActionSchema,
   SelectActionSchema,
   ScrollActionSchema,
   PressActionSchema,
   WaitActionSchema,
+  GoBackActionSchema,
+  GoForwardActionSchema,
+  ReloadActionSchema,
+  AcceptDialogActionSchema,
+  DismissDialogActionSchema,
 ]);
 
 export const ObservationRequestSchema = Type.Object({

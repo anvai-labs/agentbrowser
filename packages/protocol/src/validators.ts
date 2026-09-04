@@ -9,8 +9,8 @@
  */
 
 import { TypeCompiler } from '@sinclair/typebox/compiler';
-import type { SessionRequest } from './types.js';
-import { SessionRequestSchema } from './schemas.js';
+import type { SessionRequest, SupportedAction } from './types.js';
+import { ActionSchema, SessionRequestSchema } from './schemas.js';
 
 /** One validation failure, addressed by pointer path. */
 export interface ValidationIssue {
@@ -40,6 +40,25 @@ export function validateSessionRequest(body: unknown): Validated<SessionRequest>
   }
   const issues: ValidationIssue[] = [];
   for (const error of sessionRequest.Errors(body)) {
+    issues.push({ path: error.path, message: error.message });
+  }
+  return { ok: false, issues };
+}
+
+const action = TypeCompiler.Compile(ActionSchema);
+
+/**
+ * Validate a constructed action (the protocol's nested SupportedAction
+ * shape, not the flat wire body) against the ActionSchema union.
+ * Enforced in the service immediately after construction, so REST /act,
+ * /plan and direct service callers all pass through one gate.
+ */
+export function validateAction(body: unknown): Validated<SupportedAction> {
+  if (action.Check(body)) {
+    return { ok: true, value: body as SupportedAction };
+  }
+  const issues: ValidationIssue[] = [];
+  for (const error of action.Errors(body)) {
     issues.push({ path: error.path, message: error.message });
   }
   return { ok: false, issues };

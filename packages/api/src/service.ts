@@ -50,6 +50,7 @@ import type {
 import {
   DELIVERED_EXTRACT_FORMATS,
   REF_PATTERN,
+  validateAction,
   type DeliveredExtractFormat,
 } from '@agentbrowser/protocol';
 
@@ -1202,12 +1203,31 @@ export class AgentBrowserService {
         );
       }
 
+      // ADR-015 B4b: construct-then-validate. The wire body is flat, so
+      // validation happens on the constructed protocol action - one gate
+      // for REST /act, /plan (which loops through this method), and direct
+      // service callers. Structural failures (missing target, bad param
+      // shape) are schema-driven for every delivered action.
+      const constructedAction = this.toProtocolAction(actRequest);
+      const actionValidation = validateAction(constructedAction);
+      if (!actionValidation.ok) {
+        const details = actionValidation.issues
+          .map((issue) => `${issue.path || '(root)'}: ${issue.message}`)
+          .join('; ');
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `Invalid action: ${details}`,
+          false,
+          { issues: actionValidation.issues }
+        );
+      }
+
       const adapter = new RefTranslatingPage(page.enginePage, page);
       const result = await this.executor.execute(
         {
           pageId,
           expectedRevision: actRequest.expectedRevision ?? page.revision,
-          action: this.toProtocolAction(actRequest),
+          action: actionValidation.value,
         },
         {
           enginePage: adapter,
