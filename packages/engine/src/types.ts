@@ -9,6 +9,7 @@ import type {
   ActionRequest,
   ActionResult,
   ArtifactRef,
+  ElementTarget,
   EngineCapabilities,
   ObservationRequest,
   PageState,
@@ -59,6 +60,11 @@ export interface EngineSessionOptions {
  *
  * Implementations MUST treat the verdict as a pure function of hostname:
  * engines memoize verdicts per host.
+ *
+ * Throw contract (ADR-015 B9): every gate blocks by THROWING - the thrown
+ * error should carry the policy's code (e.g. POLICY_DENIED) and the rule
+ * that fired, so engines can surface a typed refusal. Returning without
+ * throwing means ALLOW.
  */
 export interface RequestPolicy {
   checkRequest(request: { hostname: string; url: string }): Promise<void>;
@@ -154,11 +160,10 @@ export interface ElementBounds {
 }
 
 /**
- * Engine element target
+ * Engine element target - ADR-015: the protocol's ElementTarget is the
+ * single declaration; this alias keeps the engine-facing name.
  */
-export interface EngineTarget {
-  ref: string;
-}
+export type EngineTarget = ElementTarget;
 
 /**
  * Engine action (unified type)
@@ -170,15 +175,11 @@ export interface EngineAction {
 }
 
 /**
- * Action effect from engine
+ * Action effect from engine - ADR-015: the protocol's ActionResult is the
+ * single declaration of the result shape; the engine interface extends it
+ * with the engine-only `effect` tag instead of redeclaring the fields.
  */
-export interface ActionEffect {
-  actionId: string;
-  startTimestamp: string;
-  endTimestamp: string;
-  oldRevision: number;
-  newRevision: number;
-  result: unknown;
+export interface ActionEffect extends ActionResult {
   effect?: string;
 }
 
@@ -219,7 +220,7 @@ export interface ExtractionEvidence {
 export type EngineEventType =
   | 'page.created'
   | 'page.destroyed'
-  | 'page navigated'
+  | 'page.navigated'
   | 'page.loaded'
   | 'page.crashed'
   | 'console.log'

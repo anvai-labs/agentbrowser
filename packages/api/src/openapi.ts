@@ -7,7 +7,7 @@
  * in lockstep with the protocol by construction.
  */
 
-import { DELIVERED_ACTION_TYPES } from '@agentbrowser/protocol';
+import { DELIVERED_ACTION_TYPES, DELIVERED_EXTRACT_FORMATS } from '@agentbrowser/protocol';
 import {
   ActionRequestSchema,
   ActionResultSchema,
@@ -250,6 +250,26 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                 timezoneId: { type: 'string' },
                 ttlMs: { type: 'integer', minimum: 0 },
                 idleTimeoutMs: { type: 'integer', minimum: 0 },
+                policy: {
+                  type: 'object',
+                  description:
+                    'Per-session policy, mapped onto the session at creation. ' +
+                    'allowedHosts is an exhaustive allow-list; blockedHosts denies ' +
+                    'on top of the base policy; downloads stay denied unless ' +
+                    'allowDownloads is true. (The flat top-level spellings of ' +
+                    'these fields keep working.)',
+                  required: ['allowedHosts'],
+                  properties: {
+                    allowedHosts: {
+                      type: 'array',
+                      items: { type: 'string' },
+                      minItems: 1,
+                    },
+                    blockedHosts: { type: 'array', items: { type: 'string' } },
+                    allowDownloads: { type: 'boolean' },
+                    maxDownloadBytes: { type: 'number', minimum: 0 },
+                  },
+                },
               },
             }),
           },
@@ -486,7 +506,31 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                   description: 'Prompt answer for acceptDialog.',
                 },
                 value: { type: 'string' },
+                key: { type: 'string', description: 'Key for press.' },
+                direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] },
+                amount: { type: 'number' },
                 observe: { type: 'string', enum: ['after', 'none'] },
+                wait: {
+                  type: 'object',
+                  description: 'Post-action wait condition.',
+                  properties: {
+                    until: { type: 'string' },
+                    timeoutMs: { type: 'number' },
+                  },
+                  required: ['until'],
+                },
+                condition: {
+                  type: 'object',
+                  description: 'Wait-action condition (action: "wait" only).',
+                  properties: {
+                    until: {
+                      type: 'string',
+                      enum: ['settled', 'domcontentloaded', 'load', 'networkidle'],
+                    },
+                    timeoutMs: { type: 'number' },
+                  },
+                  required: ['until'],
+                },
               },
             }),
           },
@@ -627,7 +671,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               properties: {
                 format: {
                   type: 'string',
-                  enum: ['text', 'markdown', 'links', 'tables', 'forms', 'jsonld'],
+                  enum: [...DELIVERED_EXTRACT_FORMATS],
                 },
               },
             }),

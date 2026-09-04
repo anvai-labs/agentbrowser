@@ -513,6 +513,29 @@ describe('PlaywrightChromiumEngine ref store', () => {
     expect(filled?.value).toBe('agent@example.com');
   });
 
+  it('should deliver the Phase-1 action set against real Chromium', async () => {
+    const page = await observedPage();
+    const state = await page.observe({ mode: 'interactive' });
+    const target = state.elements.find((el) => el.role === 'link' || el.role === 'button');
+    const ref = target?.ref;
+    if (!ref) throw new Error('no actionable element observed');
+
+    // Non-mutating: hover leaves the revision alone.
+    const before = (await page.observe({ mode: 'interactive' })).revision ?? 0;
+    await page.act({ type: 'hover', target: { ref } });
+    await page.act({ type: 'wait', condition: { until: 'load' } });
+
+    // Mutating: dblclick advances it.
+    const dbl = await page.act({ type: 'dblclick', target: { ref } });
+    expect(dbl.newRevision).toBeGreaterThan(dbl.oldRevision);
+
+    // History navigation on the real page.
+    const back = await page.act({ type: 'goBack' });
+    expect(back.result).toEqual({ success: true });
+    await page.act({ type: 'goForward' });
+    await page.act({ type: 'reload' });
+  });
+
   it('should reject acting on an unknown ref', async () => {
     const page = await observedPage();
 

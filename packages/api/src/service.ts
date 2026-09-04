@@ -47,6 +47,12 @@ import type {
   PdfRequest,
   ScreenshotRequest,
 } from '@agentbrowser/protocol';
+import {
+  DELIVERED_EXTRACT_FORMATS,
+  type DeliveredExtractFormat,
+  REF_PATTERN,
+  validateAction,
+} from '@agentbrowser/protocol';
 
 /** Typed failure carrying a protocol error code. */
 export class ServiceError extends Error {
@@ -116,6 +122,8 @@ export interface ServiceActRequest {
   promptText?: string | undefined;
   /** Post-action wait condition (spec 11.1). */
   wait?: { until: string; timeoutMs?: number | undefined } | undefined;
+  /** Wait-action condition (the `wait` ACTION; distinct from post-action wait). */
+  condition?: { until: string; timeoutMs?: number | undefined } | undefined;
 }
 
 export interface ServiceActResult {
@@ -162,8 +170,6 @@ const HIGH_RISK_EFFECTS = new Set([
   'external-message',
   'destructive',
 ]);
-
-const REF_PATTERN = /^e(\d+)_(\d+)$/;
 
 interface PageContext {
   sessionId: string;
@@ -991,8 +997,12 @@ export class AgentBrowserService {
     }
 
     if (request.sinceRevision !== undefined) {
+      // The diff path accepts maxBytes but previously returned unbounded;
+      // paginateObservation applies the same byte budget to the diff result.
       return this.secretManager.redact(
-        this.diffObservation(page, observation, request.sinceRevision)
+        this.paginateObservation(this.diffObservation(page, observation, request.sinceRevision), {
+          maxBytes: request.maxBytes,
+        })
       );
     }
 
@@ -1087,6 +1097,15 @@ export class AgentBrowserService {
         `Invalid maxElements ${maxElements}: expected a positive integer.`
       );
     }
+    if (
+      request.maxBytes !== undefined &&
+      (!Number.isInteger(request.maxBytes) || request.maxBytes < 1)
+    ) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `Invalid maxBytes ${request.maxBytes}: expected a positive integer.`
+      );
+    }
 
     // Byte budget first (spec 10): trim serialized size while keeping
     // document order, then apply the element-count budget. Truncation must
@@ -1094,14 +1113,21 @@ export class AgentBrowserService {
     // lives here and not in the normalizer.
     let elements = observation.elements;
     let truncated = false;
+    let working = observation;
     if (request.maxBytes !== undefined) {
       const budget = request.maxBytes;
       let low = 0;
       let high = elements.length;
       // Binary search for the largest prefix fitting the byte budget.
+      // Measured in REAL bytes (Buffer.byteLength of the serialized form):
+      // string .length counts UTF-16 code units, so a multibyte page could
+      // previously return up to ~3x the budget.
       while (low < high) {
         const mid = Math.ceil((low + high) / 2);
-        const size = JSON.stringify({ ...observation, elements: elements.slice(0, mid) }).length;
+        const size = Buffer.byteLength(
+          JSON.stringify({ ...observation, elements: elements.slice(0, mid) }),
+          'utf8'
+        );
         if (size <= budget) {
           low = mid;
         } else {
@@ -1111,22 +1137,74 @@ export class AgentBrowserService {
       if (low < elements.length) {
         elements = elements.slice(0, low);
         truncated = true;
+        working = { ...observation, elements, truncated: true };
+      }
+      // Budget the fixed fields too: if the element prefix alone is empty
+      // and the payload is still over budget, trim whole trailing
+      // paragraphs of text (content mode's byte-dominant field), then as a
+      // last resort the summary. Never fail the request.
+      if (elements.length === 0 && Buffer.byteLength(JSON.stringify(working), 'utf8') > budget) {
+        const text = observation.text ?? [];
+        let keep = text.length;
+        while (keep > 0) {
+          const candidate = {
+            ...working,
+            text: text.slice(0, keep - 1),
+            truncated: true,
+          };
+          if (Buffer.byteLength(JSON.stringify(candidate), 'utf8') <= budget) {
+            working = candidate;
+            break;
+          }
+          keep--;
+        }
+        if (keep > 0) {
+          working = { ...working, text: text.slice(0, keep), truncated: true };
+        } else if (Buffer.byteLength(JSON.stringify({ ...working, text: [] }), 'utf8') <= budget) {
+          working = { ...working, text: [], truncated: true };
+        }
+      }
+      // Diff-mode payloads carry their weight in `changes` (each entry a
+      // full old/new element pair); trim trailing changes the same way.
+      const changes = observation.changes;
+      if (
+        changes !== undefined &&
+        changes.length > 0 &&
+        Buffer.byteLength(JSON.stringify(working), 'utf8') > budget
+      ) {
+        let keepChanges = changes.length;
+        while (keepChanges > 0) {
+          const candidate = {
+            ...working,
+            changes: changes.slice(0, keepChanges - 1),
+            truncated: true,
+          };
+          if (Buffer.byteLength(JSON.stringify(candidate), 'utf8') <= budget) {
+            working = candidate;
+            break;
+          }
+          keepChanges--;
+        }
+        if (keepChanges === 0) {
+          working = { ...working, changes: [], truncated: true };
+        }
       }
     }
-
+    // The working observation carries any byte-budget trimming above.
     const start = continueFrom ?? 0;
     if (maxElements === undefined) {
-      return truncated ? { ...observation, elements, truncated } : observation;
+      return working === observation ? observation : working;
     }
 
     const slice = elements.slice(start, start + maxElements);
     const remaining = elements.length - (start + slice.length);
 
     if (remaining <= 0) {
-      return { ...observation, elements: slice, truncated };
+      // `truncated` mirrors the cursor semantics: true iff more to fetch.
+      return { ...working, elements: slice, truncated: truncated || working.truncated };
     }
     return {
-      ...observation,
+      ...working,
       elements: slice,
       truncated: true,
       continuation: { nextOrdinal: start + slice.length, remaining },
@@ -1197,13 +1275,37 @@ export class AgentBrowserService {
           `Unknown wait condition '${request.wait.until}'. Supported: ${[...DELIVERED_WAITS].join(', ')}.`
         );
       }
+      // The wait ACTION shares the delivered condition set (schema checks
+      // the shape; this checks the semantics).
+      if (request.condition !== undefined && !DELIVERED_WAITS.has(request.condition.until)) {
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `Unknown wait condition '${request.condition.until}'. Supported: ${[...DELIVERED_WAITS].join(', ')}.`
+        );
+      }
+
+      // ADR-015 B4b: construct-then-validate. The wire body is flat, so
+      // validation happens on the constructed protocol action - one gate
+      // for REST /act, /plan (which loops through this method), and direct
+      // service callers. Structural failures (missing target, bad param
+      // shape) are schema-driven for every delivered action.
+      const constructedAction = this.toProtocolAction(actRequest);
+      const actionValidation = validateAction(constructedAction);
+      if (!actionValidation.ok) {
+        const details = actionValidation.issues
+          .map((issue) => `${issue.path || '(root)'}: ${issue.message}`)
+          .join('; ');
+        throw new ServiceError('INVALID_REQUEST', `Invalid action: ${details}`, false, {
+          issues: actionValidation.issues,
+        });
+      }
 
       const adapter = new RefTranslatingPage(page.enginePage, page);
       const result = await this.executor.execute(
         {
           pageId,
           expectedRevision: actRequest.expectedRevision ?? page.revision,
-          action: this.toProtocolAction(actRequest),
+          action: actionValidation.value,
         },
         {
           enginePage: adapter,
@@ -1509,7 +1611,7 @@ export class AgentBrowserService {
     sessionId: string,
     pageId: string,
     request: {
-      format?: 'text' | 'markdown' | 'links' | 'tables' | 'forms' | 'jsonld' | 'schema';
+      format?: DeliveredExtractFormat;
       schema?: Record<string, unknown>;
     }
   ): Promise<import('@agentbrowser/engine').ExtractionResult> {
@@ -1567,7 +1669,7 @@ export class AgentBrowserService {
         default:
           throw new ServiceError(
             'INVALID_REQUEST',
-            `Unknown extraction format: ${String(request.format)}. Supported: text, markdown, links, tables, forms, jsonld.`
+            `Unknown extraction format: ${String(request.format)}. Supported: text, markdown, links, tables, forms, jsonld, schema.`
           );
       }
     });
@@ -1725,6 +1827,19 @@ export class AgentBrowserService {
     if (request.direction !== undefined) action.direction = request.direction;
     if (request.amount !== undefined) action.amount = request.amount;
     if (request.promptText !== undefined) action.promptText = request.promptText;
+    if (request.condition !== undefined) action.condition = request.condition;
+    // The flat transport carries a single `value`; the protocol's select
+    // takes `values`. Coerce here - without it every HTTP select was
+    // rejected by the executor (SelectAction requires non-empty values),
+    // a latent bug since select shipped.
+    if (request.action === 'select' && request.value !== undefined) {
+      // SelectAction takes `values`; a stray `value` on a constructed
+      // action is additionalProperties-excess the schema tolerates, but
+      // drop it so the executor sees exactly the protocol shape.
+      const { value: _dropped, ...rest } = action;
+      Object.assign(action, rest);
+      action.values = [request.value];
+    }
     return action as unknown as Parameters<ActionExecutor['execute']>[0]['action'];
   }
 
@@ -1859,10 +1974,13 @@ class RefTranslatingPage implements EnginePage {
       }
     }
     const effect = await this.inner.act(projected);
-    // Navigate is handled by navigate(); dialog actions are non-mutating.
-    // Everything else advances the service revision.
+    // Navigate is handled by navigate(); dialog actions, hover and the
+    // wait action are non-mutating. Everything else advances the service
+    // revision.
     const nonMutating =
       action.type === 'navigate' ||
+      action.type === 'hover' ||
+      action.type === 'wait' ||
       action.type === 'acceptDialog' ||
       action.type === 'dismissDialog';
     const newRevision = nonMutating ? this.page.revision : this.page.revision + 1;

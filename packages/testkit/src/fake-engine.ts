@@ -181,6 +181,10 @@ class FakePage implements EnginePage {
   private sessionOptions: EngineSessionOptions;
   private pageOptions: NewPageOptions | undefined;
   private currentUrl = 'about:blank';
+  /** Browsing history for goBack/goForward (bounded). */
+  /** Browsing history including the current entry (bounded). */
+  private historyStack: string[] = ['about:blank'];
+  private historyIndex = 0;
   private currentTitle = '';
   private pageStatus: 'loading' | 'interactive' | 'complete' = 'loading';
   private revision = 1;
@@ -288,6 +292,13 @@ class FakePage implements EnginePage {
       throw new Error('Page is closed');
     }
 
+    // Classic history semantics: forward entries beyond the current
+    // position are dropped, the new URL becomes the current entry.
+    this.historyStack = [...this.historyStack.slice(0, this.historyIndex + 1), request.url];
+    if (this.historyStack.length > 50) {
+      this.historyStack = this.historyStack.slice(-50);
+    }
+    this.historyIndex = this.historyStack.length - 1;
     this.currentUrl = request.url;
     this.pageStatus = 'loading';
     this.revision++;
@@ -463,6 +474,55 @@ class FakePage implements EnginePage {
       case 'navigate':
         await this.navigate({ url: action.url as string });
         break;
+      case 'dblclick':
+        this.revision++;
+        break;
+      case 'hover':
+      case 'wait':
+        // Non-mutating: no state change, no revision bump.
+        break;
+      case 'clear': {
+        const target = action.target as EngineTarget | undefined;
+        if (target) {
+          const element = this.elementByRef.get(target.ref);
+          if (element) {
+            element.value = '';
+          }
+        }
+        this.revision++;
+        break;
+      }
+      case 'check':
+      case 'uncheck': {
+        const target = action.target as EngineTarget | undefined;
+        if (target) {
+          const element = this.elementByRef.get(target.ref);
+          if (element) {
+            element.checked = action.type === 'check';
+          }
+        }
+        this.revision++;
+        break;
+      }
+      case 'goBack': {
+        if (this.historyIndex > 0) {
+          this.historyIndex--;
+          this.currentUrl = this.historyStack[this.historyIndex] as string;
+          this.revision++;
+        }
+        break;
+      }
+      case 'goForward': {
+        if (this.historyIndex < this.historyStack.length - 1) {
+          this.historyIndex++;
+          this.currentUrl = this.historyStack[this.historyIndex] as string;
+          this.revision++;
+        }
+        break;
+      }
+      case 'reload':
+        this.revision++;
+        break;
       default:
         this.revision++;
     }
@@ -630,6 +690,8 @@ class FakePage implements EnginePage {
  * Fake element
  */
 interface FakeElement {
+  /** Toggled state for check/uncheck semantics. */
+  checked?: boolean;
   ref: string;
   role: string;
   name: string;

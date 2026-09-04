@@ -20,6 +20,12 @@ import type {
   SessionRequest,
   SessionResponse,
 } from '@agentbrowser/sdk-typescript';
+import {
+  DELIVERED_EXTRACT_FORMATS,
+  REF_PATTERN,
+  UsageError,
+  formatErrorForUser,
+} from '@agentbrowser/sdk-typescript';
 import { Command } from 'commander';
 
 /**
@@ -63,13 +69,7 @@ export interface Cli {
   run(argv: string[]): Promise<number>;
 }
 
-/** Element refs are the only interaction handle - selectors are never accepted. */
-const REF_PATTERN = /^e\d+_\d+$/;
-
 const DEFAULT_BASE_URL = 'http://localhost:3000';
-
-/** Raised for input the CLI can reject before touching the network. */
-class UsageError extends Error {}
 
 export function buildCli(deps: CliDependencies): Cli {
   return {
@@ -329,6 +329,128 @@ export function buildCli(deps: CliDependencies): Cli {
         );
 
       act
+        .command('dblclick')
+        .description('double-click an element')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('<ref>')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string, ref: string) => {
+            await runAction(ctx, sessionId, pageId, { action: 'dblclick', target: refTarget(ref) });
+          })
+        );
+
+      act
+        .command('hover')
+        .description('hover an element (non-mutating)')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('<ref>')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string, ref: string) => {
+            await runAction(ctx, sessionId, pageId, { action: 'hover', target: refTarget(ref) });
+          })
+        );
+
+      act
+        .command('clear')
+        .description('clear an input')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('<ref>')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string, ref: string) => {
+            await runAction(ctx, sessionId, pageId, { action: 'clear', target: refTarget(ref) });
+          })
+        );
+
+      act
+        .command('check')
+        .description('tick a checkbox or radio')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('<ref>')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string, ref: string) => {
+            await runAction(ctx, sessionId, pageId, { action: 'check', target: refTarget(ref) });
+          })
+        );
+
+      act
+        .command('uncheck')
+        .description('untick a checkbox')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('<ref>')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string, ref: string) => {
+            await runAction(ctx, sessionId, pageId, { action: 'uncheck', target: refTarget(ref) });
+          })
+        );
+
+      act
+        .command('wait')
+        .description('wait for a load condition (non-mutating)')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('<until>', 'settled | domcontentloaded | load | networkidle')
+        .option('--timeout-ms <ms>', 'timeout in milliseconds')
+        .action(
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              pageId: string,
+              until: string,
+              options: { timeoutMs?: string }
+            ) => {
+              await runAction(ctx, sessionId, pageId, {
+                action: 'wait',
+                condition: {
+                  until,
+                  ...(options.timeoutMs !== undefined
+                    ? { timeoutMs: Number.parseInt(options.timeoutMs, 10) }
+                    : {}),
+                },
+              } as never);
+            }
+          )
+        );
+
+      act
+        .command('goBack')
+        .description('navigate back in history')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string) => {
+            await runAction(ctx, sessionId, pageId, { action: 'goBack' } as never);
+          })
+        );
+
+      act
+        .command('goForward')
+        .description('navigate forward in history')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string) => {
+            await runAction(ctx, sessionId, pageId, { action: 'goForward' } as never);
+          })
+        );
+
+      act
+        .command('reload')
+        .description('reload the current page')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string) => {
+            await runAction(ctx, sessionId, pageId, { action: 'reload' } as never);
+          })
+        );
+
+      act
         .command('press')
         .description('press a key')
         .argument('<sessionId>')
@@ -394,7 +516,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .description('extract deterministic structured data from a page')
         .argument('<sessionId>')
         .argument('<pageId>')
-        .option('--format <format>', 'text | markdown | links | tables | forms | jsonld')
+        .option('--format <format>', `one of: ${DELIVERED_EXTRACT_FORMATS.join(' | ')}`)
         .action(
           action(async (ctx, sessionId: string, pageId: string, options: { format?: string }) => {
             const result = (await ctx.client.sessions.extract(sessionId, pageId, {
@@ -543,15 +665,8 @@ function renderObservation(observation: ObservationResponse): string[] {
 }
 
 function formatError(error: unknown): string {
-  if (error instanceof UsageError) {
-    return error.message;
-  }
-
-  if (error instanceof Error) {
-    const code = (error as { code?: string }).code;
-    // SDK errors already carry "CODE: message"
-    return code && !error.message.startsWith(code) ? `${code}: ${error.message}` : error.message;
-  }
-
-  return String(error);
+  return formatErrorForUser(
+    error,
+    'The element ref is stale. Run observe again to get fresh refs at the current revision, then act on the new ref. Do not retry the old one.'
+  );
 }

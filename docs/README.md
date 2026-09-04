@@ -39,7 +39,7 @@ ADRs capture significant architectural decisions, their context, and consequence
 | [ADR-012](adr/012-snapshot-plan-interaction-model.md) | Snapshot-Plan Interaction Model with Adaptive Modes | Accepted | Batched action plans (`browser_plan`) + self-contained page snapshots (`browser_snapshot`), one round trip each; adaptive stable/verified remap mode driven by observed ref churn |
 | [ADR-013](adr/013-headed-sessions-and-walled-logins.md) | Headed Sessions, De-fingerprinting, and Walled Logins | Accepted | De-fingerprint headed only; no CDP arms race — cookie-seeding handoff is the prescribed route for turnstile-class walls |
 | [ADR-014](adr/014-npm-distribution.md) | npm Distribution for the MCP Server (Trusted Publishing, @anvailabs scope) | Accepted | npm = @anvailabs/agentbrowser-mcp via OIDC trusted publishing; server stays tarballs+Docker; verify enforced not token-keyed |
-| [ADR-015](adr/015-cross-package-contract-single-source-of-truth.md) | Single Source of Truth for Cross-Package Contract Primitives | Proposed | Renumbered twice (011→012→015): 012 collided a second time with the Accepted snapshot-plan ADR above; resolved 2026-09-03 |
+| [ADR-015](adr/015-cross-package-contract-single-source-of-truth.md) | Single Source of Truth for Cross-Package Contract Primitives | Accepted | Contract primitives live once in protocol (REF_PATTERN/parseRef, extract formats, UsageError, compiled validators, type-level contracts); SDK mirrors protocol types; renumbered twice (011→012→015) after collisions |
 
 ## Technical Design
 

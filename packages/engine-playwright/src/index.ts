@@ -974,6 +974,57 @@ class PlaywrightPage implements EnginePage {
         this.bumpRevision();
         break;
       }
+      case 'dblclick': {
+        const locator = this.locatorFor((action.target as EngineTarget).ref);
+        await locator.dblclick();
+        this.bumpRevision();
+        break;
+      }
+      case 'hover': {
+        // Hover is non-mutating observation support: no revision bump, so
+        // refs live across it.
+        const locator = this.locatorFor((action.target as EngineTarget).ref);
+        await locator.hover();
+        break;
+      }
+      case 'clear': {
+        const locator = this.locatorFor((action.target as EngineTarget).ref);
+        await locator.fill('');
+        this.bumpRevision();
+        break;
+      }
+      case 'check':
+      case 'uncheck': {
+        const locator = this.locatorFor((action.target as EngineTarget).ref);
+        if (action.type === 'check') {
+          await locator.check();
+        } else {
+          await locator.uncheck();
+        }
+        this.bumpRevision();
+        break;
+      }
+      case 'wait': {
+        // Non-mutating; bounded by the condition's timeout.
+        const condition = action.condition as { until?: string; timeoutMs?: number };
+        const state = condition?.until === 'networkidle' ? 'networkidle' : 'load';
+        await this.waitForLoadState(state, { timeout: condition?.timeoutMs });
+        break;
+      }
+      case 'goBack':
+      case 'goForward': {
+        const response =
+          action.type === 'goBack' ? await this.page.goBack() : await this.page.goForward();
+        if (response !== null) {
+          this.bumpRevision();
+        }
+        break;
+      }
+      case 'reload': {
+        await this.page.reload();
+        this.bumpRevision();
+        break;
+      }
       default:
         // Other action types are recorded without a revision bump.
         break;

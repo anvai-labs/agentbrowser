@@ -223,6 +223,49 @@ describe('FakeEngine', () => {
       expect(effect.newRevision).toBeGreaterThan(effect.oldRevision);
     });
 
+    it('should deliver the Phase-1 action set with the right mutation semantics', async () => {
+      const session = await engine.createSession({});
+      const page = await session.newPage();
+      await page.navigate({ url: 'https://example.com' });
+      await page.navigate({ url: 'https://example.com/page2' });
+
+      // Refs from the CURRENT revision (they die with each navigation).
+      const current = await page.observe({});
+      const ref = (current.elements[0] as { ref: string }).ref;
+
+      // Non-mutating: hover and wait leave the revision alone.
+      const before = page.revision;
+      await page.act({ type: 'hover', target: { ref } });
+      await page.act({ type: 'wait', condition: { until: 'load' } });
+      expect(page.revision).toBe(before);
+
+      // Mutating actions advance the revision and (where applicable)
+      // mutate element state.
+      await page.act({ type: 'dblclick', target: { ref } });
+      expect(page.revision).toBe(before + 1);
+
+      await page.act({ type: 'fill', target: { ref }, value: 'typed' });
+      await page.act({ type: 'clear', target: { ref } });
+      const cleared = await page.observe({});
+      const clearedEl = cleared.elements.find((e) => e.ref === ref);
+      expect(clearedEl?.value).toBe('');
+
+      await page.act({ type: 'check', target: { ref } });
+      await page.act({ type: 'uncheck', target: { ref } });
+
+      // History navigation: goBack returns to the first URL, goForward
+      // re-advances.
+      const back = await page.act({ type: 'goBack' });
+      expect(back.newRevision).toBeGreaterThan(back.oldRevision);
+      const state = await page.observe({});
+      expect(state.url).toBe('https://example.com');
+      await page.act({ type: 'goForward' });
+      const forwarded = await page.observe({});
+      expect(forwarded.url).toBe('https://example.com/page2');
+
+      await page.act({ type: 'reload' });
+    });
+
     it('should close page', async () => {
       const session = await engine.createSession({});
       const page = await session.newPage();

@@ -454,7 +454,7 @@ describe('Engine Event Types', () => {
     const eventTypes = [
       'page.created',
       'page.destroyed',
-      'page navigated',
+      'page.navigated',
       'page.loaded',
       'page.crashed',
       'console.log',

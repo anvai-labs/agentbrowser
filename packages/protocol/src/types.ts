@@ -34,7 +34,7 @@ export interface Viewport {
  */
 export interface SessionRequest {
   /** Engine selection; omitted = server default. */
-  engine?: EngineType;
+  engine?: EngineSelection;
   /** Owning tenant; stamped onto the session for scoping and quotas. */
   tenantId?: string;
   ttlMs?: number;
@@ -67,9 +67,16 @@ export interface SessionCookie {
 }
 
 /**
- * Engine type selection
+ * Engine selection. The two literals are the protocol-known names; the
+ * registry (TD-BROWSER-7) also routes arbitrary registered engine names
+ * (e.g. 'safari'), so the request field accepts any string while keeping
+ * autocomplete for the known ones. Unknown names fail loudly at the
+ * service (ENGINE_NOT_FOUND).
  */
 export type EngineType = 'playwright-chromium' | 'auto';
+
+/** Request-facing engine selection: known names or a registered name. */
+export type EngineSelection = EngineType | (string & {});
 
 /**
  * Session policy configuration
@@ -151,6 +158,7 @@ export type ObservationMode =
 export type ActionType =
   | 'navigate'
   | 'click'
+  | 'dblclick'
   | 'hover'
   | 'fill'
   | 'type'
@@ -243,6 +251,14 @@ export type ActionEffect =
   | 'destructive';
 
 /**
+ * ADR-015: the engine package's result interface used to carry this same
+ * name with a completely different shape. The risk classification keeps
+ * the union; engines (and anything else that needs the classification
+ * name) use this alias so a module importing both cannot collide.
+ */
+export type ActionEffectType = ActionEffect;
+
+/**
  * Action request
  */
 export interface ActionRequest {
@@ -287,6 +303,44 @@ export interface ClickAction extends Action {
 export interface ElementTarget {
   ref: string;
 }
+
+/**
+ * The stable element-reference grammar (ADR-004): `e<revision>_<ordinal>`.
+ * Single source of truth (ADR-015): every surface derives from these
+ * exports. `REF_PATTERN.source` must stay byte-for-byte stable — it is
+ * embedded verbatim in the published OpenAPI and MCP schemas.
+ */
+export const REF_PATTERN = /^e\d+_\d+$/;
+
+const REF_PARSE_PATTERN = /^e(\d+)_(\d+)$/;
+
+/** Parse a ref into its revision and ordinal; null when malformed. */
+export function parseRef(ref: string): { revision: number; ordinal: number } | null {
+  const match = REF_PARSE_PATTERN.exec(ref);
+  if (!match?.[1] || !match?.[2]) {
+    return null;
+  }
+  return {
+    revision: Number.parseInt(match[1], 10),
+    ordinal: Number.parseInt(match[2], 10),
+  };
+}
+
+/**
+ * Extraction formats the stack delivers, in canonical order (ADR-015
+ * SSOT; superset of the pre-SSOT lists — includes 'schema').
+ */
+export const DELIVERED_EXTRACT_FORMATS = [
+  'text',
+  'markdown',
+  'links',
+  'tables',
+  'forms',
+  'jsonld',
+  'schema',
+] as const;
+
+export type DeliveredExtractFormat = (typeof DELIVERED_EXTRACT_FORMATS)[number];
 
 /**
  * Fill action
@@ -345,13 +399,82 @@ export interface WaitAction extends Action {
 export type SupportedAction =
   | NavigateAction
   | ClickAction
+  | DblClickAction
+  | HoverAction
   | FillAction
+  | ClearAction
+  | CheckAction
+  | UncheckAction
   | SelectAction
   | ScrollAction
   | PressAction
   | WaitAction
+  | GoBackAction
+  | GoForwardAction
+  | ReloadAction
   | AcceptDialogAction
   | DismissDialogAction;
+
+/**
+ * Hover an element (non-mutating).
+ */
+export interface HoverAction extends Action {
+  type: 'hover';
+  target: ElementTarget;
+}
+
+/**
+ * Double-click an element.
+ */
+export interface DblClickAction extends Action {
+  type: 'dblclick';
+  target: ElementTarget;
+}
+
+/**
+ * Clear an input's value.
+ */
+export interface ClearAction extends Action {
+  type: 'clear';
+  target: ElementTarget;
+}
+
+/**
+ * Tick a checkbox or radio.
+ */
+export interface CheckAction extends Action {
+  type: 'check';
+  target: ElementTarget;
+}
+
+/**
+ * Untick a checkbox.
+ */
+export interface UncheckAction extends Action {
+  type: 'uncheck';
+  target: ElementTarget;
+}
+
+/**
+ * Navigate back in history.
+ */
+export interface GoBackAction extends Action {
+  type: 'goBack';
+}
+
+/**
+ * Navigate forward in history.
+ */
+export interface GoForwardAction extends Action {
+  type: 'goForward';
+}
+
+/**
+ * Reload the current page.
+ */
+export interface ReloadAction extends Action {
+  type: 'reload';
+}
 
 /**
  * Accept a pending dialog, optionally answering a prompt.
@@ -378,10 +501,19 @@ export interface DismissDialogAction extends Action {
  */
 export const DELIVERED_ACTION_TYPES = [
   'click',
+  'dblclick',
+  'hover',
   'fill',
+  'clear',
+  'check',
+  'uncheck',
   'select',
   'scroll',
   'press',
+  'wait',
+  'goBack',
+  'goForward',
+  'reload',
   'acceptDialog',
   'dismissDialog',
 ] as const;

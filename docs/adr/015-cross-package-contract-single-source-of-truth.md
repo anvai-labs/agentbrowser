@@ -1,6 +1,6 @@
 # ADR-015: Single source of truth for cross-package contract primitives
 
-**Status:** Proposed
+**Status:** Accepted — implemented (Phase 1, 2026-09-04)
 **Context:** 2026-08-31
 **Superseded by:** N/A
 
