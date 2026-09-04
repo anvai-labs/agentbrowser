@@ -7,6 +7,7 @@
 
 import { Static, Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
+import { REF_PATTERN } from './types.js';
 
 // Re-export all types for convenience
 export * from './types.js';
@@ -186,7 +187,7 @@ export const PageStatusSchema = Type.Union([
 ]);
 
 export const PageElementSchema = Type.Object({
-  ref: Type.String({ pattern: '^e\\d+_\\d+$' }),
+  ref: Type.String({ pattern: REF_PATTERN.source }),
   role: Type.String(),
   name: Type.Optional(Type.String()),
   value: Type.Optional(Type.String()),
@@ -236,7 +237,7 @@ export const PageStateSchema = Type.Object({
 // ============================================================================
 
 export const ElementTargetSchema = Type.Object({
-  ref: Type.String({ pattern: '^e\\d+_\\d+$' }),
+  ref: Type.String({ pattern: REF_PATTERN.source }),
 });
 
 export const NavigateActionSchema = Type.Object({

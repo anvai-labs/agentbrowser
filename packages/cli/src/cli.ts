@@ -20,6 +20,7 @@ import type {
   SessionRequest,
   SessionResponse,
 } from '@agentbrowser/sdk-typescript';
+import { DELIVERED_EXTRACT_FORMATS, REF_PATTERN } from '@agentbrowser/sdk-typescript';
 import { Command } from 'commander';
 
 /**
@@ -63,8 +64,6 @@ export interface Cli {
   run(argv: string[]): Promise<number>;
 }
 
-/** Element refs are the only interaction handle - selectors are never accepted. */
-const REF_PATTERN = /^e\d+_\d+$/;
 
 const DEFAULT_BASE_URL = 'http://localhost:3000';
 
@@ -394,7 +393,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .description('extract deterministic structured data from a page')
         .argument('<sessionId>')
         .argument('<pageId>')
-        .option('--format <format>', 'text | markdown | links | tables | forms | jsonld')
+        .option('--format <format>', `one of: ${DELIVERED_EXTRACT_FORMATS.join(' | ')}`)
         .action(
           action(async (ctx, sessionId: string, pageId: string, options: { format?: string }) => {
             const result = (await ctx.client.sessions.extract(sessionId, pageId, {

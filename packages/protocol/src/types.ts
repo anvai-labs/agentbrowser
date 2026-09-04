@@ -289,6 +289,44 @@ export interface ElementTarget {
 }
 
 /**
+ * The stable element-reference grammar (ADR-004): `e<revision>_<ordinal>`.
+ * Single source of truth (ADR-015): every surface derives from these
+ * exports. `REF_PATTERN.source` must stay byte-for-byte stable — it is
+ * embedded verbatim in the published OpenAPI and MCP schemas.
+ */
+export const REF_PATTERN = /^e\d+_\d+$/;
+
+const REF_PARSE_PATTERN = /^e(\d+)_(\d+)$/;
+
+/** Parse a ref into its revision and ordinal; null when malformed. */
+export function parseRef(ref: string): { revision: number; ordinal: number } | null {
+  const match = REF_PARSE_PATTERN.exec(ref);
+  if (!match?.[1] || !match?.[2]) {
+    return null;
+  }
+  return {
+    revision: Number.parseInt(match[1], 10),
+    ordinal: Number.parseInt(match[2], 10),
+  };
+}
+
+/**
+ * Extraction formats the stack delivers, in canonical order (ADR-015
+ * SSOT; superset of the pre-SSOT lists — includes 'schema').
+ */
+export const DELIVERED_EXTRACT_FORMATS = [
+  'text',
+  'markdown',
+  'links',
+  'tables',
+  'forms',
+  'jsonld',
+  'schema',
+] as const;
+
+export type DeliveredExtractFormat = (typeof DELIVERED_EXTRACT_FORMATS)[number];
+
+/**
  * Fill action
  */
 export interface FillAction extends Action {

@@ -9,6 +9,7 @@
 
 import { createHash } from 'node:crypto';
 import { MetricsRegistry } from '@agentbrowser/core';
+import { DELIVERED_EXTRACT_FORMATS } from '@agentbrowser/protocol';
 import type { StructuredLogger } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
 import cors from '@fastify/cors';
@@ -783,7 +784,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
           const format = (body as { format?: string }).format;
           const schema = (body as { schema?: Record<string, unknown> }).schema;
-          const supported = ['text', 'markdown', 'links', 'tables', 'forms', 'jsonld', 'schema'];
+          const supported: readonly string[] = DELIVERED_EXTRACT_FORMATS;
           if (typeof format !== 'string' || !supported.includes(format)) {
             return reply.status(400).send({
               error: {

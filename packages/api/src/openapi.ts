@@ -7,7 +7,7 @@
  * in lockstep with the protocol by construction.
  */
 
-import { DELIVERED_ACTION_TYPES } from '@agentbrowser/protocol';
+import { DELIVERED_ACTION_TYPES, DELIVERED_EXTRACT_FORMATS } from '@agentbrowser/protocol';
 import {
   ActionRequestSchema,
   ActionResultSchema,
@@ -627,7 +627,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               properties: {
                 format: {
                   type: 'string',
-                  enum: ['text', 'markdown', 'links', 'tables', 'forms', 'jsonld'],
+                  enum: [...DELIVERED_EXTRACT_FORMATS],
                 },
               },
             }),

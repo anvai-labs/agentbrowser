@@ -29,6 +29,7 @@ import type {
   SessionRequest,
   SessionResponse,
 } from '@agentbrowser/sdk-typescript';
+import { DELIVERED_EXTRACT_FORMATS, REF_PATTERN } from '@agentbrowser/sdk-typescript';
 
 export type { ClientOptions, ExportedCookie };
 
@@ -83,8 +84,6 @@ export interface McpServer {
 
 const PROTOCOL_VERSION = '2024-11-05';
 
-/** Element refs are the only interaction handle - selectors are never accepted. */
-const REF_PATTERN = '^e\\d+_\\d+$';
 
 interface ToolDefinition {
   name: string;
@@ -352,7 +351,7 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
             properties: {
               ref: {
                 type: 'string',
-                pattern: REF_PATTERN,
+                pattern: REF_PATTERN.source,
                 description: 'Element ref from browser_observe, e.g. e1_0.',
               },
             },
@@ -375,7 +374,7 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
         const ref = target.ref;
         if (
           !isDialogAction &&
-          (typeof ref !== 'string' || !new RegExp(`^${REF_PATTERN}$`).test(ref))
+          (typeof ref !== 'string' || !REF_PATTERN.test(ref))
         ) {
           throw new UsageError(
             `Invalid element reference '${String(ref)}'. Expected a ref of the form e<revision>_<ordinal>, such as e1_0. Call browser_observe to list current refs.`
@@ -414,8 +413,14 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
           pageId: { type: 'string' },
           format: {
             type: 'string',
-            enum: ['text', 'markdown', 'links', 'tables', 'forms', 'jsonld'],
+            enum: [...DELIVERED_EXTRACT_FORMATS],
             description: 'What to extract (default: text).',
+          },
+          schema: {
+            type: 'object',
+            description:
+              'JSON Schema constraining the extraction (format: "schema" only): ' +
+              'properties to pick, with type/description/enum constraints.',
           },
         },
         required: ['sessionId', 'pageId', 'format'],
@@ -423,15 +428,17 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
       handler: async (args) => {
         const [sessionId, pageId] = sessionAndPage(args);
         const format = args.format;
-        const supported = ['text', 'markdown', 'links', 'tables', 'forms', 'jsonld'];
+        const supported: readonly string[] = DELIVERED_EXTRACT_FORMATS;
         if (typeof format !== 'string' || !supported.includes(format)) {
           throw new UsageError(
             `Unknown extraction format '${String(format)}'. Supported: ${supported.join(', ')}.`
           );
         }
-        return await client.sessions.extract(sessionId, pageId, {
-          format: format as ExtractRequest['format'],
-        });
+        const request: ExtractRequest = { format: format as ExtractRequest['format'] };
+        if (args.schema !== undefined && typeof args.schema === 'object') {
+          request.schema = args.schema as Record<string, unknown>;
+        }
+        return await client.sessions.extract(sessionId, pageId, request);
       },
     },
 

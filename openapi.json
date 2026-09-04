@@ -1451,7 +1451,8 @@
                       "links",
                       "tables",
                       "forms",
-                      "jsonld"
+                      "jsonld",
+                      "schema"
                     ]
                   }
                 }

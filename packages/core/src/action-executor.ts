@@ -8,7 +8,12 @@
  */
 
 import type { ActionEffect, EngineAction, EnginePage, ResolvedTarget } from '@agentbrowser/engine';
-import { DELIVERED_ACTION_TYPES, ErrorCode, createApiErrorDetail } from '@agentbrowser/protocol';
+import {
+  DELIVERED_ACTION_TYPES,
+  ErrorCode,
+  createApiErrorDetail,
+  parseRef,
+} from '@agentbrowser/protocol';
 import type {
   ActionRequest,
   ActionResult,
@@ -42,8 +47,6 @@ export interface ExecutionContext {
 
 /** Delivered actions, derived from the protocol single source of truth. */
 const SUPPORTED_ACTION_TYPES: ReadonlySet<string> = new Set(DELIVERED_ACTION_TYPES);
-
-const REF_PATTERN = /^e(\d+)_(\d+)$/;
 
 /**
  * ActionExecutor handles action execution with element references
@@ -224,14 +227,14 @@ export class ActionExecutor {
       return null;
     }
 
-    const refMatch = REF_PATTERN.exec(target.ref);
-    if (!refMatch?.[1]) {
+    const parsedRef = parseRef(target.ref);
+    if (!parsedRef) {
       return invalidRequest(`Invalid element reference format: ${target.ref}`, {
         ref: target.ref,
       });
     }
 
-    const refRevision = Number.parseInt(refMatch[1], 10);
+    const refRevision = parsedRef.revision;
     if (refRevision !== currentRevision) {
       return staleTarget(
         `Element reference ${target.ref} belongs to revision ${refRevision}, but the page is at revision ${currentRevision}`,

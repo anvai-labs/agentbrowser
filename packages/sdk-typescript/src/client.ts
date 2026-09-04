@@ -125,8 +125,15 @@ export interface ActionResult {
 }
 
 export interface ExtractRequest {
-  format: 'text' | 'markdown' | 'links' | 'tables' | 'forms' | 'jsonld';
+  format: 'text' | 'markdown' | 'links' | 'tables' | 'forms' | 'jsonld' | 'schema';
+  /** JSON Schema constraining the extraction (format: 'schema' only). */
+  schema?: Record<string, unknown>;
 }
+
+// ADR-015 single-source-of-truth re-exports: surfaces (CLI, MCP) import
+// these from the SDK rather than redeclaring them.
+export { DELIVERED_EXTRACT_FORMATS, REF_PATTERN, parseRef } from '@agentbrowser/protocol';
+export type { DeliveredExtractFormat } from '@agentbrowser/protocol';
 
 export interface ExtractResult {
   data: unknown;

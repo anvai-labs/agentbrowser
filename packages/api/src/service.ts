@@ -47,6 +47,11 @@ import type {
   PdfRequest,
   ScreenshotRequest,
 } from '@agentbrowser/protocol';
+import {
+  DELIVERED_EXTRACT_FORMATS,
+  REF_PATTERN,
+  type DeliveredExtractFormat,
+} from '@agentbrowser/protocol';
 
 /** Typed failure carrying a protocol error code. */
 export class ServiceError extends Error {
@@ -163,7 +168,6 @@ const HIGH_RISK_EFFECTS = new Set([
   'destructive',
 ]);
 
-const REF_PATTERN = /^e(\d+)_(\d+)$/;
 
 interface PageContext {
   sessionId: string;
@@ -1509,7 +1513,7 @@ export class AgentBrowserService {
     sessionId: string,
     pageId: string,
     request: {
-      format?: 'text' | 'markdown' | 'links' | 'tables' | 'forms' | 'jsonld' | 'schema';
+      format?: DeliveredExtractFormat;
       schema?: Record<string, unknown>;
     }
   ): Promise<import('@agentbrowser/engine').ExtractionResult> {
@@ -1567,7 +1571,7 @@ export class AgentBrowserService {
         default:
           throw new ServiceError(
             'INVALID_REQUEST',
-            `Unknown extraction format: ${String(request.format)}. Supported: text, markdown, links, tables, forms, jsonld.`
+            `Unknown extraction format: ${String(request.format)}. Supported: text, markdown, links, tables, forms, jsonld, schema.`
           );
       }
     });

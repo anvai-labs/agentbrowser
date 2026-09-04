@@ -22,6 +22,7 @@ import {
   ViewportSchema,
   validate,
 } from './schemas';
+import { DELIVERED_EXTRACT_FORMATS, REF_PATTERN, parseRef } from './types';
 import type { SupportedAction } from './types';
 
 describe('Schema Validation - Session Request', () => {
@@ -543,5 +544,32 @@ describe('Schema Structure', () => {
   it('should export validate function', () => {
     expect(validate).toBeDefined();
     expect(typeof validate).toBe('function');
+  });
+});
+
+describe('ADR-015 single-source-of-truth exports', () => {
+  it('REF_PATTERN.source stays byte-for-byte stable (embedded in OpenAPI/MCP schemas)', () => {
+    expect(REF_PATTERN.source).toBe('^e\\d+_\\d+$');
+  });
+
+  it('parseRef extracts revision and ordinal, rejects malformed refs', () => {
+    expect(parseRef('e3_12')).toEqual({ revision: 3, ordinal: 12 });
+    expect(parseRef('e0_0')).toEqual({ revision: 0, ordinal: 0 });
+    expect(parseRef('x3_12')).toBeNull();
+    expect(parseRef('e3_')).toBeNull();
+    expect(parseRef('e3_12x')).toBeNull();
+    expect(parseRef('')).toBeNull();
+  });
+
+  it('DELIVERED_EXTRACT_FORMATS is the canonical format list, including schema', () => {
+    expect([...DELIVERED_EXTRACT_FORMATS]).toEqual([
+      'text',
+      'markdown',
+      'links',
+      'tables',
+      'forms',
+      'jsonld',
+      'schema',
+    ]);
   });
 });
