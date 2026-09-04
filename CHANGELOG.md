@@ -7,6 +7,28 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added
+
+- Bounded-collection eviction discipline (TD-BROWSER-9, née TD-BROWSER-8): `BoundedCache`/
+  `RingBuffer` primitives in `@agentbrowser/core`, applied to the redaction cache, span buffer, and
+  network-policy request log (previously **fully unbounded**, not just large); indexed lookups for
+  approval-token-by-session and element-by-ref replace per-call linear scans; the plan executor's
+  churn map is cleaned up on session/page teardown instead of leaking one entry per session:page
+  pair for the life of the process.
+- **Summary quantiles over a bounded window** (TD-BROWSER-9, A2): metrics summaries keep
+  incremental all-time-exact `_count`/`_sum` and compute quantiles over the most recent
+  `maxSamplesPerSummary` samples (default 1,000) — quantiles are now recent-window signals, not
+  all-time promises; identical to prior behavior below the window size.
+- **Operations guide** (`docs/operations.md`): configuration, auth, health/metrics, session
+  lifecycle, engine selection, deployment notes, and a troubleshooting table.
+- **`docs/README.md` re-indexed by audience** with a task-based routing table; stale
+  "planned documentation" entries resolved (the threat model has existed for a while; the
+  operations guide now does too).
+- engine-obscura's scope relative to ADR-013's no-evasion rule is now stated explicitly in
+  `docs/engines.md` — outside the rule (unregistered, unreachable by `createSession`,
+  benchmark-only), and barred from the engine registry until a follow-up ADR closes its tested
+  egress-enforcement gap.
+
 ### Fixed
 
 - **The two decision-record numbering collisions introduced while "resolving" the prior pair are
@@ -21,19 +43,25 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   them got the literal string `"undefined"` sent to the service instead of a validation error.
   Fixed alongside a new `browser_snapshot` MCP tool (TD-BROWSER-8's snapshot half had a server
   route and service method but no SDK or MCP path — unreachable from any real client until now).
-- A leftover debug `console.log` in the plan executor's stale-ref remap path is removed, the
-  `churn` tracking map (introduced with TD-BROWSER-8) is now cleaned up on session/page teardown
-  instead of leaking one entry per session:page pair for the life of the process, and `verified`
-  mode (raised after repeated ref churn) now requires a role+label match before accepting a
-  remapped ref — previously it changed nothing behaviorally and could silently rebind an action to
-  the wrong element on a reordering page.
-
-### Added
-
-- Bounded-collection eviction discipline (TD-BROWSER-9, née TD-BROWSER-8): `BoundedCache`/
-  `RingBuffer` primitives in `@agentbrowser/core`, applied to the redaction cache, span buffer, and
-  network-policy request log (previously **fully unbounded**, not just large); indexed lookups for
-  approval-token-by-session and element-by-ref replace per-call linear scans.
+  The same `"undefined"` coercion on `browser_close`, `browser_cookies`, and `browser_create`'s
+  `tenantId` is fixed too, and `browser_plan` no longer reports `ok` for a missing/non-array
+  `actions` argument (it was an empty plan with zero steps).
+- **Verified mode has teeth** — and its remap works past the first stale step. `verified` mode
+  (raised after repeated ref churn) now requires a role+label match before accepting a remapped
+  ref (previously it changed nothing behaviorally and could silently rebind an action to the wrong
+  element on a reordering page), matching on the redacted form so labels embedding secrets still
+  match their own element, reading the pre-failure baseline from the mint-time revision history
+  (the self-heal's own re-observe used to invalidate it, killing remap for every stale step after
+  the first), reporting a gone element as the honest `PLAN_STEP_FAILED` instead of a misleading
+  `AMBIGUOUS_REMAP`, and surfacing a remap-retry failure as the plan envelope instead of a thrown
+  error. A leftover debug `console.log` in the same path is removed.
+- **Memory/reclamation fixes**: `RingBuffer.clear()` (used by `clearLogs`) now releases item
+  references instead of only resetting cursors; per-session teardown is deduplicated into one
+  helper, fixing shipped drift where a crashed session's event listeners survived
+  `recoverFromCrash` while the sibling paths dropped them.
+- The snapshot payload type is declared once (`PageSnapshot` in the SDK) instead of hand-copied
+  across three packages, and the release smoke test reports the real tool count instead of a
+  hardcoded `9`.
 
 ## [1.7.0] — 2026-09-03
 

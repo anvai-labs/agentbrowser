@@ -83,16 +83,31 @@ packages/
 ├── extraction/         # Page extraction
 ├── testkit/            # FakeEngine + the reusable contract suite
 ├── sdk-typescript/     # TypeScript client SDK
-├── mcp-server/         # The MCP stdio server (9 high-level tools)
+├── mcp-server/         # The MCP stdio server (11 high-level tools)
 ├── api/                # REST + WebSocket service
 ├── cli/                # Operator CLI
 └── benchmarks/         # Performance benchmarks
 ```
 
-Nine MCP tools today: `browser_create`, `browser_navigate`, `browser_observe`,
-`browser_act`, `browser_extract`, `browser_screenshot`, `browser_pdf`,
-`browser_cookies`, `browser_close`. No raw selectors, no evaluate - element
+Eleven MCP tools today: `browser_create`, `browser_navigate`,
+`browser_observe`, `browser_act`, `browser_extract`, `browser_screenshot`,
+`browser_pdf`, `browser_cookies`, `browser_close`, and the batched pair
+`browser_snapshot` + `browser_plan`. No raw selectors, no evaluate - element
 refs come from observations and die with their revision (ADR-009).
+
+### The fast path for forms: snapshot then plan
+
+Filling a multi-field form one `browser_act` at a time costs a round trip
+per field, because every action bumps the page revision. The batched pair
+collapses that to two calls ([TD-BROWSER-8](docs/td/TD-BROWSER-8-batched-snapshots-and-action-plans.md)):
+
+1. `browser_snapshot` returns a self-contained page summary - url, title,
+   revision, the page's adaptive `mode`, and `fields` (`{ref, role, label}`).
+2. `browser_plan` executes the whole ordered sequence (fill/click/press/
+   scroll) in one call, reporting per-step results. A stale ref self-heals
+   once per step; once a page has churned enough to enter `verified` mode,
+   the executor requires a role+label match before remapping and aborts
+   loudly (`AMBIGUOUS_REMAP`) rather than risk acting on the wrong element.
 
 ## Development
 
@@ -105,10 +120,28 @@ pnpm -r lint          # Biome
 
 ## Documentation
 
-- [ADR index](docs/README.md) - architecture decision records
-- [Technical design](docs/technical-design.md) - implementation plan
-- [Engine matrix](docs/engines.md) - engines and the contract suite
-- [TD index](docs/td/) - technical design documents (TD-BROWSER-5/6/7)
+New here? Read top to bottom: the README above covers install and the MCP
+surface; the rest depends on who you are.
+
+**Using AgentBrowser**
+
+- [Consuming as an MCP server](#consuming-as-an-mcp-server) - Claude Code, Claude Desktop, Codex, Victor wiring
+- [Snapshot then plan](#the-fast-path-for-forms-snapshot-then-plan) - the two-call form-filling flow
+- [TypeScript SDK](packages/sdk-typescript) - programmatic clients (`SessionsClient.plan` / `.snapshot`)
+- REST: every route is documented by the service itself at `GET /openapi.json`
+
+**Running AgentBrowser**
+
+- [Operations guide](docs/operations.md) - configuration, auth, health and metrics, session lifecycle, deployment, troubleshooting
+- [Engine matrix](docs/engines.md) - engines, their contract-suite status, and egress guarantees
+- [Changelog](CHANGELOG.md) - what changed in each release
+
+**Understanding the design**
+
+- [Docs index](docs/README.md) - the full map: ADRs (the "why"), threat model, audits
+- [Architecture decisions](docs/README.md#architecture-decision-records-adrs) - ADR-001…015
+- [Technical designs](docs/td/) - TD-BROWSER-5…9 feature records
+- [Threat model](docs/threat-model.md) - the security posture and its named limits
 
 ## License
 
