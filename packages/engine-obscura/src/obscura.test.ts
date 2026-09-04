@@ -86,8 +86,15 @@ suite('Obscura engine (binary available)', () => {
     const dedicated = await createObscuraEngine({ launch: { binary } });
     const child = dedicated.server.process;
     await dedicated.shutdown();
+    // shutdown() resolves when the kill is SENT; Node populates exitCode
+    // only when the exit event is DELIVERED - asynchronously, and
+    // occasionally after shutdown() returns. Poll briefly instead of
+    // asserting synchronously (this flaked ~1-in-4 identical-code runs).
+    const deadline = Date.now() + 5000;
+    while (child.exitCode === null && child.signalCode === null && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
     expect(child.exitCode).not.toBeNull();
-    expect(child.exitCode !== null && child.killed === false ? child.exitCode : 0).toBeDefined();
   }, 30_000);
 });
 
