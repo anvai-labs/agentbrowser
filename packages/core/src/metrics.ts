@@ -4,9 +4,21 @@
  * Prometheus-shaped counters, gauges and latency summaries rendered in the
  * text exposition format. Metric and label names are sanitized to the
  * Prometheus character set; label values are escaped.
+ *
+ * Summary series (TD-BROWSER-9, A2): `_count` and `_sum` are exact over all
+ * time (maintained incrementally, O(1) per sample); quantiles are computed
+ * over a bounded sliding window of the most recent samples per series.
+ * The window bounds both memory and per-scrape cost - previously every
+ * sample was retained forever, re-allocated per observe() (O(n²) total) and
+ * fully re-sorted per render().
  */
 
+import { RingBuffer } from './ring-buffer.js';
+
 type Labels = Record<string, string | number>;
+
+/** Default bound on samples retained per summary series for quantiles. */
+const DEFAULT_MAX_SAMPLES = 1000;
 
 interface Entry {
   name: string;
@@ -52,11 +64,33 @@ function percentile(sorted: number[], q: number): number {
 
 const QUANTILES = [0.5, 0.95, 0.99] as const;
 
+export interface MetricsRegistryOptions {
+  /**
+   * Samples retained per summary series for quantile estimation
+   * (TD-BROWSER-9, A2). Oldest evicted first once the cap is hit.
+   * Quantiles reflect this recent window rather than all-time history;
+   * `_count`/`_sum` stay all-time exact regardless.
+   */
+  maxSamplesPerSummary?: number;
+}
+
+interface SampleSeries {
+  entry: Entry;
+  window: RingBuffer<number>;
+  count: number;
+  sum: number;
+}
+
 export class MetricsRegistry {
   private readonly counters = new Map<string, { entry: Entry; value: number }>();
   private readonly gauges = new Map<string, { entry: Entry; value: number }>();
-  private readonly samples = new Map<string, { entry: Entry; values: number[] }>();
+  private readonly samples = new Map<string, SampleSeries>();
   private readonly types = new Map<string, 'counter' | 'gauge' | 'summary'>();
+  private readonly maxSamples: number;
+
+  constructor(options: MetricsRegistryOptions = {}) {
+    this.maxSamples = options.maxSamplesPerSummary ?? DEFAULT_MAX_SAMPLES;
+  }
 
   incrementCounter(name: string, labels: Labels = {}): void {
     this.declare(name, 'counter');
@@ -80,11 +114,19 @@ export class MetricsRegistry {
   observe(name: string, valueMs: number, labels: Labels = {}): void {
     this.declare(name, 'summary');
     const id = seriesId(name, labels);
-    const current = this.samples.get(id);
-    this.samples.set(id, {
-      entry: { name: sanitizeName(name), labels },
-      values: [...(current?.values ?? []), valueMs],
-    });
+    let series = this.samples.get(id);
+    if (series === undefined) {
+      series = {
+        entry: { name: sanitizeName(name), labels },
+        window: new RingBuffer({ capacity: this.maxSamples }),
+        count: 0,
+        sum: 0,
+      };
+      this.samples.set(id, series);
+    }
+    series.window.push(valueMs);
+    series.count++;
+    series.sum += valueMs;
   }
 
   /** Render the registry in the Prometheus text exposition format. */
@@ -101,18 +143,17 @@ export class MetricsRegistry {
     for (const { entry, value } of this.gauges.values()) {
       lines.push(`${entry.name}${renderLabels(entry.labels)} ${value}`);
     }
-    for (const { entry, values } of this.samples.values()) {
-      const sorted = [...values].sort((a, b) => a - b);
+    for (const { entry, window, count, sum } of this.samples.values()) {
+      // Sort only the bounded window, not all-time history (TD-BROWSER-9, A2).
+      const sorted = window.toArray().sort((a, b) => a - b);
       const labels = renderLabels(entry.labels);
 
       for (const q of QUANTILES) {
         const qLabels = labels ? `${labels.slice(0, -1)},quantile="${q}"}` : `{quantile="${q}"}`;
         lines.push(`${entry.name}${qLabels} ${percentile(sorted, q)}`);
       }
-      lines.push(`${entry.name}_count${labels} ${sorted.length}`);
-      lines.push(
-        `${entry.name}_sum${labels} ${sorted.reduce((total, sample) => total + sample, 0)}`
-      );
+      lines.push(`${entry.name}_count${labels} ${count}`);
+      lines.push(`${entry.name}_sum${labels} ${sum}`);
     }
 
     return lines.join('\n');

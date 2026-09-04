@@ -121,7 +121,9 @@ complete and remains in [technical-design.md](technical-design.md).
   implemented.**
 - [TD-BROWSER-9](td/TD-BROWSER-9-bounded-in-memory-collections.md) - Bounded
   in-memory collections & eviction discipline (shared `BoundedCache`/`RingBuffer`,
-  indexed hot-path lookups). **Proposed.** Addresses `hygiene-audit.md` Theme A.
+  indexed hot-path lookups). **Accepted, implemented** (all 8 sites; metrics
+  quantiles read a bounded recent-sample window, `_count`/`_sum` stay all-time).
+  Addresses `hygiene-audit.md` Theme A.
 
 ## Audits
 

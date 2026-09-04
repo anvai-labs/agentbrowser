@@ -83,3 +83,22 @@ different element: a refused act is loud.
 - `GET /v1/sessions/:sessionId/pages/:pageId/snapshot`,
   `POST /v1/sessions/:sessionId/pages/:pid/plan` routes; MCP `browser_plan`
   tool; SDK `SessionsClient.plan`.
+- v1.7.1 additions: MCP `browser_snapshot` tool (the snapshot was
+  service/route-only before — an MCP client had no way to reach it, breaking
+  the snapshot→plan loop the TD is built around); `browser_plan` now declares
+  `sessionId`/`pageId` as required schema fields (previously a call missing
+  them proxied the literal string `"undefined"` to the REST API and failed
+  there with a confusing 404); verified-mode remap now enforces the
+  "never silently substitutes a different element" rule from the modes table
+  above — a remap candidate must match the pre-failure element's role+label,
+  else the plan aborts with `AMBIGUOUS_REMAP` instead of guessing.
+- v1.7.1 review fixes on the above: the verified-mode baseline is looked up
+  in the per-revision history by the failing ref's own revision prefix (the
+  self-heal's re-observe replaces `lastObservation` mid-plan, which used to
+  make every stale step after the first unremappable); the baseline is
+  compared on its redacted form so labels embedding secrets still match
+  their own element; a remap retry failure surfaces as the plan envelope
+  rather than a thrown error; an empty candidate list (element gone) reports
+  the honest `PLAN_STEP_FAILED` instead of a misleading `AMBIGUOUS_REMAP`;
+  the snapshot payload shape is declared once as the SDK's `PageSnapshot`
+  and reused by the MCP server.

@@ -5,6 +5,8 @@
  * with configurable security rules and comprehensive logging.
  */
 
+import { RingBuffer } from '@agentbrowser/core';
+
 export interface NetworkPolicyOptions {
   blockLoopback?: boolean;
   blockPrivateIPs?: boolean;
@@ -12,6 +14,12 @@ export interface NetworkPolicyOptions {
   maxRedirects?: number;
   maxResponseSize?: number;
   enableLogging?: boolean;
+  /**
+   * Bound on the request log (TD-BROWSER-9, A4): previously fully unbounded
+   * when `enableLogging` was on - every checked request stayed for the life
+   * of the process. Oldest entries are evicted first once the cap is hit.
+   */
+  maxLogEntries?: number;
 }
 
 export interface NetworkRequest {
@@ -54,7 +62,7 @@ export class NetworkPolicyError extends Error {
  */
 export class NetworkPolicy {
   private readonly options: Required<NetworkPolicyOptions>;
-  private readonly logs: LogEntry[] = [];
+  private readonly logs: RingBuffer<LogEntry>;
 
   // Private IP ranges
   private readonly PRIVATE_IP_RANGES = [
@@ -79,12 +87,15 @@ export class NetworkPolicy {
       maxRedirects: options.maxRedirects ?? 10,
       maxResponseSize: options.maxResponseSize ?? 10 * 1024 * 1024, // 10MB default
       enableLogging: options.enableLogging ?? false,
+      maxLogEntries: options.maxLogEntries ?? 10_000,
     };
 
     // Validate configuration
     if (this.options.maxRedirects < 0) {
       throw new Error('maxRedirects must be non-negative');
     }
+
+    this.logs = new RingBuffer({ capacity: this.options.maxLogEntries });
   }
 
   /**
@@ -232,14 +243,14 @@ export class NetworkPolicy {
    * Get all logged requests
    */
   getLogs(): LogEntry[] {
-    return [...this.logs];
+    return this.logs.toArray();
   }
 
   /**
    * Clear all logs
    */
   clearLogs(): void {
-    this.logs.length = 0;
+    this.logs.clear();
   }
 
   /**

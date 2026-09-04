@@ -431,6 +431,62 @@ describe('ActionExecutor', () => {
     });
   });
 
+  describe('element index (TD-BROWSER-9, A7)', () => {
+    it('should consult the provided elementIndex instead of scanning observation.elements', async () => {
+      // The resolved target matches observation.elements[0] exactly (no
+      // staleness by the linear-scan path), but elementIndex is deliberately
+      // seeded with a different element at the same ref. If the executor
+      // actually consults elementIndex (not just accepts it and ignores it),
+      // this must surface as a fingerprint mismatch.
+      (mockEnginePage.resolve as any).mockResolvedValue({
+        ref: 'e1_0',
+        fingerprint: 'button_Submit_visible_true_enabled_true',
+        role: 'button',
+        name: 'Submit',
+        visible: true,
+        enabled: true,
+      });
+
+      const elementIndex = new Map(mockObservation.elements.map((el) => [el.ref, el]));
+      elementIndex.set('e1_0', {
+        ref: 'e1_0',
+        role: 'button',
+        name: 'Cancel', // disagrees with observation.elements[0]'s name
+        visible: true,
+        enabled: true,
+      });
+
+      const result = await executor.execute(req({ type: 'click', target: { ref: 'e1_0' } }), {
+        enginePage: mockEnginePage,
+        observation: mockObservation,
+        elementIndex,
+      });
+
+      expect(result.error?.code).toBe('STALE_TARGET');
+      expect(mockEnginePage.act).not.toHaveBeenCalled();
+    });
+
+    it('should fall back to scanning observation.elements when elementIndex is omitted', async () => {
+      (mockEnginePage.resolve as any).mockResolvedValue({
+        ref: 'e1_0',
+        fingerprint: 'button_Submit_visible_true_enabled_true',
+        role: 'button',
+        name: 'Submit',
+        visible: true,
+        enabled: true,
+      });
+      (mockEnginePage.act as any).mockResolvedValue(effect());
+
+      const result = await executor.execute(req({ type: 'click', target: { ref: 'e1_0' } }), {
+        enginePage: mockEnginePage,
+        observation: mockObservation,
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(mockEnginePage.act).toHaveBeenCalled();
+    });
+  });
+
   describe('post-action observation', () => {
     it('should attach a normalized observation when observeAfter is requested', async () => {
       (mockEnginePage.resolve as any).mockResolvedValue({

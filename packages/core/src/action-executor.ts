@@ -31,6 +31,13 @@ export interface ExecutionContext {
    * `observation.revision`.
    */
   currentRevision?: number;
+  /**
+   * ref -> element index for the same observation (TD-BROWSER-9, A7).
+   * Optional: callers that already build this map once per observation (to
+   * avoid a per-action O(n) `find` over `observation.elements`) pass it
+   * through; when absent, verification falls back to the linear scan.
+   */
+  elementIndex?: ReadonlyMap<string, PageElement>;
 }
 
 /** Delivered actions, derived from the protocol single source of truth. */
@@ -50,7 +57,7 @@ export class ActionExecutor {
    * Execute an action through its element reference
    */
   async execute(request: ActionRequest, context: ExecutionContext): Promise<ActionResult> {
-    const { enginePage, observation, currentRevision } = context;
+    const { enginePage, observation, currentRevision, elementIndex } = context;
     const startTimestamp = new Date().toISOString();
     const revision = currentRevision ?? observation.revision;
 
@@ -100,7 +107,12 @@ export class ActionExecutor {
       }
 
       if (target && resolvedTarget) {
-        const fingerprintError = this.verifyFingerprint(target.ref, resolvedTarget, observation);
+        const fingerprintError = this.verifyFingerprint(
+          target.ref,
+          resolvedTarget,
+          observation,
+          elementIndex
+        );
         if (fingerprintError) {
           return this.failure(fingerprintError, startTimestamp, revision);
         }
@@ -231,14 +243,19 @@ export class ActionExecutor {
   }
 
   /**
-   * Verify the resolved element still matches what the caller observed
+   * Verify the resolved element still matches what the caller observed.
+   * Prefers the caller's per-observation index (O(1)) over the linear scan
+   * (TD-BROWSER-9, A7).
    */
   private verifyFingerprint(
     ref: string,
     resolvedTarget: ResolvedTarget,
-    observation: PageState
+    observation: PageState,
+    elementIndex?: ReadonlyMap<string, PageElement>
   ): ApiErrorDetail | null {
-    const observedElement = observation.elements.find((el) => el.ref === ref);
+    const observedElement = elementIndex
+      ? elementIndex.get(ref)
+      : observation.elements.find((el) => el.ref === ref);
 
     // Not in the observation: nothing to compare against, revision checks stand.
     if (!observedElement) {

@@ -1,6 +1,6 @@
 # TD-BROWSER-9: Bounded in-memory collections & eviction discipline
 
-**Status:** Proposed
+**Status:** Accepted, implemented (all eight sites landed in v1.7.1; A2 landed last, in its own PR per the Implementation Notes, with the quantile-window semantics change documented below and in `core/metrics.ts`)
 **Context:** 2026-08-31
 **Related:** [ADR-005](../adr/005-ephemeral-sessions-explicit-persistence.md) (ephemeral sessions), [ADR-008](../adr/008-process-container-isolation.md) (isolation), `docs/hygiene-audit.md` Theme A
 
@@ -31,20 +31,26 @@ sessions over a bounded run; these grow along axes the soak test holds constant
 (distinct redacted strings, metric observations, spans, logged requests, distinct
 hostnames, token count).
 
-## The seven sites (all verified in code)
+## The eight sites
 
-| ID | Collection | Growth axis | Current structure | Location |
-|----|-----------|-------------|-------------------|----------|
-| A1 | `redactionCache` | distinct strings ever redacted | `Map`, set-on-miss, no eviction | `core/secret-manager.ts:31,118-130` |
-| A2 | metric `values[]` | total `observe()` calls | spread-**realloc** per sample (O(n²)) + full `sort` per `render()` | `core/metrics.ts:80-87,104-115` |
-| A3 | span buffer | spans over cap | `Array` + `shift()` (O(n) evict) | `core/tracing.ts:93-95` |
-| A4 | network `logs[]` | checked requests (when logging on) | `Array`, no cap | `policy/network-policy.ts:57,182-196` |
-| A5 | egress `verdicts` | distinct hostnames per context | `Map`, no eviction | `engine-playwright/index.ts:193-210` |
-| A6 | approval `getSessionTokens` | tokens (per-lookup scan) | O(n) `filter` over all tokens | `core/approval-gate.ts:211-224` |
-| A7 | fingerprint element lookup | actions × elements | O(n) `find` per action | `core/action-executor.ts:241` |
+An 8th site (the plan executor's churn tracker) surfaced after this doc was
+written, from unrelated TD-BROWSER-8 work landing in the interim; it belongs
+in this table for the same reason as A6/A7 — small, keyed, session-lifetime
+data needing explicit cleanup rather than a general cache.
 
-A1–A5 are **unbounded growth**; A6–A7 are **wrong-structure-for-the-access-pattern**
-(correct output, avoidable cost).
+| ID | Collection | Growth axis | Current structure | Location | Status |
+|----|-----------|-------------|-------------------|----------|--------|
+| A1 | `redactionCache` | distinct strings ever redacted | `BoundedCache` (LRU, 10k default) | `core/secret-manager.ts` | **Fixed** |
+| A2 | metric `values[]` | total `observe()` calls | incremental count/sum (all-time exact) + `RingBuffer` recent-sample window (`maxSamplesPerSummary`, 1000 default); quantiles over the window | `core/metrics.ts` | **Fixed** |
+| A3 | span buffer | spans over cap | `RingBuffer` (O(1) evict) | `core/tracing.ts` | **Fixed** |
+| A4 | network `logs[]` | checked requests (when logging on) | `RingBuffer`, `maxLogEntries` (10k default) | `policy/network-policy.ts` | **Fixed** |
+| A5 | egress `verdicts`/`resolutionCache` | distinct hostnames per context | `Map`, bounded by construction (one per `BrowserContext`) — documented, not cached | `engine-playwright/index.ts` | **Fixed** (comment) |
+| A6 | approval `getSessionTokens` | tokens (per-lookup scan) | `Map<sessionId, Set<tokenId>>` index, O(1) | `core/approval-gate.ts` | **Fixed** |
+| A7 | fingerprint element lookup | actions × elements | reuses the per-observation `Map<ref, element>` already built in `service.ts`, O(1) | `core/action-executor.ts`, `api/service.ts` | **Fixed** |
+| A8 | plan-executor `churn` map | distinct session:page pairs ever seen | explicit `.delete()` on all four teardown paths (`closeSession`, `closePage`, `recoverFromCrash`, `sweepExpiredSessions`) | `api/service.ts` (`executePlan`/`bumpChurn`) | **Fixed** |
+
+A1–A5 were **unbounded growth**; A6–A8 are **wrong-structure-for-the-access-pattern
+or missing-teardown** (correct output, avoidable cost or a genuine leak for A8).
 
 ## Decision
 
@@ -101,16 +107,25 @@ Adopt one shared bounded-collection discipline rather than five bespoke fixes.
 
 ## Acceptance criteria
 
-- [ ] `BoundedCache` and `RingBuffer` exist in core with eviction-order unit tests.
-- [ ] A1–A5 collections have an enforced, configurable cap; a targeted test drives
-      each past its cap and asserts size stays bounded (this is the test the soak
-      test lacks).
-- [ ] A3 and A4 no longer use `Array.shift()` for eviction.
-- [ ] A6 lookup is O(1) via a maintained index, with a test that create/revoke/
+- [x] `BoundedCache` and `RingBuffer` exist in core with eviction-order unit tests.
+- [x] A1, A3, A4 collections have an enforced, configurable cap (structure swaps,
+      landed first per the risk ordering below); a targeted test drives each past
+      its cap and asserts size stays bounded (this is the test the soak test lacks).
+- [x] A2 keeps incremental count/sum over all-time history plus a bounded
+      recent-sample window (`maxSamplesPerSummary`, default 1000) for quantiles,
+      and no longer re-allocates per sample or sorts full history per render().
+      Windowing semantics: quantiles are over the recent window, not all-time —
+      the documented trade for a live metrics endpoint; `_count`/`_sum` stay
+      all-time exact.
+- [x] A6 lookup is O(1) via a maintained index, with a test that create/revoke/
       expire keep the index consistent with the primary token map.
-- [ ] A7 verification consumes a per-observation ref index; no per-action linear
-      `find` remains on the action hot path.
-- [ ] Every cap is a named option with a documented default; none is a bare literal.
+- [x] A7 verification consumes a per-observation ref index; no per-action linear
+      `find` remains on the action hot path (fallback scan retained only for
+      callers that don't build the index).
+- [x] A8 `churn` map entries are removed on session/page teardown (`closeSession`,
+      `closePage`, `recoverFromCrash`, `sweepExpiredSessions`), with a test proving
+      no entry survives past its session's/page's lifetime.
+- [x] Every cap is a named option with a documented default; none is a bare literal.
 
 ## Implementation Notes
 

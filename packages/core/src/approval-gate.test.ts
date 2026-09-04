@@ -295,6 +295,46 @@ describe('Approval Gates', () => {
       expect(valid).toBe(false);
     });
 
+    it('should keep the session index consistent with the primary token map across create/use/cleanup (TD-BROWSER-9, A6)', async () => {
+      // A long ttl so only the explicit useApprovalToken() below - not time -
+      // drives which tokens runCleanup purges; a short cleanup interval so
+      // the purge is observable within the test.
+      const gate = new ApprovalGate({ tokenTtlMs: 5000, cleanupIntervalMs: 50 });
+
+      // Two sessions, mixed tokens.
+      const usedToken = await gate.generateApprovalToken({
+        sessionId: 'ses_a',
+        action: { type: 'click' },
+      });
+      await gate.generateApprovalToken({ sessionId: 'ses_a', action: { type: 'fill' } });
+      const otherSessionToken = await gate.generateApprovalToken({
+        sessionId: 'ses_b',
+        action: { type: 'click' },
+      });
+
+      expect(await gate.getSessionTokens('ses_a')).toHaveLength(2);
+      expect(await gate.getSessionTokens('ses_b')).toHaveLength(1);
+
+      // Mark one 'used' - runCleanup purges used tokens regardless of ttl.
+      await gate.useApprovalToken(usedToken.tokenId);
+
+      // Wait past one cleanup pass.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // ses_a's used token is gone from the index, its pending one remains,
+      // and ses_b's untouched token is unaffected - proves the index isn't
+      // just cleared wholesale on a cleanup pass.
+      const remainingA = await gate.getSessionTokens('ses_a');
+      expect(remainingA).toHaveLength(1);
+      expect(remainingA[0]?.tokenId).not.toBe(usedToken.tokenId);
+
+      const remainingB = await gate.getSessionTokens('ses_b');
+      expect(remainingB).toHaveLength(1);
+      expect(remainingB[0]?.tokenId).toBe(otherSessionToken.tokenId);
+
+      await gate.shutdown();
+    });
+
     it('should maintain token count within limits', async () => {
       const gateWithLimit = new ApprovalGate({ maxTokens: 5 });
 

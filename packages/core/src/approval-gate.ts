@@ -53,6 +53,13 @@ export class ApprovalError extends Error {
 export class ApprovalGate {
   private readonly options: Required<ApprovalGateOptions>;
   private readonly tokens: Map<string, ApprovalToken> = new Map();
+  /**
+   * Session -> token id index (TD-BROWSER-9, A6): keeps getSessionTokens()
+   * O(1) instead of an O(n) scan over every token. Must be kept consistent
+   * with `tokens` on every create/expire/cleanup - the one place a bug here
+   * could reintroduce drift, hence the dedicated consistency test.
+   */
+  private readonly sessionIndex: Map<string, Set<string>> = new Map();
   private cleanupTimer?: NodeJS.Timeout;
 
   // High-risk action patterns
@@ -131,6 +138,9 @@ export class ApprovalGate {
     };
 
     this.tokens.set(tokenId, token);
+    const sessionTokenIds = this.sessionIndex.get(request.sessionId) ?? new Set<string>();
+    sessionTokenIds.add(tokenId);
+    this.sessionIndex.set(request.sessionId, sessionTokenIds);
 
     return token;
   }
@@ -206,17 +216,23 @@ export class ApprovalGate {
   }
 
   /**
-   * Get all tokens for a session
+   * Get all tokens for a session (TD-BROWSER-9, A6: O(1) via the session
+   * index rather than a full scan of every token).
    */
   async getSessionTokens(sessionId: string): Promise<ApprovalToken[]> {
-    const sessionTokens: ApprovalToken[] = [];
+    const tokenIds = this.sessionIndex.get(sessionId);
+    if (!tokenIds) {
+      return [];
+    }
 
-    for (const token of this.tokens.values()) {
-      if (token.sessionId === sessionId) {
-        // Skip expired tokens
-        if (Date.now() <= token.expiresAt) {
-          sessionTokens.push(token);
-        }
+    const now = Date.now();
+    const sessionTokens: ApprovalToken[] = [];
+    for (const tokenId of tokenIds) {
+      const token = this.tokens.get(tokenId);
+      // Skip expired tokens (and tolerate an index entry outliving its token,
+      // though runCleanup keeps that from happening in normal operation).
+      if (token && now <= token.expiresAt) {
+        sessionTokens.push(token);
       }
     }
 
@@ -241,6 +257,7 @@ export class ApprovalGate {
 
     // Clear all tokens
     this.tokens.clear();
+    this.sessionIndex.clear();
   }
 
   /**
@@ -260,10 +277,18 @@ export class ApprovalGate {
   private async runCleanup(): Promise<void> {
     const now = Date.now();
 
-    // Remove expired tokens in a single pass
+    // Remove expired tokens in a single pass, keeping the session index
+    // consistent with the primary map.
     for (const [tokenId, token] of this.tokens.entries()) {
       if (now > token.expiresAt || token.status === 'used') {
         this.tokens.delete(tokenId);
+        const sessionTokenIds = this.sessionIndex.get(token.sessionId);
+        if (sessionTokenIds) {
+          sessionTokenIds.delete(tokenId);
+          if (sessionTokenIds.size === 0) {
+            this.sessionIndex.delete(token.sessionId);
+          }
+        }
       }
     }
   }
