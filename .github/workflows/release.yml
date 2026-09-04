@@ -231,30 +231,29 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
       - name: Build (package + its workspace dependencies)
         run: pnpm install --frozen-lockfile && pnpm --filter @anvailabs/agentbrowser-mcp... build
-      - name: Pack with pnpm (resolves workspace:* into real versions)
-        working-directory: packages/mcp-server
-        run: pnpm pack --pack-destination ../..
-      # Each step starts fresh at the workspace root; the tarball lands at the
-      # root via --pack-destination, so reference it root-relative (an earlier
-      # draft's ../../ here escaped the workspace entirely — review finding).
       - name: Publish with npm (OIDC) — skip if this version is already on the registry
         # The bootstrap publish (bridging the Trusted-Publisher chicken-and-egg)
         # puts the first version up from a local token; a re-run or subsequent
         # release flow must not die on "already published" (same idempotency as
         # the crates job in the sibling repo).
         #
-        # ADR-014: OIDC trusted publishing ONLY. A stale bootstrap-era
-        # NODE_AUTH_TOKEN is injected into this job's environment from outside
-        # the workflow (repo/env/org secret lists are empty; the runner shows
-        # it masked in every step). npm prefers an .npmrc token over the OIDC
-        # assertion, so that dead token made the publish PUT fail E404 on
-        # v1.7.1 — the first release to exercise this path. Emptying the
-        # variable alone was not enough (v1.7.1 take 2): setup-node's
-        # generated .npmrc still carries an `_authToken=${NODE_AUTH_TOKEN}`
-        # line, and a configured-but-empty token makes npm fail ENEEDAUTH
-        # instead of attempting the OIDC flow. Point the userconfig at
-        # /dev/null so no token auth is configured AT ALL for this step —
-        # only then does npm 11.x fall through to trusted publishing.
+        # ADR-014: OIDC trusted publishing ONLY, via the documented
+        # invocation: `npm publish --provenance` from the package directory
+        # with NO other credential configured. The v1.7.1 failure ladder:
+        # take 1 E404 — a stale ambient NODE_AUTH_TOKEN (injected from
+        # outside the workflow; repo/env/org secret lists are empty) was
+        # preferred by npm over OIDC and is dead. Take 2 ENEEDAUTH — token
+        # emptied, but setup-node's .npmrc still carried `_authToken=`
+        # (configured-but-empty ≠ absent). Take 3 ENEEDAUTH — userconfig
+        # neutralized so zero auth existed, which proved npm never
+        # auto-attempts the OIDC exchange on a bare publish: `--provenance`
+        # is what enters the trusted-publisher flow, and with id-token: write
+        # and no other credential the OIDC exchange IS the authentication.
+        # The earlier pnpm-pack-then-publish-tarball flow is dropped:
+        # provenance publishes from the package directory, and the package
+        # has zero runtime deps (esbuild bundles everything into dist/), so
+        # nothing needs workspace:* resolution at publish time.
+        working-directory: packages/mcp-server
         env:
           NODE_AUTH_TOKEN: ''
           NPM_CONFIG_USERCONFIG: /dev/null
@@ -265,7 +264,7 @@ jobs:
             | grep -q "\"${VERSION}\""; then
             echo "::notice::$VERSION already on npm — skipping publish (verify still runs)"
           else
-            npm publish anvailabs-agentbrowser-mcp-*.tgz --access public
+            npm publish --access public --provenance
           fi
       - name: Verify the registry actually has this version
         # Enforced, never token-keyed (the sibling repo's lesson): check the
