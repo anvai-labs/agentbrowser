@@ -62,15 +62,11 @@ Response: 403 APPROVAL_REQUIRED
   }
 }
 
-// 3. Human reviews and approves
-POST /v1/approvals
-{
-  "approvalId": "apr_01...",
-  "approved": true,
-  "signature": "..."  // Cryptographic signature
-}
+// 3. The APPROVAL_REQUIRED error details carry a single-use tokenId
+//    (bound to this exact action + session + expiry).
 
-// 4. Agent retries with approval token
+// 4. The caller retries the IDENTICAL act with approvalToken = tokenId;
+//    the gate validates the binding and burns the token (single-use).
 POST /v1/sessions/{id}/actions
 {
   "action": { "type": "click", "target": { "ref": "e17_09" } },
@@ -189,7 +185,7 @@ const DEFAULT_POLICY: ApprovalPolicy = {
     "read",
     "write-local"
   ],
-  approvalTtlMs: 900000,  // 15 minutes
+  approvalTtlMs: 300000,  // 5 minutes (approval-gate.ts default)
   maxPendingApprovals: 10
 };
 ```
@@ -277,6 +273,11 @@ async validateApprovalToken(token, action, page): Promise<boolean> {
 ```
 
 ### MCP integration
+
+> Sketch, not implemented: the MCP server has no interactive
+> approval-request flow today - `APPROVAL_REQUIRED` (with its `tokenId`)
+> surfaces to the MCP client as a tool error, and the human approves
+> out-of-band before the client retries.
 
 ```typescript
 // MCP tools should detect high-risk actions and request approval

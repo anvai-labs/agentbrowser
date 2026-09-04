@@ -137,7 +137,7 @@ const BENCHMARK_METRICS = {
 ### Benchmark harness
 
 ```typescript
-// tests/performance/engine-benchmark.ts
+// packages/benchmarks/src/harness.ts
 interface EngineBenchmark {
   name: string;
   engine: BrowserEngine;

@@ -20,22 +20,26 @@ action plan out**:
 
 1. **Snapshot** (`GET .../pages/:pid/snapshot`): a single self-contained
    payload - url, title, revision, and every interactive element as
-   `{ref, role, label, value}`. One call gives an LLM the whole decision
+   `{ref, role, label}`. One call gives an LLM the whole decision
    surface. No per-element exposure.
 2. **Plan** (`POST .../pages/:pid/plan`): a list of actions executed
-   server-side in one call. Per-step results return together with the final
-   state. The LLM reasons once; the browser executes; one response.
-3. **Adaptive modes, auto-toggled per page**: the service scores churn per
-   page (stale-ref failures vs clean ref acts). Stable pages run SNAPPY
-   (deltas, optimistic ordinal-remapped refs, no full re-observe). Volatile
-   pages (churn score crosses threshold) auto-toggle VERIFIED: an observation
-   is inserted before every subsequent step and a fresh snapshot rides the
-   response. The toggle decays back when steps run clean. No human picks the
-   mode; the page's observed behavior does.
-4. **Dynamic pages**: plan steps may declare `waitForLabel` (bounded poll for
-   an element to appear after a prior step, e.g. a password field revealed by
-   "continue"). Elements that appear from interactions are bound by the next
-   snapshot - never assumed.
+   server-side in one call. The response carries per-step results plus the
+   page's mode. The LLM reasons once; the browser executes; one response.
+3. **Adaptive modes, auto-toggled per page (as shipped - see TD-BROWSER-8's
+   implementation record)**: the service scores churn per page (stale-ref
+   failures vs clean ref acts). Stable pages run STABLE (optimistic
+   ordinal-remapped refs on the single allowed revision bump). Volatile
+   pages (churn crosses the threshold) auto-toggle VERIFIED: remapping a
+   stale ref then additionally requires a role+label match with the
+   pre-failure element, else the plan aborts loudly (`AMBIGUOUS_REMAP`) -
+   the executor never silently substitutes a different element. The score
+   decays when steps run clean. No human picks the mode; the page's
+   observed behavior does.
+4. **Dynamic pages (Phase 2, spec'd - not yet implemented)**: plan steps
+   may declare `waitForLabel` (bounded poll for an element to appear after
+   a prior step, e.g. a password field revealed by "continue"). Elements
+   that appear from interactions are bound by the next snapshot - never
+   assumed.
 
 ## Consequences
 

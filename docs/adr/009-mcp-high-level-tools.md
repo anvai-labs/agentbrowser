@@ -54,6 +54,13 @@ browser_extract(session, schema, options)
 // Evidence
 browser_screenshot(session, options)
 browser_pdf(session, options)
+
+// Session continuity (TD-BROWSER-6)
+browser_cookies(session)          // export cookies for handoff
+
+// Batched interaction (ADR-012)
+browser_snapshot(session, page)   // self-contained page payload
+browser_plan(session, page, steps) // ordered batch, self-healing
 ```
 
 ### NOT exposed (dangerous or low-level)
@@ -69,7 +76,7 @@ browser_pdf(session, options)
 ## Consequences
 
 ### Positive
-- **Small tool surface**: Only 8 tools to understand
+- **Small tool surface**: Only 11 tools to understand
 - **Composable**: Tools combine for complex workflows
 - **Safe**: No dangerous code execution APIs
 - **Token efficient**: Small tool descriptions
@@ -90,7 +97,7 @@ browser_pdf(session, options)
 ### Why high-level tools
 
 1. **Agent reasoning**: Smaller tool surface is easier to reason about
-- **Token efficiency**: 8 tools < 20+ tools in context
+- **Token efficiency**: 11 tools < 20+ tools in context
 - **Safety**: High-level tools can include safety checks
 - **Composability**: Tools combine for any workflow
 
@@ -109,7 +116,9 @@ browser_pdf(session, options)
 3. **Network bypass**: `route()` can disable security checks
 4. **Selectors**: Direct selectors are fragile and unsafe
 
-These are available via REST API with explicit authentication/authorization, but not via untrusted MCP agents.
+These are not exposed on any public surface — REST or MCP; the REST API
+serves the same ref-based contract, and `evaluate`/`route`/direct
+selectors exist only inside the engine packages.
 
 ### Alternative considered: Full Playwright API
 **Rejected** because:
@@ -205,6 +214,10 @@ export const BROWSER_TOOLS = [
 
   {
     name: "browser_extract",
+    // Shipped surface is format-based (text/markdown/links/tables/forms/
+    // jsonld). Schema-constrained extraction is a recorded gap
+    // (docs/audit.md P0-7) — the JSON-Schema sketch below is planned, not
+    // shipped.
     description: "Extract structured data from page using JSON Schema",
     inputSchema: {
       type: "object",
@@ -332,10 +345,11 @@ async loginAndExtract(credentials) {
 
 ### Validation criteria
 
-- MCP tool surface is ≤ 10 tools
+- MCP tool surface stays small (11 tools today; the promise is a small,
+  composable set, not a specific ceiling)
 - No `evaluate()` or code execution APIs
 - All results labeled with `untrustedContent: true`
 - High-risk actions require approval
 - Tools use refs, not raw selectors
 - Can complete common workflows with tool combinations
-- Tool descriptions < 200 tokens total
+- Tool descriptions stay terse (the batched tools carry usage guidance)
