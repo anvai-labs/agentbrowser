@@ -242,6 +242,16 @@ jobs:
         # puts the first version up from a local token; a re-run or subsequent
         # release flow must not die on "already published" (same idempotency as
         # the crates job in the sibling repo).
+        #
+        # ADR-014: OIDC trusted publishing ONLY. A stale bootstrap-era
+        # NODE_AUTH_TOKEN is injected into this job's environment from outside
+        # the workflow (repo/env/org secret lists are empty; the runner shows
+        # it masked in every step). npm prefers an .npmrc token over the OIDC
+        # assertion, so that dead token made the publish PUT fail E404 on
+        # v1.7.1 — the first release to exercise this path. Force the token
+        # empty for this step so npm falls through to OIDC.
+        env:
+          NODE_AUTH_TOKEN: ''
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           if curl -sf -A "agentbrowser-release" \
