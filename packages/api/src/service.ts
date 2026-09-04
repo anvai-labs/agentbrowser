@@ -303,6 +303,7 @@ export class AgentBrowserService {
         for (const [pageId, page] of this.pages) {
           if (page.sessionId === sessionId) {
             this.pages.delete(pageId);
+            this.churn.delete(`${sessionId}:${pageId}`);
           }
         }
         this.eventListeners.delete(sessionId);
@@ -429,6 +430,7 @@ export class AgentBrowserService {
     for (const [pageId, page] of this.pages) {
       if (page.sessionId === sessionId) {
         this.pages.delete(pageId);
+        this.churn.delete(`${sessionId}:${pageId}`);
       }
     }
     this.sessionDownloadPolicy.delete(sessionId);
@@ -596,6 +598,7 @@ export class AgentBrowserService {
     for (const [pageId, page] of this.pages) {
       if (page.sessionId === sessionId) {
         this.pages.delete(pageId);
+        this.churn.delete(`${sessionId}:${pageId}`);
       }
     }
     this.sessionDownloadPolicy.delete(sessionId);
@@ -667,10 +670,11 @@ export class AgentBrowserService {
           const observed = await this.observe(sessionId, pageId, { mode: 'interactive' });
           const elements =
             (observed as unknown as { elements?: Array<{ ref: string }> }).elements ?? [];
-          console.log(
-            'PLAN-REMAP:',
-            JSON.stringify({ ordinal, stepRef: step.target?.ref, count: elements.length })
-          );
+          this.logger?.debug('plan.remap', {
+            ordinal,
+            stepRef: step.target?.ref,
+            count: elements.length,
+          });
           let remapped: string | undefined;
           for (const e of elements) {
             if (typeof e.ref === 'string' && e.ref.endsWith(`_${ordinal}`)) {
@@ -769,6 +773,7 @@ export class AgentBrowserService {
 
     await page.enginePage.close();
     this.pages.delete(pageId);
+    this.churn.delete(`${sessionId}:${pageId}`);
   }
 
   // ---- navigation ---------------------------------------------------------
@@ -1122,6 +1127,11 @@ export class AgentBrowserService {
           enginePage: adapter,
           observation: this.lastObservationOf(page),
           currentRevision: page.revision,
+          // TD-BROWSER-9, A7: reuse the map already built in observe() rather
+          // than let the executor re-scan observation.elements per action.
+          ...(page.lastObservation !== undefined
+            ? { elementIndex: page.lastObservation.byRef }
+            : {}),
         }
       );
 

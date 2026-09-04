@@ -116,7 +116,6 @@ describe('AgentBrowserService', () => {
         { action: 'click', target: { ref } },
         { action: 'click', target: { ref } },
       ]);
-      console.log('PLAN RESULT:', JSON.stringify(result));
       expect(result.ok).toBe(true);
       expect(result.results).toHaveLength(2);
       expect(result.results.every((r) => r.ok)).toBe(true);
@@ -132,6 +131,47 @@ describe('AgentBrowserService', () => {
       expect(result.ok).toBe(false);
       expect(result.completed).toBe(0);
       expect(result.error).toBeDefined();
+    });
+
+    it('does not leak a churn-tracking entry after page/session teardown (TD-BROWSER-9, A8)', async () => {
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+      const obs = (await service.observe(session.sessionId, pageId, {
+        mode: 'interactive',
+      })) as unknown as { elements: Array<{ ref: string }> };
+      const ref = obs.elements[0].ref;
+
+      // Reusing the same ref across two steps forces the second step's ref
+      // to go stale after the first step advances the revision, exercising
+      // the self-heal remap path that bumps churn for this session:page.
+      await service.executePlan(session.sessionId, pageId, [
+        { action: 'click', target: { ref } },
+        { action: 'click', target: { ref } },
+      ]);
+
+      const churn = (service as unknown as { churn: Map<string, number> }).churn;
+      const churnKey = `${session.sessionId}:${pageId}`;
+      expect(churn.has(churnKey)).toBe(true);
+
+      await service.closePage(session.sessionId, pageId);
+      expect(churn.has(churnKey)).toBe(false);
+
+      // Same check via closeSession, on a fresh page.
+      const pageId2 = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId2, { url: 'https://example.com/' });
+      const obs2 = (await service.observe(session.sessionId, pageId2, {
+        mode: 'interactive',
+      })) as unknown as { elements: Array<{ ref: string }> };
+      await service.executePlan(session.sessionId, pageId2, [
+        { action: 'click', target: { ref: obs2.elements[0].ref } },
+        { action: 'click', target: { ref: obs2.elements[0].ref } },
+      ]);
+      const churnKey2 = `${session.sessionId}:${pageId2}`;
+      expect(churn.has(churnKey2)).toBe(true);
+
+      await service.closeSession(session.sessionId);
+      expect(churn.has(churnKey2)).toBe(false);
     });
   });
 

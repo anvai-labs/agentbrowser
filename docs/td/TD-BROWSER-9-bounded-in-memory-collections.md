@@ -1,6 +1,6 @@
 # TD-BROWSER-9: Bounded in-memory collections & eviction discipline
 
-**Status:** Proposed
+**Status:** Accepted, Phase 1 implemented (A1, A3–A8 landed in v1.7.1; A2 deferred to its own follow-up PR per the Implementation Notes)
 **Context:** 2026-08-31
 **Related:** [ADR-005](../adr/005-ephemeral-sessions-explicit-persistence.md) (ephemeral sessions), [ADR-008](../adr/008-process-container-isolation.md) (isolation), `docs/hygiene-audit.md` Theme A
 
@@ -45,9 +45,9 @@ data needing explicit cleanup rather than a general cache.
 | A3 | span buffer | spans over cap | `RingBuffer` (O(1) evict) | `core/tracing.ts` | **Fixed** |
 | A4 | network `logs[]` | checked requests (when logging on) | `RingBuffer`, `maxLogEntries` (10k default) | `policy/network-policy.ts` | **Fixed** |
 | A5 | egress `verdicts`/`resolutionCache` | distinct hostnames per context | `Map`, bounded by construction (one per `BrowserContext`) — documented, not cached | `engine-playwright/index.ts` | **Fixed** (comment) |
-| A6 | approval `getSessionTokens` | tokens (per-lookup scan) | O(n) `filter` over all tokens | `core/approval-gate.ts:211-224` | Open |
-| A7 | fingerprint element lookup | actions × elements | O(n) `find` per action | `core/action-executor.ts:241` | Open |
-| A8 | plan-executor `churn` map | distinct session:page pairs ever seen | `Map`, never cleaned up on session/page teardown | `api/service.ts` (`executePlan`/`bumpChurn`) | Open |
+| A6 | approval `getSessionTokens` | tokens (per-lookup scan) | `Map<sessionId, Set<tokenId>>` index, O(1) | `core/approval-gate.ts` | **Fixed** |
+| A7 | fingerprint element lookup | actions × elements | reuses the per-observation `Map<ref, element>` already built in `service.ts`, O(1) | `core/action-executor.ts`, `api/service.ts` | **Fixed** |
+| A8 | plan-executor `churn` map | distinct session:page pairs ever seen | explicit `.delete()` on all four teardown paths (`closeSession`, `closePage`, `recoverFromCrash`, `sweepExpiredSessions`) | `api/service.ts` (`executePlan`/`bumpChurn`) | **Fixed** |
 
 A1–A5 were **unbounded growth**; A6–A8 are **wrong-structure-for-the-access-pattern
 or missing-teardown** (correct output, avoidable cost or a genuine leak for A8).
@@ -112,14 +112,18 @@ Adopt one shared bounded-collection discipline rather than five bespoke fixes.
       landed first per the risk ordering below); a targeted test drives each past
       its cap and asserts size stays bounded (this is the test the soak test lacks).
 - [x] A3 and A4 no longer use `Array.shift()` for eviction.
-- [ ] A6 lookup is O(1) via a maintained index, with a test that create/revoke/
+- [x] A6 lookup is O(1) via a maintained index, with a test that create/revoke/
       expire keep the index consistent with the primary token map.
-- [ ] A7 verification consumes a per-observation ref index; no per-action linear
-      `find` remains on the action hot path.
-- [ ] A8 `churn` map entries are removed on session/page teardown (`closeSession`,
+- [x] A7 verification consumes a per-observation ref index; no per-action linear
+      `find` remains on the action hot path (fallback scan retained only for
+      callers that don't build the index).
+- [x] A8 `churn` map entries are removed on session/page teardown (`closeSession`,
       `closePage`, `recoverFromCrash`, `sweepExpiredSessions`), with a test proving
       no entry survives past its session's/page's lifetime.
 - [x] Every cap is a named option with a documented default; none is a bare literal.
+
+Remaining: **A2** (metrics quantile-window change), deliberately deferred to its
+own follow-up PR per the Implementation Notes below.
 
 ## Implementation Notes
 
