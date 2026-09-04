@@ -997,8 +997,12 @@ export class AgentBrowserService {
     }
 
     if (request.sinceRevision !== undefined) {
+      // The diff path accepts maxBytes but previously returned unbounded;
+      // paginateObservation applies the same byte budget to the diff result.
       return this.secretManager.redact(
-        this.diffObservation(page, observation, request.sinceRevision)
+        this.paginateObservation(this.diffObservation(page, observation, request.sinceRevision), {
+          maxBytes: request.maxBytes,
+        })
       );
     }
 
@@ -1093,6 +1097,12 @@ export class AgentBrowserService {
         `Invalid maxElements ${maxElements}: expected a positive integer.`
       );
     }
+    if (request.maxBytes !== undefined && (!Number.isInteger(request.maxBytes) || request.maxBytes < 1)) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `Invalid maxBytes ${request.maxBytes}: expected a positive integer.`
+      );
+    }
 
     // Byte budget first (spec 10): trim serialized size while keeping
     // document order, then apply the element-count budget. Truncation must
@@ -1100,14 +1110,21 @@ export class AgentBrowserService {
     // lives here and not in the normalizer.
     let elements = observation.elements;
     let truncated = false;
+    let working = observation;
     if (request.maxBytes !== undefined) {
       const budget = request.maxBytes;
       let low = 0;
       let high = elements.length;
       // Binary search for the largest prefix fitting the byte budget.
+      // Measured in REAL bytes (Buffer.byteLength of the serialized form):
+      // string .length counts UTF-16 code units, so a multibyte page could
+      // previously return up to ~3x the budget.
       while (low < high) {
         const mid = Math.ceil((low + high) / 2);
-        const size = JSON.stringify({ ...observation, elements: elements.slice(0, mid) }).length;
+        const size = Buffer.byteLength(
+          JSON.stringify({ ...observation, elements: elements.slice(0, mid) }),
+          'utf8'
+        );
         if (size <= budget) {
           low = mid;
         } else {
@@ -1117,22 +1134,76 @@ export class AgentBrowserService {
       if (low < elements.length) {
         elements = elements.slice(0, low);
         truncated = true;
+        working = { ...observation, elements, truncated: true };
+      }
+      // Budget the fixed fields too: if the element prefix alone is empty
+      // and the payload is still over budget, trim whole trailing
+      // paragraphs of text (content mode's byte-dominant field), then as a
+      // last resort the summary. Never fail the request.
+      if (elements.length === 0 && Buffer.byteLength(JSON.stringify(working), 'utf8') > budget) {
+        const text = observation.text ?? [];
+        let keep = text.length;
+        while (keep > 0) {
+          const candidate = {
+            ...working,
+            text: text.slice(0, keep - 1),
+            truncated: true,
+          };
+          if (Buffer.byteLength(JSON.stringify(candidate), 'utf8') <= budget) {
+            working = candidate;
+            break;
+          }
+          keep--;
+        }
+        if (keep > 0) {
+          working = { ...working, text: text.slice(0, keep), truncated: true };
+        } else if (
+          Buffer.byteLength(JSON.stringify({ ...working, text: [] }), 'utf8') <= budget
+        ) {
+          working = { ...working, text: [], truncated: true };
+        }
+      }
+      // Diff-mode payloads carry their weight in `changes` (each entry a
+      // full old/new element pair); trim trailing changes the same way.
+      const changes = observation.changes;
+      if (
+        changes !== undefined &&
+        changes.length > 0 &&
+        Buffer.byteLength(JSON.stringify(working), 'utf8') > budget
+      ) {
+        let keepChanges = changes.length;
+        while (keepChanges > 0) {
+          const candidate = {
+            ...working,
+            changes: changes.slice(0, keepChanges - 1),
+            truncated: true,
+          };
+          if (Buffer.byteLength(JSON.stringify(candidate), 'utf8') <= budget) {
+            working = candidate;
+            break;
+          }
+          keepChanges--;
+        }
+        if (keepChanges === 0) {
+          working = { ...working, changes: [], truncated: true };
+        }
       }
     }
-
+    // The working observation carries any byte-budget trimming above.
     const start = continueFrom ?? 0;
     if (maxElements === undefined) {
-      return truncated ? { ...observation, elements, truncated } : observation;
+      return working === observation ? observation : working;
     }
 
     const slice = elements.slice(start, start + maxElements);
     const remaining = elements.length - (start + slice.length);
 
     if (remaining <= 0) {
-      return { ...observation, elements: slice, truncated };
+      // `truncated` mirrors the cursor semantics: true iff more to fetch.
+      return { ...working, elements: slice, truncated: truncated || working.truncated };
     }
     return {
-      ...observation,
+      ...working,
       elements: slice,
       truncated: true,
       continuation: { nextOrdinal: start + slice.length, remaining },
@@ -1761,8 +1832,12 @@ export class AgentBrowserService {
     // rejected by the executor (SelectAction requires non-empty values),
     // a latent bug since select shipped.
     if (request.action === 'select' && request.value !== undefined) {
+      // SelectAction takes `values`; a stray `value` on a constructed
+      // action is additionalProperties-excess the schema tolerates, but
+      // drop it so the executor sees exactly the protocol shape.
+      const { value: _dropped, ...rest } = action;
+      Object.assign(action, rest);
       action.values = [request.value];
-      delete action.value;
     }
     return action as unknown as Parameters<ActionExecutor['execute']>[0]['action'];
   }

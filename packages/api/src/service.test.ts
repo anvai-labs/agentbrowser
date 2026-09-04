@@ -1902,3 +1902,76 @@ expect.extend({
     };
   },
 });
+
+describe('maxBytes hardening (Phase 1, A4)', () => {
+  let engine: FakeEngine;
+  let service: AgentBrowserService;
+
+  beforeEach(() => {
+    engine = new FakeEngine();
+    service = new AgentBrowserService({ engine });
+  });
+
+  it('measures real UTF-8 bytes, not UTF-16 code units', async () => {
+    const session = await service.createSession({ tenantId: 't1' });
+    const pageId = (await service.createPage(session.sessionId)).pageId;
+    // Multibyte name: each CJK char is 3 UTF-8 bytes but 1 UTF-16 unit.
+    const engineSessionId = engine.getSessionIds()[0];
+    engine.getFakePage(engineSessionId as string, pageId)?.setElements(
+      Array.from({ length: 40 }, (_, i) => ({ role: 'button', name: `按钮编号${i}` }))
+    );
+    const observation = await service.observe(session.sessionId, pageId, {});
+    expect(observation.truncated).toBe(false);
+
+    const budget = Buffer.byteLength(JSON.stringify(observation), 'utf8') - 300;
+    const bounded = (await service.observe(session.sessionId, pageId, {
+      maxBytes: budget,
+    })) as unknown as { truncated: boolean };
+    expect(bounded.truncated).toBe(true);
+    const size = Buffer.byteLength(JSON.stringify(bounded), 'utf8');
+    expect(size).toBeLessThanOrEqual(budget);
+  });
+
+  it('rejects invalid maxBytes instead of trimming everything', async () => {
+    const session = await service.createSession({ tenantId: 't1' });
+    const pageId = (await service.createPage(session.sessionId)).pageId;
+    await expect(
+      service.observe(session.sessionId, pageId, { maxBytes: 1.5 as number })
+    ).rejects.toThrow(/Invalid maxBytes/);
+    await expect(
+      service.observe(session.sessionId, pageId, { maxBytes: 0 })
+    ).rejects.toThrow(/Invalid maxBytes/);
+  });
+
+  it('applies the byte budget to sinceRevision diffs too', async () => {
+    const session = await service.createSession({ tenantId: 't1' });
+    const pageId = (await service.createPage(session.sessionId)).pageId;
+    await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+    const base = await service.observe(session.sessionId, pageId, {});
+    // A fill produces a real diff entry (old/new value pair).
+    const textbox = base.elements.find((el) => el.role === 'textbox');
+    await service.act(session.sessionId, pageId, {
+      action: 'fill',
+      target: { ref: textbox?.ref },
+      value: 'a-value-that-changes-the-diff-payload',
+    });
+    await service.observe(session.sessionId, pageId, {});
+
+    const diff = (await service.observe(session.sessionId, pageId, {
+      sinceRevision: base.revision,
+    })) as unknown as { changes?: unknown[] };
+
+    const full = Buffer.byteLength(JSON.stringify(diff), 'utf8');
+    const budget = full - 100;
+    const bounded = (await service.observe(session.sessionId, pageId, {
+      sinceRevision: base.revision,
+      maxBytes: budget,
+    })) as unknown as { truncated?: boolean; changes?: unknown[] };
+    // Diffs previously bypassed the budget entirely (same size back). Now
+    // the payload shrinks toward the budget; the floor is the fixed
+    // envelope (session/page/url/title), which is never dropped.
+    const size = Buffer.byteLength(JSON.stringify(bounded), 'utf8');
+    expect(size).toBeLessThan(full);
+    expect(bounded.truncated).toBe(true);
+  });
+});

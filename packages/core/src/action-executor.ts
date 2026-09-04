@@ -157,12 +157,30 @@ export class ActionExecutor {
   ): Promise<PageState> {
     const raw = await context.enginePage.observe(request.observeAfter ?? {});
 
-    return this.normalizer.normalize(raw, {
+    const normalized = this.normalizer.normalize(raw, {
       ...request.observeAfter,
       revision: newRevision,
       sessionId: context.observation.sessionId,
       pageId: request.pageId,
     });
+
+    // observeAfter previously accepted maxBytes and silently ignored it
+    // (the dead normalizer option). Bound it here: a prefix cut in
+    // document order, mirroring the service's byte budget semantics.
+    const budget = request.observeAfter?.maxBytes;
+    if (budget !== undefined) {
+      let elements = normalized.elements;
+      while (
+        elements.length > 0 &&
+        Buffer.byteLength(JSON.stringify({ ...normalized, elements }), 'utf8') > budget
+      ) {
+        elements = elements.slice(0, Math.floor(elements.length / 2));
+      }
+      if (elements.length < normalized.elements.length) {
+        return { ...normalized, elements, truncated: true };
+      }
+    }
+    return normalized;
   }
 
   /**

@@ -147,7 +147,7 @@ Response:
 ### Observation defaults
 
 - `mode`: `"interactive"` unless otherwise specified
-- `maxBytes`: accepted on requests, not yet enforced
+- `maxBytes`: enforced in the service post-ref-bridging (byte-budget element prefix + text/changes trimming; see `paginateObservation`)
 - `maxElements`: `300` default (`observation-normalizer.ts`)
 - Truncate deterministically: dialogs/focused first, then interactive, then content
 
