@@ -42,13 +42,13 @@ The system must default to safety (ephemeral) while supporting persistence when 
 ### Session lifecycle
 
 ```
-CREATING -> READY -> ACTIVE -> CLOSING -> CLOSED
+CREATING -> ready -> active -> CLOSING -> CLOSED
 
-Terminal states:
-- EXPIRED (TTL reached)
-- POLICY_TERMINATED (security violation)
-- ENGINE_CRASHED (browser process crashed)
-- QUOTA_TERMINATED (resource limits exceeded)
+Terminal outcomes (lowercase states in code; close carries a reason):
+- expired (TTL or idle timeout reached)
+- crashed (browser process crashed)
+- terminated:<reason> (explicit close; POLICY_/QUOTA_TERMINATED states
+  were never implemented)
 ```
 
 ### What's ephemeral by default
@@ -68,7 +68,8 @@ Terminal states:
 - Execution traces
 - Network logs
 - Downloaded files (via explicit save)
-- Session snapshots (for resume, not indefinite storage)
+- Session snapshots for resume (spec'd; not implemented - the ADR-012 page
+  snapshot is an observation payload, not a resume mechanism)
 
 ## Consequences
 
@@ -195,23 +196,12 @@ POST /v1/sessions
 ### Export APIs
 
 ```typescript
-// Export cookies
-POST /v1/sessions/{id}/exports/cookies
-Response: { "cookies": [...], "exportedAt": "..." }
+// Export cookies (shipped, TD-BROWSER-6)
+GET /v1/sessions/{id}/cookies
+Response: { "cookies": [...] }   // httpOnly included; re-seed via create
 
-// Export trace
-POST /v1/sessions/{id}/exports/trace
-Response: { "traceUrl": "/v1/artifacts/art_01..." }
-
-// Export snapshot (for resume)
-POST /v1/sessions/{id}/snapshots
-Response: { "snapshotId": "snap_01...", "data": "<base64>" }
-
-// Resume from snapshot
-POST /v1/sessions
-{
-  "restoreFrom": "snap_01..."
-}
+// Export trace - spec'd, no route exists today
+// Session-resume snapshots + restoreFrom - spec'd, not implemented
 ```
 
 ### Cleanup verification
@@ -241,5 +231,5 @@ async auditCleanup(session) {
 - After close, no temp files remain
 - After close, no browser processes remain
 - Can export specific data types on demand
-- Can resume from snapshot
+- Can resume from snapshot (not yet implemented)
 - No cross-tenant storage references possible

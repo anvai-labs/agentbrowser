@@ -34,14 +34,23 @@ agentbrowser/
 ├── packages/
 │   ├── protocol/          # Versioned JSON schemas, TypeScript types, API contracts
 │   ├── engine/            # BrowserEngine interface (engine-neutral contract)
+│   ├── engine-playwright/ # Playwright Chromium/Firefox/WebKit engine (production default)
+│   ├── engine-safari/     # Real Safari via safaridriver (ADR-011)
+│   ├── engine-obscura/    # Obscura adapter — experimental, benchmark-only, unregistered
 │   ├── core/              # Session coordination, observation normalization, action execution
+│   ├── policy/            # Network egress policy (SSRF defense)
+│   ├── extraction/        # Deterministic + model-adapter page extraction
 │   ├── testkit/           # FakeEngine for contract testing, test utilities
-│   └── sdk-typescript/    # TypeScript client SDK
-├── apps/                  # (Planned) REST server, CLI, MCP server
+│   ├── sdk-typescript/    # TypeScript client SDK
+│   ├── api/               # REST + WebSocket service (Fastify) + OpenAPI emission
+│   ├── cli/               # `agentbrowser` CLI
+│   ├── mcp-server/        # `agentbrowser-mcp` MCP stdio server
+│   └── benchmarks/        # Release-gate benchmark and soak suites
 ├── docs/
 │   ├── adr/               # Architecture Decision Records
-│   ├── technical-design.md # Detailed implementation roadmap
-│   └── implementation-roadmap.md
+│   ├── td/                # Post-MVP technical designs (TD-BROWSER-5..9)
+│   ├── technical-design.md # MVP implementation plan (historical record)
+│   └── operations.md      # Operator guide
 └── agentbrowser-mvp-spec.md # Complete MVP specification
 ```
 
@@ -56,6 +65,10 @@ core (depends on: engine, protocol)
   ↓
 testkit (depends on: engine)
 ```
+
+`policy` (dependency-free), `extraction`, and the surfaces (`api`, `cli`,
+`mcp-server`, `benchmarks`) build on core/engine/protocol; each package's
+`package.json` is the authoritative graph.
 
 **Never import from concrete implementations** (like `engine-playwright`) in packages that should be engine-neutral. The `protocol` and `engine` packages must have zero Playwright imports.
 
@@ -95,7 +108,7 @@ This project uses a **develop + main branch workflow** to ensure stable releases
 ### Branch Structure
 - **`main`**: Release branch - always stable, releasable code
 - **`develop`**: Integration branch - active development, feature integration
-- **`feature/*`**: Feature branches - isolated work on specific features/tasks
+- **`feat/*`** (also `fix/*`, `docs/*`, `ci/*`, `chore/*` in use): task branches - isolated work on a feature or fix
 
 ### Workflow Pattern
 ```
@@ -154,8 +167,10 @@ main (release branch)
    third.
 
 ### CI Configuration
-- **Triggers**: Push and PR to `main` or `develop`
-- **Jobs**: Type-check → Lint → Test → Build (parallel)
+- **Triggers**: Push and PR to `main` or `develop`; docs-only *pushes* skip
+  via `paths-ignore` (pull requests always run the full suite)
+- **Jobs**: type-check, lint (includes the doc-link check), test, build,
+  docker, benchmarks, obscura (experimental), bun compile + smoke
 - **Protection**: Main requires PR + passing CI
 
 This workflow ensures `main` is always releasable while allowing active development on `develop`.
@@ -187,6 +202,11 @@ The following ADRs in `docs/adr/` are critical for understanding design choices:
 8. **ADR-008**: Process/container isolation - Security boundaries for multi-tenancy
 9. **ADR-009**: MCP high-level tools - Why MCP exposes composable tools, not raw Playwright methods
 10. **ADR-010**: Rust engine gated by benchmarks - When to invest in native engine
+11. **ADR-011**: Real Safari via safaridriver - always headed, egress unenforceable (loud refusal)
+12. **ADR-012**: Snapshot-plan interaction model - batched plans + snapshots, adaptive stable/verified modes
+13. **ADR-013**: Headed sessions and walled logins - de-fingerprint headed only; cookie-seeding handoff over CDP arms races
+14. **ADR-014**: npm distribution - `@anvailabs/agentbrowser-mcp` via OIDC trusted publishing
+15. **ADR-015** (Proposed): cross-package contract single source of truth
 
 ## Core Concepts
 
@@ -279,8 +299,8 @@ it('should navigate and observe', async () => {
 ### Security Considerations
 
 Before making changes that affect security boundaries:
-1. Review `docs/adr/006-network-egress-policy-ssrf.md` (when it exists)
-2. Review threat model (when written)
+1. Review `docs/adr/006-network-egress-policy-ssrf.md`
+2. Review `docs/threat-model.md`
 3. Consider SSRF, prompt injection, secret exfiltration, cross-tenant leakage
 4. Add security tests for the threat model
 
@@ -295,15 +315,9 @@ Before making changes that affect security boundaries:
 
 ## Phase Status
 
-The project is in **Phase 0: Repository Foundation** (per `docs/technical-design.md`).
-
-Current status:
-- ✅ Monorepo structure set up
-- ✅ Protocol types defined
-- ✅ Engine interface defined
-- ✅ FakeEngine implemented
-- ✅ Test structure in place
-- 🚧 Tests being refined
+The MVP (TD-001..TD-026, `docs/technical-design.md`) is complete and shipped
+(2026-08); releases are cut from `main` (v1.x). Post-MVP work is tracked in
+`docs/td/` (TD-BROWSER-5..9) and summarized in `CHANGELOG.md`.
 
 ## Debugging Tips
 
@@ -333,7 +347,7 @@ const session = await engine.createSession({});
 
 ## Common Pitfalls
 
-1. **Importing Playwright types in engine-neutral packages**: Never import from `playwright` in `packages/protocol/`, `packages/engine/`, or `packages/core/`. All Playwright code lives in `packages/engine-playwright/` (when created).
+1. **Importing Playwright types in engine-neutral packages**: Never import from `playwright` in `packages/protocol/`, `packages/engine/`, or `packages/core/`. All Playwright code lives in `packages/engine-playwright/`.
 
 2. **Exposing internal implementation**: Public API surfaces should use types from `@agentbrowser/protocol`, not internal engine types.
 
@@ -341,13 +355,13 @@ const session = await engine.createSession({});
 
 4. **Missing staleness checks**: Actions must verify page revision before executing. Never auto-retry on `STALE_TARGET` errors.
 
-5. **Secret leakage**: Sensitive values must be redacted from logs, traces, and error messages. Use the secret manager (when implemented).
+5. **Secret leakage**: Sensitive values must be redacted from logs, traces, and error messages. Use `SecretManager` (`packages/core/src/secret-manager.ts`).
 
 ## Related Documentation
 
 - **README.md**: Project overview and quick start
 - **docs/technical-design.md**: Detailed implementation plan with task breakdown
-- **docs/implementation-roadmap.md**: Progress tracking
+- **docs/implementation-roadmap.md**: Historical MVP planning record (progress history: docs/phase1-progress.md; current status: CHANGELOG.md)
 - **docs/adr/*.md**: Architecture decision records
 - **agentbrowser-mvp-spec.md**: Complete MVP specification with principles and invariants
 

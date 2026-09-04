@@ -1,6 +1,6 @@
 # ADR-008: Process/Container Isolation for Hostile Multi-Tenancy
 
-**Status:** Accepted
+**Status:** Accepted (the isolation-tier *decision*; tiers beyond `context` are not yet implemented)
 **Context:** 2025-01-23
 **Superseded by:** N/A
 
@@ -31,8 +31,12 @@ For a hosted multi-tenant service, stronger isolation is required.
 
 ### Default for MVP
 
-- **Local development**: `context` isolation (shared process)
-- **Hosted MVP**: `process` isolation (one process per session)
+- **Local development**: `context` isolation (shared process) — shipped
+- **Hosted MVP**: `process` isolation (one process per session) — **not
+  yet implemented**: the headless pool currently shares one browser
+  process, and only headed sessions get a dedicated browser
+  (TD-BROWSER-6). Process-per-session remains the target for hosted
+  multi-tenancy.
 - **Future**: `container` isolation for premium tier
 
 ### Process isolation implementation
@@ -284,4 +288,5 @@ async monitorSessionResources(session) {
 - Can set per-process resource limits
 - Cleanup terminates all processes
 - Local dev uses context isolation
-- Hosted uses process isolation minimum
+- Hosted uses process isolation minimum (target; today only headed
+  sessions get a dedicated browser)

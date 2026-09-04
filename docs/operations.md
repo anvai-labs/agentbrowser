@@ -74,8 +74,8 @@ Port and bind address default to `3000` on `0.0.0.0`
 
 The metrics surface is counters (`sessions_created_total`,
 `sessions_closed_total`, `sessions_crashed_total`, …), gauges
-(`sessions_active`), and per-operation latency summaries. Since v1.7.1,
-summary quantiles are computed over a bounded window of the most recent
+(`sessions_active`), and per-operation latency summaries. As of the
+upcoming 1.7.1 release, summary quantiles are computed over a bounded window of the most recent
 samples per series (default 1,000, configurable via
 `MetricsRegistryOptions.maxSamplesPerSummary`) while `_count` and `_sum`
 stay exact over all time — alert on `count`/`sum` rates; treat
@@ -120,18 +120,23 @@ including per-engine egress guarantees, is in the
   than enforcing nothing quietly.
 - **Obscura** (`engine-obscura`) is experimental, unregistered, and
   benchmark-only — it cannot be selected by a session, by design; see the
-  Obscura section and its ADR-013 scope note in [engines.md](engines.md).
+  Obscura section in [engines.md](engines.md).
 
 ## Operating through the CLI
 
-The `agentbrowser` CLI (same install) is a thin, scriptable surface over
-the SDK — useful for smoke checks and ad-hoc automation:
+The `agentbrowser` CLI (`packages/cli`) is a thin, scriptable surface over
+the SDK — useful for smoke checks and ad-hoc automation. It currently
+ships from a source checkout only (`pnpm --filter @agentbrowser/cli build`,
+then `node packages/cli/dist/bin.js`); it is not yet in the Homebrew
+formula or the release tarballs:
 
 ```bash
 export AGENTBROWSER_BASE_URL=http://localhost:3000
-export AGENTBROWSER_API_KEY=key1:tenant1
+# The bearer is the KEY segment only - the server parses `key:tenant` pairs
+# and matches on the key's hash, so sending `key1:tenant1` as the bearer 401s.
+export AGENTBROWSER_API_KEY=key1
 
-agentbrowser session create --json
+agentbrowser session create --tenant tenant1 --json
 agentbrowser navigate <sessionId> <pageId> https://example.com
 agentbrowser act click <sessionId> <pageId> <ref>
 agentbrowser session list

@@ -47,8 +47,9 @@ The system must enforce network policy at a choke point where all outbound traff
     "fe80::/10"           // IPv6 link-local
   ],
   "blockMetadata": true,   // Cloud metadata endpoints
-  "maxRedirects": 5,
-  "maxResponseBytes": 10485760,  // 10 MB
+  "maxRedirects": 10,
+  // maxResponseBytes (response-size caps) is spec'd but unwired; the
+  // shipped per-session download cap is maxDownloadBytes (10 MB default).
   "allowDownloads": false
 }
 ```
@@ -258,7 +259,7 @@ async logPolicyDecision(sessionId, decision) {
 
 - Cannot access 127.0.0.1 from page JavaScript
 - Cannot access cloud metadata endpoints
-- Cannot follow >5 redirects
+- Cannot follow >10 redirects (default)
 - Cannot download >10MB without explicit permission
 - All requests logged with allow/deny
 - IP rechecked after DNS rebinding attempt

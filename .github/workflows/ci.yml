@@ -1,6 +1,8 @@
 name: CI
 
-# Thrift: docs-only changes skip CI entirely (no compute burned on prose).
+# Thrift: docs-only *pushes* to main/develop skip CI (paths-ignore below).
+# Pull requests always run the full suite — prose cannot silently break a
+# build, but it can stale-link a doc, and PR CI carries the link check.
 on:
   push:
     paths-ignore:
