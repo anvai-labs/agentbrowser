@@ -50,6 +50,11 @@ export class RingBuffer<T> {
   }
 
   clear(): void {
+    // Drop item references, not just the cursors: callers like
+    // NetworkPolicy.clearLogs() clear to reclaim memory, and leaving items
+    // reachable in the backing array would retain up to `capacity` entries
+    // until overwritten.
+    this.buf.fill(undefined);
     this.start = 0;
     this.count = 0;
   }

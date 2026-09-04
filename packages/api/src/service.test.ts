@@ -237,6 +237,100 @@ describe('AgentBrowserService', () => {
       expect(result.ok).toBe(false);
       expect(result.error?.code).toBe('AMBIGUOUS_REMAP');
     });
+
+    it('remaps later stale refs of a plan from their mint-time revision, not just the first (regression: self-heal re-observe used to invalidate the baseline)', async () => {
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+
+      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
+      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
+      fakePage?.setElements([{ role: 'button', name: 'Submit' }]);
+      const obs = (await service.observe(session.sessionId, pageId, {
+        mode: 'interactive',
+      })) as unknown as { elements: Array<{ ref: string }> };
+      const ref = obs.elements[0].ref;
+
+      const churn = (service as unknown as { churn: Map<string, number> }).churn;
+      churn.set(`${session.sessionId}:${pageId}`, 3);
+
+      await service.act(session.sessionId, pageId, { action: 'scroll', direction: 'down' });
+
+      // The exact flow browser_snapshot + browser_plan recommend: one plan
+      // addressing the same stale ref twice. Step 1's self-heal re-observes,
+      // replacing lastObservation - step 2's baseline must come from the
+      // mint-time revision history, or verified mode aborts a plan that
+      // stable mode completes.
+      const result = await service.executePlan(session.sessionId, pageId, [
+        { action: 'click', target: { ref } },
+        { action: 'click', target: { ref } },
+      ]);
+
+      expect(result.ok).toBe(true);
+      expect(result.mode).toBe('verified');
+      expect(result.results.every((r) => r.ok)).toBe(true);
+    });
+
+    it('matches remap candidates on the redacted form of the baseline so secret-bearing labels still match', async () => {
+      const secreted = new AgentBrowserService({
+        engine,
+        secretManager: new SecretManager({ 'vault://p': 'hunter2' }),
+      });
+      const session = await secreted.createSession({ tenantId: 't1' });
+      const pageId = (await secreted.createPage(session.sessionId)).pageId;
+      await secreted.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+
+      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
+      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
+      fakePage?.setElements([{ role: 'button', name: 'Submit hunter2' }]);
+      const obs = (await secreted.observe(session.sessionId, pageId, {
+        mode: 'interactive',
+      })) as unknown as { elements: Array<{ ref: string }> };
+      const ref = obs.elements[0].ref;
+
+      const churn = (secreted as unknown as { churn: Map<string, number> }).churn;
+      churn.set(`${session.sessionId}:${pageId}`, 3);
+
+      await secreted.act(session.sessionId, pageId, { action: 'scroll', direction: 'down' });
+
+      // The remap candidates arrive redacted ("Submit ***"); the history
+      // baseline is unredacted ("Submit hunter2"). Comparing raw would never
+      // match the element to itself.
+      const result = await secreted.executePlan(session.sessionId, pageId, [
+        { action: 'click', target: { ref } },
+      ]);
+
+      expect(result.ok).toBe(true);
+      expect(result.mode).toBe('verified');
+    });
+
+    it('reports PLAN_STEP_FAILED, not AMBIGUOUS_REMAP, when the element is gone in verified mode', async () => {
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+
+      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
+      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
+      fakePage?.setElements([{ role: 'button', name: 'Submit' }]);
+      const obs = (await service.observe(session.sessionId, pageId, {
+        mode: 'interactive',
+      })) as unknown as { elements: Array<{ ref: string }> };
+      const ref = obs.elements[0].ref;
+
+      const churn = (service as unknown as { churn: Map<string, number> }).churn;
+      churn.set(`${session.sessionId}:${pageId}`, 3);
+
+      // The element is removed outright: no candidate exists at any ordinal.
+      fakePage?.setElements([]);
+
+      const result = await service.executePlan(session.sessionId, pageId, [
+        { action: 'click', target: { ref } },
+      ]);
+
+      expect(result.ok).toBe(false);
+      expect(result.error?.code).toBe('PLAN_STEP_FAILED');
+      expect(result.error?.message).not.toContain('AMBIGUOUS_REMAP');
+    });
   });
 
   describe('cookie export (TD-BROWSER-6)', () => {
@@ -981,11 +1075,14 @@ describe('AgentBrowserService', () => {
       const traced = new AgentBrowserService({ engine: new FakeEngine(), tracer });
       const sessionId = (await traced.createSession({ tenantId: 't1' })).sessionId;
       const pageId = (await traced.createPage(sessionId)).pageId;
-      tracer.completedSpans().length = 0; // focus on the navigation
+      // Focus on the navigation: spans already recorded (session.create etc.)
+      // stay in the tracer - completedSpans() is a copy, so truncating it
+      // would silently no-op - so slice by count instead.
+      const spanCountBefore = tracer.completedSpans().length;
 
       await traced.navigate(sessionId, pageId, { url: 'https://example.com' });
 
-      const spans = tracer.completedSpans();
+      const spans = tracer.completedSpans().slice(spanCountBefore);
       const nav = spans.find((s) => s.name === 'navigate');
       const policyCheck = spans.find((s) => s.name === 'policy.check');
 

@@ -51,6 +51,11 @@ describe('RingBuffer', () => {
 
     expect(buffer.toArray()).toEqual([]);
     expect(buffer.length).toBe(0);
+    // Clearing must release the item references, not just reset the cursors:
+    // clearLogs()-style callers clear to reclaim memory.
+    expect(
+      (buffer as unknown as { buf: (number | undefined)[] }).buf.every((slot) => slot === undefined)
+    ).toBe(true);
 
     // Still usable after a clear.
     buffer.push(9);

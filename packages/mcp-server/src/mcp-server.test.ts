@@ -201,6 +201,34 @@ describe('AgentBrowser MCP server', () => {
       expect(response.result.isError).toBe(true);
       expect(sessions.snapshot).not.toHaveBeenCalled();
     });
+
+    it('rejects a browser_plan call whose actions argument is missing or not an array, instead of returning an empty ok plan', async () => {
+      for (const badActions of [undefined, 'fill login', { action: 'click' }]) {
+        const response = JSON.parse(
+          await call('td10', 'browser_plan', {
+            sessionId: 'ses_1',
+            pageId: 'pg_1',
+            actions: badActions,
+          })
+        );
+        expect(response.result.isError).toBe(true);
+        expect(response.result.content[0].text).toMatch(/actions/);
+      }
+      expect(sessions.plan).not.toHaveBeenCalled();
+    });
+
+    it('rejects browser_close and browser_cookies calls missing sessionId instead of proxying the string "undefined"', async () => {
+      const closed = JSON.parse(await call('td11', 'browser_close', {}));
+      expect(closed.result.isError).toBe(true);
+      expect(closed.result.content[0].text).toMatch(/sessionId/);
+
+      const cookies = JSON.parse(await call('td12', 'browser_cookies', {}));
+      expect(cookies.result.isError).toBe(true);
+      expect(cookies.result.content[0].text).toMatch(/sessionId/);
+
+      expect(sessions.close).not.toHaveBeenCalled();
+      expect(sessions.cookies).not.toHaveBeenCalled();
+    });
   });
 
   describe('tools/list', () => {

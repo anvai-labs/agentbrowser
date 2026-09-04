@@ -92,3 +92,13 @@ different element: a refused act is loud.
   "never silently substitutes a different element" rule from the modes table
   above — a remap candidate must match the pre-failure element's role+label,
   else the plan aborts with `AMBIGUOUS_REMAP` instead of guessing.
+- v1.7.1 review fixes on the above: the verified-mode baseline is looked up
+  in the per-revision history by the failing ref's own revision prefix (the
+  self-heal's re-observe replaces `lastObservation` mid-plan, which used to
+  make every stale step after the first unremappable); the baseline is
+  compared on its redacted form so labels embedding secrets still match
+  their own element; a remap retry failure surfaces as the plan envelope
+  rather than a thrown error; an empty candidate list (element gone) reports
+  the honest `PLAN_STEP_FAILED` instead of a misleading `AMBIGUOUS_REMAP`;
+  the snapshot payload shape is declared once as the SDK's `PageSnapshot`
+  and reused by the MCP server.

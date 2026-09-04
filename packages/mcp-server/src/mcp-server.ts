@@ -23,6 +23,7 @@ import type {
   ObservationRequest,
   ObservationResponse,
   PageResponse,
+  PageSnapshot,
   PdfRequest,
   ScreenshotRequest,
   SessionRequest,
@@ -49,16 +50,7 @@ export interface McpClient {
       mode?: string;
     }>;
     /** TD-BROWSER-8: self-contained snapshot payload for one-shot LLM reasoning. */
-    snapshot(
-      sessionId: string,
-      pageId: string
-    ): Promise<{
-      url: string;
-      title: string;
-      revision: number;
-      mode: string;
-      fields: Array<{ ref: string; role: string; label: string }>;
-    }>;
+    snapshot(sessionId: string, pageId: string): Promise<PageSnapshot>;
     createPage(sessionId: string): Promise<PageResponse>;
     navigate(
       sessionId: string,
@@ -156,7 +148,10 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
         required: ['tenantId'],
       },
       handler: async (args) => {
-        const request: SessionRequest = { tenantId: String(args.tenantId) };
+        if (typeof args.tenantId !== 'string' || args.tenantId.length === 0) {
+          throw new UsageError('tenantId is required and must be a non-empty string.');
+        }
+        const request: SessionRequest = { tenantId: args.tenantId };
         if (typeof args.engine === 'string') request.engine = args.engine;
         if (typeof args.headless === 'boolean') request.headless = args.headless;
         if (typeof args.ttlMs === 'number') request.ttlMs = args.ttlMs;
@@ -183,9 +178,11 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
         required: ['sessionId'],
       },
       handler: async (args) => {
-        const sessionId = String(args.sessionId);
-        const cookies = await client.sessions.cookies(sessionId);
-        return { sessionId, cookies };
+        if (typeof args.sessionId !== 'string' || args.sessionId.length === 0) {
+          throw new UsageError('sessionId is required and must be a non-empty string.');
+        }
+        const cookies = await client.sessions.cookies(args.sessionId);
+        return { sessionId: args.sessionId, cookies };
       },
     },
 
@@ -234,8 +231,13 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
       },
       handler: async (args) => {
         const [sessionId, pageId] = sessionAndPage(args);
-        const actions = Array.isArray(args.actions) ? args.actions : [];
-        return await client.sessions.plan(sessionId, pageId, actions);
+        // Schema-only validation is not enforcement: a client that ignores
+        // inputSchema must still get a usage error, not a silently empty
+        // plan that reports ok with zero steps executed.
+        if (!Array.isArray(args.actions)) {
+          throw new UsageError('actions is required and must be an array of plan steps.');
+        }
+        return await client.sessions.plan(sessionId, pageId, args.actions);
       },
     },
 
@@ -249,8 +251,11 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
         required: ['sessionId'],
       },
       handler: async (args) => {
-        await client.sessions.close(String(args.sessionId));
-        return { sessionId: String(args.sessionId), closed: true };
+        if (typeof args.sessionId !== 'string' || args.sessionId.length === 0) {
+          throw new UsageError('sessionId is required and must be a non-empty string.');
+        }
+        await client.sessions.close(args.sessionId);
+        return { sessionId: args.sessionId, closed: true };
       },
     },
 
