@@ -1,6 +1,6 @@
 # TD-BROWSER-9: Bounded in-memory collections & eviction discipline
 
-**Status:** Accepted, Phase 1 implemented (A1, A3–A8 landed in v1.7.1; A2 deferred to its own follow-up PR per the Implementation Notes)
+**Status:** Accepted, implemented (all eight sites landed in v1.7.1; A2 landed last, in its own PR per the Implementation Notes, with the quantile-window semantics change documented below and in `core/metrics.ts`)
 **Context:** 2026-08-31
 **Related:** [ADR-005](../adr/005-ephemeral-sessions-explicit-persistence.md) (ephemeral sessions), [ADR-008](../adr/008-process-container-isolation.md) (isolation), `docs/hygiene-audit.md` Theme A
 
@@ -41,7 +41,7 @@ data needing explicit cleanup rather than a general cache.
 | ID | Collection | Growth axis | Current structure | Location | Status |
 |----|-----------|-------------|-------------------|----------|--------|
 | A1 | `redactionCache` | distinct strings ever redacted | `BoundedCache` (LRU, 10k default) | `core/secret-manager.ts` | **Fixed** |
-| A2 | metric `values[]` | total `observe()` calls | spread-**realloc** per sample (O(n²)) + full `sort` per `render()` | `core/metrics.ts:80-87,104-115` | Open |
+| A2 | metric `values[]` | total `observe()` calls | incremental count/sum (all-time exact) + `RingBuffer` recent-sample window (`maxSamplesPerSummary`, 1000 default); quantiles over the window | `core/metrics.ts` | **Fixed** |
 | A3 | span buffer | spans over cap | `RingBuffer` (O(1) evict) | `core/tracing.ts` | **Fixed** |
 | A4 | network `logs[]` | checked requests (when logging on) | `RingBuffer`, `maxLogEntries` (10k default) | `policy/network-policy.ts` | **Fixed** |
 | A5 | egress `verdicts`/`resolutionCache` | distinct hostnames per context | `Map`, bounded by construction (one per `BrowserContext`) — documented, not cached | `engine-playwright/index.ts` | **Fixed** (comment) |
@@ -111,7 +111,12 @@ Adopt one shared bounded-collection discipline rather than five bespoke fixes.
 - [x] A1, A3, A4 collections have an enforced, configurable cap (structure swaps,
       landed first per the risk ordering below); a targeted test drives each past
       its cap and asserts size stays bounded (this is the test the soak test lacks).
-- [x] A3 and A4 no longer use `Array.shift()` for eviction.
+- [x] A2 keeps incremental count/sum over all-time history plus a bounded
+      recent-sample window (`maxSamplesPerSummary`, default 1000) for quantiles,
+      and no longer re-allocates per sample or sorts full history per render().
+      Windowing semantics: quantiles are over the recent window, not all-time —
+      the documented trade for a live metrics endpoint; `_count`/`_sum` stay
+      all-time exact.
 - [x] A6 lookup is O(1) via a maintained index, with a test that create/revoke/
       expire keep the index consistent with the primary token map.
 - [x] A7 verification consumes a per-observation ref index; no per-action linear
@@ -121,9 +126,6 @@ Adopt one shared bounded-collection discipline rather than five bespoke fixes.
       `closePage`, `recoverFromCrash`, `sweepExpiredSessions`), with a test proving
       no entry survives past its session's/page's lifetime.
 - [x] Every cap is a named option with a documented default; none is a bare literal.
-
-Remaining: **A2** (metrics quantile-window change), deliberately deferred to its
-own follow-up PR per the Implementation Notes below.
 
 ## Implementation Notes
 
