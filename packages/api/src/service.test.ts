@@ -102,6 +102,39 @@ describe('AgentBrowserService', () => {
     });
   });
 
+  describe('action plans (TD-BROWSER-8)', () => {
+    it('executes a multi-step plan in one call', async () => {
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+      const obs = (await service.observe(session.sessionId, pageId, {
+        mode: 'interactive',
+      })) as unknown as { elements: Array<{ ref: string }> };
+      const ref = obs.elements[0].ref;
+
+      const result = await service.executePlan(session.sessionId, pageId, [
+        { action: 'click', target: { ref } },
+        { action: 'click', target: { ref } },
+      ]);
+      console.log('PLAN RESULT:', JSON.stringify(result));
+      expect(result.ok).toBe(true);
+      expect(result.results).toHaveLength(2);
+      expect(result.results.every((r) => r.ok)).toBe(true);
+    });
+
+    it('aborts on the first failing step and reports progress', async () => {
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      const result = await service.executePlan(session.sessionId, pageId, [
+        { action: 'click', target: { ref: 'e999999_999' } },
+        { action: 'click', target: { ref: 'e1_0' } },
+      ]);
+      expect(result.ok).toBe(false);
+      expect(result.completed).toBe(0);
+      expect(result.error).toBeDefined();
+    });
+  });
+
   describe('cookie export (TD-BROWSER-6)', () => {
     it('exports an array for a live session', async () => {
       const session = await service.createSession({ tenantId: 't1' });

@@ -288,6 +288,32 @@ export class SessionsClient {
     return body.cookies;
   }
 
+  /** TD-BROWSER-8: execute a batched action plan; returns per-step results. */
+  async plan(
+    sessionId: string,
+    pageId: string,
+    actions: Array<Record<string, unknown>>
+  ): Promise<{
+    ok: boolean;
+    completed: number;
+    results: Array<{ step: number; ok: boolean; error?: string }>;
+    mode?: string;
+    error?: { code: string; message: string };
+  }> {
+    const response = await this.requestFn(
+      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/plan`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...this.headers,
+        },
+        body: JSON.stringify({ actions }),
+      }
+    );
+    return this.handleResponse(response);
+  }
+
   async navigate(
     sessionId: string,
     pageId: string,

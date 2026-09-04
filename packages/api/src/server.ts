@@ -17,7 +17,7 @@ import Fastify from 'fastify';
 import type { FastifyError, FastifyInstance, FastifyRequest } from 'fastify';
 import { ArtifactAuthorizer } from './artifact-auth.js';
 import { buildOpenApiDocument } from './openapi.js';
-import { AgentBrowserService, ServiceError } from './service.js';
+import { AgentBrowserService, type ServiceActRequest, ServiceError } from './service.js';
 
 export interface ServerOptions {
   port?: number;
@@ -25,6 +25,11 @@ export interface ServerOptions {
   corsOrigin?: string | string[];
   /** Browser engine backing the server. Production must inject a real one. */
   engine?: BrowserEngine;
+  /**
+   * TD-BROWSER-7 Phase 1/2: named auxiliary engines for per-session routing
+   * (e.g. `safari` -> SafaridriverEngine). Unknown names fail loudly.
+   */
+  engines?: Record<string, BrowserEngine>;
   /** Download payload fetcher; injectable so tests never touch the network. */
   downloader?(url: string): Promise<{ bytes: Uint8Array; contentType: string }>;
   /** Metrics registry exposed at /metrics; defaults to a fresh registry. */
@@ -135,6 +140,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   const metrics = options.metrics ?? new MetricsRegistry();
   const service = new AgentBrowserService({
     engine,
+    ...(options.engines ? { engines: options.engines } : {}),
     metrics,
     ...(options.logger ? { logger: options.logger } : {}),
     ...(options.downloader ? { downloader: options.downloader } : {}),
@@ -420,6 +426,52 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             return reply;
           }
           return reply.send({ cookies: await service.getSessionCookies(sessionId) });
+        } catch (error) {
+          return fail(reply, error);
+        }
+      });
+
+      v1.get('/sessions/:sessionId/pages/:pageId/snapshot', async (request, reply) => {
+        try {
+          const { sessionId = '', pageId = '' } = request.params as {
+            sessionId?: string;
+            pageId?: string;
+          };
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+            return reply;
+          }
+          return reply.send(await service.getSnapshot(sessionId, pageId));
+        } catch (error) {
+          return fail(reply, error);
+        }
+      });
+
+      v1.post('/sessions/:sessionId/pages/:pageId/plan', async (request, reply) => {
+        try {
+          const { sessionId = '', pageId = '' } = request.params as {
+            sessionId?: string;
+            pageId?: string;
+          };
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+            return reply;
+          }
+          const body = request.body as { actions?: Array<Record<string, unknown>> };
+          if (!Array.isArray(body.actions)) {
+            return reply.status(400).send({
+              error: {
+                code: 'INVALID_REQUEST',
+                message: 'body.actions must be an array of plan steps',
+                retryable: false,
+              },
+            });
+          }
+          return reply.send(
+            await service.executePlan(
+              sessionId,
+              pageId,
+              body.actions as unknown as ServiceActRequest[]
+            )
+          );
         } catch (error) {
           return fail(reply, error);
         }

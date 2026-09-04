@@ -40,7 +40,12 @@ export async function runEngineContractSuite(
   assert.ok(capabilities.supportedActionTypes.length > 0);
 
   // --- session lifecycle --------------------------------------------------
-  const session = await engine.createSession({ headless: true });
+  // Always-headed engines (TD-BROWSER-7, real Safari) declare it in their
+  // capabilities; the suite then requests headed, since headless is not a
+  // mode the engine can honor.
+  const session = await engine.createSession({
+    headless: capabilities.alwaysHeaded !== true,
+  });
   assert.ok(session.id.length > 0, 'session id must be non-empty');
 
   const pages = await session.pages();

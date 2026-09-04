@@ -635,6 +635,110 @@ export class AgentBrowserService {
     return engine;
   }
 
+  /**
+   * TD-BROWSER-8: execute a batched action plan in one call. Steps run
+   * sequentially; a STALE_TARGET failure self-heals once by re-observing and
+   * remapping the ref by ordinal (deterministic on stable forms). The first
+   * hard failure aborts the plan with the completed prefix reported.
+   */
+  async executePlan(
+    sessionId: string,
+    pageId: string,
+    steps: ServiceActRequest[]
+  ): Promise<{
+    ok: boolean;
+    completed: number;
+    results: Array<{ step: number; ok: boolean; actionId?: string; error?: string }>;
+    mode: 'stable' | 'verified';
+    error?: { code: string; message: string };
+  }> {
+    const results: Array<{ step: number; ok: boolean; actionId?: string; error?: string }> = [];
+    const churnKey = `${sessionId}:${pageId}`;
+    for (const [index, step] of steps.entries()) {
+      try {
+        const effect = await this.act(sessionId, pageId, step);
+        this.decayChurn(churnKey);
+        results.push({ step: index, ok: true, actionId: effect.actionId });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const ordinal = /(?:^|e\d+)_(\d+)$/.exec(step.target?.ref ?? '')?.[1];
+        if (ordinal !== undefined && /STALE_TARGET|revision|fingerprint/i.test(message)) {
+          this.bumpChurn(churnKey);
+          const observed = await this.observe(sessionId, pageId, { mode: 'interactive' });
+          const elements =
+            (observed as unknown as { elements?: Array<{ ref: string }> }).elements ?? [];
+          console.log(
+            'PLAN-REMAP:',
+            JSON.stringify({ ordinal, stepRef: step.target?.ref, count: elements.length })
+          );
+          let remapped: string | undefined;
+          for (const e of elements) {
+            if (typeof e.ref === 'string' && e.ref.endsWith(`_${ordinal}`)) {
+              remapped = e.ref;
+              break;
+            }
+          }
+          if (remapped !== undefined) {
+            const retry = await this.act(sessionId, pageId, { ...step, target: { ref: remapped } });
+            results.push({ step: index, ok: true, actionId: retry.actionId });
+            continue;
+          }
+        }
+        results.push({ step: index, ok: false, error: message });
+        return {
+          ok: false,
+          completed: index,
+          results,
+          mode: this.churnMode(churnKey),
+          error: { code: 'PLAN_STEP_FAILED', message },
+        };
+      }
+    }
+    return { ok: true, completed: steps.length, results, mode: this.churnMode(churnKey) };
+  }
+
+  private churn = new Map<string, number>();
+  private bumpChurn(key: string): void {
+    this.churn.set(key, (this.churn.get(key) ?? 0) + 1);
+  }
+  private decayChurn(key: string): void {
+    this.churn.set(key, Math.max(0, (this.churn.get(key) ?? 0) - 1));
+  }
+  private churnMode(key: string): 'stable' | 'verified' {
+    return (this.churn.get(key) ?? 0) >= 3 ? 'verified' : 'stable';
+  }
+
+  /** TD-BROWSER-8: self-contained snapshot payload for one-shot LLM reasoning. */
+  async getSnapshot(
+    sessionId: string,
+    pageId: string
+  ): Promise<{
+    url: string;
+    title: string;
+    revision: number;
+    mode: 'stable' | 'verified';
+    fields: Array<{ ref: string; role: string; label: string }>;
+  }> {
+    const state = await this.observe(sessionId, pageId, { mode: 'interactive' });
+    const view = state as unknown as {
+      url?: string;
+      title?: string;
+      revision?: number;
+      elements?: Array<{ ref: string; role?: string; name?: string }>;
+    };
+    return {
+      url: view.url ?? '',
+      title: view.title ?? '',
+      revision: view.revision ?? 0,
+      mode: this.churnMode(`${sessionId}:${pageId}`),
+      fields: (view.elements ?? []).map((e) => ({
+        ref: e.ref,
+        role: e.role ?? '',
+        label: e.name ?? '',
+      })),
+    };
+  }
+
   // ---- pages --------------------------------------------------------------
 
   async createPage(sessionId: string): Promise<ServicePageView> {

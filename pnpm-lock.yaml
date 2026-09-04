@@ -29,6 +29,9 @@ importers:
       '@agentbrowser/engine-playwright':
         specifier: workspace:^
         version: link:../engine-playwright
+      '@agentbrowser/engine-safari':
+        specifier: workspace:*
+        version: link:../engine-safari
       '@agentbrowser/extraction':
         specifier: workspace:^
         version: link:../extraction
@@ -207,6 +210,31 @@ importers:
       ws:
         specifier: ^8.21.3
         version: 8.21.3
+
+  packages/engine-safari:
+    dependencies:
+      '@agentbrowser/engine':
+        specifier: workspace:*
+        version: link:../engine
+      '@agentbrowser/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+    devDependencies:
+      '@agentbrowser/testkit':
+        specifier: workspace:*
+        version: link:../testkit
+      '@biomejs/biome':
+        specifier: ^1.9.4
+        version: 1.9.4
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.20.1)
 
   packages/extraction:
     dependencies:

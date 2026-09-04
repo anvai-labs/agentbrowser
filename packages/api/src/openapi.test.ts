@@ -11,7 +11,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { buildOpenApiDocument } from './openapi';
 import { buildServer } from './server';
 
-type Json = Record<string, any>;
+type Json = Record<string, unknown>;
 
 describe('OpenAPI document', () => {
   let doc: Json;
