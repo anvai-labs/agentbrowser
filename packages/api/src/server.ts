@@ -7,7 +7,7 @@
  * against FakeEngine and production runs PlaywrightChromiumEngine.
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { InMemoryTracer, MetricsRegistry, type SecretManager } from '@agentbrowser/core';
 import type { StructuredLogger } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
@@ -192,6 +192,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     ...(options.engines ? { engines: options.engines } : {}),
     metrics,
     tracer,
+    ...(options.secretManager ? { secretManager: options.secretManager } : {}),
     ...(options.logger ? { logger: options.logger } : {}),
     ...(options.downloader ? { downloader: options.downloader } : {}),
     ...(options.defaultTtlMs !== undefined ? { defaultTtlMs: options.defaultTtlMs } : {}),
@@ -210,16 +211,20 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       return reply.status(statusFor(error.code)).send({
         error: {
           code: error.code,
-          message: error.message,
+          message: options.secretManager?.redact(error.message) ?? error.message,
           retryable: error.retryable,
-          ...(error.details !== undefined ? { details: error.details } : {}),
+          ...(error.details !== undefined
+            ? { details: options.secretManager?.redact(error.details) ?? error.details }
+            : {}),
         },
       });
     }
     return reply.status(500).send({
       error: {
         code: 'INTERNAL',
-        message: error instanceof Error ? error.message : 'Unknown error',
+        message:
+          options.secretManager?.redact(error instanceof Error ? error.message : 'Unknown error') ??
+          (error instanceof Error ? error.message : 'Unknown error'),
         retryable: false,
       },
     });
@@ -349,7 +354,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   // unversioned and unauthenticated by design.
   // ------------------------------------------------------------------
   const artifactAuth = new ArtifactAuthorizer({
-    key: process.env.AGENTBROWSER_ARTIFACT_KEY ?? 'dev-artifact-key',
+    key: process.env.AGENTBROWSER_ARTIFACT_KEY ?? randomBytes(32).toString('hex'),
   });
 
   await fastify.register(
@@ -386,7 +391,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         }
         const session = service.getSession(sessionId);
         if (session === undefined) {
-          return true; // let the route's own 404 handle missing sessions
+          throw new ServiceError('SESSION_NOT_FOUND', 'Session does not exist.');
         }
         const owner = (session as { tenantId?: string }).tenantId;
         if (owner !== undefined && owner !== tenant) {
@@ -508,7 +513,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       v1.get(
         '/sessions',
         route(async (request, reply) => {
-          return reply.send({ sessions: service.listSessions() });
+          return reply.send({ sessions: service.listSessions(tenantOf(request)) });
         })
       );
 
@@ -873,10 +878,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           const query = request.query as { token?: string };
           const tokenValid =
             query.token !== undefined && artifactAuth.verify(artifactId, query.token);
-          if (!tokenValid && !requireOwnership(reply, sessionId, tenantOf(request))) {
-            return reply;
-          }
-          const stored = service.getArtifact(sessionId, artifactId);
+          const stored = service.getArtifact(
+            sessionId,
+            artifactId,
+            tokenValid ? undefined : tenantOf(request)
+          );
           if (!stored) {
             return reply.status(404).send({
               error: {

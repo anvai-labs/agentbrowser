@@ -373,7 +373,7 @@ export class AgentBrowserService {
     attributes: Record<string, unknown>,
     operation: (span: Span | undefined) => Promise<T>
   ): Promise<T> {
-    const span = this.tracer?.startSpan(name, attributes);
+    const span = this.tracer?.startSpan(name, this.secretManager.redact(attributes));
     const startedAt = Date.now();
     return operation(span).then(
       (value) => {
@@ -387,10 +387,14 @@ export class AgentBrowserService {
         const code = error instanceof ServiceError ? error.code : 'INTERNAL';
         this.telemetry(name, 'error', attributes, startedAt, code);
         if (span) {
-          this.tracer?.failSpan(span, code, error instanceof Error ? error.message : String(error));
+          this.tracer?.failSpan(
+            span,
+            code,
+            this.secretManager.redact(error instanceof Error ? error.message : String(error))
+          );
           this.tracer?.endSpan(span);
         }
-        throw error;
+        throw this.redactedError(this.mapError(error));
       }
     );
   }
@@ -411,7 +415,7 @@ export class AgentBrowserService {
       }
     }
     if (this.logger) {
-      const fields: Record<string, unknown> = { ...attributes, outcome };
+      const fields: Record<string, unknown> = this.secretManager.redact({ ...attributes, outcome });
       if (code !== undefined) {
         fields.code = code;
       }
@@ -479,7 +483,7 @@ export class AgentBrowserService {
    * is not preserved, documented at the route).
    */
   getSessionEvents(sessionId: string, typeFilter?: string): EngineEvent[] {
-    this.coordinator.get(sessionId);
+    this.requireSession(sessionId);
     const others = this.eventHistory.get(sessionId)?.toArray() ?? [];
     const requests = this.requestHistory.get(sessionId)?.toArray() ?? [];
     if (typeFilter?.startsWith('request.')) {
@@ -495,7 +499,14 @@ export class AgentBrowserService {
     void (async () => {
       try {
         for await (const event of enginePage.events()) {
-          const stamped: EngineEvent = { ...event, sessionId, pageId };
+          const stamped: EngineEvent = this.secretManager.redact({
+            ...event,
+            sessionId,
+            pageId,
+            ...(event.data !== undefined
+              ? { data: this.secretManager.redactUntrusted(event.data) }
+              : {}),
+          });
           this.recordEvent(sessionId, stamped);
           const listeners = this.eventListeners.get(sessionId);
           if (listeners) {
@@ -672,15 +683,18 @@ export class AgentBrowserService {
     };
   }
 
-  listSessions(): ServiceSessionView[] {
-    return this.coordinator.getAllSessions().map((metadata) => ({
-      sessionId: metadata.id,
-      status: metadata.state.toLowerCase(),
-      engine: { name: metadata.engineName, version: this.engine.version },
-      createdAt: new Date(metadata.createdAt).toISOString(),
-      ttlMs: metadata.ttlMs,
-      idleTimeoutMs: metadata.idleTimeoutMs,
-    }));
+  listSessions(tenantId?: string): ServiceSessionView[] {
+    return this.coordinator
+      .getAllSessions()
+      .filter((metadata) => tenantId === undefined || metadata.tenantId === tenantId)
+      .map((metadata) => ({
+        sessionId: metadata.id,
+        status: metadata.state.toLowerCase(),
+        engine: { name: metadata.engineName, version: this.engine.version },
+        createdAt: new Date(metadata.createdAt).toISOString(),
+        ttlMs: metadata.ttlMs,
+        idleTimeoutMs: metadata.idleTimeoutMs,
+      }));
   }
 
   async closeSession(sessionId: string): Promise<void> {
@@ -711,17 +725,17 @@ export class AgentBrowserService {
    * the standard store (TTL, size bounds, token-gated serving).
    */
   async exportTrace(sessionId: string): Promise<ArtifactMetadata> {
-    this.coordinator.get(sessionId); // liveness + ownership via mapError
+    this.requireSession(sessionId);
     const spans = (this.tracer?.completedSpans() ?? []).filter(
       (span) => span.attributes.sessionId === sessionId
     );
     const payload = JSON.stringify(
-      { sessionId, exportedAt: new Date().toISOString(), spans },
+      this.secretManager.redact({ sessionId, exportedAt: new Date().toISOString(), spans }),
       null,
       2
     );
     return this.traced('trace.export', { sessionId }, async () =>
-      this.artifacts.put('trace', 'application/json', new TextEncoder().encode(payload), {
+      this.putArtifact(sessionId, 'trace', 'application/json', new TextEncoder().encode(payload), {
         filename: `trace-${sessionId}.json`,
         sessionId,
       })
@@ -754,7 +768,8 @@ export class AgentBrowserService {
         throw error;
       }
       const html = raw.content ?? '';
-      const metadata = this.artifacts.put(
+      const metadata = this.putArtifact(
+        sessionId,
         'html',
         'text/html; charset=utf-8',
         new TextEncoder().encode(html),
@@ -1177,7 +1192,11 @@ export class AgentBrowserService {
       }
 
       const hostname = this.hostnameOf(url);
-      const policySpan = this.tracer?.startSpan('policy.check', { hostname }, span);
+      const policySpan = this.tracer?.startSpan(
+        'policy.check',
+        this.secretManager.redact({ hostname }),
+        span
+      );
       try {
         await this.networkPolicy.checkRequest({ hostname, url });
         if (policySpan) {
@@ -1188,7 +1207,7 @@ export class AgentBrowserService {
           this.tracer?.failSpan(
             policySpan,
             'POLICY_DENIED',
-            error instanceof Error ? error.message : String(error)
+            this.secretManager.redact(error instanceof Error ? error.message : String(error))
           );
           this.tracer?.endSpan(policySpan);
         }
@@ -1216,7 +1235,11 @@ export class AgentBrowserService {
       page.revision += 1;
       page.lastObservation = undefined;
 
-      return { status: result.status, url: result.url, redirectChain: result.redirectChain };
+      return this.secretManager.redact({
+        status: result.status,
+        url: result.url,
+        redirectChain: result.redirectChain,
+      });
     });
   }
 
@@ -1770,7 +1793,7 @@ export class AgentBrowserService {
         );
       }
       const bytes = Buffer.from(captured.bytesBase64, 'base64');
-      return this.artifacts.put('pdf', 'application/pdf', new Uint8Array(bytes), {
+      return this.putArtifact(sessionId, 'pdf', 'application/pdf', new Uint8Array(bytes), {
         sessionId,
       });
     });
@@ -1836,7 +1859,7 @@ export class AgentBrowserService {
       }
 
       try {
-        return this.artifacts.put('download', contentType, bytes, {
+        return this.putArtifact(sessionId, 'download', contentType, bytes, {
           ...(request.filename !== undefined ? { filename: request.filename } : {}),
           sessionId,
         });
@@ -1894,20 +1917,39 @@ export class AgentBrowserService {
           ? 'application/json'
           : 'application/octet-stream';
 
-      return this.artifacts.put('download', contentType, bytes, { filename, sessionId });
+      return this.putArtifact(sessionId, 'download', contentType, bytes, { filename, sessionId });
     });
   }
 
   /** Retrieve a stored artifact, scoped to its session. */
   getArtifact(
     sessionId: string,
-    artifactId: string
+    artifactId: string,
+    tenantId?: string
   ): { metadata: ArtifactMetadata; bytes: Uint8Array } | undefined {
     const entry = this.artifacts.get(artifactId);
     if (!entry || entry.metadata.sessionId !== sessionId) {
       return undefined;
     }
+    if (tenantId !== undefined && entry.metadata.tenantId !== tenantId) {
+      throw new ServiceError('FORBIDDEN', 'Artifact belongs to another tenant.');
+    }
     return entry;
+  }
+
+  private putArtifact(
+    sessionId: string,
+    type: ArtifactMetadata['type'],
+    contentType: string,
+    bytes: Uint8Array,
+    labels: { filename?: string; sessionId?: string } = {}
+  ): ArtifactMetadata {
+    const owner = this.requireSession(sessionId).metadata.tenantId;
+    return this.artifacts.put(type, contentType, bytes, {
+      ...labels,
+      sessionId,
+      ...(owner !== undefined ? { tenantId: owner } : {}),
+    });
   }
 
   // ---- extraction ---------------------------------------------------------
@@ -1953,17 +1995,19 @@ export class AgentBrowserService {
 
       switch (request.format) {
         case 'text':
-          return extractVisibleText(sourced);
+          return this.secretManager.redact(extractVisibleText(sourced));
         case 'markdown':
-          return extractMarkdown(sourced);
+          return this.secretManager.redact(extractMarkdown(sourced));
         case 'links':
-          return extractLinks(sourced);
+          return this.secretManager.redact(extractLinks(sourced));
         case 'tables':
-          return extractTables(sourced);
+          return this.secretManager.redact(extractTables(sourced));
         case 'forms':
-          return extractForms(sourced);
-        case 'jsonld':
-          return extractJsonLd(sourced);
+          return this.secretManager.redact(extractForms(sourced));
+        case 'jsonld': {
+          const result = this.secretManager.redact(extractJsonLd(sourced));
+          return { ...result, data: this.secretManager.redactUntrusted(result.data) };
+        }
         case 'schema': {
           this.validateExtractSchema(request.schema);
           const extractor = new SchemaExtractor({
@@ -2076,7 +2120,8 @@ export class AgentBrowserService {
         }
       }
 
-      const metadata = this.artifacts.put(
+      const metadata = this.putArtifact(
+        sessionId,
         'screenshot',
         captured.contentType,
         new Uint8Array(bytes),
@@ -2246,7 +2291,7 @@ export class AgentBrowserService {
       error.code,
       this.secretManager.redact(error.message),
       error.retryable,
-      error.details !== undefined ? this.secretManager.redact(error.details) : undefined
+      error.details !== undefined ? this.secretManager.redactUntrusted(error.details) : undefined
     );
   }
 

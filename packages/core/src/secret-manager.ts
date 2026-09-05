@@ -102,6 +102,13 @@ export class SecretManager {
     return [...this.secrets.keys()];
   }
 
+  /** Page/model dictionary keys are untrusted too; trusted protocol keys stay intact in redact(). */
+  redactUntrusted(input: Record<string, unknown>): Record<string, unknown>;
+  redactUntrusted(input: unknown): unknown;
+  redactUntrusted(input: unknown): unknown {
+    return this.redactValue(input, true);
+  }
+
   /**
    * Safe serialization: accidental JSON.stringify of the manager must never
    * leak values, so it renders as a reference inventory only.
@@ -110,19 +117,27 @@ export class SecretManager {
     return { redacted: true, references: this.references() };
   }
 
-  private redactValue(value: unknown): unknown {
+  private redactValue(value: unknown, redactKeys = false): unknown {
     if (typeof value === 'string') {
       return this.redactString(value);
     }
     if (Array.isArray(value)) {
-      return value.map((item) => this.redactValue(item));
+      return value.map((item) => this.redactValue(item, redactKeys));
     }
     if (value !== null && typeof value === 'object') {
-      const output: Record<string, unknown> = {};
-      for (const [key, item] of Object.entries(value)) {
-        output[key] = this.redactValue(item);
-      }
-      return output;
+      const seen = new Set<string>();
+      return Object.fromEntries(
+        Object.entries(value).map(([key, item]) => {
+          const base = redactKeys ? this.redactString(key) : key;
+          let safeKey = base;
+          let suffix = 1;
+          // Preserve both values if redacted names collide, without exposing
+          // original keys. fromEntries also treats __proto__ as an own key.
+          while (seen.has(safeKey)) safeKey = `${base}#${suffix++}`;
+          seen.add(safeKey);
+          return [safeKey, this.redactValue(item, redactKeys)];
+        })
+      );
     }
     return value;
   }
