@@ -8,7 +8,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { MetricsRegistry } from '@agentbrowser/core';
+import { InMemoryTracer, MetricsRegistry, type SecretManager } from '@agentbrowser/core';
 import type { StructuredLogger } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
 import { DELIVERED_EXTRACT_FORMATS, validateSessionRequest } from '@agentbrowser/protocol';
@@ -41,6 +41,10 @@ export interface ServerOptions {
   downloader?(url: string): Promise<{ bytes: Uint8Array; contentType: string }>;
   /** Metrics registry exposed at /metrics; defaults to a fresh registry. */
   metrics?: MetricsRegistry;
+  /** Span tracer; defaults to a bounded in-memory tracer (exportable per session). */
+  tracer?: InMemoryTracer;
+  /** Secret registry used to scrub traces/observations; defaults to empty. */
+  secretManager?: SecretManager;
   /** Structured operation log; when absent, no operation logging. */
   logger?: StructuredLogger;
   /**
@@ -145,10 +149,19 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     engine = new FakeEngine();
   }
   const metrics = options.metrics ?? new MetricsRegistry();
+  // Trace export (A3): without a tracer, the service emits no spans and
+  // the export route would have nothing to serve. In-memory, bounded
+  // (RingBuffer), secret-scrubbed via the service's secret manager.
+  const tracer =
+    options.tracer ??
+    new InMemoryTracer({
+      ...(options.secretManager ? { secretManager: options.secretManager } : {}),
+    });
   const service = new AgentBrowserService({
     engine,
     ...(options.engines ? { engines: options.engines } : {}),
     metrics,
+    tracer,
     ...(options.logger ? { logger: options.logger } : {}),
     ...(options.downloader ? { downloader: options.downloader } : {}),
   });
@@ -472,6 +485,52 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             return reply;
           }
           return reply.send({ cookies: await service.getSessionCookies(sessionId) });
+        } catch (error) {
+          return fail(reply, error);
+        }
+      });
+
+      // A3 evidence: the session's recent event ledger (console replay).
+      v1.get('/sessions/:sessionId/events/replay', async (request, reply) => {
+        try {
+          const { sessionId } = request.params as { sessionId: string };
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+            return reply;
+          }
+          const typeFilter = (request.query as { type?: string } | null)?.type;
+          const events = service
+            .getSessionEvents(sessionId)
+            .filter((event) => typeFilter === undefined || event.type === typeFilter);
+          return reply.send({ events });
+        } catch (error) {
+          return fail(reply, error);
+        }
+      });
+
+      // A3 evidence: export the session's completed spans as an artifact.
+      v1.post('/sessions/:sessionId/trace', async (request, reply) => {
+        try {
+          const { sessionId } = request.params as { sessionId: string };
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+            return reply;
+          }
+          return reply.status(201).send(await service.exportTrace(sessionId));
+        } catch (error) {
+          return fail(reply, error);
+        }
+      });
+
+      // A3 evidence: capture the page's current HTML as an artifact.
+      v1.post('/sessions/:sessionId/pages/:pageId/html', async (request, reply) => {
+        try {
+          const { sessionId, pageId } = request.params as {
+            sessionId: string;
+            pageId: string;
+          };
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+            return reply;
+          }
+          return reply.status(201).send(await service.exportHtml(sessionId, pageId));
         } catch (error) {
           return fail(reply, error);
         }

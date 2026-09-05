@@ -333,6 +333,78 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         },
       },
 
+      '/v1/sessions/{sessionId}/trace': {
+        post: {
+          operationId: 'exportSessionTrace',
+          summary: 'Export the session trace as an artifact',
+          description:
+            "A3 evidence: the session's completed spans (secret-scrubbed, bounded) " +
+            'serialized as a JSON artifact. Served via the standard artifact route ' +
+            '(TTL, ownership or signed token).',
+          tags: ['sessions'],
+          parameters: [sessionIdParam],
+          responses: {
+            '201': {
+              description: 'Artifact metadata for the trace.',
+              content: json(ref('ArtifactRef')),
+            },
+            '404': NOT_FOUND,
+          },
+        },
+      },
+
+      '/v1/sessions/{sessionId}/events/replay': {
+        get: {
+          operationId: 'getSessionEvents',
+          summary: 'Replay the session event ledger',
+          description:
+            "A3 evidence: the session's recent engine events (bounded ring, oldest " +
+            'first) - console lines and lifecycle events for late subscribers. ' +
+            'Optional ?type= filters by event type.',
+          tags: ['sessions'],
+          parameters: [
+            sessionIdParam,
+            {
+              name: 'type',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Filter by event type, e.g. console.log.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'The retained events.',
+              content: json({
+                type: 'object',
+                required: ['events'],
+                properties: { events: { type: 'array', items: { type: 'object' } } },
+              }),
+            },
+            '404': NOT_FOUND,
+          },
+        },
+      },
+
+      '/v1/sessions/{sessionId}/pages/{pageId}/html': {
+        post: {
+          operationId: 'exportPageHtml',
+          summary: 'Capture the page HTML as an artifact',
+          description:
+            "A3 evidence: the page's current HTML as a text/html artifact. Raw " +
+            'HTML is NOT secret-redacted - values typed into forms ride it ' +
+            'verbatim; the artifact metadata carries an explicit warning.',
+          tags: ['pages'],
+          parameters: [sessionIdParam, pageIdParam],
+          responses: {
+            '201': {
+              description: 'Artifact metadata for the HTML.',
+              content: json(ref('ArtifactRef')),
+            },
+            '404': NOT_FOUND,
+          },
+        },
+      },
+
       '/v1/sessions/{sessionId}/cookies': {
         get: {
           operationId: 'getSessionCookies',

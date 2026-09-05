@@ -17,6 +17,7 @@ import {
   ApprovalGate,
   ArtifactStore,
   ObservationNormalizer,
+  RingBuffer,
   SecretManager,
   SessionCoordinator,
   SessionState,
@@ -49,6 +50,7 @@ import type {
 } from '@agentbrowser/protocol';
 import {
   DELIVERED_EXTRACT_FORMATS,
+  DELIVERED_OBSERVATION_MODES,
   type DeliveredExtractFormat,
   REF_PATTERN,
   validateAction,
@@ -324,6 +326,7 @@ export class AgentBrowserService {
       }
     }
     this.eventListeners.delete(sessionId);
+    this.eventHistory.delete(sessionId);
     this.sessionDownloadPolicy.delete(sessionId);
     this.sessionPolicies.delete(sessionId);
   }
@@ -406,11 +409,35 @@ export class AgentBrowserService {
   }
 
   /** Pull a page's engine events forever, dispatching to session listeners. */
+  /**
+   * A3 evidence: bounded per-session event history (the spec's
+   * "per-session event ledger"). Every engine event crosses pumpEvents;
+   * console lines replay from here for late subscribers.
+   */
+  private readonly eventHistory = new Map<string, RingBuffer<EngineEvent>>();
+  private static readonly EVENT_HISTORY_LIMIT = 500;
+
+  private recordEvent(sessionId: string, event: EngineEvent): void {
+    let buffer = this.eventHistory.get(sessionId);
+    if (buffer === undefined) {
+      buffer = new RingBuffer<EngineEvent>({ capacity: AgentBrowserService.EVENT_HISTORY_LIMIT });
+      this.eventHistory.set(sessionId, buffer);
+    }
+    buffer.push(event);
+  }
+
+  /** Recent events for a session, oldest first (console replay). */
+  getSessionEvents(sessionId: string): EngineEvent[] {
+    this.coordinator.get(sessionId);
+    return this.eventHistory.get(sessionId)?.toArray() ?? [];
+  }
+
   private pumpEvents(sessionId: string, pageId: string, enginePage: EnginePage): void {
     void (async () => {
       try {
         for await (const event of enginePage.events()) {
           const stamped: EngineEvent = { ...event, sessionId, pageId };
+          this.recordEvent(sessionId, stamped);
           const listeners = this.eventListeners.get(sessionId);
           if (listeners) {
             for (const listener of [...listeners]) {
@@ -617,6 +644,72 @@ export class AgentBrowserService {
     } catch (error) {
       throw this.mapError(error);
     }
+  }
+
+  /**
+   * A3 evidence: export the session's completed spans as a JSON artifact.
+   * Spans are already secret-scrubbed by the tracer; the artifact rides
+   * the standard store (TTL, size bounds, token-gated serving).
+   */
+  async exportTrace(sessionId: string): Promise<ArtifactMetadata> {
+    this.coordinator.get(sessionId); // liveness + ownership via mapError
+    const spans = (this.tracer?.completedSpans() ?? []).filter(
+      (span) => span.attributes.sessionId === sessionId
+    );
+    const payload = JSON.stringify(
+      { sessionId, exportedAt: new Date().toISOString(), spans },
+      null,
+      2
+    );
+    return this.traced('trace.export', { sessionId }, async () =>
+      this.artifacts.put('trace', 'application/json', new TextEncoder().encode(payload), {
+        filename: `trace-${sessionId}.json`,
+        sessionId,
+      })
+    );
+  }
+
+  /**
+   * A3 evidence: capture the page's current HTML as an artifact. Raw HTML
+   * is NOT secret-scrubbed - typed-in form values ride it verbatim - so
+   * the metadata carries an explicit warning, mirroring maskSensitive's
+   * honest-refusal precedent.
+   */
+  async exportHtml(sessionId: string, pageId: string): Promise<ArtifactMetadata> {
+    return this.traced('html.export', { sessionId, pageId }, async () => {
+      const page = this.requirePage(sessionId, pageId);
+      this.coordinator.updateActivity(sessionId);
+      let raw: Awaited<ReturnType<EnginePage['observe']>>;
+      try {
+        raw = await page.enginePage.observe({});
+      } catch (error) {
+        if (this.isCrash(error instanceof Error ? error.message : String(error))) {
+          await this.recoverFromCrash(sessionId, 'exportHtml: engine crashed');
+          throw new ServiceError(
+            'ENGINE_CRASHED',
+            'The browser engine crashed; the session has been terminated.',
+            false,
+            { sessionId }
+          );
+        }
+        throw error;
+      }
+      const html = raw.content ?? '';
+      const metadata = this.artifacts.put(
+        'html',
+        'text/html; charset=utf-8',
+        new TextEncoder().encode(html),
+        {
+          filename: `page-${pageId}.html`,
+          sessionId,
+        }
+      );
+      return {
+        ...metadata,
+        description:
+          'Raw page HTML; NOT secret-redacted - values typed into forms are captured verbatim.',
+      };
+    });
   }
 
   /**
@@ -947,6 +1040,16 @@ export class AgentBrowserService {
 
     // Normalize the FULL element list; pagination and diffing are service
     // concerns so the cursor and changes stay coherent with each other.
+    // Honest stopgap (A3): the protocol mode superset contains values the
+    // stack does not deliver (compact_dom, visual); a silent empty-element
+    // observation is a lie - reject typed instead.
+    const DELIVERED_MODES = new Set<string>(DELIVERED_OBSERVATION_MODES);
+    if (request.mode !== undefined && !DELIVERED_MODES.has(request.mode)) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `Observation mode '${request.mode}' is not delivered. Supported: ${[...DELIVERED_MODES].join(', ')}.`
+      );
+    }
     const observationRequest: ObservationRequest = {
       ...(request.mode !== undefined ? { mode: request.mode } : {}),
     };
@@ -1480,64 +1583,66 @@ export class AgentBrowserService {
     pageId: string,
     request: { url: string; filename?: string }
   ): Promise<ArtifactMetadata> {
-    this.requirePage(sessionId, pageId);
-    this.coordinator.updateActivity(sessionId);
+    return this.traced('download.fetch', { sessionId, pageId }, async () => {
+      this.requirePage(sessionId, pageId);
+      this.coordinator.updateActivity(sessionId);
 
-    const policy = this.sessionDownloadPolicy.get(sessionId);
-    if (!policy?.allowDownloads) {
-      throw new ServiceError(
-        'DOWNLOAD_BLOCKED',
-        'Downloads are disabled for this session. Create the session with allowDownloads to enable them.',
-        false
-      );
-    }
+      const policy = this.sessionDownloadPolicy.get(sessionId);
+      if (!policy?.allowDownloads) {
+        throw new ServiceError(
+          'DOWNLOAD_BLOCKED',
+          'Downloads are disabled for this session. Create the session with allowDownloads to enable them.',
+          false
+        );
+      }
 
-    let parsed: URL;
-    try {
-      parsed = new URL(request.url);
-    } catch {
-      throw new ServiceError(
-        'INVALID_REQUEST',
-        `Invalid download URL: ${request.url.slice(0, 100)}`
-      );
-    }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      throw new ServiceError(
-        'POLICY_DENIED',
-        `Downloads accept http(s) URLs only; '${parsed.protocol}' is not permitted.`
-      );
-    }
+      let parsed: URL;
+      try {
+        parsed = new URL(request.url);
+      } catch {
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `Invalid download URL: ${request.url.slice(0, 100)}`
+        );
+      }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new ServiceError(
+          'POLICY_DENIED',
+          `Downloads accept http(s) URLs only; '${parsed.protocol}' is not permitted.`
+        );
+      }
 
-    try {
-      const egress = this.sessionPolicies.get(sessionId) ?? this.rootRequestPolicy;
-      await egress.checkRequest({ hostname: parsed.hostname, url: request.url });
-    } catch (error) {
-      throw this.mapError(error);
-    }
+      try {
+        const egress = this.sessionPolicies.get(sessionId) ?? this.rootRequestPolicy;
+        await egress.checkRequest({ hostname: parsed.hostname, url: request.url });
+      } catch (error) {
+        throw this.mapError(error);
+      }
 
-    const { bytes, contentType } = await this.downloader(request.url);
+      const { bytes, contentType } = await this.downloader(request.url);
 
-    if (bytes.length > policy.maxDownloadBytes) {
-      throw new ServiceError(
-        'DOWNLOAD_BLOCKED',
-        `Payload is ${bytes.length} bytes; this session allows at most ${policy.maxDownloadBytes} bytes.`,
-        false,
-        { sizeBytes: bytes.length, maxDownloadBytes: policy.maxDownloadBytes }
-      );
-    }
+      if (bytes.length > policy.maxDownloadBytes) {
+        throw new ServiceError(
+          'DOWNLOAD_BLOCKED',
+          `Payload is ${bytes.length} bytes; this session allows at most ${policy.maxDownloadBytes} bytes.`,
+          false,
+          { sizeBytes: bytes.length, maxDownloadBytes: policy.maxDownloadBytes }
+        );
+      }
 
-    try {
-      return this.artifacts.put('download', contentType, bytes, {
-        ...(request.filename !== undefined ? { filename: request.filename } : {}),
-        sessionId,
-      });
-    } catch (error) {
-      const code = (error as { code?: string }).code;
-      throw new ServiceError(
-        code === 'ARTIFACT_TOO_LARGE' ? 'DOWNLOAD_BLOCKED' : 'INTERNAL',
-        error instanceof Error ? error.message : String(error)
-      );
-    }
+      try {
+        return this.artifacts.put('download', contentType, bytes, {
+          ...(request.filename !== undefined ? { filename: request.filename } : {}),
+          sessionId,
+        });
+      } catch (error) {
+        const code = (error as { code?: string }).code;
+        throw new ServiceError(
+          code === 'ARTIFACT_TOO_LARGE' ? 'DOWNLOAD_BLOCKED' : 'INTERNAL',
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+    });
   }
 
   /**
@@ -1712,50 +1817,57 @@ export class AgentBrowserService {
     pageId: string,
     request: ScreenshotRequest
   ): Promise<ArtifactMetadata> {
-    const page = this.requirePage(sessionId, pageId);
-    this.coordinator.updateActivity(sessionId);
+    return this.traced('screenshot', { sessionId, pageId }, async () => {
+      const page = this.requirePage(sessionId, pageId);
+      this.coordinator.updateActivity(sessionId);
 
-    let captured: Awaited<ReturnType<EnginePage['screenshot']>>;
-    try {
-      captured = await page.enginePage.screenshot(request);
-    } catch (error) {
-      if (this.isCrash(error instanceof Error ? error.message : String(error))) {
-        await this.recoverFromCrash(sessionId, 'screenshot: engine crashed');
-        throw new ServiceError(
-          'ENGINE_CRASHED',
-          'The browser engine crashed; the session has been terminated.',
-          false,
-          { sessionId }
-        );
+      let captured: Awaited<ReturnType<EnginePage['screenshot']>>;
+      try {
+        captured = await page.enginePage.screenshot(request);
+      } catch (error) {
+        if (this.isCrash(error instanceof Error ? error.message : String(error))) {
+          await this.recoverFromCrash(sessionId, 'screenshot: engine crashed');
+          throw new ServiceError(
+            'ENGINE_CRASHED',
+            'The browser engine crashed; the session has been terminated.',
+            false,
+            { sessionId }
+          );
+        }
+        throw error;
       }
-      throw error;
-    }
 
-    const bytes = Buffer.from((captured as { bytesBase64?: string }).bytesBase64 ?? '', 'base64');
-    // maskSensitive honesty (spec 12/16): pixel masking needs element
-    // geometry the engines do not expose yet. When values may be on
-    // screen and masking was requested, the artifact carries a recorded
-    // warning instead of silently implying a masked image.
-    const warnings: string[] = [];
-    if (request.maskSensitive === true) {
-      const observation = page.lastObservation;
-      const sensitiveOnPage =
-        observation !== undefined &&
-        [...observation.byRef.values()].some(
-          (element) => element.value !== undefined && element.value !== ''
-        );
-      if (sensitiveOnPage) {
-        warnings.push(
-          'maskSensitive requested but pixel masking is not implemented; the screenshot may contain on-screen values. Prefer redacted observations.'
-        );
-        this.logger?.warn('screenshot.mask-sensitive-unavailable', { sessionId, pageId });
+      const bytes = Buffer.from((captured as { bytesBase64?: string }).bytesBase64 ?? '', 'base64');
+      // maskSensitive honesty (spec 12/16): pixel masking needs element
+      // geometry the engines do not expose yet. When values may be on
+      // screen and masking was requested, the artifact carries a recorded
+      // warning instead of silently implying a masked image.
+      const warnings: string[] = [];
+      if (request.maskSensitive === true) {
+        const observation = page.lastObservation;
+        const sensitiveOnPage =
+          observation !== undefined &&
+          [...observation.byRef.values()].some(
+            (element) => element.value !== undefined && element.value !== ''
+          );
+        if (sensitiveOnPage) {
+          warnings.push(
+            'maskSensitive requested but pixel masking is not implemented; the screenshot may contain on-screen values. Prefer redacted observations.'
+          );
+          this.logger?.warn('screenshot.mask-sensitive-unavailable', { sessionId, pageId });
+        }
       }
-    }
 
-    const metadata = this.artifacts.put('screenshot', captured.contentType, new Uint8Array(bytes), {
-      sessionId,
+      const metadata = this.artifacts.put(
+        'screenshot',
+        captured.contentType,
+        new Uint8Array(bytes),
+        {
+          sessionId,
+        }
+      );
+      return warnings.length > 0 ? { ...metadata, warnings } : metadata;
     });
-    return warnings.length > 0 ? { ...metadata, warnings } : metadata;
   }
 
   // ---- shutdown -----------------------------------------------------------
