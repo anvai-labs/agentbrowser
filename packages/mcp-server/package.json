@@ -1,6 +1,6 @@
 {
   "name": "@anvailabs/agentbrowser-mcp",
-  "version": "1.8.2",
+  "version": "1.8.3",
   "type": "module",
   "description": "MCP server exposing AgentBrowser as high-level, safe, composable tools (talks to an AgentBrowser service via AGENTBROWSER_BASE_URL)",
   "main": "dist/index.js",
