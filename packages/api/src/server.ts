@@ -21,7 +21,7 @@ import type { SessionPolicy } from '@agentbrowser/protocol';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import Fastify from 'fastify';
-import type { FastifyError, FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ArtifactAuthorizer } from './artifact-auth.js';
 import { buildOpenApiDocument } from './openapi.js';
 import {
@@ -205,7 +205,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   });
 
   /** Translate a service failure into the protocol error envelope. */
-  const fail = (reply: import('fastify').FastifyReply, error: unknown) => {
+  const fail = (reply: FastifyReply, error: unknown) => {
     if (error instanceof ServiceError) {
       return reply.status(statusFor(error.code)).send({
         error: {
@@ -225,10 +225,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     });
   };
 
-  const requireBody = (
-    reply: import('fastify').FastifyReply,
-    body: unknown
-  ): body is Record<string, unknown> => {
+  const requireBody = (reply: FastifyReply, body: unknown): body is Record<string, unknown> => {
     if (body === undefined || body === null || typeof body !== 'object') {
       reply.status(400).send({
         error: {
@@ -240,6 +237,35 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       return false;
     }
     return true;
+  };
+
+  /**
+   * Wrap a /v1 handler with the try/catch -> fail(reply, error) frame every
+   * route below needed (hygiene F1). A pure mechanical extraction - no
+   * handler body logic changes, only the duplicated shell is removed. Grew
+   * to 22 identical copies (from 16 at the last audit) as new routes kept
+   * repeating the pattern instead of using an abstraction.
+   */
+  const route =
+    (handler: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>) =>
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      try {
+        return await handler(request, reply);
+      } catch (error) {
+        return fail(reply, error);
+      }
+    };
+
+  /**
+   * Extract typed path params without re-declaring the shape at each call
+   * site (hygiene F2, grew to 21 copies). Fastify guarantees a matched
+   * route's named segments are present strings, so this never defaults -
+   * the `= ''` defaults two call sites previously carried were dead code
+   * for exactly that reason.
+   */
+  const params = <K extends string>(request: FastifyRequest, ...keys: K[]): Record<K, string> => {
+    const raw = request.params as Record<string, string>;
+    return Object.fromEntries(keys.map((k) => [k, raw[k]])) as Record<K, string>;
   };
 
   fastify.get('/health/live', async (request, reply) => {
@@ -351,7 +377,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
       /** 403 unless the session belongs to the caller's tenant. */
       const requireOwnership = (
-        reply: import('fastify').FastifyReply,
+        reply: FastifyReply,
         sessionId: string,
         tenant: string | undefined
       ): boolean => {
@@ -377,8 +403,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       };
 
       // Session management endpoints
-      v1.post('/sessions', async (request, reply) => {
-        try {
+      v1.post(
+        '/sessions',
+        route(async (request, reply) => {
           const body = request.body;
           if (!requireBody(reply, body)) {
             return reply;
@@ -446,14 +473,12 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           }
           const session = await service.createSession(createRequest as never);
           return reply.status(201).send(session);
-        } catch (error) {
-          return fail(reply, error);
-        }
-      });
+        })
+      );
 
       // Session event stream: WebSocket upgrade, JSON per frame.
       v1.get('/sessions/:sessionId/events', { websocket: true }, (socket, request) => {
-        const { sessionId } = request.params as { sessionId: string };
+        const { sessionId } = params(request, 'sessionId');
         const tenant = (request as FastifyRequest & { tenant?: string }).tenant;
         if (tenant !== undefined) {
           const session = service.getSession(sessionId);
@@ -480,17 +505,17 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         });
       });
 
-      v1.get('/sessions', async (request, reply) => {
-        try {
+      v1.get(
+        '/sessions',
+        route(async (request, reply) => {
           return reply.send({ sessions: service.listSessions() });
-        } catch (error) {
-          return fail(reply, error);
-        }
-      });
+        })
+      );
 
-      v1.get('/sessions/:sessionId', async (request, reply) => {
-        try {
-          const { sessionId } = request.params as { sessionId: string };
+      v1.get(
+        '/sessions/:sessionId',
+        route(async (request, reply) => {
+          const { sessionId } = params(request, 'sessionId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
@@ -507,27 +532,25 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           }
 
           return reply.send(session);
-        } catch (error) {
-          return fail(reply, error);
-        }
-      });
+        })
+      );
 
-      v1.get('/sessions/:sessionId/cookies', async (request, reply) => {
-        try {
-          const { sessionId } = request.params as { sessionId: string };
+      v1.get(
+        '/sessions/:sessionId/cookies',
+        route(async (request, reply) => {
+          const { sessionId } = params(request, 'sessionId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
           return reply.send({ cookies: await service.getSessionCookies(sessionId) });
-        } catch (error) {
-          return fail(reply, error);
-        }
-      });
+        })
+      );
 
       // A3 evidence: the session's recent event ledger (console replay).
-      v1.get('/sessions/:sessionId/events/replay', async (request, reply) => {
-        try {
-          const { sessionId } = request.params as { sessionId: string };
+      v1.get(
+        '/sessions/:sessionId/events/replay',
+        route(async (request, reply) => {
+          const { sessionId } = params(request, 'sessionId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
@@ -535,46 +558,37 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           // spec 5.1); getSessionEvents routes the filter accordingly.
           const typeFilter = (request.query as { type?: string } | null)?.type;
           return reply.send({ events: service.getSessionEvents(sessionId, typeFilter) });
-        } catch (error) {
-          return fail(reply, error);
-        }
-      });
+        })
+      );
 
       // A3 evidence: export the session's completed spans as an artifact.
-      v1.post('/sessions/:sessionId/trace', async (request, reply) => {
-        try {
-          const { sessionId } = request.params as { sessionId: string };
+      v1.post(
+        '/sessions/:sessionId/trace',
+        route(async (request, reply) => {
+          const { sessionId } = params(request, 'sessionId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
           return reply.status(201).send(await service.exportTrace(sessionId));
-        } catch (error) {
-          return fail(reply, error);
-        }
-      });
+        })
+      );
 
       // A3 evidence: capture the page's current HTML as an artifact.
-      v1.post('/sessions/:sessionId/pages/:pageId/html', async (request, reply) => {
-        try {
-          const { sessionId, pageId } = request.params as {
-            sessionId: string;
-            pageId: string;
-          };
+      v1.post(
+        '/sessions/:sessionId/pages/:pageId/html',
+        route(async (request, reply) => {
+          const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
           return reply.status(201).send(await service.exportHtml(sessionId, pageId));
-        } catch (error) {
-          return fail(reply, error);
-        }
-      });
+        })
+      );
 
-      v1.get('/sessions/:sessionId/pages/:pageId/snapshot', async (request, reply) => {
-        try {
-          const { sessionId = '', pageId = '' } = request.params as {
-            sessionId?: string;
-            pageId?: string;
-          };
+      v1.get(
+        '/sessions/:sessionId/pages/:pageId/snapshot',
+        route(async (request, reply) => {
+          const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
@@ -590,17 +604,13 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               ...(maxBytes !== undefined ? { maxBytes } : {}),
             })
           );
-        } catch (error) {
-          return fail(reply, error);
-        }
-      });
+        })
+      );
 
-      v1.post('/sessions/:sessionId/pages/:pageId/plan', async (request, reply) => {
-        try {
-          const { sessionId = '', pageId = '' } = request.params as {
-            sessionId?: string;
-            pageId?: string;
-          };
+      v1.post(
+        '/sessions/:sessionId/pages/:pageId/plan',
+        route(async (request, reply) => {
+          const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
@@ -644,41 +654,38 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               body.actions as unknown as ServiceActRequest[]
             )
           );
-        } catch (error) {
-          return fail(reply, error);
-        }
-      });
+        })
+      );
 
-      v1.delete('/sessions/:sessionId', async (request, reply) => {
-        try {
-          const { sessionId } = request.params as { sessionId: string };
+      v1.delete(
+        '/sessions/:sessionId',
+        route(async (request, reply) => {
+          const { sessionId } = params(request, 'sessionId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
           await service.closeSession(sessionId);
           return reply.send({ sessionId, status: 'closed' });
-        } catch (error) {
-          return fail(reply, error);
-        }
-      });
+        })
+      );
 
       // Page management endpoints
-      v1.post('/sessions/:sessionId/pages', async (request, reply) => {
-        try {
-          const { sessionId } = request.params as { sessionId: string };
+      v1.post(
+        '/sessions/:sessionId/pages',
+        route(async (request, reply) => {
+          const { sessionId } = params(request, 'sessionId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
           const page = await service.createPage(sessionId);
           return reply.status(201).send(page);
-        } catch (error) {
-          return fail(reply, error);
-        }
-      });
+        })
+      );
 
-      v1.get('/sessions/:sessionId/pages/:pageId', async (request, reply) => {
-        try {
-          const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
+      v1.get(
+        '/sessions/:sessionId/pages/:pageId',
+        route(async (request, reply) => {
+          const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
@@ -695,28 +702,26 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           }
 
           return reply.send(page);
-        } catch (error) {
-          return fail(reply, error);
-        }
-      });
+        })
+      );
 
-      v1.delete('/sessions/:sessionId/pages/:pageId', async (request, reply) => {
-        try {
-          const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
+      v1.delete(
+        '/sessions/:sessionId/pages/:pageId',
+        route(async (request, reply) => {
+          const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
           await service.closePage(sessionId, pageId);
           return reply.send({ pageId, status: 'closed' });
-        } catch (error) {
-          return fail(reply, error);
-        }
-      });
+        })
+      );
 
       // Navigation endpoint
-      v1.post('/sessions/:sessionId/pages/:pageId/navigate', async (request, reply) => {
-        try {
-          const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
+      v1.post(
+        '/sessions/:sessionId/pages/:pageId/navigate',
+        route(async (request, reply) => {
+          const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
@@ -744,15 +749,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               : {}),
           });
           return reply.send(result);
-        } catch (error) {
-          return fail(reply, error);
-        }
-      });
+        })
+      );
 
       // Observation endpoint
-      v1.post('/sessions/:sessionId/pages/:pageId/observe', async (request, reply) => {
-        try {
-          const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
+      v1.post(
+        '/sessions/:sessionId/pages/:pageId/observe',
+        route(async (request, reply) => {
+          const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
@@ -762,15 +766,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             (request.body ?? {}) as never
           );
           return reply.send(observation);
-        } catch (error) {
-          return fail(reply, error);
-        }
-      });
+        })
+      );
 
       // Action execution endpoint
-      v1.post('/sessions/:sessionId/pages/:pageId/act', async (request, reply) => {
-        try {
-          const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
+      v1.post(
+        '/sessions/:sessionId/pages/:pageId/act',
+        route(async (request, reply) => {
+          const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
@@ -825,15 +828,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               : {}),
           });
           return reply.send(result);
-        } catch (error) {
-          return fail(reply, error);
-        }
-      });
+        })
+      );
 
       // Download endpoint: policy-gated artifact capture
-      v1.post('/sessions/:sessionId/pages/:pageId/download', async (request, reply) => {
-        try {
-          const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
+      v1.post(
+        '/sessions/:sessionId/pages/:pageId/download',
+        route(async (request, reply) => {
+          const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
@@ -858,18 +860,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             ...(filename !== undefined ? { filename } : {}),
           });
           return reply.send(artifact);
-        } catch (error) {
-          return fail(reply, error);
-        }
-      });
+        })
+      );
 
       // Artifact retrieval, scoped to the owning session
-      v1.get('/sessions/:sessionId/artifacts/:artifactId', async (request, reply) => {
-        try {
-          const { sessionId, artifactId } = request.params as {
-            sessionId: string;
-            artifactId: string;
-          };
+      v1.get(
+        '/sessions/:sessionId/artifacts/:artifactId',
+        route(async (request, reply) => {
+          const { sessionId, artifactId } = params(request, 'sessionId', 'artifactId');
           // Access granted by session ownership OR a short-lived signed
           // token minted when the artifact was created (spec 13.1).
           const query = request.query as { token?: string };
@@ -893,34 +891,33 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             metadata: stored.metadata,
             contentBase64: Buffer.from(stored.bytes).toString('base64'),
           });
-        } catch (error) {
-          return fail(reply, error);
-        }
-      });
+        })
+      );
 
       // Collect an intercepted in-page download (spec 10)
-      v1.post('/sessions/:sessionId/pages/:pageId/downloads/:filename', async (request, reply) => {
-        try {
-          const { sessionId, pageId, filename } = request.params as {
-            sessionId: string;
-            pageId: string;
-            filename: string;
-          };
+      v1.post(
+        '/sessions/:sessionId/pages/:pageId/downloads/:filename',
+        route(async (request, reply) => {
+          const { sessionId, pageId, filename } = params(
+            request,
+            'sessionId',
+            'pageId',
+            'filename'
+          );
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
 
           const artifact = await service.collectDownload(sessionId, pageId, filename);
           return reply.send(artifact);
-        } catch (error) {
-          return fail(reply, error);
-        }
-      });
+        })
+      );
 
       // PDF capture endpoint
-      v1.post('/sessions/:sessionId/pages/:pageId/pdf', async (request, reply) => {
-        try {
-          const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
+      v1.post(
+        '/sessions/:sessionId/pages/:pageId/pdf',
+        route(async (request, reply) => {
+          const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
@@ -940,15 +937,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               : {}),
           });
           return reply.send(artifact);
-        } catch (error) {
-          return fail(reply, error);
-        }
-      });
+        })
+      );
 
       // Extraction endpoint (spec 12): deterministic extractors with evidence
-      v1.post('/sessions/:sessionId/pages/:pageId/extract', async (request, reply) => {
-        try {
-          const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
+      v1.post(
+        '/sessions/:sessionId/pages/:pageId/extract',
+        route(async (request, reply) => {
+          const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
@@ -975,15 +971,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             ...(schema !== undefined ? { schema } : {}),
           });
           return reply.send(result);
-        } catch (error) {
-          return fail(reply, error);
-        }
-      });
+        })
+      );
 
       // Screenshot endpoint
-      v1.post('/sessions/:sessionId/pages/:pageId/screenshot', async (request, reply) => {
-        try {
-          const { sessionId, pageId } = request.params as { sessionId: string; pageId: string };
+      v1.post(
+        '/sessions/:sessionId/pages/:pageId/screenshot',
+        route(async (request, reply) => {
+          const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
@@ -1019,10 +1014,8 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             ...(body.maskSensitive !== undefined ? { maskSensitive: body.maskSensitive } : {}),
           });
           return reply.send(artifact);
-        } catch (error) {
-          return fail(reply, error);
-        }
-      });
+        })
+      );
     },
     { prefix: '/v1' }
   );
