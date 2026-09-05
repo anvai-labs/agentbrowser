@@ -1,16 +1,21 @@
 # Engineering-hygiene audit (2026-08-31)
 
-> **Status (2026-09-04, second pass): Themes A, B remediated; E1/E2, C3, F3
-> fixed (Phase 3).** Theme A landed as TD-BROWSER-9 (BoundedCache/RingBuffer, bounded
-> quantile window, indexed lookups). Theme B landed as ADR-015 (SSOT ref
-> grammar + extract formats, ActionEffect/EngineTarget aliases, shared
-> UsageError/formatter, SDK type mirror, compiled schema validation with
-> type-level contract tests). E1 (unguarded + unredacted model-adapter call)
-> and E2 (unanchored match regex) landed alongside the Phase 2 schema-
-> extraction work. Phase 3 fixed C3 (SSRF ranges), F3 (statusFor
-> exhaustiveness), and F5 earlier; C1 closed by honest re-label per the
-> audit's own criteria. Themes D, F1/F2/F4/F6, G, C2/C4-C6, E3/E4 remain
-> open. Findings below are as audited (12 packages; 14 now).
+> **Status (2026-09-05, third pass): Theme A/B/E1/E2/C3/F3/F5 remediated;
+> C2/C4/C5/D2/E4 were already fixed in Phase 3's C9 hygiene sweep but never
+> marked here.** Theme A landed as TD-BROWSER-9 (BoundedCache/RingBuffer,
+> bounded quantile window, indexed lookups). Theme B landed as ADR-015
+> (SSOT ref grammar + extract formats, ActionEffect/EngineTarget aliases,
+> shared UsageError/formatter, SDK type mirror, compiled schema validation
+> with type-level contract tests). E1/E2 (Phase 2) and C3/F3/F5 (Phase 3)
+> are fixed; C1 closed by honest re-label. C2 (dead `checkExpiration`), C4
+> (dead engine-wide revision counter), C5 (dead normalizer counters), D2
+> (listener-ownership doc), and E4 (dialog `try/finally`) were deleted/fixed
+> in Phase 3's C9 sweep alongside other work but this doc was never updated
+> — confirmed absent from the code by direct grep, marked fixed now.
+> **Remaining open: C6, D1, F1/F2/F4, F6, G1/G2** — a hygiene-tail cycle is
+> in progress against the M/L-severity ones (C6, D1, F1/F2/F4, G1/G2); E3
+> and F6 stay deliberately deferred (low severity, narrow value per this
+> audit's own text). Findings below are as audited (12 packages; 14 now).
 
 A **maintenance-and-design** audit, distinct from `docs/audit.md` (which was a
 vision-vs-implementation / security-and-spec audit, now closed). This pass looks
@@ -97,10 +102,10 @@ straight deletion or an honest re-label; none needs a design decision.
 | # | Finding | Location | Sev | Rationalization (verify this) |
 |---|---------|----------|-----|-------------------------------|
 | C1 | `engine-playwright` `extract()` is a body-text stub, yet extraction is advertised in `capabilities()` and the **real** schema extraction runs elsewhere | `engine-playwright/index.ts:752-759` returns `{text: body}`; real path `api/service.ts:1326` `new SchemaExtractor(...).extract(...)` | **M** | The engine method ignores `schema/selector/format`; nothing calls it for real extraction — the service extracts from observed state via `@agentbrowser/extraction`. So the method is dead **and** the advertised capability overclaims (the exact anti-pattern ADR-009 / "no silent fallback" forbid). Either implement it or drop it from capabilities and route explicitly. |
-| C2 | Dead `checkExpiration()` shadows the real cleanup path | `core/session-coordinator.ts:334-341` | **M** | Never called; duplicates `isSessionExpired()` logic and calls `this.close()` in a shape incompatible with the timer-driven `runCleanup()` that is the actual path. |
+| C2 | ~~Dead `checkExpiration()` shadows the real cleanup path~~ **FIXED (Phase 3, undocumented until now)** | `core/session-coordinator.ts:334-341` | **M** | Never called; duplicates `isSessionExpired()` logic and calls `this.close()` in a shape incompatible with the timer-driven `runCleanup()` that is the actual path. |
 | C3 | ~~Incomplete SSRF IP-range coverage~~ **FIXED (Phase 3, 2026-09-04)** | `policy/network-policy.ts:60-65` (`PRIVATE_IP_RANGES`, unused) + `:230-233` (`0.0.0.0/8` branch matches only exact `0.0.0.0`) + `:242-266` (`isPrivateIP` covers only RFC1918) | **H** | The `PRIVATE_IP_RANGES` field is dead; the checks were hand-inlined instead — and incompletely: `0.0.0.0/8` non-zero (e.g. `0.1.2.3`) and general `169.254/16` link-local (only the metadata IP is blocked separately) fall through `isLoopback`/`isPrivateIP`/`isMetadataEndpoint` and are **allowed**. Code contradicts the `0.0.0.0/8` comment and the SSRF intent. Security-adjacent; narrow real-world exploitability but a clear defect. Fix by driving all checks from the (revived, CIDR-correct) table. |
-| C4 | Engine-wide `revisionCounter`/`incrementRevision()` never used; revisions are page-local | `engine-playwright/index.ts:93,259-261` (vs page-local `revision` at `:360`, used in refs at `:573`) | **L** | Method never invoked; leaves the revision model ambiguous (engine vs page scope). Delete and let ADR-004's page-local model stand. |
-| C5 | Dead `elementCounter` field + `resetCounter()` in the normalizer | `core/observation-normalizer.ts:48,277` | **L** | Never read/incremented; refs come from `revision`+`index` via `generateRef()`. Vestige of an abandoned scheme. |
+| C4 | ~~Engine-wide `revisionCounter`/`incrementRevision()` never used~~ **FIXED (Phase 3, undocumented until now)** | `engine-playwright/index.ts:93,259-261` (vs page-local `revision` at `:360`, used in refs at `:573`) | **L** | Method never invoked; leaves the revision model ambiguous (engine vs page scope). Delete and let ADR-004's page-local model stand. |
+| C5 | ~~Dead `elementCounter` field + `resetCounter()` in the normalizer~~ **FIXED (Phase 3, undocumented until now)** | `core/observation-normalizer.ts:48,277` | **L** | Never read/incremented; refs come from `revision`+`index` via `generateRef()`. Vestige of an abandoned scheme. |
 | C6 | FakeEngine returns `Promise<any>` where the interface promises typed results | `testkit/fake-engine.ts:482,494` (`screenshot`/`pdf` → `any`), `:148-150` (`cookies(): Promise<any>` always `[]`), throws plain `Error` not `ErrorCode` at `:364,134,270` | **L** | The reference test substrate erodes the very types it exists to validate; `any` hides `ArtifactRef`/`NormalizedCookie` shape drift, and plain-string throws mean contract tests can't assert on `ErrorCode`. |
 
 ---
@@ -110,7 +115,7 @@ straight deletion or an honest re-label; none needs a design decision.
 | # | Finding | Location | Sev | Rationalization (verify this) |
 |---|---------|----------|-----|-------------------------------|
 | D1 | Playwright page listeners never deregistered on `close()` | `engine-playwright/index.ts:371-435` attach `page.on('close'/'dialog'/'load'/'console')`; `:842-854` `close()` doesn't `off` them | **M** | Four listeners per page attached in the constructor, none removed before `page.close()`; a session churning many pages accumulates handler stubs. Fix is `removeAllListeners()`/stored `off` in `close()`. |
-| D2 | Session-scoped listener ownership on teardown is undocumented | `core/session-coordinator.ts:355-361` (`SessionContext` holds `engine`/`engineSession`) | **L** | No dereg call in `close()`/`terminate()` and no comment stating whether the engine or the session owns listeners; not demonstrably a leak (engine may own them) but the silence is the hazard. Document the ownership contract. |
+| D2 | ~~Session-scoped listener ownership on teardown is undocumented~~ **FIXED (Phase 3, undocumented until now)** | `core/session-coordinator.ts:355-361` (`SessionContext` holds `engine`/`engineSession`) | **L** | No dereg call in `close()`/`terminate()` and no comment stating whether the engine or the session owns listeners; not demonstrably a leak (engine may own them) but the silence is the hazard. Document the ownership contract. |
 
 ---
 
@@ -121,7 +126,7 @@ straight deletion or an honest re-label; none needs a design decision.
 | E1 | ~~Model-adapter failure discards successful deterministic extraction~~ **FIXED (Phase 2, 2026-09-04)** | `extraction/schema-extraction.ts` | **H** | Was worse than originally audited: the model call was unguarded (a throw discarded successful deterministic data) AND `secretManager.redact` ran AFTER the model call, so an injected adapter saw unredacted page text. Now: try/catch keeps deterministic data + a warning; redaction runs before the model call; input is size-capped. |
 | E2 | ~~Deterministic field-match regex isn't word-boundary anchored~~ **FIXED (Phase 2, 2026-09-04)** | `extraction/schema-extraction.ts` | **M** | Property names are now regex-escaped and `\b`-anchored in both match patterns; a substring-false-positive test (`price` not matching inside `pricey`) is in place. |
 | E3 | Fragile Playwright error classification by `String(error)` regex | `engine-playwright/index.ts:451-462` | **L** | Blocked-navigation detection matches `net::ERR_*` against the stringified error; breaks silently if Playwright changes message format. Prefer error `.code`/`.name`, or throw a typed error from the egress handler. |
-| E4 | Dialog settlement lacks an error boundary in the fake | `testkit/fake-engine.ts:233-246` | **L** | Listener call then `emitEvent` in sequence; a throwing listener skips the emit, leaving `pendingDialog` cleared but no event — `try/finally` fixes it. Test-substrate only. |
+| E4 | ~~Dialog settlement lacks an error boundary in the fake~~ **FIXED (Phase 3, undocumented until now)** | `testkit/fake-engine.ts:233-246` | **L** | Listener call then `emitEvent` in sequence; a throwing listener skips the emit, leaving `pendingDialog` cleared but no event — `try/finally` fixes it. Test-substrate only. |
 
 ---
 

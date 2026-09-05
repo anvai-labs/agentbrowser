@@ -8,6 +8,7 @@
 import type {
   ActionEffect,
   BrowserEngine,
+  CapturedArtifact,
   EngineAction,
   EngineCapabilities,
   EngineEvent,
@@ -21,9 +22,11 @@ import type {
   NavigationRequest,
   NavigationResult,
   NewPageOptions,
+  NormalizedCookie,
   ObservationRequest,
   PdfRequest,
   RawPageState,
+  ResolvedTarget,
   ScreenshotRequest,
 } from '@agentbrowser/engine';
 import { DELIVERED_ACTION_TYPES, DELIVERED_OBSERVATION_MODES } from '@agentbrowser/protocol';
@@ -146,7 +149,7 @@ class FakeSession implements EngineSession {
     return Array.from(this._pages.values());
   }
 
-  async cookies(): Promise<any[]> {
+  async cookies(): Promise<NormalizedCookie[]> {
     return [];
   }
 
@@ -373,7 +376,7 @@ class FakePage implements EnginePage {
     return observation;
   }
 
-  async resolve(target: EngineTarget): Promise<any> {
+  async resolve(target: EngineTarget): Promise<ResolvedTarget> {
     this.assertNotDead();
     if (this.closed) {
       throw new Error('Page is closed');
@@ -385,7 +388,12 @@ class FakePage implements EnginePage {
       throw new Error('Element not found');
     }
 
-    const result: any = {
+    // C6: was Promise<any> with three extra fields (value/required/
+    // focused) nothing downstream consumed (verified: action-executor
+    // only reads .visible/.enabled/.fingerprint; the contract test only
+    // asserts role/name/visible/enabled/fingerprint) - typed to the real
+    // ResolvedTarget shape, dropping the dead extras.
+    const result: ResolvedTarget = {
       ref: element.ref,
       fingerprint: this.generateFingerprint(element),
       role: element.role,
@@ -395,18 +403,6 @@ class FakePage implements EnginePage {
 
     if (element.name !== undefined) {
       result.name = element.name;
-    }
-
-    if (element.value !== undefined && element.value !== '') {
-      result.value = element.value;
-    }
-
-    if (element.required !== undefined && element.required !== false) {
-      result.required = element.required;
-    }
-
-    if (element.focused !== undefined && element.focused !== false) {
-      result.focused = element.focused;
     }
 
     return result;
@@ -576,7 +572,7 @@ class FakePage implements EnginePage {
     };
   }
 
-  async pdf(request: PdfRequest): Promise<any> {
+  async pdf(request: PdfRequest): Promise<CapturedArtifact> {
     const content = `%PDF-1.4\nfake-page:${this.currentUrl}\nprinted:${request.printBackground === true}\n%%EOF`;
     return {
       artifactId: `pdf-${Date.now()}`,
@@ -588,7 +584,7 @@ class FakePage implements EnginePage {
     };
   }
 
-  async screenshot(request: ScreenshotRequest): Promise<any> {
+  async screenshot(request: ScreenshotRequest): Promise<CapturedArtifact> {
     const format = request.format || 'png';
     const content = `fake-screenshot:${this.currentUrl}:${format}:full=${request.fullPage === true}`;
     const bytes = Buffer.from(content, 'utf8');

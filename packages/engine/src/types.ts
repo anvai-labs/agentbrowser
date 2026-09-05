@@ -367,12 +367,12 @@ export interface EnginePage {
   /**
    * Capture screenshot
    */
-  screenshot(request: ScreenshotRequest): Promise<ArtifactRef>;
+  screenshot(request: ScreenshotRequest): Promise<CapturedArtifact>;
 
   /**
    * Generate PDF (optional)
    */
-  pdf?(request: PdfRequest): Promise<ArtifactRef>;
+  pdf?(request: PdfRequest): Promise<CapturedArtifact>;
 
   /**
    * Get page events stream
@@ -397,6 +397,27 @@ export interface NormalizedCookie {
   httpOnly: boolean;
   secure: boolean;
   sameSite: 'Strict' | 'Lax' | 'None';
+}
+
+/**
+ * An ArtifactRef plus the actual captured bytes. The service builds the
+ * real, artifact-store-backed ArtifactRef from these bytes (put() mints
+ * its own artifactId/url) - the engine's artifactId/url fields above are
+ * placeholders, never surfaced to a caller. bytesBase64 is not optional:
+ * a capture method with no bytes to report should not implement
+ * screenshot/pdf at all (pdf is already optional on EnginePage for
+ * exactly this reason).
+ *
+ * PRODUCTION BUG this type exists to prevent recurring: the real
+ * Playwright and Safari engines used to return bare ArtifactRef with no
+ * bytes, and the service's Buffer.from(undefined ?? '', 'base64') dropped
+ * the mismatch silently - every real screenshot/PDF was a 0-byte artifact,
+ * caught by nothing (every prior service-level test ran against
+ * FakeEngine, which happened to include the field despite the looser
+ * `Promise<any>` it was typed with).
+ */
+export interface CapturedArtifact extends ArtifactRef {
+  bytesBase64: string;
 }
 
 /**
