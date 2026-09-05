@@ -44,7 +44,6 @@ export interface NormalizationOptions {
  * ObservationNormalizer converts raw engine state into semantic observations
  */
 export class ObservationNormalizer {
-  private elementCounter = 0;
 
   /**
    * Normalize raw page state into semantic observation
@@ -269,10 +268,4 @@ export class ObservationNormalizer {
     return `Page with ${parts.join(', ')}`;
   }
 
-  /**
-   * Reset element counter (for testing)
-   */
-  resetCounter(): void {
-    this.elementCounter = 0;
-  }
 }

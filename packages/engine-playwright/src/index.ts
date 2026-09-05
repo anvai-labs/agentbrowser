@@ -133,7 +133,6 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   private _name = 'playwright-chromium';
   private _version = '1.0.0';
   private browser: Browser | undefined;
-  private revisionCounter = 1;
   readonly dialogGraceMs: number;
   private readonly rootEgress: RequestPolicy | undefined;
   private readonly webSocketPolicy: 'off' | 'deny-all';
@@ -575,10 +574,6 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       await this.browser.close();
       this.browser = undefined;
     }
-  }
-
-  incrementRevision(): number {
-    return this.revisionCounter++;
   }
 }
 

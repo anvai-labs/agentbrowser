@@ -1,14 +1,16 @@
 # Engineering-hygiene audit (2026-08-31)
 
-> **Status (2026-09-04): Themes A and B are remediated; Theme E's E1/E2 are
-> fixed.** Theme A landed as TD-BROWSER-9 (BoundedCache/RingBuffer, bounded
+> **Status (2026-09-04, second pass): Themes A, B remediated; E1/E2, C3, F3
+> fixed (Phase 3).** Theme A landed as TD-BROWSER-9 (BoundedCache/RingBuffer, bounded
 > quantile window, indexed lookups). Theme B landed as ADR-015 (SSOT ref
 > grammar + extract formats, ActionEffect/EngineTarget aliases, shared
 > UsageError/formatter, SDK type mirror, compiled schema validation with
 > type-level contract tests). E1 (unguarded + unredacted model-adapter call)
 > and E2 (unanchored match regex) landed alongside the Phase 2 schema-
-> extraction work. Themes C, D, F, G and E3/E4 remain open. Findings below
-> are as audited (12 packages; 14 now).
+> extraction work. Phase 3 fixed C3 (SSRF ranges), F3 (statusFor
+> exhaustiveness), and F5 earlier; C1 closed by honest re-label per the
+> audit's own criteria. Themes D, F1/F2/F4/F6, G, C2/C4-C6, E3/E4 remain
+> open. Findings below are as audited (12 packages; 14 now).
 
 A **maintenance-and-design** audit, distinct from `docs/audit.md` (which was a
 vision-vs-implementation / security-and-spec audit, now closed). This pass looks
@@ -96,7 +98,7 @@ straight deletion or an honest re-label; none needs a design decision.
 |---|---------|----------|-----|-------------------------------|
 | C1 | `engine-playwright` `extract()` is a body-text stub, yet extraction is advertised in `capabilities()` and the **real** schema extraction runs elsewhere | `engine-playwright/index.ts:752-759` returns `{text: body}`; real path `api/service.ts:1326` `new SchemaExtractor(...).extract(...)` | **M** | The engine method ignores `schema/selector/format`; nothing calls it for real extraction — the service extracts from observed state via `@agentbrowser/extraction`. So the method is dead **and** the advertised capability overclaims (the exact anti-pattern ADR-009 / "no silent fallback" forbid). Either implement it or drop it from capabilities and route explicitly. |
 | C2 | Dead `checkExpiration()` shadows the real cleanup path | `core/session-coordinator.ts:334-341` | **M** | Never called; duplicates `isSessionExpired()` logic and calls `this.close()` in a shape incompatible with the timer-driven `runCleanup()` that is the actual path. |
-| C3 | Incomplete SSRF IP-range coverage **and** its unused table share one root cause | `policy/network-policy.ts:60-65` (`PRIVATE_IP_RANGES`, unused) + `:230-233` (`0.0.0.0/8` branch matches only exact `0.0.0.0`) + `:242-266` (`isPrivateIP` covers only RFC1918) | **H** | The `PRIVATE_IP_RANGES` field is dead; the checks were hand-inlined instead — and incompletely: `0.0.0.0/8` non-zero (e.g. `0.1.2.3`) and general `169.254/16` link-local (only the metadata IP is blocked separately) fall through `isLoopback`/`isPrivateIP`/`isMetadataEndpoint` and are **allowed**. Code contradicts the `0.0.0.0/8` comment and the SSRF intent. Security-adjacent; narrow real-world exploitability but a clear defect. Fix by driving all checks from the (revived, CIDR-correct) table. |
+| C3 | ~~Incomplete SSRF IP-range coverage~~ **FIXED (Phase 3, 2026-09-04)** | `policy/network-policy.ts:60-65` (`PRIVATE_IP_RANGES`, unused) + `:230-233` (`0.0.0.0/8` branch matches only exact `0.0.0.0`) + `:242-266` (`isPrivateIP` covers only RFC1918) | **H** | The `PRIVATE_IP_RANGES` field is dead; the checks were hand-inlined instead — and incompletely: `0.0.0.0/8` non-zero (e.g. `0.1.2.3`) and general `169.254/16` link-local (only the metadata IP is blocked separately) fall through `isLoopback`/`isPrivateIP`/`isMetadataEndpoint` and are **allowed**. Code contradicts the `0.0.0.0/8` comment and the SSRF intent. Security-adjacent; narrow real-world exploitability but a clear defect. Fix by driving all checks from the (revived, CIDR-correct) table. |
 | C4 | Engine-wide `revisionCounter`/`incrementRevision()` never used; revisions are page-local | `engine-playwright/index.ts:93,259-261` (vs page-local `revision` at `:360`, used in refs at `:573`) | **L** | Method never invoked; leaves the revision model ambiguous (engine vs page scope). Delete and let ADR-004's page-local model stand. |
 | C5 | Dead `elementCounter` field + `resetCounter()` in the normalizer | `core/observation-normalizer.ts:48,277` | **L** | Never read/incremented; refs come from `revision`+`index` via `generateRef()`. Vestige of an abandoned scheme. |
 | C6 | FakeEngine returns `Promise<any>` where the interface promises typed results | `testkit/fake-engine.ts:482,494` (`screenshot`/`pdf` → `any`), `:148-150` (`cookies(): Promise<any>` always `[]`), throws plain `Error` not `ErrorCode` at `:364,134,270` | **L** | The reference test substrate erodes the very types it exists to validate; `any` hides `ArtifactRef`/`NormalizedCookie` shape drift, and plain-string throws mean contract tests can't assert on `ErrorCode`. |
@@ -129,9 +131,9 @@ straight deletion or an honest re-label; none needs a design decision.
 |---|---------|----------|-----|-------------------------------|
 | F1 | 16 route handlers repeat the same `try { … } catch (error) { return fail(reply, error) }` frame | `api/server.ts` (16× `return fail(reply, error)`) | **M** | Grep count = 16 in one file; a `route()` higher-order wrapper (tenancy + error mapping once) removes ~450 lines and makes the error contract a single edit. |
 | F2 | `const { sessionId, pageId } = request.params as {…}` cast repeated 9×+ | `api/server.ts` (multiple) | **L** | Mechanical param-cast repetition; a typed `params(request)` helper centralizes the cast. |
-| F3 | `statusFor()` code→HTTP switch not checked against the protocol `ErrorCode` enum | `api/server.ts:71-99` | **L** | 20 hand-maintained cases vs 21 enum members; a missing case silently defaults to 500. A table keyed by the enum (exhaustiveness-checked) prevents drift. |
+| F3 | ~~`statusFor()` code→HTTP switch not checked against the enum~~ **FIXED (Phase 3)** | `api/server.ts:71-99` | **L** | 20 hand-maintained cases vs 21 enum members; a missing case silently defaults to 500. A table keyed by the enum (exhaustiveness-checked) prevents drift. |
 | F4 | 378-line `buildMcpServer()` interleaves tool definitions with dispatch | `mcp-server.ts:83-461` | **L** | Tool schemas (~300 lines) inline before dispatch at `:416`; a module-level `TOOLS` table separates data from control flow and makes adding a tool a data edit. |
-| F5 | MCP `browser_observe` accepts `maxBytes` but omits it from the tool description | `mcp-server.ts:196-230` (prop present at `:206-211`, description `:191-195` mentions only `maxElements`) | **L** | Silent capability — agents can't discover `maxBytes` from the schema description. (Also noted P2-6 in `docs/audit.md`.) |
+| F5 | ~~MCP `browser_observe` accepts `maxBytes` but omits it from the tool description~~ **FIXED (earlier)** | `mcp-server.ts:196-230` (prop present at `:206-211`, description `:191-195` mentions only `maxElements`) | **L** | Silent capability — agents can't discover `maxBytes` from the schema description. (Also noted P2-6 in `docs/audit.md`.) |
 | F6 | No shared HTTP client abstraction | `sdk client.ts:185-403` | **L** | Timeout/JSON/error-decode logic lives inside `SessionsClient`; any second HTTP consumer re-implements it. Low priority at 4 surfaces. |
 
 ---

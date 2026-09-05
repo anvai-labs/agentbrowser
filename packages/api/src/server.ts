@@ -52,6 +52,9 @@ export interface ServerOptions {
   secretManager?: SecretManager;
   /** Structured operation log; when absent, no operation logging. */
   logger?: StructuredLogger;
+  /** Session-default overrides plumbed to the coordinator (see ServiceDependencies). */
+  defaultTtlMs?: number;
+  defaultIdleTimeoutMs?: number;
   /**
    * Bearer-key authentication: SHA-256(key) -> tenantId. When absent (and no
    * AGENTBROWSER_API_KEYS env), auth is disabled with a loud warning -
@@ -191,6 +194,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     tracer,
     ...(options.logger ? { logger: options.logger } : {}),
     ...(options.downloader ? { downloader: options.downloader } : {}),
+    ...(options.defaultTtlMs !== undefined ? { defaultTtlMs: options.defaultTtlMs } : {}),
+    ...(options.defaultIdleTimeoutMs !== undefined
+      ? { defaultIdleTimeoutMs: options.defaultIdleTimeoutMs }
+      : {}),
   });
 
   fastify.addHook('onClose', async () => {

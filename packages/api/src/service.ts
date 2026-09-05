@@ -171,6 +171,14 @@ export interface ServiceDependencies {
   logger?: StructuredLogger;
   /** How often to reconcile service state with coordinator expiry (ms). */
   sweepIntervalMs?: number;
+  /**
+   * Operator-level session defaults (env-plumbed via bin.ts). A request
+   * still overrides either per session; these just move the baseline for
+   * deployments whose workloads systematically need longer (e.g. headed
+   * human-in-the-loop flows vs the 2-min default idle).
+   */
+  defaultTtlMs?: number;
+  defaultIdleTimeoutMs?: number;
 }
 
 /** Risk classes that require an approval token before the action runs. */
@@ -252,7 +260,14 @@ export class AgentBrowserService {
       this.engines.set(name, engine);
     }
     this.coordinator =
-      deps.coordinator ?? new SessionCoordinator({ cleanupCheckIntervalMs: 3_600_000 });
+      deps.coordinator ??
+      new SessionCoordinator({
+        cleanupCheckIntervalMs: 3_600_000,
+        ...(deps.defaultTtlMs !== undefined ? { defaultTtlMs: deps.defaultTtlMs } : {}),
+        ...(deps.defaultIdleTimeoutMs !== undefined
+          ? { defaultIdleTimeoutMs: deps.defaultIdleTimeoutMs }
+          : {}),
+      });
     this.normalizer = deps.normalizer ?? new ObservationNormalizer();
     this.executor = deps.executor ?? new ActionExecutor(this.normalizer);
     // SSRF defenses are on by default (ADR-006): loopback, private ranges and

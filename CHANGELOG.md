@@ -5,6 +5,69 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [Unreleased]
+
+### Security
+
+- **SSRF range gaps closed** (hygiene C3, the audit's top security-adjacent
+  item): `blockPrivateIPs` previously allowed entire non-routable ranges —
+  `169.254.0.0/16` link-local (including the ECS task-metadata address),
+  `100.64.0.0/10` CGNAT, all of `0.0.0.0/8` beyond exact `0.0.0.0`,
+  `198.18.0.0/15`, and every IPv6 literal (`::1`, `fe80::/10`, `fc00::/7` —
+  the parser was IPv4-only). Public addresses unaffected.
+
+### Fixed
+
+- **Plan steps are validated again** — a v1.8.1 defect: an unvalidated
+  `waitMs` on a `waitForLabel` step could hang the plan route in an infinite
+  observe loop forever (`waitMs: "abc"` → NaN deadline → a poll that never
+  exits; `1e308` → the same via Infinity). The route now schema-checks every
+  step (`PlanStepSchema`, the last unvalidated request surface) and the
+  service clamps hard (100–60000 ms, finite, typed rejection) as defense in
+  depth.
+- **Error-to-HTTP mapping is exhaustive** (hygiene F3): three live-thrown
+  codes reached clients as 500s — `ACTION_TIMEOUT` (as an incoherent
+  500 + retryable), `ENGINE_CRASHED`, and `INVALID_TENANT_ID` (which wasn't
+  even in the enum, violating the protocol error schema). Timeouts now map
+  to 504, invalid tenants to 400, `SESSION_EXPIRED` to 410; the table is
+  `satisfies`-checked so a new code without a mapping is a compile error.
+
+### Added
+
+- **Network summary** (the last required §5.1 evidence row): the egress
+  choke point emits `request.started`/`finished`/`failed` at every path —
+  including all five previously-silent denial sites, each carrying the
+  POLICY's own code/rule instead of a flattened 'deny'. URLs are recorded
+  as origin+path only (query strings are the token carrier and are dropped
+  at the engine). Events ride the existing pipeline into their own bounded
+  ledger (a request flood no longer evicts console lines) and replay via
+  `?type=request.finished`.
+- **The CLI ships** — previously uninstallable by any packaged means (brew
+  had only the MCP binary and the server wrapper; the package is private).
+  Release artifacts now include `agentbrowser-cli-<target>` for all five
+  targets, `--help`-smoked wherever the runner can execute them.
+- **The CLI/MCP session flags dogfooding actually needed**:
+  `--idle-timeout` (the 2-minute default was yanking headed human-in-the-loop
+  logins mid-flow), `--cookies` + a `session cookies` export command (the
+  full credential-handoff loop), `--allow-downloads`/`--max-download-bytes`,
+  `--locale`, `--timezone-id`, `--allow-hosts`/`--blocked-hosts`; MCP
+  `browser_create` gains `idleTimeoutMs`.
+- **Operator session-default env vars**: `AGENTBROWSER_DEFAULT_TTL_MS` and
+  `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS` (per-request values still win).
+
+### Changed
+
+- **compact_dom de-scoped** (ADR-003 amendment): the Evidence row it
+  belonged to is served by the HTML artifact + interactive/content modes,
+  there is no reserved plumbing and no consumer, and an ungated delivery
+  flip would recreate the exact lie the typed rejection was added to
+  prevent. The normalizer-only revival path is documented if a consumer
+  appears.
+- `SessionPolicy.allowedHosts` is optional (a blockedHosts-only or
+  downloads-only policy is a legitimate restrict-only combination).
+- operations.md: the "30-second sweep" claim corrected (the API service uses
+  lazy-on-access expiry plus a 1-hour background sweep).
+
 ## [1.8.1] — 2026-09-04
 
 ### Added
