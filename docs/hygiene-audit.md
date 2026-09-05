@@ -1,21 +1,23 @@
 # Engineering-hygiene audit (2026-08-31)
 
-> **Status (2026-09-05, third pass): Theme A/B/E1/E2/C3/F3/F5 remediated;
-> C2/C4/C5/D2/E4 were already fixed in Phase 3's C9 hygiene sweep but never
-> marked here.** Theme A landed as TD-BROWSER-9 (BoundedCache/RingBuffer,
-> bounded quantile window, indexed lookups). Theme B landed as ADR-015
-> (SSOT ref grammar + extract formats, ActionEffect/EngineTarget aliases,
-> shared UsageError/formatter, SDK type mirror, compiled schema validation
-> with type-level contract tests). E1/E2 (Phase 2) and C3/F3/F5 (Phase 3)
-> are fixed; C1 closed by honest re-label. C2 (dead `checkExpiration`), C4
-> (dead engine-wide revision counter), C5 (dead normalizer counters), D2
-> (listener-ownership doc), and E4 (dialog `try/finally`) were deleted/fixed
-> in Phase 3's C9 sweep alongside other work but this doc was never updated
-> — confirmed absent from the code by direct grep, marked fixed now.
-> **Remaining open: C6, D1, F1/F2/F4, F6, G1/G2** — a hygiene-tail cycle is
-> in progress against the M/L-severity ones (C6, D1, F1/F2/F4, G1/G2); E3
-> and F6 stay deliberately deferred (low severity, narrow value per this
-> audit's own text). Findings below are as audited (12 packages; 14 now).
+> **Status (2026-09-05, fourth pass): every finding in this audit is now
+> fixed.** Theme A landed as TD-BROWSER-9 (BoundedCache/RingBuffer, bounded
+> quantile window, indexed lookups). Theme B landed as ADR-015 (SSOT ref
+> grammar + extract formats, ActionEffect/EngineTarget aliases, shared
+> UsageError/formatter, SDK type mirror, compiled schema validation with
+> type-level contract tests). E1/E2 (Phase 2) and C3/F3/F5 (Phase 3) are
+> fixed; C1 closed by honest re-label. C2/C4/C5/D2/E4 were deleted/fixed in
+> Phase 3's C9 sweep but this doc wasn't updated until the hygiene-tail
+> cycle (2026-09-05) caught it by direct grep. The same cycle then closed
+> the rest of the M/L-severity tail — C6 (FakeEngine typed substrate,
+> which surfaced and fixed a real production bug: real Playwright/Safari
+> engines silently dropping screenshot/PDF bytes), D1 (listener cleanup),
+> F1/F2 (server.ts `route()`/`params()`), F4 (MCP tool-table hoist), G1
+> (dead tsconfig `composite`), G2 (logger injection) — landed via PR #69/#70.
+> **E3 and F6**, deliberately deferred in that cycle as low-severity/narrow-
+> value, are now closed too: E3's fallback turned out to be dead *and*
+> actively wrong (see below) rather than merely fragile; F6 consolidated the
+> SDK's HTTP mechanics into one `HttpClient.requestJson()`.
 
 A **maintenance-and-design** audit, distinct from `docs/audit.md` (which was a
 vision-vs-implementation / security-and-spec audit, now closed). This pass looks
@@ -106,7 +108,7 @@ straight deletion or an honest re-label; none needs a design decision.
 | C3 | ~~Incomplete SSRF IP-range coverage~~ **FIXED (Phase 3, 2026-09-04)** | `policy/network-policy.ts:60-65` (`PRIVATE_IP_RANGES`, unused) + `:230-233` (`0.0.0.0/8` branch matches only exact `0.0.0.0`) + `:242-266` (`isPrivateIP` covers only RFC1918) | **H** | The `PRIVATE_IP_RANGES` field is dead; the checks were hand-inlined instead — and incompletely: `0.0.0.0/8` non-zero (e.g. `0.1.2.3`) and general `169.254/16` link-local (only the metadata IP is blocked separately) fall through `isLoopback`/`isPrivateIP`/`isMetadataEndpoint` and are **allowed**. Code contradicts the `0.0.0.0/8` comment and the SSRF intent. Security-adjacent; narrow real-world exploitability but a clear defect. Fix by driving all checks from the (revived, CIDR-correct) table. |
 | C4 | ~~Engine-wide `revisionCounter`/`incrementRevision()` never used~~ **FIXED (Phase 3, undocumented until now)** | `engine-playwright/index.ts:93,259-261` (vs page-local `revision` at `:360`, used in refs at `:573`) | **L** | Method never invoked; leaves the revision model ambiguous (engine vs page scope). Delete and let ADR-004's page-local model stand. |
 | C5 | ~~Dead `elementCounter` field + `resetCounter()` in the normalizer~~ **FIXED (Phase 3, undocumented until now)** | `core/observation-normalizer.ts:48,277` | **L** | Never read/incremented; refs come from `revision`+`index` via `generateRef()`. Vestige of an abandoned scheme. |
-| C6 | FakeEngine returns `Promise<any>` where the interface promises typed results | `testkit/fake-engine.ts:482,494` (`screenshot`/`pdf` → `any`), `:148-150` (`cookies(): Promise<any>` always `[]`), throws plain `Error` not `ErrorCode` at `:364,134,270` | **L** | The reference test substrate erodes the very types it exists to validate; `any` hides `ArtifactRef`/`NormalizedCookie` shape drift, and plain-string throws mean contract tests can't assert on `ErrorCode`. |
+| C6 | ~~FakeEngine returns `Promise<any>` where the interface promises typed results~~ **FIXED (hygiene-tail, 2026-09-05)** | `testkit/fake-engine.ts:482,494` (`screenshot`/`pdf` → `any`), `:148-150` (`cookies(): Promise<any>` always `[]`), throws plain `Error` not `ErrorCode` at `:364,134,270` | **L** | The reference test substrate erodes the very types it exists to validate; `any` hides `ArtifactRef`/`NormalizedCookie` shape drift, and plain-string throws mean contract tests can't assert on `ErrorCode`. Retyped `resolve()`→`ResolvedTarget`, `pdf()`/`screenshot()`→`CapturedArtifact`, `cookies()`→`NormalizedCookie[]`. Retyping `screenshot`/`pdf` surfaced a real production bug (see the new C6 entry that was C5 in the plan): the real Playwright/Safari engines silently omitted the `bytesBase64` field `service.ts` reads to build the artifact, so every real capture was 0 bytes — fixed via a compiler-enforced `CapturedArtifact` type plus a real-Chromium regression test. The plain `Error` throws were checked against `engine-playwright`'s equivalent throws and found already consistent — no `ErrorCode` contract exists to conform to there. |
 
 ---
 
@@ -114,7 +116,7 @@ straight deletion or an honest re-label; none needs a design decision.
 
 | # | Finding | Location | Sev | Rationalization (verify this) |
 |---|---------|----------|-----|-------------------------------|
-| D1 | Playwright page listeners never deregistered on `close()` | `engine-playwright/index.ts:371-435` attach `page.on('close'/'dialog'/'load'/'console')`; `:842-854` `close()` doesn't `off` them | **M** | Four listeners per page attached in the constructor, none removed before `page.close()`; a session churning many pages accumulates handler stubs. Fix is `removeAllListeners()`/stored `off` in `close()`. |
+| D1 | ~~Playwright page listeners never deregistered on `close()`~~ **FIXED (hygiene-tail, 2026-09-05)** | `engine-playwright/index.ts:371-435` attach `page.on('close'/'dialog'/'load'/'console')`; `:842-854` `close()` doesn't `off` them | **M** | Four listeners per page attached in the constructor, none removed before `page.close()`; a session churning many pages accumulates handler stubs. First attempt used `page.removeAllListeners()`, which also strips Playwright's own internally-attached page listeners — this raced the Obscura engine's context-level route handler into an unhandled `route.abort: ...has been closed` rejection on teardown (caught by CI). Fixed by storing named handler references and removing exactly those four via `.off()`. |
 | D2 | ~~Session-scoped listener ownership on teardown is undocumented~~ **FIXED (Phase 3, undocumented until now)** | `core/session-coordinator.ts:355-361` (`SessionContext` holds `engine`/`engineSession`) | **L** | No dereg call in `close()`/`terminate()` and no comment stating whether the engine or the session owns listeners; not demonstrably a leak (engine may own them) but the silence is the hazard. Document the ownership contract. |
 
 ---
@@ -125,7 +127,7 @@ straight deletion or an honest re-label; none needs a design decision.
 |---|---------|----------|-----|-------------------------------|
 | E1 | ~~Model-adapter failure discards successful deterministic extraction~~ **FIXED (Phase 2, 2026-09-04)** | `extraction/schema-extraction.ts` | **H** | Was worse than originally audited: the model call was unguarded (a throw discarded successful deterministic data) AND `secretManager.redact` ran AFTER the model call, so an injected adapter saw unredacted page text. Now: try/catch keeps deterministic data + a warning; redaction runs before the model call; input is size-capped. |
 | E2 | ~~Deterministic field-match regex isn't word-boundary anchored~~ **FIXED (Phase 2, 2026-09-04)** | `extraction/schema-extraction.ts` | **M** | Property names are now regex-escaped and `\b`-anchored in both match patterns; a substring-false-positive test (`price` not matching inside `pricey`) is in place. |
-| E3 | Fragile Playwright error classification by `String(error)` regex | `engine-playwright/index.ts:451-462` | **L** | Blocked-navigation detection matches `net::ERR_*` against the stringified error; breaks silently if Playwright changes message format. Prefer error `.code`/`.name`, or throw a typed error from the egress handler. |
+| E3 | ~~Fragile Playwright error classification by `String(error)` regex~~ **FIXED (2026-09-05)** | `engine-playwright/index.ts:451-462` | **L** | Blocked-navigation detection matches `net::ERR_*` against the stringified error; breaks silently if Playwright changes message format. Prefer error `.code`/`.name`, or throw a typed error from the egress handler. Turned out worse than fragile: `installEgress` only ever denies via `route.fulfill(BLOCKED_RESPONSE)` (caught by the `x-agentbrowser-blocked` header check two lines below), never `route.abort()` for a policy reason — the one `route.abort('failed')` call is a genuine fetch failure and produces `net::ERR_FAILED`, which the regex didn't even match. The regex's only live effect was silently relabeling any *unrelated* real navigation abort (e.g. a superseded navigation) as a policy block. Removed; a new test reproduces a genuine `net::ERR_ABORTED` (via a superseded navigation, unrelated to any policy) and asserts it now propagates as a real error instead of `{status: 'blocked'}` — verified it fails under the old code. |
 | E4 | ~~Dialog settlement lacks an error boundary in the fake~~ **FIXED (Phase 3, undocumented until now)** | `testkit/fake-engine.ts:233-246` | **L** | Listener call then `emitEvent` in sequence; a throwing listener skips the emit, leaving `pendingDialog` cleared but no event — `try/finally` fixes it. Test-substrate only. |
 
 ---
@@ -134,12 +136,12 @@ straight deletion or an honest re-label; none needs a design decision.
 
 | # | Finding | Location | Sev | Rationalization (verify this) |
 |---|---------|----------|-----|-------------------------------|
-| F1 | 16 route handlers repeat the same `try { … } catch (error) { return fail(reply, error) }` frame | `api/server.ts` (16× `return fail(reply, error)`) | **M** | Grep count = 16 in one file; a `route()` higher-order wrapper (tenancy + error mapping once) removes ~450 lines and makes the error contract a single edit. |
-| F2 | `const { sessionId, pageId } = request.params as {…}` cast repeated 9×+ | `api/server.ts` (multiple) | **L** | Mechanical param-cast repetition; a typed `params(request)` helper centralizes the cast. |
+| F1 | ~~16 route handlers repeat the same `try { … } catch (error) { return fail(reply, error) }` frame~~ **FIXED (hygiene-tail, 2026-09-05)** | `api/server.ts` (grown to 22× `return fail(reply, error)` by the time of the fix) | **M** | Grep count = 16 in one file; a `route()` higher-order wrapper (tenancy + error mapping once) removes ~450 lines and makes the error contract a single edit. Pure mechanical extraction — all 22 handler bodies byte-identical, just de-nested one level; the existing 119-case server+openapi suite was the regression guard. |
+| F2 | ~~`const { sessionId, pageId } = request.params as {…}` cast repeated 9×+~~ **FIXED (hygiene-tail, 2026-09-05)** | `api/server.ts` (grown to 21×) | **L** | Mechanical param-cast repetition; a typed `params(request)` helper centralizes the cast. The two sites with a defensive `= ''` default were dropped — Fastify guarantees a matched route's named path segments are present strings, so the defaults were dead code. |
 | F3 | ~~`statusFor()` code→HTTP switch not checked against the enum~~ **FIXED (Phase 3)** | `api/server.ts:71-99` | **L** | 20 hand-maintained cases vs 21 enum members; a missing case silently defaults to 500. A table keyed by the enum (exhaustiveness-checked) prevents drift. |
-| F4 | 378-line `buildMcpServer()` interleaves tool definitions with dispatch | `mcp-server.ts:83-461` | **L** | Tool schemas (~300 lines) inline before dispatch at `:416`; a module-level `TOOLS` table separates data from control flow and makes adding a tool a data edit. |
+| F4 | ~~378-line `buildMcpServer()` interleaves tool definitions with dispatch~~ **FIXED (hygiene-tail, 2026-09-05)** | `mcp-server.ts:83-461` (grown to 644 lines by the time of the fix) | **L** | Tool schemas (~300 lines) inline before dispatch at `:416`; a module-level `TOOLS` table separates data from control flow and makes adding a tool a data edit. Hoisted to a module-level `buildTools(client)` factory, called once from `buildMcpServer`; dispatch logic untouched. |
 | F5 | ~~MCP `browser_observe` accepts `maxBytes` but omits it from the tool description~~ **FIXED (earlier)** | `mcp-server.ts:196-230` (prop present at `:206-211`, description `:191-195` mentions only `maxElements`) | **L** | Silent capability — agents can't discover `maxBytes` from the schema description. (Also noted P2-6 in `docs/audit.md`.) |
-| F6 | No shared HTTP client abstraction | `sdk client.ts:185-403` | **L** | Timeout/JSON/error-decode logic lives inside `SessionsClient`; any second HTTP consumer re-implements it. Low priority at 4 surfaces. |
+| F6 | ~~No shared HTTP client abstraction~~ **FIXED (2026-09-05)** | `sdk client.ts:185-403` | **L** | Timeout/JSON/error-decode logic lives inside `SessionsClient`; any second HTTP consumer re-implements it. Low priority at 4 surfaces. Consolidated into one `HttpClient.requestJson()` that `AgentBrowserClient` owns and `SessionsClient` calls; every method's per-call header/body/URL-building boilerplate collapsed to a one-line call. `SessionsClient`'s constructor now takes the `HttpClient` instance directly (was 4 positional args); the SDK package is `private: true` and `SessionsClient` was never constructed outside `AgentBrowserClient`, so this was a safe signature change. |
 
 ---
 
@@ -147,8 +149,8 @@ straight deletion or an honest re-label; none needs a design decision.
 
 | # | Finding | Location | Sev | Rationalization (verify this) |
 |---|---------|----------|-----|-------------------------------|
-| G1 | `composite: true` declared (root + core/engine/protocol/testkit) with **no `references` graph anywhere**, and builds run plain `tsc` not `tsc -b` | root `tsconfig.json:20`; per-pkg build scripts `"build": "tsc"` | **L** | `grep -rn '"references"'` returns nothing; `composite` only forces `rootDir` discipline and emits `.tsbuildinfo` (which `clean` deletes) but yields no incremental cross-project build. Either wire `references` + `tsc -b`, or drop `composite`. Topological correctness currently relies on `pnpm -r` ordering, which works — so this is config that misleads, not breakage. |
-| G2 | Service/library code logs via raw `console.*`, bypassing `StructuredLogger` | `core/session-coordinator.ts:305`, `core/approval-gate.ts:252`, `api/server.ts:128,233,818` | **M** | `StructuredLogger` exists but background/error paths call `console.error/warn/log`; combined with `docs/audit.md` P2 (bin.ts builds a logger it never injects), production has no structured operation log for these paths. Inject the logger and route these through it. |
+| G1 | ~~`composite: true` declared (root + core/engine/protocol/testkit) with **no `references` graph anywhere**, and builds run plain `tsc` not `tsc -b`~~ **FIXED (hygiene-tail, 2026-09-05)** | root `tsconfig.json:20`; per-pkg build scripts `"build": "tsc"` | **L** | `grep -rn '"references"'` returns nothing; `composite` only forces `rootDir` discipline and emits `.tsbuildinfo` (which `clean` deletes) but yields no incremental cross-project build. Either wire `references` + `tsc -b`, or drop `composite`. Topological correctness currently relies on `pnpm -r` ordering, which works — so this is config that misleads, not breakage. Dropped `composite` from all 5 tsconfigs; verified with a clean `rm -rf packages/*/dist && pnpm -r build` plus a full type-check that cross-package `.d.ts` resolution is unaffected. |
+| G2 | ~~Service/library code logs via raw `console.*`, bypassing `StructuredLogger`~~ **FIXED (hygiene-tail, 2026-09-05)** | `core/session-coordinator.ts:305`, `core/approval-gate.ts:252`, `api/server.ts:128,233,818` | **M** | `StructuredLogger` exists but background/error paths call `console.error/warn/log`; combined with `docs/audit.md` P2 (bin.ts builds a logger it never injects), production has no structured operation log for these paths. Inject the logger and route these through it. `SessionCoordinator`/`ApprovalGate` gained an optional `logger` field (kept out of their `Required<>` internal config type via `Omit`, since it has no sensible default) and now route their background-cleanup error paths through it — silent-if-uninjected, matching `service.ts`'s existing convention. |
 
 ---
 
@@ -168,3 +170,8 @@ are sound — the findings against them are bounds and guards, not redesigns.
 2. **B1/B2/B8** (name collision + SDK drift + event typo — small, high-confusion), then the rest of **Theme B** behind [ADR-015].
 3. **Theme A** remainder behind [TD-BROWSER-9]; **G2** (logger injection).
 4. Polish: **Theme C** deletions, **Theme F** refactors, **G1** build config, remaining L items.
+
+Followed in that order across four phases (2026-09-04/05) plus a final
+hygiene-tail cycle for the M/L-severity remainder. **Every finding in this
+audit is now fixed** — see the per-row `FIXED` markers above for what
+changed and when.
