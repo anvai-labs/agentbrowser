@@ -2040,6 +2040,46 @@ describe('AgentBrowserService', () => {
         'NOT_FOUND'
       );
     });
+
+    it('should surface a clean error when the engine violates the CapturedArtifact contract (screenshot)', async () => {
+      const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await service.createPage(sessionId)).pageId;
+
+      // CapturedArtifact's bytesBase64 is a compile-time-only guarantee -
+      // BrowserEngine is a plugged-in interface a non-TypeScript engine
+      // could implement without it. Simulate that by having the fake
+      // return a bare ArtifactRef, missing the field entirely.
+      const ids = engine.getSessionIds();
+      const fakePage = engine.getFakePage(ids[ids.length - 1] ?? 'x', pageId);
+      (fakePage as unknown as { screenshot: () => Promise<unknown> }).screenshot = async () => ({
+        artifactId: 'engine-art-1',
+        type: 'screenshot',
+        contentType: 'image/png',
+        sizeBytes: 0,
+        url: '',
+      });
+
+      await expect(service.screenshot(sessionId, pageId, {})).rejects.toMatchServiceError(
+        'INTERNAL'
+      );
+    });
+
+    it('should surface a clean error when the engine violates the CapturedArtifact contract (pdf)', async () => {
+      const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
+      const pageId = (await service.createPage(sessionId)).pageId;
+
+      const ids = engine.getSessionIds();
+      const fakePage = engine.getFakePage(ids[ids.length - 1] ?? 'x', pageId);
+      (fakePage as unknown as { pdf: () => Promise<unknown> }).pdf = async () => ({
+        artifactId: 'engine-art-2',
+        type: 'pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 0,
+        url: '',
+      });
+
+      await expect(service.pdf(sessionId, pageId, {})).rejects.toMatchServiceError('INTERNAL');
+    });
   });
 
   describe('shutdown', () => {
