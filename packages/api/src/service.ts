@@ -126,6 +126,14 @@ export interface ServiceActRequest {
   wait?: { until: string; timeoutMs?: number | undefined } | undefined;
   /** Wait-action condition (the `wait` ACTION; distinct from post-action wait). */
   condition?: { until: string; timeoutMs?: number | undefined } | undefined;
+  /**
+   * TD-BROWSER-8 Phase 2: wait (before this plan step runs) until an
+   * element whose name contains this substring appears - for fields
+   * revealed by a prior step. Plan-step-only; never forwarded to
+   * toProtocolAction. Bounded by waitMs (default 5000ms).
+   */
+  waitForLabel?: string | undefined;
+  waitMs?: number | undefined;
 }
 
 export interface ServiceActResult {
@@ -756,13 +764,42 @@ export class AgentBrowserService {
     const results: Array<{ step: number; ok: boolean; actionId?: string; error?: string }> = [];
     const churnKey = this.churnKey(sessionId, pageId);
     for (const [index, step] of steps.entries()) {
+      // TD-BROWSER-8 Phase 2: pre-step label wait for fields revealed by a
+      // prior step. A caller cannot know the ref of an element that does
+      // not exist yet at plan-authoring time, so waitForLabel resolves the
+      // ref itself - the step's own target is filled in from the wait
+      // unless the step already pinned one. A miss surfaces as a typed
+      // step failure - never a hang.
+      let effectiveStep = step;
+      if (step.waitForLabel !== undefined) {
+        try {
+          const resolvedRef = await this.waitForLabel(
+            sessionId,
+            pageId,
+            step.waitForLabel,
+            step.waitMs
+          );
+          effectiveStep =
+            step.target !== undefined ? step : { ...step, target: { ref: resolvedRef } };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          results.push({ step: index, ok: false, error: message });
+          return {
+            ok: false,
+            completed: index,
+            results,
+            mode: this.churnMode(churnKey),
+            error: { code: 'PLAN_WAIT_TIMEOUT', message },
+          };
+        }
+      }
       try {
-        const effect = await this.act(sessionId, pageId, step);
+        const effect = await this.act(sessionId, pageId, effectiveStep);
         this.decayChurn(churnKey);
         results.push({ step: index, ok: true, actionId: effect.actionId });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        const ordinal = /(?:^|e\d+)_(\d+)$/.exec(step.target?.ref ?? '')?.[1];
+        const ordinal = /(?:^|e\d+)_(\d+)$/.exec(effectiveStep.target?.ref ?? '')?.[1];
         if (ordinal !== undefined && /STALE_TARGET|revision|fingerprint/i.test(message)) {
           this.bumpChurn(churnKey);
           const mode = this.churnMode(churnKey);
@@ -774,12 +811,14 @@ export class AgentBrowserService {
           // back to lastObservation only if that revision was evicted.
           let baseline: PageElement | undefined;
           const page = this.pages.get(pageId);
-          if (step.target?.ref !== undefined && page) {
-            const refRevision = /(?:^|e)(\d+)_/.exec(step.target.ref)?.[1];
+          if (effectiveStep.target?.ref !== undefined && page) {
+            const refRevision = /(?:^|e)(\d+)_/.exec(effectiveStep.target.ref)?.[1];
             baseline =
               (refRevision !== undefined
-                ? page.history.get(Number.parseInt(refRevision, 10))?.byRef.get(step.target.ref)
-                : undefined) ?? page.lastObservation?.byRef.get(step.target.ref);
+                ? page.history
+                    .get(Number.parseInt(refRevision, 10))
+                    ?.byRef.get(effectiveStep.target.ref)
+                : undefined) ?? page.lastObservation?.byRef.get(effectiveStep.target.ref);
           }
 
           const observed = await this.observe(sessionId, pageId, { mode: 'interactive' });
@@ -791,7 +830,7 @@ export class AgentBrowserService {
             ).elements ?? [];
           this.logger?.debug('plan.remap', {
             ordinal,
-            stepRef: step.target?.ref,
+            stepRef: effectiveStep.target?.ref,
             count: elements.length,
             mode,
           });
@@ -836,9 +875,13 @@ export class AgentBrowserService {
             // envelope, not as a thrown error escaping the catch.
             try {
               const retry = await this.act(sessionId, pageId, {
-                ...step,
+                ...effectiveStep,
                 target: { ref: remapped },
               });
+              // Fix: the primary success path decays churn (below); the
+              // remap-retry success path did not, so a plan of repeated
+              // remapped steps never cooled back down out of VERIFIED mode.
+              this.decayChurn(churnKey);
               results.push({ step: index, ok: true, actionId: retry.actionId });
               continue;
             } catch (retryError) {
@@ -877,6 +920,63 @@ export class AgentBrowserService {
       }
     }
     return { ok: true, completed: steps.length, results, mode: this.churnMode(churnKey) };
+  }
+
+  /**
+   * TD-BROWSER-8 Phase 2: poll until an element whose name contains
+   * `label` appears, then return ITS resolved (service-level) ref - a
+   * caller cannot supply a ref for an element that does not exist yet at
+   * plan-authoring time. Ticks use RAW engine observations, not
+   * this.observe() - a full observe() per tick would replace
+   * lastObservation and consume one of the bounded history slots, evicting
+   * the mint-revision baseline verified-mode remap depends on. Only the
+   * final hit runs a real observe(), which also mints the actionable ref.
+   */
+  private async waitForLabel(
+    sessionId: string,
+    pageId: string,
+    label: string,
+    waitMs?: number
+  ): Promise<string> {
+    const page = this.requirePage(sessionId, pageId);
+    const deadline = Date.now() + (waitMs ?? 5000);
+    for (;;) {
+      const raw = await page.enginePage.observe({});
+      const hit = raw.elements.some(
+        (element) => typeof element.name === 'string' && element.name.includes(label)
+      );
+      if (hit) {
+        const observed = (await this.observe(sessionId, pageId, {
+          mode: 'interactive',
+        })) as unknown as { elements: Array<{ ref: string; name?: string }> };
+        const resolved = observed.elements.find(
+          (element) => typeof element.name === 'string' && element.name.includes(label)
+        );
+        if (resolved === undefined) {
+          // Present in the raw tick but not in the redacted/normalized
+          // observation - it exists but under interactive-mode filtering
+          // it doesn't qualify as actionable. Treat as a miss.
+          if (Date.now() >= deadline) {
+            throw new ServiceError(
+              'ACTION_TIMEOUT',
+              `waitForLabel: '${label}' matched a raw element but never became actionable within ${waitMs ?? 5000}ms`,
+              true
+            );
+          }
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          continue;
+        }
+        return resolved.ref;
+      }
+      if (Date.now() >= deadline) {
+        throw new ServiceError(
+          'ACTION_TIMEOUT',
+          `waitForLabel: no element matching '${label}' appeared within ${waitMs ?? 5000}ms`,
+          true
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
   }
 
   private churn = new Map<string, number>();

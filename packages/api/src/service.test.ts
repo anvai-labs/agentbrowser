@@ -133,6 +133,85 @@ describe('AgentBrowserService', () => {
       expect(result.error).toBeDefined();
     });
 
+    it('waitForLabel waits for a click-revealed field before the next step runs (TD-BROWSER-8 Phase 2)', async () => {
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+
+      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
+      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
+      fakePage?.setElements([{ role: 'button', name: 'Continue' }]);
+      const obs = (await service.observe(session.sessionId, pageId, {
+        mode: 'interactive',
+      })) as unknown as { elements: Array<{ ref: string }> };
+      const continueRef = obs.elements[0].ref;
+
+      // The password field is NOT present yet; it appears asynchronously
+      // as a consequence of the click (never synchronously - a
+      // synchronous reveal would pass even without a real poll loop).
+      fakePage?.revealAfterClick('Continue', [{ role: 'textbox', name: 'Password' }], 80);
+
+      const result = await service.executePlan(session.sessionId, pageId, [
+        { action: 'click', target: { ref: continueRef } },
+        { action: 'fill', waitForLabel: 'Password', value: 'hunter2' } as never,
+      ]);
+
+      expect(result.ok).toBe(true);
+      expect(result.results).toHaveLength(2);
+    });
+
+    it('waitForLabel surfaces a typed timeout instead of hanging when the label never appears', async () => {
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+
+      const result = await service.executePlan(session.sessionId, pageId, [
+        { action: 'click', waitForLabel: 'Never Appears', waitMs: 120 } as never,
+      ]);
+
+      expect(result.ok).toBe(false);
+      expect(result.error?.code).toBe('PLAN_WAIT_TIMEOUT');
+      expect(result.error?.message).toMatch(/Never Appears/);
+    });
+
+    it('decays churn on a successful remap-retry step, not just the primary path', async () => {
+      // Without the fix, the stale->remap path bumps churn on every step
+      // that goes stale but never decays it back down on a successful
+      // retry - so a plan with several remapped-but-fine steps would climb
+      // monotonically and stay pinned in verified mode even after the page
+      // has actually stabilized. Two remapped-and-successful steps using
+      // the SAME (increasingly stale) ref should net back to the
+      // pre-plan churn level, not accumulate.
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+
+      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
+      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
+      fakePage?.setElements([{ role: 'button', name: 'Submit' }]);
+      const obs = (await service.observe(session.sessionId, pageId, {
+        mode: 'interactive',
+      })) as unknown as { elements: Array<{ ref: string }> };
+      const ref = obs.elements[0].ref;
+
+      const churnKey = `${session.sessionId}:${pageId}`;
+      const churn = (service as unknown as { churn: Map<string, number> }).churn;
+      churn.set(churnKey, 3);
+
+      // Advance the revision so the ref is already stale before the plan
+      // starts; the element still matches role+label so each remap succeeds.
+      await service.act(session.sessionId, pageId, { action: 'scroll', direction: 'down' });
+
+      const before = churn.get(churnKey) ?? 0;
+      const result = await service.executePlan(session.sessionId, pageId, [
+        { action: 'click', target: { ref } },
+        { action: 'click', target: { ref } },
+      ]);
+
+      expect(result.ok).toBe(true);
+      expect(churn.get(churnKey) ?? 0).toBe(before);
+    });
+
     it('does not leak a churn-tracking entry after page/session teardown (TD-BROWSER-9, A8)', async () => {
       const session = await service.createSession({ tenantId: 't1' });
       const pageId = (await service.createPage(session.sessionId)).pageId;
