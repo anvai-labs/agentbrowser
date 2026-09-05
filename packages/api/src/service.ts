@@ -1756,6 +1756,19 @@ export class AgentBrowserService {
         throw error;
       }
 
+      // Boundary check (not redundant with the CapturedArtifact type): that
+      // type is compile-time only, and BrowserEngine is a plugged-in
+      // interface a non-TypeScript engine could implement without it.
+      // Fail with a diagnosable error naming the contract violation instead
+      // of an opaque Buffer.from(undefined, ...) TypeError.
+      if (typeof captured.bytesBase64 !== 'string') {
+        throw new ServiceError(
+          'INTERNAL',
+          'The active engine returned a PDF capture with no bytesBase64 payload (BrowserEngine contract violation).',
+          false,
+          { sessionId }
+        );
+      }
       const bytes = Buffer.from(captured.bytesBase64, 'base64');
       return this.artifacts.put('pdf', 'application/pdf', new Uint8Array(bytes), {
         sessionId,
@@ -2029,6 +2042,19 @@ export class AgentBrowserService {
         throw error;
       }
 
+      // Boundary check (not redundant with the CapturedArtifact type): that
+      // type is compile-time only, and BrowserEngine is a plugged-in
+      // interface a non-TypeScript engine could implement without it.
+      // Fail with a diagnosable error naming the contract violation instead
+      // of an opaque Buffer.from(undefined, ...) TypeError.
+      if (typeof captured.bytesBase64 !== 'string') {
+        throw new ServiceError(
+          'INTERNAL',
+          'The active engine returned a screenshot capture with no bytesBase64 payload (BrowserEngine contract violation).',
+          false,
+          { sessionId }
+        );
+      }
       const bytes = Buffer.from(captured.bytesBase64, 'base64');
       // maskSensitive honesty (spec 12/16): pixel masking needs element
       // geometry the engines do not expose yet. When values may be on
