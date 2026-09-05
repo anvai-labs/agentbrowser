@@ -444,9 +444,36 @@ class FakePage implements EnginePage {
               : { dialog: 'dismissed' },
         };
       }
-      case 'click':
+      case 'click': {
         this.revision++;
+        const target = action.target as EngineTarget | undefined;
+        const clicked = target ? this.elementByRef.get(target.ref) : undefined;
+        const revealIndex = clicked
+          ? this.pendingReveals.findIndex((r) => r.matchName === clicked.name)
+          : -1;
+        if (revealIndex !== -1) {
+          const reveal = this.pendingReveals[revealIndex] as (typeof this.pendingReveals)[number];
+          this.pendingReveals.splice(revealIndex, 1);
+          setTimeout(() => {
+            const baseIndex = this.elements.length;
+            const added: FakeElement[] = reveal.elements.map((el, i) => ({
+              ref: el.ref ?? `e${this.revision}_${baseIndex + i + 1}`,
+              role: el.role ?? 'unknown',
+              name: el.name ?? '',
+              value: el.value ?? '',
+              required: el.required ?? false,
+              visible: el.visible ?? true,
+              enabled: el.enabled ?? true,
+              focused: el.focused ?? false,
+              ...(el.risk !== undefined ? { risk: el.risk } : {}),
+              attributes: el.attributes ?? {},
+            }));
+            this.elements = [...this.elements, ...added];
+            this.syncElementIndex();
+          }, reveal.delayMs);
+        }
         break;
+      }
       case 'fill': {
         // A real page keeps the typed value; so does the fake.
         const target = action.target as EngineTarget | undefined;
@@ -654,6 +681,31 @@ class FakePage implements EnginePage {
     ]
       .filter(Boolean)
       .join('_');
+  }
+
+  private pendingReveals: Array<{
+    matchName: string;
+    elements: Array<Partial<FakeElement>>;
+    delayMs: number;
+  }> = [];
+
+  /**
+   * Test hook (TD-BROWSER-8 Phase 2 pressure matrix): after a click on the
+   * element named `matchName`, ASYNCHRONOUSLY (setTimeout) append
+   * `elements` to the page - simulating an onclick-revealed field (e.g. a
+   * password field shown after a "Continue" click). Deliberately async: a
+   * synchronous reveal would pass even if waitForLabel's poll loop only
+   * checked once. Matched by NAME rather than ref: the service re-mints
+   * its own refs on top of the engine's (see the refMap bridge in
+   * service.ts observe()), so a caller-visible ref never equals the raw
+   * ref this engine's click case receives.
+   */
+  revealAfterClick(
+    matchName: string,
+    elements: Array<Partial<FakeElement>>,
+    delayMs = 100
+  ): void {
+    this.pendingReveals.push({ matchName, elements, delayMs });
   }
 
   /**

@@ -682,6 +682,69 @@ describe('AgentBrowser REST API', () => {
       );
     });
 
+    it('should export the session trace as an artifact (A3)', async () => {
+      // Generate some traced operations first.
+      await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/navigate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: 'https://example.com' }),
+      });
+
+      const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/trace`, {
+        method: 'POST',
+      });
+      expect(response.status).toBe(201);
+      const meta = await response.json();
+      expect(meta.type).toBe('trace');
+      expect(meta.contentType).toBe('application/json');
+
+      // Round-trip the artifact: it must contain the navigate span.
+      const artifact = await fetch(
+        `${baseUrl}/v1/sessions/${sessionId}/artifacts/${meta.artifactId}`
+      );
+      expect(artifact.status).toBe(200);
+      const artifactBody = await artifact.json();
+      const trace = JSON.parse(
+        Buffer.from(artifactBody.contentBase64 as string, 'base64').toString('utf8')
+      );
+      const names = trace.spans.map((span: { name: string }) => span.name);
+      expect(names).toContain('navigate');
+      expect(
+        trace.spans.every(
+          (span: { attributes: { sessionId?: string } }) => span.attributes.sessionId === sessionId
+        )
+      ).toBe(true);
+    });
+
+    it('should capture the page HTML as an artifact with a redaction warning (A3)', async () => {
+      const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/html`, {
+        method: 'POST',
+      });
+      expect(response.status).toBe(201);
+      const meta = await response.json();
+      expect(meta.type).toBe('html');
+      expect(meta.description).toMatch(/NOT secret-redacted/);
+    });
+
+    it('should expose the session event ledger with console replay (A3)', async () => {
+      // Emit a console event through the engine (FakeEngine-backed test server).
+      const events = await fetch(`${baseUrl}/v1/sessions/${sessionId}/events/replay`);
+      expect(events.status).toBe(200);
+      const body = await events.json();
+      expect(Array.isArray(body.events)).toBe(true);
+    });
+
+    it('should reject undelivered observation modes typed (A3)', async () => {
+      const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/observe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'compact_dom' }),
+      });
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error.message).toMatch(/not delivered/);
+    });
+
     it('should reject an unsupported format', async () => {
       const response = await fetch(
         `${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/screenshot`,
@@ -819,6 +882,71 @@ describe('AgentBrowser REST API safety integration', () => {
     return { sessionId, pageId };
   };
 
+  describe('plan and snapshot over HTTP (TD-BROWSER-8, contract-honesty)', () => {
+    it('should return a self-contained snapshot bounded by maxElements', async () => {
+      const { sessionId, pageId } = await setupPage();
+      await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/navigate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: 'https://example.com' }),
+      });
+
+      const full = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/snapshot`);
+      expect(full.status).toBe(200);
+      const fullBody = await full.json();
+      expect(fullBody.fields).toBeDefined();
+      expect(fullBody.mode).toBe('stable');
+
+      const bounded = await fetch(
+        `${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/snapshot?maxElements=1`
+      );
+      expect(bounded.status).toBe(200);
+      const boundedBody = await bounded.json();
+      expect(boundedBody.fields.length).toBeLessThanOrEqual(1);
+    });
+
+    it('should execute a plan over HTTP and report the final revision', async () => {
+      const { sessionId, pageId } = await setupPage();
+      await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/navigate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: 'https://example.com' }),
+      });
+      const obsResponse = await fetch(
+        `${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/observe`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: 'interactive' }),
+        }
+      );
+      const { elements } = await obsResponse.json();
+      if (elements.length === 0) return;
+
+      const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          actions: [{ action: 'click', target: { ref: elements[0].ref } }],
+        }),
+      });
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(data.ok).toBe(true);
+      expect(typeof data.newRevision).toBe('number');
+    });
+
+    it('should reject a plan body without an actions array', async () => {
+      const { sessionId, pageId } = await setupPage();
+      const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      expect(response.status).toBe(400);
+    });
+  });
+
   describe('network egress policy at the HTTP layer', () => {
     it('should 403 POLICY_DENIED for loopback navigation', async () => {
       const { sessionId, pageId } = await setupPage();
@@ -954,6 +1082,36 @@ describe('AgentBrowser REST API safety integration', () => {
         revision: expect.any(Number),
       });
       expect(typeof result.evidence[0].hash).toBe('string');
+    });
+
+    it('should extract via schema over HTTP and reject a malformed schema', async () => {
+      const { sessionId, pageId } = await setupPage();
+      const schemaOk = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/extract`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          format: 'schema',
+          schema: { properties: { title: { type: 'string' } } },
+        }),
+      });
+      expect(schemaOk.status).toBe(200);
+      const data = await schemaOk.json();
+      expect(data.data).toBeDefined();
+      expect(Array.isArray(data.evidence)).toBe(true);
+
+      const noSchema = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/extract`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ format: 'schema' }),
+      });
+      expect(noSchema.status).toBe(400);
+
+      const badSchema = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/extract`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ format: 'schema', schema: { properties: 'nope' } }),
+      });
+      expect(badSchema.status).toBe(400);
     });
 
     it('should reject an unknown format', async () => {

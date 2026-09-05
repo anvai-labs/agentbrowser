@@ -5,6 +5,72 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [Unreleased]
+
+### Added
+
+- **Evidence completion** (spec §5.1, A3): the span tracer now actually runs
+  in production (built and tested since v1.7.1, but never constructed by the
+  server); `POST /v1/sessions/:id/trace` exports a session's completed,
+  secret-scrubbed spans as a JSON artifact, and
+  `POST /v1/sessions/:id/pages/:id/html` captures the page's raw HTML
+  (explicitly marked NOT secret-redacted — typed-in form values ride it
+  verbatim). `GET /v1/sessions/:id/events/replay` exposes a bounded
+  per-session event ledger for late subscribers. Requesting an undelivered
+  observation mode (`compact_dom`, `visual`) now fails typed instead of
+  silently returning zero elements.
+- **`waitForLabel` plan steps** (TD-BROWSER-8 Phase 2): a plan step can
+  declare `waitForLabel` (substring match) + `waitMs` instead of a fixed
+  `target` — for fields that only exist after a prior step (e.g. a password
+  field revealed by clicking Continue). The executor polls, resolves the
+  ref itself once the label appears, and fills it into the step; a miss
+  surfaces as a typed `PLAN_WAIT_TIMEOUT`, never a hang.
+- **`/plan` and `/snapshot` are now documented in OpenAPI** — both have been
+  reachable since Phase 1 but were invisible to any spec-generated client.
+  The snapshot route (and SDK method) accept `maxElements`/`maxBytes`
+  bounds; `executePlan`'s response gains `newRevision`. The CLI gains
+  matching `snapshot` and `plan` commands.
+- **Schema extraction is complete end-to-end**: CLI `--schema`, SDK
+  `ExtractResult.modelUsed`/`tokenUsage`, and REST/SDK/MCP test coverage
+  (previously wired in Phase 1 but never tested on those surfaces). The
+  schema argument itself is now shape-validated instead of accepting any
+  truthy value.
+
+### Fixed
+
+- **Model-adapter hygiene in schema extraction** (hygiene finding E1, worse
+  than originally audited): a model failure no longer discards deterministic
+  results that had already succeeded, and — the more serious half — **page
+  text is now redacted before an injected model adapter sees it**, not only
+  on the value it returns. No production code path injects a model today
+  (this closes a public-API hazard, not a live leak). Text handed to an
+  adapter is also capped. Property-name matching is regex-escaped and
+  word-boundary anchored (`price` no longer matches inside `pricey`, E2).
+- A stale-then-successfully-remapped plan step now decays its own churn
+  bump, matching the always-clean success path. Previously only fully clean
+  steps decayed churn, so a plan with several remapped-but-fine steps could
+  ratchet upward forever and stay pinned in verified mode even after the
+  page had genuinely stabilized.
+- A dead `vitest` `resolve.alias` in `packages/api` (relative to CWD, so
+  silently broken under `pnpm -r test`) is fixed — surfaced by this cycle's
+  first API-package test importing `@agentbrowser/engine-playwright`
+  directly.
+
+### Changed
+
+- **ADR-005: session-resume snapshots are de-scoped**, not implemented.
+  Auth re-entry — the only real reason to want this — is already fully
+  served by cookie seeding (TD-BROWSER-6); the one genuine gap
+  (localStorage-based auth) has zero engine support today and would need
+  its own scoped TD if it ever becomes a real need. See the ADR for the
+  full reasoning.
+- TD-BROWSER-8 status corrected: the adaptive-modes table previously
+  claimed VERIFIED mode inserts an observation before every step and rides
+  snapshots on responses — neither was ever built. VERIFIED only changes
+  remap-matching strictness (role+label required, never guesses).
+- ADR-003: `compact_dom` is documented as not delivered (was silently
+  returning an empty observation; now a typed `INVALID_REQUEST`).
+
 ## [1.8.0] — 2026-09-04
 
 ### Added

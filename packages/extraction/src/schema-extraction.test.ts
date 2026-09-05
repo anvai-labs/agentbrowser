@@ -9,6 +9,7 @@
  * actually ran. The browser service functions without an LLM.
  */
 
+import { SecretManager } from '@agentbrowser/core';
 import type { RawPageState } from '@agentbrowser/engine';
 import { describe, expect, it } from 'vitest';
 import { SchemaExtractor } from './schema-extraction';
@@ -130,5 +131,90 @@ describe('SchemaExtractor (deterministic provider)', () => {
 
     expect(a.data).toEqual(b.data);
     expect(a.evidence?.[0]?.hash).toBe(b.evidence?.[0]?.hash);
+  });
+});
+
+describe('model-adapter hygiene (E1) + adjacency anchoring (E2)', () => {
+  it('keeps deterministic data and warns when the model throws (E1)', async () => {
+    const extractor = new SchemaExtractor({
+      model: {
+        name: 'flakey',
+        async extract() {
+          throw new Error('rate limited');
+        },
+      },
+    });
+    const result = await extractor.extract(PAGE, {
+      ...PRODUCT_SCHEMA,
+      properties: { ...PRODUCT_SCHEMA.properties, rating: { type: 'string' } },
+    });
+
+    // Deterministic results survive the model failure.
+    expect(result.data).toMatchObject({ price: '$29.99' });
+    expect(result.modelUsed).toBeUndefined();
+    expect(result.warnings?.some((w) => w.includes('model extraction failed'))).toBe(true);
+  });
+
+  it('redacts page text BEFORE the model sees it (E1)', async () => {
+    let seenText = '';
+    const extractor = new SchemaExtractor({
+      secretManager: new SecretManager({ 'vault://p': 'hunter2' }),
+      model: {
+        name: 'spy-model',
+        async extract(input) {
+          seenText = input.text;
+          return {};
+        },
+      },
+    });
+    // Put a secret in the page text where deterministic matching won't
+    // consume it as a field value (standalone line).
+    const page: RawPageState = {
+      ...PAGE,
+      content: `${PAGE.content}<p>note hunter2 end</p>`,
+    };
+    await extractor.extract(page, PRODUCT_SCHEMA);
+
+    expect(seenText).not.toContain('hunter2');
+  });
+
+  it('caps the text handed to the model (E1)', async () => {
+    let seenLength = 0;
+    const extractor = new SchemaExtractor({
+      model: {
+        name: 'cap-model',
+        async extract(input) {
+          seenLength = input.text.length;
+          return {};
+        },
+      },
+    });
+    const big: RawPageState = {
+      ...PAGE,
+      content: `${PAGE.content}<p>${'x'.repeat(50_000)}</p>`,
+    };
+    await extractor.extract(big, {
+      ...PRODUCT_SCHEMA,
+      properties: { ...PRODUCT_SCHEMA.properties, rating: { type: 'string' } },
+    });
+
+    expect(seenLength).toBeLessThanOrEqual(20_000);
+  });
+
+  it('does not match a property inside a longer word (E2)', async () => {
+    // 'price' must not fire on the word 'pricey'.
+    const page: RawPageState = {
+      ...PAGE,
+      content: '<html><body><h1>Widget</h1><p>pricey $9.99</p></body></html>',
+    };
+    const extractor = new SchemaExtractor();
+    const result = await extractor.extract(page, {
+      type: 'object',
+      properties: { price: { type: 'string' } },
+      required: ['price'],
+    });
+
+    expect(result.data.price).toBeUndefined();
+    expect(result.warnings?.some((w) => w.includes("required field 'price'"))).toBe(true);
   });
 });

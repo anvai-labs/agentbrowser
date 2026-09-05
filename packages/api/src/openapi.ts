@@ -333,6 +333,207 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         },
       },
 
+      '/v1/sessions/{sessionId}/trace': {
+        post: {
+          operationId: 'exportSessionTrace',
+          summary: 'Export the session trace as an artifact',
+          description:
+            "A3 evidence: the session's completed spans (secret-scrubbed, bounded) " +
+            'serialized as a JSON artifact. Served via the standard artifact route ' +
+            '(TTL, ownership or signed token).',
+          tags: ['sessions'],
+          parameters: [sessionIdParam],
+          responses: {
+            '201': {
+              description: 'Artifact metadata for the trace.',
+              content: json(ref('ArtifactRef')),
+            },
+            '404': NOT_FOUND,
+          },
+        },
+      },
+
+      '/v1/sessions/{sessionId}/events/replay': {
+        get: {
+          operationId: 'getSessionEvents',
+          summary: 'Replay the session event ledger',
+          description:
+            "A3 evidence: the session's recent engine events (bounded ring, oldest " +
+            'first) - console lines and lifecycle events for late subscribers. ' +
+            'Optional ?type= filters by event type.',
+          tags: ['sessions'],
+          parameters: [
+            sessionIdParam,
+            {
+              name: 'type',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Filter by event type, e.g. console.log.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'The retained events.',
+              content: json({
+                type: 'object',
+                required: ['events'],
+                properties: { events: { type: 'array', items: { type: 'object' } } },
+              }),
+            },
+            '404': NOT_FOUND,
+          },
+        },
+      },
+
+      '/v1/sessions/{sessionId}/pages/{pageId}/html': {
+        post: {
+          operationId: 'exportPageHtml',
+          summary: 'Capture the page HTML as an artifact',
+          description:
+            "A3 evidence: the page's current HTML as a text/html artifact. Raw " +
+            'HTML is NOT secret-redacted - values typed into forms ride it ' +
+            'verbatim; the artifact metadata carries an explicit warning.',
+          tags: ['pages'],
+          parameters: [sessionIdParam, pageIdParam],
+          responses: {
+            '201': {
+              description: 'Artifact metadata for the HTML.',
+              content: json(ref('ArtifactRef')),
+            },
+            '404': NOT_FOUND,
+          },
+        },
+      },
+
+      '/v1/sessions/{sessionId}/pages/{pageId}/snapshot': {
+        get: {
+          operationId: 'getPageSnapshot',
+          summary: 'Self-contained observation for browser_plan',
+          description:
+            'ADR-012/TD-BROWSER-8: a self-contained snapshot (url, title, revision, ' +
+            'mode, fields) usable as browser_plan targets in one round trip, with no ' +
+            'separate observe call. `mode` reflects the adaptive stable/verified state ' +
+            '(raised after repeated ref churn). Optional ?maxElements=/?maxBytes= bound ' +
+            'the fields payload (pressure-matrix payload economics).',
+          tags: ['pages'],
+          parameters: [
+            sessionIdParam,
+            pageIdParam,
+            {
+              name: 'maxElements',
+              in: 'query',
+              schema: { type: 'integer', minimum: 1 },
+              description: 'Cap the number of fields returned.',
+            },
+            {
+              name: 'maxBytes',
+              in: 'query',
+              schema: { type: 'integer', minimum: 1 },
+              description: 'Cap the serialized response size in bytes.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'The page snapshot.',
+              content: json({
+                type: 'object',
+                required: ['url', 'title', 'revision', 'mode', 'fields'],
+                properties: {
+                  url: { type: 'string' },
+                  title: { type: 'string' },
+                  revision: { type: 'integer' },
+                  mode: { type: 'string', enum: ['stable', 'verified'] },
+                  fields: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      required: ['ref', 'role', 'label'],
+                      properties: {
+                        ref: { type: 'string' },
+                        role: { type: 'string' },
+                        label: { type: 'string' },
+                      },
+                    },
+                  },
+                  truncated: { type: 'boolean' },
+                },
+              }),
+            },
+            '404': NOT_FOUND,
+          },
+        },
+      },
+
+      '/v1/sessions/{sessionId}/pages/{pageId}/plan': {
+        post: {
+          operationId: 'executePagePlan',
+          summary: 'Execute a batched action plan in one call',
+          description:
+            'TD-BROWSER-8: run several act steps sequentially in one call. The first ' +
+            'hard failure aborts with the completed prefix reported. Stale refs ' +
+            'self-heal once by re-observing (adaptive stable/verified matching by churn). ' +
+            'A step for a field revealed by a prior step (Phase 2) may declare ' +
+            '`waitForLabel` (substring match on the element name) instead of `target` - ' +
+            'the executor waits for it to appear (bounded by `waitMs`, default 5000) and ' +
+            'resolves the ref itself.',
+          tags: ['pages'],
+          parameters: [sessionIdParam, pageIdParam],
+          requestBody: {
+            required: true,
+            content: json({
+              type: 'object',
+              required: ['actions'],
+              properties: {
+                actions: {
+                  type: 'array',
+                  description:
+                    'Ordered plan steps: each is an ActionRequest, optionally with ' +
+                    '`waitForLabel` + `waitMs` instead of `target`.',
+                  items: ref('ActionRequest'),
+                },
+              },
+            }),
+          },
+          responses: {
+            '200': {
+              description: 'The plan outcome.',
+              content: json({
+                type: 'object',
+                required: ['ok', 'completed', 'results', 'mode', 'newRevision'],
+                properties: {
+                  ok: { type: 'boolean' },
+                  completed: { type: 'integer' },
+                  results: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      required: ['step', 'ok'],
+                      properties: {
+                        step: { type: 'integer' },
+                        ok: { type: 'boolean' },
+                        actionId: { type: 'string' },
+                        error: { type: 'string' },
+                      },
+                    },
+                  },
+                  mode: { type: 'string', enum: ['stable', 'verified'] },
+                  newRevision: {
+                    type: 'integer',
+                    description: "Payload economics: the plan's cheap final-state signal.",
+                  },
+                  error: {
+                    type: 'object',
+                    properties: { code: { type: 'string' }, message: { type: 'string' } },
+                  },
+                },
+              }),
+            },
+            '400': INVALID_REQUEST,
+            '404': NOT_FOUND,
+          },
+        },
+      },
+
       '/v1/sessions/{sessionId}/cookies': {
         get: {
           operationId: 'getSessionCookies',
@@ -673,6 +874,19 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                   type: 'string',
                   enum: [...DELIVERED_EXTRACT_FORMATS],
                 },
+                schema: {
+                  type: 'object',
+                  description:
+                    'JSON Schema for format=schema: flat top-level ' +
+                    'properties (name -> {type, description}) + optional ' +
+                    'required array. Deterministic matching first; an ' +
+                    'injected model adapter (if configured) only fills ' +
+                    'fields the deterministic pass could not find.',
+                  properties: {
+                    properties: { type: 'object' },
+                    required: { type: 'array', items: { type: 'string' } },
+                  },
+                },
               },
             }),
           },
@@ -699,6 +913,10 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                     },
                   },
                   warnings: { type: 'array', items: { type: 'string' } },
+                  modelUsed: {
+                    type: 'string',
+                    description: 'Which model adapter contributed, if any.',
+                  },
                 },
               }),
             },

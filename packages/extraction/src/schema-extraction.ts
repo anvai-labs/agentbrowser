@@ -26,6 +26,9 @@ export interface ModelExtractProvider {
   }): Promise<Record<string, unknown>>;
 }
 
+/** Cap on page text handed to a model adapter (hygiene E1). */
+const MAX_MODEL_TEXT_CHARS = 20_000;
+
 export interface SchemaExtractorOptions {
   /** Pluggable model provider; absent = deterministic matching only. */
   model?: ModelExtractProvider;
@@ -38,6 +41,11 @@ interface SchemaProperty {
 }
 
 /** Parse a minimal subset of JSON Schema: object with properties/required. */
+/** Escape regex metacharacters in a property name before interpolation (hygiene E2). */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function propertiesOf(schema: Record<string, unknown>): SchemaProperty[] {
   const properties = (schema.properties ?? {}) as Record<string, unknown>;
   const required = new Set((schema.required as string[] | undefined) ?? []);
@@ -92,7 +100,7 @@ function matchFields(
     // Class-scoped inner text first: <span class="price">$29.99</span>
     // is the page explicitly labeling its data.
     const classPattern = new RegExp(
-      `class="[^"]*\\b${property.name}\\b[^"]*"[^>]*>([^<]{1,200})<`,
+      `class="[^"]*\\b${escapeRegExp(property.name)}\\b[^"]*"[^>]*>([^<]{1,200})<`,
       'i'
     );
     const classMatch = classPattern.exec(rawTitleSource)?.[1]?.trim();
@@ -102,7 +110,10 @@ function matchFields(
     }
 
     // `label value` adjacency in text: "price: $29.99" / "sku SKU-42".
-    const pattern = new RegExp(`(?:^|\\s)${property.name}\\s*[:=]?\\s*([^\\s]{1,80})`, 'i');
+    const pattern = new RegExp(
+      `(?:^|\\s)${escapeRegExp(property.name)}\b\\s*[:=]?\\s*([^\\s]{1,80})`,
+      'i'
+    );
     const match = pattern.exec(text);
     if (match?.[1] !== undefined) {
       data[property.name] = match[1].replace(/[,;]$/, '');
@@ -134,15 +145,33 @@ export class SchemaExtractor {
     let data: Record<string, unknown> = matched.data;
 
     // Model adapter for the remainder; deterministic results win.
+    // Hygiene E1: the adapter call is GUARDED (a model failure must never
+    // discard the deterministic results that already succeeded) and the
+    // text is REDACTED before it leaves this module - previously redaction
+    // ran only on the returned data, after the model had already seen the
+    // raw page text. The payload is also capped.
     const remaining = properties.filter((p) => data[p.name] === undefined);
     let modelUsed: string | undefined;
     if (this.model !== undefined && remaining.length > 0) {
-      const modelData = await this.model.extract({ title: raw.title, text, schema });
-      modelUsed = this.model.name;
-      for (const property of remaining) {
-        if (modelData[property.name] !== undefined) {
-          data[property.name] = modelData[property.name];
+      const safeText = this.secretManager !== undefined ? this.secretManager.redact(text) : text;
+      try {
+        const modelData = await this.model.extract({
+          title: raw.title,
+          text: safeText.slice(0, MAX_MODEL_TEXT_CHARS),
+          schema,
+        });
+        modelUsed = this.model.name;
+        for (const property of remaining) {
+          if (modelData[property.name] !== undefined) {
+            data[property.name] = modelData[property.name];
+          }
         }
+      } catch (error) {
+        warnings.push(
+          `model extraction failed; deterministic results kept: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
       }
     }
 

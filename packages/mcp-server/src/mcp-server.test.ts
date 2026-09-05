@@ -394,6 +394,36 @@ describe('AgentBrowser MCP server', () => {
       expect(extracted.evidence[0].hash).toBe('abc12345');
     });
 
+    it('should forward schema extraction and reject a missing schema', async () => {
+      const ok = JSON.parse(
+        await call('ex-s1', 'browser_extract', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          format: 'schema',
+          schema: { properties: { price: { type: 'string' } } },
+        })
+      );
+      expect(ok.result.isError).toBeUndefined();
+      expect(sessions.extract).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        format: 'schema',
+        schema: { properties: { price: { type: 'string' } } },
+      });
+
+      // The tool does not itself require schema (the service's 400 is the
+      // single source of truth) - it forwards faithfully.
+      const forwarded = JSON.parse(
+        await call('ex-s2', 'browser_extract', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          format: 'schema',
+        })
+      );
+      expect(forwarded.result.isError).toBeUndefined();
+      expect(sessions.extract).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        format: 'schema',
+      });
+    });
+
     it('should reject an unknown extract format', async () => {
       const response = JSON.parse(
         await call('10c', 'browser_extract', {

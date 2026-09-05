@@ -132,6 +132,9 @@ export interface ExtractResult {
     hash: string;
   }>;
   warnings?: string[];
+  /** Which model adapter contributed (only when one is injected). */
+  modelUsed?: string;
+  tokenUsage?: Record<string, unknown>;
 }
 
 export interface ScreenshotRequest {
@@ -201,6 +204,7 @@ export interface PageSnapshot {
   revision: number;
   mode: 'stable' | 'verified';
   fields: Array<{ ref: string; role: string; label: string }>;
+  truncated?: boolean;
 }
 
 /**
@@ -324,9 +328,17 @@ export class SessionsClient {
   }
 
   /** TD-BROWSER-8: self-contained snapshot payload for one-shot LLM reasoning. */
-  async snapshot(sessionId: string, pageId: string): Promise<PageSnapshot> {
+  async snapshot(
+    sessionId: string,
+    pageId: string,
+    bounds?: { maxElements?: number; maxBytes?: number }
+  ): Promise<PageSnapshot> {
+    const query = new URLSearchParams();
+    if (bounds?.maxElements !== undefined) query.set('maxElements', String(bounds.maxElements));
+    if (bounds?.maxBytes !== undefined) query.set('maxBytes', String(bounds.maxBytes));
+    const qs = query.toString();
     const response = await this.requestFn(
-      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/snapshot`,
+      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/snapshot${qs ? `?${qs}` : ''}`,
       { headers: this.headers }
     );
     return this.handleResponse(response);

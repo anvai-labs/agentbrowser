@@ -65,11 +65,10 @@ Terminal outcomes (lowercase states in code; close carries a reason):
 
 - Cookies via export API
 - Page screenshots/PDFs
-- Execution traces
+- Execution traces (`POST /v1/sessions/{id}/trace`, A3)
+- Page HTML (`POST /v1/sessions/{id}/pages/{id}/html`, A3)
 - Network logs
 - Downloaded files (via explicit save)
-- Session snapshots for resume (spec'd; not implemented - the ADR-012 page
-  snapshot is an observation payload, not a resume mechanism)
 
 ## Consequences
 
@@ -200,9 +199,49 @@ POST /v1/sessions
 GET /v1/sessions/{id}/cookies
 Response: { "cookies": [...] }   // httpOnly included; re-seed via create
 
-// Export trace - spec'd, no route exists today
-// Session-resume snapshots + restoreFrom - spec'd, not implemented
+// Export trace (shipped, A3, Phase 2)
+POST /v1/sessions/{id}/trace
+Response: ArtifactRef             // completed spans, secret-scrubbed, as JSON
+
+// Export page HTML (shipped, A3, Phase 2)
+POST /v1/sessions/{id}/pages/{id}/html
+Response: ArtifactRef             // raw HTML, NOT secret-redacted (metadata says so)
 ```
+
+### Session-resume snapshots: de-scoped (Phase 2 decision, 2026-09-04)
+
+Spec'd but never built; deliberately de-scoped rather than implemented.
+Auth re-entry - the dominant reason anyone would want to "resume" a
+session - is already fully served by cookie seeding
+([TD-BROWSER-6](../td/TD-BROWSER-6-headed-sessions-and-credential-handoff.md)):
+create a new session with the previous session's `cookies`, and it
+re-enters the authenticated state.
+
+A snapshot mechanism would add exactly one thing cookies can't cover:
+localStorage/sessionStorage-based auth (SPAs keeping a JWT in storage
+rather than a cookie). Nothing else it could plausibly restore is real -
+refs and revision are process-local minting state, meaningless after a
+restore; a restored page still needs a fresh `observe()` before any
+action can target it; "resuming" open pages is just the caller replaying
+the URLs it already knows via `createPage` + `navigate`. And the
+capability that *would* be real - storage-state restore - has zero
+engine support today (no engine exposes `localStorage`; Playwright's
+`context.storageState()` is unused anywhere in this codebase) and would
+need an `EnginePage` interface change plus a real answer for Safari
+(WebDriver-injected `localStorage` access is a same-origin,
+post-navigation-only operation, the same constraint that already
+complicates its cookie seeding). A snapshot artifact holding cookies (or
+worse, storage) is also a serialized credential bundle, which is exactly
+the kind of persistent artifact ADR-005's ephemeral-by-default stance
+exists to avoid creating casually.
+
+`BrowserEngine.restoreSession?()` and `EngineSession.snapshot?()` remain
+on the engine interface as optional, unimplemented hooks (no engine
+implements either) - kept for now as a documented non-goal rather than
+removed, since they're additive and cost nothing unused. If storage-based
+auth re-entry becomes a real, asked-for need, it gets its own TD scoped
+to exactly that (storageState resume), not a general session-snapshot
+mechanism.
 
 ### Cleanup verification
 
@@ -230,6 +269,5 @@ async auditCleanup(session) {
 - Fresh session has zero cookies/storage
 - After close, no temp files remain
 - After close, no browser processes remain
-- Can export specific data types on demand
-- Can resume from snapshot (not yet implemented)
+- Can export specific data types on demand (cookies, trace, page HTML)
 - No cross-tenant storage references possible

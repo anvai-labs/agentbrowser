@@ -16,6 +16,7 @@ import type {
   ObservationRequest,
   ObservationResponse,
   PageResponse,
+  PageSnapshot,
   ScreenshotRequest,
   SessionRequest,
   SessionResponse,
@@ -53,8 +54,30 @@ export interface CliClient {
     extract(
       sessionId: string,
       pageId: string,
-      request: { format: string }
-    ): Promise<{ data?: unknown; evidence?: unknown[]; warnings?: string[] }>;
+      request: { format: string; schema?: Record<string, unknown> }
+    ): Promise<{
+      data?: unknown;
+      evidence?: unknown[];
+      warnings?: string[];
+      modelUsed?: string;
+    }>;
+    plan(
+      sessionId: string,
+      pageId: string,
+      actions: Array<Record<string, unknown>>
+    ): Promise<{
+      ok: boolean;
+      completed: number;
+      results: Array<{ step: number; ok: boolean; actionId?: string; error?: string }>;
+      mode?: string;
+      newRevision?: number;
+      error?: { code: string; message: string };
+    }>;
+    snapshot(
+      sessionId: string,
+      pageId: string,
+      bounds?: { maxElements?: number; maxBytes?: number }
+    ): Promise<PageSnapshot>;
   };
 }
 
@@ -277,6 +300,74 @@ export function buildCli(deps: CliDependencies): Cli {
               ctx.emit(observation, () => renderObservation(observation));
             }
           )
+        );
+
+      // ---- snapshot (TD-BROWSER-8) -------------------------------------------
+      program
+        .command('snapshot')
+        .description('self-contained observation usable as plan targets in one round trip')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .option('--max-elements <n>', 'maximum fields to return')
+        .option('--max-bytes <n>', 'maximum snapshot size in bytes')
+        .action(
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              pageId: string,
+              options: { maxElements?: string; maxBytes?: string }
+            ) => {
+              const bounds: { maxElements?: number; maxBytes?: number } = {};
+              if (options.maxElements) {
+                bounds.maxElements = Number.parseInt(options.maxElements, 10);
+              }
+              if (options.maxBytes) {
+                bounds.maxBytes = Number.parseInt(options.maxBytes, 10);
+              }
+              const snapshot = await ctx.client.sessions.snapshot(sessionId, pageId, bounds);
+
+              ctx.emit(snapshot, () => [
+                `${snapshot.url} (${snapshot.mode}, revision ${snapshot.revision})`,
+                ...snapshot.fields.map((f) => `  ${f.ref} [${f.role}] ${f.label}`),
+                ...(snapshot.truncated ? ['  (truncated)'] : []),
+              ]);
+            }
+          )
+        );
+
+      // ---- plan (TD-BROWSER-8) ------------------------------------------------
+      program
+        .command('plan')
+        .description(
+          'execute a batched action plan from inline JSON steps in one call ' +
+            '(each step: an act argument object, optionally waitForLabel + waitMs)'
+        )
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('<stepsJson>', 'JSON array of plan steps')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string, stepsJson: string) => {
+            let steps: Array<Record<string, unknown>>;
+            try {
+              steps = JSON.parse(stepsJson) as Array<Record<string, unknown>>;
+            } catch {
+              throw new UsageError('<stepsJson> must be a valid JSON array of plan steps.');
+            }
+            if (!Array.isArray(steps)) {
+              throw new UsageError('<stepsJson> must be a JSON array of plan steps.');
+            }
+
+            const result = await ctx.client.sessions.plan(sessionId, pageId, steps);
+
+            ctx.emit(result, () => [
+              `${result.ok ? 'ok' : 'failed'}: ${result.completed}/${steps.length} steps completed (mode: ${result.mode ?? 'stable'})`,
+              ...result.results.map(
+                (r) => `  step ${r.step}: ${r.ok ? 'ok' : `FAILED - ${r.error ?? 'unknown'}`}`
+              ),
+              ...(result.error ? [`  ${result.error.code}: ${result.error.message}`] : []),
+            ]);
+          })
         );
 
       // ---- act -------------------------------------------------------------
@@ -517,15 +608,35 @@ export function buildCli(deps: CliDependencies): Cli {
         .argument('<sessionId>')
         .argument('<pageId>')
         .option('--format <format>', `one of: ${DELIVERED_EXTRACT_FORMATS.join(' | ')}`)
+        .option(
+          '--schema <json>',
+          'inline JSON Schema for format=schema (flat top-level properties)'
+        )
         .action(
-          action(async (ctx, sessionId: string, pageId: string, options: { format?: string }) => {
-            const result = (await ctx.client.sessions.extract(sessionId, pageId, {
-              format: (options.format ?? 'text') as never,
-            })) as unknown;
-            ctx.emit(result, () => [
-              JSON.stringify((result as { data?: unknown }).data, null, 2).slice(0, 4000),
-            ]);
-          })
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              pageId: string,
+              options: { format?: string; schema?: string }
+            ) => {
+              let schemaValue: Record<string, unknown> | undefined;
+              if (options.schema !== undefined) {
+                try {
+                  schemaValue = JSON.parse(options.schema) as Record<string, unknown>;
+                } catch {
+                  throw new UsageError('--schema must be valid inline JSON.');
+                }
+              }
+              const result = (await ctx.client.sessions.extract(sessionId, pageId, {
+                format: (options.format ?? 'text') as never,
+                ...(schemaValue !== undefined ? { schema: schemaValue } : {}),
+              })) as unknown;
+              ctx.emit(result, () => [
+                JSON.stringify((result as { data?: unknown }).data, null, 2).slice(0, 4000),
+              ]);
+            }
+          )
         );
 
       // ---- screenshot ------------------------------------------------------
