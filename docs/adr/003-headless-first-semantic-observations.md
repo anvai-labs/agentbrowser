@@ -37,9 +37,17 @@ type ObservationMode =
   | "interactive"      // Semantic tree, form state, interactive refs (default)
   | "content"         // Readable text, headings, structure
   | "accessibility"    // Full ARIA tree, roles, names, states
-  | "compact_dom"     // Minimal DOM structure
-  | "visual"          // Screenshot (pixels)
+  | "compact_dom"     // Minimal DOM structure - NOT DELIVERED (see below)
+  | "visual"          // Screenshot (pixels) - delivered as the separate screenshot/PDF endpoints, not an observation mode
 ```
+
+`compact_dom` is part of the type's superset but no normalizer mode or
+engine implementation exists for it. Requesting it used to silently
+return a zero-element observation (a lie); since Phase 2 (2026-09-04)
+the service rejects it typed (`INVALID_REQUEST`, listing the actually
+`DELIVERED_OBSERVATION_MODES`) instead. Building it for real needs a
+definition, a normalizer mode, and per-engine work - its own TD, not
+folded into this one.
 
 ## Consequences
 

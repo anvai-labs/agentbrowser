@@ -213,7 +213,11 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
         'Execute a batched action plan in one call (TD-BROWSER-8). Each action: ' +
         '{action: fill|click|press|scroll, target?: {ref}, value?, key?}. Steps run ' +
         'sequentially; the first hard failure aborts with per-step results. Best paired ' +
-        'with browser_snapshot: address refs from its `fields` in one round trip.',
+        'with browser_snapshot: address refs from its `fields` in one round trip. ' +
+        'A step for a field that only appears after a prior step (Phase 2) may declare ' +
+        '`waitForLabel` (substring match on the element name) instead of `target` - the ' +
+        'executor waits for it to appear (bounded by `waitMs`, default 5000) and resolves ' +
+        'the ref itself; a miss aborts the plan with a typed PLAN_WAIT_TIMEOUT.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -221,7 +225,9 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
           pageId: { type: 'string' },
           actions: {
             type: 'array',
-            description: 'Ordered plan steps: {action, target?: {ref}, value?, key?}',
+            description:
+              'Ordered plan steps: {action, target?: {ref}, value?, key?, ' +
+              'waitForLabel?, waitMs?}',
             items: { type: 'object' },
           },
         },

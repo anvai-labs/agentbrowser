@@ -60,6 +60,15 @@ describe('OpenAPI document', () => {
       ['/v1/sessions/{sessionId}/pages/{pageId}/download', 'post'],
       ['/v1/sessions/{sessionId}/artifacts/{artifactId}', 'get'],
       ['/v1/sessions/{sessionId}/events', 'get'],
+      // TD-BROWSER-8 (contract-honesty fix, Phase 2): these two were
+      // implemented since Phase 1 but never documented - invisible to any
+      // spec-generated client.
+      ['/v1/sessions/{sessionId}/pages/{pageId}/snapshot', 'get'],
+      ['/v1/sessions/{sessionId}/pages/{pageId}/plan', 'post'],
+      // A3 evidence completion (Phase 2).
+      ['/v1/sessions/{sessionId}/trace', 'post'],
+      ['/v1/sessions/{sessionId}/pages/{pageId}/html', 'post'],
+      ['/v1/sessions/{sessionId}/events/replay', 'get'],
     ] as const;
 
     it.each(expectedPaths)('should document %s %s', (path, method) => {

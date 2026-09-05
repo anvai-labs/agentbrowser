@@ -17,6 +17,7 @@ import {
   ApprovalGate,
   ArtifactStore,
   ObservationNormalizer,
+  RingBuffer,
   SecretManager,
   SessionCoordinator,
   SessionState,
@@ -49,6 +50,7 @@ import type {
 } from '@agentbrowser/protocol';
 import {
   DELIVERED_EXTRACT_FORMATS,
+  DELIVERED_OBSERVATION_MODES,
   type DeliveredExtractFormat,
   REF_PATTERN,
   validateAction,
@@ -124,6 +126,14 @@ export interface ServiceActRequest {
   wait?: { until: string; timeoutMs?: number | undefined } | undefined;
   /** Wait-action condition (the `wait` ACTION; distinct from post-action wait). */
   condition?: { until: string; timeoutMs?: number | undefined } | undefined;
+  /**
+   * TD-BROWSER-8 Phase 2: wait (before this plan step runs) until an
+   * element whose name contains this substring appears - for fields
+   * revealed by a prior step. Plan-step-only; never forwarded to
+   * toProtocolAction. Bounded by waitMs (default 5000ms).
+   */
+  waitForLabel?: string | undefined;
+  waitMs?: number | undefined;
 }
 
 export interface ServiceActResult {
@@ -324,6 +334,7 @@ export class AgentBrowserService {
       }
     }
     this.eventListeners.delete(sessionId);
+    this.eventHistory.delete(sessionId);
     this.sessionDownloadPolicy.delete(sessionId);
     this.sessionPolicies.delete(sessionId);
   }
@@ -406,11 +417,35 @@ export class AgentBrowserService {
   }
 
   /** Pull a page's engine events forever, dispatching to session listeners. */
+  /**
+   * A3 evidence: bounded per-session event history (the spec's
+   * "per-session event ledger"). Every engine event crosses pumpEvents;
+   * console lines replay from here for late subscribers.
+   */
+  private readonly eventHistory = new Map<string, RingBuffer<EngineEvent>>();
+  private static readonly EVENT_HISTORY_LIMIT = 500;
+
+  private recordEvent(sessionId: string, event: EngineEvent): void {
+    let buffer = this.eventHistory.get(sessionId);
+    if (buffer === undefined) {
+      buffer = new RingBuffer<EngineEvent>({ capacity: AgentBrowserService.EVENT_HISTORY_LIMIT });
+      this.eventHistory.set(sessionId, buffer);
+    }
+    buffer.push(event);
+  }
+
+  /** Recent events for a session, oldest first (console replay). */
+  getSessionEvents(sessionId: string): EngineEvent[] {
+    this.coordinator.get(sessionId);
+    return this.eventHistory.get(sessionId)?.toArray() ?? [];
+  }
+
   private pumpEvents(sessionId: string, pageId: string, enginePage: EnginePage): void {
     void (async () => {
       try {
         for await (const event of enginePage.events()) {
           const stamped: EngineEvent = { ...event, sessionId, pageId };
+          this.recordEvent(sessionId, stamped);
           const listeners = this.eventListeners.get(sessionId);
           if (listeners) {
             for (const listener of [...listeners]) {
@@ -620,6 +655,72 @@ export class AgentBrowserService {
   }
 
   /**
+   * A3 evidence: export the session's completed spans as a JSON artifact.
+   * Spans are already secret-scrubbed by the tracer; the artifact rides
+   * the standard store (TTL, size bounds, token-gated serving).
+   */
+  async exportTrace(sessionId: string): Promise<ArtifactMetadata> {
+    this.coordinator.get(sessionId); // liveness + ownership via mapError
+    const spans = (this.tracer?.completedSpans() ?? []).filter(
+      (span) => span.attributes.sessionId === sessionId
+    );
+    const payload = JSON.stringify(
+      { sessionId, exportedAt: new Date().toISOString(), spans },
+      null,
+      2
+    );
+    return this.traced('trace.export', { sessionId }, async () =>
+      this.artifacts.put('trace', 'application/json', new TextEncoder().encode(payload), {
+        filename: `trace-${sessionId}.json`,
+        sessionId,
+      })
+    );
+  }
+
+  /**
+   * A3 evidence: capture the page's current HTML as an artifact. Raw HTML
+   * is NOT secret-scrubbed - typed-in form values ride it verbatim - so
+   * the metadata carries an explicit warning, mirroring maskSensitive's
+   * honest-refusal precedent.
+   */
+  async exportHtml(sessionId: string, pageId: string): Promise<ArtifactMetadata> {
+    return this.traced('html.export', { sessionId, pageId }, async () => {
+      const page = this.requirePage(sessionId, pageId);
+      this.coordinator.updateActivity(sessionId);
+      let raw: Awaited<ReturnType<EnginePage['observe']>>;
+      try {
+        raw = await page.enginePage.observe({});
+      } catch (error) {
+        if (this.isCrash(error instanceof Error ? error.message : String(error))) {
+          await this.recoverFromCrash(sessionId, 'exportHtml: engine crashed');
+          throw new ServiceError(
+            'ENGINE_CRASHED',
+            'The browser engine crashed; the session has been terminated.',
+            false,
+            { sessionId }
+          );
+        }
+        throw error;
+      }
+      const html = raw.content ?? '';
+      const metadata = this.artifacts.put(
+        'html',
+        'text/html; charset=utf-8',
+        new TextEncoder().encode(html),
+        {
+          filename: `page-${pageId}.html`,
+          sessionId,
+        }
+      );
+      return {
+        ...metadata,
+        description:
+          'Raw page HTML; NOT secret-redacted - values typed into forms are captured verbatim.',
+      };
+    });
+  }
+
+  /**
    * TD-BROWSER-7 Phase 1: route sessions by engine name. Default/absent/"auto"
    * resolves to the primary engine; unknown names fail loudly - a session must
    * never silently run on a different engine than the one requested.
@@ -658,18 +759,51 @@ export class AgentBrowserService {
     completed: number;
     results: Array<{ step: number; ok: boolean; actionId?: string; error?: string }>;
     mode: 'stable' | 'verified';
+    /** Payload economics (pressure matrix row 4): the plan's cheap "final state" signal. */
+    newRevision: number;
     error?: { code: string; message: string };
   }> {
     const results: Array<{ step: number; ok: boolean; actionId?: string; error?: string }> = [];
     const churnKey = this.churnKey(sessionId, pageId);
+    const finalRevision = (): number => this.pages.get(pageId)?.revision ?? 0;
     for (const [index, step] of steps.entries()) {
+      // TD-BROWSER-8 Phase 2: pre-step label wait for fields revealed by a
+      // prior step. A caller cannot know the ref of an element that does
+      // not exist yet at plan-authoring time, so waitForLabel resolves the
+      // ref itself - the step's own target is filled in from the wait
+      // unless the step already pinned one. A miss surfaces as a typed
+      // step failure - never a hang.
+      let effectiveStep = step;
+      if (step.waitForLabel !== undefined) {
+        try {
+          const resolvedRef = await this.waitForLabel(
+            sessionId,
+            pageId,
+            step.waitForLabel,
+            step.waitMs
+          );
+          effectiveStep =
+            step.target !== undefined ? step : { ...step, target: { ref: resolvedRef } };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          results.push({ step: index, ok: false, error: message });
+          return {
+            ok: false,
+            completed: index,
+            results,
+            mode: this.churnMode(churnKey),
+            newRevision: finalRevision(),
+            error: { code: 'PLAN_WAIT_TIMEOUT', message },
+          };
+        }
+      }
       try {
-        const effect = await this.act(sessionId, pageId, step);
+        const effect = await this.act(sessionId, pageId, effectiveStep);
         this.decayChurn(churnKey);
         results.push({ step: index, ok: true, actionId: effect.actionId });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        const ordinal = /(?:^|e\d+)_(\d+)$/.exec(step.target?.ref ?? '')?.[1];
+        const ordinal = /(?:^|e\d+)_(\d+)$/.exec(effectiveStep.target?.ref ?? '')?.[1];
         if (ordinal !== undefined && /STALE_TARGET|revision|fingerprint/i.test(message)) {
           this.bumpChurn(churnKey);
           const mode = this.churnMode(churnKey);
@@ -681,12 +815,14 @@ export class AgentBrowserService {
           // back to lastObservation only if that revision was evicted.
           let baseline: PageElement | undefined;
           const page = this.pages.get(pageId);
-          if (step.target?.ref !== undefined && page) {
-            const refRevision = /(?:^|e)(\d+)_/.exec(step.target.ref)?.[1];
+          if (effectiveStep.target?.ref !== undefined && page) {
+            const refRevision = /(?:^|e)(\d+)_/.exec(effectiveStep.target.ref)?.[1];
             baseline =
               (refRevision !== undefined
-                ? page.history.get(Number.parseInt(refRevision, 10))?.byRef.get(step.target.ref)
-                : undefined) ?? page.lastObservation?.byRef.get(step.target.ref);
+                ? page.history
+                    .get(Number.parseInt(refRevision, 10))
+                    ?.byRef.get(effectiveStep.target.ref)
+                : undefined) ?? page.lastObservation?.byRef.get(effectiveStep.target.ref);
           }
 
           const observed = await this.observe(sessionId, pageId, { mode: 'interactive' });
@@ -698,7 +834,7 @@ export class AgentBrowserService {
             ).elements ?? [];
           this.logger?.debug('plan.remap', {
             ordinal,
-            stepRef: step.target?.ref,
+            stepRef: effectiveStep.target?.ref,
             count: elements.length,
             mode,
           });
@@ -743,9 +879,13 @@ export class AgentBrowserService {
             // envelope, not as a thrown error escaping the catch.
             try {
               const retry = await this.act(sessionId, pageId, {
-                ...step,
+                ...effectiveStep,
                 target: { ref: remapped },
               });
+              // Fix: the primary success path decays churn (below); the
+              // remap-retry success path did not, so a plan of repeated
+              // remapped steps never cooled back down out of VERIFIED mode.
+              this.decayChurn(churnKey);
               results.push({ step: index, ok: true, actionId: retry.actionId });
               continue;
             } catch (retryError) {
@@ -757,6 +897,7 @@ export class AgentBrowserService {
                 completed: index,
                 results,
                 mode: this.churnMode(churnKey),
+                newRevision: finalRevision(),
                 error: { code: 'PLAN_STEP_FAILED', message: retryMessage },
               };
             }
@@ -769,6 +910,7 @@ export class AgentBrowserService {
               completed: index,
               results,
               mode,
+              newRevision: finalRevision(),
               error: { code: 'AMBIGUOUS_REMAP', message: ambiguousMessage },
             };
           }
@@ -779,11 +921,75 @@ export class AgentBrowserService {
           completed: index,
           results,
           mode: this.churnMode(churnKey),
+          newRevision: finalRevision(),
           error: { code: 'PLAN_STEP_FAILED', message },
         };
       }
     }
-    return { ok: true, completed: steps.length, results, mode: this.churnMode(churnKey) };
+    return {
+      ok: true,
+      completed: steps.length,
+      results,
+      mode: this.churnMode(churnKey),
+      newRevision: finalRevision(),
+    };
+  }
+
+  /**
+   * TD-BROWSER-8 Phase 2: poll until an element whose name contains
+   * `label` appears, then return ITS resolved (service-level) ref - a
+   * caller cannot supply a ref for an element that does not exist yet at
+   * plan-authoring time. Ticks use RAW engine observations, not
+   * this.observe() - a full observe() per tick would replace
+   * lastObservation and consume one of the bounded history slots, evicting
+   * the mint-revision baseline verified-mode remap depends on. Only the
+   * final hit runs a real observe(), which also mints the actionable ref.
+   */
+  private async waitForLabel(
+    sessionId: string,
+    pageId: string,
+    label: string,
+    waitMs?: number
+  ): Promise<string> {
+    const page = this.requirePage(sessionId, pageId);
+    const deadline = Date.now() + (waitMs ?? 5000);
+    for (;;) {
+      const raw = await page.enginePage.observe({});
+      const hit = raw.elements.some(
+        (element) => typeof element.name === 'string' && element.name.includes(label)
+      );
+      if (hit) {
+        const observed = (await this.observe(sessionId, pageId, {
+          mode: 'interactive',
+        })) as unknown as { elements: Array<{ ref: string; name?: string }> };
+        const resolved = observed.elements.find(
+          (element) => typeof element.name === 'string' && element.name.includes(label)
+        );
+        if (resolved === undefined) {
+          // Present in the raw tick but not in the redacted/normalized
+          // observation - it exists but under interactive-mode filtering
+          // it doesn't qualify as actionable. Treat as a miss.
+          if (Date.now() >= deadline) {
+            throw new ServiceError(
+              'ACTION_TIMEOUT',
+              `waitForLabel: '${label}' matched a raw element but never became actionable within ${waitMs ?? 5000}ms`,
+              true
+            );
+          }
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          continue;
+        }
+        return resolved.ref;
+      }
+      if (Date.now() >= deadline) {
+        throw new ServiceError(
+          'ACTION_TIMEOUT',
+          `waitForLabel: no element matching '${label}' appeared within ${waitMs ?? 5000}ms`,
+          true
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
   }
 
   private churn = new Map<string, number>();
@@ -803,20 +1009,30 @@ export class AgentBrowserService {
   /** TD-BROWSER-8: self-contained snapshot payload for one-shot LLM reasoning. */
   async getSnapshot(
     sessionId: string,
-    pageId: string
+    pageId: string,
+    bounds?: { maxElements?: number; maxBytes?: number }
   ): Promise<{
     url: string;
     title: string;
     revision: number;
     mode: 'stable' | 'verified';
     fields: Array<{ ref: string; role: string; label: string }>;
+    truncated?: boolean;
   }> {
-    const state = await this.observe(sessionId, pageId, { mode: 'interactive' });
+    // Payload economics (TD-BROWSER-8 pressure matrix, row 4): the fields
+    // list previously had no way to bound its size from the caller's side;
+    // it now flows through the same byte/element budget as observe().
+    const state = await this.observe(sessionId, pageId, {
+      mode: 'interactive',
+      ...(bounds?.maxElements !== undefined ? { maxElements: bounds.maxElements } : {}),
+      ...(bounds?.maxBytes !== undefined ? { maxBytes: bounds.maxBytes } : {}),
+    });
     const view = state as unknown as {
       url?: string;
       title?: string;
       revision?: number;
       elements?: Array<{ ref: string; role?: string; name?: string }>;
+      truncated?: boolean;
     };
     return {
       url: view.url ?? '',
@@ -828,6 +1044,7 @@ export class AgentBrowserService {
         role: e.role ?? '',
         label: e.name ?? '',
       })),
+      ...(view.truncated === true ? { truncated: true } : {}),
     };
   }
 
@@ -947,6 +1164,16 @@ export class AgentBrowserService {
 
     // Normalize the FULL element list; pagination and diffing are service
     // concerns so the cursor and changes stay coherent with each other.
+    // Honest stopgap (A3): the protocol mode superset contains values the
+    // stack does not deliver (compact_dom, visual); a silent empty-element
+    // observation is a lie - reject typed instead.
+    const DELIVERED_MODES = new Set<string>(DELIVERED_OBSERVATION_MODES);
+    if (request.mode !== undefined && !DELIVERED_MODES.has(request.mode)) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `Observation mode '${request.mode}' is not delivered. Supported: ${[...DELIVERED_MODES].join(', ')}.`
+      );
+    }
     const observationRequest: ObservationRequest = {
       ...(request.mode !== undefined ? { mode: request.mode } : {}),
     };
@@ -1480,64 +1707,66 @@ export class AgentBrowserService {
     pageId: string,
     request: { url: string; filename?: string }
   ): Promise<ArtifactMetadata> {
-    this.requirePage(sessionId, pageId);
-    this.coordinator.updateActivity(sessionId);
+    return this.traced('download.fetch', { sessionId, pageId }, async () => {
+      this.requirePage(sessionId, pageId);
+      this.coordinator.updateActivity(sessionId);
 
-    const policy = this.sessionDownloadPolicy.get(sessionId);
-    if (!policy?.allowDownloads) {
-      throw new ServiceError(
-        'DOWNLOAD_BLOCKED',
-        'Downloads are disabled for this session. Create the session with allowDownloads to enable them.',
-        false
-      );
-    }
+      const policy = this.sessionDownloadPolicy.get(sessionId);
+      if (!policy?.allowDownloads) {
+        throw new ServiceError(
+          'DOWNLOAD_BLOCKED',
+          'Downloads are disabled for this session. Create the session with allowDownloads to enable them.',
+          false
+        );
+      }
 
-    let parsed: URL;
-    try {
-      parsed = new URL(request.url);
-    } catch {
-      throw new ServiceError(
-        'INVALID_REQUEST',
-        `Invalid download URL: ${request.url.slice(0, 100)}`
-      );
-    }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      throw new ServiceError(
-        'POLICY_DENIED',
-        `Downloads accept http(s) URLs only; '${parsed.protocol}' is not permitted.`
-      );
-    }
+      let parsed: URL;
+      try {
+        parsed = new URL(request.url);
+      } catch {
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `Invalid download URL: ${request.url.slice(0, 100)}`
+        );
+      }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new ServiceError(
+          'POLICY_DENIED',
+          `Downloads accept http(s) URLs only; '${parsed.protocol}' is not permitted.`
+        );
+      }
 
-    try {
-      const egress = this.sessionPolicies.get(sessionId) ?? this.rootRequestPolicy;
-      await egress.checkRequest({ hostname: parsed.hostname, url: request.url });
-    } catch (error) {
-      throw this.mapError(error);
-    }
+      try {
+        const egress = this.sessionPolicies.get(sessionId) ?? this.rootRequestPolicy;
+        await egress.checkRequest({ hostname: parsed.hostname, url: request.url });
+      } catch (error) {
+        throw this.mapError(error);
+      }
 
-    const { bytes, contentType } = await this.downloader(request.url);
+      const { bytes, contentType } = await this.downloader(request.url);
 
-    if (bytes.length > policy.maxDownloadBytes) {
-      throw new ServiceError(
-        'DOWNLOAD_BLOCKED',
-        `Payload is ${bytes.length} bytes; this session allows at most ${policy.maxDownloadBytes} bytes.`,
-        false,
-        { sizeBytes: bytes.length, maxDownloadBytes: policy.maxDownloadBytes }
-      );
-    }
+      if (bytes.length > policy.maxDownloadBytes) {
+        throw new ServiceError(
+          'DOWNLOAD_BLOCKED',
+          `Payload is ${bytes.length} bytes; this session allows at most ${policy.maxDownloadBytes} bytes.`,
+          false,
+          { sizeBytes: bytes.length, maxDownloadBytes: policy.maxDownloadBytes }
+        );
+      }
 
-    try {
-      return this.artifacts.put('download', contentType, bytes, {
-        ...(request.filename !== undefined ? { filename: request.filename } : {}),
-        sessionId,
-      });
-    } catch (error) {
-      const code = (error as { code?: string }).code;
-      throw new ServiceError(
-        code === 'ARTIFACT_TOO_LARGE' ? 'DOWNLOAD_BLOCKED' : 'INTERNAL',
-        error instanceof Error ? error.message : String(error)
-      );
-    }
+      try {
+        return this.artifacts.put('download', contentType, bytes, {
+          ...(request.filename !== undefined ? { filename: request.filename } : {}),
+          sessionId,
+        });
+      } catch (error) {
+        const code = (error as { code?: string }).code;
+        throw new ServiceError(
+          code === 'ARTIFACT_TOO_LARGE' ? 'DOWNLOAD_BLOCKED' : 'INTERNAL',
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+    });
   }
 
   /**
@@ -1655,16 +1884,11 @@ export class AgentBrowserService {
         case 'jsonld':
           return extractJsonLd(sourced);
         case 'schema': {
-          if (request.schema === undefined) {
-            throw new ServiceError(
-              'INVALID_REQUEST',
-              "format 'schema' requires a schema (JSON Schema object)."
-            );
-          }
+          this.validateExtractSchema(request.schema);
           const extractor = new SchemaExtractor({
             ...(this.secretManager !== undefined ? { secretManager: this.secretManager } : {}),
           });
-          return await extractor.extract(sourced, request.schema);
+          return await extractor.extract(sourced, request.schema as Record<string, unknown>);
         }
         default:
           throw new ServiceError(
@@ -1675,6 +1899,41 @@ export class AgentBrowserService {
     });
   }
 
+  /**
+   * Shape-check the schema argument for format:'schema' (flat subset:
+   * top-level `properties` object + optional `required` string array) with
+   * a size bound. Previously any truthy JSON value passed through.
+   */
+  private validateExtractSchema(schema: Record<string, unknown> | undefined): void {
+    if (schema === undefined) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        "format 'schema' requires a schema (JSON Schema object)."
+      );
+    }
+    if (Buffer.byteLength(JSON.stringify(schema), 'utf8') > 65_536) {
+      throw new ServiceError('INVALID_REQUEST', 'schema exceeds the 64 KiB bound.');
+    }
+    if (
+      typeof schema !== 'object' ||
+      Array.isArray(schema) ||
+      schema.properties === undefined ||
+      typeof schema.properties !== 'object' ||
+      Array.isArray(schema.properties)
+    ) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        "schema must be an object with a top-level 'properties' object."
+      );
+    }
+    if (
+      schema.required !== undefined &&
+      (!Array.isArray(schema.required) || schema.required.some((r) => typeof r !== 'string'))
+    ) {
+      throw new ServiceError('INVALID_REQUEST', "schema 'required' must be an array of strings.");
+    }
+  }
+
   // ---- screenshots --------------------------------------------------------
 
   async screenshot(
@@ -1682,50 +1941,57 @@ export class AgentBrowserService {
     pageId: string,
     request: ScreenshotRequest
   ): Promise<ArtifactMetadata> {
-    const page = this.requirePage(sessionId, pageId);
-    this.coordinator.updateActivity(sessionId);
+    return this.traced('screenshot', { sessionId, pageId }, async () => {
+      const page = this.requirePage(sessionId, pageId);
+      this.coordinator.updateActivity(sessionId);
 
-    let captured: Awaited<ReturnType<EnginePage['screenshot']>>;
-    try {
-      captured = await page.enginePage.screenshot(request);
-    } catch (error) {
-      if (this.isCrash(error instanceof Error ? error.message : String(error))) {
-        await this.recoverFromCrash(sessionId, 'screenshot: engine crashed');
-        throw new ServiceError(
-          'ENGINE_CRASHED',
-          'The browser engine crashed; the session has been terminated.',
-          false,
-          { sessionId }
-        );
+      let captured: Awaited<ReturnType<EnginePage['screenshot']>>;
+      try {
+        captured = await page.enginePage.screenshot(request);
+      } catch (error) {
+        if (this.isCrash(error instanceof Error ? error.message : String(error))) {
+          await this.recoverFromCrash(sessionId, 'screenshot: engine crashed');
+          throw new ServiceError(
+            'ENGINE_CRASHED',
+            'The browser engine crashed; the session has been terminated.',
+            false,
+            { sessionId }
+          );
+        }
+        throw error;
       }
-      throw error;
-    }
 
-    const bytes = Buffer.from((captured as { bytesBase64?: string }).bytesBase64 ?? '', 'base64');
-    // maskSensitive honesty (spec 12/16): pixel masking needs element
-    // geometry the engines do not expose yet. When values may be on
-    // screen and masking was requested, the artifact carries a recorded
-    // warning instead of silently implying a masked image.
-    const warnings: string[] = [];
-    if (request.maskSensitive === true) {
-      const observation = page.lastObservation;
-      const sensitiveOnPage =
-        observation !== undefined &&
-        [...observation.byRef.values()].some(
-          (element) => element.value !== undefined && element.value !== ''
-        );
-      if (sensitiveOnPage) {
-        warnings.push(
-          'maskSensitive requested but pixel masking is not implemented; the screenshot may contain on-screen values. Prefer redacted observations.'
-        );
-        this.logger?.warn('screenshot.mask-sensitive-unavailable', { sessionId, pageId });
+      const bytes = Buffer.from((captured as { bytesBase64?: string }).bytesBase64 ?? '', 'base64');
+      // maskSensitive honesty (spec 12/16): pixel masking needs element
+      // geometry the engines do not expose yet. When values may be on
+      // screen and masking was requested, the artifact carries a recorded
+      // warning instead of silently implying a masked image.
+      const warnings: string[] = [];
+      if (request.maskSensitive === true) {
+        const observation = page.lastObservation;
+        const sensitiveOnPage =
+          observation !== undefined &&
+          [...observation.byRef.values()].some(
+            (element) => element.value !== undefined && element.value !== ''
+          );
+        if (sensitiveOnPage) {
+          warnings.push(
+            'maskSensitive requested but pixel masking is not implemented; the screenshot may contain on-screen values. Prefer redacted observations.'
+          );
+          this.logger?.warn('screenshot.mask-sensitive-unavailable', { sessionId, pageId });
+        }
       }
-    }
 
-    const metadata = this.artifacts.put('screenshot', captured.contentType, new Uint8Array(bytes), {
-      sessionId,
+      const metadata = this.artifacts.put(
+        'screenshot',
+        captured.contentType,
+        new Uint8Array(bytes),
+        {
+          sessionId,
+        }
+      );
+      return warnings.length > 0 ? { ...metadata, warnings } : metadata;
     });
-    return warnings.length > 0 ? { ...metadata, warnings } : metadata;
   }
 
   // ---- shutdown -----------------------------------------------------------

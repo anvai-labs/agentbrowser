@@ -1,12 +1,14 @@
 # Engineering-hygiene audit (2026-08-31)
 
-> **Status (2026-09-04): Themes A and B are remediated.** Theme A landed
-> as TD-BROWSER-9 (BoundedCache/RingBuffer, bounded quantile window,
-> indexed lookups). Theme B landed as ADR-015 (SSOT ref grammar + extract
-> formats, ActionEffect/EngineTarget aliases, shared UsageError/formatter,
-> SDK type mirror, compiled schema validation with type-level contract
-> tests). Themes C-G remain open. Findings below are as audited (12
-> packages; 14 now).
+> **Status (2026-09-04): Themes A and B are remediated; Theme E's E1/E2 are
+> fixed.** Theme A landed as TD-BROWSER-9 (BoundedCache/RingBuffer, bounded
+> quantile window, indexed lookups). Theme B landed as ADR-015 (SSOT ref
+> grammar + extract formats, ActionEffect/EngineTarget aliases, shared
+> UsageError/formatter, SDK type mirror, compiled schema validation with
+> type-level contract tests). E1 (unguarded + unredacted model-adapter call)
+> and E2 (unanchored match regex) landed alongside the Phase 2 schema-
+> extraction work. Themes C, D, F, G and E3/E4 remain open. Findings below
+> are as audited (12 packages; 14 now).
 
 A **maintenance-and-design** audit, distinct from `docs/audit.md` (which was a
 vision-vs-implementation / security-and-spec audit, now closed). This pass looks
@@ -114,8 +116,8 @@ straight deletion or an honest re-label; none needs a design decision.
 
 | # | Finding | Location | Sev | Rationalization (verify this) |
 |---|---------|----------|-----|-------------------------------|
-| E1 | Model-adapter failure discards successful deterministic extraction | `extraction/schema-extraction.ts:139-147` | **H** | `await this.model.extract(...)` is unguarded; a model timeout/rate-limit throws out of `extract()` even though deterministic results at `:132-134` already succeeded. Violates the deterministic-first contract (spec §12.2) — the browser's reliability shouldn't depend on an optional LLM. Wrap in try/catch, push a warning, keep deterministic data. |
-| E2 | Deterministic field-match regex isn't word-boundary anchored | `extraction/schema-extraction.ts:104-109` | **M** | `(?:^|\s)${name}\s*[:=]?...` can match a field name embedded in a larger token; `\b${name}\b` avoids false positives on hyphenated/concatenated identifiers. No test covers the substring case. |
+| E1 | ~~Model-adapter failure discards successful deterministic extraction~~ **FIXED (Phase 2, 2026-09-04)** | `extraction/schema-extraction.ts` | **H** | Was worse than originally audited: the model call was unguarded (a throw discarded successful deterministic data) AND `secretManager.redact` ran AFTER the model call, so an injected adapter saw unredacted page text. Now: try/catch keeps deterministic data + a warning; redaction runs before the model call; input is size-capped. |
+| E2 | ~~Deterministic field-match regex isn't word-boundary anchored~~ **FIXED (Phase 2, 2026-09-04)** | `extraction/schema-extraction.ts` | **M** | Property names are now regex-escaped and `\b`-anchored in both match patterns; a substring-false-positive test (`price` not matching inside `pricey`) is in place. |
 | E3 | Fragile Playwright error classification by `String(error)` regex | `engine-playwright/index.ts:451-462` | **L** | Blocked-navigation detection matches `net::ERR_*` against the stringified error; breaks silently if Playwright changes message format. Prefer error `.code`/`.name`, or throw a typed error from the egress handler. |
 | E4 | Dialog settlement lacks an error boundary in the fake | `testkit/fake-engine.ts:233-246` | **L** | Listener call then `emitEvent` in sequence; a throwing listener skips the emit, leaving `pendingDialog` cleared but no event — `try/finally` fixes it. Test-substrate only. |
 
