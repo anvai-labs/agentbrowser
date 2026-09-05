@@ -94,7 +94,12 @@ suite('Obscura engine (binary available)', () => {
     while (child.exitCode === null && child.signalCode === null && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    expect(child.exitCode).not.toBeNull();
+    // The guarantee is "the process is reaped" - either exit path counts:
+    // a self-exiting process sets exitCode; one killed before it can handle
+    // the signal sets signalCode and leaves exitCode null. The previous
+    // exitCode-only assertion failed the signal path instantly (this flaked
+    // twice today, 11ms failures).
+    expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
   }, 30_000);
 });
 
