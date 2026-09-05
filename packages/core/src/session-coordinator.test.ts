@@ -13,6 +13,7 @@ import type {
 } from '@agentbrowser/engine';
 import type { SessionRequest } from '@agentbrowser/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { StructuredLogger } from './logger';
 import { SessionCoordinator, SessionState } from './session-coordinator';
 
 // Mock engine implementation for testing
@@ -485,6 +486,32 @@ describe('SessionCoordinator', () => {
       expect(shortLivedCoordinator.getSessionCount()).toBe(0);
 
       await shortLivedCoordinator.shutdown();
+    });
+
+    it('should route a failed cleanup-close through the injected logger, not console (hygiene G2)', async () => {
+      const lines: string[] = [];
+      const logger = new StructuredLogger({ sink: (line) => lines.push(line) });
+      const failingEngine = new MockEngine();
+      failingEngine.createSession = async () => {
+        const session = new MockEngineSession();
+        session.close = async () => {
+          throw new Error('engine session close failed');
+        };
+        return session;
+      };
+      const loggedCoordinator = new SessionCoordinator({
+        defaultTtlMs: 50,
+        cleanupCheckIntervalMs: 30,
+        logger,
+      });
+
+      await loggedCoordinator.create({ engine: 'mock-engine' }, failingEngine);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(lines.some((line) => line.includes('session.cleanup-close-failed'))).toBe(true);
+      expect(lines.some((line) => line.includes('engine session close failed'))).toBe(true);
+
+      await loggedCoordinator.shutdown();
     });
   });
 

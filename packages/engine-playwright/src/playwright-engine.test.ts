@@ -19,6 +19,25 @@ describe('PlaywrightChromiumEngine', () => {
     await engine.close();
   });
 
+  it('removes its Playwright page listeners on close (hygiene D1)', async () => {
+    const session = await engine.createSession({ headless: true });
+    const page = await session.newPage();
+    const backing = (page as unknown as { backingPage(): import('playwright').Page }).backingPage();
+
+    // setupEventListeners attaches these four on construction.
+    expect(backing.listenerCount('close')).toBeGreaterThan(0);
+    expect(backing.listenerCount('dialog')).toBeGreaterThan(0);
+    expect(backing.listenerCount('load')).toBeGreaterThan(0);
+    expect(backing.listenerCount('console')).toBeGreaterThan(0);
+
+    await page.close();
+
+    expect(backing.listenerCount('close')).toBe(0);
+    expect(backing.listenerCount('dialog')).toBe(0);
+    expect(backing.listenerCount('load')).toBe(0);
+    expect(backing.listenerCount('console')).toBe(0);
+  });
+
   // TD-BROWSER-6: headed sessions get a dedicated browser; the shared
   // headless browser must be untouched by them. Headed needs a display, so
   // the headed pair runs on darwin only (linux CI has no window server).

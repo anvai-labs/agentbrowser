@@ -5,12 +5,20 @@
  * automatic expiration, validation, and usage tracking.
  */
 
+import type { StructuredLogger } from './logger.js';
+
 const LOW_RISK_ACTIONS = new Set<string>(['observe', 'navigate', 'scroll', 'press']);
 
 export interface ApprovalGateOptions {
   tokenTtlMs?: number;
   maxTokens?: number;
   cleanupIntervalMs?: number;
+  /**
+   * Structured log for the background cleanup path (hygiene G2): absent
+   * means silent-if-uninjected, matching the service's own convention for
+   * optional telemetry - there is deliberately no console fallback.
+   */
+  logger?: StructuredLogger;
 }
 
 export interface ApprovalActionRequest {
@@ -51,7 +59,8 @@ export class ApprovalError extends Error {
  * Approval Gate for high-risk action authorization
  */
 export class ApprovalGate {
-  private readonly options: Required<ApprovalGateOptions>;
+  private readonly options: Required<Omit<ApprovalGateOptions, 'logger'>>;
+  private readonly logger: StructuredLogger | undefined;
   private readonly tokens: Map<string, ApprovalToken> = new Map();
   /**
    * Session -> token id index (TD-BROWSER-9, A6): keeps getSessionTokens()
@@ -77,6 +86,7 @@ export class ApprovalGate {
       maxTokens: options.maxTokens ?? 1000,
       cleanupIntervalMs: options.cleanupIntervalMs ?? 60000, // 1 minute default
     };
+    this.logger = options.logger;
 
     // Validate configuration
     if (this.options.tokenTtlMs <= 0) {
@@ -266,7 +276,9 @@ export class ApprovalGate {
   private startCleanupTimer(): void {
     this.cleanupTimer = setInterval(() => {
       this.runCleanup().catch((error) => {
-        console.error('Approval token cleanup error:', error);
+        this.logger?.error('approval.cleanup-failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
       });
     }, this.options.cleanupIntervalMs);
   }
@@ -338,7 +350,7 @@ export class ApprovalGate {
   /**
    * Get current configuration
    */
-  getConfig(): Readonly<Required<ApprovalGateOptions>> {
+  getConfig(): Readonly<Required<Omit<ApprovalGateOptions, 'logger'>>> {
     return { ...this.options };
   }
 }
