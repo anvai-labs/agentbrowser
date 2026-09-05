@@ -41,6 +41,9 @@ export interface CliClient {
     cookies(
       sessionId: string
     ): Promise<Array<{ name: string; value: string; domain: string; path: string }>>;
+    trace(sessionId: string): Promise<ArtifactRef>;
+    html(sessionId: string, pageId: string): Promise<ArtifactRef>;
+    events(sessionId: string, type?: string): Promise<Array<Record<string, unknown>>>;
     createPage(sessionId: string): Promise<PageResponse>;
     navigate(
       sessionId: string,
@@ -301,6 +304,41 @@ export function buildCli(deps: CliDependencies): Cli {
           })
         );
 
+      // A3 evidence: export the session's completed spans as an artifact.
+      session
+        .command('trace')
+        .description("export the session's completed (secret-scrubbed) spans as a trace artifact")
+        .argument('<sessionId>')
+        .action(
+          action(async (ctx, sessionId: string) => {
+            const artifact = await ctx.client.sessions.trace(sessionId);
+            ctx.emit(artifact, () => [
+              `Trace artifact ${artifact.artifactId}`,
+              `  type:        ${artifact.type}`,
+              `  size:        ${artifact.sizeBytes} bytes`,
+              `  fetch with:  GET ${artifact.url}`,
+            ]);
+          })
+        );
+
+      // A3 + network summary: replay retained session events.
+      session
+        .command('events')
+        .description('replay retained session events (console + request ledgers)')
+        .argument('<sessionId>')
+        .option('--type <type>', 'filter by event type, e.g. request.finished or console.log')
+        .action(
+          action(async (ctx, sessionId: string, options: { type?: string }) => {
+            const events = await ctx.client.sessions.events(sessionId, options.type);
+            ctx.emit(events, () =>
+              events.map(
+                (event) =>
+                  `${String(event.timestamp ?? '')} ${String(event.type ?? '?')} ${JSON.stringify(event.data ?? {})}`
+              )
+            );
+          })
+        );
+
       // ---- page ------------------------------------------------------------
       const page = program.command('page').description('manage pages within a session');
 
@@ -315,6 +353,25 @@ export function buildCli(deps: CliDependencies): Cli {
               `Page ${created.pageId}`,
               `  session: ${created.sessionId ?? sessionId}`,
               `  status:  ${created.status ?? 'unknown'}`,
+            ]);
+          })
+        );
+
+      // A3 evidence: capture the page's current HTML as an artifact.
+      page
+        .command('html')
+        .description(
+          "capture the page's current HTML as an artifact (NOT secret-redacted — typed-in form values ride it verbatim)"
+        )
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string) => {
+            const artifact = await ctx.client.sessions.html(sessionId, pageId);
+            ctx.emit(artifact, () => [
+              `HTML artifact ${artifact.artifactId}`,
+              `  size:        ${artifact.sizeBytes} bytes`,
+              `  fetch with:  GET ${artifact.url}`,
             ]);
           })
         );

@@ -702,4 +702,45 @@ describe('SessionsClient.extract schema passthrough', () => {
       schema: { properties: { price: { type: 'string' } } },
     });
   });
+
+  describe('SessionsClient evidence methods (trace/html/events)', () => {
+    it('POSTs the trace export and returns the artifact', async () => {
+      const fetchMock = global.fetch as unknown as {
+        mockResolvedValueOnce(v: unknown): void;
+        mock: { calls: unknown[][] };
+      };
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ artifactId: 'trace_1', type: 'trace' }),
+      });
+      const localClient = new AgentBrowserClient({ baseUrl: 'http://localhost:3000' });
+      await localClient.sessions.trace('ses_1');
+      const calls = fetchMock.mock.calls;
+      const call = calls[calls.length - 1] as unknown[];
+      expect(call[0]).toBe('http://localhost:3000/v1/sessions/ses_1/trace');
+      expect((call[1] as { method: string }).method).toBe('POST');
+    });
+
+    it('POSTs the page HTML export and replays events with the type filter', async () => {
+      const fetchMock = global.fetch as unknown as {
+        mockResolvedValueOnce(v: unknown): void;
+        mockResolvedValueAgain(v: unknown): void;
+        mock: { calls: unknown[][] };
+      };
+      fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ artifactId: 'h_1' }) });
+      fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ events: [] }) });
+      const localClient = new AgentBrowserClient({ baseUrl: 'http://localhost:3000' });
+      await localClient.sessions.html('ses_1', 'pg_1');
+      await localClient.sessions.events('ses_1', 'request.finished');
+
+      const calls = fetchMock.mock.calls;
+      const htmlCall = calls[calls.length - 2] as unknown[];
+      expect(htmlCall[0]).toBe('http://localhost:3000/v1/sessions/ses_1/pages/pg_1/html');
+      expect((htmlCall[1] as { method: string }).method).toBe('POST');
+      const eventsCall = calls[calls.length - 1] as unknown[];
+      expect(eventsCall[0]).toBe(
+        'http://localhost:3000/v1/sessions/ses_1/events/replay?type=request.finished'
+      );
+    });
+  });
 });

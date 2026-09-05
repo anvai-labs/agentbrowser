@@ -301,6 +301,37 @@ export class SessionsClient {
     return body.cookies;
   }
 
+  /** A3 evidence: export the session's completed spans as a trace artifact. */
+  async trace(sessionId: string): Promise<ArtifactRef> {
+    const response = await this.requestFn(`${this.baseUrl}/v1/sessions/${sessionId}/trace`, {
+      method: 'POST',
+      headers: this.headers,
+    });
+    return this.handleResponse(response);
+  }
+
+  /** A3 evidence: capture the page's current HTML as an artifact (NOT redacted). */
+  async html(sessionId: string, pageId: string): Promise<ArtifactRef> {
+    const response = await this.requestFn(
+      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/html`,
+      { method: 'POST', headers: this.headers }
+    );
+    return this.handleResponse(response);
+  }
+
+  /** A3/network summary: replay retained session events, oldest first per ledger. */
+  async events(sessionId: string, type?: string): Promise<Array<Record<string, unknown>>> {
+    const query = type !== undefined ? `?type=${encodeURIComponent(type)}` : '';
+    const response = await this.requestFn(
+      `${this.baseUrl}/v1/sessions/${sessionId}/events/replay${query}`,
+      { headers: this.headers }
+    );
+    const body = (await this.handleResponse(response)) as {
+      events: Array<Record<string, unknown>>;
+    };
+    return body.events;
+  }
+
   /** TD-BROWSER-8: execute a batched action plan; returns per-step results. */
   async plan(
     sessionId: string,
