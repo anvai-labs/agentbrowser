@@ -857,24 +857,21 @@ class PlaywrightPage implements EnginePage {
 
   async navigate(request: NavigationRequest): Promise<NavigationResult> {
     const waitUntil = request.waitUntil || 'load';
-    let response: import('playwright').Response | null;
-    try {
-      response = await this.page.goto(request.url, {
-        waitUntil: waitUntil as 'load' | 'domcontentloaded' | 'networkidle',
-      });
-    } catch (error) {
-      // An aborted navigation is the egress choke point doing its job.
-      if (/ERR_BLOCKED_BY_CLIENT|net::ERR_ABORTED/i.test(String(error))) {
-        return {
-          status: 'blocked',
-          url: request.url,
-          redirectChain: [],
-        };
-      }
-      throw error;
-    }
+    const response = await this.page.goto(request.url, {
+      waitUntil: waitUntil as 'load' | 'domcontentloaded' | 'networkidle',
+    });
     // The choke point serves a marked 403 for denied navigations and
-    // denied redirect targets alike.
+    // denied redirect targets alike (hygiene E3: every deny path in
+    // installEgress uses route.fulfill(BLOCKED_RESPONSE), never
+    // route.abort() - the header is the only signal a denial ever
+    // produces, so it's also the only one worth matching on. A prior
+    // String(error)-regex fallback here for 'ERR_BLOCKED_BY_CLIENT'/
+    // 'net::ERR_ABORTED' didn't match anything installEgress's own
+    // abort() call actually throws (that's reason 'failed', i.e.
+    // net::ERR_FAILED, and represents a genuine fetch failure, not a
+    // policy decision - it must propagate as a real error). Its only
+    // live effect was silently relabeling any unrelated real navigation
+    // abort as a policy block.
     if (response?.headers()?.['x-agentbrowser-blocked'] === '1') {
       return {
         status: 'blocked',
