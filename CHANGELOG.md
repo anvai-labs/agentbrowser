@@ -5,6 +5,53 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [1.8.3] — 2026-09-05
+
+Closes the 2026-08-31 engineering-hygiene audit in full — every finding is now
+fixed (see [docs/hygiene-audit.md](docs/hygiene-audit.md)).
+
+### Fixed
+
+- **Screenshots and PDFs from real engines were 0-byte artifacts.** The real
+  Playwright and Safari engines silently dropped the `bytesBase64` byte
+  payload that `service.ts` needs to build an artifact, so every real
+  screenshot/PDF was a 0-byte file — uncaught because all service-level
+  tests ran against `FakeEngine` only. The engine contract is now
+  compiler-enforced via the `CapturedArtifact` type, with a real-Chromium
+  regression test (hygiene C6).
+- **Genuine navigation aborts were silently mislabeled as egress-policy
+  blocks** (hygiene E3). `navigate()` matched Playwright errors against a
+  `net::ERR_ABORTED`-style regex, but every egress deny actually goes
+  through `route.fulfill` (detected via the `x-agentbrowser-blocked`
+  header) — the regex's only live effect was reporting unrelated real
+  navigation aborts as `{status: 'blocked'}`. The regex is removed; real
+  aborts now propagate. A regression test reproduces a genuine
+  `net::ERR_ABORTED` (superseding a navigation) and confirms it surfaces.
+- **`pdf()`/`screenshot()` fail cleanly when an engine violates the
+  capture contract.** `CapturedArtifact` is compile-time only and
+  `BrowserEngine` is a plugged-in interface a non-TypeScript engine could
+  implement over RPC/subprocess; a non-conforming result previously
+  crashed with an opaque `Buffer.from(undefined, ...)` TypeError. Both
+  routes now throw a diagnosable `INTERNAL` `ServiceError` naming the
+  contract violation, with contract-violation tests.
+- **Teardown race in listener cleanup** (hygiene D1's own first draft):
+  the initial fix used `page.removeAllListeners()`, which strips
+  Playwright's own internally-attached listeners too and raced the Obscura
+  engine's context-level route handler into an unhandled
+  "route.abort: ...has been closed" rejection on teardown. The app's four
+  listeners are now removed individually via `.off()`.
+
+### Changed
+
+- Internal consolidations from the audit's low-severity findings,
+  behavior-neutral with the existing test suite unchanged: `server.ts`
+  `route()`/`params()` helpers (F1/F2), MCP tool catalog hoisted out of
+  `buildMcpServer` (F4), one shared SDK `HttpClient` replacing
+  per-method HTTP boilerplate (F6), injectable logger (G2), dead
+  `composite: true` dropped from tsconfig (G1), `FakeEngine` properly
+  typed (C6), and documentation updates marking findings already fixed in
+  v1.8.2 (C2/C4/C5/D2/E4).
+
 ## [1.8.2] — 2026-09-04
 
 ### Security
