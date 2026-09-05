@@ -737,6 +737,18 @@ class PlaywrightPage implements EnginePage {
   private eventsClosed = false;
   private removeSelf: () => void = () => {};
   private pendingDialog: { dialog: import('playwright').Dialog; timer: NodeJS.Timeout } | undefined;
+  /**
+   * Handler references for the four listeners setupEventListeners() attaches
+   * (hygiene D1): removed by name in close(), NOT via page.removeAllListeners()
+   * - that strips Playwright's own internally-attached page listeners too,
+   * which raced context-level route handlers into an unhandled
+   * "route.abort: ...has been closed" rejection during teardown (caught by
+   * the Obscura CDP suite, which shares this same PlaywrightPage).
+   */
+  private onPageClose: () => void = () => {};
+  private onPageDialog: (dialog: import('playwright').Dialog) => void = () => {};
+  private onPageLoad: () => void = () => {};
+  private onPageConsole: (msg: import('playwright').ConsoleMessage) => void = () => {};
 
   /** Registered by the owning session so close() removes it from the map. */
   registerRemoval(remove: () => void): void {
@@ -769,16 +781,17 @@ class PlaywrightPage implements EnginePage {
   private setupEventListeners(): void {
     // The browser can close pages without PlaywrightPage.close() running
     // (engine.close()); Playwright's own close event ends the iterator.
-    this.page.on('close', () => {
+    this.onPageClose = () => {
       this.eventsClosed = true;
       const waiters = this.eventWaiters;
       this.eventWaiters = [];
       for (const wake of waiters) {
         wake();
       }
-    });
+    };
+    this.page.on('close', this.onPageClose);
 
-    this.page.on('dialog', (dialog) => {
+    this.onPageDialog = (dialog) => {
       // Hold the dialog so an agent can accept or dismiss it; settle it
       // automatically after the grace (beforeunload auto-accepts because
       // dismissing cancels the navigation).
@@ -807,18 +820,20 @@ class PlaywrightPage implements EnginePage {
           defaultPrompt: dialog.defaultValue(),
         },
       });
-    });
+    };
+    this.page.on('dialog', this.onPageDialog);
 
-    this.page.on('load', () => {
+    this.onPageLoad = () => {
       this.enqueueEvent({
         type: 'page.loaded',
         timestamp: new Date().toISOString(),
         sessionId: 'unknown', // Stamped by the service
         pageId: this.id,
       });
-    });
+    };
+    this.page.on('load', this.onPageLoad);
 
-    this.page.on('console', (msg) => {
+    this.onPageConsole = (msg) => {
       this.enqueueEvent({
         type: msg.type() as never,
         timestamp: new Date().toISOString(),
@@ -826,7 +841,8 @@ class PlaywrightPage implements EnginePage {
         pageId: this.id,
         data: { text: msg.text() },
       });
-    });
+    };
+    this.page.on('console', this.onPageConsole);
   }
 
   /** Enqueue an event and wake any iterator waiting for one. */
@@ -1304,10 +1320,15 @@ class PlaywrightPage implements EnginePage {
     // Hygiene D1: the constructor attaches 'close'/'dialog'/'load'/'console'
     // listeners (setupEventListeners) that were never explicitly removed -
     // a session churning many pages accumulated handler stubs on each
-    // Playwright Page object until it was GC'd. Explicit removal before
-    // close() makes the lifecycle self-evidently clean regardless of what
-    // else retains a reference to the underlying page.
-    this.page.removeAllListeners();
+    // Playwright Page object until it was GC'd. Removed by name (not
+    // page.removeAllListeners()) so Playwright's own internally-attached
+    // page listeners survive - stripping those raced a context-level
+    // route handler into an unhandled "route.abort: ...has been closed"
+    // rejection during teardown (caught by the Obscura CDP suite).
+    this.page.off('close', this.onPageClose);
+    this.page.off('dialog', this.onPageDialog);
+    this.page.off('load', this.onPageLoad);
+    this.page.off('console', this.onPageConsole);
     await this.page.close();
   }
 }
