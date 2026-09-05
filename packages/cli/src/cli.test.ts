@@ -35,6 +35,26 @@ describe('AgentBrowser CLI', () => {
         { sessionId: 'ses_2', status: 'active', createdAt: '2026-08-23T10:05:00Z' },
       ]),
       close: vi.fn().mockResolvedValue(undefined),
+      cookies: vi
+        .fn()
+        .mockResolvedValue([{ name: 'sid', value: 'abc', domain: 'example.com', path: '/' }]),
+      trace: vi.fn().mockResolvedValue({
+        artifactId: 'trace_1',
+        type: 'trace',
+        contentType: 'application/json',
+        sizeBytes: 2048,
+        url: '/v1/sessions/ses_1/artifacts/trace_1',
+      }),
+      html: vi.fn().mockResolvedValue({
+        artifactId: 'html_1',
+        type: 'html',
+        contentType: 'text/html; charset=utf-8',
+        sizeBytes: 4096,
+        url: '/v1/sessions/ses_1/artifacts/html_1',
+      }),
+      events: vi
+        .fn()
+        .mockResolvedValue([{ type: 'request.finished', timestamp: 't', data: { status: 200 } }]),
       createPage: vi.fn().mockResolvedValue({
         pageId: 'pg_1',
         sessionId: 'ses_1',
@@ -110,6 +130,70 @@ describe('AgentBrowser CLI', () => {
           viewport: { width: 1280, height: 720 },
         })
       );
+    });
+
+    it('should pass the new session flags through (idle-timeout, locale, policy nesting)', async () => {
+      await run(
+        'session',
+        'create',
+        '--tenant',
+        'tenant_1',
+        '--idle-timeout',
+        '3600000',
+        '--locale',
+        'en-US',
+        '--timezone-id',
+        'America/New_York',
+        '--allow-downloads',
+        '--max-download-bytes',
+        '1048576',
+        '--blocked-hosts',
+        'ads.example.com, tracker.io'
+      );
+
+      expect(sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'tenant_1',
+          idleTimeoutMs: 3_600_000,
+          locale: 'en-US',
+          timezoneId: 'America/New_York',
+          policy: {
+            allowDownloads: true,
+            maxDownloadBytes: 1_048_576,
+            blockedHosts: ['ads.example.com', 'tracker.io'],
+          },
+        })
+      );
+    });
+
+    it('should seed cookies from inline JSON and reject malformed JSON', async () => {
+      const jar = JSON.stringify([{ name: 'sid', value: 'abc', domain: 'example.com', path: '/' }]);
+      await run('session', 'create', '--tenant', 'tenant_1', '--cookies', jar);
+      expect(sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cookies: [{ name: 'sid', value: 'abc', domain: 'example.com', path: '/' }],
+        })
+      );
+
+      const bad = await run('session', 'create', '--tenant', 'tenant_1', '--cookies', 'not-json');
+      expect(bad).toBe(1);
+      expect(sessions.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('should export cookies (the credential-handoff loop)', async () => {
+      await run('session', 'cookies', 'ses_1');
+      expect(sessions.cookies).toHaveBeenCalledWith('ses_1');
+    });
+
+    it('should export trace, HTML, and replay events (evidence from the CLI)', async () => {
+      await run('session', 'trace', 'ses_1');
+      expect(sessions.trace).toHaveBeenCalledWith('ses_1');
+
+      await run('page', 'html', 'ses_1', 'pg_1');
+      expect(sessions.html).toHaveBeenCalledWith('ses_1', 'pg_1');
+
+      await run('session', 'events', 'ses_1', '--type', 'request.finished');
+      expect(sessions.events).toHaveBeenCalledWith('ses_1', 'request.finished');
     });
 
     it('should send headless:false for --no-headless (the flag that was missing live)', async () => {

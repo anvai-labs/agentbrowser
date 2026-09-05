@@ -171,6 +171,14 @@ export interface ServiceDependencies {
   logger?: StructuredLogger;
   /** How often to reconcile service state with coordinator expiry (ms). */
   sweepIntervalMs?: number;
+  /**
+   * Operator-level session defaults (env-plumbed via bin.ts). A request
+   * still overrides either per session; these just move the baseline for
+   * deployments whose workloads systematically need longer (e.g. headed
+   * human-in-the-loop flows vs the 2-min default idle).
+   */
+  defaultTtlMs?: number;
+  defaultIdleTimeoutMs?: number;
 }
 
 /** Risk classes that require an approval token before the action runs. */
@@ -252,7 +260,14 @@ export class AgentBrowserService {
       this.engines.set(name, engine);
     }
     this.coordinator =
-      deps.coordinator ?? new SessionCoordinator({ cleanupCheckIntervalMs: 3_600_000 });
+      deps.coordinator ??
+      new SessionCoordinator({
+        cleanupCheckIntervalMs: 3_600_000,
+        ...(deps.defaultTtlMs !== undefined ? { defaultTtlMs: deps.defaultTtlMs } : {}),
+        ...(deps.defaultIdleTimeoutMs !== undefined
+          ? { defaultIdleTimeoutMs: deps.defaultIdleTimeoutMs }
+          : {}),
+      });
     this.normalizer = deps.normalizer ?? new ObservationNormalizer();
     this.executor = deps.executor ?? new ActionExecutor(this.normalizer);
     // SSRF defenses are on by default (ADR-006): loopback, private ranges and
@@ -335,6 +350,7 @@ export class AgentBrowserService {
     }
     this.eventListeners.delete(sessionId);
     this.eventHistory.delete(sessionId);
+    this.requestHistory.delete(sessionId);
     this.sessionDownloadPolicy.delete(sessionId);
     this.sessionPolicies.delete(sessionId);
   }
@@ -424,20 +440,46 @@ export class AgentBrowserService {
    */
   private readonly eventHistory = new Map<string, RingBuffer<EngineEvent>>();
   private static readonly EVENT_HISTORY_LIMIT = 500;
+  /**
+   * Request lifecycle events get their OWN bounded ledger (spec 5.1
+   * network summary): a subresource-heavy page emits dozens of requests
+   * per navigation, and sharing the console ledger would evict exactly
+   * the console lines the replay buffer exists for.
+   */
+  private readonly requestHistory = new Map<string, RingBuffer<EngineEvent>>();
+  private static readonly REQUEST_HISTORY_LIMIT = 1000;
 
   private recordEvent(sessionId: string, event: EngineEvent): void {
-    let buffer = this.eventHistory.get(sessionId);
+    const isRequest = event.type.startsWith('request.');
+    const store = isRequest ? this.requestHistory : this.eventHistory;
+    const limit = isRequest
+      ? AgentBrowserService.REQUEST_HISTORY_LIMIT
+      : AgentBrowserService.EVENT_HISTORY_LIMIT;
+    let buffer = store.get(sessionId);
     if (buffer === undefined) {
-      buffer = new RingBuffer<EngineEvent>({ capacity: AgentBrowserService.EVENT_HISTORY_LIMIT });
-      this.eventHistory.set(sessionId, buffer);
+      buffer = new RingBuffer<EngineEvent>({ capacity: limit });
+      store.set(sessionId, buffer);
     }
     buffer.push(event);
   }
 
-  /** Recent events for a session, oldest first (console replay). */
-  getSessionEvents(sessionId: string): EngineEvent[] {
+  /**
+   * Recent events for a session, oldest first per ledger. A `request.*`
+   * type filter serves the request ledger; no filter returns both ledgers
+   * (console/other first, then requests - cross-ledger interleaving order
+   * is not preserved, documented at the route).
+   */
+  getSessionEvents(sessionId: string, typeFilter?: string): EngineEvent[] {
     this.coordinator.get(sessionId);
-    return this.eventHistory.get(sessionId)?.toArray() ?? [];
+    const others = this.eventHistory.get(sessionId)?.toArray() ?? [];
+    const requests = this.requestHistory.get(sessionId)?.toArray() ?? [];
+    if (typeFilter?.startsWith('request.')) {
+      return requests.filter((event) => event.type === typeFilter);
+    }
+    if (typeFilter !== undefined) {
+      return others.filter((event) => event.type === typeFilter);
+    }
+    return [...others, ...requests];
   }
 
   private pumpEvents(sessionId: string, pageId: string, enginePage: EnginePage): void {
@@ -952,7 +994,24 @@ export class AgentBrowserService {
     waitMs?: number
   ): Promise<string> {
     const page = this.requirePage(sessionId, pageId);
-    const deadline = Date.now() + (waitMs ?? 5000);
+    // waitMs arrives from the public plan route unvalidated (the plan body
+    // is a loose array until PlanStepSchema lands). A non-number ("abc")
+    // or non-finite (1e308 -> Infinity deadline) value used to poison the
+    // deadline arithmetic - `Date.now() >= NaN` is always false, so the
+    // poll loop below never exited (unbounded observe churn, forever).
+    // Validate hard: reject garbage, bound the sane range, default 5000.
+    if (
+      waitMs !== undefined &&
+      (typeof waitMs !== 'number' || !Number.isFinite(waitMs) || waitMs < 100 || waitMs > 60_000)
+    ) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `waitMs must be a finite number between 100 and 60000; got ${JSON.stringify(waitMs)}`,
+        false
+      );
+    }
+    const boundedWaitMs = waitMs ?? 5000;
+    const deadline = Date.now() + boundedWaitMs;
     for (;;) {
       const raw = await page.enginePage.observe({});
       const hit = raw.elements.some(
@@ -972,7 +1031,7 @@ export class AgentBrowserService {
           if (Date.now() >= deadline) {
             throw new ServiceError(
               'ACTION_TIMEOUT',
-              `waitForLabel: '${label}' matched a raw element but never became actionable within ${waitMs ?? 5000}ms`,
+              `waitForLabel: '${label}' matched a raw element but never became actionable within ${boundedWaitMs}ms`,
               true
             );
           }
@@ -984,7 +1043,7 @@ export class AgentBrowserService {
       if (Date.now() >= deadline) {
         throw new ServiceError(
           'ACTION_TIMEOUT',
-          `waitForLabel: no element matching '${label}' appeared within ${waitMs ?? 5000}ms`,
+          `waitForLabel: no element matching '${label}' appeared within ${boundedWaitMs}ms`,
           true
         );
       }

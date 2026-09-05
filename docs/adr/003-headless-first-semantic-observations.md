@@ -45,9 +45,34 @@ type ObservationMode =
 engine implementation exists for it. Requesting it used to silently
 return a zero-element observation (a lie); since Phase 2 (2026-09-04)
 the service rejects it typed (`INVALID_REQUEST`, listing the actually
-`DELIVERED_OBSERVATION_MODES`) instead. Building it for real needs a
-definition, a normalizer mode, and per-engine work - its own TD, not
-folded into this one.
+`DELIVERED_OBSERVATION_MODES`) instead.
+
+### De-scoped (Phase 3 decision, 2026-09-04) — a documented non-goal
+
+Spec'd since the MVP, never built, and deliberately de-scoped rather
+than implemented (the same shape as ADR-005's session-resume
+de-scope). The reasoning:
+
+- The spec positions compact DOM under **Evidence** (§5.1) — and that
+  row is served: raw HTML ships as an artifact
+  (`POST /v1/sessions/{id}/pages/{id}/html`, v1.8.1) and the compact
+  agent-facing view is exactly what `interactive`/`content` modes
+  already deliver. No consumer has ever asked for the middle form.
+- There is **no reserved plumbing** waiting: the normalizer accepts
+  `mode` and never reads it; no engine branches on it. Full delivery
+  is greenfield with a definition problem this ADR already declined to
+  rush — and flipping delivery requires per-engine capability gating to
+  stay honest (Safari advertises only `interactive` and ignores mode
+  entirely; an ungated flip would recreate the exact lie the typed
+  rejection was added to prevent).
+- The one real gap it might have closed — sites with broken
+  accessibility — is served by the screenshot/PDF evidence path today.
+
+If a real consumer appears, the revival path is the normalizer-only
+variant (~a day): a regex tag/id/text outline derived from the
+`rawState.content` the engine already fetches on every observe, plus
+the delivered-list flip and per-engine gating — scoped as its own TD,
+not resurrected wholesale.
 
 ## Consequences
 

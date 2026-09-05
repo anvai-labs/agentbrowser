@@ -181,7 +181,6 @@ class FakePage implements EnginePage {
   private sessionOptions: EngineSessionOptions;
   private pageOptions: NewPageOptions | undefined;
   private currentUrl = 'about:blank';
-  /** Browsing history for goBack/goForward (bounded). */
   /** Browsing history including the current entry (bounded). */
   private historyStack: string[] = ['about:blank'];
   private historyIndex = 0;
@@ -248,8 +247,12 @@ class FakePage implements EnginePage {
       ...(promptText !== undefined ? { promptText } : {}),
       message: dialog.message,
     };
-    this.dialogHandledListener?.(record);
-    this.emitEvent('dialog.closed', { reason, ...record });
+    try {
+      this.dialogHandledListener?.(record);
+    } finally {
+      // A throwing listener must not swallow the close event (E4).
+      this.emitEvent('dialog.closed', { reason, ...record });
+    }
   }
 
   /** Test hook: emit an engine event to subscribers. */

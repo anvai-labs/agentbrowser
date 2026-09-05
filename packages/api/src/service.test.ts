@@ -279,6 +279,28 @@ describe('AgentBrowserService', () => {
       expect(result.error?.message).toMatch(/Never Appears/);
     });
 
+    it('rejects garbage waitMs instantly instead of hanging the poll loop (v1.8.1 defect)', async () => {
+      // Regression: waitMs arrives at waitForLabel unvalidated. "abc"
+      // string-concatenates into a NaN deadline (Date.now() >= NaN is
+      // always false -> the poll loop never exits); 1e308 does the same
+      // via an Infinity deadline. Both wedged a request handler forever.
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+
+      for (const bad of ['abc', 1e308, -1, 0, 61_000, Number.NaN]) {
+        const result = await service.executePlan(session.sessionId, pageId, [
+          { action: 'click', waitForLabel: 'Anything', waitMs: bad } as never,
+        ]);
+        expect(result.ok).toBe(false);
+        // The pre-step gate wraps any waitForLabel throw in the
+        // PLAN_WAIT_TIMEOUT envelope; the message distinguishes the
+        // invalid-input rejection from a genuine poll timeout.
+        expect(result.error?.code).toBe('PLAN_WAIT_TIMEOUT');
+        expect(result.error?.message).toMatch(/waitMs must be a finite number/);
+      }
+    });
+
     it('decays churn on a successful remap-retry step, not just the primary path', async () => {
       // Without the fix, the stale->remap path bumps churn on every step
       // that goes stale but never decays it back down on a successful
@@ -2159,5 +2181,88 @@ describe('maxBytes hardening (Phase 1, A4)', () => {
     const size = Buffer.byteLength(JSON.stringify(bounded), 'utf8');
     expect(size).toBeLessThan(full);
     expect(bounded.truncated).toBe(true);
+  });
+});
+
+describe('request-event ledger separation (spec 5.1 network summary)', () => {
+  let engine: FakeEngine;
+  let service: AgentBrowserService;
+
+  beforeEach(() => {
+    engine = new FakeEngine();
+    service = new AgentBrowserService({ engine });
+  });
+
+  it('routes request.* events to their own ledger and filters replay by type', async () => {
+    const session = await service.createSession({ tenantId: 't1' });
+    const pageId = (await service.createPage(session.sessionId)).pageId;
+    const ids = engine.getSessionIds();
+    const fakePage = engine.getFakePage(ids[ids.length - 1] as string, pageId);
+
+    fakePage?.emitEvent('console.log', { text: 'hello' });
+    fakePage?.emitEvent('request.started', { url: 'https://a.example/', hostname: 'a.example' });
+    fakePage?.emitEvent('request.finished', {
+      url: 'https://a.example/',
+      hostname: 'a.example',
+      status: 200,
+    });
+    fakePage?.emitEvent('request.failed', {
+      url: 'https://b.example/',
+      hostname: 'b.example',
+      blocked: true,
+      reason: 'POLICY_DENIED (sessionHostPolicy)',
+    });
+    // The service pump drains the engine queue asynchronously.
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    // Type-filtered: only the matching request type.
+    const finished = service.getSessionEvents(session.sessionId, 'request.finished');
+    expect(finished).toHaveLength(1);
+    expect(finished[0]?.data?.status).toBe(200);
+
+    const failed = service.getSessionEvents(session.sessionId, 'request.failed');
+    expect(failed).toHaveLength(1);
+    expect(failed[0]?.data?.reason).toMatch(/POLICY_DENIED/);
+
+    // Unfiltered: both ledgers, console lines intact.
+    const all = service.getSessionEvents(session.sessionId);
+    expect(all.filter((e) => e.type === 'console.log')).toHaveLength(1);
+    expect(all.filter((e) => e.type.startsWith('request.'))).toHaveLength(3);
+  });
+
+  it('a request flood does not evict console lines from the replay ledger', async () => {
+    const session = await service.createSession({ tenantId: 't1' });
+    const pageId = (await service.createPage(session.sessionId)).pageId;
+    const ids = engine.getSessionIds();
+    const fakePage = engine.getFakePage(ids[ids.length - 1] as string, pageId);
+
+    fakePage?.emitEvent('console.log', { text: 'keep me' });
+    for (let i = 0; i < 600; i++) {
+      fakePage?.emitEvent('request.started', { url: `https://x.example/${i}` });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const all = service.getSessionEvents(session.sessionId);
+    expect(all.some((e) => e.type === 'console.log' && e.data?.text === 'keep me')).toBe(true);
+    expect(all.filter((e) => e.type === 'request.started').length).toBe(600);
+  });
+
+  it('drops the request ledger with the session', async () => {
+    const session = await service.createSession({ tenantId: 't1' });
+    const pageId = (await service.createPage(session.sessionId)).pageId;
+    const ids = engine.getSessionIds();
+    engine
+      .getFakePage(ids[ids.length - 1] as string, pageId)
+      ?.emitEvent('request.finished', { url: 'https://a.example/' });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const internal = service as unknown as {
+      requestHistory: Map<string, unknown>;
+      eventHistory: Map<string, unknown>;
+    };
+    expect(internal.requestHistory.has(session.sessionId)).toBe(true);
+    await service.closeSession(session.sessionId);
+    expect(internal.requestHistory.has(session.sessionId)).toBe(false);
+    expect(internal.eventHistory.has(session.sessionId)).toBe(false);
   });
 });

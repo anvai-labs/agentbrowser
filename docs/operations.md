@@ -56,6 +56,8 @@ config file.
 | `AGENTBROWSER_LOG_LEVEL` | service | `debug` or `info` (default). Logs are structured JSON, scrubbed of registered secrets. |
 | `AGENTBROWSER_CHROME_PATH` | service (Playwright engine) | Prefer a specific real Chrome for headed sessions ([ADR-013](adr/013-headed-sessions-and-walled-logins.md)). |
 | `AGENTBROWSER_ARTIFACT_KEY` | service | Bearer key guarding artifact download URLs, when set. |
+| `AGENTBROWSER_DEFAULT_TTL_MS` | service | Operator-level default session TTL (ms); per-session `ttlMs` still wins. Unset/garbage → the 15-min default. |
+| `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS` | service | Operator-level default idle timeout (ms); per-session `idleTimeoutMs` still wins. Unset/garbage → the 2-min default. Useful for deployments that are mostly headed human-in-the-loop flows. |
 
 Port and bind address default to `3000` on `0.0.0.0`
 (`ServerOptions`); when exposing the service beyond localhost, set
@@ -91,9 +93,14 @@ sibling `.err.log`); `brew services list` shows run state.
 Sessions are **ephemeral by default** ([ADR-005](adr/005-ephemeral-sessions-explicit-persistence.md)):
 
 - default TTL **15 minutes**, default idle timeout **2 minutes** — both
-  overridable per session (`ttlMs`, `idleTimeoutMs` on create);
-- a 30-second sweep expires lapsed sessions, drops their pages,
-  listeners, and per-session policy state, and emits `page.destroyed`
+  overridable per session (`ttlMs`, `idleTimeoutMs` on create), and the
+  defaults themselves are operator-tunable
+  (`AGENTBROWSER_DEFAULT_TTL_MS` / `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS`);
+- expiry is **lazy on access plus a 1-hour background sweep** (the
+  coordinator's 30-second default is unused by the API service): a lapsed
+  session is reaped the moment anything touches it, and the periodic sweep
+  catches anything idle between touches, dropping its pages, listeners,
+  and per-session policy state, and emitting `page.destroyed`
   (reason `session-expired`) on the session's event stream;
 - closing a session (`DELETE /v1/sessions/:id`, CLI `session close`,
   MCP `browser_close`) releases the browser context immediately and

@@ -38,6 +38,12 @@ export interface CliClient {
     create(request: SessionRequest): Promise<SessionResponse>;
     list(): Promise<SessionResponse[]>;
     close(sessionId: string): Promise<void>;
+    cookies(
+      sessionId: string
+    ): Promise<Array<{ name: string; value: string; domain: string; path: string }>>;
+    trace(sessionId: string): Promise<ArtifactRef>;
+    html(sessionId: string, pageId: string): Promise<ArtifactRef>;
+    events(sessionId: string, type?: string): Promise<Array<Record<string, unknown>>>;
     createPage(sessionId: string): Promise<PageResponse>;
     navigate(
       sessionId: string,
@@ -160,6 +166,26 @@ export function buildCli(deps: CliDependencies): Cli {
         )
         .option('--viewport <WxH>', 'viewport size, e.g. 1280x720')
         .option('--ttl <ms>', 'session TTL in milliseconds')
+        .option(
+          '--idle-timeout <ms>',
+          'idle timeout in ms (server default 120000 = 2 min — raise this for headed human-in-the-loop logins; server caps at 3600000)'
+        )
+        .option('--locale <tag>', 'locale, e.g. en-US')
+        .option('--timezone-id <tz>', 'IANA timezone, e.g. America/New_York')
+        .option(
+          '--cookies <json>',
+          'seed cookies as inline JSON (the credential-handoff loop: pair with `session cookies` to export first)'
+        )
+        .option(
+          '--allow-downloads',
+          'allow downloads for this session (denied by default server-side)'
+        )
+        .option('--max-download-bytes <n>', 'per-download byte cap when downloads are allowed')
+        .option('--allow-hosts <a,b>', 'restrict egress to these hosts (comma-separated)')
+        .option(
+          '--blocked-hosts <a,b>',
+          'block these hosts on top of the SSRF base (comma-separated)'
+        )
         .action(
           action(async (ctx, options: Record<string, string | boolean | undefined>) => {
             const request: SessionRequest = { tenantId: String(options.tenant) };
@@ -177,6 +203,49 @@ export function buildCli(deps: CliDependencies): Cli {
             }
             if (options.ttl) {
               request.ttlMs = Number.parseInt(String(options.ttl), 10);
+            }
+            if (options.idleTimeout) {
+              request.idleTimeoutMs = Number.parseInt(String(options.idleTimeout), 10);
+            }
+            if (options.locale) {
+              request.locale = String(options.locale);
+            }
+            if (options.timezoneId) {
+              request.timezoneId = String(options.timezoneId);
+            }
+            if (options.cookies) {
+              try {
+                request.cookies = JSON.parse(String(options.cookies)) as NonNullable<
+                  SessionRequest['cookies']
+                >;
+              } catch {
+                throw new UsageError('--cookies must be valid inline JSON (an array of cookies).');
+              }
+            }
+            // Egress/download rules ride the wire nested under `policy`
+            // (the server maps them onto the session); any combination is
+            // restrict-only over the SSRF base.
+            const policy: Record<string, unknown> = {};
+            if (options.allowDownloads !== undefined) {
+              policy.allowDownloads = Boolean(options.allowDownloads);
+            }
+            if (options.maxDownloadBytes) {
+              policy.maxDownloadBytes = Number.parseInt(String(options.maxDownloadBytes), 10);
+            }
+            if (options.allowHosts) {
+              policy.allowedHosts = String(options.allowHosts)
+                .split(',')
+                .map((h) => h.trim())
+                .filter((h) => h.length > 0);
+            }
+            if (options.blockedHosts) {
+              policy.blockedHosts = String(options.blockedHosts)
+                .split(',')
+                .map((h) => h.trim())
+                .filter((h) => h.length > 0);
+            }
+            if (Object.keys(policy).length > 0) {
+              request.policy = policy as unknown as NonNullable<SessionRequest['policy']>;
             }
 
             const created = await ctx.client.sessions.create(request);
@@ -218,6 +287,58 @@ export function buildCli(deps: CliDependencies): Cli {
           })
         );
 
+      // The export half of the credential-handoff loop (TD-BROWSER-6):
+      // export cookies, later re-seed a new session via
+      // `session create --cookies "$(…)"`.
+      session
+        .command('cookies')
+        .description("export a session's cookies (re-seed future sessions via create --cookies)")
+        .argument('<sessionId>')
+        .action(
+          action(async (ctx, sessionId: string) => {
+            const cookies = await ctx.client.sessions.cookies(sessionId);
+            ctx.emit(cookies, () => [
+              JSON.stringify(cookies),
+              `(${cookies.length} cookie${cookies.length === 1 ? '' : 's'} — re-seed with: session create --cookies '${JSON.stringify(cookies)}')`,
+            ]);
+          })
+        );
+
+      // A3 evidence: export the session's completed spans as an artifact.
+      session
+        .command('trace')
+        .description("export the session's completed (secret-scrubbed) spans as a trace artifact")
+        .argument('<sessionId>')
+        .action(
+          action(async (ctx, sessionId: string) => {
+            const artifact = await ctx.client.sessions.trace(sessionId);
+            ctx.emit(artifact, () => [
+              `Trace artifact ${artifact.artifactId}`,
+              `  type:        ${artifact.type}`,
+              `  size:        ${artifact.sizeBytes} bytes`,
+              `  fetch with:  GET ${artifact.url}`,
+            ]);
+          })
+        );
+
+      // A3 + network summary: replay retained session events.
+      session
+        .command('events')
+        .description('replay retained session events (console + request ledgers)')
+        .argument('<sessionId>')
+        .option('--type <type>', 'filter by event type, e.g. request.finished or console.log')
+        .action(
+          action(async (ctx, sessionId: string, options: { type?: string }) => {
+            const events = await ctx.client.sessions.events(sessionId, options.type);
+            ctx.emit(events, () =>
+              events.map(
+                (event) =>
+                  `${String(event.timestamp ?? '')} ${String(event.type ?? '?')} ${JSON.stringify(event.data ?? {})}`
+              )
+            );
+          })
+        );
+
       // ---- page ------------------------------------------------------------
       const page = program.command('page').description('manage pages within a session');
 
@@ -232,6 +353,25 @@ export function buildCli(deps: CliDependencies): Cli {
               `Page ${created.pageId}`,
               `  session: ${created.sessionId ?? sessionId}`,
               `  status:  ${created.status ?? 'unknown'}`,
+            ]);
+          })
+        );
+
+      // A3 evidence: capture the page's current HTML as an artifact.
+      page
+        .command('html')
+        .description(
+          "capture the page's current HTML as an artifact (NOT secret-redacted — typed-in form values ride it verbatim)"
+        )
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string) => {
+            const artifact = await ctx.client.sessions.html(sessionId, pageId);
+            ctx.emit(artifact, () => [
+              `HTML artifact ${artifact.artifactId}`,
+              `  size:        ${artifact.sizeBytes} bytes`,
+              `  fetch with:  GET ${artifact.url}`,
             ]);
           })
         );

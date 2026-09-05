@@ -358,9 +358,13 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           operationId: 'getSessionEvents',
           summary: 'Replay the session event ledger',
           description:
-            "A3 evidence: the session's recent engine events (bounded ring, oldest " +
-            'first) - console lines and lifecycle events for late subscribers. ' +
-            'Optional ?type= filters by event type.',
+            "A3 evidence: the session's recent engine events (bounded rings, oldest " +
+            'first per ledger) - console lines and lifecycle events for late ' +
+            'subscribers. Network summary (spec 5.1): request lifecycle events ' +
+            '(request.started/finished/failed, URLs query-string-redacted, denials ' +
+            'carrying the policy code/rule) live in their own bounded ledger - ' +
+            'filter with ?type=request.finished etc. Unfiltered returns both ' +
+            'ledgers (console first; cross-ledger ordering not preserved).',
           tags: ['sessions'],
           parameters: [
             sessionIdParam,

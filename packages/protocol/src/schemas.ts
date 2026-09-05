@@ -7,7 +7,7 @@
 
 import { Static, Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import { REF_PATTERN } from './types.js';
+import { DELIVERED_ACTION_TYPES, REF_PATTERN } from './types.js';
 
 // Re-export all types for convenience
 export * from './types.js';
@@ -18,6 +18,7 @@ export * from './types.js';
 
 export const ErrorCodeEnum = Type.Union([
   Type.Literal('INVALID_REQUEST'),
+  Type.Literal('INVALID_TENANT_ID'),
   Type.Literal('UNAUTHORIZED'),
   Type.Literal('FORBIDDEN'),
   Type.Literal('NOT_FOUND'),
@@ -33,6 +34,7 @@ export const ErrorCodeEnum = Type.Union([
   Type.Literal('TARGET_DISABLED'),
   Type.Literal('NAVIGATION_TIMEOUT'),
   Type.Literal('ACTION_TIMEOUT'),
+  Type.Literal('PLAN_WAIT_TIMEOUT'),
   Type.Literal('ENGINE_UNSUPPORTED'),
   Type.Literal('ENGINE_CRASHED'),
   Type.Literal('DOWNLOAD_BLOCKED'),
@@ -78,7 +80,10 @@ export const ApprovalPolicySchema = Type.Object({
 });
 
 export const SessionPolicySchema = Type.Object({
-  allowedHosts: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+  // Optional since Phase 3: requiring allowedHosts meant a policy object
+  // carrying ONLY blockedHosts (or only download rules) could not be
+  // expressed - every restrict-only combination is legitimate.
+  allowedHosts: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
   blockedHosts: Type.Optional(Type.Array(Type.String())),
   allowDownloads: Type.Optional(Type.Boolean()),
   maxDownloadBytes: Type.Optional(Type.Number({ minimum: 0 })),
@@ -339,6 +344,40 @@ export const WaitTypeSchema = Type.Union([
 export const WaitConditionSchema = Type.Object({
   until: WaitTypeSchema,
   timeoutMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 300000 })),
+});
+
+/**
+ * A plan step on the WIRE (the flat /plan vocabulary, distinct from the
+ * nested SupportedAction the service constructs per step). Constrains but
+ * does not strip unknown keys (the validateSessionRequest contract): the
+ * point is to reject garbage before it reaches executePlan - notably a
+ * non-integer or out-of-range waitMs, which used to poison waitForLabel's
+ * deadline arithmetic into a never-exiting poll loop.
+ */
+export const PlanStepSchema = Type.Object({
+  action: Type.Union(DELIVERED_ACTION_TYPES.map((literal) => Type.Literal(literal))),
+  target: Type.Optional(Type.Object({ ref: Type.String({ pattern: REF_PATTERN.source }) })),
+  value: Type.Optional(Type.String()),
+  key: Type.Optional(Type.String()),
+  direction: Type.Optional(
+    Type.Union([
+      Type.Literal('up'),
+      Type.Literal('down'),
+      Type.Literal('left'),
+      Type.Literal('right'),
+    ])
+  ),
+  amount: Type.Optional(Type.Number()),
+  observe: Type.Optional(Type.Union([Type.Literal('after'), Type.Literal('none')])),
+  expectedRevision: Type.Optional(Type.Integer({ minimum: 0 })),
+  approvalToken: Type.Optional(Type.String()),
+  promptText: Type.Optional(Type.String()),
+  wait: Type.Optional(WaitConditionSchema),
+  condition: Type.Optional(WaitConditionSchema),
+  /** TD-BROWSER-8 Phase 2: pre-step label wait. */
+  waitForLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+  /** Bounded hard (100-60000): garbage here wedged the poll loop pre-v1.8.2. */
+  waitMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 60000 })),
 });
 
 export const WaitActionSchema = Type.Object({

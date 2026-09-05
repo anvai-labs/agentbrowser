@@ -11,7 +11,12 @@ import { createHash } from 'node:crypto';
 import { InMemoryTracer, MetricsRegistry, type SecretManager } from '@agentbrowser/core';
 import type { StructuredLogger } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
-import { DELIVERED_EXTRACT_FORMATS, validateSessionRequest } from '@agentbrowser/protocol';
+import {
+  DELIVERED_EXTRACT_FORMATS,
+  ErrorCode,
+  validatePlanStep,
+  validateSessionRequest,
+} from '@agentbrowser/protocol';
 import type { SessionPolicy } from '@agentbrowser/protocol';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
@@ -47,6 +52,9 @@ export interface ServerOptions {
   secretManager?: SecretManager;
   /** Structured operation log; when absent, no operation logging. */
   logger?: StructuredLogger;
+  /** Session-default overrides plumbed to the coordinator (see ServiceDependencies). */
+  defaultTtlMs?: number;
+  defaultIdleTimeoutMs?: number;
   /**
    * Bearer-key authentication: SHA-256(key) -> tenantId. When absent (and no
    * AGENTBROWSER_API_KEYS env), auth is disabled with a loud warning -
@@ -84,34 +92,56 @@ function apiKeysFromEnv(): Map<string, string> | undefined {
   return keys;
 }
 
+/**
+ * Map protocol error codes onto HTTP statuses (hygiene F3).
+ *
+ * Exhaustive over the ErrorCode enum: the `satisfies Record<ErrorCode,
+ * number>` check makes this a compile error the moment a new code is added
+ * without a mapping - the hand-maintained switch previously drifted to 6
+ * unmapped members, three of them LIVE-thrown (ACTION_TIMEOUT with
+ * retryable=true reached clients as an incoherent 500; ENGINE_CRASHED as
+ * 500; INVALID_TENANT_ID wasn't even in the enum, violating the protocol
+ * error schema).
+ */
+const STATUS_FOR = {
+  // 400 family: the request was bad (bad shape, bad target, bad tenant).
+  [ErrorCode.INVALID_REQUEST]: 400,
+  [ErrorCode.INVALID_TENANT_ID]: 400,
+  [ErrorCode.STALE_TARGET]: 400,
+  [ErrorCode.TARGET_NOT_FOUND]: 400,
+  [ErrorCode.TARGET_AMBIGUOUS]: 400,
+  [ErrorCode.TARGET_NOT_VISIBLE]: 400,
+  [ErrorCode.TARGET_DISABLED]: 400,
+  [ErrorCode.OUTPUT_TRUNCATED]: 400,
+  // Auth/permission.
+  [ErrorCode.UNAUTHORIZED]: 401,
+  [ErrorCode.FORBIDDEN]: 403,
+  [ErrorCode.POLICY_DENIED]: 403,
+  [ErrorCode.APPROVAL_REQUIRED]: 403,
+  [ErrorCode.DOWNLOAD_BLOCKED]: 403,
+  // Gone.
+  [ErrorCode.NOT_FOUND]: 404,
+  [ErrorCode.SESSION_NOT_FOUND]: 404,
+  [ErrorCode.PAGE_NOT_FOUND]: 404,
+  [ErrorCode.SESSION_EXPIRED]: 410,
+  // The service could not satisfy the request shape (engine can't do it).
+  [ErrorCode.ENGINE_UNSUPPORTED]: 422,
+  // Too much.
+  [ErrorCode.QUOTA_EXCEEDED]: 429,
+  // The browser side timed out waiting (retryable per the service).
+  [ErrorCode.NAVIGATION_TIMEOUT]: 504,
+  [ErrorCode.ACTION_TIMEOUT]: 504,
+  // In-band today (plan envelope, HTTP 200); mapped in case it's ever
+  // thrown as a ServiceError.
+  [ErrorCode.PLAN_WAIT_TIMEOUT]: 504,
+  // Server-side failures.
+  [ErrorCode.ENGINE_CRASHED]: 500,
+  [ErrorCode.INTERNAL]: 500,
+} satisfies Record<ErrorCode, number>;
+
 /** Map protocol error codes onto HTTP statuses. */
 function statusFor(code: string): number {
-  switch (code) {
-    case 'UNAUTHORIZED':
-      return 401;
-    case 'SESSION_NOT_FOUND':
-    case 'NOT_FOUND':
-    case 'PAGE_NOT_FOUND':
-      return 404;
-    case 'POLICY_DENIED':
-    case 'APPROVAL_REQUIRED':
-    case 'FORBIDDEN':
-    case 'DOWNLOAD_BLOCKED':
-      return 403;
-    case 'QUOTA_EXCEEDED':
-      return 429;
-    case 'ENGINE_UNSUPPORTED':
-      return 422;
-    case 'INVALID_REQUEST':
-    case 'STALE_TARGET':
-    case 'TARGET_NOT_FOUND':
-    case 'TARGET_AMBIGUOUS':
-    case 'TARGET_NOT_VISIBLE':
-    case 'TARGET_DISABLED':
-      return 400;
-    default:
-      return 500;
-  }
+  return STATUS_FOR[code as ErrorCode] ?? 500;
 }
 
 export async function buildServer(options: ServerOptions = {}): Promise<FastifyInstance> {
@@ -164,6 +194,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     tracer,
     ...(options.logger ? { logger: options.logger } : {}),
     ...(options.downloader ? { downloader: options.downloader } : {}),
+    ...(options.defaultTtlMs !== undefined ? { defaultTtlMs: options.defaultTtlMs } : {}),
+    ...(options.defaultIdleTimeoutMs !== undefined
+      ? { defaultIdleTimeoutMs: options.defaultIdleTimeoutMs }
+      : {}),
   });
 
   fastify.addHook('onClose', async () => {
@@ -497,11 +531,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
+          // request.* events live in their own ledger (network summary,
+          // spec 5.1); getSessionEvents routes the filter accordingly.
           const typeFilter = (request.query as { type?: string } | null)?.type;
-          const events = service
-            .getSessionEvents(sessionId)
-            .filter((event) => typeFilter === undefined || event.type === typeFilter);
-          return reply.send({ events });
+          return reply.send({ events: service.getSessionEvents(sessionId, typeFilter) });
         } catch (error) {
           return fail(reply, error);
         }
@@ -580,6 +613,29 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
                 retryable: false,
               },
             });
+          }
+          // Plan steps were the last unvalidated request surface (a bare
+          // array cast): garbage waitForLabel/waitMs rode straight into
+          // waitForLabel's deadline arithmetic (NaN deadline = a poll loop
+          // that never exits). Each step is schema-checked on entry now;
+          // the service-side clamp remains as defense in depth.
+          for (const [index, step] of body.actions.entries()) {
+            const validated = validatePlanStep(step);
+            if (!validated.ok) {
+              const details = validated.issues
+                .map(
+                  (issue: { path: string; message: string }) =>
+                    `actions[${index}]${issue.path}: ${issue.message}`
+                )
+                .join('; ');
+              return reply.status(400).send({
+                error: {
+                  code: 'INVALID_REQUEST',
+                  message: `Invalid plan step: ${details}`,
+                  retryable: false,
+                },
+              });
+            }
           }
           return reply.send(
             await service.executePlan(
