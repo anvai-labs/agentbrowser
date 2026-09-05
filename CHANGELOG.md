@@ -54,6 +54,10 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   `browser_create` gains `idleTimeoutMs`.
 - **Operator session-default env vars**: `AGENTBROWSER_DEFAULT_TTL_MS` and
   `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS` (per-request values still win).
+- **Evidence export from the CLI**: `session trace` (spans artifact),
+  `page html` (page HTML artifact), and `session events [--type]` (console +
+  request-ledger replay) — the evidence routes are now reachable from
+  scripts without curl, via new SDK `trace()`/`html()`/`events()` methods.
 
 ### Changed
 

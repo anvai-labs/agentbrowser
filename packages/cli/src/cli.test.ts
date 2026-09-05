@@ -38,6 +38,23 @@ describe('AgentBrowser CLI', () => {
       cookies: vi
         .fn()
         .mockResolvedValue([{ name: 'sid', value: 'abc', domain: 'example.com', path: '/' }]),
+      trace: vi.fn().mockResolvedValue({
+        artifactId: 'trace_1',
+        type: 'trace',
+        contentType: 'application/json',
+        sizeBytes: 2048,
+        url: '/v1/sessions/ses_1/artifacts/trace_1',
+      }),
+      html: vi.fn().mockResolvedValue({
+        artifactId: 'html_1',
+        type: 'html',
+        contentType: 'text/html; charset=utf-8',
+        sizeBytes: 4096,
+        url: '/v1/sessions/ses_1/artifacts/html_1',
+      }),
+      events: vi
+        .fn()
+        .mockResolvedValue([{ type: 'request.finished', timestamp: 't', data: { status: 200 } }]),
       createPage: vi.fn().mockResolvedValue({
         pageId: 'pg_1',
         sessionId: 'ses_1',
@@ -166,6 +183,17 @@ describe('AgentBrowser CLI', () => {
     it('should export cookies (the credential-handoff loop)', async () => {
       await run('session', 'cookies', 'ses_1');
       expect(sessions.cookies).toHaveBeenCalledWith('ses_1');
+    });
+
+    it('should export trace, HTML, and replay events (evidence from the CLI)', async () => {
+      await run('session', 'trace', 'ses_1');
+      expect(sessions.trace).toHaveBeenCalledWith('ses_1');
+
+      await run('page', 'html', 'ses_1', 'pg_1');
+      expect(sessions.html).toHaveBeenCalledWith('ses_1', 'pg_1');
+
+      await run('session', 'events', 'ses_1', '--type', 'request.finished');
+      expect(sessions.events).toHaveBeenCalledWith('ses_1', 'request.finished');
     });
 
     it('should send headless:false for --no-headless (the flag that was missing live)', async () => {
