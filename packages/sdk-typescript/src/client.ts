@@ -132,6 +132,9 @@ export interface ExtractResult {
     hash: string;
   }>;
   warnings?: string[];
+  /** Which model adapter contributed (only when one is injected). */
+  modelUsed?: string;
+  tokenUsage?: Record<string, unknown>;
 }
 
 export interface ScreenshotRequest {

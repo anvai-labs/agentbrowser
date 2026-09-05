@@ -354,7 +354,13 @@ export interface EnginePage {
   act(action: EngineAction): Promise<ActionEffect>;
 
   /**
-   * Extract data from page
+   * Extract data from page.
+   *
+   * VESTIGIAL: extraction in the shipped stack is service-level (the
+   * service observes the page and runs the extraction package's pure
+   * functions over the raw state); no engine's implementation of this
+   * method is consulted in production. Kept on the interface for
+   * compatibility; do not build on it.
    */
   extract(request: ExtractionRequest): Promise<ExtractionResult>;
 

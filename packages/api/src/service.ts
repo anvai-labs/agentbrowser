@@ -1655,16 +1655,11 @@ export class AgentBrowserService {
         case 'jsonld':
           return extractJsonLd(sourced);
         case 'schema': {
-          if (request.schema === undefined) {
-            throw new ServiceError(
-              'INVALID_REQUEST',
-              "format 'schema' requires a schema (JSON Schema object)."
-            );
-          }
+          this.validateExtractSchema(request.schema);
           const extractor = new SchemaExtractor({
             ...(this.secretManager !== undefined ? { secretManager: this.secretManager } : {}),
           });
-          return await extractor.extract(sourced, request.schema);
+          return await extractor.extract(sourced, request.schema as Record<string, unknown>);
         }
         default:
           throw new ServiceError(
@@ -1673,6 +1668,41 @@ export class AgentBrowserService {
           );
       }
     });
+  }
+
+  /**
+   * Shape-check the schema argument for format:'schema' (flat subset:
+   * top-level `properties` object + optional `required` string array) with
+   * a size bound. Previously any truthy JSON value passed through.
+   */
+  private validateExtractSchema(schema: Record<string, unknown> | undefined): void {
+    if (schema === undefined) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        "format 'schema' requires a schema (JSON Schema object)."
+      );
+    }
+    if (Buffer.byteLength(JSON.stringify(schema), 'utf8') > 65_536) {
+      throw new ServiceError('INVALID_REQUEST', 'schema exceeds the 64 KiB bound.');
+    }
+    if (
+      typeof schema !== 'object' ||
+      Array.isArray(schema) ||
+      schema.properties === undefined ||
+      typeof schema.properties !== 'object' ||
+      Array.isArray(schema.properties)
+    ) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        "schema must be an object with a top-level 'properties' object."
+      );
+    }
+    if (
+      schema.required !== undefined &&
+      (!Array.isArray(schema.required) || schema.required.some((r) => typeof r !== 'string'))
+    ) {
+      throw new ServiceError('INVALID_REQUEST', "schema 'required' must be an array of strings.");
+    }
   }
 
   // ---- screenshots --------------------------------------------------------

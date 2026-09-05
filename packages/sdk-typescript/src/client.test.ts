@@ -675,3 +675,31 @@ describe('AgentBrowser SDK', () => {
     });
   });
 });
+
+describe('SessionsClient.extract schema passthrough', () => {
+  it('sends format and schema verbatim on the wire', async () => {
+    const fetchMock = global.fetch as unknown as {
+      mockResolvedValueOnce(v: unknown): void;
+      mock: { calls: unknown[][] };
+    };
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: {}, evidence: [] }),
+    });
+
+    const localClient = new AgentBrowserClient({ baseUrl: 'http://localhost:3000' });
+    await localClient.sessions.extract('ses_1', 'pg_1', {
+      format: 'schema',
+      schema: { properties: { price: { type: 'string' } } },
+    });
+
+    // The global fetch mock's history carries earlier tests; read OUR call.
+    const calls = fetchMock.mock.calls;
+    const call = calls[calls.length - 1] as unknown[];
+    const body = JSON.parse((call[1] as { body: string }).body);
+    expect(body).toEqual({
+      format: 'schema',
+      schema: { properties: { price: { type: 'string' } } },
+    });
+  });
+});

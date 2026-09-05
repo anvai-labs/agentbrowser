@@ -956,6 +956,36 @@ describe('AgentBrowser REST API safety integration', () => {
       expect(typeof result.evidence[0].hash).toBe('string');
     });
 
+    it('should extract via schema over HTTP and reject a malformed schema', async () => {
+      const { sessionId, pageId } = await setupPage();
+      const schemaOk = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/extract`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          format: 'schema',
+          schema: { properties: { title: { type: 'string' } } },
+        }),
+      });
+      expect(schemaOk.status).toBe(200);
+      const data = await schemaOk.json();
+      expect(data.data).toBeDefined();
+      expect(Array.isArray(data.evidence)).toBe(true);
+
+      const noSchema = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/extract`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ format: 'schema' }),
+      });
+      expect(noSchema.status).toBe(400);
+
+      const badSchema = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/extract`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ format: 'schema', schema: { properties: 'nope' } }),
+      });
+      expect(badSchema.status).toBe(400);
+    });
+
     it('should reject an unknown format', async () => {
       const { sessionId, pageId } = await setupPage();
 

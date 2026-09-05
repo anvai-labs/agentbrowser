@@ -53,8 +53,13 @@ export interface CliClient {
     extract(
       sessionId: string,
       pageId: string,
-      request: { format: string }
-    ): Promise<{ data?: unknown; evidence?: unknown[]; warnings?: string[] }>;
+      request: { format: string; schema?: Record<string, unknown> }
+    ): Promise<{
+      data?: unknown;
+      evidence?: unknown[];
+      warnings?: string[];
+      modelUsed?: string;
+    }>;
   };
 }
 
@@ -517,15 +522,35 @@ export function buildCli(deps: CliDependencies): Cli {
         .argument('<sessionId>')
         .argument('<pageId>')
         .option('--format <format>', `one of: ${DELIVERED_EXTRACT_FORMATS.join(' | ')}`)
+        .option(
+          '--schema <json>',
+          'inline JSON Schema for format=schema (flat top-level properties)'
+        )
         .action(
-          action(async (ctx, sessionId: string, pageId: string, options: { format?: string }) => {
-            const result = (await ctx.client.sessions.extract(sessionId, pageId, {
-              format: (options.format ?? 'text') as never,
-            })) as unknown;
-            ctx.emit(result, () => [
-              JSON.stringify((result as { data?: unknown }).data, null, 2).slice(0, 4000),
-            ]);
-          })
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              pageId: string,
+              options: { format?: string; schema?: string }
+            ) => {
+              let schemaValue: Record<string, unknown> | undefined;
+              if (options.schema !== undefined) {
+                try {
+                  schemaValue = JSON.parse(options.schema) as Record<string, unknown>;
+                } catch {
+                  throw new UsageError('--schema must be valid inline JSON.');
+                }
+              }
+              const result = (await ctx.client.sessions.extract(sessionId, pageId, {
+                format: (options.format ?? 'text') as never,
+                ...(schemaValue !== undefined ? { schema: schemaValue } : {}),
+              })) as unknown;
+              ctx.emit(result, () => [
+                JSON.stringify((result as { data?: unknown }).data, null, 2).slice(0, 4000),
+              ]);
+            }
+          )
         );
 
       // ---- screenshot ------------------------------------------------------

@@ -673,6 +673,19 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                   type: 'string',
                   enum: [...DELIVERED_EXTRACT_FORMATS],
                 },
+                schema: {
+                  type: 'object',
+                  description:
+                    'JSON Schema for format=schema: flat top-level ' +
+                    'properties (name -> {type, description}) + optional ' +
+                    'required array. Deterministic matching first; an ' +
+                    'injected model adapter (if configured) only fills ' +
+                    'fields the deterministic pass could not find.',
+                  properties: {
+                    properties: { type: 'object' },
+                    required: { type: 'array', items: { type: 'string' } },
+                  },
+                },
               },
             }),
           },
@@ -699,6 +712,10 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                     },
                   },
                   warnings: { type: 'array', items: { type: 'string' } },
+                  modelUsed: {
+                    type: 'string',
+                    description: 'Which model adapter contributed, if any.',
+                  },
                 },
               }),
             },
