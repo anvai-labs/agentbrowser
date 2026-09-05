@@ -524,11 +524,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
+          // request.* events live in their own ledger (network summary,
+          // spec 5.1); getSessionEvents routes the filter accordingly.
           const typeFilter = (request.query as { type?: string } | null)?.type;
-          const events = service
-            .getSessionEvents(sessionId)
-            .filter((event) => typeFilter === undefined || event.type === typeFilter);
-          return reply.send({ events });
+          return reply.send({ events: service.getSessionEvents(sessionId, typeFilter) });
         } catch (error) {
           return fail(reply, error);
         }

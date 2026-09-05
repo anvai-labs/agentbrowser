@@ -2210,6 +2210,10 @@
                     "type": "string"
                   },
                   {
+                    "const": "INVALID_TENANT_ID",
+                    "type": "string"
+                  },
+                  {
                     "const": "UNAUTHORIZED",
                     "type": "string"
                   },
@@ -2267,6 +2271,10 @@
                   },
                   {
                     "const": "ACTION_TIMEOUT",
+                    "type": "string"
+                  },
+                  {
+                    "const": "PLAN_WAIT_TIMEOUT",
                     "type": "string"
                   },
                   {
@@ -2332,6 +2340,10 @@
                 "type": "string"
               },
               {
+                "const": "INVALID_TENANT_ID",
+                "type": "string"
+              },
+              {
                 "const": "UNAUTHORIZED",
                 "type": "string"
               },
@@ -2389,6 +2401,10 @@
               },
               {
                 "const": "ACTION_TIMEOUT",
+                "type": "string"
+              },
+              {
+                "const": "PLAN_WAIT_TIMEOUT",
                 "type": "string"
               },
               {
@@ -2577,9 +2593,6 @@
           },
           "policy": {
             "type": "object",
-            "required": [
-              "allowedHosts"
-            ],
             "properties": {
               "allowedHosts": {
                 "minItems": 1,
@@ -4559,6 +4572,10 @@
                     "type": "string"
                   },
                   {
+                    "const": "INVALID_TENANT_ID",
+                    "type": "string"
+                  },
+                  {
                     "const": "UNAUTHORIZED",
                     "type": "string"
                   },
@@ -4616,6 +4633,10 @@
                   },
                   {
                     "const": "ACTION_TIMEOUT",
+                    "type": "string"
+                  },
+                  {
+                    "const": "PLAN_WAIT_TIMEOUT",
                     "type": "string"
                   },
                   {

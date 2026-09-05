@@ -335,6 +335,7 @@ export class AgentBrowserService {
     }
     this.eventListeners.delete(sessionId);
     this.eventHistory.delete(sessionId);
+    this.requestHistory.delete(sessionId);
     this.sessionDownloadPolicy.delete(sessionId);
     this.sessionPolicies.delete(sessionId);
   }
@@ -424,20 +425,46 @@ export class AgentBrowserService {
    */
   private readonly eventHistory = new Map<string, RingBuffer<EngineEvent>>();
   private static readonly EVENT_HISTORY_LIMIT = 500;
+  /**
+   * Request lifecycle events get their OWN bounded ledger (spec 5.1
+   * network summary): a subresource-heavy page emits dozens of requests
+   * per navigation, and sharing the console ledger would evict exactly
+   * the console lines the replay buffer exists for.
+   */
+  private readonly requestHistory = new Map<string, RingBuffer<EngineEvent>>();
+  private static readonly REQUEST_HISTORY_LIMIT = 1000;
 
   private recordEvent(sessionId: string, event: EngineEvent): void {
-    let buffer = this.eventHistory.get(sessionId);
+    const isRequest = event.type.startsWith('request.');
+    const store = isRequest ? this.requestHistory : this.eventHistory;
+    const limit = isRequest
+      ? AgentBrowserService.REQUEST_HISTORY_LIMIT
+      : AgentBrowserService.EVENT_HISTORY_LIMIT;
+    let buffer = store.get(sessionId);
     if (buffer === undefined) {
-      buffer = new RingBuffer<EngineEvent>({ capacity: AgentBrowserService.EVENT_HISTORY_LIMIT });
-      this.eventHistory.set(sessionId, buffer);
+      buffer = new RingBuffer<EngineEvent>({ capacity: limit });
+      store.set(sessionId, buffer);
     }
     buffer.push(event);
   }
 
-  /** Recent events for a session, oldest first (console replay). */
-  getSessionEvents(sessionId: string): EngineEvent[] {
+  /**
+   * Recent events for a session, oldest first per ledger. A `request.*`
+   * type filter serves the request ledger; no filter returns both ledgers
+   * (console/other first, then requests - cross-ledger interleaving order
+   * is not preserved, documented at the route).
+   */
+  getSessionEvents(sessionId: string, typeFilter?: string): EngineEvent[] {
     this.coordinator.get(sessionId);
-    return this.eventHistory.get(sessionId)?.toArray() ?? [];
+    const others = this.eventHistory.get(sessionId)?.toArray() ?? [];
+    const requests = this.requestHistory.get(sessionId)?.toArray() ?? [];
+    if (typeFilter?.startsWith('request.')) {
+      return requests.filter((event) => event.type === typeFilter);
+    }
+    if (typeFilter !== undefined) {
+      return others.filter((event) => event.type === typeFilter);
+    }
+    return [...others, ...requests];
   }
 
   private pumpEvents(sessionId: string, pageId: string, enginePage: EnginePage): void {
