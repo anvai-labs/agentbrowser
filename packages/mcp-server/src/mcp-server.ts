@@ -91,24 +91,26 @@ interface ToolDefinition {
   handler(args: Record<string, unknown>): Promise<unknown>;
 }
 
+/** Extract sessionId/pageId from tool args, or throw a usage error. */
+function sessionAndPage(args: Record<string, unknown>): [string, string] {
+  if (typeof args.sessionId !== 'string' || args.sessionId.length === 0) {
+    throw new UsageError('sessionId is required and must be a non-empty string.');
+  }
+  if (typeof args.pageId !== 'string' || args.pageId.length === 0) {
+    throw new UsageError('pageId is required and must be a non-empty string.');
+  }
+  return [args.sessionId, args.pageId];
+}
+
 /**
- * Build the MCP server with its tool catalog.
+ * The MCP tool catalog (hygiene F4): previously interleaved with dispatch
+ * inside one 644-line buildMcpServer function (grown from 378 at the last
+ * audit). Hoisted to a data factory - adding a tool is now a data edit,
+ * not a control-flow edit. Every tool object below is byte-identical to
+ * before; only its container moved.
  */
-export function buildMcpServer(deps: McpDependencies): McpServer {
-  const client = deps.createClient({ baseUrl: deps.baseUrl ?? 'http://localhost:3000' });
-  const serverInfo = deps.serverInfo ?? { name: 'agentbrowser', version: '1.0.0' };
-
-  const sessionAndPage = (args: Record<string, unknown>): [string, string] => {
-    if (typeof args.sessionId !== 'string' || args.sessionId.length === 0) {
-      throw new UsageError('sessionId is required and must be a non-empty string.');
-    }
-    if (typeof args.pageId !== 'string' || args.pageId.length === 0) {
-      throw new UsageError('pageId is required and must be a non-empty string.');
-    }
-    return [args.sessionId, args.pageId];
-  };
-
-  const tools: ToolDefinition[] = [
+function buildTools(client: McpClient): ToolDefinition[] {
+  return [
     {
       name: 'browser_create',
       description:
@@ -536,6 +538,16 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
       },
     },
   ];
+}
+
+/**
+ * Build the MCP server with its tool catalog.
+ */
+export function buildMcpServer(deps: McpDependencies): McpServer {
+  const client = deps.createClient({ baseUrl: deps.baseUrl ?? 'http://localhost:3000' });
+  const serverInfo = deps.serverInfo ?? { name: 'agentbrowser', version: '1.0.0' };
+
+  const tools = buildTools(client);
 
   const toolByName = new Map(tools.map((tool) => [tool.name, tool]));
 
