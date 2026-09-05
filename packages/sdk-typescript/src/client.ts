@@ -208,290 +208,41 @@ export interface PageSnapshot {
 }
 
 /**
- * Sessions API client
+ * F6: the SDK's one HTTP mechanic - timeout, JSON encode/decode, error-decode
+ * - lives here, not per-method in SessionsClient. A second HTTP-consuming
+ * client (there is only one today) would take an HttpClient instance and
+ * reuse requestJson() instead of re-implementing this.
  */
-export class SessionsClient {
+class HttpClient {
   constructor(
-    private baseUrl: string,
-    private timeout: number,
-    private headers: Record<string, string>,
-    private requestFn: (url: string, options: RequestInit) => Promise<Response>
+    private readonly baseUrl: string,
+    private readonly timeoutMs: number,
+    private readonly headers: Record<string, string>
   ) {}
 
-  async create(request: SessionRequest): Promise<SessionResponse> {
-    const response = await this.requestFn(`${this.baseUrl}/v1/sessions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...this.headers,
-      },
-      body: JSON.stringify(request),
-    });
-
-    return this.handleResponse(response);
-  }
-
-  async get(sessionId: string): Promise<SessionResponse> {
-    const response = await this.requestFn(`${this.baseUrl}/v1/sessions/${sessionId}`, {
-      method: 'GET',
-      headers: this.headers,
-    });
-
-    return this.handleResponse(response);
-  }
-
-  async list(): Promise<SessionResponse[]> {
-    const response = await this.requestFn(`${this.baseUrl}/v1/sessions`, {
-      method: 'GET',
-      headers: this.headers,
-    });
-
-    const data = await this.handleResponse<{ sessions: SessionResponse[] }>(response);
-    return data.sessions;
-  }
-
-  async close(sessionId: string): Promise<void> {
-    const response = await this.requestFn(`${this.baseUrl}/v1/sessions/${sessionId}`, {
-      method: 'DELETE',
-      headers: this.headers,
-    });
-
-    await this.handleResponse(response);
-  }
-
-  async createPage(sessionId: string): Promise<PageResponse> {
-    const response = await this.requestFn(`${this.baseUrl}/v1/sessions/${sessionId}/pages`, {
-      method: 'POST',
-      headers: this.headers,
-    });
-
-    return this.handleResponse(response);
-  }
-
-  async getPage(sessionId: string, pageId: string): Promise<PageResponse> {
-    const response = await this.requestFn(
-      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}`,
-      {
-        method: 'GET',
-        headers: this.headers,
-      }
-    );
-
-    return this.handleResponse(response);
-  }
-
-  async closePage(sessionId: string, pageId: string): Promise<void> {
-    const response = await this.requestFn(
-      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}`,
-      {
-        method: 'DELETE',
-        headers: this.headers,
-      }
-    );
-
-    await this.handleResponse(response);
-  }
-
-  /** TD-BROWSER-6: scoped cookie export — the read half of the credential handoff loop. */
-  async cookies(sessionId: string): Promise<ExportedCookie[]> {
-    const response = await this.requestFn(`${this.baseUrl}/v1/sessions/${sessionId}/cookies`, {
-      headers: this.headers,
-    });
-    const body = (await this.handleResponse(response)) as { cookies: ExportedCookie[] };
-    return body.cookies;
-  }
-
-  /** A3 evidence: export the session's completed spans as a trace artifact. */
-  async trace(sessionId: string): Promise<ArtifactRef> {
-    const response = await this.requestFn(`${this.baseUrl}/v1/sessions/${sessionId}/trace`, {
-      method: 'POST',
-      headers: this.headers,
-    });
-    return this.handleResponse(response);
-  }
-
-  /** A3 evidence: capture the page's current HTML as an artifact (NOT redacted). */
-  async html(sessionId: string, pageId: string): Promise<ArtifactRef> {
-    const response = await this.requestFn(
-      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/html`,
-      { method: 'POST', headers: this.headers }
-    );
-    return this.handleResponse(response);
-  }
-
-  /** A3/network summary: replay retained session events, oldest first per ledger. */
-  async events(sessionId: string, type?: string): Promise<Array<Record<string, unknown>>> {
-    const query = type !== undefined ? `?type=${encodeURIComponent(type)}` : '';
-    const response = await this.requestFn(
-      `${this.baseUrl}/v1/sessions/${sessionId}/events/replay${query}`,
-      { headers: this.headers }
-    );
-    const body = (await this.handleResponse(response)) as {
-      events: Array<Record<string, unknown>>;
-    };
-    return body.events;
-  }
-
-  /** TD-BROWSER-8: execute a batched action plan; returns per-step results. */
-  async plan(
-    sessionId: string,
-    pageId: string,
-    actions: Array<Record<string, unknown>>
-  ): Promise<{
-    ok: boolean;
-    completed: number;
-    results: Array<{ step: number; ok: boolean; error?: string }>;
-    mode?: string;
-    error?: { code: string; message: string };
-  }> {
-    const response = await this.requestFn(
-      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/plan`,
-      {
-        method: 'POST',
+  async requestJson<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        method: init.method ?? 'GET',
         headers: {
-          'Content-Type': 'application/json',
           ...this.headers,
+          ...(init.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
         },
-        body: JSON.stringify({ actions }),
+        ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new AgentBrowserError('TIMEOUT', 'Request timeout', false);
       }
-    );
-    return this.handleResponse(response);
-  }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
-  /** TD-BROWSER-8: self-contained snapshot payload for one-shot LLM reasoning. */
-  async snapshot(
-    sessionId: string,
-    pageId: string,
-    bounds?: { maxElements?: number; maxBytes?: number }
-  ): Promise<PageSnapshot> {
-    const query = new URLSearchParams();
-    if (bounds?.maxElements !== undefined) query.set('maxElements', String(bounds.maxElements));
-    if (bounds?.maxBytes !== undefined) query.set('maxBytes', String(bounds.maxBytes));
-    const qs = query.toString();
-    const response = await this.requestFn(
-      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/snapshot${qs ? `?${qs}` : ''}`,
-      { headers: this.headers }
-    );
-    return this.handleResponse(response);
-  }
-
-  async navigate(
-    sessionId: string,
-    pageId: string,
-    request: NavigationRequest
-  ): Promise<NavigationResponse> {
-    const response = await this.requestFn(
-      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/navigate`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...this.headers,
-        },
-        body: JSON.stringify(request),
-      }
-    );
-
-    return this.handleResponse(response);
-  }
-
-  async observe(
-    sessionId: string,
-    pageId: string,
-    request: ObservationRequest = {}
-  ): Promise<ObservationResponse> {
-    const response = await this.requestFn(
-      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/observe`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...this.headers,
-        },
-        body: JSON.stringify(request),
-      }
-    );
-
-    return this.handleResponse(response);
-  }
-
-  async executeAction(
-    sessionId: string,
-    pageId: string,
-    request: ActionRequest
-  ): Promise<ActionResult> {
-    const response = await this.requestFn(
-      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/act`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...this.headers,
-        },
-        body: JSON.stringify(request),
-      }
-    );
-
-    return this.handleResponse(response);
-  }
-
-  async screenshot(
-    sessionId: string,
-    pageId: string,
-    request: ScreenshotRequest = {}
-  ): Promise<ArtifactRef> {
-    const response = await this.requestFn(
-      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/screenshot`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...this.headers,
-        },
-        body: JSON.stringify(request),
-      }
-    );
-
-    return this.handleResponse(response);
-  }
-
-  async extract(
-    sessionId: string,
-    pageId: string,
-    request: ExtractRequest
-  ): Promise<ExtractResult> {
-    const response = await this.requestFn(
-      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/extract`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...this.headers,
-        },
-        body: JSON.stringify(request),
-      }
-    );
-
-    return this.handleResponse(response);
-  }
-
-  async pdf(sessionId: string, pageId: string, request: PdfRequest = {}): Promise<ArtifactRef> {
-    const response = await this.requestFn(
-      `${this.baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/pdf`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...this.headers,
-        },
-        body: JSON.stringify(request),
-      }
-    );
-
-    return this.handleResponse(response);
-  }
-
-  private async handleResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
       let error: ApiError;
       try {
@@ -516,6 +267,168 @@ export class SessionsClient {
 }
 
 /**
+ * Sessions API client
+ */
+export class SessionsClient {
+  constructor(private readonly http: HttpClient) {}
+
+  async create(request: SessionRequest): Promise<SessionResponse> {
+    return this.http.requestJson('/v1/sessions', { method: 'POST', body: request });
+  }
+
+  async get(sessionId: string): Promise<SessionResponse> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}`);
+  }
+
+  async list(): Promise<SessionResponse[]> {
+    const data = await this.http.requestJson<{ sessions: SessionResponse[] }>('/v1/sessions');
+    return data.sessions;
+  }
+
+  async close(sessionId: string): Promise<void> {
+    await this.http.requestJson(`/v1/sessions/${sessionId}`, { method: 'DELETE' });
+  }
+
+  async createPage(sessionId: string): Promise<PageResponse> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/pages`, { method: 'POST' });
+  }
+
+  async getPage(sessionId: string, pageId: string): Promise<PageResponse> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}`);
+  }
+
+  async closePage(sessionId: string, pageId: string): Promise<void> {
+    await this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  /** TD-BROWSER-6: scoped cookie export — the read half of the credential handoff loop. */
+  async cookies(sessionId: string): Promise<ExportedCookie[]> {
+    const body = await this.http.requestJson<{ cookies: ExportedCookie[] }>(
+      `/v1/sessions/${sessionId}/cookies`
+    );
+    return body.cookies;
+  }
+
+  /** A3 evidence: export the session's completed spans as a trace artifact. */
+  async trace(sessionId: string): Promise<ArtifactRef> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/trace`, { method: 'POST' });
+  }
+
+  /** A3 evidence: capture the page's current HTML as an artifact (NOT redacted). */
+  async html(sessionId: string, pageId: string): Promise<ArtifactRef> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/html`, {
+      method: 'POST',
+    });
+  }
+
+  /** A3/network summary: replay retained session events, oldest first per ledger. */
+  async events(sessionId: string, type?: string): Promise<Array<Record<string, unknown>>> {
+    const query = type !== undefined ? `?type=${encodeURIComponent(type)}` : '';
+    const body = await this.http.requestJson<{ events: Array<Record<string, unknown>> }>(
+      `/v1/sessions/${sessionId}/events/replay${query}`
+    );
+    return body.events;
+  }
+
+  /** TD-BROWSER-8: execute a batched action plan; returns per-step results. */
+  async plan(
+    sessionId: string,
+    pageId: string,
+    actions: Array<Record<string, unknown>>
+  ): Promise<{
+    ok: boolean;
+    completed: number;
+    results: Array<{ step: number; ok: boolean; error?: string }>;
+    mode?: string;
+    error?: { code: string; message: string };
+  }> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/plan`, {
+      method: 'POST',
+      body: { actions },
+    });
+  }
+
+  /** TD-BROWSER-8: self-contained snapshot payload for one-shot LLM reasoning. */
+  async snapshot(
+    sessionId: string,
+    pageId: string,
+    bounds?: { maxElements?: number; maxBytes?: number }
+  ): Promise<PageSnapshot> {
+    const query = new URLSearchParams();
+    if (bounds?.maxElements !== undefined) query.set('maxElements', String(bounds.maxElements));
+    if (bounds?.maxBytes !== undefined) query.set('maxBytes', String(bounds.maxBytes));
+    const qs = query.toString();
+    return this.http.requestJson(
+      `/v1/sessions/${sessionId}/pages/${pageId}/snapshot${qs ? `?${qs}` : ''}`
+    );
+  }
+
+  async navigate(
+    sessionId: string,
+    pageId: string,
+    request: NavigationRequest
+  ): Promise<NavigationResponse> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/navigate`, {
+      method: 'POST',
+      body: request,
+    });
+  }
+
+  async observe(
+    sessionId: string,
+    pageId: string,
+    request: ObservationRequest = {}
+  ): Promise<ObservationResponse> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/observe`, {
+      method: 'POST',
+      body: request,
+    });
+  }
+
+  async executeAction(
+    sessionId: string,
+    pageId: string,
+    request: ActionRequest
+  ): Promise<ActionResult> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/act`, {
+      method: 'POST',
+      body: request,
+    });
+  }
+
+  async screenshot(
+    sessionId: string,
+    pageId: string,
+    request: ScreenshotRequest = {}
+  ): Promise<ArtifactRef> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/screenshot`, {
+      method: 'POST',
+      body: request,
+    });
+  }
+
+  async extract(
+    sessionId: string,
+    pageId: string,
+    request: ExtractRequest
+  ): Promise<ExtractResult> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/extract`, {
+      method: 'POST',
+      body: request,
+    });
+  }
+
+  async pdf(sessionId: string, pageId: string, request: PdfRequest = {}): Promise<ArtifactRef> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/pdf`, {
+      method: 'POST',
+      body: request,
+    });
+  }
+}
+
+/**
  * AgentBrowser SDK Client
  */
 export class AgentBrowserClient {
@@ -533,10 +446,7 @@ export class AgentBrowserClient {
     };
 
     this.sessions = new SessionsClient(
-      this.baseUrl,
-      this.timeout,
-      this.customHeaders,
-      this.request.bind(this)
+      new HttpClient(this.baseUrl, this.timeout, this.customHeaders)
     );
   }
 
@@ -545,31 +455,5 @@ export class AgentBrowserClient {
    */
   setHeaders(headers: Record<string, string>): void {
     Object.assign(this.customHeaders, headers);
-  }
-
-  /**
-   * Make an HTTP request with timeout
-   */
-  private async request(url: string, options: RequestInit = {}): Promise<Response> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-
-    try {
-      const response = await fetch(url, {
-        ...options,
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-      return response;
-    } catch (error) {
-      clearTimeout(timeoutId);
-
-      if (error instanceof Error && error.name === 'AbortError') {
-        throw new AgentBrowserError('TIMEOUT', 'Request timeout', false);
-      }
-
-      throw error;
-    }
   }
 }
