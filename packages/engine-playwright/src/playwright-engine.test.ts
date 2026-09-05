@@ -675,6 +675,65 @@ function egressFixtures(): Promise<{ port: number; stop(): Promise<void> }> {
 }
 
 describe('engine-level egress choke point (P0-4)', () => {
+  it('emits request lifecycle events: denied requests carry the policy reason (spec 5.1)', async () => {
+    const fixtures = await egressFixtures();
+    const engine = new PlaywrightChromiumEngine({
+      egress: {
+        async checkRequest(request: { hostname: string; url?: string }) {
+          if (request.hostname === '127.0.0.1') return;
+          const err = new Error(`POLICY_DENIED: ${request.hostname}`) as Error & {
+            code?: string;
+            details?: { rule?: string };
+          };
+          err.code = 'POLICY_DENIED';
+          err.details = { rule: 'sessionHostPolicy' };
+          throw err;
+        },
+      },
+    });
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+
+      const events: Array<{ type: string; data?: Record<string, unknown> }> = [];
+      const pump = (async () => {
+        for await (const event of page.events()) {
+          if (event.type.startsWith('request.')) {
+            events.push({ type: event.type, data: event.data });
+          }
+        }
+      })();
+
+      // The leak page (allowed origin) fetches a denied host - with a
+      // query-string token on the target URL to pin the redaction rule.
+      await page.navigate({
+        url: `http://127.0.0.1:${fixtures.port}/leak?to=http://10.0.0.1/x%3Ftoken%3Dhunter2`,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 700));
+
+      const blocked = events.filter((e) => e.data?.blocked === true);
+      expect(blocked.length).toBeGreaterThan(0);
+      for (const event of blocked) {
+        expect(event.type).toBe('request.failed');
+        expect(String(event.data?.reason)).toMatch(/POLICY_DENIED/);
+        expect(event.data?.hostname).toBe('10.0.0.1');
+        // URL redaction: query strings (token carriers) never ride the
+        // event - only origin + path are recorded.
+        expect(String(event.data?.url)).not.toContain('hunter2');
+        expect(String(event.data?.url)).toBe('http://10.0.0.1/x');
+      }
+
+      const finished = events.filter((e) => e.type === 'request.finished');
+      expect(finished.length).toBeGreaterThan(0);
+      expect(finished[0]?.data?.status).toBe(200);
+
+      void pump;
+    } finally {
+      await engine.close();
+      await fixtures.stop();
+    }
+  });
+
   it('should block a redirect to a denied host (the audit bypass, closed)', async () => {
     const fixtures = await egressFixtures();
     const engine = new PlaywrightChromiumEngine({

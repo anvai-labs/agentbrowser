@@ -342,17 +342,6 @@ export class SessionCoordinator {
     return false;
   }
 
-  /**
-   * Check if session is expired (legacy method for compatibility)
-   */
-  private checkExpiration(session: SessionContext): void {
-    if (this.isSessionExpired(session)) {
-      session.state = SessionState.EXPIRED;
-      this.close(session.id, 'expired').catch(() => {
-        // Ignore close errors during expiration
-      });
-    }
-  }
 
   /**
    * Generate session ID
@@ -372,4 +361,11 @@ export interface SessionContext {
   engine: BrowserEngine;
   engineSession: import('@agentbrowser/engine').EngineSession;
   metadata: SessionMetadata;
+  /**
+   * Listener ownership (D2): engine event listeners are attached by the
+   * CONSUMER that needs them (e.g. the API service's per-page pump), not by
+   * this coordinator - close() releases the session's engine resources but
+   * does not (and cannot) deregister consumer-side listeners; consumers must
+   * tie their listeners to the page/session teardown they observe.
+   */
 }

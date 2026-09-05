@@ -86,6 +86,34 @@ describe('Network Policy', () => {
       }
     });
 
+    // Hygiene C3 (Phase 3): these ranges were previously ALLOWED through
+    // blockPrivateIPs - each was a live SSRF bypass.
+    it.each(
+      [
+        ['169.254.170.2', '169.254.0.0/16 link-local (ECS task metadata)'],
+        ['169.254.0.1', '169.254.0.0/16 link-local'],
+        ['100.64.0.1', '100.64.0.0/10 CGNAT'],
+        ['100.127.255.254', '100.64.0.0/10 CGNAT upper bound'],
+        ['0.1.2.3', '0.0.0.0/8 "this network" (non-zero)'],
+        ['198.18.0.5', '198.18.0.0/15 benchmarking'],
+        ['198.19.255.1', '198.18.0.0/15 benchmarking upper bound'],
+        ['::1', 'IPv6 loopback'],
+        ['[::1]', 'IPv6 loopback (bracketed URL form)'],
+        ['fe80::1', 'IPv6 link-local'],
+        ['fc00::1', 'IPv6 unique-local'],
+        ['fd12:3456:789a::1', 'IPv6 unique-local fd'],
+      ].map(([hostname]) => hostname)
+    )('should block previously-allowed non-routable address %s', async (hostname: string) => {
+      const policy = new NetworkPolicy({ blockPrivateIPs: true });
+      await expect(policy.checkRequest({ hostname })).rejects.toThrow(/private/i);
+    });
+
+    it('still allows public addresses', async () => {
+      const policy = new NetworkPolicy({ blockPrivateIPs: true });
+      await expect(policy.checkRequest({ hostname: '93.184.216.34' })).resolves.toBeUndefined();
+      await expect(policy.checkRequest({ hostname: 'example.com' })).resolves.toBeUndefined();
+    });
+
     it('should block 172.16.0.0/12', async () => {
       const policy = new NetworkPolicy({ blockPrivateIPs: true });
 

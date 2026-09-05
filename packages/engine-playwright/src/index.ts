@@ -67,6 +67,18 @@ function canonicalFingerprint(element: StoredElement): string {
     .join('_');
 }
 
+/** Mutable holder for routing request events out of the egress handler. */
+export interface RequestEventSink {
+  emit:
+    | ((event: {
+        type: 'request.started' | 'request.finished' | 'request.failed';
+        timestamp: string;
+        data: Record<string, unknown>;
+        playwrightPage: unknown;
+      }) => void)
+    | undefined;
+}
+
 /**
  * PlaywrightChromiumEngine implements BrowserEngine using Playwright
  */
@@ -121,7 +133,6 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   private _name = 'playwright-chromium';
   private _version = '1.0.0';
   private browser: Browser | undefined;
-  private revisionCounter = 1;
   readonly dialogGraceMs: number;
   private readonly rootEgress: RequestPolicy | undefined;
   private readonly webSocketPolicy: 'off' | 'deny-all';
@@ -220,8 +231,15 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       );
     }
 
+    // Request-event sink (spec 5.1 network summary, Phase 3): the route
+    // handler below emits request.started/finished/failed through this
+    // holder; the session routes each event to its originating page so the
+    // existing event pipeline (page queue -> service pump -> replay/WS)
+    // carries it with no new transport. installEgress runs before any page
+    // exists, hence the mutable holder.
+    const requestSink: RequestEventSink = { emit: undefined };
     if (egress !== undefined) {
-      await this.installEgress(context, egress);
+      await this.installEgress(context, egress, requestSink);
     }
 
     // Seed cookies so a caller can reuse an already-authenticated session
@@ -247,7 +265,12 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       await context.addCookies(toAdd as Parameters<typeof context.addCookies>[0]);
     }
 
-    return new PlaywrightSession(context, this, options.headless === false ? browser : undefined);
+    return new PlaywrightSession(
+      context,
+      this,
+      options.headless === false ? browser : undefined,
+      requestSink
+    );
   }
 
   /**
@@ -320,7 +343,11 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
    * function of hostname. Cost: routing disables Chromium's HTTP cache and
    * adds one in-process hop per request (benchmarks re-baselined).
    */
-  private async installEgress(context: BrowserContext, egress: RequestPolicy): Promise<void> {
+  private async installEgress(
+    context: BrowserContext,
+    egress: RequestPolicy,
+    sink: RequestEventSink
+  ): Promise<void> {
     // Verdict cache keys on hostname + resolved-IP set: a changed DNS
     // resolution (rebinding) re-validates instead of replaying a stale
     // allow.
@@ -332,6 +359,9 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     // closes - not a general-purpose cache, so no eviction policy is added
     // here on top of the session lifetime bound.
     const verdicts = new Map<string, 'allow' | 'deny'>();
+    // Denial reason per hostname (spec 6: "Records allow/deny decisions";
+    // ADR-015 B9: engines surface the policy's code/rule, not just 'deny').
+    const denyReasons = new Map<string, string>();
     const resolutionCache = new Map<string, string[]>();
     const dns = await import('node:dns/promises');
 
@@ -357,12 +387,19 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       }
     };
 
-    const verdictOf = async (hostname: string, url: string): Promise<'allow' | 'deny'> => {
+    const verdictOf = async (
+      hostname: string,
+      url: string
+    ): Promise<{ verdict: 'allow' | 'deny'; reason?: string }> => {
       const cached = verdicts.get(hostname);
       if (cached !== undefined) {
-        return cached;
+        const cachedReason = denyReasons.get(hostname);
+        return cachedReason !== undefined
+          ? { verdict: cached, reason: cachedReason }
+          : { verdict: cached };
       }
       let verdict: 'allow' | 'deny';
+      let reason: string | undefined;
       try {
         await egress.checkRequest({ hostname, url });
         if (egress.checkResolvedAddresses !== undefined) {
@@ -372,11 +409,53 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
           }
         }
         verdict = 'allow';
-      } catch {
+      } catch (error) {
         verdict = 'deny';
+        // Surface the policy's own code/rule instead of flattening to
+        // 'deny' (NetworkPolicyError carries both; anything else still
+        // gets a readable message).
+        const err = error as { code?: string; details?: { rule?: string }; message?: string };
+        reason =
+          err.code !== undefined
+            ? `${err.code}${err.details?.rule !== undefined ? ` (${err.details.rule})` : ''}`
+            : (err.message ?? 'denied by egress policy');
+        denyReasons.set(hostname, reason);
       }
       verdicts.set(hostname, verdict);
-      return verdict;
+      return reason !== undefined ? { verdict, reason } : { verdict };
+    };
+
+    /** Emit a request lifecycle event through the sink (spec 5.1 evidence). */
+    const emitRequest = (
+      type: 'request.started' | 'request.finished' | 'request.failed',
+      request: import('playwright').Request,
+      extra: Record<string, unknown>
+    ): void => {
+      const emit = sink.emit;
+      if (emit === undefined) {
+        return;
+      }
+      let playwrightPage: unknown;
+      try {
+        playwrightPage = request.frame().page();
+      } catch {
+        return; // frame detached mid-flight; nothing to attribute to
+      }
+      // URLs carry query-string tokens (spec 14.2): record origin + path,
+      // never the query. Deterministic engine-side, no secret registry needed.
+      const parsed = new URL(request.url());
+      emit({
+        type,
+        timestamp: new Date().toISOString(),
+        playwrightPage,
+        data: {
+          url: `${parsed.origin}${parsed.pathname}`,
+          hostname: parsed.hostname,
+          method: request.method(),
+          resourceType: request.resourceType(),
+          ...extra,
+        },
+      });
     };
 
     // WebSocket upgrades bypass context.route entirely. Selective
@@ -409,7 +488,11 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       const url = request.url();
       const hostname = new URL(url).hostname;
 
-      if ((await verdictOf(hostname, url)) === 'deny') {
+      emitRequest('request.started', request, {});
+
+      const initial = await verdictOf(hostname, url);
+      if (initial.verdict === 'deny') {
+        emitRequest('request.failed', request, { blocked: true, reason: initial.reason });
         await route.fulfill(BLOCKED_RESPONSE);
         return;
       }
@@ -424,6 +507,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
           try {
             await egress.checkResponse({ headers });
           } catch {
+            emitRequest('request.failed', request, {
+              blocked: true,
+              reason: 'RESPONSE_TOO_LARGE (response-size cap)',
+            });
             await route.fulfill(BLOCKED_RESPONSE);
             return;
           }
@@ -437,9 +524,17 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
           try {
             await egress.checkBodySize(body.byteLength);
           } catch {
+            emitRequest('request.failed', request, {
+              blocked: true,
+              reason: 'RESPONSE_TOO_LARGE (actual-byte cap)',
+            });
             await route.fulfill(BLOCKED_RESPONSE);
             return;
           }
+          emitRequest('request.finished', request, {
+            status: response.status(),
+            bytes: body.byteLength,
+          });
           await route.fulfill({ response, body: body.toString('base64') });
           return;
         }
@@ -447,13 +542,28 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         const location = headers.location;
         if (response.status() >= 300 && response.status() < 400 && location !== undefined) {
           const absolute = new URL(location, url);
-          if ((await verdictOf(absolute.hostname, absolute.toString())) === 'deny') {
+          const hop = await verdictOf(absolute.hostname, absolute.toString());
+          if (hop.verdict === 'deny') {
+            emitRequest('request.failed', request, {
+              blocked: true,
+              reason: hop.reason,
+              redirect: absolute.origin + absolute.pathname,
+            });
             await route.fulfill(BLOCKED_RESPONSE);
             return;
           }
         }
+        const declaredLength = headers['content-length'];
+        emitRequest('request.finished', request, {
+          status: response.status(),
+          ...(declaredLength !== undefined ? { bytes: Number.parseInt(declaredLength, 10) } : {}),
+        });
         await route.fulfill({ response });
-      } catch {
+      } catch (error) {
+        emitRequest('request.failed', request, {
+          blocked: false,
+          reason: error instanceof Error ? error.message : 'fetch failed',
+        });
         await route.abort('failed');
       }
     });
@@ -464,10 +574,6 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       await this.browser.close();
       this.browser = undefined;
     }
-  }
-
-  incrementRevision(): number {
-    return this.revisionCounter++;
   }
 }
 
@@ -486,11 +592,44 @@ class PlaywrightSession implements EngineSession {
 
   private ownedBrowser: Browser | undefined;
 
-  constructor(context: BrowserContext, engine: PlaywrightChromiumEngine, ownedBrowser?: Browser) {
+  /** The page-routing request-event sink installed by createSession. */
+  private readonly requestSink: RequestEventSink | undefined;
+
+  constructor(
+    context: BrowserContext,
+    engine: PlaywrightChromiumEngine,
+    ownedBrowser?: Browser,
+    requestSink?: RequestEventSink
+  ) {
     this.id = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     this.context = context;
     this.engine = engine;
     this.ownedBrowser = ownedBrowser;
+    this.requestSink = requestSink;
+    if (requestSink !== undefined) {
+      requestSink.emit = (event) => {
+        const page = this.pageForPlaywrightPage(event.playwrightPage);
+        if (page === undefined) {
+          return; // no owning page in this session (or already closed)
+        }
+        const { playwrightPage: _dropped, ...rest } = event;
+        page.emitExternalEvent({
+          ...rest,
+          sessionId: this.id,
+          pageId: page.id,
+        });
+      };
+    }
+  }
+
+  /** Find this session's page object backing a raw Playwright page. */
+  private pageForPlaywrightPage(candidate: unknown): PlaywrightPage | undefined {
+    for (const page of this.pageMap.values()) {
+      if (page.backingPage() === candidate) {
+        return page;
+      }
+    }
+    return undefined;
   }
 
   async newPage(options?: NewPageOptions): Promise<EnginePage> {
@@ -601,6 +740,20 @@ class PlaywrightPage implements EnginePage {
   /** Registered by the owning session so close() removes it from the map. */
   registerRemoval(remove: () => void): void {
     this.removeSelf = remove;
+  }
+
+  /** The raw Playwright page backing this engine page (request-event routing). */
+  backingPage(): Page {
+    return this.page;
+  }
+
+  /**
+   * Enqueue an event originating OUTSIDE this page (the egress handler's
+   * request lifecycle events, routed here by the session). Stamps nothing:
+   * the caller provides sessionId/pageId.
+   */
+  emitExternalEvent(event: EngineEvent): void {
+    this.enqueueEvent(event);
   }
 
   constructor(id: string, page: Page, engine: PlaywrightChromiumEngine) {

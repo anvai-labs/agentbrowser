@@ -38,6 +38,9 @@ export interface CliClient {
     create(request: SessionRequest): Promise<SessionResponse>;
     list(): Promise<SessionResponse[]>;
     close(sessionId: string): Promise<void>;
+    cookies(
+      sessionId: string
+    ): Promise<Array<{ name: string; value: string; domain: string; path: string }>>;
     createPage(sessionId: string): Promise<PageResponse>;
     navigate(
       sessionId: string,
@@ -160,6 +163,26 @@ export function buildCli(deps: CliDependencies): Cli {
         )
         .option('--viewport <WxH>', 'viewport size, e.g. 1280x720')
         .option('--ttl <ms>', 'session TTL in milliseconds')
+        .option(
+          '--idle-timeout <ms>',
+          'idle timeout in ms (server default 120000 = 2 min — raise this for headed human-in-the-loop logins; server caps at 3600000)'
+        )
+        .option('--locale <tag>', 'locale, e.g. en-US')
+        .option('--timezone-id <tz>', 'IANA timezone, e.g. America/New_York')
+        .option(
+          '--cookies <json>',
+          'seed cookies as inline JSON (the credential-handoff loop: pair with `session cookies` to export first)'
+        )
+        .option(
+          '--allow-downloads',
+          'allow downloads for this session (denied by default server-side)'
+        )
+        .option('--max-download-bytes <n>', 'per-download byte cap when downloads are allowed')
+        .option('--allow-hosts <a,b>', 'restrict egress to these hosts (comma-separated)')
+        .option(
+          '--blocked-hosts <a,b>',
+          'block these hosts on top of the SSRF base (comma-separated)'
+        )
         .action(
           action(async (ctx, options: Record<string, string | boolean | undefined>) => {
             const request: SessionRequest = { tenantId: String(options.tenant) };
@@ -177,6 +200,49 @@ export function buildCli(deps: CliDependencies): Cli {
             }
             if (options.ttl) {
               request.ttlMs = Number.parseInt(String(options.ttl), 10);
+            }
+            if (options.idleTimeout) {
+              request.idleTimeoutMs = Number.parseInt(String(options.idleTimeout), 10);
+            }
+            if (options.locale) {
+              request.locale = String(options.locale);
+            }
+            if (options.timezoneId) {
+              request.timezoneId = String(options.timezoneId);
+            }
+            if (options.cookies) {
+              try {
+                request.cookies = JSON.parse(String(options.cookies)) as NonNullable<
+                  SessionRequest['cookies']
+                >;
+              } catch {
+                throw new UsageError('--cookies must be valid inline JSON (an array of cookies).');
+              }
+            }
+            // Egress/download rules ride the wire nested under `policy`
+            // (the server maps them onto the session); any combination is
+            // restrict-only over the SSRF base.
+            const policy: Record<string, unknown> = {};
+            if (options.allowDownloads !== undefined) {
+              policy.allowDownloads = Boolean(options.allowDownloads);
+            }
+            if (options.maxDownloadBytes) {
+              policy.maxDownloadBytes = Number.parseInt(String(options.maxDownloadBytes), 10);
+            }
+            if (options.allowHosts) {
+              policy.allowedHosts = String(options.allowHosts)
+                .split(',')
+                .map((h) => h.trim())
+                .filter((h) => h.length > 0);
+            }
+            if (options.blockedHosts) {
+              policy.blockedHosts = String(options.blockedHosts)
+                .split(',')
+                .map((h) => h.trim())
+                .filter((h) => h.length > 0);
+            }
+            if (Object.keys(policy).length > 0) {
+              request.policy = policy as unknown as NonNullable<SessionRequest['policy']>;
             }
 
             const created = await ctx.client.sessions.create(request);
@@ -215,6 +281,23 @@ export function buildCli(deps: CliDependencies): Cli {
           action(async (ctx, sessionId: string) => {
             await ctx.client.sessions.close(sessionId);
             ctx.emit({ sessionId, closed: true }, () => [`Closed session ${sessionId}`]);
+          })
+        );
+
+      // The export half of the credential-handoff loop (TD-BROWSER-6):
+      // export cookies, later re-seed a new session via
+      // `session create --cookies "$(…)"`.
+      session
+        .command('cookies')
+        .description("export a session's cookies (re-seed future sessions via create --cookies)")
+        .argument('<sessionId>')
+        .action(
+          action(async (ctx, sessionId: string) => {
+            const cookies = await ctx.client.sessions.cookies(sessionId);
+            ctx.emit(cookies, () => [
+              JSON.stringify(cookies),
+              `(${cookies.length} cookie${cookies.length === 1 ? '' : 's'} — re-seed with: session create --cookies '${JSON.stringify(cookies)}')`,
+            ]);
           })
         );
 

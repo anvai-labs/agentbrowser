@@ -25,7 +25,7 @@ import {
 import { ActionSchema } from './schemas';
 import { DELIVERED_EXTRACT_FORMATS, REF_PATTERN, parseRef } from './types';
 import type { SupportedAction } from './types';
-import { validateAction, validateSessionRequest } from './validators';
+import { validateAction, validatePlanStep, validateSessionRequest } from './validators';
 
 describe('Schema Validation - Session Request', () => {
   it('should validate valid session request', () => {
@@ -691,5 +691,44 @@ describe('ADR-015 action-union drift coverage', () => {
     expect(validateAction({ type: 'wait' }).ok).toBe(false); // missing condition
     expect(validateAction({ type: 'nope' }).ok).toBe(false);
     expect(validateAction('click').ok).toBe(false);
+  });
+});
+
+describe('validatePlanStep (compiled, Phase 3)', () => {
+  it('accepts every delivered action type as a flat step', () => {
+    for (const action of [...DELIVERED_ACTION_TYPES]) {
+      const result = validatePlanStep({ action });
+      expect({ action, ok: result.ok }).toEqual({ action, ok: true });
+    }
+  });
+
+  it('accepts the waitForLabel vocabulary with a bounded waitMs', () => {
+    expect(
+      validatePlanStep({ action: 'fill', waitForLabel: 'Password', waitMs: 5000, value: 'x' }).ok
+    ).toBe(true);
+    expect(validatePlanStep({ action: 'click', target: { ref: 'e1_0' } }).ok).toBe(true);
+  });
+
+  it('rejects the garbage that used to hang the poll loop', () => {
+    // "abc": non-integer waitMs -> NaN deadline -> infinite poll.
+    expect(validatePlanStep({ action: 'click', waitForLabel: 'x', waitMs: 'abc' }).ok).toBe(false);
+    // 1e308: integer-passing JSON number far outside the bound.
+    expect(validatePlanStep({ action: 'click', waitForLabel: 'x', waitMs: 1e308 }).ok).toBe(false);
+    expect(validatePlanStep({ action: 'click', waitMs: 50 }).ok).toBe(false); // < 100
+    expect(validatePlanStep({ action: 'click', waitMs: 61000 }).ok).toBe(false); // > 60000
+  });
+
+  it('rejects unknown actions and malformed refs', () => {
+    expect(validatePlanStep({ action: 'explode' }).ok).toBe(false);
+    expect(validatePlanStep({ action: 'click', target: { ref: 'nope' } }).ok).toBe(false);
+    expect(validatePlanStep({ action: 'click', target: { ref: 'e1_0' } }).ok).toBe(true);
+  });
+
+  it('constrains but does not strip unknown keys', () => {
+    const result = validatePlanStep({ action: 'click', futureField: 1 });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.futureField).toBe(1);
+    }
   });
 });

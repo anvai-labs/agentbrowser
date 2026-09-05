@@ -82,7 +82,8 @@ export type EngineSelection = EngineType | (string & {});
  * Session policy configuration
  */
 export interface SessionPolicy {
-  allowedHosts: string[];
+  /** Optional since Phase 3: blockedHosts-only / downloads-only policies are legitimate (restrict-only). */
+  allowedHosts?: string[];
   blockedHosts?: string[];
   allowDownloads?: boolean;
   maxDownloadBytes?: number;

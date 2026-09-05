@@ -8,6 +8,7 @@
 export enum ErrorCode {
   // Request/Response errors
   INVALID_REQUEST = 'INVALID_REQUEST',
+  INVALID_TENANT_ID = 'INVALID_TENANT_ID',
   UNAUTHORIZED = 'UNAUTHORIZED',
   FORBIDDEN = 'FORBIDDEN',
   NOT_FOUND = 'NOT_FOUND',
@@ -33,6 +34,7 @@ export enum ErrorCode {
   // Navigation and action errors
   NAVIGATION_TIMEOUT = 'NAVIGATION_TIMEOUT',
   ACTION_TIMEOUT = 'ACTION_TIMEOUT',
+  PLAN_WAIT_TIMEOUT = 'PLAN_WAIT_TIMEOUT',
 
   // Engine errors
   ENGINE_UNSUPPORTED = 'ENGINE_UNSUPPORTED',

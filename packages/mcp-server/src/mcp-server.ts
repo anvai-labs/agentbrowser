@@ -121,6 +121,12 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
           engine: { type: 'string', description: 'Engine to use, e.g. playwright-chromium.' },
           headless: { type: 'boolean' },
           ttlMs: { type: 'number' },
+          idleTimeoutMs: {
+            type: 'number',
+            description:
+              'Idle timeout in ms (default 120000 = 2 min; max 3600000). Raise for ' +
+              'headed human-in-the-loop flows where the user thinks between steps.',
+          },
           cookies: {
             type: 'array',
             description:
@@ -153,6 +159,7 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
         if (typeof args.engine === 'string') request.engine = args.engine;
         if (typeof args.headless === 'boolean') request.headless = args.headless;
         if (typeof args.ttlMs === 'number') request.ttlMs = args.ttlMs;
+        if (typeof args.idleTimeoutMs === 'number') request.idleTimeoutMs = args.idleTimeoutMs;
         if (Array.isArray(args.cookies))
           request.cookies = args.cookies as NonNullable<SessionRequest['cookies']>;
 
