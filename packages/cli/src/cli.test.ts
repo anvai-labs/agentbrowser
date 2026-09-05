@@ -35,6 +35,9 @@ describe('AgentBrowser CLI', () => {
         { sessionId: 'ses_2', status: 'active', createdAt: '2026-08-23T10:05:00Z' },
       ]),
       close: vi.fn().mockResolvedValue(undefined),
+      cookies: vi
+        .fn()
+        .mockResolvedValue([{ name: 'sid', value: 'abc', domain: 'example.com', path: '/' }]),
       createPage: vi.fn().mockResolvedValue({
         pageId: 'pg_1',
         sessionId: 'ses_1',
@@ -110,6 +113,59 @@ describe('AgentBrowser CLI', () => {
           viewport: { width: 1280, height: 720 },
         })
       );
+    });
+
+    it('should pass the new session flags through (idle-timeout, locale, policy nesting)', async () => {
+      await run(
+        'session',
+        'create',
+        '--tenant',
+        'tenant_1',
+        '--idle-timeout',
+        '3600000',
+        '--locale',
+        'en-US',
+        '--timezone-id',
+        'America/New_York',
+        '--allow-downloads',
+        '--max-download-bytes',
+        '1048576',
+        '--blocked-hosts',
+        'ads.example.com, tracker.io'
+      );
+
+      expect(sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'tenant_1',
+          idleTimeoutMs: 3_600_000,
+          locale: 'en-US',
+          timezoneId: 'America/New_York',
+          policy: {
+            allowDownloads: true,
+            maxDownloadBytes: 1_048_576,
+            blockedHosts: ['ads.example.com', 'tracker.io'],
+          },
+        })
+      );
+    });
+
+    it('should seed cookies from inline JSON and reject malformed JSON', async () => {
+      const jar = JSON.stringify([{ name: 'sid', value: 'abc', domain: 'example.com', path: '/' }]);
+      await run('session', 'create', '--tenant', 'tenant_1', '--cookies', jar);
+      expect(sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cookies: [{ name: 'sid', value: 'abc', domain: 'example.com', path: '/' }],
+        })
+      );
+
+      const bad = await run('session', 'create', '--tenant', 'tenant_1', '--cookies', 'not-json');
+      expect(bad).toBe(1);
+      expect(sessions.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('should export cookies (the credential-handoff loop)', async () => {
+      await run('session', 'cookies', 'ses_1');
+      expect(sessions.cookies).toHaveBeenCalledWith('ses_1');
     });
 
     it('should send headless:false for --no-headless (the flag that was missing live)', async () => {

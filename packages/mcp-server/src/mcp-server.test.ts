@@ -295,6 +295,16 @@ describe('AgentBrowser MCP server', () => {
       expect(response.result.isError).toBeFalsy();
     });
 
+    it('should forward idleTimeoutMs on session create (Phase 3)', async () => {
+      const response = JSON.parse(
+        await call('6b', 'browser_create', { tenantId: 'tenant_1', idleTimeoutMs: 3600000 })
+      );
+      expect(response.result.isError).toBeFalsy();
+      expect(sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({ tenantId: 'tenant_1', idleTimeoutMs: 3_600_000 })
+      );
+    });
+
     it('should navigate', async () => {
       const response = JSON.parse(
         await call('7', 'browser_navigate', {

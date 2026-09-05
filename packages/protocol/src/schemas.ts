@@ -80,7 +80,10 @@ export const ApprovalPolicySchema = Type.Object({
 });
 
 export const SessionPolicySchema = Type.Object({
-  allowedHosts: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+  // Optional since Phase 3: requiring allowedHosts meant a policy object
+  // carrying ONLY blockedHosts (or only download rules) could not be
+  // expressed - every restrict-only combination is legitimate.
+  allowedHosts: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
   blockedHosts: Type.Optional(Type.Array(Type.String())),
   allowDownloads: Type.Optional(Type.Boolean()),
   maxDownloadBytes: Type.Optional(Type.Number({ minimum: 0 })),
