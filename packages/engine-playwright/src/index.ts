@@ -1295,6 +1295,13 @@ class PlaywrightPage implements EnginePage {
     for (const wake of waiters) {
       wake();
     }
+    // Hygiene D1: the constructor attaches 'close'/'dialog'/'load'/'console'
+    // listeners (setupEventListeners) that were never explicitly removed -
+    // a session churning many pages accumulated handler stubs on each
+    // Playwright Page object until it was GC'd. Explicit removal before
+    // close() makes the lifecycle self-evidently clean regardless of what
+    // else retains a reference to the underlying page.
+    this.page.removeAllListeners();
     await this.page.close();
   }
 }

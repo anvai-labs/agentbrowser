@@ -267,6 +267,10 @@ export class AgentBrowserService {
         ...(deps.defaultIdleTimeoutMs !== undefined
           ? { defaultIdleTimeoutMs: deps.defaultIdleTimeoutMs }
           : {}),
+        // Hygiene G2: previously this background cleanup path had no way
+        // to reach the service's injected logger and fell back to
+        // console.error, invisible in a production log pipeline.
+        ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
       });
     this.normalizer = deps.normalizer ?? new ObservationNormalizer();
     this.executor = deps.executor ?? new ActionExecutor(this.normalizer);
@@ -278,7 +282,12 @@ export class AgentBrowserService {
     // The root policy is both the service fast-fail and the engine choke
     // point's base: one verdict, enforced at both layers.
     this.rootRequestPolicy = this.networkPolicy;
-    this.approvalGate = deps.approvalGate ?? new ApprovalGate({ cleanupIntervalMs: 3_600_000 });
+    this.approvalGate =
+      deps.approvalGate ??
+      new ApprovalGate({
+        cleanupIntervalMs: 3_600_000,
+        ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
+      });
     // An empty registry redacts nothing; a populated one is enforced at every
     // output boundary (observations, error messages, error details).
     this.secretManager = deps.secretManager ?? new SecretManager();

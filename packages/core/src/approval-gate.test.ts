@@ -7,6 +7,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ApprovalError, ApprovalGate, ApprovalToken } from './approval-gate';
+import { StructuredLogger } from './logger';
 
 describe('Approval Gates', () => {
   let gate: ApprovalGate;
@@ -333,6 +334,26 @@ describe('Approval Gates', () => {
       expect(remainingB[0]?.tokenId).toBe(otherSessionToken.tokenId);
 
       await gate.shutdown();
+    });
+
+    it('routes a failed cleanup pass through the injected logger, not console (hygiene G2)', async () => {
+      const lines: string[] = [];
+      const logger = new StructuredLogger({ sink: (line) => lines.push(line) });
+      const loggedGate = new ApprovalGate({ cleanupIntervalMs: 30, logger });
+
+      // runCleanup's body is a pure synchronous map purge with no natural
+      // throw path; force the failure the catch handler exists for, to
+      // prove the wiring (not to simulate a realistic scenario).
+      (loggedGate as unknown as { runCleanup(): Promise<void> }).runCleanup = async () => {
+        throw new Error('cleanup exploded');
+      };
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect(lines.some((line) => line.includes('approval.cleanup-failed'))).toBe(true);
+      expect(lines.some((line) => line.includes('cleanup exploded'))).toBe(true);
+
+      await loggedGate.shutdown();
     });
 
     it('should maintain token count within limits', async () => {

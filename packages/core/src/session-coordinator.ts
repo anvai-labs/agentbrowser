@@ -7,6 +7,7 @@
 
 import type { BrowserEngine } from '@agentbrowser/engine';
 import type { SessionRequest, SessionResponse } from '@agentbrowser/protocol';
+import type { StructuredLogger } from './logger.js';
 
 /**
  * Session states
@@ -48,6 +49,14 @@ export interface CoordinatorConfig {
   defaultTtlMs?: number;
   defaultIdleTimeoutMs?: number;
   cleanupCheckIntervalMs?: number;
+  /**
+   * Structured log for the background cleanup path (hygiene G2): absent
+   * means silent-if-uninjected, matching the service's own convention for
+   * optional telemetry - there is deliberately no console fallback. Kept
+   * out of the `Required<CoordinatorConfig>` defaulting below (optional
+   * telemetry, not a defaultable numeric setting).
+   */
+  logger?: StructuredLogger;
 }
 
 /**
@@ -57,7 +66,8 @@ export interface CoordinatorConfig {
  */
 export class SessionCoordinator {
   private sessions: Map<string, SessionContext> = new Map();
-  private config: Required<CoordinatorConfig>;
+  private config: Required<Omit<CoordinatorConfig, 'logger'>>;
+  private readonly logger: StructuredLogger | undefined;
   private cleanupTimer?: NodeJS.Timeout;
 
   constructor(config: CoordinatorConfig = {}) {
@@ -67,6 +77,7 @@ export class SessionCoordinator {
       defaultIdleTimeoutMs: config.defaultIdleTimeoutMs ?? 120000, // 2 minutes
       cleanupCheckIntervalMs: config.cleanupCheckIntervalMs ?? 30000, // 30 seconds
     };
+    this.logger = config.logger;
 
     // Start cleanup timer
     this.startCleanupTimer();
@@ -316,7 +327,10 @@ export class SessionCoordinator {
         this.sessions.delete(id);
         // Then close the engine session asynchronously without calling close()
         session.engineSession.close('expired').catch((error) => {
-          console.error(`Failed to close expired session ${id}:`, error);
+          this.logger?.error('session.cleanup-close-failed', {
+            sessionId: id,
+            error: error instanceof Error ? error.message : String(error),
+          });
         });
       }
     }
