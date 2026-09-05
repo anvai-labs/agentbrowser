@@ -928,6 +928,33 @@ describe('engine-level egress choke point (P0-4)', () => {
   });
 });
 
+describe('navigation error classification (hygiene E3)', () => {
+  it('propagates a genuine navigation abort as a real error, not a false "blocked" status', async () => {
+    const fixtures = await egressFixtures();
+    // No egress policy configured at all: this failure has nothing to do
+    // with the choke point. Navigating to an unreachable port, then
+    // immediately superseding it with a second navigation, reproduces a
+    // genuine Chromium `net::ERR_ABORTED` (verified empirically) - the
+    // exact message a prior String(error)-regex fallback in navigate()
+    // matched and silently reported as {status: 'blocked'}, masking a real
+    // navigation failure as a policy denial.
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+
+      const first = page.navigate({ url: 'http://127.0.0.1:1/' });
+      const second = page.navigate({ url: `http://127.0.0.1:${fixtures.port}/` });
+
+      await expect(first).rejects.toThrow(/ERR_ABORTED/);
+      await expect(second).resolves.toMatchObject({ status: 'success' });
+    } finally {
+      await engine.close();
+      await fixtures.stop();
+    }
+  }, 15000);
+});
+
 describe('in-page download interception (spec 10)', () => {
   it('should capture a page-initiated download with bytes and events', async () => {
     // Fixture page serving a download via Content-Disposition.
