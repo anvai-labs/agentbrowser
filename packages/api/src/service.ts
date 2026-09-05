@@ -1756,7 +1756,7 @@ export class AgentBrowserService {
         throw error;
       }
 
-      const bytes = Buffer.from((captured as { bytesBase64?: string }).bytesBase64 ?? '', 'base64');
+      const bytes = Buffer.from(captured.bytesBase64, 'base64');
       return this.artifacts.put('pdf', 'application/pdf', new Uint8Array(bytes), {
         sessionId,
       });
@@ -2029,7 +2029,7 @@ export class AgentBrowserService {
         throw error;
       }
 
-      const bytes = Buffer.from((captured as { bytesBase64?: string }).bytesBase64 ?? '', 'base64');
+      const bytes = Buffer.from(captured.bytesBase64, 'base64');
       // maskSensitive honesty (spec 12/16): pixel masking needs element
       // geometry the engines do not expose yet. When values may be on
       // screen and masking was requested, the artifact carries a recorded

@@ -8,6 +8,7 @@ import type {
   ActionEffect,
   ArtifactRef,
   BrowserEngine,
+  CapturedArtifact,
   EngineAction,
   EngineCapabilities,
   EngineEvent,
@@ -1205,7 +1206,7 @@ class PlaywrightPage implements EnginePage {
     };
   }
 
-  async screenshot(request: ScreenshotRequest): Promise<ArtifactRef> {
+  async screenshot(request: ScreenshotRequest): Promise<CapturedArtifact> {
     const screenshot = await this.page.screenshot({
       fullPage: request.fullPage || false,
       type: request.format || 'png',
@@ -1217,10 +1218,14 @@ class PlaywrightPage implements EnginePage {
       contentType: `image/${request.format || 'png'}`,
       sizeBytes: screenshot.length,
       url: `/v1/artifacts/screenshot-${Date.now()}`,
+      // Production bug fix: this field used to be silently absent, and
+      // the service's Buffer.from(undefined ?? '', 'base64') turned every
+      // real screenshot into a 0-byte artifact. See CapturedArtifact's doc.
+      bytesBase64: screenshot.toString('base64'),
     };
   }
 
-  async pdf(request: PdfRequest): Promise<ArtifactRef> {
+  async pdf(request: PdfRequest): Promise<CapturedArtifact> {
     const buffer = await this.page.pdf({
       landscape: request.landscape || false,
       printBackground: request.printBackground || false,
@@ -1232,6 +1237,7 @@ class PlaywrightPage implements EnginePage {
       contentType: 'application/pdf',
       sizeBytes: buffer.length,
       url: `/v1/artifacts/pdf-${Date.now()}`,
+      bytesBase64: buffer.toString('base64'),
     };
   }
 

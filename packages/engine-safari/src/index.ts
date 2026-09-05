@@ -559,7 +559,7 @@ class SafariPage implements EnginePage {
 
   async screenshot(
     request: ScreenshotRequest
-  ): Promise<import('@agentbrowser/engine').ArtifactRef> {
+  ): Promise<import('@agentbrowser/engine').CapturedArtifact> {
     this.assertOpen();
     await this.switchTo();
     const value = await this.driver.request<string>(
@@ -574,6 +574,12 @@ class SafariPage implements EnginePage {
       contentType: 'image/png',
       sizeBytes: bytes.length,
       url: `/sessions/${this.wdSessionId}/screenshots/${this.id}`,
+      // Production bug fix (same as engine-playwright): this field used
+      // to be silently absent, and the service's
+      // Buffer.from(undefined ?? '', 'base64') turned every real
+      // screenshot into a 0-byte artifact. The driver already returns
+      // base64 directly - no re-encoding needed.
+      bytesBase64: value,
     };
   }
 
