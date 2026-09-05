@@ -18,6 +18,7 @@ export * from './types.js';
 
 export const ErrorCodeEnum = Type.Union([
   Type.Literal('INVALID_REQUEST'),
+  Type.Literal('INVALID_TENANT_ID'),
   Type.Literal('UNAUTHORIZED'),
   Type.Literal('FORBIDDEN'),
   Type.Literal('NOT_FOUND'),
@@ -33,6 +34,7 @@ export const ErrorCodeEnum = Type.Union([
   Type.Literal('TARGET_DISABLED'),
   Type.Literal('NAVIGATION_TIMEOUT'),
   Type.Literal('ACTION_TIMEOUT'),
+  Type.Literal('PLAN_WAIT_TIMEOUT'),
   Type.Literal('ENGINE_UNSUPPORTED'),
   Type.Literal('ENGINE_CRASHED'),
   Type.Literal('DOWNLOAD_BLOCKED'),

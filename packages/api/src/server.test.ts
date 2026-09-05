@@ -946,6 +946,28 @@ describe('AgentBrowser REST API safety integration', () => {
       expect(response.status).toBe(400);
     });
 
+    it('should 400 (not 500) on an invalid tenant id — statusFor exhaustiveness (F3)', async () => {
+      // INVALID_TENANT_ID was thrown by the service but absent from both
+      // the ErrorCode enum and statusFor, so clients got a 500 for a
+      // request-shape problem.
+      const response = await fetch(`${baseUrl}/v1/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId: 'x'.repeat(65) }),
+      });
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error.code).toBe('INVALID_TENANT_ID');
+
+      const badFormat = await fetch(`${baseUrl}/v1/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId: '-bad-start-' }),
+      });
+      expect(badFormat.status).toBe(400);
+      expect((await badFormat.json()).error.code).toBe('INVALID_TENANT_ID');
+    });
+
     it('should reject a garbage waitMs at the route before it can hang the poll loop', async () => {
       // v1.8.1 defect: this exact body wedged the request handler in an
       // infinite observe loop (NaN deadline). The route must 400 instantly.

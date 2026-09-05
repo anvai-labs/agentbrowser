@@ -64,14 +64,6 @@ export class NetworkPolicy {
   private readonly options: Required<NetworkPolicyOptions>;
   private readonly logs: RingBuffer<LogEntry>;
 
-  // Private IP ranges
-  private readonly PRIVATE_IP_RANGES = [
-    { start: '10.0.0.0', prefix: 8 }, // 10.0.0.0/8
-    { start: '172.16.0.0', prefix: 12 }, // 172.16.0.0/12
-    { start: '192.168.0.0', prefix: 16 }, // 192.168.0.0/16
-    { start: '127.0.0.0', prefix: 8 }, // 127.0.0.0/8 (loopback)
-  ];
-
   // Cloud metadata service endpoints
   private readonly METADATA_ENDPOINTS = [
     '169.254.169.254', // AWS, Azure
@@ -281,9 +273,41 @@ export class NetworkPolicy {
   }
 
   /**
-   * Check if hostname is a private IP address
+   * Check if hostname is a private / non-routable IP address.
+   *
+   * Covers the full SSRF-relevant set, not just RFC1918 (hygiene C3): the
+   * gaps below were previously ALLOWED through blockPrivateIPs —
+   * 169.254.0.0/16 link-local (which also guards metadata endpoints
+   * beyond the exact ones listed in METADATA_ENDPOINTS, e.g. ECS task
+   * metadata at 169.254.170.2), 100.64.0.0/10 CGNAT, 0.0.0.0/8
+   * "this network" (only exact 0.0.0.0 was loopback-checked), and
+   * 198.18.0.0/15 benchmarking. IPv6 literals are checked too: ::1
+   * loopback, fe80::/10 link-local, fc00::/7 ULA (URL hostnames may
+   * arrive bracketed).
    */
   private isPrivateIP(hostname: string): boolean {
+    // IPv6 (possibly bracketed, as URL hostnames are).
+    const unbracketed =
+      hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
+    if (unbracketed.includes(':')) {
+      const expanded = unbracketed.toLowerCase();
+      if (expanded === '::1' || expanded === '::') {
+        return true; // loopback / unspecified
+      }
+      if (
+        expanded.startsWith('fe8') ||
+        expanded.startsWith('fe9') ||
+        expanded.startsWith('fea') ||
+        expanded.startsWith('feb')
+      ) {
+        return true; // fe80::/10 link-local
+      }
+      if (expanded.startsWith('fc') || expanded.startsWith('fd')) {
+        return true; // fc00::/7 unique local
+      }
+      return false;
+    }
+
     if (!this.isIPAddress(hostname)) {
       return false;
     }
@@ -303,6 +327,29 @@ export class NetworkPolicy {
 
     // 192.168.0.0/16
     if (a === 192 && b === 168) {
+      return true;
+    }
+
+    // 169.254.0.0/16 link-local
+    if (a === 169 && b === 254) {
+      return true;
+    }
+
+    // 100.64.0.0/10 CGNAT
+    if (a === 100 && b !== undefined && b >= 64 && b <= 127) {
+      return true;
+    }
+
+    // 0.0.0.0/8 "this network"
+    if (a === 0) {
+      return true;
+    }
+
+    // 198.18.0.0/15 benchmarking
+    if (a === 198 && b === 18) {
+      return true;
+    }
+    if (a === 198 && b === 19) {
       return true;
     }
 
