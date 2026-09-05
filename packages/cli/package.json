@@ -11,6 +11,8 @@
   },
   "scripts": {
     "build": "tsc",
+    "compile": "node scripts/compile.mjs",
+    "smoke": "node scripts/smoke.mjs dist-bin/agentbrowser",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -43,26 +43,31 @@ jobs:
           - target: bun-darwin-arm64
             os: macos-latest
             artifact: agentbrowser-mcp-darwin-arm64
+            cli_artifact: agentbrowser-cli-darwin-arm64
             smoke: true
           # GitHub retired the Intel macOS runners: the x64 build is
           # cross-compiled on the arm64 runner and smoke-tested through Rosetta.
           - target: bun-darwin-x64
             os: macos-latest
             artifact: agentbrowser-mcp-darwin-x64
+            cli_artifact: agentbrowser-cli-darwin-x64
             smoke: true
           - target: bun-linux-x64
             os: ubuntu-latest
             artifact: agentbrowser-mcp-linux-x64
+            cli_artifact: agentbrowser-cli-linux-x64
             smoke: true
           # No arm64 Linux runners are available to private repos: the arm64
           # build is cross-compiled and its smoke is explicitly skipped.
           - target: bun-linux-arm64
             os: ubuntu-latest
             artifact: agentbrowser-mcp-linux-arm64
+            cli_artifact: agentbrowser-cli-linux-arm64
             smoke: false
           - target: bun-windows-x64
             os: windows-latest
             artifact: agentbrowser-mcp-windows-x64.exe
+            cli_artifact: agentbrowser-cli-windows-x64.exe
             smoke: true
     steps:
       - uses: actions/checkout@v4
@@ -105,6 +110,23 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: packages/mcp-server/dist-bin/${{ matrix.artifact }}
+          if-no-files-found: error
+
+      # The CLI rides the same matrix/targets (Phase 3): its only deps are
+      # commander + the fetch-only SDK, both bundle-clean. Previously the
+      # CLI was unreachable except from a repo checkout - brew shipped only
+      # the MCP binary and the server wrapper, and the package is private.
+      - name: Compile the CLI binary
+        run: node packages/cli/scripts/compile.mjs --target=${{ matrix.target }} --outfile=packages/cli/dist-bin/${{ matrix.cli_artifact }}
+
+      - name: CLI smoke (--help)
+        if: ${{ matrix.smoke }}
+        run: node packages/cli/scripts/smoke.mjs packages/cli/dist-bin/${{ matrix.cli_artifact }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.cli_artifact }}
+          path: packages/cli/dist-bin/${{ matrix.cli_artifact }}
           if-no-files-found: error
 
   server-packages:
@@ -300,7 +322,7 @@ jobs:
       - name: Compute checksums
         run: |
           cd release-assets
-          sha256sum agentbrowser-mcp-* agentbrowser-server-* > sha256sums.txt
+          sha256sum agentbrowser-mcp-* agentbrowser-cli-* agentbrowser-server-* > sha256sums.txt
           cat sha256sums.txt
 
       - name: Write release notes
@@ -339,6 +361,10 @@ jobs:
           | agentbrowser-mcp-linux-x64 | run natively on the build runner |
           | agentbrowser-mcp-linux-arm64 | **skipped** - cross-compiled; private repos have no arm64 Linux runners |
           | agentbrowser-mcp-windows-x64.exe | run natively on the build runner |
+
+          The CLI (`agentbrowser-cli-<target>`) ships from this release too —
+          `--help` smoke-tested wherever the runner can execute it (same
+          targets/omissions as the MCP binary).
 
           Each smoke ran `initialize` + `tools/list` against the compiled
           artifact and required the full 9-tool catalog and a release version
