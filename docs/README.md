@@ -135,8 +135,8 @@ complete and remains in [technical-design.md](technical-design.md).
   `safaridriver`/WebDriver, engine registry. **Accepted, implemented.**
 - [TD-BROWSER-8](td/TD-BROWSER-8-batched-snapshots-and-action-plans.md) -
   Batched action plans (`browser_plan`) and self-contained page snapshots
-  (`browser_snapshot`), adaptive stable/verified remap mode. **Accepted, Phase 1
-  implemented.**
+  (`browser_snapshot`), adaptive stable/verified remap mode, `waitForLabel`
+  for dynamically-revealed fields. **Accepted, Phase 1 and 2 implemented.**
 - [TD-BROWSER-9](td/TD-BROWSER-9-bounded-in-memory-collections.md) - Bounded
   in-memory collections & eviction discipline (shared `BoundedCache`/`RingBuffer`,
   indexed hot-path lookups). **Accepted, implemented** (all 8 sites; metrics
