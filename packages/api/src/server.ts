@@ -11,7 +11,11 @@ import { createHash } from 'node:crypto';
 import { InMemoryTracer, MetricsRegistry, type SecretManager } from '@agentbrowser/core';
 import type { StructuredLogger } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
-import { DELIVERED_EXTRACT_FORMATS, validateSessionRequest } from '@agentbrowser/protocol';
+import {
+  DELIVERED_EXTRACT_FORMATS,
+  validatePlanStep,
+  validateSessionRequest,
+} from '@agentbrowser/protocol';
 import type { SessionPolicy } from '@agentbrowser/protocol';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
@@ -580,6 +584,29 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
                 retryable: false,
               },
             });
+          }
+          // Plan steps were the last unvalidated request surface (a bare
+          // array cast): garbage waitForLabel/waitMs rode straight into
+          // waitForLabel's deadline arithmetic (NaN deadline = a poll loop
+          // that never exits). Each step is schema-checked on entry now;
+          // the service-side clamp remains as defense in depth.
+          for (const [index, step] of body.actions.entries()) {
+            const validated = validatePlanStep(step);
+            if (!validated.ok) {
+              const details = validated.issues
+                .map(
+                  (issue: { path: string; message: string }) =>
+                    `actions[${index}]${issue.path}: ${issue.message}`
+                )
+                .join('; ');
+              return reply.status(400).send({
+                error: {
+                  code: 'INVALID_REQUEST',
+                  message: `Invalid plan step: ${details}`,
+                  retryable: false,
+                },
+              });
+            }
           }
           return reply.send(
             await service.executePlan(

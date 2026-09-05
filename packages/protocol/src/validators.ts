@@ -9,7 +9,7 @@
  */
 
 import { TypeCompiler } from '@sinclair/typebox/compiler';
-import { ActionSchema, SessionRequestSchema } from './schemas.js';
+import { ActionSchema, PlanStepSchema, SessionRequestSchema } from './schemas.js';
 import type { SessionRequest, SupportedAction } from './types.js';
 
 /** One validation failure, addressed by pointer path. */
@@ -57,6 +57,28 @@ export function validateAction(body: unknown): Validated<SupportedAction> {
   }
   const issues: ValidationIssue[] = [];
   for (const error of action.Errors(body)) {
+    issues.push({ path: error.path, message: error.message });
+  }
+  return { ok: false, issues };
+}
+
+const planStep = TypeCompiler.Compile(PlanStepSchema);
+
+/**
+ * Validate one plan step (the flat wire vocabulary) against PlanStepSchema.
+ * The plan route was the last request surface taking an unvalidated loose
+ * array: waitForLabel/waitMs rode straight through to waitForLabel's
+ * deadline arithmetic, where a non-numeric or non-finite waitMs produced a
+ * NaN/Infinity deadline and a poll loop that never exited. validateAction
+ * does not close this - toProtocolAction strips both fields BEFORE it runs.
+ * Like the other validators: constrains, does not strip.
+ */
+export function validatePlanStep(body: unknown): Validated<Record<string, unknown>> {
+  if (planStep.Check(body)) {
+    return { ok: true, value: body as Record<string, unknown> };
+  }
+  const issues: ValidationIssue[] = [];
+  for (const error of planStep.Errors(body)) {
     issues.push({ path: error.path, message: error.message });
   }
   return { ok: false, issues };

@@ -7,7 +7,7 @@
 
 import { Static, Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import { REF_PATTERN } from './types.js';
+import { DELIVERED_ACTION_TYPES, REF_PATTERN } from './types.js';
 
 // Re-export all types for convenience
 export * from './types.js';
@@ -339,6 +339,40 @@ export const WaitTypeSchema = Type.Union([
 export const WaitConditionSchema = Type.Object({
   until: WaitTypeSchema,
   timeoutMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 300000 })),
+});
+
+/**
+ * A plan step on the WIRE (the flat /plan vocabulary, distinct from the
+ * nested SupportedAction the service constructs per step). Constrains but
+ * does not strip unknown keys (the validateSessionRequest contract): the
+ * point is to reject garbage before it reaches executePlan - notably a
+ * non-integer or out-of-range waitMs, which used to poison waitForLabel's
+ * deadline arithmetic into a never-exiting poll loop.
+ */
+export const PlanStepSchema = Type.Object({
+  action: Type.Union(DELIVERED_ACTION_TYPES.map((literal) => Type.Literal(literal))),
+  target: Type.Optional(Type.Object({ ref: Type.String({ pattern: REF_PATTERN.source }) })),
+  value: Type.Optional(Type.String()),
+  key: Type.Optional(Type.String()),
+  direction: Type.Optional(
+    Type.Union([
+      Type.Literal('up'),
+      Type.Literal('down'),
+      Type.Literal('left'),
+      Type.Literal('right'),
+    ])
+  ),
+  amount: Type.Optional(Type.Number()),
+  observe: Type.Optional(Type.Union([Type.Literal('after'), Type.Literal('none')])),
+  expectedRevision: Type.Optional(Type.Integer({ minimum: 0 })),
+  approvalToken: Type.Optional(Type.String()),
+  promptText: Type.Optional(Type.String()),
+  wait: Type.Optional(WaitConditionSchema),
+  condition: Type.Optional(WaitConditionSchema),
+  /** TD-BROWSER-8 Phase 2: pre-step label wait. */
+  waitForLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+  /** Bounded hard (100-60000): garbage here wedged the poll loop pre-v1.8.2. */
+  waitMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 60000 })),
 });
 
 export const WaitActionSchema = Type.Object({

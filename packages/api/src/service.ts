@@ -952,7 +952,24 @@ export class AgentBrowserService {
     waitMs?: number
   ): Promise<string> {
     const page = this.requirePage(sessionId, pageId);
-    const deadline = Date.now() + (waitMs ?? 5000);
+    // waitMs arrives from the public plan route unvalidated (the plan body
+    // is a loose array until PlanStepSchema lands). A non-number ("abc")
+    // or non-finite (1e308 -> Infinity deadline) value used to poison the
+    // deadline arithmetic - `Date.now() >= NaN` is always false, so the
+    // poll loop below never exited (unbounded observe churn, forever).
+    // Validate hard: reject garbage, bound the sane range, default 5000.
+    if (
+      waitMs !== undefined &&
+      (typeof waitMs !== 'number' || !Number.isFinite(waitMs) || waitMs < 100 || waitMs > 60_000)
+    ) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `waitMs must be a finite number between 100 and 60000; got ${JSON.stringify(waitMs)}`,
+        false
+      );
+    }
+    const boundedWaitMs = waitMs ?? 5000;
+    const deadline = Date.now() + boundedWaitMs;
     for (;;) {
       const raw = await page.enginePage.observe({});
       const hit = raw.elements.some(
@@ -972,7 +989,7 @@ export class AgentBrowserService {
           if (Date.now() >= deadline) {
             throw new ServiceError(
               'ACTION_TIMEOUT',
-              `waitForLabel: '${label}' matched a raw element but never became actionable within ${waitMs ?? 5000}ms`,
+              `waitForLabel: '${label}' matched a raw element but never became actionable within ${boundedWaitMs}ms`,
               true
             );
           }
@@ -984,7 +1001,7 @@ export class AgentBrowserService {
       if (Date.now() >= deadline) {
         throw new ServiceError(
           'ACTION_TIMEOUT',
-          `waitForLabel: no element matching '${label}' appeared within ${waitMs ?? 5000}ms`,
+          `waitForLabel: no element matching '${label}' appeared within ${boundedWaitMs}ms`,
           true
         );
       }

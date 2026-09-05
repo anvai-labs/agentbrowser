@@ -279,6 +279,28 @@ describe('AgentBrowserService', () => {
       expect(result.error?.message).toMatch(/Never Appears/);
     });
 
+    it('rejects garbage waitMs instantly instead of hanging the poll loop (v1.8.1 defect)', async () => {
+      // Regression: waitMs arrives at waitForLabel unvalidated. "abc"
+      // string-concatenates into a NaN deadline (Date.now() >= NaN is
+      // always false -> the poll loop never exits); 1e308 does the same
+      // via an Infinity deadline. Both wedged a request handler forever.
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+
+      for (const bad of ['abc', 1e308, -1, 0, 61_000, Number.NaN]) {
+        const result = await service.executePlan(session.sessionId, pageId, [
+          { action: 'click', waitForLabel: 'Anything', waitMs: bad } as never,
+        ]);
+        expect(result.ok).toBe(false);
+        // The pre-step gate wraps any waitForLabel throw in the
+        // PLAN_WAIT_TIMEOUT envelope; the message distinguishes the
+        // invalid-input rejection from a genuine poll timeout.
+        expect(result.error?.code).toBe('PLAN_WAIT_TIMEOUT');
+        expect(result.error?.message).toMatch(/waitMs must be a finite number/);
+      }
+    });
+
     it('decays churn on a successful remap-retry step, not just the primary path', async () => {
       // Without the fix, the stale->remap path bumps churn on every step
       // that goes stale but never decays it back down on a successful

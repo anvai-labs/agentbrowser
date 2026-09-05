@@ -945,6 +945,22 @@ describe('AgentBrowser REST API safety integration', () => {
       });
       expect(response.status).toBe(400);
     });
+
+    it('should reject a garbage waitMs at the route before it can hang the poll loop', async () => {
+      // v1.8.1 defect: this exact body wedged the request handler in an
+      // infinite observe loop (NaN deadline). The route must 400 instantly.
+      const { sessionId, pageId } = await setupPage();
+      const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          actions: [{ action: 'click', waitForLabel: 'x', waitMs: 'abc' }],
+        }),
+      });
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error.message).toMatch(/waitMs/);
+    });
   });
 
   describe('network egress policy at the HTTP layer', () => {
