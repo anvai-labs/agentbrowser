@@ -121,6 +121,111 @@ describe('AgentBrowserService', () => {
       expect(result.results.every((r) => r.ok)).toBe(true);
     });
 
+    it('pressure matrix row 1: a static 5-field form completes in one call with zero intermediate observations', async () => {
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+
+      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
+      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
+      fakePage?.setElements([
+        { role: 'textbox', name: 'Name' },
+        { role: 'textbox', name: 'Email' },
+        { role: 'textbox', name: 'Company' },
+        { role: 'textbox', name: 'Role' },
+        { role: 'button', name: 'Submit' },
+      ]);
+      const obs = (await service.observe(session.sessionId, pageId, {
+        mode: 'interactive',
+      })) as unknown as { elements: Array<{ ref: string }> };
+      const refs = obs.elements.map((e) => e.ref);
+
+      const result = await service.executePlan(session.sessionId, pageId, [
+        { action: 'fill', target: { ref: refs[0] }, value: 'Ada' },
+        { action: 'fill', target: { ref: refs[1] }, value: 'ada@example.com' },
+        { action: 'fill', target: { ref: refs[2] }, value: 'Acme' },
+        { action: 'fill', target: { ref: refs[3] }, value: 'Engineer' },
+        { action: 'click', target: { ref: refs[4] } },
+      ]);
+
+      expect(result.ok).toBe(true);
+      expect(result.completed).toBe(5);
+      expect(result.results).toHaveLength(5);
+      // Per-step results carry only the outcome, never an embedded
+      // observation - that is only opted into via observe:'after'.
+      for (const stepResult of result.results) {
+        expect(Object.keys(stepResult).sort()).toEqual(['actionId', 'ok', 'step'].sort());
+      }
+      expect(typeof result.newRevision).toBe('number');
+    });
+
+    it('pressure matrix row 3: a re-rendering list under sustained churn never mis-clicks and stays in VERIFIED mode', async () => {
+      // Note on churn arithmetic: a successful remap now decays its own
+      // bump (the C3 fix), so a single stale-and-recovered step nets to
+      // ZERO churn change - churn cannot climb from a clean baseline while
+      // every step keeps succeeding (by design: resolved instability isn't
+      // held against the session forever). This test instead reflects the
+      // matrix's real intent under SUSTAINED high churn (comfortably above
+      // the verified threshold, as real repeated flakiness would produce):
+      // every step still finds the correct element by role+label - never
+      // guessing under a re-rendering list - and the session stays pinned
+      // in verified mode throughout, not just for one lucky step.
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+
+      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
+      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
+      fakePage?.setElements([{ role: 'button', name: 'Item' }]);
+      const obs = (await service.observe(session.sessionId, pageId, {
+        mode: 'interactive',
+      })) as unknown as { elements: Array<{ ref: string }> };
+      const staleRef = obs.elements[0].ref;
+
+      const churnKey = `${session.sessionId}:${pageId}`;
+      const churn = (service as unknown as { churn: Map<string, number> }).churn;
+      churn.set(churnKey, 5);
+
+      await service.act(session.sessionId, pageId, { action: 'scroll', direction: 'down' });
+
+      const result = await service.executePlan(session.sessionId, pageId, [
+        { action: 'click', target: { ref: staleRef } },
+        { action: 'click', target: { ref: staleRef } },
+        { action: 'click', target: { ref: staleRef } },
+      ]);
+
+      expect(result.ok).toBe(true);
+      expect(result.results.every((r) => r.ok)).toBe(true);
+      expect(result.mode).toBe('verified');
+      // Sustained, not runaway: each resolved step nets back to baseline.
+      expect(churn.get(churnKey)).toBe(5);
+    });
+
+    it('pressure matrix row 4: snapshot bytes are bounded by maxElements/maxBytes', async () => {
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+
+      const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
+      const fakePage = engine.getFakePage(engineSessionId as string, pageId);
+      fakePage?.setElements(
+        Array.from({ length: 40 }, (_, i) => ({ role: 'button', name: `Item ${i}` }))
+      );
+
+      const full = await service.getSnapshot(session.sessionId, pageId);
+      expect(full.fields.length).toBe(40);
+
+      const bounded = await service.getSnapshot(session.sessionId, pageId, { maxElements: 5 });
+      expect(bounded.fields.length).toBeLessThanOrEqual(5);
+      expect(bounded.truncated).toBe(true);
+
+      const byteBudget = Buffer.byteLength(JSON.stringify(full), 'utf8') - 200;
+      const byteBounded = await service.getSnapshot(session.sessionId, pageId, {
+        maxBytes: byteBudget,
+      });
+      expect(byteBounded.fields.length).toBeLessThan(40);
+    });
+
     it('aborts on the first failing step and reports progress', async () => {
       const session = await service.createSession({ tenantId: 't1' });
       const pageId = (await service.createPage(session.sessionId)).pageId;

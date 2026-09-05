@@ -759,10 +759,13 @@ export class AgentBrowserService {
     completed: number;
     results: Array<{ step: number; ok: boolean; actionId?: string; error?: string }>;
     mode: 'stable' | 'verified';
+    /** Payload economics (pressure matrix row 4): the plan's cheap "final state" signal. */
+    newRevision: number;
     error?: { code: string; message: string };
   }> {
     const results: Array<{ step: number; ok: boolean; actionId?: string; error?: string }> = [];
     const churnKey = this.churnKey(sessionId, pageId);
+    const finalRevision = (): number => this.pages.get(pageId)?.revision ?? 0;
     for (const [index, step] of steps.entries()) {
       // TD-BROWSER-8 Phase 2: pre-step label wait for fields revealed by a
       // prior step. A caller cannot know the ref of an element that does
@@ -789,6 +792,7 @@ export class AgentBrowserService {
             completed: index,
             results,
             mode: this.churnMode(churnKey),
+            newRevision: finalRevision(),
             error: { code: 'PLAN_WAIT_TIMEOUT', message },
           };
         }
@@ -893,6 +897,7 @@ export class AgentBrowserService {
                 completed: index,
                 results,
                 mode: this.churnMode(churnKey),
+                newRevision: finalRevision(),
                 error: { code: 'PLAN_STEP_FAILED', message: retryMessage },
               };
             }
@@ -905,6 +910,7 @@ export class AgentBrowserService {
               completed: index,
               results,
               mode,
+              newRevision: finalRevision(),
               error: { code: 'AMBIGUOUS_REMAP', message: ambiguousMessage },
             };
           }
@@ -915,11 +921,18 @@ export class AgentBrowserService {
           completed: index,
           results,
           mode: this.churnMode(churnKey),
+          newRevision: finalRevision(),
           error: { code: 'PLAN_STEP_FAILED', message },
         };
       }
     }
-    return { ok: true, completed: steps.length, results, mode: this.churnMode(churnKey) };
+    return {
+      ok: true,
+      completed: steps.length,
+      results,
+      mode: this.churnMode(churnKey),
+      newRevision: finalRevision(),
+    };
   }
 
   /**
@@ -996,20 +1009,30 @@ export class AgentBrowserService {
   /** TD-BROWSER-8: self-contained snapshot payload for one-shot LLM reasoning. */
   async getSnapshot(
     sessionId: string,
-    pageId: string
+    pageId: string,
+    bounds?: { maxElements?: number; maxBytes?: number }
   ): Promise<{
     url: string;
     title: string;
     revision: number;
     mode: 'stable' | 'verified';
     fields: Array<{ ref: string; role: string; label: string }>;
+    truncated?: boolean;
   }> {
-    const state = await this.observe(sessionId, pageId, { mode: 'interactive' });
+    // Payload economics (TD-BROWSER-8 pressure matrix, row 4): the fields
+    // list previously had no way to bound its size from the caller's side;
+    // it now flows through the same byte/element budget as observe().
+    const state = await this.observe(sessionId, pageId, {
+      mode: 'interactive',
+      ...(bounds?.maxElements !== undefined ? { maxElements: bounds.maxElements } : {}),
+      ...(bounds?.maxBytes !== undefined ? { maxBytes: bounds.maxBytes } : {}),
+    });
     const view = state as unknown as {
       url?: string;
       title?: string;
       revision?: number;
       elements?: Array<{ ref: string; role?: string; name?: string }>;
+      truncated?: boolean;
     };
     return {
       url: view.url ?? '',
@@ -1021,6 +1044,7 @@ export class AgentBrowserService {
         role: e.role ?? '',
         label: e.name ?? '',
       })),
+      ...(view.truncated === true ? { truncated: true } : {}),
     };
   }
 

@@ -882,6 +882,71 @@ describe('AgentBrowser REST API safety integration', () => {
     return { sessionId, pageId };
   };
 
+  describe('plan and snapshot over HTTP (TD-BROWSER-8, contract-honesty)', () => {
+    it('should return a self-contained snapshot bounded by maxElements', async () => {
+      const { sessionId, pageId } = await setupPage();
+      await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/navigate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: 'https://example.com' }),
+      });
+
+      const full = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/snapshot`);
+      expect(full.status).toBe(200);
+      const fullBody = await full.json();
+      expect(fullBody.fields).toBeDefined();
+      expect(fullBody.mode).toBe('stable');
+
+      const bounded = await fetch(
+        `${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/snapshot?maxElements=1`
+      );
+      expect(bounded.status).toBe(200);
+      const boundedBody = await bounded.json();
+      expect(boundedBody.fields.length).toBeLessThanOrEqual(1);
+    });
+
+    it('should execute a plan over HTTP and report the final revision', async () => {
+      const { sessionId, pageId } = await setupPage();
+      await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/navigate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: 'https://example.com' }),
+      });
+      const obsResponse = await fetch(
+        `${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/observe`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: 'interactive' }),
+        }
+      );
+      const { elements } = await obsResponse.json();
+      if (elements.length === 0) return;
+
+      const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          actions: [{ action: 'click', target: { ref: elements[0].ref } }],
+        }),
+      });
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(data.ok).toBe(true);
+      expect(typeof data.newRevision).toBe('number');
+    });
+
+    it('should reject a plan body without an actions array', async () => {
+      const { sessionId, pageId } = await setupPage();
+      const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      expect(response.status).toBe(400);
+    });
+  });
+
   describe('network egress policy at the HTTP layer', () => {
     it('should 403 POLICY_DENIED for loopback navigation', async () => {
       const { sessionId, pageId } = await setupPage();

@@ -545,7 +545,18 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
-          return reply.send(await service.getSnapshot(sessionId, pageId));
+          // Payload economics (TD-BROWSER-8 pressure matrix, row 4).
+          const query = request.query as { maxElements?: string; maxBytes?: string };
+          const maxElements =
+            query.maxElements !== undefined ? Number.parseInt(query.maxElements, 10) : undefined;
+          const maxBytes =
+            query.maxBytes !== undefined ? Number.parseInt(query.maxBytes, 10) : undefined;
+          return reply.send(
+            await service.getSnapshot(sessionId, pageId, {
+              ...(maxElements !== undefined ? { maxElements } : {}),
+              ...(maxBytes !== undefined ? { maxBytes } : {}),
+            })
+          );
         } catch (error) {
           return fail(reply, error);
         }

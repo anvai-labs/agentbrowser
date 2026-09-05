@@ -405,6 +405,135 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         },
       },
 
+      '/v1/sessions/{sessionId}/pages/{pageId}/snapshot': {
+        get: {
+          operationId: 'getPageSnapshot',
+          summary: 'Self-contained observation for browser_plan',
+          description:
+            'ADR-012/TD-BROWSER-8: a self-contained snapshot (url, title, revision, ' +
+            'mode, fields) usable as browser_plan targets in one round trip, with no ' +
+            'separate observe call. `mode` reflects the adaptive stable/verified state ' +
+            '(raised after repeated ref churn). Optional ?maxElements=/?maxBytes= bound ' +
+            'the fields payload (pressure-matrix payload economics).',
+          tags: ['pages'],
+          parameters: [
+            sessionIdParam,
+            pageIdParam,
+            {
+              name: 'maxElements',
+              in: 'query',
+              schema: { type: 'integer', minimum: 1 },
+              description: 'Cap the number of fields returned.',
+            },
+            {
+              name: 'maxBytes',
+              in: 'query',
+              schema: { type: 'integer', minimum: 1 },
+              description: 'Cap the serialized response size in bytes.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'The page snapshot.',
+              content: json({
+                type: 'object',
+                required: ['url', 'title', 'revision', 'mode', 'fields'],
+                properties: {
+                  url: { type: 'string' },
+                  title: { type: 'string' },
+                  revision: { type: 'integer' },
+                  mode: { type: 'string', enum: ['stable', 'verified'] },
+                  fields: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      required: ['ref', 'role', 'label'],
+                      properties: {
+                        ref: { type: 'string' },
+                        role: { type: 'string' },
+                        label: { type: 'string' },
+                      },
+                    },
+                  },
+                  truncated: { type: 'boolean' },
+                },
+              }),
+            },
+            '404': NOT_FOUND,
+          },
+        },
+      },
+
+      '/v1/sessions/{sessionId}/pages/{pageId}/plan': {
+        post: {
+          operationId: 'executePagePlan',
+          summary: 'Execute a batched action plan in one call',
+          description:
+            'TD-BROWSER-8: run several act steps sequentially in one call. The first ' +
+            'hard failure aborts with the completed prefix reported. Stale refs ' +
+            'self-heal once by re-observing (adaptive stable/verified matching by churn). ' +
+            'A step for a field revealed by a prior step (Phase 2) may declare ' +
+            '`waitForLabel` (substring match on the element name) instead of `target` - ' +
+            'the executor waits for it to appear (bounded by `waitMs`, default 5000) and ' +
+            'resolves the ref itself.',
+          tags: ['pages'],
+          parameters: [sessionIdParam, pageIdParam],
+          requestBody: {
+            required: true,
+            content: json({
+              type: 'object',
+              required: ['actions'],
+              properties: {
+                actions: {
+                  type: 'array',
+                  description:
+                    'Ordered plan steps: each is an ActionRequest, optionally with ' +
+                    '`waitForLabel` + `waitMs` instead of `target`.',
+                  items: ref('ActionRequest'),
+                },
+              },
+            }),
+          },
+          responses: {
+            '200': {
+              description: 'The plan outcome.',
+              content: json({
+                type: 'object',
+                required: ['ok', 'completed', 'results', 'mode', 'newRevision'],
+                properties: {
+                  ok: { type: 'boolean' },
+                  completed: { type: 'integer' },
+                  results: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      required: ['step', 'ok'],
+                      properties: {
+                        step: { type: 'integer' },
+                        ok: { type: 'boolean' },
+                        actionId: { type: 'string' },
+                        error: { type: 'string' },
+                      },
+                    },
+                  },
+                  mode: { type: 'string', enum: ['stable', 'verified'] },
+                  newRevision: {
+                    type: 'integer',
+                    description: "Payload economics: the plan's cheap final-state signal.",
+                  },
+                  error: {
+                    type: 'object',
+                    properties: { code: { type: 'string' }, message: { type: 'string' } },
+                  },
+                },
+              }),
+            },
+            '400': INVALID_REQUEST,
+            '404': NOT_FOUND,
+          },
+        },
+      },
+
       '/v1/sessions/{sessionId}/cookies': {
         get: {
           operationId: 'getSessionCookies',
