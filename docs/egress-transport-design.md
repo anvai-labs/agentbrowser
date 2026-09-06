@@ -164,18 +164,20 @@ instead of silently reducing its guarantees. No production rollout is implied.
 
 | Unit | Scope | Risk / effort | Exit evidence | Status |
 | --- | --- | --- | --- | --- |
-| T0 | Correct current guarantees; retain multi-hop repro; agree threat/capability contract | High-priority truthfulness / small | Reviewer can reproduce bypass; docs distinguish shipped and proposed behavior | Direction approved; durable truth guard, independent review and full local checks passed; delivery pending |
+| T0 | Correct current guarantees; retain multi-hop repro; agree threat/capability contract | High-priority truthfulness / small | Reviewer can reproduce bypass; docs distinguish shipped and proposed behavior | Design baseline and durable fixture complete; independent review passed; not runtime enforcement |
 | T1 | Bounded Chromium request/response lifecycle feasibility, pinned-version compatibility | High / medium | All target types, redirects and response gates; clean shutdown; no dual-owner race | Gate failed: worker WS/WSS coverage gaps; body-fulfillment comparison also breaks a data-worker HTTP control; investigation required |
 | T2 | Authenticated gateway and shared connection primitives | High / large | DNS rebind, host/TLS identity, session revocation, concurrency and byte limits | Not started |
 | T3 | Compose guarded Chromium mode; retire old route-fetch path for that mode | High / large | End-to-end acceptance matrix below, including normal site semantics | Blocked on T1/T2 |
 | T4 | Forced-egress Linux deployment profile, ADR-008-compatible | High / large | Deliberate proxy/DNS/UDP bypass attempts fail at network boundary; cannot alter rules; fail-closed startup and teardown | Required for contained-profile release; not started |
 
-Group D's already-written direct-download and WS corrections remain useful but
-do not close R4. Deliver them only as an explicitly partial correction after
-independent review confirms that disclosure; the all-hop finding stays open
-through transport implementation. Keep B/C/E/F/G moving with their own review
-gates, rebasing around held work after checking actual code dependencies. Never
-merge an unapproved predecessor merely because it is in the local stack.
+Group D's direct-download and page WS corrections merged in
+[PR 80](https://github.com/anvai-labs/agentbrowser/pull/80) as an explicitly
+partial correction after independent review and all CI checks passed. They do
+not close R4; the all-hop finding stays open through transport implementation.
+The unrelated A-G corrective groups are now merged; see the
+[delivery record](engineering-review-remediation.md). Future transport units
+retain their own review gates and must not merge an unapproved predecessor
+merely because it is in a local stack.
 
 ## Acceptance matrix
 

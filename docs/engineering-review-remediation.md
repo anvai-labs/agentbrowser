@@ -19,8 +19,8 @@ validation record below. A checked status never means merely documented.
 | D | R4, R9 | Egress composition, safe download transport, typed captured downloads | B | Merged: [PR 80](https://github.com/anvai-labs/agentbrowser/pull/80); explicitly partial, R4 remains open |
 | E | R10, R12 | Shared observation budgets and retention/admission bounds | C, D | Merged: [PR 81](https://github.com/anvai-labs/agentbrowser/pull/81) |
 | F | R11 | Safari transport, lifecycle, and explicit deployment capabilities | B | Merged: [PR 82](https://github.com/anvai-labs/agentbrowser/pull/82) |
-| G | Release follow-up | Lockstep product/package versions and release checks | F (delivery stack only) | Independent review and full local checks passed; [PR 83](https://github.com/anvai-labs/agentbrowser/pull/83) awaiting CI |
-| T0 | Egress contract baseline | Accepted local/contained profiles, truthful guarantees, durable redirect gap fixture | Separate from release-version changes | Independent review and full local checks passed; delivery pending |
+| G | Release follow-up | Lockstep product/package versions and release checks | F (delivery stack only) | Merged: [PR 83](https://github.com/anvai-labs/agentbrowser/pull/83) |
+| T0 | Egress contract baseline | Accepted local/contained profiles, truthful guarantees, durable redirect gap fixture | Separate from release-version changes | Design and evidence recorded; independently reviewed; runtime gates T1-T4 remain open |
 
 ## Findings and acceptance criteria
 
@@ -72,7 +72,7 @@ validation record below. A checked status never means merely documented.
 
 ## Validation and delivery record
 
-Groups A-C passed independent correction review and all CI checks before merge.
+Groups A-G passed independent correction review and all CI checks before merge.
 Other historical per-finding statuses above are implementation notes, not release
 claims; the group table governs delivery. D's successful direct-download and
 page WebSocket tests do not establish all-hop browser or worker enforcement.
@@ -82,17 +82,17 @@ Its operational limitations are documented in [engines](engines.md),
 ### Independent review and integration update
 
 A merged into `develop` at `b72510c`, B at `c0798d8`, C at `b865868`, and partial D
-at `d04d77f`, E at `c7903f8`, and F at `92e7efa`, each after
+at `d04d77f`, E at `c7903f8`, F at `92e7efa`, and G at `d9ddfc5`, each after
 independent correction review and all eight GitHub CI checks passed. Their local and remote task branches were deleted;
 there was only one worktree, so no duplicate dependency trees were removed.
 The remaining local stack was rebased onto that merge. No promotion to `main`,
 release, or package publication was performed. B's first publication attempt was
 stopped by three local Chromium test/hook timeouts; its full commit checks had
 passed earlier. A subsequent full workspace check passed without changing the
-tests or increasing timeouts. B subsequently passed all CI and merged. G is
-the sole open corrective PR (#83); do not open the next
-corrective PR until it is merged. G now ends at the release-version commit;
-T0 has its own branch pointer, without creating another worktree.
+tests or increasing timeouts. B subsequently passed all CI and merged.
+A-G were delivered sequentially as PRs 77-83. T0 is the separate final
+design/evidence unit; its branch was rebased onto G without creating another
+worktree. This delivery does not close R4 or implement a contained profile.
 
 E/F/G correction commits were folded into their original local groups rather
 than new branches. Their full validation hooks passed. F's 18 always-on
@@ -141,7 +141,7 @@ the findings. Real Safari and Obscura were not run during the review.
 Implemented in group G: lockstep first-party package versions with one authoritative product version,
 automated manifest synchronization, and CI checks against tags and built artifacts.
 Keep `/v1` protocol and underlying browser versions independent. The current API
-manifest (`1.2.0`) and hardcoded health version (`1.0.0`) were inconsistent with
+manifest (previously `1.2.0`) and hardcoded health version (`1.0.0`) were inconsistent with
 the shipped product. This is a separate release-consistency PR, not a new release
 inside the safety fixes. Independent SDK versions can be revisited if it acquires
 an independent publishing/support lifecycle.
