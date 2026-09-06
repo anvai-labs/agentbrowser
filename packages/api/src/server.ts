@@ -33,6 +33,8 @@ import {
 } from './service.js';
 
 export interface ServerOptions {
+  /** Operator-owned rules. Client-supplied session policy can only restrict these. */
+  approvalPolicy?: import('@agentbrowser/core').ActionRiskPolicyOptions;
   port?: number;
   host?: string;
   corsOrigin?: string | string[];
@@ -190,6 +192,12 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     });
   const service = new AgentBrowserService({
     engine,
+    ...((options.approvalPolicy ?? process.env.AGENTBROWSER_APPROVAL_POLICY) !== undefined
+      ? {
+          approvalPolicy:
+            options.approvalPolicy ?? JSON.parse(process.env.AGENTBROWSER_APPROVAL_POLICY ?? '{}'),
+        }
+      : {}),
     ...(options.engines ? { engines: options.engines } : {}),
     metrics,
     tracer,
@@ -459,6 +467,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           const { cookies, ...validatedRequest } = validated.value;
           const policy = (body as { policy?: SessionPolicy }).policy;
           const createRequest: ServiceSessionRequest = { ...validatedRequest };
+          if (policy?.approval !== undefined) createRequest.approval = policy.approval;
           // Structurally identical wire shapes; the protocol type's stricter
           // optionals (no | undefined) need explicit casts under
           // exactOptionalPropertyTypes - hence assignments, not spreads.

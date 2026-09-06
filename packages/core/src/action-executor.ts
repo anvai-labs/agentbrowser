@@ -28,6 +28,8 @@ import type {
 import { ObservationNormalizer } from './observation-normalizer.js';
 
 export interface ExecutionContext {
+  /** Policy runs after live target validation, immediately before effects. */
+  beforeAction?(resolved?: ResolvedTarget): Promise<void>;
   enginePage: EnginePage;
   /** The observation the caller's refs were minted from. */
   observation: PageState;
@@ -122,6 +124,7 @@ export class ActionExecutor {
         }
       }
 
+      await context.beforeAction?.(resolvedTarget);
       const effect = await enginePage.act(this.buildEngineAction(request.action));
 
       const result: ActionResult = {

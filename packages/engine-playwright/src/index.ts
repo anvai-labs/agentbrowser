@@ -31,7 +31,14 @@ import type {
 import type { RequestPolicy } from '@agentbrowser/engine';
 import { EngineError, normalizeEngineError } from '@agentbrowser/engine';
 import { DELIVERED_ACTION_TYPES, DELIVERED_OBSERVATION_MODES } from '@agentbrowser/protocol';
-import { type Browser, type BrowserContext, Locator, type Page, chromium } from 'playwright';
+import {
+  type Browser,
+  type BrowserContext,
+  type ElementHandle,
+  type Locator,
+  type Page,
+  chromium,
+} from 'playwright';
 
 // Re-export engine types
 export * from '@agentbrowser/engine';
@@ -44,6 +51,12 @@ interface StoredElement {
   value?: string;
   visible: boolean;
   enabled: boolean;
+}
+
+interface NodeBinding {
+  handle: ElementHandle;
+  locator: Locator;
+  snapshot: string;
 }
 
 /** Strip surrounding quotes and unescape from an aria snapshot value. */
@@ -734,6 +747,7 @@ class PlaywrightPage implements EnginePage {
    */
   private revision = 1;
   private refStore = new Map<string, StoredElement>();
+  private bindings = new Map<string, NodeBinding>();
   private eventWaiters: Array<() => void> = [];
   private eventsClosed = false;
   private removeSelf: () => void = () => {};
@@ -856,6 +870,11 @@ class PlaywrightPage implements EnginePage {
     }
   }
 
+  async getUrl(): Promise<string> {
+    if (this.page.isClosed()) throw new EngineError('PAGE_NOT_FOUND', 'Page is closed');
+    return this.page.url();
+  }
+
   async navigate(request: NavigationRequest): Promise<NavigationResult> {
     try {
       return await this.performNavigation(request);
@@ -900,6 +919,15 @@ class PlaywrightPage implements EnginePage {
 
   private bumpRevision(): void {
     this.revision += 1;
+    this.releaseRefs();
+  }
+
+  private releaseRefs(): void {
+    for (const { handle } of this.bindings.values()) {
+      // Disposal is best effort after document/context teardown.
+      void handle.dispose().catch(() => {});
+    }
+    this.bindings.clear();
     this.refStore.clear();
   }
 
@@ -909,7 +937,7 @@ class PlaywrightPage implements EnginePage {
     // Get accessibility tree if requested
     let elements: StoredElement[] = [];
 
-    if (mode === 'interactive' || mode === 'accessibility') {
+    if (mode === 'interactive' || mode === 'accessibility' || mode === 'content') {
       try {
         // Playwright's accessibility surface is the aria snapshot (YAML).
         const yaml = await this.page.locator('body').ariaSnapshot();
@@ -918,26 +946,76 @@ class PlaywrightPage implements EnginePage {
         // Fallback if the aria snapshot is not available
         elements = await this.getContentElements();
       }
-    } else if (mode === 'content') {
-      // Get content-focused elements
-      elements = await this.getContentElements();
     }
 
     // Rebuild the ref store from this observation: refs are deterministic
     // within a revision (document order), so the same element maps to the
     // same ref until the page mutates.
+    const previous = this.bindings;
+    const previousCount = this.refStore.size;
+    this.bindings = new Map();
     this.refStore.clear();
-    for (const [index, element] of elements.entries()) {
-      this.refStore.set(element.ref ?? `e${this.revision}_${index}`, {
-        role: element.role,
-        ...(element.name !== undefined ? { name: element.name } : {}),
-        ...(element.value !== undefined ? { value: element.value } : {}),
-        visible: element.visible,
-        enabled: element.enabled,
-      });
+    let changed = previousCount > 0 && previousCount !== elements.length;
+    const ordinals = new Map<string, number>();
+    try {
+      for (const [index, element] of elements.entries()) {
+        const ref = element.ref ?? `e${this.revision}_${index}`;
+        const key = JSON.stringify([element.role, element.name ?? '']);
+        const ordinal = ordinals.get(key) ?? 0;
+        ordinals.set(key, ordinal + 1);
+        const locator = this.page
+          .getByRole(element.role as never, { name: element.name ?? '', exact: true })
+          .nth(ordinal);
+        // Bind once to an actual node. An ordinal is never resolved anew at act time.
+        if (await locator.count()) {
+          const handle = await locator.elementHandle();
+          if (handle) {
+            const snapshot = await locator.ariaSnapshot({ timeout: 1000 });
+            const prior = previous.get(ref);
+            if (
+              previous.size > 0 &&
+              (!prior ||
+                prior.snapshot !== snapshot ||
+                !(await handle
+                  .evaluate((node, old) => node.isSameNode(old), prior.handle)
+                  .catch(() => false)))
+            )
+              changed = true;
+            this.bindings.set(ref, { handle, locator, snapshot });
+            element.visible = await handle.isVisible();
+            element.enabled = await handle.isEnabled();
+          }
+        }
+        this.refStore.set(ref, {
+          role: element.role,
+          ...(element.name !== undefined ? { name: element.name } : {}),
+          ...(element.value !== undefined ? { value: element.value } : {}),
+          visible: element.visible,
+          enabled: element.enabled,
+        });
+      }
+    } finally {
+      for (const { handle } of previous.values()) void handle.dispose().catch(() => {});
+    }
+    if (changed) {
+      this.revision += 1;
+      const bindings = new Map<string, NodeBinding>();
+      const states = new Map<string, StoredElement>();
+      for (const [index, element] of elements.entries()) {
+        const oldRef = element.ref ?? '';
+        const newRef = `e${this.revision}_${index}`;
+        const binding = this.bindings.get(oldRef);
+        const state = this.refStore.get(oldRef);
+        if (binding) bindings.set(newRef, binding);
+        if (state) states.set(newRef, state);
+        element.ref = newRef;
+      }
+      this.bindings = bindings;
+      this.refStore = states;
     }
 
     return {
+      revision: this.revision,
       url: this.page.url(),
       title: await this.page.title(),
       status: 'interactive',
@@ -978,7 +1056,8 @@ class PlaywrightPage implements EnginePage {
 
       // Element line: `role`, `role "name"`, `role "name": inline-value`,
       // or with a trailing bare colon when the node has children.
-      const elementMatch = /^([a-zA-Z][\w-]*)(?:\s+"((?:[^"\\]|\\.)*)")?(?::\s*(.*))?$/.exec(text);
+      const elementMatch =
+        /^([a-zA-Z][\w-]*)(?:\s+"((?:[^"\\]|\\.)*)")?(?:\s+\[[^\]]*\])*(?::\s*(.*))?$/.exec(text);
       if (!elementMatch?.[1]) {
         continue;
       }
@@ -1046,29 +1125,70 @@ class PlaywrightPage implements EnginePage {
 
   async resolve(target: EngineTarget): Promise<ResolvedTarget> {
     const stored = this.refStore.get(target.ref);
-    if (!stored) {
-      throw new Error(`Element not found: ${target.ref} (observe the page to mint refs)`);
+    const binding = this.bindings.get(target.ref);
+    if (!stored || !binding) {
+      throw new EngineError(
+        'TARGET_NOT_FOUND',
+        `Element not found: ${target.ref} (observe the page to mint refs)`
+      );
+    }
+    if (!(await binding.handle.evaluate((node) => node.isConnected))) {
+      throw new EngineError(
+        'STALE_TARGET',
+        'Observed node was detached or replaced; observe again.'
+      );
+    }
+    const visible = await binding.handle.isVisible();
+    const enabled = await binding.handle.isEnabled();
+    if (visible && enabled) {
+      // Some CDP adapters materialize fresh JavaScript wrappers for the same
+      // DOM node. Compare DOM identity, not wrapper-object equality.
+      const current =
+        (await binding.locator.count()) === 1
+          ? await binding.locator.elementHandle({ timeout: 1000 })
+          : null;
+      let matchesOriginal = false;
+      try {
+        matchesOriginal =
+          current !== null &&
+          (await binding.handle.evaluate(
+            (original, candidate) => original.isSameNode(candidate),
+            current
+          ));
+      } finally {
+        await current?.dispose();
+      }
+      if (
+        !matchesOriginal ||
+        (await binding.locator.ariaSnapshot({ timeout: 1000 })) !== binding.snapshot
+      ) {
+        throw new EngineError(
+          'STALE_TARGET',
+          'Observed target identity or semantic state changed; observe again.'
+        );
+      }
     }
 
     return {
       ref: target.ref,
-      fingerprint: canonicalFingerprint(stored),
+      fingerprint: canonicalFingerprint({ ...stored, visible, enabled }),
       role: stored.role,
       ...(stored.name !== undefined ? { name: stored.name } : {}),
-      visible: stored.visible,
-      enabled: stored.enabled,
+      visible,
+      enabled,
     };
   }
 
   /** Locator for a stored element, addressed semantically (never selectors). */
   private locatorFor(ref: string) {
-    const stored = this.refStore.get(ref);
-    if (!stored) {
-      throw new Error(`Element not found: ${ref} (observe the page to mint refs)`);
+    const binding = this.bindings.get(ref);
+    if (!binding) {
+      throw new EngineError(
+        'TARGET_NOT_FOUND',
+        `Element not found: ${ref} (observe the page to mint refs)`
+      );
     }
-    return this.page
-      .getByRole(stored.role as never, stored.name !== undefined ? { name: stored.name } : {})
-      .first();
+    return binding.handle;
   }
 
   async act(action: EngineAction): Promise<ActionEffect> {
@@ -1081,6 +1201,11 @@ class PlaywrightPage implements EnginePage {
   }
 
   private async performAction(action: EngineAction): Promise<ActionEffect> {
+    if (action.target) {
+      const live = await this.resolve(action.target);
+      if (!live.visible) throw new EngineError('TARGET_NOT_VISIBLE', 'Target is not visible');
+      if (!live.enabled) throw new EngineError('TARGET_DISABLED', 'Target is disabled');
+    }
     const actionId = `action-${Date.now()}`;
     const startTimestamp = new Date().toISOString();
     const oldRevision = this.revision;
@@ -1339,6 +1464,7 @@ class PlaywrightPage implements EnginePage {
 
   async close(): Promise<void> {
     this.eventsClosed = true;
+    this.releaseRefs();
     this.removeSelf();
     if (this.pendingDialog) {
       clearTimeout(this.pendingDialog.timer);
