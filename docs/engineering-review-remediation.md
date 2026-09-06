@@ -31,8 +31,8 @@ checks green. Reuse the single clean worktree; do not recreate the A-G stack.
 
 | Unit | Scope | Acceptance / stop condition | Status |
 | --- | --- | --- | --- |
-| T1a | Compare native, network-delivered CSP, header injection, and body fulfillment with/without added policy | Preserve worker HTTP positive controls; correlate CSP violations, network failures and server hits; distinguish fixture failures from policy denials | Diagnostic comparison complete; independently approved; 36-case evidence and 10 offline tests pass on `test/t1-worker-policy-inheritance`; delivery pending |
-| T1b | Complete target attachment and nested-worker coverage | Independent review of startup ordering and all-target controls; no production claim from page-only coverage | Pending T1a evidence |
+| T1a | Compare policy delivery and diagnose replay failures | Preserve HTTP controls; correlate browser failures, CSP violations and server hits | Diagnostic unit complete and independently approved: 36-case comparison, 27-case worker follow-up, 20 offline tests; T1/R4 remain open |
+| T1b | Complete target attachment and nested-worker coverage | Independent review of startup ordering and all-target controls; no production claim from page-only coverage | Next after T1a delivery; diagnostic observer misses one native request-start event |
 | T1c | Reassess transport feasibility against the complete acceptance matrix | T1 remains open until semantics and coverage pass; revisit design explicitly if they cannot | Pending |
 
 T1a is a bounded probe/evidence PR, not a production adapter change. Keep
@@ -47,8 +47,14 @@ diagnosis or full target-coverage result; see the
 [comparison and limitations](egress-transport-feasibility.md#t1a-native-policy-versus-body-fulfillment).
 Independent review caught missing delivery/denial assertions in the evidence
 verifier; three failing mutation tests reproduced that gap before correction.
-All ten offline tests now pass; workspace build, version and doc-link checks
-also pass. Next work needs worker-scoped failure reasons, not weaker policy.
+The initial ten offline tests pass. The follow-up adds five child-session
+lifecycle tests and five diagnostic-attribution tests; all twenty pass.
+Worker-scoped evidence identifies `LocalNetworkAccessPermissionDenied` for
+replayed data-worker HTTP to the loopback fixture, including no-policy replay.
+The browser's underlying reason for changing that decision is still unproven;
+this does not establish a general public-network HTTP failure. No production
+security checks were disabled. The observer also misses one native request-start
+event, so it cannot establish race-free startup or all-target enforcement.
 
 | ID | Finding / location | Severity | Why it matters / reproduced behavior | Fix and required regression | Status |
 | --- | --- | --- | --- | --- | --- |

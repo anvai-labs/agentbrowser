@@ -12,7 +12,8 @@ export function verifyInheritanceEvidence(rows) {
   const env = one('environment');
   const arms = ['native-control', 'native-policy', 'control', 'network-policy', 'network-fulfilled',
     'added-policy', 'fulfilled-control', 'fulfilled-policy', 'strict-fulfilled'];
-  const modes = ['external-dedicated', 'blob-dedicated', 'blob-shared', 'data-dedicated'];
+  const modes = env.workerNetwork === true ? ['external-dedicated', 'blob-dedicated', 'data-dedicated']
+    : ['external-dedicated', 'blob-dedicated', 'blob-shared', 'data-dedicated'];
   assert.deepEqual(env.arms, arms);
   assert.deepEqual(env.modes, modes);
   assert.equal(env.addedPolicy, 'connect-src http: https:');

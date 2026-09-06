@@ -134,8 +134,9 @@ Fetch response-stage `responseErrorReason: Failed` and no worker HTTP CSP
 violation. The strict arm recorded HTTP violations, validating the recorder's
 positive control. Page-scoped Network/console diagnostics were empty: absence
 there does not prove absence of a worker-side CORS or local-network error.
-The loopback fixture is a scope limitation; address-space/local-network checks
-remain a hypothesis, not a diagnosed cause. No additional CSP, CORS or
+At that stage, the loopback fixture was a scope limitation and local-network
+checks were still a hypothesis. The worker-scoped follow-up below identifies
+Chromium's blocking reason, but not its underlying metadata cause. No additional CSP, CORS or
 local-network bypass flags were used. The existing fixture-only TLS certificate
 verification exception remains; no host certificate store was changed.
 
@@ -159,9 +160,59 @@ cleanup. Its `fixtureValid: true` explicitly accompanies
 `securityAcceptance: false`: CI checks the evidence verifier, not live worker
 enforcement. This comparison does not close T1 or R4.
 
-Next: obtain worker-scoped network failure reasons before choosing a replay
-mechanism, alongside the separately scoped recursive-target coverage probe.
-Do not attribute the data-worker failure to CSP or remove the policy to fix it.
+### Worker-scoped follow-up: observed local-network denial
+
+The [dedicated-worker diagnostic run](evidence/worker-network-diagnostics.jsonl)
+retains 27 cases on runtime Chromium 151.0.7922.34. Every HTTP/WS/WSS outcome and
+server-hit tuple matches the corresponding T1a case. Shared and nested workers
+were deliberately excluded; this is not an all-target interception experiment.
+
+| Observed failure | Worker-scoped evidence | Conclusion |
+| --- | --- | --- |
+| Data-worker HTTP in all three non-strict replay arms | Correlated `Network.loadingFailed`, `net::ERR_FAILED`, `corsErrorStatus.corsError: LocalNetworkAccessPermissionDenied`; no HTTP CSP violation or server hit | Chromium denied local-network access to the loopback fixture, not an observed CSP denial |
+| WS/WSS without added connection policy, under replay | `Network.webSocketFrameError` reports `ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS`, correlated to each socket URL | These failed socket controls are not policy-enforcement evidence |
+| Native external-worker initial request | Response and completion captured, but `requestWillBeSent` missing | The observer does not establish complete pre-execution coverage |
+
+This identifies the **browser's reported blocking reason**, not why replay
+changes the local-network decision. Changed response/security metadata remains
+an unverified explanation. The fixture does not establish a general failure of
+data-worker requests to public destinations. Do not disable local-network
+checks, grant broad permissions, or weaken CSP as a production workaround.
+
+The test-only [child CDP bridge](../scripts/probes/child-cdp.mjs) uses the pinned
+browser's deprecated non-flattened message path, not Playwright private objects.
+It bounds pending commands, enforces deadlines, correlates inner command replies
+by child session, and rejects outstanding work on detach. The
+[CDP Target contract](https://chromedevtools.github.io/devtools-protocol/tot/Target/#method-setAutoAttach)
+supports pause-on-attach, but Playwright is another debugger client and can also
+resume workers. All 27 enable/resume acknowledgements were recorded; most
+requests arrived before the resume acknowledgement. Neither an acknowledgement
+nor `waitingForDebugger: true` proves control of worker startup. A production
+design must establish that invariant separately.
+
+Two diagnostic runs completed. The first stdout was truncated by the capture
+tool because request initiator stacks repeated embedded worker source. The
+second projects request/response identity fields while retaining full failure
+fields; its complete output is retained. It records 27 detaches with no pending
+commands, nine empty observer cleanups, no handler errors or dropped diagnostics,
+and final browser/socket cleanup. No additional bypass flags were introduced;
+the pre-existing fixture-only TLS exception remains.
+
+```bash
+node scripts/probes/worker-csp.mjs --worker-network
+node scripts/probes/verify-worker-network.mjs docs/evidence/worker-network-diagnostics.jsonl docs/evidence/worker-csp-inheritance.jsonl
+pnpm test:probes
+```
+
+The offline verifier checks matching baseline outcomes, response/completion
+coverage, correlated failure reasons, socket attribution, and observer cleanup.
+It reports the missing native request-start event explicitly and always returns
+`completePreExecutionCoverage: false` and `securityAcceptance: false`.
+
+Next: independently prove target startup ordering and recursive coverage, and
+test a metadata-preserving response mechanism before selecting production
+transport. The native control is sufficient to establish the observed response
+and outcome, not complete request-start capture. T1 and R4 remain open.
 
 The [accepted two-profile decision](egress-transport-design.md) is unchanged.
 OS-enforced gateway-only routing remains required for the contained profile,
@@ -174,8 +225,9 @@ Before another production adapter change, establish an effective browser-owned
 upgrade restriction across the complete target/policy lifecycle. Recursive
 target attachment is necessary for the demonstrated nested-script gap, but is
 not evidence that blob/data inheritance works. T1a now separates native policy
-behavior from the body-fulfillment failure; worker-scoped diagnosis and a
-compatible policy-delivery mechanism are still required. Preserve ordinary
+behavior from the loopback replay failure; the observed local-network denial
+does not explain the changed local-network decision or establish a compatible policy-delivery
+mechanism. Preserve ordinary
 worker HTTP requests and stricter origin policies in every control.
 
 Do not silently disable workers, remove the WebSocket guarantee, substitute TLS
