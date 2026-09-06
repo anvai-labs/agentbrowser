@@ -21,6 +21,8 @@ validation record below. A checked status never means merely documented.
 | F | R11 | Safari transport, lifecycle, and explicit deployment capabilities | B | Merged: [PR 82](https://github.com/anvai-labs/agentbrowser/pull/82) |
 | G | Release follow-up | Lockstep product/package versions and release checks | F (delivery stack only) | Independent review and full local checks passed; delivery pending |
 
+| T0 | Egress contract baseline | Accepted local/contained profiles, truthful guarantees, durable redirect gap fixture | Separate from release-version changes | Independently reviewed; rebased validation and delivery pending |
+
 ## Findings and acceptance criteria
 
 | ID | Finding / location | Severity | Why it matters / reproduced behavior | Fix and required regression | Status |
@@ -80,14 +82,22 @@ Its operational limitations are documented in [engines](engines.md),
 
 ### Independent review and integration update
 
-A merged into `develop` at `b72510c` after independent correction review and all
-eight GitHub CI checks passed. Its local and remote task branches were deleted;
+A merged into `develop` at `b72510c` and B at `c0798d8`, each after independent
+correction review and all eight GitHub CI checks passed. Their local and remote task branches were deleted;
 there was only one worktree, so no duplicate dependency trees were removed.
 The remaining local stack was rebased onto that merge. No promotion to `main`,
 release, or package publication was performed. B's first publication attempt was
 stopped by three local Chromium test/hook timeouts; its full commit checks had
 passed earlier. A subsequent full workspace check passed without changing the
-tests or increasing timeouts. B publication remains pending.
+tests or increasing timeouts. B subsequently passed all CI and merged. C is
+the sole open corrective PR (#79); do not open the next PR until it is merged.
+
+E/F/G correction commits were folded into their original local groups rather
+than new branches. Their full validation hooks passed. F's 18 always-on
+mock/HTTP tests include cross-page execution, shutdown races, queue admission,
+closing-handle suppression and 100 successful close cycles without enumeration.
+The real Safari suite remains enablement-gated (six tests skipped on this host).
+Release version/dependency tests and documentation-link checks also passed.
 
 | Review follow-up | Group | Disposition |
 | --- | --- | --- |
@@ -96,10 +106,10 @@ tests or increasing timeouts. B publication remains pending.
 | Consent uses missing/stale observation URL | C | Live engine URL port with legacy observation fallback; no-observe/history/external-navigation/token regressions; full checks and independent review passed |
 | Session-only policy omits default WS denial | D | Corrected; real Chromium probe confirms zero server connections |
 | Direct transport omits operator redirect limit | D | Typed policy delegation corrected; zero-limit fixture contacts only initial URL |
-| Later browser redirect hops bypass route callback and policy | D / R4 | **Open, high severity.** Owner chose [transport-level design first](egress-transport-design.md), not temporary redirect denial; D remains held |
-| Diff observation discards continuation/maxElements | E | Confirmed; correction pending |
-| Safari selected-window races and late resource creation after close | F | Confirmed; shared operation queue and lifecycle correction pending |
-| npm publishing lacks tag-guard dependency | G | Confirmed; correction pending before merge |
+| Later browser redirect hops bypass route callback and policy | D / R4 | **Open, high severity.** Owner approved [local and contained profiles](egress-transport-design.md); partial D may proceed only with explicit limitations; contained release requires T1-T4 |
+| Diff observation discards continuation/maxElements | E | Corrected; 420-element diff paginates 300+120 and honors maxElements; independent review passed |
+| Safari selected-window races and late resource creation after close | F | Corrected; bounded shared operation queue, stable close promises, pending-start cleanup and identity-safe closing markers; independent review passed |
+| npm publishing lacks tag-guard dependency | G | Corrected; direct dependency plus regression test; independent review passed |
 
 The implementation-only statuses in the historical finding table above are not
 closure claims; the current group/review tables govern delivery. In particular,
@@ -115,7 +125,7 @@ the findings. Real Safari and Obscura were not run during the review.
 
 | Group | Branch / PR | Validation | Remaining limitations |
 | --- | --- | --- | --- |
-| A | `fix/review-evidence-boundaries` | Workspace build; 195 API/service/boundary tests; 24 extraction tests passed | Raw evidence bytes intentionally not redacted; independent PR review pending |
+| A | [PR 77](https://github.com/anvai-labs/agentbrowser/pull/77), merged | Workspace build; 195 API/service/boundary tests; 24 extraction tests; independent correction review and all CI passed | Raw evidence bytes intentionally not redacted |
 | B | `fix/review-action-contracts` | Workspace build; 126 service, 65 HTTP, 44 SDK, 46 MCP, 34 CLI, 85 protocol, 33 engine, 173 core tests; real Chromium scroll/keyboard regression passed | Legacy adapter message matching retained at one compatibility boundary; timeout does not imply safe mutation retry |
 | C | `fix/review-target-identity-consent` | Workspace build; 127 service/ref-translation tests; 65 core policy/gate/executor tests; 5 real DOM identity and 3 real consent/plan tests passed | Conservative staleness on reorder; exact-match rules are not semantic risk inference; independent human authorization remains the caller's responsibility |
 | D | `fix/review-egress-downloads` | Workspace build; 128 service tests; 48 policy tests; 4 direct-transport tests; DNS revalidation/disposal regression; real Chromium chunked-page/captured-download regression | Playwright fetch still buffers before size checks and does not pin DNS; browser temporary-disk quota belongs to ADR-008 deployment isolation |

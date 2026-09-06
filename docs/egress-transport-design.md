@@ -162,7 +162,7 @@ instead of silently reducing its guarantees. No production rollout is implied.
 
 | Unit | Scope | Risk / effort | Exit evidence | Status |
 | --- | --- | --- | --- | --- |
-| T0 | Correct current guarantees; retain multi-hop repro; agree threat/capability contract | High-priority truthfulness / small | Reviewer can reproduce bypass; docs distinguish shipped and proposed behavior | Direction approved; durable regression and correction review next |
+| T0 | Correct current guarantees; retain multi-hop repro; agree threat/capability contract | High-priority truthfulness / small | Reviewer can reproduce bypass; docs distinguish shipped and proposed behavior | Direction approved; durable truth guard, independent review and full local checks passed; delivery pending |
 | T1 | Bounded Chromium request/response lifecycle feasibility, pinned-version compatibility | High / medium | All target types, redirects and response gates; clean shutdown; no dual-owner race | One-page probe only |
 | T2 | Authenticated gateway and shared connection primitives | High / large | DNS rebind, host/TLS identity, session revocation, concurrency and byte limits | Not started |
 | T3 | Compose guarded Chromium mode; retire old route-fetch path for that mode | High / large | End-to-end acceptance matrix below, including normal site semantics | Blocked on T1/T2 |
