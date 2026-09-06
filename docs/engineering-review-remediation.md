@@ -16,8 +16,8 @@ validation record below. A checked status never means merely documented.
 | A | R1, R2, R6 | Evidence ownership, secret boundaries, deterministic extraction | None | Merged: [PR 77](https://github.com/anvai-labs/agentbrowser/pull/77) |
 | B | R7, R8, R13 | Wire actions, SDK deadlines/error details, adapter error normalization | A | Merged: [PR 78](https://github.com/anvai-labs/agentbrowser/pull/78) |
 | C | R3, R5 | Live element identity and operator-controlled approval policy | B | Merged: [PR 79](https://github.com/anvai-labs/agentbrowser/pull/79) |
-| D | R4, R9 | Egress composition, safe download transport, typed captured downloads | B | Independently reviewed partial correction; delivery pending; R4 remains open |
-| E | R10, R12 | Shared observation budgets and retention/admission bounds | C, D | Pending |
+| D | R4, R9 | Egress composition, safe download transport, typed captured downloads | B | Merged: [PR 80](https://github.com/anvai-labs/agentbrowser/pull/80); explicitly partial, R4 remains open |
+| E | R10, R12 | Shared observation budgets and retention/admission bounds | C, D | Independent review and full local checks passed; delivery pending |
 | F | R11 | Safari transport, lifecycle, and explicit deployment capabilities | B | Pending |
 
 ## Findings and acceptance criteria
@@ -80,7 +80,7 @@ the findings. Real Safari and Obscura were not run during the review.
 | B | `fix/review-action-contracts` | Workspace build; 126 service, 65 HTTP, 44 SDK, 46 MCP, 34 CLI, 85 protocol, 33 engine, 173 core tests; real Chromium scroll/keyboard regression passed | Legacy adapter message matching retained at one compatibility boundary; timeout does not imply safe mutation retry |
 | C | `fix/review-target-identity-consent` | Workspace build; 127 service/ref-translation tests; 65 core policy/gate/executor tests; 5 real DOM identity and 3 real consent/plan tests passed | Conservative staleness on reorder; exact-match rules are not semantic risk inference; independent human authorization remains the caller's responsibility |
 | D | `fix/review-egress-downloads` | Workspace build; 128 service tests; 48 policy tests; 4 direct-transport tests; DNS revalidation/disposal regression; real Chromium chunked-page/captured-download regression | Playwright fetch still buffers before size checks and does not pin DNS; browser temporary-disk quota belongs to ADR-008 deployment isolation |
-| E | Pending | Pending | Pending |
+| E | `fix/review-resource-budgets` | Workspace build; 85 focused core tests; 130 service/budget tests; UTF-8 boundary sweep, full-list cursor, expanding-redaction, event-byte and concurrent token-admission regressions | Serialized service-ledger bounds are not total process-memory limits; engine queues/live snapshots remain separate; text/diff truncation requires larger budgets rather than an element cursor |
 | F | Pending | Pending | Pending |
 
 ## Separate release-tooling follow-up

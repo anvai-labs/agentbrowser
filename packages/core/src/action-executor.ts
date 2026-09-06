@@ -25,6 +25,7 @@ import type {
   PageState,
   SupportedAction,
 } from '@agentbrowser/protocol';
+import { budgetObservation } from './observation-budget.js';
 import { ObservationNormalizer } from './observation-normalizer.js';
 
 export interface ExecutionContext {
@@ -163,28 +164,16 @@ export class ActionExecutor {
 
     const normalized = this.normalizer.normalize(raw, {
       ...request.observeAfter,
+      retainAllElements: true,
       revision: newRevision,
       sessionId: context.observation.sessionId,
       pageId: request.pageId,
     });
 
-    // observeAfter previously accepted maxBytes and silently ignored it
-    // (the dead normalizer option). Bound it here: a prefix cut in
-    // document order, mirroring the service's byte budget semantics.
-    const budget = request.observeAfter?.maxBytes;
-    if (budget !== undefined) {
-      let elements = normalized.elements;
-      while (
-        elements.length > 0 &&
-        Buffer.byteLength(JSON.stringify({ ...normalized, elements }), 'utf8') > budget
-      ) {
-        elements = elements.slice(0, Math.floor(elements.length / 2));
-      }
-      if (elements.length < normalized.elements.length) {
-        return { ...normalized, elements, truncated: true };
-      }
-    }
-    return normalized;
+    return budgetObservation(normalized, {
+      maxElements: request.observeAfter?.maxElements,
+      maxBytes: request.observeAfter?.maxBytes,
+    });
   }
 
   /**

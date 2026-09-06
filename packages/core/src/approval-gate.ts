@@ -95,11 +95,11 @@ export class ApprovalGate {
     this.logger = options.logger;
 
     // Validate configuration
-    if (this.options.tokenTtlMs <= 0) {
+    if (!Number.isSafeInteger(this.options.tokenTtlMs) || this.options.tokenTtlMs <= 0) {
       throw new Error('tokenTtlMs must be positive');
     }
 
-    if (this.options.maxTokens <= 0) {
+    if (!Number.isSafeInteger(this.options.maxTokens) || this.options.maxTokens <= 0) {
       throw new Error('maxTokens must be positive');
     }
 
@@ -142,6 +142,13 @@ export class ApprovalGate {
     // Check token limit and clean up if needed
     if (this.tokens.size >= this.options.maxTokens) {
       await this.runCleanup();
+    }
+    // Check again after cleanup. There is no await between this admission
+    // decision and insertion, so concurrent callers cannot over-admit.
+    if (this.tokens.size >= this.options.maxTokens) {
+      throw new ApprovalError('QUOTA_EXCEEDED', 'Approval token capacity reached', false, {
+        maxTokens: this.options.maxTokens,
+      });
     }
 
     const token: ApprovalToken = {
@@ -341,11 +348,17 @@ export class ApprovalGate {
    * Update configuration
    */
   updateConfig(options: Partial<ApprovalGateOptions>): void {
-    if (options.tokenTtlMs !== undefined && options.tokenTtlMs <= 0) {
+    if (
+      options.tokenTtlMs !== undefined &&
+      (!Number.isSafeInteger(options.tokenTtlMs) || options.tokenTtlMs <= 0)
+    ) {
       throw new Error('tokenTtlMs must be positive');
     }
 
-    if (options.maxTokens !== undefined && options.maxTokens <= 0) {
+    if (
+      options.maxTokens !== undefined &&
+      (!Number.isSafeInteger(options.maxTokens) || options.maxTokens <= 0)
+    ) {
       throw new Error('maxTokens must be positive');
     }
 
