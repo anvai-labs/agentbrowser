@@ -1,5 +1,7 @@
 // T1 feasibility probe only, not production enforcement or a security acceptance test.
 // Run from a dependency-installed checkout: node scripts/probes/worker-csp.mjs
+// Add --inheritance for T1a native/network policy and fulfillment controls.
+// Add --worker-network for dedicated-worker CDP diagnostics (no shared/nested claim).
 // Requires OpenSSL and the pinned Playwright Chromium binary. Exit 0 means execution completed,
 // not that enforcement passed. Inspect result/hits, handlerErrors and cleanup records.
 // One owned browser, 90-second execution deadline and bounded cleanup.
@@ -9,8 +11,17 @@ import { createServer as createHttpsServer } from 'node:https';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { chromium } from '../../packages/engine-playwright/node_modules/playwright/index.mjs';
+import { ChildCdp } from './child-cdp.mjs';
 
-const MODES = ['external-dedicated', 'external-shared', 'nested-external', 'blob-dedicated', 'blob-shared', 'data-dedicated', 'nested-blob'];
+const workerNetwork = process.argv.includes('--worker-network');
+const inheritance = process.argv.includes('--inheritance') || workerNetwork;
+if (process.argv.slice(2).some(arg => !['--inheritance', '--worker-network'].includes(arg))) throw new Error('Unknown probe argument');
+const MODES = workerNetwork ? ['external-dedicated', 'blob-dedicated', 'data-dedicated'] : inheritance
+  ? ['external-dedicated', 'blob-dedicated', 'blob-shared', 'data-dedicated']
+  : ['external-dedicated', 'external-shared', 'nested-external', 'blob-dedicated', 'blob-shared', 'data-dedicated', 'nested-blob'];
+const ARMS = inheritance
+  ? ['native-control', 'native-policy', 'control', 'network-policy', 'network-fulfilled', 'added-policy', 'fulfilled-control', 'fulfilled-policy', 'strict-fulfilled']
+  : ['control', 'added-policy', 'fulfilled-policy', 'strict-intersection', 'strict-fulfilled'];
 const addedPolicy = 'connect-src http: https:';
 const hits = [];
 const sockets = new Set();
@@ -18,6 +29,12 @@ const paused = [];
 const injected = [];
 const handlerErrors = [];
 const results = [];
+const diagnostics = [];
+let droppedDiagnostics = 0;
+function diagnose(record) {
+  if (diagnostics.length >= 1000) { droppedDiagnostics++; return; }
+  diagnostics.push(record);
+}
 let browserServer;
 let browser;
 let plain;
@@ -26,17 +43,26 @@ let deadline;
 
 // This function is serialized into external, blob and data worker scripts.
 async function runChecks(config) {
+  const violations = [];
+  if (config.diagnostics) self.addEventListener('securitypolicyviolation', event => {
+    if (violations.length < 20) violations.push({
+      effectiveDirective: event.effectiveDirective, blockedURI: event.blockedURI,
+      originalPolicy: event.originalPolicy, disposition: event.disposition,
+    });
+  });
   const fetchController = new AbortController();
+  const fetchStarted = performance.now();
   const fetchTimer = setTimeout(() => fetchController.abort(), 1500);
   let http;
   try {
     const response = await fetch(config.http, { signal: fetchController.signal });
     http = { status: response.status, body: await response.text() };
   } catch (error) {
-    http = { error: String(error) };
+    http = { error: String(error), ...(config.diagnostics ? { name: error.name } : {}) };
   } finally {
     clearTimeout(fetchTimer);
   }
+  if (config.diagnostics) Object.assign(http, { elapsedMs: performance.now() - fetchStarted, aborted: fetchController.signal.aborted });
   const socketCheck = endpoint => new Promise(resolve => {
     let ws;
     let done = false;
@@ -57,7 +83,12 @@ async function runChecks(config) {
       finish('throw:' + String(error));
     }
   });
-  return { http, ws: await socketCheck(config.ws), wss: await socketCheck(config.wss) };
+  const result = { http, ws: await socketCheck(config.ws), wss: await socketCheck(config.wss) };
+  if (config.diagnostics) {
+    await new Promise(resolve => setTimeout(resolve, 0));
+    result.diagnostics = { origin: self.origin, locationOrigin: self.location.origin, isSecureContext: self.isSecureContext, violations };
+  }
+  return result;
 }
 
 const workerSource = (config, shared = false) => {
@@ -73,15 +104,21 @@ async function run() {
   const handler = (request, response) => {
     const url = new URL(request.url, 'http://fixture');
     if (url.pathname === '/probe') {
-      hits.push({ kind: 'http', arm: url.searchParams.get('arm'), mode: url.searchParams.get('mode') });
+      hits.push({ kind: 'http', arm: url.searchParams.get('arm'), mode: url.searchParams.get('mode'),
+        ...(inheritance ? { method: request.method, origin: request.headers.origin ?? null,
+          preflightMethod: request.headers['access-control-request-method'] ?? null,
+          preflightHeaders: request.headers['access-control-request-headers'] ?? null } : {}) });
       response.setHeader('access-control-allow-origin', '*');
       response.end('worker-http-ok');
       return;
     }
-    const arm = url.searchParams.get('arm');
+    const arm = url.searchParams.get('arm') ?? '';
     // Separate original policies exercise preservation of duplicate headers.
     response.setHeader('content-security-policy', arm.startsWith('strict-')
       ? ["connect-src 'none'", "img-src 'none'"] : "img-src 'none'");
+    if (['native-policy', 'network-policy', 'network-fulfilled'].includes(arm)) {
+      response.setHeader('content-security-policy', ["img-src 'none'", addedPolicy]);
+    }
     if (url.pathname === '/worker.js' || url.pathname === '/shared-worker.js') {
       response.setHeader('content-type', 'text/javascript');
       const config = JSON.parse(url.searchParams.get('config'));
@@ -120,29 +157,104 @@ async function run() {
   }
   browserServer = await chromium.launchServer({ headless: true, args: ['--ignore-certificate-errors'], timeout: 10000 });
   browser = await chromium.connect(browserServer.wsEndpoint(), { timeout: 10000 });
-  console.log(JSON.stringify({ type: 'environment', browserVersion: browser.version(), addedPolicy, modes: MODES, cdpScope: 'page session only; worker-script response coverage recorded, not assumed' }));
+  console.log(JSON.stringify({ type: 'environment', browserVersion: browser.version(), addedPolicy, modes: MODES, arms: ARMS,
+    ...(workerNetwork ? { workerNetwork: true } : {}),
+    cdpScope: workerNetwork ? 'page Fetch plus non-recursive dedicated-worker Network observer; native arms do not enable Fetch'
+      : 'page session only; native arms do not enable Fetch; worker coverage recorded, not assumed' }));
   const origin = `http://127.0.0.1:${plain.address().port}`;
-  for (const arm of ['control', 'added-policy', 'fulfilled-policy', 'strict-intersection', 'strict-fulfilled']) {
+  for (const arm of ARMS) {
     const context = await browser.newContext({ ignoreHTTPSErrors: true });
     context.setDefaultTimeout(8000);
     const page = await context.newPage();
     const cdp = await context.newCDPSession(page);
+    let currentMode;
+    const children = new Map();
+    const initializations = new Set();
+    if (workerNetwork) {
+      cdp.on('Target.attachedToTarget', event => {
+        const { sessionId, targetInfo, waitingForDebugger } = event;
+        const mode = currentMode;
+        diagnose({ arm, mode, kind: 'worker-attached', sessionId, targetId: targetInfo.targetId, targetType: targetInfo.type, waitingForDebugger });
+        if (children.size >= 16) {
+          handlerErrors.push({ arm, error: 'worker-observer-capacity' });
+          void context.close().catch(error => handlerErrors.push({ arm, error: String(error) }));
+          return;
+        }
+        const child = new ChildCdp(cdp, sessionId);
+        children.set(sessionId, child);
+        for (const method of ['Network.requestWillBeSent', 'Network.requestWillBeSentExtraInfo',
+          'Network.responseReceived', 'Network.loadingFinished', 'Network.loadingFailed',
+          'Network.webSocketCreated', 'Network.webSocketFrameError']) {
+          child.on(method, event => {
+            // Stack traces can embed the complete data-worker source URL. Keep
+            // request identity and network outcomes, not repeated fixture code.
+            let params = event;
+            if (method === 'Network.requestWillBeSent') params = {
+              requestId: event.requestId, type: event.type,
+              request: { url: event.request.url, method: event.request.method },
+            };
+            if (method === 'Network.responseReceived') params = {
+              requestId: event.requestId, type: event.type,
+              response: { url: event.response.url, status: event.response.status,
+                remoteIPAddress: event.response.remoteIPAddress, securityState: event.response.securityState },
+            };
+            if (method === 'Network.webSocketCreated') params = { requestId: event.requestId, url: event.url };
+            diagnose({ arm, mode, kind: 'worker-network', sessionId, method, params });
+          });
+        }
+        const initialization = (async () => {
+          try {
+            await child.send('Network.enable');
+            diagnose({ arm, mode, kind: 'worker-network-enabled', sessionId });
+            await child.send('Runtime.runIfWaitingForDebugger');
+            diagnose({ arm, mode, kind: 'worker-resumed', sessionId });
+          } catch (error) {
+            handlerErrors.push({ arm, mode, error: `worker-observer: ${String(error)}` });
+            await child.send('Runtime.runIfWaitingForDebugger').catch(() => {});
+          }
+        })();
+        initializations.add(initialization);
+        void initialization.finally(() => initializations.delete(initialization));
+      });
+      cdp.on('Target.detachedFromTarget', ({ sessionId }) => {
+        const child = children.get(sessionId);
+        if (!child) return;
+        diagnose({ arm, kind: 'worker-detached', sessionId, pendingCommands: child.pendingCount });
+        child.close();
+        children.delete(sessionId);
+      });
+      await cdp.send('Target.setAutoAttach', {
+        autoAttach: true, waitForDebuggerOnStart: true, flatten: false,
+        filter: [{ type: 'worker' }, { exclude: true }],
+      });
+    }
+    if (inheritance) {
+      page.on('console', message => diagnose({ arm, kind: 'console', level: message.type(), text: message.text().slice(0, 800) }));
+      cdp.on('Network.loadingFailed', event => diagnose({ arm, kind: 'loadingFailed', ...event }));
+      await cdp.send('Network.enable');
+    }
     cdp.on('Fetch.requestPaused', async event => {
-      const stage = event.responseStatusCode !== undefined ? 'response' : 'request';
+      const stage = event.responseStatusCode !== undefined || event.responseErrorReason !== undefined ? 'response' : 'request';
       const url = new URL(event.request.url);
-      paused.push({ arm, stage, path: url.pathname });
+      paused.push({ arm, stage, path: url.pathname, ...(inheritance ? {
+        mode: url.searchParams.get('mode'), requestId: event.requestId,
+        networkId: event.networkId, responseErrorReason: event.responseErrorReason,
+      } : {}) });
       try {
-        if (stage === 'response' && arm !== 'control' && ['/page', '/worker.js', '/shared-worker.js', '/nested.js'].includes(url.pathname)) {
+        const injectPolicy = ['added-policy', 'fulfilled-policy', 'strict-intersection', 'strict-fulfilled'].includes(arm);
+        const useFulfillment = ['network-fulfilled', 'fulfilled-control', 'fulfilled-policy', 'strict-fulfilled'].includes(arm);
+        if (stage === 'response' && event.responseStatusCode !== undefined && (injectPolicy || useFulfillment) && ['/page', '/worker.js', '/shared-worker.js', '/nested.js'].includes(url.pathname)) {
           const headers = [...(event.responseHeaders ?? [])];
-          headers.push({ name: 'Content-Security-Policy', value: addedPolicy });
-          const useFulfillment = arm === 'fulfilled-policy' || arm === 'strict-fulfilled';
+          if (injectPolicy) headers.push({ name: 'Content-Security-Policy', value: addedPolicy });
           const record = { arm, path: url.pathname, mechanism: useFulfillment ? 'fulfillRequest' : 'continueResponse', policies: headers.filter(h => h.name.toLowerCase() === 'content-security-policy').map(h => h.value) };
+          if (inheritance) Object.assign(record, { originalHeaders: event.responseHeaders, finalHeaders: headers });
           injected.push(record);
           if (useFulfillment) {
             const body = await cdp.send('Fetch.getResponseBody', { requestId: event.requestId });
             const bytes = Buffer.from(body.body, body.base64Encoded ? 'base64' : 'utf8');
             if (bytes.byteLength > 256 * 1024) throw new Error('fixture-body-exceeds-256KiB');
             record.bodyBytes = bytes.byteLength;
+            if (inheritance) record.bodySha256 = createHash('sha256').update(bytes).digest('hex');
             await cdp.send('Fetch.fulfillRequest', { requestId: event.requestId, responseCode: event.responseStatusCode, responseHeaders: headers, body: bytes.toString('base64') });
           } else {
             await cdp.send('Fetch.continueResponse', { requestId: event.requestId, responseCode: event.responseStatusCode, responseHeaders: headers });
@@ -155,12 +267,13 @@ async function run() {
         await cdp.send('Fetch.failRequest', { requestId: event.requestId, errorReason: 'BlockedByClient' }).catch(() => {});
       }
     });
-    await cdp.send('Fetch.enable', { patterns: [{ urlPattern: '*', requestStage: 'Request' }, { urlPattern: '*', requestStage: 'Response' }] });
+    if (!arm.startsWith('native-')) await cdp.send('Fetch.enable', { patterns: [{ urlPattern: '*', requestStage: 'Request' }, { urlPattern: '*', requestStage: 'Response' }] });
     await page.goto(`${origin}/page?arm=${arm}`, { timeout: 8000 });
     console.log(JSON.stringify({ type: 'navigation', arm, url: page.url(), expectedUrl: `${origin}/page?arm=${arm}` }));
     for (const mode of MODES) {
+      currentMode = mode;
       const query = `arm=${arm}&mode=${mode}`;
-      const config = { http: `${origin}/probe?${query}`, ws: `ws://127.0.0.1:${plain.address().port}/socket?${query}`, wss: `wss://127.0.0.1:${tls.address().port}/socket?${query}` };
+      const config = { http: `${origin}/probe?${query}`, ws: `ws://127.0.0.1:${plain.address().port}/socket?${query}`, wss: `wss://127.0.0.1:${tls.address().port}/socket?${query}`, ...(inheritance ? { diagnostics: true } : {}) };
       const external = `${origin}/${mode === 'external-shared' ? 'shared-worker.js' : mode.startsWith('nested-') ? 'nested.js' : 'worker.js'}?arm=${arm}&blob=${mode === 'nested-blob' ? '1' : '0'}&config=${encodeURIComponent(JSON.stringify(config))}`;
       const source = workerSource(config, mode === 'blob-shared');
       const result = await page.evaluate(({ mode, external, source }) => new Promise(resolve => {
@@ -193,6 +306,13 @@ async function run() {
       console.log(JSON.stringify(row));
     }
     await context.close();
+    if (workerNetwork) {
+      for (const child of children.values()) child.close();
+      await Promise.all(initializations);
+      diagnose({ arm, kind: 'worker-observer-cleanup', remainingChildren: children.size,
+        pendingCommands: [...children.values()].reduce((sum, child) => sum + child.pendingCount, 0) });
+      children.clear();
+    }
   }
 }
 
@@ -206,6 +326,7 @@ try {
 } finally {
   clearTimeout(deadline);
   console.log(JSON.stringify({ type: 'coverage', paused, injected, handlerErrors }));
+  if (inheritance) console.log(JSON.stringify({ type: 'diagnostics', records: diagnostics, droppedDiagnostics }));
   let cleanupTimeout;
   try {
     await Promise.race([browser?.close(), new Promise((_, reject) => {
@@ -223,5 +344,6 @@ try {
     server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));
   }
+  if (inheritance) console.log(JSON.stringify({ type: 'final-hits', hits }));
   console.log(JSON.stringify({ type: 'cleanup', ownedBrowserStopped: !browserServer || browserServer.process().exitCode !== null || browserServer.process().signalCode !== null, remainingSockets: sockets.size }));
 }

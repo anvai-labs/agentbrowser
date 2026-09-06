@@ -24,6 +24,38 @@ validation record below. A checked status never means merely documented.
 
 ## Findings and acceptance criteria
 
+### Next milestone: T1 policy inheritance feasibility
+
+Fresh baseline: merged `develop` at `9f041af`, with all eight post-merge CI
+checks green. Reuse the single clean worktree; do not recreate the A-G stack.
+
+| Unit | Scope | Acceptance / stop condition | Status |
+| --- | --- | --- | --- |
+| T1a | Compare policy delivery and diagnose replay failures | Preserve HTTP controls; correlate browser failures, CSP violations and server hits | Diagnostic unit complete and independently approved: 36-case comparison, 27-case worker follow-up, 20 offline tests; T1/R4 remain open |
+| T1b | Complete target attachment and nested-worker coverage | Independent review of startup ordering and all-target controls; no production claim from page-only coverage | Next after T1a delivery; diagnostic observer misses one native request-start event |
+| T1c | Reassess transport feasibility against the complete acceptance matrix | T1 remains open until semantics and coverage pass; revisit design explicitly if they cannot | Pending |
+
+T1a is a bounded probe/evidence PR, not a production adapter change. Keep
+historical evidence immutable. No gateway deployment, host networking changes,
+CA installation, worker disabling, or weakening of the WS/WSS contract is
+included. R4 remains open throughout this investigation.
+
+T1a narrows the data-worker HTTP failure to the tested body-fulfillment path,
+including replay without added connection policy. Native server-delivered policy
+preserves HTTP and denies WS/WSS in these four modes. This is not a root-cause
+diagnosis or full target-coverage result; see the
+[comparison and limitations](egress-transport-feasibility.md#t1a-native-policy-versus-body-fulfillment).
+Independent review caught missing delivery/denial assertions in the evidence
+verifier; three failing mutation tests reproduced that gap before correction.
+The initial ten offline tests pass. The follow-up adds five child-session
+lifecycle tests and five diagnostic-attribution tests; all twenty pass.
+Worker-scoped evidence identifies `LocalNetworkAccessPermissionDenied` for
+replayed data-worker HTTP to the loopback fixture, including no-policy replay.
+The browser's underlying reason for changing that decision is still unproven;
+this does not establish a general public-network HTTP failure. No production
+security checks were disabled. The observer also misses one native request-start
+event, so it cannot establish race-free startup or all-target enforcement.
+
 | ID | Finding / location | Severity | Why it matters / reproduced behavior | Fix and required regression | Status |
 | --- | --- | --- | --- | --- | --- |
 | R1 | Missing-session ownership fallback; api/server.ts, api/service.ts | H | Tenant B reads A's artifact after close and exports A's retained trace | Persist artifact ownership through TTL; reject missing live sessions; filter lists; test close/expiry across tenants | Merged in A |
