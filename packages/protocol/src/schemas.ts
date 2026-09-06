@@ -7,7 +7,7 @@
 
 import { Static, Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import { DELIVERED_ACTION_TYPES, REF_PATTERN } from './types.js';
+import { DELIVERED_ACTION_TYPES, DELIVERED_WAIT_TYPES, REF_PATTERN } from './types.js';
 
 // Re-export all types for convenience
 export * from './types.js';
@@ -354,10 +354,18 @@ export const WaitConditionSchema = Type.Object({
  * non-integer or out-of-range waitMs, which used to poison waitForLabel's
  * deadline arithmetic into a never-exiting poll loop.
  */
+export const DeliveredWaitConditionSchema = Type.Object({
+  until: Type.Union(DELIVERED_WAIT_TYPES.map((value) => Type.Literal(value))),
+  timeoutMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 300000 })),
+});
+
 export const PlanStepSchema = Type.Object({
   action: Type.Union(DELIVERED_ACTION_TYPES.map((literal) => Type.Literal(literal))),
   target: Type.Optional(Type.Object({ ref: Type.String({ pattern: REF_PATTERN.source }) })),
   value: Type.Optional(Type.String()),
+  values: Type.Optional(Type.Array(Type.String(), { minItems: 1 })),
+  deltaX: Type.Optional(Type.Number()),
+  deltaY: Type.Optional(Type.Number()),
   key: Type.Optional(Type.String()),
   direction: Type.Optional(
     Type.Union([
@@ -372,13 +380,16 @@ export const PlanStepSchema = Type.Object({
   expectedRevision: Type.Optional(Type.Integer({ minimum: 0 })),
   approvalToken: Type.Optional(Type.String()),
   promptText: Type.Optional(Type.String()),
-  wait: Type.Optional(WaitConditionSchema),
-  condition: Type.Optional(WaitConditionSchema),
+  wait: Type.Optional(DeliveredWaitConditionSchema),
+  condition: Type.Optional(DeliveredWaitConditionSchema),
   /** TD-BROWSER-8 Phase 2: pre-step label wait. */
   waitForLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
   /** Bounded hard (100-60000): garbage here wedged the poll loop pre-v1.8.2. */
   waitMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 60000 })),
 });
+
+/** Shared transport fields; decodeWireAction additionally enforces each action branch. */
+export const WireActionEnvelopeSchema = Type.Omit(PlanStepSchema, ['waitForLabel', 'waitMs']);
 
 export const WaitActionSchema = Type.Object({
   type: Type.Literal('wait'),

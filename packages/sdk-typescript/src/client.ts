@@ -92,16 +92,8 @@ export interface ObservationResponse {
 /** The delivered action set, derived from the protocol source of truth. */
 export type DeliveredAction = (typeof DELIVERED_ACTION_TYPES)[number];
 
-export interface ActionRequest {
-  action: DeliveredAction;
-  /** Required for element-targeted actions; omitted for dialog actions. */
-  target?: { ref: string };
-  value?: string;
-  /** Prompt answer for acceptDialog. */
-  promptText?: string;
-  options?: Record<string, unknown>;
-  observe?: 'after' | 'none';
-}
+export type ActionRequest = import('@agentbrowser/protocol').WireActionRequest;
+export { validateWireAction } from '@agentbrowser/protocol';
 
 export interface ActionResult {
   status: string;
@@ -162,13 +154,19 @@ export interface ApiError {
   code: string;
   message: string;
   retryable: boolean;
+  details?: Record<string, unknown>;
+  action?: string;
+  traceId?: string;
 }
 
 export class AgentBrowserError extends Error {
   constructor(
     public code: string,
     message: string,
-    public retryable = false
+    public retryable = false,
+    public details?: Record<string, unknown>,
+    public action?: string,
+    public traceId?: string
   ) {
     super(`${code}: ${message}`);
     this.name = 'AgentBrowserError';
@@ -223,9 +221,8 @@ class HttpClient {
   async requestJson<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
-    let response: Response;
     try {
-      response = await fetch(`${this.baseUrl}${path}`, {
+      const response = await fetch(`${this.baseUrl}${path}`, {
         method: init.method ?? 'GET',
         headers: {
           ...this.headers,
@@ -234,35 +231,43 @@ class HttpClient {
         ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
         signal: controller.signal,
       });
+      if (!response.ok) {
+        let error: ApiError;
+        try {
+          const data = (await response.json()) as { error?: ApiError };
+          error = data.error || {
+            code: 'UNKNOWN_ERROR',
+            message: 'Unknown error',
+            retryable: false,
+          };
+        } catch (cause) {
+          if (controller.signal.aborted) throw cause;
+          error = {
+            code: 'UNKNOWN_ERROR',
+            message: `HTTP ${response.status}: ${response.statusText}`,
+            retryable: false,
+          };
+        }
+        throw new AgentBrowserError(
+          error.code,
+          error.message,
+          error.retryable,
+          error.details,
+          error.action,
+          error.traceId
+        );
+      }
+
+      return (await response.json()) as T;
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
+      if (controller.signal.aborted) {
+        // A timed-out mutation may have run: never advertise blind retry safety.
         throw new AgentBrowserError('TIMEOUT', 'Request timeout', false);
       }
       throw error;
     } finally {
       clearTimeout(timeoutId);
     }
-
-    if (!response.ok) {
-      let error: ApiError;
-      try {
-        const data = (await response.json()) as { error?: ApiError };
-        error = data.error || {
-          code: 'UNKNOWN_ERROR',
-          message: 'Unknown error',
-          retryable: false,
-        };
-      } catch {
-        error = {
-          code: 'UNKNOWN_ERROR',
-          message: `HTTP ${response.status}: ${response.statusText}`,
-          retryable: false,
-        };
-      }
-      throw new AgentBrowserError(error.code, error.message, error.retryable);
-    }
-
-    return response.json() as Promise<T>;
   }
 }
 

@@ -24,6 +24,7 @@ import {
   SessionRequestSchema,
   SessionResponseSchema,
   ViewportSchema,
+  WireActionEnvelopeSchema,
 } from '@agentbrowser/protocol';
 
 const API_VERSION = '1.0.0';
@@ -697,47 +698,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           parameters: [sessionIdParam, pageIdParam],
           requestBody: {
             required: true,
-            content: json({
-              type: 'object',
-              required: ['action'],
-              properties: {
-                action: {
-                  type: 'string',
-                  enum: [...DELIVERED_ACTION_TYPES],
-                },
-                target: ref('ElementTarget'),
-                promptText: {
-                  type: 'string',
-                  description: 'Prompt answer for acceptDialog.',
-                },
-                value: { type: 'string' },
-                key: { type: 'string', description: 'Key for press.' },
-                direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] },
-                amount: { type: 'number' },
-                observe: { type: 'string', enum: ['after', 'none'] },
-                wait: {
-                  type: 'object',
-                  description: 'Post-action wait condition.',
-                  properties: {
-                    until: { type: 'string' },
-                    timeoutMs: { type: 'number' },
-                  },
-                  required: ['until'],
-                },
-                condition: {
-                  type: 'object',
-                  description: 'Wait-action condition (action: "wait" only).',
-                  properties: {
-                    until: {
-                      type: 'string',
-                      enum: ['settled', 'domcontentloaded', 'load', 'networkidle'],
-                    },
-                    timeoutMs: { type: 'number' },
-                  },
-                  required: ['until'],
-                },
-              },
-            }),
+            content: json(WireActionEnvelopeSchema),
           },
           responses: {
             '200': { description: 'The action result.', content: json(ref('ActionOutcome')) },

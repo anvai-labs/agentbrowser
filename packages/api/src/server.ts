@@ -16,6 +16,7 @@ import {
   ErrorCode,
   validatePlanStep,
   validateSessionRequest,
+  validateWireAction,
 } from '@agentbrowser/protocol';
 import type { SessionPolicy } from '@agentbrowser/protocol';
 import cors from '@fastify/cors';
@@ -787,51 +788,13 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             return reply;
           }
 
-          const {
-            action,
-            target,
-            value,
-            key,
-            direction,
-            amount,
-            observe,
-            expectedRevision,
-            approvalToken,
-            promptText,
-            wait,
-            condition,
-          } = body as Record<string, unknown>;
-
-          if (typeof action !== 'string') {
-            return reply.status(400).send({
-              error: {
-                code: 'INVALID_REQUEST',
-                message: 'action is required and must be a string',
-                retryable: false,
-              },
+          const validated = validateWireAction(body);
+          if (!validated.ok) {
+            throw new ServiceError('INVALID_REQUEST', 'Invalid action request', false, {
+              issues: validated.issues,
             });
           }
-
-          const result = await service.act(sessionId, pageId, {
-            action,
-            ...(target !== undefined ? { target: target as { ref: string } } : {}),
-            ...(value !== undefined ? { value: value as string } : {}),
-            ...(key !== undefined ? { key: key as string } : {}),
-            ...(direction !== undefined
-              ? { direction: direction as 'up' | 'down' | 'left' | 'right' }
-              : {}),
-            ...(amount !== undefined ? { amount: amount as number } : {}),
-            ...(observe !== undefined ? { observe: observe as 'after' | 'none' } : {}),
-            ...(expectedRevision !== undefined
-              ? { expectedRevision: expectedRevision as number }
-              : {}),
-            ...(approvalToken !== undefined ? { approvalToken: approvalToken as string } : {}),
-            ...(promptText !== undefined ? { promptText: promptText as string } : {}),
-            ...(wait !== undefined ? { wait: wait as { until: string; timeoutMs?: number } } : {}),
-            ...(condition !== undefined
-              ? { condition: condition as { until: string; timeoutMs?: number } }
-              : {}),
-          });
+          const result = await service.act(sessionId, pageId, validated.value);
           return reply.send(result);
         })
       );

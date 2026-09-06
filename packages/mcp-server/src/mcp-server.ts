@@ -9,7 +9,13 @@
  * JSON-RPC line (or null for notifications), so any transport can drive it.
  */
 
-import { DELIVERED_ACTION_TYPES, UsageError, formatErrorForUser } from '@agentbrowser/protocol';
+import {
+  DELIVERED_ACTION_TYPES,
+  UsageError,
+  WireActionEnvelopeSchema,
+  formatErrorForUser,
+  validateWireAction,
+} from '@agentbrowser/protocol';
 import type {
   ActionRequest,
   ActionResult,
@@ -356,38 +362,12 @@ function buildTools(client: McpClient): ToolDefinition[] {
       inputSchema: {
         type: 'object',
         properties: {
+          ...WireActionEnvelopeSchema.properties,
           sessionId: { type: 'string' },
           pageId: { type: 'string' },
           action: {
             type: 'string',
             enum: [...DELIVERED_ACTION_TYPES],
-          },
-          target: {
-            type: 'object',
-            properties: {
-              ref: {
-                type: 'string',
-                pattern: REF_PATTERN.source,
-                description: 'Element ref from browser_observe, e.g. e1_0.',
-              },
-            },
-            required: ['ref'],
-          },
-          value: { type: 'string', description: 'Value for fill/select.' },
-          key: { type: 'string', description: 'Key for press.' },
-          direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] },
-          amount: { type: 'number' },
-          condition: {
-            type: 'object',
-            description: 'Wait-action condition (action: "wait" only).',
-            properties: {
-              until: {
-                type: 'string',
-                enum: ['settled', 'domcontentloaded', 'load', 'networkidle'],
-              },
-              timeoutMs: { type: 'number' },
-            },
-            required: ['until'],
           },
         },
         required: ['sessionId', 'pageId', 'action'],
@@ -396,43 +376,21 @@ function buildTools(client: McpClient): ToolDefinition[] {
         const [sessionId, pageId] = sessionAndPage(args);
 
         const target = (args.target ?? {}) as { ref?: unknown };
-        // These actions carry no target; ref validation applies only when
-        // a target is expected.
-        const UNTARGETED_ACTIONS = new Set([
-          'acceptDialog',
-          'dismissDialog',
-          'wait',
-          'goBack',
-          'goForward',
-          'reload',
-        ]);
         const ref = target.ref;
-        if (
-          !UNTARGETED_ACTIONS.has(String(args.action)) &&
-          (typeof ref !== 'string' || !REF_PATTERN.test(ref))
-        ) {
+        if (args.target !== undefined && (typeof ref !== 'string' || !REF_PATTERN.test(ref))) {
           throw new UsageError(
             `Invalid element reference '${String(ref)}'. Expected a ref of the form e<revision>_<ordinal>, such as e1_0. Call browser_observe to list current refs.`
           );
         }
 
-        const request: Record<string, unknown> = {
-          action: args.action,
-          target: { ref },
-        };
-        if (typeof args.value === 'string') request.value = args.value;
-        if (typeof args.key === 'string') request.key = args.key;
-        if (typeof args.direction === 'string') request.direction = args.direction;
-        if (typeof args.amount === 'number') request.amount = args.amount;
-        if (args.condition !== undefined && typeof args.condition === 'object') {
-          request.condition = args.condition as { until: string; timeoutMs?: number };
-        }
+        const { sessionId: _session, pageId: _page, ...request } = args;
 
-        return await client.sessions.executeAction(
-          sessionId,
-          pageId,
-          request as unknown as ActionRequest
-        );
+        const validated = validateWireAction(request);
+        if (!validated.ok)
+          throw new UsageError(
+            `Invalid action: ${validated.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; ')}. Element-targeted actions require a ref from browser_observe.`
+          );
+        return await client.sessions.executeAction(sessionId, pageId, validated.value);
       },
     },
 

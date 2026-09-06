@@ -14,7 +14,7 @@ validation record below. A checked status never means merely documented.
 | Group | Findings | Intended PR scope | Dependency | Status |
 | --- | --- | --- | --- | --- |
 | A | R1, R2, R6 | Evidence ownership, secret boundaries, deterministic extraction | None | Implemented; review pending |
-| B | R7, R8, R13 | Wire actions, SDK deadlines/error details, adapter error normalization | A | Pending |
+| B | R7, R8, R13 | Wire actions, SDK deadlines/error details, adapter error normalization | A | Implemented; review pending |
 | C | R3, R5 | Live element identity and operator-controlled approval policy | B | Pending |
 | D | R4, R9 | Egress composition, safe download transport, typed captured downloads | B | Pending |
 | E | R10, R12 | Shared observation budgets and retention/admission bounds | C, D | Pending |
@@ -68,7 +68,7 @@ the findings. Real Safari and Obscura were not run during the review.
 | Group | Branch / PR | Validation | Remaining limitations |
 | --- | --- | --- | --- |
 | A | `fix/review-evidence-boundaries` | Workspace build; 195 API/service/boundary tests; 24 extraction tests passed | Raw evidence bytes intentionally not redacted; independent PR review pending |
-| B | Pending | Pending | Pending |
+| B | `fix/review-action-contracts` | Workspace build; 126 service, 65 HTTP, 44 SDK, 46 MCP, 34 CLI, 85 protocol, 33 engine, 173 core tests; real Chromium scroll/keyboard regression passed | Legacy adapter message matching retained at one compatibility boundary; timeout does not imply safe mutation retry |
 | C | Pending | Pending | Pending |
 | D | Pending | Pending | Pending |
 | E | Pending | Pending | Pending |

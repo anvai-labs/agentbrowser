@@ -11,3 +11,4 @@ export * from './types.js';
 export * from './validators.js';
 export * from './contracts.js';
 export * from './errors.js';
+export * from './wire-action.js';

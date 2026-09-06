@@ -533,6 +533,12 @@ export interface WaitCondition {
   timeoutMs?: number;
 }
 
+export const DELIVERED_WAIT_TYPES = ['settled', 'domcontentloaded', 'load', 'networkidle'] as const;
+export type DeliveredWaitCondition = {
+  until: (typeof DELIVERED_WAIT_TYPES)[number];
+  timeoutMs?: number;
+};
+
 /**
  * Wait type
  */

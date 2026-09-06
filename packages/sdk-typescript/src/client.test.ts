@@ -52,6 +52,31 @@ describe('AgentBrowser SDK', () => {
   });
 
   describe('session management', () => {
+    it('preserves machine-readable consent details and trace correlation', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: {
+              code: 'APPROVAL_REQUIRED',
+              message: 'Approval required',
+              retryable: false,
+              details: { tokenId: 'approval-123' },
+              action: 'click',
+              traceId: 'trace-123',
+            },
+          }),
+          { status: 403 }
+        )
+      );
+      await expect(
+        client.sessions.executeAction('s', 'p', { action: 'click', target: { ref: 'e1_0' } })
+      ).rejects.toMatchObject({
+        code: 'APPROVAL_REQUIRED',
+        details: { tokenId: 'approval-123' },
+        action: 'click',
+        traceId: 'trace-123',
+      });
+    });
     it('should create session', async () => {
       const mockSession = {
         sessionId: 'ses_test123',

@@ -381,7 +381,7 @@ describe('ActionExecutor', () => {
       expect(result.error?.code).toBe('TARGET_AMBIGUOUS');
     });
 
-    it('should map unrecognized engine failures to INTERNAL', async () => {
+    it('should classify legacy engine crashes consistently with other operations', async () => {
       (mockEnginePage.resolve as any).mockRejectedValue(new Error('Browser crashed'));
 
       const result = await executor.execute(req({ type: 'click', target: { ref: 'e1_0' } }), {
@@ -389,7 +389,7 @@ describe('ActionExecutor', () => {
         observation: mockObservation,
       });
 
-      expect(result.error?.code).toBe('INTERNAL');
+      expect(result.error?.code).toBe('ENGINE_CRASHED');
       expect(result.error?.message).toContain('Browser crashed');
     });
 
