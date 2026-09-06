@@ -753,7 +753,7 @@ describe('engine-level egress choke point (P0-4)', () => {
     }
   });
 
-  it('should block a redirect to a denied host (the audit bypass, closed)', async () => {
+  it('should block the first redirect target when its host is denied', async () => {
     const fixtures = await egressFixtures();
     const engine = new PlaywrightChromiumEngine({
       egress: {
@@ -1072,6 +1072,26 @@ describe('WebSocket upgrade interception (residual R2)', () => {
       `ws://127.0.0.1:${port}/`
     );
 
+  it('defaults to deny-all when policy is injected only at session creation', async () => {
+    const fixture = await probeServer();
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({
+        headless: true,
+        requestPolicy: {
+          async checkRequest() {
+            throw new Error('denied');
+          },
+        },
+      });
+      const page = await session.newPage();
+      expect(await probe(page, fixture.port)).toBe('closed');
+    } finally {
+      await engine.close();
+      await fixture.stop();
+    }
+  });
+
   it('should leave WebSockets untouched with no egress policy', async () => {
     const fixture = await probeServer();
     const engine = new PlaywrightChromiumEngine();
@@ -1109,7 +1129,7 @@ describe('WebSocket upgrade interception (residual R2)', () => {
     }
   });
 
-  it('should close every upgrade under deny-all (exfiltration gate)', async () => {
+  it('should close page WebSocket upgrades under deny-all', async () => {
     const fixture = await probeServer();
     const engine = new PlaywrightChromiumEngine({
       webSocketPolicy: 'deny-all',

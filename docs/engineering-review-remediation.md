@@ -13,10 +13,10 @@ validation record below. A checked status never means merely documented.
 
 | Group | Findings | Intended PR scope | Dependency | Status |
 | --- | --- | --- | --- | --- |
-| A | R1, R2, R6 | Evidence ownership, secret boundaries, deterministic extraction | None | Implemented; review pending |
-| B | R7, R8, R13 | Wire actions, SDK deadlines/error details, adapter error normalization | A | Implemented; review pending |
-| C | R3, R5 | Live element identity and operator-controlled approval policy | B | Implemented; review pending |
-| D | R4, R9 | Egress composition, safe download transport, typed captured downloads | B | Pending |
+| A | R1, R2, R6 | Evidence ownership, secret boundaries, deterministic extraction | None | Merged: [PR 77](https://github.com/anvai-labs/agentbrowser/pull/77) |
+| B | R7, R8, R13 | Wire actions, SDK deadlines/error details, adapter error normalization | A | Merged: [PR 78](https://github.com/anvai-labs/agentbrowser/pull/78) |
+| C | R3, R5 | Live element identity and operator-controlled approval policy | B | Merged: [PR 79](https://github.com/anvai-labs/agentbrowser/pull/79) |
+| D | R4, R9 | Egress composition, safe download transport, typed captured downloads | B | Independently reviewed partial correction; delivery pending; R4 remains open |
 | E | R10, R12 | Shared observation budgets and retention/admission bounds | C, D | Pending |
 | F | R11 | Safari transport, lifecycle, and explicit deployment capabilities | B | Pending |
 
@@ -27,7 +27,7 @@ validation record below. A checked status never means merely documented.
 | R1 | Missing-session ownership fallback; api/server.ts, api/service.ts | H | Tenant B reads A's artifact after close and exports A's retained trace | Persist artifact ownership through TTL; reject missing live sessions; filter lists; test close/expiry across tenants | Pending |
 | R2 | Incomplete redaction; api/service.ts, api/server.ts, extraction/schema-extraction.ts | H | Secrets survive event replay, extraction evidence, model title and warnings; server omits service registry injection | One injected registry; redact structured inputs/outputs before retention/broadcast; test every boundary | Pending |
 | R3 | Playwright ref identity; engine-playwright/index.ts | H | Second same-label button clicks first; resolution compares cached state | Engine-owned node identity and live fingerprint/state checks; duplicate, replacement, detachment, reorder tests | Pending |
-| R4 | Egress composition / download bypass; policy/network-policy.ts, engine-playwright/index.ts, api/service.ts | H | Wrapper drops DNS validation; body gate absent; download follows denied redirect; chunked response becomes base64 text | Complete policy delegation; bounded download transport checking each hop; correct byte fulfillment; DNS-change and chunked fixtures | Pending |
+| R4 | Egress composition / download bypass; policy/network-policy.ts, engine-playwright/index.ts, api/service.ts | H | Wrapper drops DNS validation; body gate absent; download follows denied redirect; chunked response becomes base64 text; later browser redirect hops bypass routing | D corrects direct downloads, delegation and routed bytes; all-hop browser enforcement requires transport work | OPEN; D is partial, not closure |
 | R5 | No production approval trigger; api/service.ts | H | Real engines never produce risk metadata; configurable approval policy ignored | Operator-controlled classification and explicit unknown-risk mode; enforce before execution, bind consent to page/action/identity; real fixture tests | Pending |
 | R6 | Adjacency regex backspace escape; extraction/schema-extraction.ts | M | `price: $29.99` fails deterministic matching | Correct escaping; pair positive and substring-negative tests | Pending |
 | R7 | SDK deadline ends at headers; sdk-typescript/client.ts | M | 50 ms timeout accepts a body delayed 300 ms | Deadline covers success/error body consumption and decoding; delayed-body HTTP fixture | Pending |
@@ -63,6 +63,13 @@ validation record below. A checked status never means merely documented.
 
 ## Validation and delivery record
 
+Groups A-C passed independent correction review and all CI checks before merge.
+Other historical per-finding statuses above are implementation notes, not release
+claims; the group table governs delivery. D's successful direct-download and
+page WebSocket tests do not establish all-hop browser or worker enforcement.
+Its operational limitations are documented in [engines](engines.md),
+[operations](operations.md), and the [threat model](threat-model.md).
+
 Baseline: workspace build and 740 existing tests passed; four Chromium API tests
 passed after one capture setup-timeout rerun. Adversarial local fixtures reproduced
 the findings. Real Safari and Obscura were not run during the review.
@@ -72,6 +79,16 @@ the findings. Real Safari and Obscura were not run during the review.
 | A | `fix/review-evidence-boundaries` | Workspace build; 195 API/service/boundary tests; 24 extraction tests passed | Raw evidence bytes intentionally not redacted; independent PR review pending |
 | B | `fix/review-action-contracts` | Workspace build; 126 service, 65 HTTP, 44 SDK, 46 MCP, 34 CLI, 85 protocol, 33 engine, 173 core tests; real Chromium scroll/keyboard regression passed | Legacy adapter message matching retained at one compatibility boundary; timeout does not imply safe mutation retry |
 | C | `fix/review-target-identity-consent` | Workspace build; 127 service/ref-translation tests; 65 core policy/gate/executor tests; 5 real DOM identity and 3 real consent/plan tests passed | Conservative staleness on reorder; exact-match rules are not semantic risk inference; independent human authorization remains the caller's responsibility |
-| D | Pending | Pending | Pending |
+| D | `fix/review-egress-downloads` | Workspace build; 128 service tests; 48 policy tests; 4 direct-transport tests; DNS revalidation/disposal regression; real Chromium chunked-page/captured-download regression | Playwright fetch still buffers before size checks and does not pin DNS; browser temporary-disk quota belongs to ADR-008 deployment isolation |
 | E | Pending | Pending | Pending |
 | F | Pending | Pending | Pending |
+
+## Separate release-tooling follow-up
+
+Use lockstep first-party package versions with one authoritative product version,
+automated manifest synchronization, and CI checks against tags and built artifacts.
+Keep `/v1` protocol and underlying browser versions independent. The current API
+manifest (`1.2.0`) and hardcoded health version (`1.0.0`) are inconsistent with
+the shipped product. This is a separate release-consistency PR, not a version bump
+inside the safety fixes. Independent SDK versions can be revisited if it acquires
+an independent publishing/support lifecycle.

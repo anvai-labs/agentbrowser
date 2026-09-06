@@ -87,7 +87,10 @@ export class SessionCoordinator {
    * Create a new session
    */
   async create(
-    request: SessionRequest & { requestPolicy?: import('@agentbrowser/engine').RequestPolicy },
+    request: SessionRequest & {
+      requestPolicy?: import('@agentbrowser/engine').RequestPolicy;
+      downloadPolicy?: import('@agentbrowser/engine').EngineSessionOptions['downloadPolicy'];
+    },
     engine: BrowserEngine
   ): Promise<SessionResponse> {
     // Check session limit
@@ -100,6 +103,8 @@ export class SessionCoordinator {
 
     // Create engine session
     const sessionOptions: import('@agentbrowser/engine').EngineSessionOptions = {};
+    if (request.downloadPolicy !== undefined)
+      sessionOptions.downloadPolicy = request.downloadPolicy;
 
     if (request.viewport !== undefined) {
       sessionOptions.viewport = request.viewport;
@@ -355,7 +360,6 @@ export class SessionCoordinator {
 
     return false;
   }
-
 
   /**
    * Generate session ID

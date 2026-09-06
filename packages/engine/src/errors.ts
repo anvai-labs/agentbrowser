@@ -28,6 +28,10 @@ export function normalizeEngineError(error: unknown, operation = 'act'): ApiErro
   if (typeof candidate.code === 'string' && codes.has(candidate.code)) {
     code = candidate.code as ErrorCode;
   } else if (
+    ['RESPONSE_TOO_LARGE', 'MAX_REDIRECTS', 'REDIRECT_LOOP'].includes(String(candidate.code))
+  ) {
+    code = ErrorCode.POLICY_DENIED;
+  } else if (
     /crash|target.*closed|browser.*closed|browser.*disconnect|context.*closed|page.*closed|connection.*closed/i.test(
       message
     )

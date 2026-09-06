@@ -212,6 +212,17 @@ export class NetworkPolicy {
     }
   }
 
+  /** Actual decoded bytes, including chunked and compressed responses. */
+  async checkBodySize(bytes: number): Promise<void> {
+    if (!Number.isFinite(bytes) || bytes < 0 || bytes > this.options.maxResponseSize) {
+      throw new NetworkPolicyError('POLICY_DENIED', 'Response exceeds the actual-byte cap', false, {
+        rule: 'responseBodySize',
+        size: bytes,
+        max: this.options.maxResponseSize,
+      });
+    }
+  }
+
   /**
    * Log a network request
    */
@@ -418,7 +429,6 @@ export interface SessionHostRules {
  * runs. Satisfies the engine RequestPolicy port structurally.
  */
 export class SessionHostPolicy {
-  private readonly maxResponseSizeBytes: number;
   private readonly allowedExact = new Set<string>();
   private readonly allowedSuffixes = new Set<string>();
   private readonly blockedExact = new Set<string>();
@@ -444,7 +454,6 @@ export class SessionHostPolicy {
       }
     }
     this.hasAllowList = this.allowedExact.size > 0 || this.allowedSuffixes.size > 0;
-    this.maxResponseSizeBytes = base.getConfig().maxResponseSize ?? 10 * 1024 * 1024;
   }
 
   async checkResponse(response: { headers?: Record<string, string> }): Promise<void> {
@@ -452,6 +461,18 @@ export class SessionHostPolicy {
     await this.base.checkResponse({
       ...(response.headers !== undefined ? { headers: response.headers } : {}),
     });
+  }
+
+  async checkBodySize(bytes: number): Promise<void> {
+    await this.base.checkBodySize(bytes);
+  }
+
+  async checkRedirectChain(requests: RedirectRequest[]): Promise<void> {
+    await this.base.checkRedirectChain(requests);
+  }
+
+  async checkResolvedAddresses(addresses: string[]): Promise<void> {
+    await this.base.checkResolvedAddresses(addresses);
   }
 
   async checkRequest(request: { hostname: string; url?: string }): Promise<void> {

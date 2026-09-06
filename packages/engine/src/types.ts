@@ -35,6 +35,7 @@ export type {
  * Engine session creation options
  */
 export interface EngineSessionOptions {
+  downloadPolicy?: { allow: boolean; maxBytes: number };
   viewport?: Viewport;
   locale?: string;
   timezoneId?: string;
@@ -58,8 +59,8 @@ export interface EngineSessionOptions {
  * package's NetworkPolicy and SessionHostPolicy - engines stay
  * dependency-free (dependency inversion).
  *
- * Implementations MUST treat the verdict as a pure function of hostname:
- * engines memoize verdicts per host.
+ * Engines recheck requests and DNS results before each fetch; no stale
+ * hostname allow verdict may suppress resolved-address validation.
  *
  * Throw contract (ADR-015 B9): every gate blocks by THROWING - the thrown
  * error should carry the policy's code (e.g. POLICY_DENIED) and the rule
@@ -68,6 +69,8 @@ export interface EngineSessionOptions {
  */
 export interface RequestPolicy {
   checkRequest(request: { hostname: string; url: string }): Promise<void>;
+  /** Redirect targets, excluding the initial request; throw before following. */
+  checkRedirectChain?(requests: Array<{ url: string; hostname?: string }>): Promise<void>;
   /**
    * Optional response-size gate enforced at the choke point (bytes).
    * Implementations throw to block an oversized response.
@@ -75,8 +78,9 @@ export interface RequestPolicy {
   checkResponse?(response: { headers: Record<string, string> }): Promise<void>;
   /**
    * Optional actual-byte gate for responses without content-length
-   * (chunked/streamed): the choke point buffers the body (bounded by the
-   * policy's own cap) and reports the true size. Throw to block.
+   * (chunked/streamed): reports actual bytes. A buffered adapter's check
+   * does NOT bound peak transport memory. Streaming transports call this
+   * incrementally. Throw to block.
    */
   checkBodySize?(bytes: number): Promise<void>;
   /**
@@ -233,6 +237,7 @@ export type EngineEventType =
   | 'request.failed'
   | 'download.created'
   | 'download.finished'
+  | 'download.failed'
   | 'dialog.opened'
   | 'dialog.closed'
   | 'worker.created'
@@ -295,6 +300,11 @@ export interface BrowserEngine {
  * Engine session interface
  */
 export interface EngineSession {
+  /** Consume a captured download by unique ID, or an unambiguous legacy filename. */
+  takeDownload?(
+    pageId: string,
+    downloadId: string
+  ): Promise<{ downloadId: string; filename: string; bytes: Uint8Array } | undefined>;
   /**
    * Session ID
    */

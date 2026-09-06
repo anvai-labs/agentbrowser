@@ -59,6 +59,7 @@ import {
   decodeWireAction,
   parseRef,
 } from '@agentbrowser/protocol';
+import { type DownloadTransportOptions, downloadWithPolicy } from './download-transport.js';
 
 /** Typed failure carrying a protocol error code. */
 export class ServiceError extends Error {
@@ -171,7 +172,10 @@ export interface ServiceDependencies {
   /** Artifact retention store; defaults to a bounded in-memory store. */
   artifactStore?: ArtifactStore;
   /** Payload fetcher for downloads; injectable for tests. */
-  downloader?(url: string): Promise<{ bytes: Uint8Array; contentType: string }>;
+  downloader?(
+    url: string,
+    options: DownloadTransportOptions
+  ): Promise<{ bytes: Uint8Array; contentType: string }>;
   /** Operation tracer; absent means tracing is disabled. */
   tracer?: InMemoryTracer;
   /** Operation metrics; absent means metrics are disabled. */
@@ -301,7 +305,7 @@ export class AgentBrowserService {
     // output boundary (observations, error messages, error details).
     this.secretManager = deps.secretManager ?? new SecretManager();
     this.artifacts = deps.artifactStore ?? new ArtifactStore();
-    this.downloader = deps.downloader ?? defaultDownloader;
+    this.downloader = deps.downloader ?? downloadWithPolicy;
     // Telemetry is opt-in per concern: each is wired only when provided.
     if (deps.tracer !== undefined) {
       this.tracer = deps.tracer;
@@ -618,6 +622,10 @@ export class AgentBrowserService {
 
     return this.traced('session.create', { tenantId: request.tenantId ?? '' }, async () => {
       const engineRequest: EngineSessionOptions & { engine: 'auto' } = { engine: 'auto' };
+      engineRequest.downloadPolicy = {
+        allow: request.allowDownloads ?? false,
+        maxBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
+      };
       const engine = this.resolveEngine(request.engine);
       if (request.viewport !== undefined) engineRequest.viewport = request.viewport;
       if (request.locale !== undefined) engineRequest.locale = request.locale;
@@ -1870,7 +1878,10 @@ export class AgentBrowserService {
         throw this.mapError(error);
       }
 
-      const { bytes, contentType } = await this.downloader(request.url);
+      const { bytes, contentType } = await this.downloader(request.url, {
+        policy: this.sessionPolicies.get(sessionId) ?? this.rootRequestPolicy,
+        maxBytes: policy.maxDownloadBytes,
+      });
 
       if (bytes.length > policy.maxDownloadBytes) {
         throw new ServiceError(
@@ -1910,22 +1921,14 @@ export class AgentBrowserService {
       const page = this.requirePage(sessionId, pageId);
       this.coordinator.updateActivity(sessionId);
 
-      const pull = (
-        page.enginePage as unknown as {
-          downloadBytes?: (pageId: string, filename: string) => Promise<Uint8Array | undefined>;
-        }
-      ).downloadBytes;
-      const sessionPull = (
-        page.enginePage as unknown as {
-          session?: {
-            downloadBytes?: (pageId: string, filename: string) => Promise<Uint8Array | undefined>;
-          };
-        }
-      ).session;
-
-      const bytes =
-        (await pull?.call(page.enginePage, page.enginePage.id, filename)) ??
-        (await sessionPull?.downloadBytes?.call(sessionPull, page.enginePage.id, filename));
+      const policy = this.sessionDownloadPolicy.get(sessionId);
+      if (!policy?.allowDownloads)
+        throw new ServiceError('DOWNLOAD_BLOCKED', 'Downloads are disabled for this session');
+      const captured = await this.requireSession(sessionId).engineSession.takeDownload?.(
+        page.enginePage.id,
+        filename
+      );
+      const bytes = captured?.bytes;
 
       if (bytes === undefined) {
         throw new ServiceError(
@@ -1933,14 +1936,23 @@ export class AgentBrowserService {
           `No captured download '${filename}' on this page. Downloads appear as download.finished events; collect after the event fires.`
         );
       }
+      if (bytes.byteLength > policy.maxDownloadBytes)
+        throw new ServiceError(
+          'DOWNLOAD_BLOCKED',
+          'Captured download exceeds the session byte limit'
+        );
+      const capturedFilename = captured?.filename ?? filename;
 
-      const contentType = filename.endsWith('.csv')
+      const contentType = capturedFilename.endsWith('.csv')
         ? 'text/csv'
-        : filename.endsWith('.json')
+        : capturedFilename.endsWith('.json')
           ? 'application/json'
           : 'application/octet-stream';
 
-      return this.putArtifact(sessionId, 'download', contentType, bytes, { filename, sessionId });
+      return this.putArtifact(sessionId, 'download', contentType, bytes, {
+        filename: capturedFilename,
+        sessionId,
+      });
     });
   }
 
@@ -2326,21 +2338,6 @@ export class AgentBrowserService {
     );
   }
 }
-
-/** Production download fetcher; tests inject their own. */
-const defaultDownloader = async (
-  url: string
-): Promise<{ bytes: Uint8Array; contentType: string }> => {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new ServiceError('INTERNAL', `Download failed: HTTP ${response.status}`);
-  }
-  const buffer = new Uint8Array(await response.arrayBuffer());
-  return {
-    bytes: buffer,
-    contentType: response.headers.get('content-type') ?? 'application/octet-stream',
-  };
-};
 
 /** Redact credentials from a URL before it enters an error payload. */
 function redactUrl(url: string): string {

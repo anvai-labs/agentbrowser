@@ -3,20 +3,25 @@
 AgentBrowser is engine-neutral by contract: every engine implements the
 `BrowserEngine` interface (`packages/engine`), and
 `runEngineContractSuite` (`packages/testkit`) is the single verification
-mechanism. An engine is correct exactly insofar as the suite passes;
-where it does not, the failure names the gap - never hidden, never
-worked around silently.
+mechanism for the behaviors that suite defines. Passing is not proof of
+comprehensive correctness or network security; gaps need explicit fixtures and
+capability claims must match observed behavior.
 
 ## Engine matrix
 
 | Engine | Package | Status | Contract suite | Egress choke point |
 | --- | --- | --- | --- | --- |
-| Chromium (local) | `engine-playwright` | Production default | Pass | Enforced (per-request proxy, per-hop redirects, DNS-resolved-IP validation) |
-| Chromium (remote CDP) | `engine-playwright` (`cdpEndpoint`) | Supported | Pass | Enforced as above (subject to the remote endpoint's own network position) |
-| Firefox / WebKit | `engine-playwright` (`browser:`) | Supported (availability-gated in CI where browsers are installed) | Pass | Enforced |
+| Chromium (local) | `engine-playwright` | Production default | Pass | Partial: initial request/first redirect checks; later hops bypass routing; browser connects are not DNS-pinned |
+| Chromium (remote CDP) | `engine-playwright` (`cdpEndpoint`) | Supported | Pass | Same redirect limitation; remote network position adds a boundary |
+| Firefox / WebKit | `engine-playwright` (`browser:`) | Supported (availability-gated in CI where browsers are installed) | Pass | Routing-based checks; complete transport coverage not established |
 | FakeEngine | `testkit` | Deterministic reference | Pass (reference) | N/A (no network) |
 | Obscura v0.2.1 | `engine-obscura` | **Experimental, benchmark-only** (spec §17.2 backend #3) | Pass (data: URLs) | **NOT enforceable** - see below |
 | Safari (real, via safaridriver) | `engine-safari` | **Phase 2 shipped** - macOS only, always headed, `safaridriver --enable` required | Contract suite + gated Safari tests (darwin, enablement-gated) | **NOT enforceable** - requests with a policy fail loudly (`EGRESS_UNSUPPORTED`) |
+
+Passing the engine contract suite does not establish complete network containment.
+Independent Chromium probes reproduce later-hop redirect bypasses. Direct-download
+transport fixes do not close that browser gap, and page WebSocket denial does not
+prove worker coverage. Do not use browser routing as the sole SSRF boundary.
 
 ## Engine registry (TD-BROWSER-7 Phase 1)
 
