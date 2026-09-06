@@ -17,17 +17,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The binary's serverInfo.version is stamped from package.json, so a tag
-      # that disagrees with it ships a mislabeled artifact. Fail loudly instead.
-      - name: Verify tag matches packages/mcp-server version
-        run: |
-          PKG_VERSION=$(node -p "require('./packages/mcp-server/package.json').version")
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          echo "tag=${GITHUB_REF_NAME} package=${PKG_VERSION}"
-          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} does not match packages/mcp-server version ${PKG_VERSION}. Bump the package in the release commit."
-            exit 1
-          fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The root product version owns every manifest and generated runtime stamp.
+      - name: Verify tag and first-party versions
+        run: node scripts/sync-versions.mjs --tag "$GITHUB_REF_NAME"
 
   binaries:
     name: Build ${{ matrix.artifact }}
@@ -233,6 +229,7 @@ jobs:
 
   npm-publish:
     name: npm (@anvailabs/agentbrowser-mcp)
+    needs: tag-guard
     runs-on: ubuntu-latest
     # OIDC Trusted Publishing (ADR-014): the npm binding pins (repository
     # anvai-labs/agentbrowser, workflow release.yml, environment npm) — no
