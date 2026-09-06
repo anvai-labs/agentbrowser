@@ -41,6 +41,13 @@ validation record below. A checked status never means merely documented.
 
 ## Design decisions
 
+- Owner approved the [two-profile egress direction](egress-transport-design.md):
+  native local mode remains supported; contained Chromium starts on Linux and
+  requires OS-enforced gateway-only egress before release. Pull forward only
+  that ADR-008 slice. Continue unrelated corrective PRs independently; no host
+  firewall change, production deployment, release or full Phase 4 rollout is
+  implicit. R4 remains open until transport acceptance tests pass.
+
 - Retain explicitly captured artifacts for their existing TTL after session close,
   with immutable tenant ownership. Generating a new trace requires a live owned
   session; this does not introduce session-resume persistence.
@@ -70,6 +77,37 @@ claims; the group table governs delivery. D's successful direct-download and
 page WebSocket tests do not establish all-hop browser or worker enforcement.
 Its operational limitations are documented in [engines](engines.md),
 [operations](operations.md), and the [threat model](threat-model.md).
+
+### Independent review and integration update
+
+A merged into `develop` at `b72510c` after independent correction review and all
+eight GitHub CI checks passed. Its local and remote task branches were deleted;
+there was only one worktree, so no duplicate dependency trees were removed.
+The remaining local stack was rebased onto that merge. No promotion to `main`,
+release, or package publication was performed. B's first publication attempt was
+stopped by three local Chromium test/hook timeouts; its full commit checks had
+passed earlier. A subsequent full workspace check passed without changing the
+tests or increasing timeouts. B publication remains pending.
+
+| Review follow-up | Group | Disposition |
+| --- | --- | --- |
+| Secret-bearing dictionary keys, navigation URLs and nested policy spans | A | Corrected and independently approved before merge |
+| Caller `type` overrides canonical wire `action` | B | Reject conflicting discriminator before decoding; full local checks and independent correction review passed |
+| Consent uses missing/stale observation URL | C | Live engine URL port with legacy observation fallback; no-observe/history/external-navigation/token regressions; full checks and independent review passed |
+| Session-only policy omits default WS denial | D | Corrected; real Chromium probe confirms zero server connections |
+| Direct transport omits operator redirect limit | D | Typed policy delegation corrected; zero-limit fixture contacts only initial URL |
+| Later browser redirect hops bypass route callback and policy | D / R4 | **Open, high severity.** Owner chose [transport-level design first](egress-transport-design.md), not temporary redirect denial; D remains held |
+| Diff observation discards continuation/maxElements | E | Confirmed; correction pending |
+| Safari selected-window races and late resource creation after close | F | Confirmed; shared operation queue and lifecycle correction pending |
+| npm publishing lacks tag-guard dependency | G | Confirmed; correction pending before merge |
+
+The implementation-only statuses in the historical finding table above are not
+closure claims; the current group/review tables govern delivery. In particular,
+R4 is not fixed by the successful direct-download tests. The route-only browser
+experiment is preserved in a named Git stash, not included in the delivery
+stack. T0 now retains the end-to-end bypass as the explicitly labeled
+`redirect-gap-real-chromium.test.ts` truth guard; it is not a security acceptance
+test and must be inverted when transport enforcement closes the gap.
 
 Baseline: workspace build and 740 existing tests passed; four Chromium API tests
 passed after one capture setup-timeout rerun. Adversarial local fixtures reproduced

@@ -39,7 +39,21 @@ For a hosted multi-tenant service, stronger isolation is required.
   multi-tenancy.
 - **Future**: `container` isolation for premium tier
 
-### Process isolation implementation
+### Egress containment delivery clarification (engineering review)
+
+The owner approved a separate contained Chromium deployment profile, initially
+on Linux, that requires OS-enforced gateway-only egress before release. Native
+local/Brew operation remains supported without that containment guarantee.
+See the [accepted egress direction](../egress-transport-design.md) for the
+adapter/gateway split, required bypass tests and fail-closed startup contract.
+
+This pulls forward network containment only; full hostile multi-tenant resource
+isolation, scheduling and stronger tiers remain deferred. A separate process
+or container is not itself a network policy, and OS routing restrictions do
+not replace HTTPS response/redirect checks. Unrelated correctness fixes do not
+depend on completion of this deployment profile.
+
+### Process isolation implementation example
 
 ```typescript
 // Each session gets its own Chromium process

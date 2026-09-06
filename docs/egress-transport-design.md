@@ -1,11 +1,33 @@
-# Egress transport enforcement: design proposal
+# Egress transport enforcement: accepted direction and delivery gates
 
-Status: **Proposal, not an accepted implementation plan.** The owner selected
-transport-level design before changing guarded redirect behavior (2026-09-05).
-Group D of the [review tracker](engineering-review-remediation.md) is held.
-No proxy deployment, certificate installation, or Phase 4 rollout is authorized
-by this document. Existing guarded browsing must not be described as complete
-SSRF containment while the gap below remains.
+Status: **Direction approved; implementation and verification pending.** After
+the transport review, the owner approved the two-profile recommendation:
+preserve native local operation; require OS-enforced egress for a contained
+Chromium profile; do not block unrelated fixes on full Phase 4 delivery.
+The [review tracker](engineering-review-remediation.md) retains R4 as open.
+Approval covers staged engineering work, not a production deployment, host-wide
+firewall change, certificate installation, or release. Existing guarded browsing
+must not be described as complete SSRF containment while the gap below remains.
+
+## Accepted deployment contract
+
+| Profile | First delivery target | Required guarantee | Release condition |
+| --- | --- | --- | --- |
+| Local | Native/Brew managed Chromium | Adapter and gateway checks, with explicit absence of OS containment | Transport acceptance tests; no containment claim or silent mode switch |
+| Contained | Linux managed Chromium in a restricted network environment | Browser network access only through its authorized gateway; application checks remain necessary | T1-T4 complete, independent adversarial review, real network-bypass tests; startup refuses missing enforcement |
+
+These are deployment contracts, not shipped configuration flags. Native local
+mode remains available; no automatic Docker/VM dependency is introduced there.
+The contained profile must not be advertised as available before its release
+conditions pass. A browser sandbox or ordinary Docker bridge alone does not
+meet its network requirement.
+
+Rationale: an interceptor can miss a request and a proxy can be bypassed; OS
+rules outside the browser enforce the permitted network path. Conversely, OS
+rules do not inspect HTTPS redirect counts or prevent misuse of allowed sites.
+Only the combination supports the stated guarantees. Single-user operation
+does not make page content trusted. Preserve local convenience by making the
+guarantee explicit, rather than weakening the contained profile.
 
 ## Evidence and scope
 
@@ -115,9 +137,13 @@ network boundary allowing only its gateway, including DNS/UDP and loopback
 restrictions. That boundary is an ADR-008 integration seam, not a competing
 per-route patch. Process-per-session by itself does not enforce network routing.
 
-The new evidence changes the deferral only conditionally: if local deployments
-need guaranteed SSRF containment against hostile pages/network bypasses, the
-network-isolation slice can no longer be deferred with the rest of Phase 4.
+The accepted decision pulls the network-isolation slice forward as a release
+requirement for the contained profile, not as a prerequisite for native local
+use or unrelated corrective PRs. Browser processes must not be able to change
+their network rules, access the container runtime socket, or reach gateway
+administration endpoints. The gateway runs outside that restricted boundary;
+only its authenticated data endpoint is permitted, with explicit session
+revocation. Rules must be scoped to owned resources, never host-wide defaults.
 Full hostile multi-tenant scheduling, cross-tenant CPU/memory isolation and
 microVM tiers remain outside this proposal. Until OS enforcement is delivered,
 describe local adapter/gateway guarantees precisely and retain that residual.
@@ -128,23 +154,26 @@ guarded refusal and Obscura's experimental exclusion remain. Firefox/WebKit
 need a proven interception adapter or a separately designed L7 gateway; do not
 silently claim that Chromium CDP work secures them.
 
-## Cohesive candidate PRs and decision gates
+## Cohesive PR units and delivery gates
 
-These are review units, not authorization to implement all of them.
+Implement these as separately reviewed units. T1 is a feasibility gate: if target
+coverage or browser semantics cannot be preserved, stop and revise the design
+instead of silently reducing its guarantees. No production rollout is implied.
 
 | Unit | Scope | Risk / effort | Exit evidence | Status |
 | --- | --- | --- | --- | --- |
-| T0 | Correct current guarantees; retain multi-hop repro; agree threat/capability contract | High-priority truthfulness / small | Reviewer can reproduce bypass; docs distinguish shipped and proposed behavior | Proposed; design drafted |
+| T0 | Correct current guarantees; retain multi-hop repro; agree threat/capability contract | High-priority truthfulness / small | Reviewer can reproduce bypass; docs distinguish shipped and proposed behavior | Direction approved; durable regression and correction review next |
 | T1 | Bounded Chromium request/response lifecycle feasibility, pinned-version compatibility | High / medium | All target types, redirects and response gates; clean shutdown; no dual-owner race | One-page probe only |
 | T2 | Authenticated gateway and shared connection primitives | High / large | DNS rebind, host/TLS identity, session revocation, concurrency and byte limits | Not started |
 | T3 | Compose guarded Chromium mode; retire old route-fetch path for that mode | High / large | End-to-end acceptance matrix below, including normal site semantics | Blocked on T1/T2 |
-| T4 | Forced-egress deployment profile, ADR-008-compatible | High / platform-dependent | Deliberate proxy/DNS/UDP bypass attempts fail at network boundary | Separate operator decision |
+| T4 | Forced-egress Linux deployment profile, ADR-008-compatible | High / large | Deliberate proxy/DNS/UDP bypass attempts fail at network boundary; cannot alter rules; fail-closed startup and teardown | Required for contained-profile release; not started |
 
 Group D's already-written direct-download and WS corrections remain useful but
-do not close R4. Either split them into a clearly partial PR after T0 is agreed,
-or keep D held until T3; never mark the all-hop finding fixed merely because
-the direct transport passes. Unrelated reviewed groups may be rebased around D
-after checking their actual code dependencies.
+do not close R4. Deliver them only as an explicitly partial correction after
+independent review confirms that disclosure; the all-hop finding stays open
+through transport implementation. Keep B/C/E/F/G moving with their own review
+gates, rebasing around held work after checking actual code dependencies. Never
+merge an unapproved predecessor merely because it is in the local stack.
 
 ## Acceptance matrix
 
@@ -159,7 +188,8 @@ after checking their actual code dependencies.
 | Isolation/lifecycle | Concurrent sessions/chains with same URLs; cross-session gateway auth; credential stripping; revoke existing CONNECT tunnels; gateway death; target detach; close during connect/read; no orphan process/socket or retained chain |
 | Observability | One redacted terminal event; typed policy/capability errors; counters for denials, queue rejection and cleanup failures |
 
-Before implementation, agree the first delivery target (recommended: managed
-local Chromium only) and whether hard forced-egress containment is required in
-that first delivery. Do not promise cross-engine portability or streaming
-compatibility before T1 demonstrates it.
+First targets are now agreed: managed native Chromium for local mode, and
+Linux managed Chromium for contained mode. Do not promise cross-engine
+portability or streaming compatibility before T1 demonstrates it. Application
+transport tests close their respective findings; only the T4 bypass tests
+establish the contained profile's forced-egress claim.
