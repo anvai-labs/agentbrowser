@@ -521,6 +521,30 @@ describe('ActionExecutor', () => {
       expect(result.observation?.elements[0]?.ref).toMatch(/^e2_/);
     });
 
+    it('budgets the complete post-action observation including multibyte text', async () => {
+      vi.mocked(mockEnginePage.act).mockResolvedValue(effect());
+      vi.mocked(mockEnginePage.observe).mockResolvedValue({
+        url: 'https://example.com/',
+        title: 'Test \u20AC',
+        status: 'complete',
+        content: '\u{1F642}'.repeat(5000),
+        elements: Array.from({ length: 30 }, (_, index) => ({
+          ref: `e1_${index}`,
+          role: 'button',
+          name: `Button \u20AC${index}`,
+          visible: true,
+          enabled: true,
+        })),
+      });
+      const result = await executor.execute(
+        req({ type: 'scroll', deltaY: 10 }, { observeAfter: { mode: 'content', maxBytes: 1000 } }),
+        { enginePage: mockEnginePage, observation: mockObservation }
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.observation?.truncated).toBe(true);
+      expect(Buffer.byteLength(JSON.stringify(result.observation))).toBeLessThanOrEqual(1000);
+    });
+
     it('should not observe when observeAfter is absent', async () => {
       (mockEnginePage.resolve as any).mockResolvedValue({
         ref: 'e1_0',

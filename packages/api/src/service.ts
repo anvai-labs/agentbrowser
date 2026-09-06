@@ -16,11 +16,12 @@ import {
   ActionExecutor,
   ApprovalGate,
   ArtifactStore,
+  JsonLedger,
   ObservationNormalizer,
-  RingBuffer,
   SecretManager,
   SessionCoordinator,
   SessionState,
+  budgetObservation,
 } from '@agentbrowser/core';
 import type { ArtifactMetadata } from '@agentbrowser/core';
 import type { InMemoryTracer, Span } from '@agentbrowser/core';
@@ -465,7 +466,7 @@ export class AgentBrowserService {
    * "per-session event ledger"). Every engine event crosses pumpEvents;
    * console lines replay from here for late subscribers.
    */
-  private readonly eventHistory = new Map<string, RingBuffer<EngineEvent>>();
+  private readonly eventHistory = new Map<string, JsonLedger<EngineEvent>>();
   private static readonly EVENT_HISTORY_LIMIT = 500;
   /**
    * Request lifecycle events get their OWN bounded ledger (spec 5.1
@@ -473,10 +474,10 @@ export class AgentBrowserService {
    * per navigation, and sharing the console ledger would evict exactly
    * the console lines the replay buffer exists for.
    */
-  private readonly requestHistory = new Map<string, RingBuffer<EngineEvent>>();
+  private readonly requestHistory = new Map<string, JsonLedger<EngineEvent>>();
   private static readonly REQUEST_HISTORY_LIMIT = 1000;
 
-  private recordEvent(sessionId: string, event: EngineEvent): void {
+  private recordEvent(sessionId: string, event: EngineEvent): boolean {
     const isRequest = event.type.startsWith('request.');
     const store = isRequest ? this.requestHistory : this.eventHistory;
     const limit = isRequest
@@ -484,10 +485,35 @@ export class AgentBrowserService {
       : AgentBrowserService.EVENT_HISTORY_LIMIT;
     let buffer = store.get(sessionId);
     if (buffer === undefined) {
-      buffer = new RingBuffer<EngineEvent>({ capacity: limit });
+      buffer = new JsonLedger<EngineEvent>({
+        maxEntries: limit,
+        maxBytes: isRequest ? 2 * 1024 * 1024 : 1024 * 1024,
+        maxEntryBytes: 64 * 1024,
+      });
       store.set(sessionId, buffer);
     }
-    buffer.push(event);
+    const before = buffer.stats;
+    const accepted = buffer.push(event);
+    if (!accepted)
+      this.metrics?.incrementCounter('events_dropped_total', {
+        ledger: isRequest ? 'request' : 'other',
+        reason: 'oversized',
+      });
+    const evictions = buffer.stats.evicted - before.evicted;
+    for (let index = 0; index < evictions; index++)
+      this.metrics?.incrementCounter('events_evicted_total', {
+        ledger: isRequest ? 'request' : 'other',
+      });
+    return accepted;
+  }
+
+  getSessionEventStats(sessionId: string) {
+    this.requireSession(sessionId);
+    const empty = { entries: 0, bytes: 0, dropped: 0, evicted: 0 };
+    return {
+      other: this.eventHistory.get(sessionId)?.stats ?? empty,
+      request: this.requestHistory.get(sessionId)?.stats ?? empty,
+    };
   }
 
   /**
@@ -521,12 +547,12 @@ export class AgentBrowserService {
               ? { data: this.secretManager.redactUntrusted(event.data) }
               : {}),
           });
-          this.recordEvent(sessionId, stamped);
+          if (!this.recordEvent(sessionId, stamped)) continue;
           const listeners = this.eventListeners.get(sessionId);
           if (listeners) {
             for (const listener of [...listeners]) {
               try {
-                listener(stamped);
+                listener(structuredClone(stamped));
               } catch {
                 // A misbehaving listener never breaks the stream.
               }
@@ -1309,6 +1335,7 @@ export class AgentBrowserService {
     }
     const observation = this.normalizer.normalize(raw, {
       ...(request.mode !== undefined ? { mode: request.mode } : {}),
+      retainAllElements: true,
       revision: page.revision,
       sessionId,
       pageId,
@@ -1347,14 +1374,13 @@ export class AgentBrowserService {
     if (request.sinceRevision !== undefined) {
       // The diff path accepts maxBytes but previously returned unbounded;
       // paginateObservation applies the same byte budget to the diff result.
-      return this.secretManager.redact(
-        this.paginateObservation(this.diffObservation(page, observation, request.sinceRevision), {
-          maxBytes: request.maxBytes,
-        })
+      return this.paginateObservation(
+        this.diffObservation(page, observation, request.sinceRevision),
+        request
       );
     }
 
-    return this.secretManager.redact(this.paginateObservation(observation, request));
+    return this.paginateObservation(observation, request);
   }
 
   /**
@@ -1432,131 +1458,16 @@ export class AgentBrowserService {
    * cursor when elements remain.
    */
   private paginateObservation(observation: PageState, request: PartialObservation): PageState {
-    const { continueFrom, maxElements } = request;
-    if (continueFrom !== undefined && (!Number.isInteger(continueFrom) || continueFrom < 0)) {
-      throw new ServiceError(
-        'INVALID_REQUEST',
-        `Invalid continueFrom ${continueFrom}: expected a non-negative integer.`
-      );
+    try {
+      return budgetObservation(this.secretManager.redact(observation), {
+        maxBytes: request.maxBytes,
+        maxElements: request.maxElements,
+        continueFrom: request.continueFrom,
+      });
+    } catch (error) {
+      const detail = normalizeEngineError(error);
+      throw new ServiceError(detail.code, detail.message, detail.retryable, detail.details);
     }
-    if (maxElements !== undefined && (!Number.isInteger(maxElements) || maxElements < 1)) {
-      throw new ServiceError(
-        'INVALID_REQUEST',
-        `Invalid maxElements ${maxElements}: expected a positive integer.`
-      );
-    }
-    if (
-      request.maxBytes !== undefined &&
-      (!Number.isInteger(request.maxBytes) || request.maxBytes < 1)
-    ) {
-      throw new ServiceError(
-        'INVALID_REQUEST',
-        `Invalid maxBytes ${request.maxBytes}: expected a positive integer.`
-      );
-    }
-
-    // Byte budget first (spec 10): trim serialized size while keeping
-    // document order, then apply the element-count budget. Truncation must
-    // happen AFTER ref bridging (which is positional), which is why this
-    // lives here and not in the normalizer.
-    let elements = observation.elements;
-    let truncated = false;
-    let working = observation;
-    if (request.maxBytes !== undefined) {
-      const budget = request.maxBytes;
-      let low = 0;
-      let high = elements.length;
-      // Binary search for the largest prefix fitting the byte budget.
-      // Measured in REAL bytes (Buffer.byteLength of the serialized form):
-      // string .length counts UTF-16 code units, so a multibyte page could
-      // previously return up to ~3x the budget.
-      while (low < high) {
-        const mid = Math.ceil((low + high) / 2);
-        const size = Buffer.byteLength(
-          JSON.stringify({ ...observation, elements: elements.slice(0, mid) }),
-          'utf8'
-        );
-        if (size <= budget) {
-          low = mid;
-        } else {
-          high = mid - 1;
-        }
-      }
-      if (low < elements.length) {
-        elements = elements.slice(0, low);
-        truncated = true;
-        working = { ...observation, elements, truncated: true };
-      }
-      // Budget the fixed fields too: if the element prefix alone is empty
-      // and the payload is still over budget, trim whole trailing
-      // paragraphs of text (content mode's byte-dominant field), then as a
-      // last resort the summary. Never fail the request.
-      if (elements.length === 0 && Buffer.byteLength(JSON.stringify(working), 'utf8') > budget) {
-        const text = observation.text ?? [];
-        let keep = text.length;
-        while (keep > 0) {
-          const candidate = {
-            ...working,
-            text: text.slice(0, keep - 1),
-            truncated: true,
-          };
-          if (Buffer.byteLength(JSON.stringify(candidate), 'utf8') <= budget) {
-            working = candidate;
-            break;
-          }
-          keep--;
-        }
-        if (keep > 0) {
-          working = { ...working, text: text.slice(0, keep), truncated: true };
-        } else if (Buffer.byteLength(JSON.stringify({ ...working, text: [] }), 'utf8') <= budget) {
-          working = { ...working, text: [], truncated: true };
-        }
-      }
-      // Diff-mode payloads carry their weight in `changes` (each entry a
-      // full old/new element pair); trim trailing changes the same way.
-      const changes = observation.changes;
-      if (
-        changes !== undefined &&
-        changes.length > 0 &&
-        Buffer.byteLength(JSON.stringify(working), 'utf8') > budget
-      ) {
-        let keepChanges = changes.length;
-        while (keepChanges > 0) {
-          const candidate = {
-            ...working,
-            changes: changes.slice(0, keepChanges - 1),
-            truncated: true,
-          };
-          if (Buffer.byteLength(JSON.stringify(candidate), 'utf8') <= budget) {
-            working = candidate;
-            break;
-          }
-          keepChanges--;
-        }
-        if (keepChanges === 0) {
-          working = { ...working, changes: [], truncated: true };
-        }
-      }
-    }
-    // The working observation carries any byte-budget trimming above.
-    const start = continueFrom ?? 0;
-    if (maxElements === undefined) {
-      return working === observation ? observation : working;
-    }
-
-    const slice = elements.slice(start, start + maxElements);
-    const remaining = elements.length - (start + slice.length);
-
-    if (remaining <= 0) {
-      // `truncated` mirrors the cursor semantics: true iff more to fetch.
-      return { ...working, elements: slice, truncated: truncated || working.truncated };
-    }
-    return {
-      ...working,
-      elements: slice,
-      truncated: true,
-      continuation: { nextOrdinal: start + slice.length, remaining },
-    };
   }
 
   // ---- actions ------------------------------------------------------------

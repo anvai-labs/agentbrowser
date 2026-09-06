@@ -38,13 +38,14 @@ export interface NormalizationOptions {
   sessionId?: string;
   pageId?: string;
   sinceRevision?: number;
+  /** Keep overflow for the shared budget/cursor owner; preserve prioritization. */
+  retainAllElements?: boolean;
 }
 
 /**
  * ObservationNormalizer converts raw engine state into semantic observations
  */
 export class ObservationNormalizer {
-
   /**
    * Normalize raw page state into semantic observation
    */
@@ -61,7 +62,7 @@ export class ObservationNormalizer {
     const { truncated, prioritizedElements } = this.applyTruncation(
       elements,
       maxElements,
-      rawState
+      options.retainAllElements ?? false
     );
 
     // Generate page summary
@@ -148,7 +149,7 @@ export class ObservationNormalizer {
   private applyTruncation(
     elements: PageElement[],
     maxElements: number,
-    rawState: RawPageState
+    retainAllElements: boolean
   ): { truncated: boolean; prioritizedElements: PageElement[] } {
     if (elements.length <= maxElements) {
       return { truncated: false, prioritizedElements: elements };
@@ -158,8 +159,8 @@ export class ObservationNormalizer {
     const prioritized = this.prioritizeElements(elements);
 
     return {
-      truncated: true,
-      prioritizedElements: prioritized.slice(0, maxElements),
+      truncated: !retainAllElements,
+      prioritizedElements: retainAllElements ? prioritized : prioritized.slice(0, maxElements),
     };
   }
 
@@ -267,5 +268,4 @@ export class ObservationNormalizer {
 
     return `Page with ${parts.join(', ')}`;
   }
-
 }

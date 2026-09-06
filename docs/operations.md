@@ -114,6 +114,24 @@ sibling `.err.log`); `brew services list` shows run state.
 
 ## Session lifecycle
 
+### Observation and event budgets
+
+Observation `maxBytes` measures the final redacted UTF-8 JSON, including cursor
+metadata. Element pagination addresses the complete prioritized observation;
+pass `continuation.nextOrdinal` as `continueFrom` while the page revision remains
+unchanged. The default page contains at most 300 elements. Text and diff details
+are truncated without a separate text/diff cursor; request a larger budget for
+those. If identity plus the next element cannot fit, `OUTPUT_TRUNCATED` reports
+`details.minBytes` instead of returning an oversized or non-advancing result.
+
+Service event replay retains at most 500 other events / 1 MiB and 1,000 request
+events / 2 MiB per session. Events over 64 KiB are dropped before replay and
+broadcast. `events_dropped_total` and `events_evicted_total` expose loss with
+bounded-cardinality labels. These byte counts cover serialized service ledgers,
+not engine-side queues, live DOM snapshots, serialization temporaries, or total
+process memory. Pending approval tokens have a hard admission cap; full capacity
+returns `QUOTA_EXCEEDED` until used or expired tokens can be reclaimed.
+
 Sessions are **ephemeral by default** ([ADR-005](adr/005-ephemeral-sessions-explicit-persistence.md)):
 
 - default TTL **15 minutes**, default idle timeout **2 minutes** — both
