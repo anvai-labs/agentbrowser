@@ -5,6 +5,8 @@ the transport review, the owner approved the two-profile recommendation:
 preserve native local operation; require OS-enforced egress for a contained
 Chromium profile; do not block unrelated fixes on full Phase 4 delivery.
 The [review tracker](engineering-review-remediation.md) retains R4 as open.
+T1's tested page-CDP/WebSocket and appended-CSP candidates failed worker
+coverage; see the [feasibility evidence](egress-transport-feasibility.md).
 Approval covers staged engineering work, not a production deployment, host-wide
 firewall change, certificate installation, or release. Existing guarded browsing
 must not be described as complete SSRF containment while the gap below remains.
@@ -163,7 +165,7 @@ instead of silently reducing its guarantees. No production rollout is implied.
 | Unit | Scope | Risk / effort | Exit evidence | Status |
 | --- | --- | --- | --- | --- |
 | T0 | Correct current guarantees; retain multi-hop repro; agree threat/capability contract | High-priority truthfulness / small | Reviewer can reproduce bypass; docs distinguish shipped and proposed behavior | Direction approved; durable truth guard, independent review and full local checks passed; delivery pending |
-| T1 | Bounded Chromium request/response lifecycle feasibility, pinned-version compatibility | High / medium | All target types, redirects and response gates; clean shutdown; no dual-owner race | One-page probe only |
+| T1 | Bounded Chromium request/response lifecycle feasibility, pinned-version compatibility | High / medium | All target types, redirects and response gates; clean shutdown; no dual-owner race | Gate failed: worker WS/WSS coverage gaps; body-fulfillment comparison also breaks a data-worker HTTP control; investigation required |
 | T2 | Authenticated gateway and shared connection primitives | High / large | DNS rebind, host/TLS identity, session revocation, concurrency and byte limits | Not started |
 | T3 | Compose guarded Chromium mode; retire old route-fetch path for that mode | High / large | End-to-end acceptance matrix below, including normal site semantics | Blocked on T1/T2 |
 | T4 | Forced-egress Linux deployment profile, ADR-008-compatible | High / large | Deliberate proxy/DNS/UDP bypass attempts fail at network boundary; cannot alter rules; fail-closed startup and teardown | Required for contained-profile release; not started |

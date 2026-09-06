@@ -22,13 +22,10 @@ Passing the engine contract suite does not establish complete network containmen
 Independent Chromium probes reproduce later-hop redirect bypasses. Direct-download
 transport fixes do not close that browser gap, and page WebSocket denial does not
 prove worker coverage. Do not use browser routing as the sole SSRF boundary.
+See the [accepted transport direction](egress-transport-design.md) and
+[failed worker-coverage feasibility gate](egress-transport-feasibility.md).
 
 ## Engine registry (TD-BROWSER-7 Phase 1)
-
-Passing the engine contract suite does not prove complete network containment.
-The independent review reproduced a later-hop Chromium redirect bypass; see the
-[transport enforcement proposal](egress-transport-design.md). Do not use the
-current routing layer as the sole boundary for required SSRF containment.
 
 `AgentBrowserService` accepts named auxiliary engines
 (`ServiceDependencies.engines`); `createSession` routes by the request's
