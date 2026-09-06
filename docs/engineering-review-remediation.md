@@ -24,6 +24,32 @@ validation record below. A checked status never means merely documented.
 
 ## Findings and acceptance criteria
 
+### Next milestone: T1 policy inheritance feasibility
+
+Fresh baseline: merged `develop` at `9f041af`, with all eight post-merge CI
+checks green. Reuse the single clean worktree; do not recreate the A-G stack.
+
+| Unit | Scope | Acceptance / stop condition | Status |
+| --- | --- | --- | --- |
+| T1a | Compare native, network-delivered CSP, header injection, and body fulfillment with/without added policy | Preserve worker HTTP positive controls; correlate CSP violations, network failures and server hits; distinguish fixture failures from policy denials | Diagnostic comparison complete; independently approved; 36-case evidence and 10 offline tests pass on `test/t1-worker-policy-inheritance`; delivery pending |
+| T1b | Complete target attachment and nested-worker coverage | Independent review of startup ordering and all-target controls; no production claim from page-only coverage | Pending T1a evidence |
+| T1c | Reassess transport feasibility against the complete acceptance matrix | T1 remains open until semantics and coverage pass; revisit design explicitly if they cannot | Pending |
+
+T1a is a bounded probe/evidence PR, not a production adapter change. Keep
+historical evidence immutable. No gateway deployment, host networking changes,
+CA installation, worker disabling, or weakening of the WS/WSS contract is
+included. R4 remains open throughout this investigation.
+
+T1a narrows the data-worker HTTP failure to the tested body-fulfillment path,
+including replay without added connection policy. Native server-delivered policy
+preserves HTTP and denies WS/WSS in these four modes. This is not a root-cause
+diagnosis or full target-coverage result; see the
+[comparison and limitations](egress-transport-feasibility.md#t1a-native-policy-versus-body-fulfillment).
+Independent review caught missing delivery/denial assertions in the evidence
+verifier; three failing mutation tests reproduced that gap before correction.
+All ten offline tests now pass; workspace build, version and doc-link checks
+also pass. Next work needs worker-scoped failure reasons, not weaker policy.
+
 | ID | Finding / location | Severity | Why it matters / reproduced behavior | Fix and required regression | Status |
 | --- | --- | --- | --- | --- | --- |
 | R1 | Missing-session ownership fallback; api/server.ts, api/service.ts | H | Tenant B reads A's artifact after close and exports A's retained trace | Persist artifact ownership through TTL; reject missing live sessions; filter lists; test close/expiry across tenants | Merged in A |

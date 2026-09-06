@@ -99,6 +99,70 @@ redirect compatibility. **T1 remains unpassed.**
 
 ## Design consequence and next bounded question
 
+### T1a: native policy versus body fulfillment
+
+The fresh-baseline comparison ran twice on 2026-09-06 against runtime Chromium
+151.0.7922.34. The [retained second run](evidence/worker-csp-inheritance.jsonl)
+contains all 36 cases, final server-hit reconciliation and cleanup. The first
+run guided diagnosis; only the complete second run is retained here.
+
+Run `node scripts/probes/worker-csp.mjs --inheritance` from the repository root.
+This selects nine arms across external dedicated, document blob dedicated,
+document blob shared and document data dedicated workers. Native arms have no
+Fetch interception; continuation, server-policy replay, no-added-policy replay,
+injected-header and strict-intersection controls isolate delivery effects.
+The nested-worker gap is deliberately outside this comparison and remains open.
+
+| Delivery / policy | External and blob worker HTTP | Data worker HTTP | WS/WSS |
+| --- | --- | --- | --- |
+| Native or CDP continuation, no added policy | 200 + sentinel | 200 + sentinel | All opened |
+| Server-delivered candidate policy, native or CDP continuation | 200 + sentinel | 200 + sentinel | All denied with matching worker CSP violations; zero upgrade hits |
+| Header-only injection | 200 + sentinel | 200 + sentinel | External denied; blob/data both opened |
+| Body replay without added policy | 200 + sentinel | Failed, zero HTTP hits | All failed without CSP violations; not valid enforcement evidence |
+| Body replay with server-delivered or injected candidate policy | 200 + sentinel | Failed, zero HTTP hits | All denied with matching CSP violations |
+| Body replay retaining original strict policy | Denied | Denied | Zero HTTP/upgrade hits; matching strict-policy violations |
+
+The data-worker HTTP failure therefore reproduces **without adding a connection
+policy**. Native server-delivered policy preserves that HTTP request; replaying
+the same policy does not. This implicates the tested body-fulfillment path,
+independently of whether CSP is injected. It does not identify the underlying
+Chromium cause, nor prove that all forms of fulfillment fail.
+
+All three non-strict data-worker HTTP failures were immediate `TypeError`s,
+not deadline aborts, with opaque worker origin `null`. Each has a correlated
+Fetch response-stage `responseErrorReason: Failed` and no worker HTTP CSP
+violation. The strict arm recorded HTTP violations, validating the recorder's
+positive control. Page-scoped Network/console diagnostics were empty: absence
+there does not prove absence of a worker-side CORS or local-network error.
+The loopback fixture is a scope limitation; address-space/local-network checks
+remain a hypothesis, not a diagnosed cause. No additional CSP, CORS or
+local-network bypass flags were used. The existing fixture-only TLS certificate
+verification exception remains; no host certificate store was changed.
+
+The probe now recognizes both status and error fields when classifying response
+pauses, following the [CDP Fetch event contract](https://chromedevtools.github.io/devtools-protocol/tot/Fetch/#event-requestPaused).
+It records original/final replay headers, body hashes/lengths, worker policy
+violations, abort state, origins, HTTP methods and final server hits. The retained
+run had no handler errors or dropped diagnostics and ended with its owned
+browser stopped and zero sockets. Existing historical evidence is unchanged.
+
+Validate the evidence offline with:
+
+```bash
+node scripts/probes/verify-worker-inheritance.mjs docs/evidence/worker-csp-inheritance.jsonl
+pnpm test:probes
+```
+
+The verifier rejects missing cases, failed native positive controls, wrong HTTP
+bodies, late server hits, unsupported denial claims, handler failures and failed
+cleanup. Its `fixtureValid: true` explicitly accompanies
+`securityAcceptance: false`: CI checks the evidence verifier, not live worker
+enforcement. This comparison does not close T1 or R4.
+
+Next: obtain worker-scoped network failure reasons before choosing a replay
+mechanism, alongside the separately scoped recursive-target coverage probe.
+Do not attribute the data-worker failure to CSP or remove the policy to fix it.
+
 The [accepted two-profile decision](egress-transport-design.md) is unchanged.
 OS-enforced gateway-only routing remains required for the contained profile,
 but cannot itself distinguish WSS inside an allowed encrypted CONNECT tunnel.
@@ -109,10 +173,10 @@ release-ready contained browser by composing these failed candidates.
 Before another production adapter change, establish an effective browser-owned
 upgrade restriction across the complete target/policy lifecycle. Recursive
 target attachment is necessary for the demonstrated nested-script gap, but is
-not evidence that blob/data inheritance works. Investigate that inheritance
-separately with network-delivered versus injected policy controls, including
-the newly observed data-worker HTTP regression under body fulfillment. Preserve
-ordinary worker HTTP requests and stricter origin policies in every control.
+not evidence that blob/data inheritance works. T1a now separates native policy
+behavior from the body-fulfillment failure; worker-scoped diagnosis and a
+compatible policy-delivery mechanism are still required. Preserve ordinary
+worker HTTP requests and stricter origin policies in every control.
 
 Do not silently disable workers, remove the WebSocket guarantee, substitute TLS
 interception, or install a CA to make the fixture pass. Any such trade-off needs
