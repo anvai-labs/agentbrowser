@@ -8,6 +8,7 @@
  */
 
 import type { ActionEffect, EngineAction, EnginePage, ResolvedTarget } from '@agentbrowser/engine';
+import { normalizeEngineError } from '@agentbrowser/engine';
 import {
   DELIVERED_ACTION_TYPES,
   ErrorCode,
@@ -312,34 +313,7 @@ export class ActionExecutor {
    * Map an engine exception onto the protocol error taxonomy
    */
   private mapEngineError(error: unknown): ApiErrorDetail {
-    const message = error instanceof Error ? error.message : 'Unknown engine error';
-
-    if (/not found/i.test(message)) {
-      return createApiErrorDetail(
-        ErrorCode.TARGET_NOT_FOUND,
-        `Target element not found: ${message}`
-      );
-    }
-
-    if (/multiple elements|ambiguous/i.test(message)) {
-      return createApiErrorDetail(ErrorCode.TARGET_AMBIGUOUS, `Target is ambiguous: ${message}`);
-    }
-
-    if (/stale|fingerprint/i.test(message)) {
-      return staleTarget(`Target is stale: ${message}`);
-    }
-
-    if (/timeout|timed out/i.test(message)) {
-      return createApiErrorDetail(ErrorCode.ACTION_TIMEOUT, message, { retryable: true });
-    }
-
-    // Dialog actions with nothing held are structurally impossible, not
-    // engine failures - the agent-actionable answer is INVALID_REQUEST.
-    if (/no dialog/i.test(message)) {
-      return createApiErrorDetail(ErrorCode.INVALID_REQUEST, message);
-    }
-
-    return createApiErrorDetail(ErrorCode.INTERNAL, message);
+    return normalizeEngineError(error);
   }
 
   /**

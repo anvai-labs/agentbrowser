@@ -26,6 +26,7 @@ import {
   REF_PATTERN,
   UsageError,
   formatErrorForUser,
+  validateWireAction,
 } from '@agentbrowser/sdk-typescript';
 import { Command } from 'commander';
 
@@ -643,7 +644,7 @@ export function buildCli(deps: CliDependencies): Cli {
                     ? { timeoutMs: Number.parseInt(options.timeoutMs, 10) }
                     : {}),
                 },
-              } as never);
+              });
             }
           )
         );
@@ -655,7 +656,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .argument('<pageId>')
         .action(
           action(async (ctx, sessionId: string, pageId: string) => {
-            await runAction(ctx, sessionId, pageId, { action: 'goBack' } as never);
+            await runAction(ctx, sessionId, pageId, { action: 'goBack' });
           })
         );
 
@@ -666,7 +667,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .argument('<pageId>')
         .action(
           action(async (ctx, sessionId: string, pageId: string) => {
-            await runAction(ctx, sessionId, pageId, { action: 'goForward' } as never);
+            await runAction(ctx, sessionId, pageId, { action: 'goForward' });
           })
         );
 
@@ -677,7 +678,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .argument('<pageId>')
         .action(
           action(async (ctx, sessionId: string, pageId: string) => {
-            await runAction(ctx, sessionId, pageId, { action: 'reload' } as never);
+            await runAction(ctx, sessionId, pageId, { action: 'reload' });
           })
         );
 
@@ -692,7 +693,7 @@ export function buildCli(deps: CliDependencies): Cli {
             await runAction(ctx, sessionId, pageId, {
               action: 'press',
               key,
-            } as never);
+            });
           })
         );
 
@@ -710,7 +711,7 @@ export function buildCli(deps: CliDependencies): Cli {
                 action: 'scroll',
                 direction,
                 amount: Number.parseInt(amount, 10),
-              } as never);
+              });
             }
           )
         );
@@ -722,7 +723,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .argument('<pageId>')
         .action(
           action(async (ctx, sessionId: string, pageId: string) => {
-            await runAction(ctx, sessionId, pageId, { action: 'dismissDialog' } as never);
+            await runAction(ctx, sessionId, pageId, { action: 'dismissDialog' });
           })
         );
 
@@ -737,7 +738,7 @@ export function buildCli(deps: CliDependencies): Cli {
             await runAction(ctx, sessionId, pageId, {
               action: 'acceptDialog',
               ...(promptText !== undefined ? { promptText } : {}),
-            } as never);
+            });
           })
         );
 
@@ -839,12 +840,18 @@ async function runAction(
   ctx: CommandContext,
   sessionId: string,
   pageId: string,
-  request: ActionRequest
+  input: unknown
 ): Promise<void> {
+  const validated = validateWireAction(input);
+  if (!validated.ok)
+    throw new UsageError(
+      `Invalid action: ${validated.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; ')}`
+    );
+  const request = validated.value;
   const result = await ctx.client.sessions.executeAction(sessionId, pageId, request);
 
   ctx.emit(result, () => [
-    `${request.action}${request.target ? ` ${request.target.ref}` : ''}: ${result.status ?? 'unknown'}`,
+    `${request.action}${'target' in request && request.target ? ` ${request.target.ref}` : ''}: ${result.status ?? 'unknown'}`,
     `  revision: ${result.newRevision ?? 'unchanged'}`,
   ]);
 }

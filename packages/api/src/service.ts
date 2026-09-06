@@ -30,6 +30,7 @@ import type { BrowserEngine, EngineEvent, EnginePage } from '@agentbrowser/engin
 import type { EngineSession, EngineSessionOptions, NormalizedCookie } from '@agentbrowser/engine';
 import type { RawPageState } from '@agentbrowser/engine';
 import type { RequestPolicy } from '@agentbrowser/engine';
+import { type ProtocolErrorCode, normalizeEngineError } from '@agentbrowser/engine';
 import { SchemaExtractor } from '@agentbrowser/extraction';
 import {
   extractForms,
@@ -51,15 +52,16 @@ import type {
 import {
   DELIVERED_EXTRACT_FORMATS,
   DELIVERED_OBSERVATION_MODES,
+  DELIVERED_WAIT_TYPES,
   type DeliveredExtractFormat,
   REF_PATTERN,
-  validateAction,
+  decodeWireAction,
 } from '@agentbrowser/protocol';
 
 /** Typed failure carrying a protocol error code. */
 export class ServiceError extends Error {
   constructor(
-    public code: string,
+    public code: ProtocolErrorCode,
     message: string,
     public retryable = false,
     public details?: Record<string, unknown>
@@ -114,6 +116,9 @@ export interface ServiceActRequest {
   action: string;
   target?: { ref: string } | undefined;
   value?: string | undefined;
+  values?: string[] | undefined;
+  deltaX?: number | undefined;
+  deltaY?: number | undefined;
   key?: string | undefined;
   direction?: 'up' | 'down' | 'left' | 'right' | undefined;
   amount?: number | undefined;
@@ -394,7 +399,7 @@ export class AgentBrowserService {
           );
           this.tracer?.endSpan(span);
         }
-        throw this.redactedError(this.mapError(error));
+        throw this.redactedError(this.mapError(error, name));
       }
     );
   }
@@ -525,12 +530,8 @@ export class AgentBrowserService {
     })();
   }
 
-  /** Error messages that indicate the engine itself died. */
-  private static readonly CRASH_PATTERN =
-    /crash|browser (has been )?closed|browser.*disconnect|target (page|context).*closed|context.*closed/i;
-
-  private isCrash(message: string): boolean {
-    return AgentBrowserService.CRASH_PATTERN.test(message);
+  private isCrash(error: unknown): boolean {
+    return normalizeEngineError(error).code === 'ENGINE_CRASHED';
   }
 
   /**
@@ -756,7 +757,7 @@ export class AgentBrowserService {
       try {
         raw = await page.enginePage.observe({});
       } catch (error) {
-        if (this.isCrash(error instanceof Error ? error.message : String(error))) {
+        if (this.isCrash(error)) {
           await this.recoverFromCrash(sessionId, 'exportHtml: engine crashed');
           throw new ServiceError(
             'ENGINE_CRASHED',
@@ -1221,7 +1222,7 @@ export class AgentBrowserService {
           ...(request.waitUntil !== undefined ? { waitUntil: request.waitUntil } : {}),
         });
       } catch (error) {
-        if (this.isCrash(error instanceof Error ? error.message : String(error))) {
+        if (this.isCrash(error)) {
           await this.recoverFromCrash(sessionId, 'navigate: engine crashed');
           throw new ServiceError(
             'ENGINE_CRASHED',
@@ -1272,7 +1273,7 @@ export class AgentBrowserService {
     try {
       raw = await page.enginePage.observe(observationRequest);
     } catch (error) {
-      if (this.isCrash(error instanceof Error ? error.message : String(error))) {
+      if (this.isCrash(error)) {
         await this.recoverFromCrash(sessionId, 'observe: engine crashed');
         throw new ServiceError(
           'ENGINE_CRASHED',
@@ -1578,7 +1579,9 @@ export class AgentBrowserService {
           const secretError = error as { name?: string; code?: string; message?: string };
           throw this.redactedError(
             secretError?.name === 'SecretError' && secretError.code
-              ? new ServiceError(secretError.code, secretError.message ?? 'secret error', false)
+              ? new ServiceError('INVALID_REQUEST', secretError.message ?? 'secret error', false, {
+                  reason: secretError.code,
+                })
               : new ServiceError('INTERNAL', String(error))
           );
         }
@@ -1586,7 +1589,7 @@ export class AgentBrowserService {
 
       // Wait validation (spec 11.1): unknown conditions are rejected before
       // anything runs; every wait carries a deadline.
-      const DELIVERED_WAITS = new Set(['settled', 'domcontentloaded', 'load', 'networkidle']);
+      const DELIVERED_WAITS = new Set<string>(DELIVERED_WAIT_TYPES);
       if (request.wait !== undefined && !DELIVERED_WAITS.has(request.wait.until)) {
         throw new ServiceError(
           'INVALID_REQUEST',
@@ -1607,8 +1610,7 @@ export class AgentBrowserService {
       // for REST /act, /plan (which loops through this method), and direct
       // service callers. Structural failures (missing target, bad param
       // shape) are schema-driven for every delivered action.
-      const constructedAction = this.toProtocolAction(actRequest);
-      const actionValidation = validateAction(constructedAction);
+      const actionValidation = decodeWireAction(actRequest);
       if (!actionValidation.ok) {
         const details = actionValidation.issues
           .map((issue) => `${issue.path || '(root)'}: ${issue.message}`)
@@ -1640,7 +1642,7 @@ export class AgentBrowserService {
       if (result.error) {
         // A crash inside the executor surfaces as an INTERNAL whose message
         // names the crash; recover before rethrowing the typed error.
-        if (result.error.code === 'INTERNAL' && this.isCrash(result.error.message)) {
+        if (result.error.code === 'ENGINE_CRASHED') {
           await this.recoverFromCrash(sessionId, 'act: engine crashed');
           throw this.redactedError(
             new ServiceError(
@@ -1767,7 +1769,7 @@ export class AgentBrowserService {
       try {
         captured = await page.enginePage.pdf(request);
       } catch (error) {
-        if (this.isCrash(error instanceof Error ? error.message : String(error))) {
+        if (this.isCrash(error)) {
           await this.recoverFromCrash(sessionId, 'pdf: engine crashed');
           throw new ServiceError(
             'ENGINE_CRASHED',
@@ -1975,7 +1977,7 @@ export class AgentBrowserService {
       try {
         raw = await page.enginePage.observe({});
       } catch (error) {
-        if (this.isCrash(error instanceof Error ? error.message : String(error))) {
+        if (this.isCrash(error)) {
           await this.recoverFromCrash(sessionId, 'extract: engine crashed');
           throw new ServiceError(
             'ENGINE_CRASHED',
@@ -2074,7 +2076,7 @@ export class AgentBrowserService {
       try {
         captured = await page.enginePage.screenshot(request);
       } catch (error) {
-        if (this.isCrash(error instanceof Error ? error.message : String(error))) {
+        if (this.isCrash(error)) {
           await this.recoverFromCrash(sessionId, 'screenshot: engine crashed');
           throw new ServiceError(
             'ENGINE_CRASHED',
@@ -2224,30 +2226,6 @@ export class AgentBrowserService {
     );
   }
 
-  private toProtocolAction(request: ServiceActRequest) {
-    const action: Record<string, unknown> = { type: request.action };
-    if (request.target !== undefined) action.target = { ref: request.target.ref };
-    if (request.value !== undefined) action.value = request.value;
-    if (request.key !== undefined) action.key = request.key;
-    if (request.direction !== undefined) action.direction = request.direction;
-    if (request.amount !== undefined) action.amount = request.amount;
-    if (request.promptText !== undefined) action.promptText = request.promptText;
-    if (request.condition !== undefined) action.condition = request.condition;
-    // The flat transport carries a single `value`; the protocol's select
-    // takes `values`. Coerce here - without it every HTTP select was
-    // rejected by the executor (SelectAction requires non-empty values),
-    // a latent bug since select shipped.
-    if (request.action === 'select' && request.value !== undefined) {
-      // SelectAction takes `values`; a stray `value` on a constructed
-      // action is additionalProperties-excess the schema tolerates, but
-      // drop it so the executor sees exactly the protocol shape.
-      const { value: _dropped, ...rest } = action;
-      Object.assign(action, rest);
-      action.values = [request.value];
-    }
-    return action as unknown as Parameters<ActionExecutor['execute']>[0]['action'];
-  }
-
   private lastObservationOf(page: PageContext): PageState {
     // The executor needs an observation for fingerprint checks; a synthetic
     // empty one is safe because untargeted actions skip those checks and
@@ -2295,29 +2273,14 @@ export class AgentBrowserService {
     );
   }
 
-  private mapError(error: unknown): ServiceError {
+  private mapError(error: unknown, operation = 'act'): ServiceError {
     if (error instanceof ServiceError) {
       return this.redactedError(error);
     }
-    const message = error instanceof Error ? error.message : String(error);
-    const code =
-      error instanceof Error && 'code' in error ? String((error as { code: string }).code) : '';
-
-    if (code === 'QUOTA_EXCEEDED') {
-      return new ServiceError('QUOTA_EXCEEDED', message);
-    }
-    if (message === 'SESSION_NOT_FOUND') {
-      return new ServiceError('SESSION_NOT_FOUND', 'Session does not exist.');
-    }
-    if (code === 'POLICY_DENIED') {
-      return new ServiceError(
-        'POLICY_DENIED',
-        message,
-        false,
-        (error as { details?: Record<string, unknown> }).details
-      );
-    }
-    return new ServiceError('INTERNAL', message);
+    const failure = normalizeEngineError(error, operation);
+    return this.redactedError(
+      new ServiceError(failure.code, failure.message, failure.retryable, failure.details)
+    );
   }
 }
 

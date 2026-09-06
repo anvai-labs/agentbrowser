@@ -29,6 +29,7 @@ import type {
   ScreenshotRequest,
 } from '@agentbrowser/engine';
 import type { RequestPolicy } from '@agentbrowser/engine';
+import { EngineError, normalizeEngineError } from '@agentbrowser/engine';
 import { DELIVERED_ACTION_TYPES, DELIVERED_OBSERVATION_MODES } from '@agentbrowser/protocol';
 import { type Browser, type BrowserContext, Locator, type Page, chromium } from 'playwright';
 
@@ -856,6 +857,15 @@ class PlaywrightPage implements EnginePage {
   }
 
   async navigate(request: NavigationRequest): Promise<NavigationResult> {
+    try {
+      return await this.performNavigation(request);
+    } catch (error) {
+      const failure = normalizeEngineError(error, 'navigate');
+      throw new EngineError(failure.code, failure.message, failure.retryable, failure.details);
+    }
+  }
+
+  private async performNavigation(request: NavigationRequest): Promise<NavigationResult> {
     const waitUntil = request.waitUntil || 'load';
     const response = await this.page.goto(request.url, {
       waitUntil: waitUntil as 'load' | 'domcontentloaded' | 'networkidle',
@@ -1062,6 +1072,15 @@ class PlaywrightPage implements EnginePage {
   }
 
   async act(action: EngineAction): Promise<ActionEffect> {
+    try {
+      return await this.performAction(action);
+    } catch (error) {
+      const failure = normalizeEngineError(error);
+      throw new EngineError(failure.code, failure.message, failure.retryable, failure.details);
+    }
+  }
+
+  private async performAction(action: EngineAction): Promise<ActionEffect> {
     const actionId = `action-${Date.now()}`;
     const startTimestamp = new Date().toISOString();
     const oldRevision = this.revision;
@@ -1137,7 +1156,23 @@ class PlaywrightPage implements EnginePage {
         break;
       }
       case 'scroll': {
-        await this.page.mouse.wheel(Number(action.deltaX ?? 0), Number(action.deltaY ?? 0));
+        const amount = Number(action.amount ?? 500);
+        const deltaX = Number(
+          action.deltaX ??
+            (action.direction === 'left' ? -amount : action.direction === 'right' ? amount : 0)
+        );
+        const deltaY = Number(
+          action.deltaY ??
+            (action.direction === 'up' ? -amount : action.direction === 'down' ? amount : 0)
+        );
+        if (action.target) {
+          await this.locatorFor(action.target.ref).evaluate(
+            (element, delta) => element.scrollBy(delta.x, delta.y),
+            { x: deltaX, y: deltaY }
+          );
+        } else {
+          await this.page.mouse.wheel(deltaX, deltaY);
+        }
         this.bumpRevision();
         break;
       }

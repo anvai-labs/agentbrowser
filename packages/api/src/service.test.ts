@@ -1283,7 +1283,8 @@ describe('AgentBrowserService', () => {
         })
       );
 
-      expect(error?.code).toBe('SECRET_NOT_FOUND');
+      expect(error?.code).toBe('INVALID_REQUEST');
+      expect(error?.details).toMatchObject({ reason: 'SECRET_NOT_FOUND' });
     });
 
     it('should redact secrets from error payloads', async () => {
