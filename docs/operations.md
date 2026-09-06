@@ -137,6 +137,23 @@ error level, and recorded in the crash audit — callers get a typed
 
 ## Choosing an engine
 
+### Egress and download limits
+
+Direct URL downloads validate every redirect and resolved address, pin the
+validated connection address, and bound decoded bytes and the whole-operation
+deadline. Captured browser downloads are disabled unless `allowDownloads` is
+enabled. Completed captures have unique `downloadId` values; collect by ID when
+filenames repeat. Collection consumes the retained bytes, and page close drops
+uncollected captures (at most 100 entries / 20 MiB retained per page).
+
+These are application limits, not a process-isolation guarantee. Playwright's
+interception fetch buffers a response before the actual-size check, and its
+connection resolution is separate from the policy DNS check. Browser downloads
+can also occupy temporary disk before the completed-file size check. Untrusted
+multi-tenant deployments need network-enforced egress and memory/disk quotas at
+the process/container boundary described by ADR-008; trusted local deployments
+retain that explicit deferral.
+
 Sessions name their engine (`engine` field on create / MCP
 `browser_create`). The registry resolves the primary engine by default
 and fails loudly (`ENGINE_NOT_FOUND`) on unknown names — a session never
@@ -145,7 +162,8 @@ including per-engine egress guarantees, is in the
 [engine matrix](engines.md). Notes for operators:
 
 - **Chromium (Playwright)** is the production default; the egress policy
-  is enforced per request, per redirect hop, and against DNS-resolved IPs.
+  checks routed requests, first redirect targets and resolved IPs. Later hops
+  and connection pinning remain open; see the deployment limitations below.
 - **Safari** (`engine-safari`) is macOS-only and always headed; it
   refuses policy-bearing sessions loudly (`EGRESS_UNSUPPORTED`) rather
   than enforcing nothing quietly.
@@ -180,6 +198,14 @@ seed future headless sessions with them — [TD-BROWSER-6](td/TD-BROWSER-6-heade
 
 ## Deployment notes
 
+- **Browser egress is partial**: routed requests and first redirect targets are
+  checked, but later redirect hops bypass routing. Browser DNS checks do not pin
+  connections, and response-size checks run after buffering. Page WebSocket
+  denial is not proof of worker or transport-wide coverage. Direct-download
+  pinning and streaming caps do not extend to browser traffic. Do not rely on
+  this layer alone for required SSRF containment. Native local operation remains
+  available; a contained profile requires OS-enforced gateway-only egress and
+  independent bypass tests before it can be released.
 - **Docker**: images build from the repo root; process/container
   isolation is the minimum bar for hostile multi-tenancy
   ([ADR-008](adr/008-process-container-isolation.md)). Run one service
