@@ -25,6 +25,7 @@ import Fastify from 'fastify';
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ArtifactAuthorizer } from './artifact-auth.js';
 import { buildOpenApiDocument } from './openapi.js';
+import { PRODUCT_VERSION } from './product-version.js';
 import {
   AgentBrowserService,
   type ServiceActRequest,
@@ -346,7 +347,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   fastify.get('/health', async (request, reply) => {
     return {
       status: 'healthy',
-      version: '1.0.0',
+      version: PRODUCT_VERSION,
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
     };

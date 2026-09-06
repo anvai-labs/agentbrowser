@@ -29,6 +29,7 @@ import {
   validateWireAction,
 } from '@agentbrowser/sdk-typescript';
 import { Command } from 'commander';
+import { PRODUCT_VERSION } from './product-version.js';
 
 /**
  * The slice of the SDK the CLI depends on. Declared structurally so tests can
@@ -109,6 +110,7 @@ export function buildCli(deps: CliDependencies): Cli {
       const program = new Command();
       program
         .name('agentbrowser')
+        .version(PRODUCT_VERSION)
         .description('Agent-native browser service CLI')
         .option('--base-url <url>', 'AgentBrowser server base URL', DEFAULT_BASE_URL)
         .option('--timeout <ms>', 'request timeout in milliseconds', '30000')

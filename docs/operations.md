@@ -33,6 +33,15 @@ Stale targets must be reobserved and require new confirmation.
 
 ## Installation
 
+### Release version consistency
+
+Root `package.json` owns the product version. When preparing a release, change
+that version once, run `pnpm release:sync`, and commit the synchronized manifests
+and generated stamps together. `pnpm release:check` is read-only; after building,
+`pnpm release:artifacts` exercises API health, CLI `--version`, and MCP initialize.
+CI rejects drift and release tags must equal `v<product-version>`. Matching package
+versions identify one shipped product; they do not claim every package changed.
+
 ### Homebrew (macOS / Linux)
 
 ```bash

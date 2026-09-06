@@ -18,7 +18,8 @@ validation record below. A checked status never means merely documented.
 | C | R3, R5 | Live element identity and operator-controlled approval policy | B | Merged: [PR 79](https://github.com/anvai-labs/agentbrowser/pull/79) |
 | D | R4, R9 | Egress composition, safe download transport, typed captured downloads | B | Merged: [PR 80](https://github.com/anvai-labs/agentbrowser/pull/80); explicitly partial, R4 remains open |
 | E | R10, R12 | Shared observation budgets and retention/admission bounds | C, D | Merged: [PR 81](https://github.com/anvai-labs/agentbrowser/pull/81) |
-| F | R11 | Safari transport, lifecycle, and explicit deployment capabilities | B | Independent review and full local checks passed; delivery pending |
+| F | R11 | Safari transport, lifecycle, and explicit deployment capabilities | B | Merged: [PR 82](https://github.com/anvai-labs/agentbrowser/pull/82) |
+| G | Release follow-up | Lockstep product/package versions and release checks | F (delivery stack only) | Independent review and full local checks passed; delivery pending |
 
 ## Findings and acceptance criteria
 
@@ -34,7 +35,7 @@ validation record below. A checked status never means merely documented.
 | R8 | Action dialect drift; protocol, sdk-typescript, mcp-server, cli, engine-playwright | M | MCP reload sends empty target; press wrongly requires target; directional scroll is a no-op | Canonical discriminated wire contract, shared translation; assert delivered behavior across surfaces | Merged in B |
 | R9 | Undeclared download port; api/service.ts, engine-playwright/index.ts | M | Engine holds bytes but service returns NOT_FOUND; page close retains downloads | Typed session download port, unique IDs, bounded retention, consume/close cleanup; real capture-to-service regression | Merged in partial D; R4 remains open |
 | R10 | Duplicate/incorrect observation budgets; api/service.ts, core/action-executor.ts | M | 1000-byte budget returns 1093 bytes; repeated serialization is quadratic | One budget component, final-byte accounting and coherent cursor behavior; multibyte/content/diff tests | Merged in E |
-| R11 | Safari transport and deployment contract; engine-safari, api | M | Unscoped execute URL; service rejects all Safari sessions as INTERNAL | Session-prefixed transport, lifecycle checks; explicit typed egress refusal and documented supported deployment; mock transport tests | Reviewed; F delivery pending |
+| R11 | Safari transport and deployment contract; engine-safari, api | M | Unscoped execute URL; service rejects all Safari sessions as INTERNAL | Session-prefixed transport, lifecycle checks; explicit typed egress refusal and documented supported deployment; mock transport tests | Merged in F |
 | R12 | Retention/admission limits; api/service.ts, core/approval-gate.ts | M | Event count does not bound bytes; maxTokens=2 admits 3 pending tokens | Per-event and aggregate byte bounds, drop counters, hard token admission after cleanup; capacity tests | Merged in E |
 | R13 | Fragmented error taxonomy; engine, core, api, SDK | M | Error behavior varies by operation; SDK discards approval details | Typed adapter errors, shared normalization/recovery, full protocol error envelope; cross-operation error tests | Merged in B |
 
@@ -82,13 +83,14 @@ the findings. Real Safari and Obscura were not run during the review.
 | D | `fix/review-egress-downloads` | Workspace build; 128 service tests; 48 policy tests; 4 direct-transport tests; DNS revalidation/disposal regression; real Chromium chunked-page/captured-download regression | Playwright fetch still buffers before size checks and does not pin DNS; browser temporary-disk quota belongs to ADR-008 deployment isolation |
 | E | `fix/review-resource-budgets` | Workspace build; 85 focused core tests; 130 service/budget tests; UTF-8 boundary sweep, full-list cursor, expanding-redaction, event-byte and concurrent token-admission regressions | Serialized service-ledger bounds are not total process-memory limits; engine queues/live snapshots remain separate; text/diff truncation requires larger budgets rather than an element cursor |
 | F | `fix/review-safari-contract` | Safari build; 18 always-on mock transport/lifecycle, queue, race and HTTP deadline tests; guarded API refusal regression | Real Safari remains enablement-gated and unavailable on this host; direct-engine local use has no egress enforcement or console/network evidence |
+| G | `chore/review-release-consistency` | Workspace build; 35 CLI tests; version-sync/drift/tag fixture; built API/CLI/MCP version checks; documentation links passed | Metadata aligned to existing 1.8.3; no new release or publication |
 
 ## Separate release-tooling follow-up
 
-Use lockstep first-party package versions with one authoritative product version,
+Implemented in group G: lockstep first-party package versions with one authoritative product version,
 automated manifest synchronization, and CI checks against tags and built artifacts.
 Keep `/v1` protocol and underlying browser versions independent. The current API
-manifest (`1.2.0`) and hardcoded health version (`1.0.0`) are inconsistent with
-the shipped product. This is a separate release-consistency PR, not a version bump
+manifest (`1.2.0`) and hardcoded health version (`1.0.0`) were inconsistent with
+the shipped product. This is a separate release-consistency PR, not a new release
 inside the safety fixes. Independent SDK versions can be revisited if it acquires
 an independent publishing/support lifecycle.

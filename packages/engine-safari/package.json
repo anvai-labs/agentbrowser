@@ -1,6 +1,6 @@
 {
   "name": "@agentbrowser/engine-safari",
-  "version": "0.1.0",
+  "version": "1.8.3",
   "private": true,
   "type": "module",
   "description": "Real Safari engine via macOS safaridriver (W3C WebDriver) - TD-BROWSER-7 Phase 2. Always headed, macOS only.",

@@ -12,6 +12,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const binary = process.argv[2];
@@ -36,7 +37,9 @@ const EXPECTED_TOOLS = [
 
 const TIMEOUT_MS = 20_000;
 
-const child = spawn(resolve(binary), [], { stdio: ['pipe', 'pipe', 'pipe'] });
+// Optional arguments also let this gate exercise the bundled Node entrypoint.
+const child = spawn(resolve(binary), process.argv.slice(3), { stdio: ['pipe', 'pipe', 'pipe'] });
+const expectedVersion = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 let buffer = '';
 const responses = new Map();
@@ -99,6 +102,9 @@ try {
   }
   if (!/^\d+\.\d+\.\d+/.test(String(initVersion))) {
     failures.push(`serverInfo.version is not a release version: ${JSON.stringify(initVersion)}`);
+  }
+  if (initVersion !== expectedVersion) {
+    failures.push(`serverInfo.version ${initVersion} does not match package ${expectedVersion}`);
   }
 
   const tools = await waitFor(2);
