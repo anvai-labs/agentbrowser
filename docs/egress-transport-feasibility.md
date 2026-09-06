@@ -209,10 +209,89 @@ coverage, correlated failure reasons, socket attribution, and observer cleanup.
 It reports the missing native request-start event explicitly and always returns
 `completePreExecutionCoverage: false` and `securityAcceptance: false`.
 
-Next: independently prove target startup ordering and recursive coverage, and
+The next investigation was to independently test target startup ordering and recursive coverage, and
 test a metadata-preserving response mechanism before selecting production
 transport. The native control is sufficient to establish the observed response
 and outcome, not complete request-start capture. T1 and R4 remain open.
+
+### T1b: target attachment does not establish startup ownership
+
+The [startup probe](../scripts/probes/worker-startup.mjs) isolates pause ownership
+from response replay: native HTTP delivery, no Fetch/Network domain enablement,
+no injected CSP, no certificate bypass, no permission grants. Each of three arms
+(native, nonrecursive observer, recursive observer) runs seven worker modes in
+fresh contexts. Nested depth 2 means a parent worker and one worker-created child.
+Each worker immediately starts its uniquely identified HTTP sentinel request;
+the parent creates its child without awaiting its own fetch. Workers stay alive
+until context cleanup. Shared workers use unique URLs/names and remain explicit
+positive controls, not silently disabled features.
+
+One Node monotonic clock records attachment, recursive setup acknowledgement,
+server receipt and this client's release invocation. For every attached target,
+this client delays its own release invocation by at least 200 ms; recursive
+setup is acknowledged before that invocation. `release-dispatch` is recorded **before calling the bridge's send
+method**, whose actual outer dispatch occurs in a microtask. It is therefore a
+lower bound, not a socket-dispatch timestamp. A server hit before this marker
+definitively precedes our command; a later hit would only be bounded observation,
+not proof that execution was impossible during the hold.
+
+Two retained runs on Playwright 1.62.1 / Chromium 151.0.7922.34, macOS arm64:
+[initial capture](evidence/worker-startup.jsonl) and
+[reviewed-cleanup repeat](evidence/worker-startup-reviewed.jsonl). Each contains
+21 cases and 27 worker HTTP 200 / exact `worker-startup-ok` body / matching GET
+controls. Both have the same classification for every worker:
+
+| Arm | HTTP controls | Attached workers executing before our release | Executing without observer attachment |
+| --- | --- | --- | --- |
+| Native | 9/9 | Not applicable | No diagnostic observer installed |
+| Nonrecursive | 9/9 | 5/5 | Two nested children and two shared workers |
+| Recursive | 9/9 | 7/7, including both nested children | Two shared workers |
+
+All 12 attachments report `waitingForDebugger: true`, yet their server hits
+precede this client's release by approximately 189–201 ms in the first run and
+199–201 ms in the repeat. Recursive child sessions are routed through their
+actual owning parent session; URL digests map those identities to distinct
+worker tokens. Recursion improves observation but does **not** supply startup
+control in this additional-client arrangement. The worker-only filter and
+page-rooted topology do not attempt shared-worker coverage; successful shared
+requests are reported as uncovered, not as a browser-wide impossibility claim.
+
+[CDP documents](https://chromedevtools.github.io/devtools-protocol/tot/Target/#method-setAutoAttach)
+related-target attachment (including existing targets) and recursive setup.
+Neither an attachment flag nor an acknowledgement proves exclusive pause
+ownership. Inspection of pinned Playwright's `FrameSession._onAttachedToTarget`
+also finds its own `Runtime.runIfWaitingForDebugger` and recursive auto-attachment.
+That is a plausible competing-resumer explanation, **not a causally isolated
+attribution**: this probe did not disable or trace Playwright's own resume command.
+
+Both runs end with zero pending commands, tasks, owned observer listeners and
+HTTP sockets. Parent detach is observed; the two nested detach events are not,
+so no complete detach-event claim is made. Descendant bridges are explicitly
+closed. Independent review found that browser-close rejection could previously
+skip HTTP cleanup. The repeat uses hardened cleanup that records failures and
+attempts each resource close independently, with 2-second per-operation bounds
+and browser-process kill fallback. Launch/connect each have 10-second timeouts;
+the 90-second execution watchdog begins **after** connection, not at process entry.
+
+```bash
+node scripts/probes/worker-startup.mjs
+node scripts/probes/verify-worker-startup.mjs docs/evidence/worker-startup-reviewed.jsonl
+pnpm test:probes
+```
+
+The offline suite validates both captures, exact positive controls, target
+lineage, own-child versus parent release ordering, matrix completeness and
+cleanup failures. It also tests nested bridge response routing and close-before-
+dispatch cancellation. Successful verification means valid diagnostic evidence;
+`securityAcceptance` and `completePreExecutionCoverage` remain false.
+
+**T1b startup acceptance failed; T1/R4 remain open.** Do not build a production
+pause gate around this second CDP client or equate recursion with enforcement.
+T1c should reassess a browser-owned upgrade restriction or a coordinated, sole
+target-lifecycle owner before selecting an implementation. A pure-CDP control
+without Playwright would be a bounded next causal experiment, not a replacement
+engine decision. Shared workers, frames, popups, lifecycle changes, policy
+inheritance and HTTP/WS/WSS compatibility still require the full acceptance matrix.
 
 The [accepted two-profile decision](egress-transport-design.md) is unchanged.
 OS-enforced gateway-only routing remains required for the contained profile,

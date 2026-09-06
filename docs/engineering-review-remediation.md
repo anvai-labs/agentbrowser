@@ -26,13 +26,13 @@ validation record below. A checked status never means merely documented.
 
 ### Next milestone: T1 policy inheritance feasibility
 
-Fresh baseline: merged `develop` at `9f041af`, with all eight post-merge CI
+Fresh baseline: merged `develop` at `5cc837d` ([PR 85](https://github.com/anvai-labs/agentbrowser/pull/85)), with all eight post-merge CI
 checks green. Reuse the single clean worktree; do not recreate the A-G stack.
 
 | Unit | Scope | Acceptance / stop condition | Status |
 | --- | --- | --- | --- |
-| T1a | Compare policy delivery and diagnose replay failures | Preserve HTTP controls; correlate browser failures, CSP violations and server hits | Diagnostic unit complete and independently approved: 36-case comparison, 27-case worker follow-up, 20 offline tests; T1/R4 remain open |
-| T1b | Complete target attachment and nested-worker coverage | Independent review of startup ordering and all-target controls; no production claim from page-only coverage | Next after T1a delivery; diagnostic observer misses one native request-start event |
+| T1a | Compare policy delivery and diagnose replay failures | Preserve HTTP controls; correlate browser failures, CSP violations and server hits | Merged in PR 85; 36-case comparison, 27-case worker follow-up, 20 offline tests; all eight post-merge CI checks green; T1/R4 remain open |
+| T1b | Test target startup ownership and nested-worker coverage | Independent review of startup ordering and all-target controls; no production claim from page-only coverage | Diagnostic unit independently reviewed; 47 offline tests and two 27-worker runs pass fixture integrity. **Startup gate failed:** all 12 attached workers issue HTTP before this client's release; recursion observes both children but cannot hold startup; shared controls uncovered |
 | T1c | Reassess transport feasibility against the complete acceptance matrix | T1 remains open until semantics and coverage pass; revisit design explicitly if they cannot | Pending |
 
 T1a is a bounded probe/evidence PR, not a production adapter change. Keep
