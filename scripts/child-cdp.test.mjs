@@ -67,3 +67,31 @@ test('malformed messages close the diagnostic session without an uncaught parse 
   await assert.rejects(pending, /malformed/);
   assert.equal(child.pendingCount, 0);
 });
+
+test('nested sessions route through their owning child and await the inner reply', async () => {
+  const { parent, child, sent } = setup();
+  const nested = new ChildCdp(child, 'nested');
+  const pending = nested.send('Target.setAutoAttach', { autoAttach: true });
+  await Promise.resolve();
+  await Promise.resolve();
+  const outer = JSON.parse(sent[0].message);
+  assert.equal(sent[0].sessionId, 'owned');
+  assert.equal(outer.method, 'Target.sendMessageToTarget');
+  assert.equal(outer.params.sessionId, 'nested');
+  assert.equal(JSON.parse(outer.params.message).method, 'Target.setAutoAttach');
+  reply(parent, 'owned', { id: outer.id, result: {} });
+  assert.equal(nested.pendingCount, 1, 'outer acknowledgement does not settle nested command');
+  reply(parent, 'owned', { method: 'Target.receivedMessageFromTarget', params: { sessionId: 'nested', message: JSON.stringify({ id: 1, result: { ok: true } }) } });
+  assert.deepEqual(await pending, { ok: true });
+  nested.close();
+  child.close();
+  assert.equal(parent.listenerCount('Target.receivedMessageFromTarget'), 0);
+});
+
+test('close before queued dispatch sends nothing and rejects pending work', async () => {
+  const { child, sent } = setup();
+  const pending = child.send('Runtime.runIfWaitingForDebugger');
+  child.close();
+  await assert.rejects(pending, /closed/);
+  assert.deepEqual(sent, []);
+});
