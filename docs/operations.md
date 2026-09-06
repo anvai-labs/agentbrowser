@@ -183,8 +183,13 @@ including per-engine egress guarantees, is in the
   checks routed requests, first redirect targets and resolved IPs. Later hops
   and connection pinning remain open; see the deployment limitations below.
 - **Safari** (`engine-safari`) is macOS-only and always headed; it
-  refuses policy-bearing sessions loudly (`EGRESS_UNSUPPORTED`) rather
-  than enforcing nothing quietly.
+  refuses policy-bearing sessions with `ENGINE_UNSUPPORTED` and
+  `details.reason: EGRESS_UNSUPPORTED`. The REST service always attaches
+  policy, so driver enablement alone does not make REST Safari sessions work.
+  Direct-engine local use without policy is distinct and trusted-only; it
+  offers no network interception or console/network event evidence. Driver
+  requests have whole-response deadlines, but timeout does not prove an
+  action failed to execute and must not trigger an automatic mutation retry.
 - **Obscura** (`engine-obscura`) is experimental, unregistered, and
   benchmark-only — it cannot be selected by a session, by design; see the
   Obscura section in [engines.md](engines.md).
