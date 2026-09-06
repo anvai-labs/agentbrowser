@@ -166,6 +166,12 @@ error level, and recorded in the crash audit — callers get a typed
 
 ### Egress and download limits
 
+Delivery note: the direct-download and captured-download improvements below
+merged into `develop` in [PR 80](https://github.com/anvai-labs/agentbrowser/pull/80).
+This is a partial correction, not browser containment: R4 remains open in the
+[delivery tracker](engineering-review-remediation.md). Integration into `develop`
+does not itself publish a release.
+
 Direct URL downloads validate every redirect and resolved address, pin the
 validated connection address, and bound decoded bytes and the whole-operation
 deadline. Captured browser downloads are disabled unless `allowDownloads` is

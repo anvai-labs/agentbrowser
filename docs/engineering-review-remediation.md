@@ -19,7 +19,8 @@ validation record below. A checked status never means merely documented.
 | D | R4, R9 | Egress composition, safe download transport, typed captured downloads | B | Merged: [PR 80](https://github.com/anvai-labs/agentbrowser/pull/80); explicitly partial, R4 remains open |
 | E | R10, R12 | Shared observation budgets and retention/admission bounds | C, D | Merged: [PR 81](https://github.com/anvai-labs/agentbrowser/pull/81) |
 | F | R11 | Safari transport, lifecycle, and explicit deployment capabilities | B | Merged: [PR 82](https://github.com/anvai-labs/agentbrowser/pull/82) |
-| G | Release follow-up | Lockstep product/package versions and release checks | F (delivery stack only) | Independent review and full local checks passed; delivery pending |
+| G | Release follow-up | Lockstep product/package versions and release checks | F (delivery stack only) | Merged: [PR 83](https://github.com/anvai-labs/agentbrowser/pull/83) |
+| T0 | Egress contract baseline | Accepted local/contained profiles, truthful guarantees, durable redirect gap fixture | Separate from release-version changes | Design and evidence recorded; independently reviewed; runtime gates T1-T4 remain open |
 
 ## Findings and acceptance criteria
 
@@ -40,6 +41,13 @@ validation record below. A checked status never means merely documented.
 | R13 | Fragmented error taxonomy; engine, core, api, SDK | M | Error behavior varies by operation; SDK discards approval details | Typed adapter errors, shared normalization/recovery, full protocol error envelope; cross-operation error tests | Merged in B |
 
 ## Design decisions
+
+- Owner approved the [two-profile egress direction](egress-transport-design.md):
+  native local mode remains supported; contained Chromium starts on Linux and
+  requires OS-enforced gateway-only egress before release. Pull forward only
+  that ADR-008 slice. Continue unrelated corrective PRs independently; no host
+  firewall change, production deployment, release or full Phase 4 rollout is
+  implicit. R4 remains open until transport acceptance tests pass.
 
 - Retain explicitly captured artifacts for their existing TTL after session close,
   with immutable tenant ownership. Generating a new trace requires a live owned
@@ -64,12 +72,55 @@ validation record below. A checked status never means merely documented.
 
 ## Validation and delivery record
 
-Groups A-C passed independent correction review and all CI checks before merge.
+Groups A-G passed independent correction review and all CI checks before merge.
 Other historical per-finding statuses above are implementation notes, not release
 claims; the group table governs delivery. D's successful direct-download and
 page WebSocket tests do not establish all-hop browser or worker enforcement.
 Its operational limitations are documented in [engines](engines.md),
 [operations](operations.md), and the [threat model](threat-model.md).
+
+### Independent review and integration update
+
+A merged into `develop` at `b72510c`, B at `c0798d8`, C at `b865868`, and partial D
+at `d04d77f`, E at `c7903f8`, F at `92e7efa`, and G at `d9ddfc5`, each after
+independent correction review and all eight GitHub CI checks passed. Their local and remote task branches were deleted;
+there was only one worktree, so no duplicate dependency trees were removed.
+The remaining local stack was rebased onto that merge. No promotion to `main`,
+release, or package publication was performed. B's first publication attempt was
+stopped by three local Chromium test/hook timeouts; its full commit checks had
+passed earlier. A subsequent full workspace check passed without changing the
+tests or increasing timeouts. B subsequently passed all CI and merged.
+A-G were delivered sequentially as PRs 77-83. T0 is the separate final
+design/evidence unit; its branch was rebased onto G without creating another
+worktree. This delivery does not close R4 or implement a contained profile.
+
+E/F/G correction commits were folded into their original local groups rather
+than new branches. Their full validation hooks passed. F's 18 always-on
+mock/HTTP tests include cross-page execution, shutdown races, queue admission,
+closing-handle suppression and 100 successful close cycles without enumeration.
+The real Safari suite remains enablement-gated (six tests skipped on this host).
+Release version/dependency tests and documentation-link checks also passed.
+
+| Review follow-up | Group | Disposition |
+| --- | --- | --- |
+| Secret-bearing dictionary keys, navigation URLs and nested policy spans | A | Corrected and independently approved before merge |
+| Caller `type` overrides canonical wire `action` | B | Reject conflicting discriminator before decoding; full local checks and independent correction review passed |
+| Consent uses missing/stale observation URL | C | Live engine URL port with legacy observation fallback; no-observe/history/external-navigation/token regressions; full checks and independent review passed |
+| Session-only policy omits default page WS denial | D | Corrected; real Chromium page probe confirms zero server connections; worker coverage is not implied |
+| Direct transport omits operator redirect limit | D | Typed policy delegation corrected; zero-limit fixture contacts only initial URL |
+| Later browser redirect hops bypass route callback and policy | D / R4 | **Open, high severity.** Owner approved [local and contained profiles](egress-transport-design.md); partial D may proceed only with explicit limitations; contained release requires T1-T4 |
+| Candidate worker WS/WSS controls bypassed | T1 / R4 | **Feasibility gate failed.** Page routing and header-only CSP miss workers; body fulfillment changes blob inheritance but breaks a data-worker HTTP control and still misses nested external workers; [evidence](egress-transport-feasibility.md). No production transport fix claimed |
+| Diff observation discards continuation/maxElements | E | Corrected; 420-element diff paginates 300+120 and honors maxElements; independent review passed |
+| Safari selected-window races and late resource creation after close | F | Corrected; bounded shared operation queue, stable close promises, pending-start cleanup and identity-safe closing markers; independent review passed |
+| npm publishing lacks tag-guard dependency | G | Corrected; direct dependency plus regression test; independent review passed |
+
+The implementation-only statuses in the historical finding table above are not
+closure claims; the current group/review tables govern delivery. In particular,
+R4 is not fixed by the successful direct-download tests. The route-only browser
+experiment is preserved in a named Git stash, not included in the delivery
+stack. T0 now retains the end-to-end bypass as the explicitly labeled
+`redirect-gap-real-chromium.test.ts` truth guard; it is not a security acceptance
+test and must be inverted when transport enforcement closes the gap.
 
 Baseline: workspace build and 740 existing tests passed; four Chromium API tests
 passed after one capture setup-timeout rerun. Adversarial local fixtures reproduced
@@ -77,10 +128,10 @@ the findings. Real Safari and Obscura were not run during the review.
 
 | Group | Branch / PR | Validation | Remaining limitations |
 | --- | --- | --- | --- |
-| A | `fix/review-evidence-boundaries` | Workspace build; 195 API/service/boundary tests; 24 extraction tests passed | Raw evidence bytes intentionally not redacted; independent PR review pending |
-| B | `fix/review-action-contracts` | Workspace build; 126 service, 65 HTTP, 44 SDK, 46 MCP, 34 CLI, 85 protocol, 33 engine, 173 core tests; real Chromium scroll/keyboard regression passed | Legacy adapter message matching retained at one compatibility boundary; timeout does not imply safe mutation retry |
-| C | `fix/review-target-identity-consent` | Workspace build; 127 service/ref-translation tests; 65 core policy/gate/executor tests; 5 real DOM identity and 3 real consent/plan tests passed | Conservative staleness on reorder; exact-match rules are not semantic risk inference; independent human authorization remains the caller's responsibility |
-| D | `fix/review-egress-downloads` | Workspace build; 128 service tests; 48 policy tests; 4 direct-transport tests; DNS revalidation/disposal regression; real Chromium chunked-page/captured-download regression | Playwright fetch still buffers before size checks and does not pin DNS; browser temporary-disk quota belongs to ADR-008 deployment isolation |
+| A | [PR 77](https://github.com/anvai-labs/agentbrowser/pull/77), merged | Workspace build; 195 API/service/boundary tests; 24 extraction tests; independent correction review and all CI passed | Raw evidence bytes intentionally not redacted |
+| B | [PR 78](https://github.com/anvai-labs/agentbrowser/pull/78), merged | Workspace build; 126 service, 65 HTTP, 44 SDK, 46 MCP, 34 CLI, 85 protocol, 33 engine, 173 core tests; real Chromium scroll/keyboard regression passed | Legacy adapter message matching retained at one compatibility boundary; timeout does not imply safe mutation retry |
+| C | [PR 79](https://github.com/anvai-labs/agentbrowser/pull/79), merged | Workspace build; 127 service/ref-translation tests; 65 core policy/gate/executor tests; 5 real DOM identity and 3 real consent/plan tests passed | Conservative staleness on reorder; exact-match rules are not semantic risk inference; independent human authorization remains the caller's responsibility |
+| D | `fix/review-egress-downloads` | Workspace build; 128 service tests; 48 policy tests; 5 direct-transport tests; DNS revalidation/disposal regression; real Chromium chunked-page/captured-download regression | Playwright fetch still buffers before size checks and does not pin DNS; browser temporary-disk quota belongs to ADR-008 deployment isolation |
 | E | `fix/review-resource-budgets` | Workspace build; 85 focused core tests; 130 service/budget tests; UTF-8 boundary sweep, full-list cursor, expanding-redaction, event-byte and concurrent token-admission regressions | Serialized service-ledger bounds are not total process-memory limits; engine queues/live snapshots remain separate; text/diff truncation requires larger budgets rather than an element cursor |
 | F | `fix/review-safari-contract` | Safari build; 18 always-on mock transport/lifecycle, queue, race and HTTP deadline tests; guarded API refusal regression | Real Safari remains enablement-gated and unavailable on this host; direct-engine local use has no egress enforcement or console/network evidence |
 | G | `chore/review-release-consistency` | Workspace build; 35 CLI tests; version-sync/drift/tag fixture; built API/CLI/MCP version checks; documentation links passed | Metadata aligned to existing 1.8.3; no new release or publication |
@@ -90,7 +141,7 @@ the findings. Real Safari and Obscura were not run during the review.
 Implemented in group G: lockstep first-party package versions with one authoritative product version,
 automated manifest synchronization, and CI checks against tags and built artifacts.
 Keep `/v1` protocol and underlying browser versions independent. The current API
-manifest (`1.2.0`) and hardcoded health version (`1.0.0`) were inconsistent with
+manifest (previously `1.2.0`) and hardcoded health version (`1.0.0`) were inconsistent with
 the shipped product. This is a separate release-consistency PR, not a new release
 inside the safety fixes. Independent SDK versions can be revisited if it acquires
 an independent publishing/support lifecycle.
