@@ -16,7 +16,7 @@ capability claims must match observed behavior.
 | Firefox / WebKit | `engine-playwright` (`browser:`) | Supported (availability-gated in CI where browsers are installed) | Pass | Routing-based checks; complete transport coverage not established |
 | FakeEngine | `testkit` | Deterministic reference | Pass (reference) | N/A (no network) |
 | Obscura v0.2.1 | `engine-obscura` | **Experimental, benchmark-only** (spec §17.2 backend #3) | Pass (data: URLs) | **NOT enforceable** - see below |
-| Safari (real, via safaridriver) | `engine-safari` | **Phase 2 shipped** - macOS only, always headed, `safaridriver --enable` required | Contract suite + gated Safari tests (darwin, enablement-gated) | **NOT enforceable** - requests with a policy fail loudly (`EGRESS_UNSUPPORTED`) |
+| Safari (real, via safaridriver) | `engine-safari` | **Direct-engine local use only** - macOS, always headed, driver enablement required; guarded REST creation is unsupported | Always-on mock transport/lifecycle tests + enablement-gated real Safari suite | **NOT enforceable** - policy-bearing sessions return `ENGINE_UNSUPPORTED`, reason `EGRESS_UNSUPPORTED` |
 
 Passing the engine contract suite does not establish complete network containment.
 Independent Chromium probes reproduce later-hop redirect bypasses. Direct-download
