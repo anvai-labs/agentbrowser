@@ -15,7 +15,7 @@ validation record below. A checked status never means merely documented.
 | --- | --- | --- | --- | --- |
 | A | R1, R2, R6 | Evidence ownership, secret boundaries, deterministic extraction | None | Implemented; review pending |
 | B | R7, R8, R13 | Wire actions, SDK deadlines/error details, adapter error normalization | A | Implemented; review pending |
-| C | R3, R5 | Live element identity and operator-controlled approval policy | B | Pending |
+| C | R3, R5 | Live element identity and operator-controlled approval policy | B | Implemented; review pending |
 | D | R4, R9 | Egress composition, safe download transport, typed captured downloads | B | Pending |
 | E | R10, R12 | Shared observation budgets and retention/admission bounds | C, D | Pending |
 | F | R11 | Safari transport, lifecycle, and explicit deployment capabilities | B | Pending |
@@ -55,9 +55,11 @@ validation record below. A checked status never means merely documented.
   Ownership, consent and resource budgets remain application responsibilities.
   Egress transport interfaces must remain reusable across a future process
   boundary; do not imply that post-buffer checks are streaming memory limits.
-- Approval default: pending user preference between operator rules with optional
-  strict unknown-risk handling, and strict handling by default. Independent groups
-  proceed while this choice is pending.
+- Approval default: operator rules with optional strict unknown-risk handling,
+  as recommended while the optional preference question remained unanswered.
+  Session approval settings are restrict-only; `allow` cannot relax an operator
+  requirement. Consent tokens represent caller confirmation, not an independent
+  human-authentication boundary: clients must obtain approval before retrying.
 
 ## Validation and delivery record
 
@@ -69,7 +71,7 @@ the findings. Real Safari and Obscura were not run during the review.
 | --- | --- | --- | --- |
 | A | `fix/review-evidence-boundaries` | Workspace build; 195 API/service/boundary tests; 24 extraction tests passed | Raw evidence bytes intentionally not redacted; independent PR review pending |
 | B | `fix/review-action-contracts` | Workspace build; 126 service, 65 HTTP, 44 SDK, 46 MCP, 34 CLI, 85 protocol, 33 engine, 173 core tests; real Chromium scroll/keyboard regression passed | Legacy adapter message matching retained at one compatibility boundary; timeout does not imply safe mutation retry |
-| C | Pending | Pending | Pending |
+| C | `fix/review-target-identity-consent` | Workspace build; 127 service/ref-translation tests; 65 core policy/gate/executor tests; 5 real DOM identity and 3 real consent/plan tests passed | Conservative staleness on reorder; exact-match rules are not semantic risk inference; independent human authorization remains the caller's responsibility |
 | D | Pending | Pending | Pending |
 | E | Pending | Pending | Pending |
 | F | Pending | Pending | Pending |

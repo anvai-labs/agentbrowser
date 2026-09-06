@@ -352,6 +352,11 @@ class SafariPage implements EnginePage {
     }
   }
 
+  async getUrl(): Promise<string> {
+    await this.switchTo();
+    return this.driver.request<string>(`/session/${this.wdSessionId}/url`, 'GET');
+  }
+
   async navigate(request: NavigationRequest): Promise<NavigationResult> {
     this.assertOpen();
     await this.switchTo();

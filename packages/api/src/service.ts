@@ -26,6 +26,7 @@ import type { ArtifactMetadata } from '@agentbrowser/core';
 import type { InMemoryTracer, Span } from '@agentbrowser/core';
 import type { MetricsRegistry } from '@agentbrowser/core';
 import type { StructuredLogger } from '@agentbrowser/core';
+import { ActionRiskPolicy, type ActionRiskPolicyOptions } from '@agentbrowser/core';
 import type { BrowserEngine, EngineEvent, EnginePage } from '@agentbrowser/engine';
 import type { EngineSession, EngineSessionOptions, NormalizedCookie } from '@agentbrowser/engine';
 import type { RawPageState } from '@agentbrowser/engine';
@@ -56,6 +57,7 @@ import {
   type DeliveredExtractFormat,
   REF_PATTERN,
   decodeWireAction,
+  parseRef,
 } from '@agentbrowser/protocol';
 
 /** Typed failure carrying a protocol error code. */
@@ -91,6 +93,7 @@ export interface ServiceSessionRequest {
   /** Per-session host rules, chained over the SSRF base (restrict-only). */
   allowedHosts?: string[];
   blockedHosts?: string[];
+  approval?: import('@agentbrowser/protocol').ApprovalPolicy;
 }
 
 export interface ServiceSessionView {
@@ -151,6 +154,7 @@ export interface ServiceActResult {
 }
 
 export interface ServiceDependencies {
+  approvalPolicy?: ActionRiskPolicyOptions;
   engine: BrowserEngine;
   /**
    * TD-BROWSER-7 Phase 1: named auxiliary engines. createSession routes by
@@ -186,14 +190,6 @@ export interface ServiceDependencies {
   defaultIdleTimeoutMs?: number;
 }
 
-/** Risk classes that require an approval token before the action runs. */
-const HIGH_RISK_EFFECTS = new Set([
-  'transaction',
-  'account-security',
-  'external-message',
-  'destructive',
-]);
-
 interface PageContext {
   sessionId: string;
   enginePage: EnginePage;
@@ -202,6 +198,8 @@ interface PageContext {
   lastObservation?:
     | {
         revision: number;
+        url: string;
+        engineRevision?: number;
         /** normalized ref -> engine ref */
         refMap: Map<string, string>;
         byRef: Map<string, PageElement>;
@@ -251,6 +249,11 @@ export class AgentBrowserService {
   >();
   /** Per-session egress chain (fast-fail + engine choke point, one verdict). */
   private readonly sessionPolicies = new Map<string, RequestPolicy>();
+  private readonly sessionApprovalPolicies = new Map<
+    string,
+    import('@agentbrowser/protocol').ApprovalPolicy
+  >();
+  private readonly actionRiskPolicy: ActionRiskPolicy;
   private readonly pages = new Map<string, PageContext>();
   private pageCounter = 0;
   /** Audit log of sessions terminated by engine crashes (TD-024). */
@@ -260,6 +263,7 @@ export class AgentBrowserService {
   private sweepTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(deps: ServiceDependencies) {
+    this.actionRiskPolicy = new ActionRiskPolicy(deps.approvalPolicy);
     this.engine = deps.engine;
     for (const [name, engine] of Object.entries(deps.engines ?? {})) {
       this.engines.set(name, engine);
@@ -367,6 +371,7 @@ export class AgentBrowserService {
     this.requestHistory.delete(sessionId);
     this.sessionDownloadPolicy.delete(sessionId);
     this.sessionPolicies.delete(sessionId);
+    this.sessionApprovalPolicies.delete(sessionId);
   }
 
   /**
@@ -655,6 +660,7 @@ export class AgentBrowserService {
         maxDownloadBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
       });
       this.sessionPolicies.set(session.sessionId, sessionPolicy);
+      this.sessionApprovalPolicies.set(session.sessionId, { ...request.approval });
 
       return {
         sessionId: session.sessionId,
@@ -1285,6 +1291,14 @@ export class AgentBrowserService {
       throw error;
     }
 
+    if (
+      raw.revision !== undefined &&
+      page.lastObservation?.engineRevision !== undefined &&
+      raw.revision !== page.lastObservation.engineRevision &&
+      page.revision === page.lastObservation.revision
+    ) {
+      page.revision += 1;
+    }
     const observation = this.normalizer.normalize(raw, {
       ...(request.mode !== undefined ? { mode: request.mode } : {}),
       revision: page.revision,
@@ -1296,15 +1310,22 @@ export class AgentBrowserService {
     const refMap = new Map<string, string>();
     const byRef = new Map<string, PageElement>();
     const byEngineRef = new Map<string, PageElement>();
-    observation.elements.forEach((element, index) => {
+    for (const element of observation.elements) {
       byRef.set(element.ref, element);
-      const engineRef = raw.elements[index]?.ref;
+      const ordinal = parseRef(element.ref)?.ordinal;
+      const engineRef = ordinal !== undefined ? raw.elements[ordinal]?.ref : undefined;
       if (engineRef !== undefined) {
         refMap.set(element.ref, engineRef);
         byEngineRef.set(engineRef, element);
       }
-    });
-    page.lastObservation = { revision: page.revision, refMap, byRef };
+    }
+    page.lastObservation = {
+      revision: page.revision,
+      url: raw.url,
+      ...(raw.revision !== undefined ? { engineRevision: raw.revision } : {}),
+      refMap,
+      byRef,
+    };
 
     // Retain the snapshot for sinceRevision diffs (bounded history).
     page.history.set(page.revision, { byRef, byEngineRef });
@@ -1560,8 +1581,6 @@ export class AgentBrowserService {
         }
       }
 
-      await this.checkApproval(sessionId, page, request, span);
-
       // The adapter projects the engine into service revision space: refs are
       // translated before they reach the engine, and action effects come back
       // stamped with the service's revision rather than the engine's counter.
@@ -1631,6 +1650,8 @@ export class AgentBrowserService {
           enginePage: adapter,
           observation: this.lastObservationOf(page),
           currentRevision: page.revision,
+          beforeAction: (resolved) =>
+            this.checkApproval(sessionId, pageId, page, request, resolved?.fingerprint, span),
           // TD-BROWSER-9, A7: reuse the map already built in observe() rather
           // than let the executor re-scan observation.elements per action.
           ...(page.lastObservation !== undefined
@@ -2173,27 +2194,49 @@ export class AgentBrowserService {
   /** Gate high-risk elements behind single-use approval tokens (ADR-007). */
   private async checkApproval(
     sessionId: string,
+    pageId: string,
     page: PageContext,
     request: ServiceActRequest,
+    identity?: string,
     span?: import('@agentbrowser/core').Span | undefined
   ): Promise<void> {
     const ref = request.target?.ref;
-    if (ref === undefined || !page.lastObservation) {
-      return;
-    }
-
-    const element = page.lastObservation.byRef.get(ref);
-    const risk = element?.risk;
-    if (risk === undefined || !HIGH_RISK_EFFECTS.has(risk)) {
-      return;
-    }
+    const element = ref !== undefined ? page.lastObservation?.byRef.get(ref) : undefined;
+    // Cached observations can precede history or out-of-band navigation.
+    // Older adapters fall back to a live observation, never an empty/stale URL.
+    const currentUrl = page.enginePage.getUrl
+      ? await page.enginePage.getUrl()
+      : (await page.enginePage.observe({})).url;
+    const { effect: risk, decision } = this.actionRiskPolicy.evaluate(
+      {
+        action: request.action,
+        url: currentUrl,
+        ...(element ? { element } : {}),
+      },
+      this.sessionApprovalPolicies.get(sessionId)
+    );
+    if (decision === 'allow') return;
+    if (decision === 'deny')
+      throw new ServiceError(
+        'POLICY_DENIED',
+        `Operator/session approval policy denies '${risk}' actions.`,
+        false,
+        { effect: risk }
+      );
+    const decoded = decodeWireAction(request);
+    if (!decoded.ok) throw new ServiceError('INVALID_REQUEST', 'Invalid approval action');
 
     const approvalRequest = {
       sessionId,
       action: {
         type: request.action,
         effect: risk,
-        target: { ref },
+        ...(ref !== undefined ? { target: { ref } } : {}),
+        pageId,
+        revision: page.revision,
+        url: currentUrl,
+        ...(identity !== undefined ? { identity } : {}),
+        parameters: { ...decoded.value },
         ...(request.value !== undefined ? { value: request.value } : {}),
       },
     };

@@ -7,6 +7,30 @@ client, start with the [README](../README.md); for the security model,
 see the [threat model](threat-model.md) and the
 [safety ADRs](README.md#core-architecture-adrs).
 
+## Operator approval policy
+
+`AGENTBROWSER_APPROVAL_POLICY` accepts a JSON object, or embedders can pass
+`ServerOptions.approvalPolicy`. Rules use exact hostname/action/role/name matches;
+the first matching rule wins. They are trusted deployment configuration, not
+instructions accepted from the page or from an agent request. For example:
+
+```json
+{"unknownRisk":"required","rules":[{"hostname":"shop.example","action":"click","name":"Pay","effect":"transaction"}]}
+```
+
+Unknown-risk actions default to `allow` for local automation; select `required`
+for conservative operation. Recognized high-risk effects require confirmation
+unless an operator rule explicitly allows or denies them. Session
+`policy.approval.transactions` and `externalMessages` can tighten a decision to
+`required` or `deny`, but cannot relax the operator policy. Rules do not infer
+transaction semantics from arbitrary page text; audit them for your workflows.
+
+On `APPROVAL_REQUIRED`, clients must obtain operator confirmation before retrying
+with `details.tokenId` as `approvalToken`. The token is single-use and bound to
+page, revision, resolved target fingerprint and action parameters. This protocol
+records caller confirmation; it does not independently authenticate a human.
+Stale targets must be reobserved and require new confirmation.
+
 ## Installation
 
 ### Homebrew (macOS / Linux)

@@ -116,6 +116,8 @@ export interface NavigationResult {
  * Raw page state from engine (before normalization)
  */
 export interface RawPageState {
+  /** Optional monotonic engine observation generation, including out-of-band DOM changes. */
+  revision?: number;
   url: string;
   title: string;
   status: 'loading' | 'interactive' | 'complete';
@@ -332,6 +334,9 @@ export interface EnginePage {
    * Page ID
    */
   id: string;
+
+  /** Live document URL without creating an observation or changing refs. */
+  getUrl?(): Promise<string>;
 
   /**
    * Navigate to URL
