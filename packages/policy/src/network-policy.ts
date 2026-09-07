@@ -296,6 +296,30 @@ export class NetworkPolicy {
     return { ...this.options };
   }
 
+  /** Fixed session-generation rules, without multiplying raw request-log buffers. */
+  snapshot(): NetworkPolicy {
+    // An inherited config-only clone must never silently drop a custom deny.
+    // Custom policies must explicitly implement their own immutable snapshot.
+    if (
+      Object.getPrototypeOf(this) !== NetworkPolicy.prototype ||
+      [
+        'checkRequest',
+        'checkResolvedAddresses',
+        'checkResponse',
+        'checkBodySize',
+        'checkRedirectChain',
+      ].some((name) => Object.hasOwn(this, name))
+    ) {
+      throw new NetworkPolicyError(
+        'ENGINE_UNSUPPORTED',
+        'Custom policy requires an immutable snapshot implementation'
+      );
+    }
+    const snapshot = new NetworkPolicy({ ...this.options, enableLogging: false, maxLogEntries: 1 });
+    Object.freeze(snapshot.options);
+    return snapshot;
+  }
+
   /**
    * Update policy configuration
    */

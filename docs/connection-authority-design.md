@@ -1,6 +1,6 @@
 # T2a: connection authority and test contract
 
-Status: **Independently reviewed design, merged in PR 91; T2b1 primitive implemented and independently approved, not integrated.**
+Status: **Design merged in PR 91; T2b1 merged in PR 93 with green PR/post-merge CI; T2b2 integration implemented and independently approved, awaiting delivery CI.**
 The R14/T2b0 prerequisite correction merged in PR 92 (unreleased);
 see the [delivery tracker](engineering-review-remediation.md).
 Owner approved progressing T2a locally after v1.8.4. This unit selects the
@@ -138,7 +138,7 @@ The first rollout keeps the GET-only download behavior and current limits.
 
 ## Proposed bounds and error ownership
 
-These are T2b1 primitive defaults, not production service settings yet.
+These are T2b1 primitive defaults, adopted by the T2b2 direct-download caller.
 Small values may be injected by deterministic tests. Validate all limits as
 positive safe integers before admitting work. Millisecond timeouts additionally
 must not exceed 2,147,483,647 (the supported single-timer maximum); reject invalid
@@ -203,8 +203,9 @@ and the wider transport acceptance gates remain separate work.
 
 The private [connection authority](../packages/api/src/connection-authority.ts)
 implements TCP admission, full-set DNS validation, one literal-address dial,
-canonical peer verification and revocable socket leases. It is not exported from
-the API package entry point or connected to `downloadWithPolicy`/service sessions.
+canonical peer verification and revocable socket leases. At the T2b1 merge it
+was not connected to downloads/service sessions; it remains private to the API
+implementation. T2b2 integration is described below.
 No gateway, browser adapter, HTTP/TLS implementation, deployment or package-version
 change is included. Native local behavior therefore remains unchanged.
 
@@ -248,3 +249,69 @@ redacting service logger, and separate caller cleanup diagnostics. T2b1 returns
 bounded stage/reason errors and preserves explicit protocol error codes without
 retaining raw callback/transport messages; it does not claim that service logging
 wiring or TLS wrapper cleanup is intrinsic to a TCP-only authority.
+
+## T2b2 production integration boundary
+
+The private `DownloadTransport` is created once per download-enabled session,
+using one service-runtime `DownloadBudget`. It replaces the standalone download
+helper, with no socket type exported through core/engine/protocol or a public
+route. The engine-neutral coordinator exposes only a session cancellation signal:
+explicit close, termination, detected expiry and shutdown abort it before waiting
+for engine teardown. The service revokes every download owner before shutdown,
+does not publish a generation created during shutdown, and checks the owner again
+before storing an artifact. An injected test fetcher runs inside the same transfer
+admission/cancellation envelope; it is not production TCP/TLS evidence.
+
+For download-enabled sessions, `NetworkPolicy.snapshot()` captures fixed rules
+before asynchronous engine creation. The session host composite is shared by
+navigation fast-fail, engine policy and direct downloads. Updating the injected
+base configuration affects newly created download generations, not existing ones;
+close/recreate to replace a generation. The built-in snapshot freezes configuration
+and disables private raw request logs, avoiding a new log buffer per session.
+Custom subclasses/overridden policy methods must explicitly implement an immutable
+snapshot or download-enabled session creation fails with `ENGINE_UNSUPPORTED`;
+copying their base configuration must never silently discard a custom deny.
+Sessions without downloads retain their existing injected-policy behavior.
+
+The shared budget separately caps 32 live/pending TCP attempts and 32 transfer
+continuations, with eight of each per session and no queue. A cancelled DNS/policy
+attempt retains authority admission until it settles; a cancelled response/redirect/
+body-policy callback retains transfer admission until its continuation settles.
+These are separate bounds, not a promise of 32 total objects or a hard callback
+shutdown deadline. Service teardown never waits for an arbitrary external callback.
+
+Each GET/redirect hop obtains a fresh verified lease. The HTTP request supplies
+`createConnection` with that exact socket; `agent: false` must not be used because
+it selects a default Agent that can bypass the handoff. HTTPS wraps the lease in
+TLS first, preserving logical-host certificate verification and DNS-only SNI.
+Tests provide disposable fixture trust, never disable verification or install a CA.
+There is no pooling, implicit DNS retry or second network lookup.
+
+One monotonic overall deadline (30 seconds by default) covers policy, connection,
+TLS, headers, redirects, decoding and body policy. Overrides must be positive safe
+integer milliseconds within the single-timer maximum. Redirect overrides are
+non-negative safe integers capped at 100; the default remains ten and the policy
+can restrict it further. Both encoded and decoded bytes obey the session byte cap.
+Per-hop leases drain before redirect readmission. Ordinary TCP close is not itself
+a failed transfer: buffered/decompressed data may finish afterward. The transfer
+signal owns request/response/decoder/TLS destruction, independently of raw TCP.
+
+The existing redacting service logger receives one `download.transport` terminal
+record per admitted/rejected download attempt, with generation, transfer ID, last
+established connection ID if available, stage, outcome and protocol code. Cleanup
+exceptions use a separate bounded `download.cleanup-failed` record; raw URL query,
+headers, certificates, callback details and transport messages are never logged.
+The enclosing `download.fetch` operation remains the artifact-level telemetry owner.
+
+Acceptance evidence: 46 focused download tests pass, including eight real TLS
+cases and the overflow-during-stalled-policy regression independently reproduced
+and corrected during review. Five new coordinator lifecycle cases and two policy
+snapshot cases pass. Independent transport and lifecycle reviewers approved.
+The native Bun check in `scripts/check-download-bun.ts` exercises production HTTP
+and HTTPS success/cancellation with sockets and admission drained; all four
+controls pass locally and are included in the existing Bun CI gate.
+
+Expiry cancellation occurs when the coordinator's existing lazy lookup or cleanup
+sweep detects expiry; this does not add an exact wall-clock TTL scheduler. Ordinary
+local/Brew deployments remain available. Browser routing gaps, CONNECT, gateway
+deployment and OS-enforced egress are not addressed here; T1/R4 remain open.

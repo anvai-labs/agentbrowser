@@ -38,7 +38,10 @@ in [PR 91](https://github.com/anvai-labs/agentbrowser/pull/91), with all eight P
 checks green (docs-only post-merge CI correctly excluded). R14/T2b0 merged in
 [PR 92](https://github.com/anvai-labs/agentbrowser/pull/92) at `3195bf8`, with all
 eight PR checks and all eight [post-merge CI checks](https://github.com/anvai-labs/agentbrowser/actions/runs/34106663675)
-green. T2b1 is the next runtime delivery unit. A new T1 mechanism,
+green. T2b1 merged in [PR 93](https://github.com/anvai-labs/agentbrowser/pull/93)
+at `8361f38`, with all eight PR and all eight
+[post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/34112948325)
+green. T2b2 is the current runtime delivery unit. A new T1 mechanism,
 private patch or fork still requires a separate decision.
 
 | Unit | Scope | Acceptance / stop condition | Status |
@@ -50,8 +53,27 @@ private patch or fork still requires a separate decision.
 | T1e | Supported integration contract and maintenance decision | Separate first-request admission, execution initialization and browser-semantic enforcement; no automatic probe expansion or private patch | Owner authorized focused inquiry. [Message prepared](playwright-integration-inquiry.md), not sent: upstream support requires Discord access unavailable here. No upstream-supported mechanism selected |
 | T2a | Connection-authority design and test contract | Ground extraction in the direct-download caller; define DNS/peer/TLS ownership, revocation, admission and failure tests | [Design independently reviewed](connection-authority-design.md) and merged in PR 91. Source review reproduced R14; no T1/R4 closure |
 | T2b0 | Canonical IP policy and resolver-record validation (R14) | Equivalent addresses obey configured rules; malformed or denied answer sets cause zero TCP accepts/HTTP requests; permitted local controls succeed | Merged in PR 92, unreleased; independent approval and all eight PR/post-merge checks green |
-| T2b1 | Private connection authority | Admission, revocation, DNS/peer identity and real HTTP/TLS acceptance contract | Implemented with independent lifecycle and HTTP/TLS approvals; 55 deterministic and nine real-I/O tests pass. Not integrated into production downloads; CI gates delivery. See [implementation boundary](connection-authority-design.md#t2b1-implementation-boundary) |
-| T2b2 | Direct-download and session integration | Use the primitive per session generation and one runtime budget; retain transfer/redirect/TLS semantics and owner-aware terminal diagnostics | Next after T2b1 merges green; no premature service wiring in T2b1 |
+| T2b1 | Private connection authority | Admission, revocation, DNS/peer identity and real HTTP/TLS acceptance contract | Merged in PR 93 with independent approvals, 55 deterministic/nine real-I/O cases, all eight PR and post-merge checks green; unreleased |
+| T2b2 | Direct-download and session integration | Use the primitive per session generation and one runtime budget; retain transfer/redirect/TLS semantics and owner-aware terminal diagnostics | In progress on one branch from merged T2b1; independent review and PR/post-merge CI required |
+
+T2b2 cohesive implementation checklist (one PR, no release or gateway changes):
+
+| Item | Scope / evidence | Status |
+| --- | --- | --- |
+| Lifecycle | Coordinator-owned cancellation at close/expiry/termination, before engine teardown; service generation cleanup | Implemented and independently approved; lifecycle and late-artifact regressions pass |
+| Transport | Verified socket handoff, logical TLS identity, per-hop authorization, one total deadline and bounded late callbacks | Implemented and independently approved; 46 focused download tests and four native Bun acceptance controls pass |
+| Diagnostics | One redacted terminal outcome with generation/connection identity; no raw transport errors | Implemented with separate cleanup diagnostics; privacy/outcome regressions pass |
+| Acceptance | Production HTTP/TLS and session regressions, independent adversarial review, eight PR and post-merge checks | Pending |
+
+T2b2 review evidence: the initial coordinator cancellation cases failed before
+implementation. Independent transport review reproduced encoded-size overflow
+waiting behind a stalled body-policy callback. The durable regression failed
+before the fix; overflow now aborts all I/O promptly while callback admission
+remains reserved until actual completion. Both reviewers approved the correction.
+Native Bun HTTP/HTTPS positive/cancellation checks now run in the existing Bun
+CI job. Full PR and post-merge CI remain delivery gates, not inferred from these
+local controls. See the [integration boundary](connection-authority-design.md#t2b2-production-integration-boundary)
+for policy snapshot compatibility and expiry/containment limitations.
 
 T1a is a bounded probe/evidence PR, not a production adapter change. Keep
 historical evidence immutable. No gateway deployment, host networking changes,

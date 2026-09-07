@@ -272,5 +272,8 @@ jobs:
       - name: Compile the MCP server binary (version-stamped)
         run: node packages/mcp-server/scripts/compile.mjs
 
+      - name: Native Bun download HTTP/TLS acceptance
+        run: bun scripts/check-download-bun.ts
+
       - name: Stdio smoke (initialize + tools/list)
         run: node packages/mcp-server/scripts/smoke.mjs packages/mcp-server/dist-bin/agentbrowser-mcp

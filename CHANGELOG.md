@@ -11,10 +11,18 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 - Private, bounded TCP connection-authority primitive with revocation, retained
   in-flight admission and connected-peer verification, backed by deterministic
-  and real HTTP/TLS tests. Production download/session integration remains T2b2;
-  no new browser-containment guarantee or public API is exposed.
+  and real HTTP/TLS tests. Direct downloads now use it per session generation,
+  with shared transfer/socket admission, cancellation before engine teardown,
+  logical-host TLS verification and bounded terminal diagnostics. No new
+  browser-containment guarantee or public route is exposed.
 
 ### Fixed
+
+- Cancel direct downloads on session termination and prevent late artifact
+  publication. Preserve one overall deadline across redirect/body policy work,
+  enforce encoded and decoded byte limits, and drain each redirect's lease.
+  Download-enabled sessions capture a fixed policy snapshot; custom policies
+  must explicitly support immutable snapshots instead of silently losing rules.
 
 - Classify mapped/expanded IPv6 addresses consistently for configured loopback,
   private-network and metadata policy rules. Reject malformed or scoped resolved

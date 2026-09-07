@@ -2,10 +2,31 @@ import { createServer } from 'node:http';
 import { gzipSync } from 'node:zlib';
 import { NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
 import { describe, expect, it, vi } from 'vitest';
-import { downloadWithPolicy } from './download-transport.js';
+import {
+  DownloadBudget,
+  DownloadTransport,
+  type DownloadTransportOptions,
+} from './download-transport.js';
+
+async function downloadWithPolicy(
+  url: string,
+  options: DownloadTransportOptions & {
+    resolve?(hostname: string): Promise<Array<{ address: string; family: number }>>;
+  }
+) {
+  const transport = new DownloadTransport(
+    { policy: options.policy, budget: new DownloadBudget() },
+    options.resolve ? { resolve: options.resolve } : {}
+  );
+  try {
+    return await transport.download(url, options);
+  } finally {
+    transport.revoke();
+  }
+}
 
 describe('bounded download transport', () => {
-  it('rejects every malformed resolver record before TCP, even without an address-policy hook', async () => {
+  it('rejects every malformed resolver record before TCP with the required address-policy hook', async () => {
     let accepts = 0;
     let requests = 0;
     const server = createServer((_request, response) => {
@@ -42,13 +63,13 @@ describe('bounded download transport', () => {
           const resolve = vi.fn(async () => records as Array<{ address: string; family: number }>);
           await expect(
             downloadWithPolicy(origin, {
-              policy: { checkRequest: async () => {} },
+              policy: { checkRequest: async () => {}, checkResolvedAddresses: async () => {} },
               maxBytes: 1024,
               resolve,
             })
           ).rejects.toMatchObject({
             code: 'POLICY_DENIED',
-            details: { rule: 'resolvedAddressInvalid' },
+            details: { stage: 'connect', reason: 'transferFailed' },
           });
           expect(resolve).toHaveBeenCalledOnce();
           expect(accepts).toBe(0);
@@ -130,7 +151,7 @@ describe('bounded download transport', () => {
           policy: new SessionHostPolicy(new NetworkPolicy({ maxRedirects: 0 }), {}),
           maxBytes: 1024,
         })
-      ).rejects.toMatchObject({ code: 'MAX_REDIRECTS' });
+      ).rejects.toMatchObject({ code: 'POLICY_DENIED' });
       expect(hits).toEqual(['/start']);
     } finally {
       server.closeAllConnections();
