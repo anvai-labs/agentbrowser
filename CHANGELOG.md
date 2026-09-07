@@ -5,6 +5,17 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [Unreleased]
+
+### Fixed
+
+- Classify mapped/expanded IPv6 addresses consistently for configured loopback,
+  private-network and metadata policy rules. Reject malformed or scoped resolved
+  addresses, ambiguous raw dotted-quad hostnames and invalid download resolver
+  address/family pairs before connection. Preserve explicitly permitted local
+  downloads. This R14/T2b0 correction does not close browser egress gap R4 or
+  introduce OS-enforced containment.
+
 ## [1.8.4] — 2026-09-07
 
 Patch release of the independently reviewed engineering corrections in PRs

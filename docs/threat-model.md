@@ -20,6 +20,7 @@ proves the control works. Residual risks are named, not hidden.
 | Threat (spec) | Control | Proof |
 | --- | --- | --- |
 | SSRF to loopback / private ranges / cloud metadata via navigation | Service fast-fail + host/resolved-address checks on routed requests; no browser connection pinning | `network-policy.test.ts` loopback/private/metadata suites; initial-hop engine tests |
+| Equivalent IP spellings / malformed resolver answers (R14) | Native IP identity classification under configured flags; strict resolved-literal syntax; direct downloads validate every address/family pair before selecting a connection | `address-policy.test.ts`; real `download-transport.test.ts` zero-TCP/HTTP denials plus permitted-local positive controls; not full browser containment |
 | Redirect-based policy bypass (public URL -> 302 -> blocked host) | First redirect target checked; later hops bypass routing: **open gap** | Independent real Chromium multi-hop probe falsifies complete coverage |
 | Subresource / XHR / fetch bypass | Routed requests checked; later redirect hops remain a gap; service workers blocked | `engine-playwright` "block in-page fetches" does not prove all-hop enforcement |
 | Session policy weakening by tenant | `SessionHostPolicy` is restrict-only: the SSRF base always runs after session allow/blocked lists | `network-policy.test.ts` "still enforce the base SSRF policy" |

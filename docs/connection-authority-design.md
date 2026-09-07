@@ -1,6 +1,8 @@
 # T2a: connection authority and test contract
 
-Status: **Design artifact for independent review; not implemented.**
+Status: **Independently reviewed design, merged in PR 91; authority not implemented.**
+The R14/T2b0 prerequisite correction is implemented separately (unreleased);
+see the [delivery tracker](engineering-review-remediation.md).
 Owner approved progressing T2a locally after v1.8.4. This unit selects the
 smallest connection boundary behind direct downloads, not a browser transport,
 public proxy or contained deployment. T1/R4 remain open. The
@@ -8,26 +10,28 @@ public proxy or contained deployment. T1/R4 remain open. The
 
 ## Current behavior and prerequisite correction
 
-[download-transport.ts](../packages/api/src/download-transport.ts) currently owns
+[download-transport.ts](../packages/api/src/download-transport.ts) owns
 per-hop URL policy, DNS lookup, an address-pinned HTTP(S) request, redirects,
 response decoding and buffering. It disables connection pooling and retains
-the logical URL rather than replacing the host with its selected IP. Its five
-tests cover redirected host refusal, pinned HTTP Host, chunked/compressed byte
-limits and a stalled-body deadline. They do not establish the contract below.
+the logical URL rather than replacing the host with its selected IP. At the T2a
+design baseline, five tests covered redirected host refusal, pinned HTTP Host,
+chunked/compressed byte limits and a stalled-body deadline. T2b0 adds malformed
+resolver and mapped-address regressions with real TCP/HTTP counters; neither
+set establishes the full authority contract below.
 
 | Current seam | Why extraction alone is insufficient | Required disposition |
 | --- | --- | --- |
 | Optional `checkResolvedAddresses` | A custom policy can omit DNS authorization | Strict authority creation requires both host and resolved-address gates; missing capability fails before lookup/dial, without changing the legacy engine port globally |
-| String-based IP classification | Strict policy denies `127.0.0.1` and `::1` but allows `::ffff:127.0.0.1`, `::ffff:7f00:1`, expanded IPv6 loopback and a non-IP string | **R14 / T2b0:** canonical IP parsing and classification correction before reusable authority; tests at policy and transport boundaries |
+| String-based IP classification (design baseline) | Strict policy denied `127.0.0.1` and `::1` but allowed `::ffff:127.0.0.1`, `::ffff:7f00:1`, expanded IPv6 loopback and a non-IP string | **R14 / T2b0:** corrected with native address identity/range checks and strict syntax validation; policy and real transport tests, without changing configured range membership |
 | Pinned lookup callback | No explicit connected-peer comparison | Dial a selected literal address once, verify canonical peer address/port before exposing the socket to HTTP/TLS callers |
 | Transfer timeout only | No caller/session revocation signal; asynchronous policy/DNS work can outlive the caller's result | Authority owns reservations, late completions and revocation as well as active sockets |
 | Only `maxBytes` validated | Invalid timing/resolver output can undermine bounded behavior | Validate finite options and complete resolver records before dialing |
 
-R14 is a reproduced **policy-level** defect, not an end-to-end exploit claim.
+R14 was reproduced as a **policy-level** defect, not an end-to-end exploit claim.
 Both independent review and a local built-policy check produced the decisions
 above. A malformed resolver result is a robustness boundary, not a normal DNS
-answer; distinguish it from valid mapped/expanded IP addresses. Do not call
-existing private-range checks sufficient until their representation gaps close.
+answer; distinguish it from valid mapped/expanded IP addresses. The T2b0 fix
+closes these representation gaps, not broader browser transport gaps.
 
 ## Smallest internal contract
 
@@ -191,5 +195,6 @@ policy defect independently of the unresolved browser lifecycle. T2b1 implements
 the private primitive; T2b2 migrates its first production caller with session
 lifecycle integration. These are separate review boundaries within T2b, not a
 stack of competing APIs. T2c starts only after their acceptance evidence passes.
-This document contains no implementation, new security acceptance claim, shared
-package, listener, deployment, or release-version change.
+This design does not authorize a shared package, listener, deployment or
+release-version change. T2b0 is the narrow prerequisite; the authority and its
+remaining acceptance gates are still future work.
