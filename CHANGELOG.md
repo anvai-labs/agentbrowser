@@ -7,6 +7,13 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added
+
+- Private, bounded TCP connection-authority primitive with revocation, retained
+  in-flight admission and connected-peer verification, backed by deterministic
+  and real HTTP/TLS tests. Production download/session integration remains T2b2;
+  no new browser-containment guarantee or public API is exposed.
+
 ### Fixed
 
 - Classify mapped/expanded IPv6 addresses consistently for configured loopback,

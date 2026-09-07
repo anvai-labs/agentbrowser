@@ -1,7 +1,7 @@
 # T2a: connection authority and test contract
 
-Status: **Independently reviewed design, merged in PR 91; authority not implemented.**
-The R14/T2b0 prerequisite correction is implemented separately (unreleased);
+Status: **Independently reviewed design, merged in PR 91; T2b1 primitive implemented and independently approved, not integrated.**
+The R14/T2b0 prerequisite correction merged in PR 92 (unreleased);
 see the [delivery tracker](engineering-review-remediation.md).
 Owner approved progressing T2a locally after v1.8.4. This unit selects the
 smallest connection boundary behind direct downloads, not a browser transport,
@@ -138,7 +138,7 @@ The first rollout keeps the GET-only download behavior and current limits.
 
 ## Proposed bounds and error ownership
 
-These are initial implementation defaults for review, not shipped settings.
+These are T2b1 primitive defaults, not production service settings yet.
 Small values may be injected by deterministic tests. Validate all limits as
 positive safe integers before admitting work. Millisecond timeouts additionally
 must not exceed 2,147,483,647 (the supported single-timer maximum); reject invalid
@@ -196,5 +196,55 @@ the private primitive; T2b2 migrates its first production caller with session
 lifecycle integration. These are separate review boundaries within T2b, not a
 stack of competing APIs. T2c starts only after their acceptance evidence passes.
 This design does not authorize a shared package, listener, deployment or
-release-version change. T2b0 is the narrow prerequisite; the authority and its
-remaining acceptance gates are still future work.
+release-version change. T2b0 is the narrow prerequisite; production integration
+and the wider transport acceptance gates remain separate work.
+
+## T2b1 implementation boundary
+
+The private [connection authority](../packages/api/src/connection-authority.ts)
+implements TCP admission, full-set DNS validation, one literal-address dial,
+canonical peer verification and revocable socket leases. It is not exported from
+the API package entry point or connected to `downloadWithPolicy`/service sessions.
+No gateway, browser adapter, HTTP/TLS implementation, deployment or package-version
+change is included. Native local behavior therefore remains unchanged.
+
+`ConnectionBudget` is shared by the trusted service runtime; a
+`ConnectionAuthority` instance represents one session generation. `connect`
+copies the destination and caller deadline/signal before awaiting policy,
+validates actual URL/hostname/port agreement, and returns immutable destination
+and endpoint metadata with a random connection ID. The lease's `signal` retains
+caller/owner/deadline cancellation through close; `closed` settles only after
+owned work and the TCP socket drain. Authority `closed` additionally requires
+revocation. Neither property promises to cancel an arbitrary unresolved callback.
+
+The trusted composition root must supply a fixed effective policy snapshot and
+revoke before replacing it. Capturing bound methods prevents method replacement,
+but cannot freeze arbitrary callback closure state. There is no page-selectable
+policy, mutable allow token, caller-supplied socket option, retry or pooling.
+
+Deterministic tests cover default capacity bounds, same-URL identities, retained
+reservations across cancelled generations, reentrant revocation, mutation across
+awaits, stale callbacks, deadlines, malformed destination/DNS input, and mismatched
+peers. Real loopback HTTP/TLS tests verify Host/SNI, DNS-name and IP certificate
+identity, denied-before-connect counters, and raw/TLS/upstream socket closure
+during a stalled handshake. Their TLS adapter is **test-only**: it binds lease
+cancellation to the TLS wrapper and wrapper closure back to the TCP lease.
+Ephemeral certificates are generated through the local OpenSSL command, using a
+mode-0600 key file in a uniquely created test directory. The exact file and empty
+directory are removed in `finally`; tests install no host CA and never disable
+certificate verification. This avoids Linux's inability to reopen Node's
+socket-backed child `/dev/stdin` as a key file, found by the first PR CI run.
+
+Validation: 55 deterministic and nine real-I/O cases pass; independent lifecycle
+and HTTP/TLS reviewers approved after rerunning their suites. A native Bun 1.4.0
+TCP/close control also passes. The initial tests failed on the absent primitive;
+later malformed-bracket destination regressions failed before their correction.
+These results are not a substitute for the required PR/post-merge CI gates.
+
+T2b2 must migrate that caller behavior into the production download path with
+session lifecycle integration, response/redirect/byte limits and one transfer
+deadline. It also owns generation-aware terminal logging through the existing
+redacting service logger, and separate caller cleanup diagnostics. T2b1 returns
+bounded stage/reason errors and preserves explicit protocol error codes without
+retaining raw callback/transport messages; it does not claim that service logging
+wiring or TLS wrapper cleanup is intrinsic to a TCP-only authority.
