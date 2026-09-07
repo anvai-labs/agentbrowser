@@ -1241,6 +1241,30 @@ export class AgentBrowserService {
     return { pageId, sessionId, status: 'active' };
   }
 
+  /**
+   * Pages of a session in creation order. Pages exist only once created
+   * through the create-page endpoint; this listing is the discovery path
+   * when that response was lost and the answer to "which page ids are
+   * live here". `url` rides on the engine's optional live getUrl and is
+   * omitted for pages (or engines) that cannot provide it cheaply.
+   */
+  async listPages(sessionId: string): Promise<ServicePageView[]> {
+    this.requireSession(sessionId);
+    return Promise.all(
+      [...this.pages.entries()]
+        .filter(([, page]) => page.sessionId === sessionId)
+        .map(async ([pageId, page]): Promise<ServicePageView> => {
+          let url: string | undefined;
+          try {
+            url = (await page.enginePage.getUrl?.()) ?? undefined;
+          } catch {
+            // Listing must not fail because one page's live URL is unavailable.
+          }
+          return { pageId, sessionId, status: 'active', ...(url !== undefined ? { url } : {}) };
+        })
+    );
+  }
+
   async closePage(sessionId: string, pageId: string): Promise<void> {
     const page = this.requirePage(sessionId, pageId);
     this.coordinator.updateActivity(sessionId);

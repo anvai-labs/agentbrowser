@@ -144,7 +144,27 @@ export interface PlaywrightEngineOptions {
    * file they control). Headless sessions never consult it.
    */
   chromeBinaryPath?: string;
+  /**
+   * Timeout in ms for the per-element aria snapshots that observe() takes to
+   * detect semantic change and act() takes to detect staleness (default
+   * 1000, overridable via AGENTBROWSER_SNAPSHOT_TIMEOUT_MS). A page whose
+   * elements never stabilize — a perpetually animating shared header, a
+   * hydration loop — cannot produce these snapshots at any timeout;
+   * observe() therefore degrades to identity-only binding for such elements
+   * instead of failing the whole page.
+   */
+  snapshotTimeoutMs?: number;
 }
+
+/** Positive-int env fallback; the fallback itself when unset or garbage. */
+const envPositiveInt = (name: string, fallback: number): number => {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') {
+    return fallback;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
 
 export class PlaywrightChromiumEngine implements BrowserEngine {
   private _name = 'playwright-chromium';
@@ -156,6 +176,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   private readonly browserFamily: 'chromium' | 'firefox' | 'webkit';
   private readonly cdpEndpoint: string | undefined;
   private readonly chromeBinaryPath: string;
+  readonly snapshotTimeoutMs: number;
 
   constructor(options: PlaywrightEngineOptions = {}) {
     this.dialogGraceMs = options.dialogGraceMs ?? 5000;
@@ -167,6 +188,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       options.chromeBinaryPath ??
       process.env.AGENTBROWSER_CHROME_PATH ??
       '/opt/google/chrome/chrome';
+    this.snapshotTimeoutMs =
+      options.snapshotTimeoutMs ?? envPositiveInt('AGENTBROWSER_SNAPSHOT_TIMEOUT_MS', 1000);
   }
 
   get name(): string {
@@ -1011,15 +1034,22 @@ class PlaywrightPage implements EnginePage {
         if (await locator.count()) {
           const handle = await locator.elementHandle();
           if (handle) {
-            const snapshot = await locator.ariaSnapshot({ timeout: 1000 });
+            // '' marks an element whose snapshot never stabilized (perpetual
+            // CSS animation, hydration loop): the element stays bound and
+            // clickable, but semantic change detection for it degrades to
+            // DOM-identity comparison. One unstable element must not fail
+            // the whole observation.
+            const snapshot = await locator
+              .ariaSnapshot({ timeout: this.engine.snapshotTimeoutMs })
+              .catch(() => '');
             const prior = previous.get(ref);
             if (
               previous.size > 0 &&
               (!prior ||
-                prior.snapshot !== snapshot ||
                 !(await handle
                   .evaluate((node, old) => node.isSameNode(old), prior.handle)
-                  .catch(() => false)))
+                  .catch(() => false)) ||
+                (snapshot !== '' && prior.snapshot !== '' && prior.snapshot !== snapshot))
             )
               changed = true;
             this.bindings.set(ref, { handle, locator, snapshot });
@@ -1199,10 +1229,19 @@ class PlaywrightPage implements EnginePage {
       } finally {
         await current?.dispose();
       }
-      if (
-        !matchesOriginal ||
-        (await binding.locator.ariaSnapshot({ timeout: 1000 })) !== binding.snapshot
-      ) {
+      // Semantic staleness is a refinement on top of DOM identity. When the
+      // element had no stable snapshot at observe() time ('' sentinel) or the
+      // fresh snapshot itself cannot stabilize, identity is the only check
+      // available — the same page that made observe degrade makes the fresh
+      // snapshot fail here too, and that must not read as staleness.
+      let semanticallyChanged = false;
+      if (binding.snapshot !== '') {
+        semanticallyChanged =
+          (await binding.locator
+            .ariaSnapshot({ timeout: this.engine.snapshotTimeoutMs })
+            .catch(() => binding.snapshot)) !== binding.snapshot;
+      }
+      if (!matchesOriginal || semanticallyChanged) {
         throw new EngineError(
           'STALE_TARGET',
           'Observed target identity or semantic state changed; observe again.'

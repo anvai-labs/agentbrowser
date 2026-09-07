@@ -91,6 +91,7 @@ config file.
 | `AGENTBROWSER_ARTIFACT_KEY` | service | Bearer key guarding artifact download URLs, when set. |
 | `AGENTBROWSER_DEFAULT_TTL_MS` | service | Operator-level default session TTL (ms); per-session `ttlMs` still wins. Unset/garbage → the 15-min default. |
 | `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS` | service | Operator-level default idle timeout (ms); per-session `idleTimeoutMs` still wins. Unset/garbage → the 10-min default. Useful for deployments that are mostly headed human-in-the-loop flows. |
+| `AGENTBROWSER_SNAPSHOT_TIMEOUT_MS` | service (Playwright engine) | Per-element aria-snapshot timeout in ms (default 1000). Pages whose elements never stabilize — a perpetually animating header, a hydration loop — cannot produce these snapshots at any timeout; the engine then binds those elements by DOM identity alone instead of failing the whole observation. Raise it only if 1s visibly truncates change detection on slow-but-stable pages. |
 
 Port and bind address default to `3000` on `0.0.0.0`
 (`ServerOptions`); when exposing the service beyond localhost, set
