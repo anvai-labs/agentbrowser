@@ -36,6 +36,8 @@ import {
 export interface ServerOptions {
   /** Operator-owned rules. Client-supplied session policy can only restrict these. */
   approvalPolicy?: import('@agentbrowser/core').ActionRiskPolicyOptions;
+  /** Trusted embedding only; session host rules can restrict but never weaken these rules. */
+  networkPolicy?: import('@agentbrowser/policy').NetworkPolicy;
   port?: number;
   host?: string;
   corsOrigin?: string | string[];
@@ -193,6 +195,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     });
   const service = new AgentBrowserService({
     engine,
+    ...(options.networkPolicy ? { networkPolicy: options.networkPolicy } : {}),
     ...((options.approvalPolicy ?? process.env.AGENTBROWSER_APPROVAL_POLICY) !== undefined
       ? {
           approvalPolicy:
