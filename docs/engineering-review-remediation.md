@@ -24,19 +24,27 @@ validation record below. A checked status never means merely documented.
 
 ## Findings and acceptance criteria
 
-### Next milestone: T1 policy inheritance feasibility
+### Current baseline and next decision milestone
 
-Fresh baseline: merged `develop` at `9420cda` ([PR 87](https://github.com/anvai-labs/agentbrowser/pull/87)), with all eight PR checks green.
-Its docs-only merge was excluded from post-merge CI by the existing path filter;
-the preceding runtime baseline `4e2ec00` passed all eight post-merge checks.
-Reuse the single clean worktree; do not recreate the A-G stack.
+Fresh baseline: `v1.8.4`, with `main` and `develop` synchronized at `085b8e1`
+([promotion PR 90](https://github.com/anvai-labs/agentbrowser/pull/90)). All eight
+[main CI checks](https://github.com/anvai-labs/agentbrowser/actions/runs/34077686481)
+and all twelve [release jobs](https://github.com/anvai-labs/agentbrowser/actions/runs/34081727897)
+passed. GitHub artifacts, npm and the [Homebrew formula](https://github.com/anvai-labs/homebrew-tap/pull/24)
+are published. Release completion does not close T1/R4.
+Reuse the single worktree; do not recreate the A-G stack. The next artifact is
+the [integration contract and milestone proposal](transport-integration-contract.md),
+with owner-authorized inquiry and local T2a design work. A new T1 mechanism,
+private patch or fork still requires a separate decision.
 
 | Unit | Scope | Acceptance / stop condition | Status |
 | --- | --- | --- | --- |
 | T1a | Compare policy delivery and diagnose replay failures | Preserve HTTP controls; correlate browser failures, CSP violations and server hits | Merged in PR 85; 36-case comparison, 27-case worker follow-up, 20 offline tests; all eight post-merge CI checks green; T1/R4 remain open |
 | T1b | Test target startup ownership and nested-worker coverage | Independent review of startup ordering and all-target controls; no production claim from page-only coverage | Merged in PR 86; independent review, 47 offline tests, two 27-worker runs and all eight post-merge checks pass. **Startup gate failed:** all 12 attached workers issue HTTP before this client's release; shared controls uncovered |
 | T1c | Reassess transport feasibility against the complete acceptance matrix | T1 remains open until semantics and coverage pass; revisit design explicitly if they cannot | [Reassessment independently reviewed](egress-transport-reassessment.md). Assessment artifact complete, not T1 closure. Separate lifecycle ownership from semantic compatibility; recommend one bounded ownership comparison before choosing integration or maintenance commitments |
-| T1d | Bounded sole-owner / competing-resumer comparison from T1c | Three arms, three repeats; native positive controls, all-owner command/target identity; stop without expanding if the T1b distinction is not reproduced | Implemented and independently approved as bounded diagnostic evidence. Two 27-worker runs preserve controls but do not reproduce early execution; 79 offline tests pass. Integration decision required; T1 remains open and no production mechanism selected |
+| T1d | Bounded sole-owner / competing-resumer comparison from T1c | Three arms, three repeats; native positive controls, all-owner command/target identity; stop without expanding if the T1b distinction is not reproduced | Merged in PR 88 and shipped in v1.8.4; independent review and all eight post-merge checks passed. Two 27-worker runs preserve controls but do not reproduce early execution; 79 offline tests pass. Stop condition reached; T1 remains open |
+| T1e | Supported integration contract and maintenance decision | Separate first-request admission, execution initialization and browser-semantic enforcement; no automatic probe expansion or private patch | Owner authorized focused inquiry. [Message prepared](playwright-integration-inquiry.md), not sent: upstream support requires Discord access unavailable here. No upstream-supported mechanism selected |
+| T2a | Connection-authority design and test contract | Ground extraction in the direct-download caller; define DNS/peer/TLS ownership, revocation, admission and failure tests | [Design prepared](connection-authority-design.md). Independent source review reproduced R14; T2b0 canonical-address correction precedes connection extraction. No runtime implementation or T1/R4 closure |
 
 T1a is a bounded probe/evidence PR, not a production adapter change. Keep
 historical evidence immutable. No gateway deployment, host networking changes,
@@ -74,6 +82,7 @@ event, so it cannot establish race-free startup or all-target enforcement.
 | R11 | Safari transport and deployment contract; engine-safari, api | M | Unscoped execute URL; service rejects all Safari sessions as INTERNAL | Session-prefixed transport, lifecycle checks; explicit typed egress refusal and documented supported deployment; mock transport tests | Merged in F |
 | R12 | Retention/admission limits; api/service.ts, core/approval-gate.ts | M | Event count does not bound bytes; maxTokens=2 admits 3 pending tokens | Per-event and aggregate byte bounds, drop counters, hard token admission after cleanup; capacity tests | Merged in E |
 | R13 | Fragmented error taxonomy; engine, core, api, SDK | M | Error behavior varies by operation; SDK discards approval details | Typed adapter errors, shared normalization/recovery, full protocol error envelope; cross-operation error tests | Merged in B |
+| R14 | Resolved-address representation gaps; policy/network-policy.ts | H | Strict policy denies ordinary loopback but allows mapped/expanded loopback and malformed address text; independently reproduced at policy level, not as an end-to-end network exploit | T2b0 canonical parsing/classification, mapped IPv4 handling, malformed resolver validation; policy and real transport regressions before reusable connection authority | OPEN; found during T2a design, not fixed by v1.8.4 |
 
 ## Design decisions
 
@@ -114,7 +123,7 @@ page WebSocket tests do not establish all-hop browser or worker enforcement.
 Its operational limitations are documented in [engines](engines.md),
 [operations](operations.md), and the [threat model](threat-model.md).
 
-### Independent review and integration update
+### Historical independent review and integration update (before v1.8.4)
 
 A merged into `develop` at `b72510c`, B at `c0798d8`, C at `b865868`, and partial D
 at `d04d77f`, E at `c7903f8`, F at `92e7efa`, and G at `d9ddfc5`, each after
