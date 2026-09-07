@@ -1,6 +1,8 @@
 # T1c: transport feasibility reassessment
 
 Status: **Independently reviewed reassessment for co-design; no production mechanism selected.**
+Follow-up: the specified [sole-owner comparison](egress-transport-feasibility.md#sole-owner-comparison-independent-sockets-do-not-reproduce-t1b)
+has now run. It does not reproduce T1b; the stop/decision boundary below applies.
 Baseline: `develop` at `4e2ec00`, after [PR 86](https://github.com/anvai-labs/agentbrowser/pull/86)
 and all eight [post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/34067622077)
 passed. This closes neither T1 nor R4. The

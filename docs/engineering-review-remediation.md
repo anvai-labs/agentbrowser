@@ -26,14 +26,17 @@ validation record below. A checked status never means merely documented.
 
 ### Next milestone: T1 policy inheritance feasibility
 
-Fresh baseline: merged `develop` at `4e2ec00` ([PR 86](https://github.com/anvai-labs/agentbrowser/pull/86)), with all eight post-merge CI
-checks green. Reuse the single clean worktree; do not recreate the A-G stack.
+Fresh baseline: merged `develop` at `9420cda` ([PR 87](https://github.com/anvai-labs/agentbrowser/pull/87)), with all eight PR checks green.
+Its docs-only merge was excluded from post-merge CI by the existing path filter;
+the preceding runtime baseline `4e2ec00` passed all eight post-merge checks.
+Reuse the single clean worktree; do not recreate the A-G stack.
 
 | Unit | Scope | Acceptance / stop condition | Status |
 | --- | --- | --- | --- |
 | T1a | Compare policy delivery and diagnose replay failures | Preserve HTTP controls; correlate browser failures, CSP violations and server hits | Merged in PR 85; 36-case comparison, 27-case worker follow-up, 20 offline tests; all eight post-merge CI checks green; T1/R4 remain open |
 | T1b | Test target startup ownership and nested-worker coverage | Independent review of startup ordering and all-target controls; no production claim from page-only coverage | Merged in PR 86; independent review, 47 offline tests, two 27-worker runs and all eight post-merge checks pass. **Startup gate failed:** all 12 attached workers issue HTTP before this client's release; shared controls uncovered |
 | T1c | Reassess transport feasibility against the complete acceptance matrix | T1 remains open until semantics and coverage pass; revisit design explicitly if they cannot | [Reassessment independently reviewed](egress-transport-reassessment.md). Assessment artifact complete, not T1 closure. Separate lifecycle ownership from semantic compatibility; recommend one bounded ownership comparison before choosing integration or maintenance commitments |
+| T1d | Bounded sole-owner / competing-resumer comparison from T1c | Three arms, three repeats; native positive controls, all-owner command/target identity; stop without expanding if the T1b distinction is not reproduced | Implemented and independently approved as bounded diagnostic evidence. Two 27-worker runs preserve controls but do not reproduce early execution; 79 offline tests pass. Integration decision required; T1 remains open and no production mechanism selected |
 
 T1a is a bounded probe/evidence PR, not a production adapter change. Keep
 historical evidence immutable. No gateway deployment, host networking changes,
