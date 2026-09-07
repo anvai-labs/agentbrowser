@@ -293,6 +293,98 @@ without Playwright would be a bounded next causal experiment, not a replacement
 engine decision. Shared workers, frames, popups, lifecycle changes, policy
 inheritance and HTTP/WS/WSS compatibility still require the full acceptance matrix.
 
+### Sole-owner comparison: independent sockets do not reproduce T1b
+
+The bounded comparison specified by the
+[T1c reassessment](egress-transport-reassessment.md) is now implemented in
+[sole-owner.mjs](../scripts/probes/sole-owner.mjs). It directly spawns the pinned
+Chromium headless-shell executable with an owned temporary profile. Playwright
+package metadata supplies the expected version, but no Playwright module is
+loaded and no Playwright client is connected. Raw CDP uses flattened sessions
+over one browser WebSocket connection, or two physically separate connections
+in the competitor arm. Both owners configure page auto-attachment before any
+worker is created and recursively configure each worker before releasing it.
+
+The same serialized worker body is shared with T1b, with a SHA-256 truth guard
+confirming byte-identical extraction. Native HTTP delivery, the exact sentinel
+body and unique parent/child tokens are unchanged. The scope is only an external
+dedicated worker and a depth-two external worker chain: three arms, three repeats
+per arm, 18 cases / 27 worker results. No Fetch, CSP injection, body replay,
+certificate bypass, permission grant, new target mode or production adapter was
+added. Initial script requests are counted separately from startup sentinels.
+
+Two complete runs are retained: [initial](evidence/sole-owner.jsonl) and
+[reviewed instrumentation](evidence/sole-owner-reviewed.jsonl). Runtime version
+is checked against the installed Chromium manifest (151.0.7922.34 / revision
+1234); each case fails on a mismatch. Both runs have identical classifications:
+
+| Arm | Successful HTTP 200 / exact body / GET controls | Sentinels before primary release | Meaning |
+| --- | --- | --- | --- |
+| Sole owner, immediate release | 9/9 | 0 | Positive execution/network control |
+| Sole owner, 200 ms delayed release | 9/9 | 0 | No early execution observed in this bounded window |
+| Delayed primary plus immediate competitor | 9/9 | 0 | Does **not** reproduce the T1b early-execution result |
+
+The competitor is not a nominal label: it attaches through a distinct socket
+and distinct owner-local sessions to the same worker target IDs. Its nine
+release invocations precede primary release by approximately 199–200 ms in the
+initial run and 200–202 ms in the repeat; their acknowledgements also precede
+primary release. Nevertheless, competitor-arm sentinels arrive approximately
+1.5–2.5 ms **after** primary release. All 36 owner/worker attachments report
+`waitingForDebugger: true`. This is not proof of a universal multi-debugger
+barrier, nor proof that a production lifecycle owner has been found.
+
+Every worker's initial script request occurs before primary release (27/27 in
+each run). That observation reinforces the separation between execution startup
+and network admission. The fixture allows these requests deliberately; it does
+not install or certify first-request policy checks.
+
+The topology differs from T1b in identifiable ways. Pinned Playwright 1.62.1
+`CRBrowserContext.newCDPSession` uses `_clientRootSession`, whose
+`CRConnection.createBrowserSession` issues `Target.attachToBrowserTarget` on the
+existing browser connection. Thus T1b's additional public CDP session is not a
+second physical browser connection. T1b also mixes non-flattened diagnostic
+worker sessions with flattened Playwright sessions; this comparison is flattened
+throughout. The directly launched probe uses identical flags across its own
+arms, but not all Playwright launch defaults. Exact probe flags are retained in
+the environment row. These are **candidate differences, not an isolated cause**.
+Neither a Playwright bug nor its historical resume command is attributed by
+this experiment. The result was retained without tuning the topology or adding
+an arm to manufacture early execution.
+
+Both complete runs end with no fixture errors, zero pending commands/tasks or
+HTTP sockets, the spawned browser process exited and its disposable profile
+removed. The repeat explicitly records closed connections, removed router
+listeners and auto-attach parameters. Independent review found malformed JSON
+envelopes such as `null` could throw from the raw router; six failing regressions
+reproduced this before shape validation was added. An earlier attempt failed
+pnpm metadata-path resolution before launching a browser and produced no
+experimental result. Launch discovery, CDP connection/commands and browser-exit
+waits have explicit deadlines. HTTP-server closure and profile removal are
+awaited; there is no whole-cleanup hard deadline. The case watchdog is 90 seconds,
+not a process-entry bound.
+
+```bash
+node scripts/probes/sole-owner.mjs /absolute/path/to/pinned/chrome-headless-shell
+node scripts/probes/verify-sole-owner.mjs docs/evidence/sole-owner-reviewed.jsonl
+pnpm test:probes
+```
+
+The 79 offline probe tests include matched commands/acknowledgements, owner-local
+session lineage, cross-owner target identity, positive HTTP/script counters,
+release ordering, cleanup, malformed transport input and setup-failure refusal.
+An early competitor hit is classified as falsifying evidence, not rejected as
+a bad control. The verifier always returns `securityAcceptance: false` and
+`completePreExecutionCoverage: false`.
+
+**Planned stop condition reached:** this independent-socket arrangement does not
+reproduce T1b, so it cannot justify a production integration or replacement
+engine. Reconcile the supported lifecycle integration contract before selecting
+another mechanism. Current public API inspection still exposes no pre-worker-
+resume handshake; any maintained private patch, fork or replacement engine needs
+explicit scope and maintenance approval. Upstream issue/PR submission also
+requires separate authorization. Do not automatically expand the diagnostic
+matrix. The semantic-delivery/WS gap remains independent and unresolved.
+
 The [accepted two-profile decision](egress-transport-design.md) is unchanged.
 OS-enforced gateway-only routing remains required for the contained profile,
 but cannot itself distinguish WSS inside an allowed encrypted CONNECT tunnel.

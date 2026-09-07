@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from '../../packages/engine-playwright/node_modules/playwright/index.mjs';
 import { ChildCdp } from './child-cdp.mjs';
 import { cleanupStartup } from './startup-cleanup.mjs';
+import { executeWorker } from './worker-startup-fixture.mjs';
 import { ARMS, MODES } from './verify-worker-startup.mjs';
 
 if (process.argv.length !== 2) throw new Error('No arguments supported');
@@ -38,26 +39,6 @@ const server = createServer((request, response) => {
   } else { response.statusCode = 404; response.end(); }
 });
 server.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
-
-// Serialized into a worker. Fetch starts before child creation; neither waits for
-// the other's network result. Workers stay alive until the owned context closes.
-function executeWorker(config) {
-  const own = fetch(config.sentinel, { signal: AbortSignal.timeout(3000) })
-    .then(async response => ({ token: config.token, status: response.status, body: await response.text() }))
-    .catch(error => ({ token: config.token, error: String(error) }));
-  let descendant = Promise.resolve({ workers: [], results: [] });
-  if (config.child) {
-    const childUrl = config.child.url ?? URL.createObjectURL(new Blob([config.child.source], { type: 'text/javascript' }));
-    const child = new Worker(childUrl);
-    descendant = new Promise(resolve => {
-      child.onmessage = event => resolve({ workers: [{ token: config.child.token, parentToken: config.token, url: childUrl }, ...event.data.workers], results: event.data.results });
-      child.onerror = event => resolve({ workers: [], results: [{ token: config.child.token, error: event.message }] });
-    });
-  }
-  const result = Promise.all([own, descendant]).then(([selfResult, nested]) => ({ workers: nested.workers, results: [selfResult, ...nested.results] }));
-  if (config.shared) self.onconnect = event => { result.then(value => event.ports[0].postMessage(value)); };
-  else result.then(value => self.postMessage(value));
-}
 
 function source(config) { return `(${executeWorker.toString()})(${JSON.stringify(config)});`; }
 function makeScript(arm, mode, depth = 1) {
