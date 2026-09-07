@@ -7,7 +7,7 @@
  * against FakeEngine and production runs PlaywrightChromiumEngine.
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { InMemoryTracer, MetricsRegistry, type SecretManager } from '@agentbrowser/core';
 import type { StructuredLogger } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
@@ -16,6 +16,7 @@ import {
   ErrorCode,
   validatePlanStep,
   validateSessionRequest,
+  validateWireAction,
 } from '@agentbrowser/protocol';
 import type { SessionPolicy } from '@agentbrowser/protocol';
 import cors from '@fastify/cors';
@@ -24,6 +25,7 @@ import Fastify from 'fastify';
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ArtifactAuthorizer } from './artifact-auth.js';
 import { buildOpenApiDocument } from './openapi.js';
+import { PRODUCT_VERSION } from './product-version.js';
 import {
   AgentBrowserService,
   type ServiceActRequest,
@@ -32,6 +34,8 @@ import {
 } from './service.js';
 
 export interface ServerOptions {
+  /** Operator-owned rules. Client-supplied session policy can only restrict these. */
+  approvalPolicy?: import('@agentbrowser/core').ActionRiskPolicyOptions;
   port?: number;
   host?: string;
   corsOrigin?: string | string[];
@@ -189,9 +193,16 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     });
   const service = new AgentBrowserService({
     engine,
+    ...((options.approvalPolicy ?? process.env.AGENTBROWSER_APPROVAL_POLICY) !== undefined
+      ? {
+          approvalPolicy:
+            options.approvalPolicy ?? JSON.parse(process.env.AGENTBROWSER_APPROVAL_POLICY ?? '{}'),
+        }
+      : {}),
     ...(options.engines ? { engines: options.engines } : {}),
     metrics,
     tracer,
+    ...(options.secretManager ? { secretManager: options.secretManager } : {}),
     ...(options.logger ? { logger: options.logger } : {}),
     ...(options.downloader ? { downloader: options.downloader } : {}),
     ...(options.defaultTtlMs !== undefined ? { defaultTtlMs: options.defaultTtlMs } : {}),
@@ -210,16 +221,20 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       return reply.status(statusFor(error.code)).send({
         error: {
           code: error.code,
-          message: error.message,
+          message: options.secretManager?.redact(error.message) ?? error.message,
           retryable: error.retryable,
-          ...(error.details !== undefined ? { details: error.details } : {}),
+          ...(error.details !== undefined
+            ? { details: options.secretManager?.redact(error.details) ?? error.details }
+            : {}),
         },
       });
     }
     return reply.status(500).send({
       error: {
         code: 'INTERNAL',
-        message: error instanceof Error ? error.message : 'Unknown error',
+        message:
+          options.secretManager?.redact(error instanceof Error ? error.message : 'Unknown error') ??
+          (error instanceof Error ? error.message : 'Unknown error'),
         retryable: false,
       },
     });
@@ -332,7 +347,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   fastify.get('/health', async (request, reply) => {
     return {
       status: 'healthy',
-      version: '1.0.0',
+      version: PRODUCT_VERSION,
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
     };
@@ -349,7 +364,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   // unversioned and unauthenticated by design.
   // ------------------------------------------------------------------
   const artifactAuth = new ArtifactAuthorizer({
-    key: process.env.AGENTBROWSER_ARTIFACT_KEY ?? 'dev-artifact-key',
+    key: process.env.AGENTBROWSER_ARTIFACT_KEY ?? randomBytes(32).toString('hex'),
   });
 
   await fastify.register(
@@ -386,7 +401,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         }
         const session = service.getSession(sessionId);
         if (session === undefined) {
-          return true; // let the route's own 404 handle missing sessions
+          throw new ServiceError('SESSION_NOT_FOUND', 'Session does not exist.');
         }
         const owner = (session as { tenantId?: string }).tenantId;
         if (owner !== undefined && owner !== tenant) {
@@ -453,6 +468,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           const { cookies, ...validatedRequest } = validated.value;
           const policy = (body as { policy?: SessionPolicy }).policy;
           const createRequest: ServiceSessionRequest = { ...validatedRequest };
+          if (policy?.approval !== undefined) createRequest.approval = policy.approval;
           // Structurally identical wire shapes; the protocol type's stricter
           // optionals (no | undefined) need explicit casts under
           // exactOptionalPropertyTypes - hence assignments, not spreads.
@@ -508,7 +524,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       v1.get(
         '/sessions',
         route(async (request, reply) => {
-          return reply.send({ sessions: service.listSessions() });
+          return reply.send({ sessions: service.listSessions(tenantOf(request)) });
         })
       );
 
@@ -782,51 +798,13 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             return reply;
           }
 
-          const {
-            action,
-            target,
-            value,
-            key,
-            direction,
-            amount,
-            observe,
-            expectedRevision,
-            approvalToken,
-            promptText,
-            wait,
-            condition,
-          } = body as Record<string, unknown>;
-
-          if (typeof action !== 'string') {
-            return reply.status(400).send({
-              error: {
-                code: 'INVALID_REQUEST',
-                message: 'action is required and must be a string',
-                retryable: false,
-              },
+          const validated = validateWireAction(body);
+          if (!validated.ok) {
+            throw new ServiceError('INVALID_REQUEST', 'Invalid action request', false, {
+              issues: validated.issues,
             });
           }
-
-          const result = await service.act(sessionId, pageId, {
-            action,
-            ...(target !== undefined ? { target: target as { ref: string } } : {}),
-            ...(value !== undefined ? { value: value as string } : {}),
-            ...(key !== undefined ? { key: key as string } : {}),
-            ...(direction !== undefined
-              ? { direction: direction as 'up' | 'down' | 'left' | 'right' }
-              : {}),
-            ...(amount !== undefined ? { amount: amount as number } : {}),
-            ...(observe !== undefined ? { observe: observe as 'after' | 'none' } : {}),
-            ...(expectedRevision !== undefined
-              ? { expectedRevision: expectedRevision as number }
-              : {}),
-            ...(approvalToken !== undefined ? { approvalToken: approvalToken as string } : {}),
-            ...(promptText !== undefined ? { promptText: promptText as string } : {}),
-            ...(wait !== undefined ? { wait: wait as { until: string; timeoutMs?: number } } : {}),
-            ...(condition !== undefined
-              ? { condition: condition as { until: string; timeoutMs?: number } }
-              : {}),
-          });
+          const result = await service.act(sessionId, pageId, validated.value);
           return reply.send(result);
         })
       );
@@ -873,10 +851,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           const query = request.query as { token?: string };
           const tokenValid =
             query.token !== undefined && artifactAuth.verify(artifactId, query.token);
-          if (!tokenValid && !requireOwnership(reply, sessionId, tenantOf(request))) {
-            return reply;
-          }
-          const stored = service.getArtifact(sessionId, artifactId);
+          const stored = service.getArtifact(
+            sessionId,
+            artifactId,
+            tokenValid ? undefined : tenantOf(request)
+          );
           if (!stored) {
             return reply.status(404).send({
               error: {

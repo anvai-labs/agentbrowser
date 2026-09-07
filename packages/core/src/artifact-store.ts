@@ -17,6 +17,8 @@ export interface ArtifactMetadata {
   expiresAt: number;
   filename?: string;
   sessionId?: string;
+  /** Immutable owner, retained independently of the live session. */
+  tenantId?: string;
   /** Honest-capability warnings attached by the producing layer. */
   warnings?: string[];
 }
@@ -71,7 +73,7 @@ export class ArtifactStore {
     type: ArtifactMetadata['type'],
     contentType: string,
     bytes: Uint8Array,
-    labels: { filename?: string; sessionId?: string } = {}
+    labels: { filename?: string; sessionId?: string; tenantId?: string } = {}
   ): ArtifactMetadata {
     if (bytes.length > this.maxBytes) {
       throw new ArtifactError(
@@ -98,6 +100,7 @@ export class ArtifactStore {
       expiresAt: now + this.ttlMs,
       ...(labels.filename !== undefined ? { filename: labels.filename } : {}),
       ...(labels.sessionId !== undefined ? { sessionId: labels.sessionId } : {}),
+      ...(labels.tenantId !== undefined ? { tenantId: labels.tenantId } : {}),
     };
 
     this.entries.set(metadata.artifactId, { metadata, bytes });

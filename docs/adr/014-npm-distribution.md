@@ -21,6 +21,19 @@ already ships as `@anvailabs/sandhi`).
 
 ## Decision
 
+### Product version ownership (2026-09-05 clarification)
+
+First-party workspace packages use lockstep versions because they ship as one
+product, not independently supported releases. Root `package.json` is the
+authority; `pnpm release:sync` synchronizes package manifests and the API/CLI
+runtime stamps. MCP reads its synchronized manifest (or its compiled stamp).
+`pnpm release:check`, the tag guard, and built-surface smoke checks enforce the
+agreement. This does not change which packages publish to npm. Protocol `/v1`
+and underlying browser versions remain separate. Revisit independent SDK
+versioning only when it has an independent publishing/support lifecycle.
+
+### Distribution policy
+
 1. **The MCP server publishes to npm as `@anvailabs/agentbrowser-mcp`** — the plain-JS package
    (`dist/bin.js`, no platform binaries: it is a thin HTTP proxy to an AgentBrowser service;
    Node ≥ 18 required). The package is a rename of the internal `@agentbrowser/mcp-server`

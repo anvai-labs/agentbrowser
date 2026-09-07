@@ -367,13 +367,15 @@ describe('Approval Gates', () => {
         });
       }
 
-      // Should still be able to generate (old ones expire)
-      const token = await gateWithLimit.generateApprovalToken({
-        sessionId: 'ses_new',
-        action: { type: 'click' },
-      });
-
-      expect(token).toBeDefined();
+      // Pending tokens have not expired: cleanup must not authorize overflow.
+      await expect(
+        gateWithLimit.generateApprovalToken({
+          sessionId: 'ses_new',
+          action: { type: 'click' },
+        })
+      ).rejects.toMatchObject({ code: 'QUOTA_EXCEEDED' });
+      expect(gateWithLimit.getTokenCount()).toBe(5);
+      await gateWithLimit.shutdown();
     });
   });
 

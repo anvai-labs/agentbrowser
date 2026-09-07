@@ -9,14 +9,94 @@
  */
 
 import { type ChildProcess, spawn } from 'node:child_process';
+import { EngineError, type ProtocolErrorCode } from '@agentbrowser/engine';
 
-export class SafaridriverError extends Error {
+const DRIVER_CODES: Record<string, ProtocolErrorCode> = {
+  'NO SUCH ELEMENT': 'TARGET_NOT_FOUND',
+  'STALE ELEMENT REFERENCE': 'STALE_TARGET',
+  'NO SUCH WINDOW': 'PAGE_NOT_FOUND',
+  'INVALID SESSION ID': 'SESSION_NOT_FOUND',
+  'INVALID ARGUMENT': 'INVALID_REQUEST',
+  'UNKNOWN COMMAND': 'ENGINE_UNSUPPORTED',
+  'UNSUPPORTED OPERATION': 'ENGINE_UNSUPPORTED',
+  TIMEOUT: 'ACTION_TIMEOUT',
+  'SCRIPT TIMEOUT': 'ACTION_TIMEOUT',
+  SAFARIDRIVER_UNREACHABLE: 'ENGINE_CRASHED',
+  SAFARIDRIVER_EXITED: 'ENGINE_CRASHED',
+  SAFARIDRIVER_NOT_READY: 'ENGINE_UNSUPPORTED',
+  SAFARIDRIVER_DISABLED: 'ENGINE_UNSUPPORTED',
+};
+
+export class SafaridriverError extends EngineError {
   constructor(
-    readonly code: string,
+    readonly reason: string,
     message: string
   ) {
-    super(message);
+    super(DRIVER_CODES[reason] ?? 'INTERNAL', `${reason}: ${message}`, false, { reason });
     this.name = 'SafaridriverError';
+  }
+}
+
+export interface WebDriverTransport {
+  request<T = unknown>(path: string, method: 'GET' | 'POST' | 'DELETE', body?: unknown): Promise<T>;
+  kill(): void;
+}
+
+/** One deadline covers connection, headers, body consumption and JSON decoding. */
+export async function webdriverRequest<T = unknown>(
+  url: string,
+  method: 'GET' | 'POST' | 'DELETE',
+  body?: unknown,
+  timeoutMs = 30_000
+): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const text = await response.text();
+    let payload: { value?: unknown } = {};
+    if (text.trim()) {
+      try {
+        const decoded: unknown = JSON.parse(text);
+        if (decoded === null || typeof decoded !== 'object' || Array.isArray(decoded))
+          throw new Error('Expected object');
+        payload = decoded;
+      } catch {
+        throw new SafaridriverError('INVALID_RESPONSE', 'Driver returned malformed JSON');
+      }
+    }
+    const value = payload.value;
+    if (
+      value !== null &&
+      typeof value === 'object' &&
+      'error' in value &&
+      typeof value.error === 'string'
+    ) {
+      const message =
+        'message' in value && typeof value.message === 'string' ? value.message : value.error;
+      throw new SafaridriverError(value.error.toUpperCase(), message);
+    }
+    if (!response.ok)
+      throw new SafaridriverError('HTTP_ERROR', `Driver returned HTTP ${response.status}`);
+    return value as T;
+  } catch (error) {
+    if (controller.signal.aborted)
+      throw new SafaridriverError(
+        'TIMEOUT',
+        'Driver request deadline exceeded; an action may already have executed'
+      );
+    if (error instanceof EngineError) throw error;
+    throw new SafaridriverError(
+      'SAFARIDRIVER_UNREACHABLE',
+      'Cannot communicate with the Safari driver'
+    );
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -25,12 +105,18 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function driver_waitReady(
   proc: ChildProcess,
   port: number,
-  timeoutMs: number
+  timeoutMs: number,
+  spawnFailure: () => Error | undefined
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    const failure = spawnFailure();
+    if (failure) throw new SafaridriverError('SAFARIDRIVER_DISABLED', failure.message);
     try {
-      const response = await fetch(`http://127.0.0.1:${port}/status`);
+      const response = await fetch(`http://127.0.0.1:${port}/status`, {
+        signal: AbortSignal.timeout(Math.max(1, Math.min(1000, deadline - Date.now()))),
+      });
+      await response.body?.cancel();
       if (response.ok) {
         return;
       }
@@ -67,14 +153,15 @@ export class SafaridriverProcess {
     const proc = spawn('safaridriver', ['--port', String(port)], {
       stdio: ['ignore', 'ignore', 'pipe'],
     });
-    proc.stderr?.on('data', (chunk: Buffer | string) => {
-      // surfaced on failure paths only; safaridriver is silent when healthy
+    proc.stderr?.resume();
+    let spawnError: Error | undefined;
+    proc.once('error', (error) => {
+      spawnError = error;
     });
 
     const driver = new SafaridriverProcess(proc, port);
-    void driver;
     try {
-      await driver_waitReady(proc, port, timeoutMs);
+      await driver_waitReady(proc, port, timeoutMs, () => spawnError);
     } catch (error) {
       proc.kill();
       throw error;
@@ -95,43 +182,7 @@ export class SafaridriverProcess {
     method: 'GET' | 'POST' | 'DELETE',
     body?: unknown
   ): Promise<T> {
-    let response: Response;
-    try {
-      response = await fetch(this.url(path), {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      });
-    } catch (error) {
-      throw new SafaridriverError(
-        'SAFARIDRIVER_UNREACHABLE',
-        `request to safaridriver failed: ${String(error)}`
-      );
-    }
-
-    let payload: { value?: unknown } = {};
-    try {
-      payload = (await response.json()) as { value?: unknown };
-    } catch {
-      // 204s and empty bodies are legal for several endpoints.
-    }
-
-    const value = payload.value;
-    if (
-      value !== null &&
-      typeof value === 'object' &&
-      typeof (value as { error?: unknown }).error === 'string'
-    ) {
-      const known = value as { error: string; message?: string; stacktrace?: string };
-      throw new SafaridriverError(known.error.toUpperCase(), known.message ?? known.error);
-    }
-    if (!response.ok) {
-      throw new SafaridriverError(
-        'HTTP_ERROR',
-        `safaridriver returned HTTP ${response.status} for ${path}`
-      );
-    }
-    return value as T;
+    return webdriverRequest<T>(this.url(path), method, body);
   }
 
   kill(): void {

@@ -8,6 +8,7 @@
  */
 
 import type { ActionEffect, EngineAction, EnginePage, ResolvedTarget } from '@agentbrowser/engine';
+import { normalizeEngineError } from '@agentbrowser/engine';
 import {
   DELIVERED_ACTION_TYPES,
   ErrorCode,
@@ -24,9 +25,12 @@ import type {
   PageState,
   SupportedAction,
 } from '@agentbrowser/protocol';
+import { budgetObservation } from './observation-budget.js';
 import { ObservationNormalizer } from './observation-normalizer.js';
 
 export interface ExecutionContext {
+  /** Policy runs after live target validation, immediately before effects. */
+  beforeAction?(resolved?: ResolvedTarget): Promise<void>;
   enginePage: EnginePage;
   /** The observation the caller's refs were minted from. */
   observation: PageState;
@@ -121,6 +125,7 @@ export class ActionExecutor {
         }
       }
 
+      await context.beforeAction?.(resolvedTarget);
       const effect = await enginePage.act(this.buildEngineAction(request.action));
 
       const result: ActionResult = {
@@ -159,28 +164,16 @@ export class ActionExecutor {
 
     const normalized = this.normalizer.normalize(raw, {
       ...request.observeAfter,
+      retainAllElements: true,
       revision: newRevision,
       sessionId: context.observation.sessionId,
       pageId: request.pageId,
     });
 
-    // observeAfter previously accepted maxBytes and silently ignored it
-    // (the dead normalizer option). Bound it here: a prefix cut in
-    // document order, mirroring the service's byte budget semantics.
-    const budget = request.observeAfter?.maxBytes;
-    if (budget !== undefined) {
-      let elements = normalized.elements;
-      while (
-        elements.length > 0 &&
-        Buffer.byteLength(JSON.stringify({ ...normalized, elements }), 'utf8') > budget
-      ) {
-        elements = elements.slice(0, Math.floor(elements.length / 2));
-      }
-      if (elements.length < normalized.elements.length) {
-        return { ...normalized, elements, truncated: true };
-      }
-    }
-    return normalized;
+    return budgetObservation(normalized, {
+      maxElements: request.observeAfter?.maxElements,
+      maxBytes: request.observeAfter?.maxBytes,
+    });
   }
 
   /**
@@ -312,34 +305,7 @@ export class ActionExecutor {
    * Map an engine exception onto the protocol error taxonomy
    */
   private mapEngineError(error: unknown): ApiErrorDetail {
-    const message = error instanceof Error ? error.message : 'Unknown engine error';
-
-    if (/not found/i.test(message)) {
-      return createApiErrorDetail(
-        ErrorCode.TARGET_NOT_FOUND,
-        `Target element not found: ${message}`
-      );
-    }
-
-    if (/multiple elements|ambiguous/i.test(message)) {
-      return createApiErrorDetail(ErrorCode.TARGET_AMBIGUOUS, `Target is ambiguous: ${message}`);
-    }
-
-    if (/stale|fingerprint/i.test(message)) {
-      return staleTarget(`Target is stale: ${message}`);
-    }
-
-    if (/timeout|timed out/i.test(message)) {
-      return createApiErrorDetail(ErrorCode.ACTION_TIMEOUT, message, { retryable: true });
-    }
-
-    // Dialog actions with nothing held are structurally impossible, not
-    // engine failures - the agent-actionable answer is INVALID_REQUEST.
-    if (/no dialog/i.test(message)) {
-      return createApiErrorDetail(ErrorCode.INVALID_REQUEST, message);
-    }
-
-    return createApiErrorDetail(ErrorCode.INTERNAL, message);
+    return normalizeEngineError(error);
   }
 
   /**

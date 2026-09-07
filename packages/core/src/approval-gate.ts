@@ -5,6 +5,7 @@
  * automatic expiration, validation, and usage tracking.
  */
 
+import { createHash, randomUUID } from 'node:crypto';
 import type { StructuredLogger } from './logger.js';
 
 const LOW_RISK_ACTIONS = new Set<string>(['observe', 'navigate', 'scroll', 'press']);
@@ -26,6 +27,11 @@ export interface ApprovalActionRequest {
   effect?: string;
   target?: { ref?: string };
   value?: string;
+  pageId?: string;
+  revision?: number;
+  url?: string;
+  identity?: string;
+  parameters?: Record<string, unknown>;
 }
 
 export interface ApprovalRequest {
@@ -89,11 +95,11 @@ export class ApprovalGate {
     this.logger = options.logger;
 
     // Validate configuration
-    if (this.options.tokenTtlMs <= 0) {
+    if (!Number.isSafeInteger(this.options.tokenTtlMs) || this.options.tokenTtlMs <= 0) {
       throw new Error('tokenTtlMs must be positive');
     }
 
-    if (this.options.maxTokens <= 0) {
+    if (!Number.isSafeInteger(this.options.maxTokens) || this.options.maxTokens <= 0) {
       throw new Error('maxTokens must be positive');
     }
 
@@ -136,6 +142,13 @@ export class ApprovalGate {
     // Check token limit and clean up if needed
     if (this.tokens.size >= this.options.maxTokens) {
       await this.runCleanup();
+    }
+    // Check again after cleanup. There is no await between this admission
+    // decision and insertion, so concurrent callers cannot over-admit.
+    if (this.tokens.size >= this.options.maxTokens) {
+      throw new ApprovalError('QUOTA_EXCEEDED', 'Approval token capacity reached', false, {
+        maxTokens: this.options.maxTokens,
+      });
     }
 
     const token: ApprovalToken = {
@@ -309,32 +322,43 @@ export class ApprovalGate {
    * Generate unique token ID
    */
   private generateTokenId(): string {
-    return `tok_${Date.now()}_${Math.random().toString(36).substr(2, 16)}`;
+    return `tok_${randomUUID()}`;
   }
 
   /**
    * Generate action fingerprint for validation
    */
   private generateActionFingerprint(action: ApprovalActionRequest): string {
-    const parts = [
-      action.type,
-      action.effect || '',
-      action.target?.ref || '',
-      action.value ? `value_${action.value}` : '',
-    ];
-
-    return parts.filter(Boolean).join(':');
+    const canonical = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(canonical);
+      if (value !== null && typeof value === 'object')
+        return Object.fromEntries(
+          Object.entries(value)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([key, item]) => [key, canonical(item)])
+        );
+      return value;
+    };
+    return `${action.type}:${createHash('sha256')
+      .update(JSON.stringify(canonical(action)))
+      .digest('hex')}`;
   }
 
   /**
    * Update configuration
    */
   updateConfig(options: Partial<ApprovalGateOptions>): void {
-    if (options.tokenTtlMs !== undefined && options.tokenTtlMs <= 0) {
+    if (
+      options.tokenTtlMs !== undefined &&
+      (!Number.isSafeInteger(options.tokenTtlMs) || options.tokenTtlMs <= 0)
+    ) {
       throw new Error('tokenTtlMs must be positive');
     }
 
-    if (options.maxTokens !== undefined && options.maxTokens <= 0) {
+    if (
+      options.maxTokens !== undefined &&
+      (!Number.isSafeInteger(options.maxTokens) || options.maxTokens <= 0)
+    ) {
       throw new Error('maxTokens must be positive');
     }
 

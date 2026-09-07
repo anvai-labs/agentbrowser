@@ -10,8 +10,8 @@ proves the control works. Residual risks are named, not hidden.
    keys identify tenants when configured (no-keys = trusted single-tenant
    local mode, loudly warned).
 2. **Service -> engine**: in-process, trusted.
-3. **Engine -> network**: the egress choke point. ALL page-originated
-   traffic crosses this boundary.
+3. **Engine -> network**: intended egress boundary; current browser routing
+   does not cover later redirect hops or provide OS-enforced containment.
 4. **Page content -> agent**: everything the browser returns (text,
    names, values, titles) is hostile-injected data.
 
@@ -19,9 +19,9 @@ proves the control works. Residual risks are named, not hidden.
 
 | Threat (spec) | Control | Proof |
 | --- | --- | --- |
-| SSRF to loopback / private ranges / cloud metadata via navigation | Service fast-fail + engine choke point (per-host verdicts, memoized) | `network-policy.test.ts` loopback/private/metadata suites; engine redirect test |
-| Redirect-based policy bypass (public URL -> 302 -> blocked host) | Engine proxies every request with `maxRedirects: 0` and vets each hop's real hostname (continue()d requests' redirect targets bypass interception - the reason for the proxy pattern) | `engine-playwright` "block a redirect to a denied host" |
-| Subresource / XHR / fetch bypass | Same context.route choke point intercepts every request the context makes; service workers blocked (they bypass routing) | `engine-playwright` "block in-page fetches" |
+| SSRF to loopback / private ranges / cloud metadata via navigation | Service fast-fail + host/resolved-address checks on routed requests; no browser connection pinning | `network-policy.test.ts` loopback/private/metadata suites; initial-hop engine tests |
+| Redirect-based policy bypass (public URL -> 302 -> blocked host) | First redirect target checked; later hops bypass routing: **open gap** | Independent real Chromium multi-hop probe falsifies complete coverage |
+| Subresource / XHR / fetch bypass | Routed requests checked; later redirect hops remain a gap; service workers blocked | `engine-playwright` "block in-page fetches" does not prove all-hop enforcement |
 | Session policy weakening by tenant | `SessionHostPolicy` is restrict-only: the SSRF base always runs after session allow/blocked lists | `network-policy.test.ts` "still enforce the base SSRF policy" |
 | Cross-tenant session/artifact access | Bearer-key tenancy: keys held hashed, sessions stamped with tenantId, every /v1 session-scoped route (incl. WS, 4403) verifies ownership | `server.test.ts` authentication and tenancy suite |
 | Unauthorized use | 401 without/with-unknown key when AGENTBROWSER_API_KEYS configured; loud warning when unauthenticated | same suite |
@@ -33,27 +33,28 @@ proves the control works. Residual risks are named, not hidden.
 | Excessive resource retention | TTL-expiring artifacts; session expiry sweeps reconcile service state; bounded histories and span buffers | `artifact-store.test.ts`; expiry-cleanup test; soak |
 | Process leaks | Engine close ends event iterators (browser-level close wakes waiters); soak audit reports zero leaked sessions/engine sessions | `soak.test.ts` |
 
-## Residual risks (accepted for the MVP, named honestly)
+## Open gaps and residual risks
 
-- **DNS rebinding (MITIGATED)**: the choke point now resolves every
-  hostname (dns.lookup, all addresses) and validates each resolved IP
-  against the SSRF rules (`RequestPolicy.checkResolvedAddresses`); the
-  verdict cache keys on the resolved set, so a changed resolution
-  re-validates. Proven against a real public rebinding-shaped DNS name
-  (localtest.me -> 127.0.0.1). IPv6/pinning hardening remains future
-  work.
-- **WebSocket upgrades (MITIGATED, with an upstream caveat)**: the http
-  choke point's fetch/fulfill proxy breaks page WebSocket connections
-  outright (upstream Playwright limitation, verified empirically); under
-  egress the engine therefore defaults to deny-all - every upgrade is
-  closed cleanly with code 1014. Selective forwarding
-  (routeWebSocket.connectToServer) is broken by the same coexistence
-  bug; without an egress policy WebSockets pass through untouched.
-- **Response-size caps (ENFORCED)**: content-length headers are checked
-  at the choke point, and responses without content-length (chunked) are
-  buffered - bounded by the policy cap - with actual bytes enforced
-  (`RequestPolicy.checkBodySize`). Both paths carry real-Chromium
-  blocking tests.
+- **Later-hop redirects (OPEN, not accepted debt)**: Chromium routing is not
+  invoked for every redirect hop. Host, redirect-count, response and byte gates
+  can be skipped. Direct-download fixes do not close this browser gap (R4).
+- **DNS rebinding (PARTIAL)**: routed requests recheck all resolved addresses,
+  without hostname-verdict caching, and session policies delegate those checks.
+  Browser connections are not pinned to those addresses, and later hops can
+  escape checks. Direct downloads separately validate and pin each connection.
+- **WebSocket upgrades (PARTIAL)**: root and session-only policies now install
+  the same default page WebSocket deny handler. The real Chromium page fixture
+  has zero server connections; this does not establish worker coverage or a
+  network-wide boundary. Selective forwarding remains unsupported under the
+  fetch/fulfill combination; explicit `off` and no-policy modes are unguarded.
+- **Response-size caps (PARTIAL)**: browser declared-length and actual-byte
+  checks apply only to routed responses; actual bytes are checked after buffering,
+  not as a peak-memory bound. Later redirect responses can bypass them. Direct
+  downloads separately enforce streaming decoded-byte limits.
+- **OS containment (NOT SHIPPED)**: the accepted contained Chromium profile
+  requires an external gateway and OS-enforced gateway-only egress. Native local
+  operation remains available without that guarantee. Full ADR-008 multi-tenant
+  isolation remains deferred; an ordinary Docker bridge is not forced egress.
 - **Unauthenticated infra planes (HARDENED)**: `/metrics` requires
   bearer auth when keys are configured; `/health/ready` answers
   unauthenticated probes with a minimal `{status}` (no engine/version

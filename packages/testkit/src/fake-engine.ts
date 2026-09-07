@@ -292,6 +292,12 @@ class FakePage implements EnginePage {
     this.removeSelf = remove;
   }
 
+  async getUrl(): Promise<string> {
+    this.assertNotDead();
+    if (this.closed) throw new Error('Page is closed');
+    return this.currentUrl;
+  }
+
   async navigate(request: NavigationRequest): Promise<NavigationResult> {
     this.assertNotDead();
     if (this.closed) {

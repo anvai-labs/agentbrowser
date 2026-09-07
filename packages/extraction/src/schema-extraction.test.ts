@@ -135,6 +135,41 @@ describe('SchemaExtractor (deterministic provider)', () => {
 });
 
 describe('model-adapter hygiene (E1) + adjacency anchoring (E2)', () => {
+  it('matches adjacent labels without accepting label substrings', async () => {
+    const extractor = new SchemaExtractor();
+    const schema = { type: 'object', properties: { price: { type: 'string' } } };
+    const page = { ...PAGE, elements: [], content: '<p>price: $29.99</p>' };
+    expect((await extractor.extract(page, schema)).data).toEqual({ price: '$29.99' });
+    expect(
+      (await extractor.extract({ ...page, content: '<p>surprise: $29.99</p>' }, schema)).data
+    ).toEqual({});
+  });
+
+  it('scrubs the complete model input and failure/evidence envelope', async () => {
+    let inputSeen: unknown;
+    const extractor = new SchemaExtractor({
+      secretManager: new SecretManager({ 'vault://p': 'hunter2' }),
+      model: {
+        name: 'test',
+        async extract(input) {
+          inputSeen = input;
+          throw new Error('failed hunter2');
+        },
+      },
+    });
+    const result = await extractor.extract(
+      { ...PAGE, title: 'hunter2', url: 'https://example.com/hunter2' },
+      {
+        type: 'object',
+        description: 'hunter2',
+        properties: { missing: { type: 'string' } },
+      }
+    );
+    expect(inputSeen).toBeDefined();
+    expect(JSON.stringify(inputSeen)).not.toContain('hunter2');
+    expect(result.warnings?.some((warning) => warning.includes('failed ***'))).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('hunter2');
+  });
   it('keeps deterministic data and warns when the model throws (E1)', async () => {
     const extractor = new SchemaExtractor({
       model: {

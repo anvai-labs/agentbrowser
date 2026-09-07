@@ -7,7 +7,40 @@ client, start with the [README](../README.md); for the security model,
 see the [threat model](threat-model.md) and the
 [safety ADRs](README.md#core-architecture-adrs).
 
+## Operator approval policy
+
+`AGENTBROWSER_APPROVAL_POLICY` accepts a JSON object, or embedders can pass
+`ServerOptions.approvalPolicy`. Rules use exact hostname/action/role/name matches;
+the first matching rule wins. They are trusted deployment configuration, not
+instructions accepted from the page or from an agent request. For example:
+
+```json
+{"unknownRisk":"required","rules":[{"hostname":"shop.example","action":"click","name":"Pay","effect":"transaction"}]}
+```
+
+Unknown-risk actions default to `allow` for local automation; select `required`
+for conservative operation. Recognized high-risk effects require confirmation
+unless an operator rule explicitly allows or denies them. Session
+`policy.approval.transactions` and `externalMessages` can tighten a decision to
+`required` or `deny`, but cannot relax the operator policy. Rules do not infer
+transaction semantics from arbitrary page text; audit them for your workflows.
+
+On `APPROVAL_REQUIRED`, clients must obtain operator confirmation before retrying
+with `details.tokenId` as `approvalToken`. The token is single-use and bound to
+page, revision, resolved target fingerprint and action parameters. This protocol
+records caller confirmation; it does not independently authenticate a human.
+Stale targets must be reobserved and require new confirmation.
+
 ## Installation
+
+### Release version consistency
+
+Root `package.json` owns the product version. When preparing a release, change
+that version once, run `pnpm release:sync`, and commit the synchronized manifests
+and generated stamps together. `pnpm release:check` is read-only; after building,
+`pnpm release:artifacts` exercises API health, CLI `--version`, and MCP initialize.
+CI rejects drift and release tags must equal `v<product-version>`. Matching package
+versions identify one shipped product; they do not claim every package changed.
 
 ### Homebrew (macOS / Linux)
 
@@ -90,6 +123,24 @@ sibling `.err.log`); `brew services list` shows run state.
 
 ## Session lifecycle
 
+### Observation and event budgets
+
+Observation `maxBytes` measures the final redacted UTF-8 JSON, including cursor
+metadata. Element pagination addresses the complete prioritized observation;
+pass `continuation.nextOrdinal` as `continueFrom` while the page revision remains
+unchanged. The default page contains at most 300 elements. Text and diff details
+are truncated without a separate text/diff cursor; request a larger budget for
+those. If identity plus the next element cannot fit, `OUTPUT_TRUNCATED` reports
+`details.minBytes` instead of returning an oversized or non-advancing result.
+
+Service event replay retains at most 500 other events / 1 MiB and 1,000 request
+events / 2 MiB per session. Events over 64 KiB are dropped before replay and
+broadcast. `events_dropped_total` and `events_evicted_total` expose loss with
+bounded-cardinality labels. These byte counts cover serialized service ledgers,
+not engine-side queues, live DOM snapshots, serialization temporaries, or total
+process memory. Pending approval tokens have a hard admission cap; full capacity
+returns `QUOTA_EXCEEDED` until used or expired tokens can be reclaimed.
+
 Sessions are **ephemeral by default** ([ADR-005](adr/005-ephemeral-sessions-explicit-persistence.md)):
 
 - default TTL **15 minutes**, default idle timeout **2 minutes** — both
@@ -113,6 +164,29 @@ error level, and recorded in the crash audit — callers get a typed
 
 ## Choosing an engine
 
+### Egress and download limits
+
+Delivery note: the direct-download and captured-download improvements below
+merged into `develop` in [PR 80](https://github.com/anvai-labs/agentbrowser/pull/80).
+This is a partial correction, not browser containment: R4 remains open in the
+[delivery tracker](engineering-review-remediation.md). Integration into `develop`
+does not itself publish a release.
+
+Direct URL downloads validate every redirect and resolved address, pin the
+validated connection address, and bound decoded bytes and the whole-operation
+deadline. Captured browser downloads are disabled unless `allowDownloads` is
+enabled. Completed captures have unique `downloadId` values; collect by ID when
+filenames repeat. Collection consumes the retained bytes, and page close drops
+uncollected captures (at most 100 entries / 20 MiB retained per page).
+
+These are application limits, not a process-isolation guarantee. Playwright's
+interception fetch buffers a response before the actual-size check, and its
+connection resolution is separate from the policy DNS check. Browser downloads
+can also occupy temporary disk before the completed-file size check. Untrusted
+multi-tenant deployments need network-enforced egress and memory/disk quotas at
+the process/container boundary described by ADR-008; trusted local deployments
+retain that explicit deferral.
+
 Sessions name their engine (`engine` field on create / MCP
 `browser_create`). The registry resolves the primary engine by default
 and fails loudly (`ENGINE_NOT_FOUND`) on unknown names — a session never
@@ -121,10 +195,16 @@ including per-engine egress guarantees, is in the
 [engine matrix](engines.md). Notes for operators:
 
 - **Chromium (Playwright)** is the production default; the egress policy
-  is enforced per request, per redirect hop, and against DNS-resolved IPs.
+  checks routed requests, first redirect targets and resolved IPs. Later hops
+  and connection pinning remain open; see the deployment limitations below.
 - **Safari** (`engine-safari`) is macOS-only and always headed; it
-  refuses policy-bearing sessions loudly (`EGRESS_UNSUPPORTED`) rather
-  than enforcing nothing quietly.
+  refuses policy-bearing sessions with `ENGINE_UNSUPPORTED` and
+  `details.reason: EGRESS_UNSUPPORTED`. The REST service always attaches
+  policy, so driver enablement alone does not make REST Safari sessions work.
+  Direct-engine local use without policy is distinct and trusted-only; it
+  offers no network interception or console/network event evidence. Driver
+  requests have whole-response deadlines, but timeout does not prove an
+  action failed to execute and must not trigger an automatic mutation retry.
 - **Obscura** (`engine-obscura`) is experimental, unregistered, and
   benchmark-only — it cannot be selected by a session, by design; see the
   Obscura section in [engines.md](engines.md).
@@ -156,6 +236,14 @@ seed future headless sessions with them — [TD-BROWSER-6](td/TD-BROWSER-6-heade
 
 ## Deployment notes
 
+- **Browser egress is partial**: routed requests and first redirect targets are
+  checked, but later redirect hops bypass routing. Browser DNS checks do not pin
+  connections, and response-size checks run after buffering. Page WebSocket
+  denial is not proof of worker or transport-wide coverage. Direct-download
+  pinning and streaming caps do not extend to browser traffic. Do not rely on
+  this layer alone for required SSRF containment. Native local operation remains
+  available; a contained profile requires OS-enforced gateway-only egress and
+  independent bypass tests before it can be released.
 - **Docker**: images build from the repo root; process/container
   isolation is the minimum bar for hostile multi-tenancy
   ([ADR-008](adr/008-process-container-isolation.md)). Run one service

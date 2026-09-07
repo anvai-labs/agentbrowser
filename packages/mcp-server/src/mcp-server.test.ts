@@ -359,7 +359,6 @@ describe('AgentBrowser MCP server', () => {
       expect(response.result.isError).toBeUndefined();
       expect(sessions.executeAction).toHaveBeenCalledWith('ses_1', 'pg_1', {
         action: 'wait',
-        target: { ref: undefined },
         condition: { until: 'networkidle', timeoutMs: 5000 },
       });
     });
@@ -374,7 +373,28 @@ describe('AgentBrowser MCP server', () => {
           })
         );
         expect(response.result.isError).toBeUndefined();
+        expect(sessions.executeAction).toHaveBeenLastCalledWith('ses_1', 'pg_1', { action });
       }
+    });
+
+    it('forwards untargeted press and consent fields', async () => {
+      const response = JSON.parse(
+        await call('press-consent', 'browser_act', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          action: 'press',
+          key: 'Enter',
+          approvalToken: 'operator-token',
+          expectedRevision: 1,
+        })
+      );
+      expect(response.result.isError).toBeUndefined();
+      expect(sessions.executeAction).toHaveBeenLastCalledWith('ses_1', 'pg_1', {
+        action: 'press',
+        key: 'Enter',
+        approvalToken: 'operator-token',
+        expectedRevision: 1,
+      });
     });
 
     it('should still require a ref for targeted Phase-1 actions', async () => {

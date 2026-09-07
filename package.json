@@ -1,9 +1,14 @@
 {
   "name": "agentbrowser-monorepo",
-  "version": "1.0.0",
+  "version": "1.8.4",
   "private": true,
   "description": "AgentBrowser: Agent-First Headless Browser",
   "scripts": {
+    "release:sync": "node scripts/sync-versions.mjs --write",
+    "release:check": "node scripts/sync-versions.mjs",
+    "release:artifacts": "node scripts/check-release-artifacts.mjs",
+    "test:release": "node --test scripts/sync-versions.test.mjs",
+    "test:probes": "node --test scripts/worker-inheritance.test.mjs scripts/child-cdp.test.mjs scripts/worker-network.test.mjs scripts/worker-startup.test.mjs scripts/startup-cleanup.test.mjs scripts/raw-cdp.test.mjs scripts/owner-release.test.mjs scripts/sole-owner.test.mjs",
     "build": "pnpm -r --filter './packages/**' build",
     "build:apps": "pnpm -r --filter './apps/**' build",
     "type-check": "pnpm -r type-check",

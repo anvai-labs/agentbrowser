@@ -111,7 +111,7 @@ function matchFields(
 
     // `label value` adjacency in text: "price: $29.99" / "sku SKU-42".
     const pattern = new RegExp(
-      `(?:^|\\s)${escapeRegExp(property.name)}\b\\s*[:=]?\\s*([^\\s]{1,80})`,
+      `(?:^|\\s)${escapeRegExp(property.name)}\\b\\s*[:=]?\\s*([^\\s]{1,80})`,
       'i'
     );
     const match = pattern.exec(text);
@@ -156,9 +156,9 @@ export class SchemaExtractor {
       const safeText = this.secretManager !== undefined ? this.secretManager.redact(text) : text;
       try {
         const modelData = await this.model.extract({
-          title: raw.title,
+          title: this.secretManager?.redact(raw.title) ?? raw.title,
           text: safeText.slice(0, MAX_MODEL_TEXT_CHARS),
-          schema,
+          schema: this.secretManager?.redactUntrusted(schema) ?? schema,
         });
         modelUsed = this.model.name;
         for (const property of remaining) {
@@ -195,10 +195,10 @@ export class SchemaExtractor {
 
     // Secrets never ride out in extracted values (spec 16).
     if (this.secretManager !== undefined) {
-      data = this.secretManager.redact(data);
+      data = this.secretManager.redactUntrusted(data);
     }
 
-    return {
+    const result: ExtractionResult = {
       data,
       evidence: [
         {
@@ -213,5 +213,6 @@ export class SchemaExtractor {
       ...(warnings.length > 0 ? { warnings } : {}),
       ...(modelUsed !== undefined ? { modelUsed } : {}),
     };
+    return this.secretManager?.redact(result) ?? result;
   }
 }

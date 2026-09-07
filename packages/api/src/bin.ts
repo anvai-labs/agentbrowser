@@ -12,8 +12,9 @@ import { startServer } from './server.js';
 const engine = new PlaywrightChromiumEngine();
 
 // TD-BROWSER-7 Phase 2: real Safari via safaridriver, registered for
-// per-session routing ({"engine": "safari"}). Sessions created before
-// `safaridriver --enable` fail loudly with setup instructions.
+// capability discovery. The guarded service always attaches an egress policy,
+// so Safari creation returns ENGINE_UNSUPPORTED / EGRESS_UNSUPPORTED even
+// after driver enablement; direct-engine local use is a separate deployment.
 const engines: Record<string, BrowserEngine> = {};
 if (process.platform === 'darwin') {
   const { SafaridriverEngine } = await import('@agentbrowser/engine-safari');

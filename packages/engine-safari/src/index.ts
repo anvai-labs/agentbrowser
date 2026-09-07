@@ -24,6 +24,8 @@
 import type {
   ActionEffect,
   BrowserEngine,
+  CapturedArtifact,
+  EngineAction,
   EngineCapabilities,
   EngineEvent,
   EnginePage,
@@ -41,7 +43,9 @@ import type {
   ResolvedTarget,
   ScreenshotRequest,
 } from '@agentbrowser/engine';
-import { SafaridriverError, SafaridriverProcess } from './webdriver.js';
+import { EngineError } from '@agentbrowser/engine';
+import { OperationQueue } from './operation-queue.js';
+import { SafaridriverError, SafaridriverProcess, type WebDriverTransport } from './webdriver.js';
 
 /** One-time safaridriver enablement command surfaced in loud errors. */
 export const SAFARIDRIVER_ENABLE_HINT =
@@ -92,7 +96,13 @@ export class SafaridriverEngine implements BrowserEngine {
   /** Declared for the contract suite and service-level loud refusal. */
   readonly alwaysHeaded = true;
 
-  private readonly drivers = new Set<SafaridriverProcess>();
+  private readonly drivers = new Set<WebDriverTransport>();
+  private readonly sessions = new Set<SafariSession>();
+  private readonly pendingStarts = new Set<Promise<EngineSession>>();
+  private closed = false;
+  private closePromise: Promise<void> | undefined;
+
+  constructor(private readonly options: { startDriver?: () => Promise<WebDriverTransport> } = {}) {}
 
   async capabilities(): Promise<EngineCapabilities> {
     return {
@@ -113,14 +123,37 @@ export class SafaridriverEngine implements BrowserEngine {
   }
 
   async createSession(options: EngineSessionOptions): Promise<EngineSession> {
+    const pending = this.startSession(options);
+    this.pendingStarts.add(pending);
+    try {
+      const session = await pending;
+      this.assertOpen();
+      return session;
+    } finally {
+      this.pendingStarts.delete(pending);
+    }
+  }
+
+  private assertOpen(): void {
+    if (this.closed) throw new EngineError('ENGINE_CRASHED', 'Safari engine is closed');
+  }
+
+  private async startSession(options: EngineSessionOptions): Promise<EngineSession> {
+    this.assertOpen();
     if (options.requestPolicy !== undefined) {
-      throw new SafaridriverError(
-        'EGRESS_UNSUPPORTED',
-        'Safari via safaridriver cannot intercept network traffic; egress policy is not enforceable on this engine (ADR-006). Use a Chromium session for egress-restricted work.'
+      throw new EngineError(
+        'ENGINE_UNSUPPORTED',
+        'EGRESS_UNSUPPORTED: Safari cannot intercept network traffic. Use Chromium for policy-bearing sessions (ADR-006).',
+        false,
+        { reason: 'EGRESS_UNSUPPORTED' }
       );
     }
 
-    const driver = await SafaridriverProcess.start();
+    const driver = await (this.options.startDriver?.() ?? SafaridriverProcess.start());
+    if (this.closed) {
+      driver.kill();
+      this.assertOpen();
+    }
     this.drivers.add(driver);
 
     let wdSessionId: string;
@@ -134,6 +167,7 @@ export class SafaridriverEngine implements BrowserEngine {
         },
       });
       wdSessionId = value.sessionId;
+      this.assertOpen();
     } catch (error) {
       driver.kill();
       this.drivers.delete(driver);
@@ -150,22 +184,42 @@ export class SafaridriverEngine implements BrowserEngine {
     const session = new SafariSession(driver, wdSessionId, options, () => {
       driver.kill();
       this.drivers.delete(driver);
+      this.sessions.delete(session);
     });
+    this.sessions.add(session);
 
     if (options.cookies !== undefined && options.cookies.length > 0) {
       session.queueCookies(options.cookies);
     }
-    if (options.viewport !== undefined) {
-      await session.setViewport(options.viewport.width, options.viewport.height);
+    try {
+      if (options.viewport !== undefined)
+        await session.setViewport(options.viewport.width, options.viewport.height);
+      this.assertOpen();
+    } catch (error) {
+      await session.close();
+      throw error;
     }
     return session;
   }
 
-  async close(): Promise<void> {
-    for (const driver of this.drivers) {
-      driver.kill();
-    }
-    this.drivers.clear();
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    this.closed = true;
+    const closing = [...this.sessions].map((session) => session.close());
+    this.closePromise = (async () => {
+      await Promise.all([
+        ...closing,
+        ...[...this.pendingStarts].map((pending) =>
+          pending.then(
+            (session) => session.close(),
+            () => {}
+          )
+        ),
+      ]);
+      for (const driver of this.drivers) driver.kill();
+      this.drivers.clear();
+    })();
+    return this.closePromise;
   }
 
   /**
@@ -194,11 +248,15 @@ export class SafaridriverEngine implements BrowserEngine {
 class SafariSession implements EngineSession {
   readonly id: string;
   private readonly pagesMap = new Map<string, SafariPage>();
+  /** Closed publicly but not yet confirmed absent from the driver. */
+  private readonly closingHandles = new Map<string, symbol>();
   private readonly pendingCookieSeeds: NormalizedCookie[] = [];
   private closed = false;
+  private closePromise: Promise<void> | undefined;
+  private readonly queue = new OperationQueue();
 
   constructor(
-    private readonly driver: SafaridriverProcess,
+    private readonly driver: WebDriverTransport,
     wdSessionId: string,
     options: EngineSessionOptions,
     private readonly onSessionGone: () => void
@@ -211,8 +269,13 @@ class SafariSession implements EngineSession {
     this.pendingCookieSeeds.push(...cookies);
   }
 
-  async setViewport(width: number, height: number): Promise<void> {
-    await this.driver.request(`/session/${this.wdId()}/window/rect`, 'POST', { width, height });
+  setViewport(width: number, height: number): Promise<void> {
+    return this.queue.run(
+      async () => {
+        await this.driver.request(`/session/${this.wdId()}/window/rect`, 'POST', { width, height });
+      },
+      () => this.assertOpen()
+    );
   }
 
   private wdId(): string {
@@ -227,14 +290,24 @@ class SafariSession implements EngineSession {
     return this.driver.request<T>(`/session/${this.wdId()}${path}`, method, body);
   }
 
-  async newPage(_options?: NewPageOptions): Promise<EnginePage> {
+  newPage(_options?: NewPageOptions): Promise<EnginePage> {
+    return this.queue.run(
+      () => this.newPageUnlocked(),
+      () => this.assertOpen()
+    );
+  }
+
+  private async newPageUnlocked(): Promise<EnginePage> {
     this.assertOpen();
     // Prefer a proper WebDriver new window; fall back to window.open().
     let handle: string;
     try {
       const value = await this.request<{ handle: string }>('/window/new', 'POST', { type: 'tab' });
       handle = value.handle;
-    } catch {
+    } catch (error) {
+      // A timed-out creation may have succeeded. Retrying it can open two
+      // windows; fallback only for an explicitly unsupported command.
+      if (!(error instanceof EngineError) || error.code !== 'ENGINE_UNSUPPORTED') throw error;
       const before = new Set(await this.request<string[]>('/window/handles'));
       await this.request('/execute/sync', 'POST', {
         script: 'window.open("about:blank"); return true;',
@@ -247,35 +320,64 @@ class SafariSession implements EngineSession {
       }
       handle = fresh;
     }
-    const page = new SafariPage(this.driver, this.wdId(), handle, this.pendingCookieSeeds, () => {
-      this.pagesMap.delete(handle);
-    });
-    this.pagesMap.set(handle, page);
+    this.assertOpen();
+    // An explicit successful creation can reuse a previously closed handle.
+    this.closingHandles.delete(handle);
+    const page = this.trackPage(handle);
     await page.switchTo();
     return page;
   }
 
-  async pages(): Promise<EnginePage[]> {
+  pages(): Promise<EnginePage[]> {
+    return this.queue.run(
+      () => this.pagesUnlocked(),
+      () => this.assertOpen()
+    );
+  }
+
+  private async pagesUnlocked(): Promise<EnginePage[]> {
     this.assertOpen();
     const handles = await this.request<string[]>('/window/handles');
+    this.assertOpen();
+    const live = new Set(handles);
+    for (const [handle, page] of this.pagesMap) if (!live.has(handle)) page.markClosed();
+    for (const handle of this.closingHandles.keys())
+      if (!live.has(handle)) this.closingHandles.delete(handle);
     for (const handle of handles) {
-      if (!this.pagesMap.has(handle)) {
-        const page = new SafariPage(
-          this.driver,
-          this.wdId(),
-          handle,
-          this.pendingCookieSeeds,
-          () => {
-            this.pagesMap.delete(handle);
-          }
-        );
-        this.pagesMap.set(handle, page);
-      }
+      if (!this.pagesMap.has(handle) && !this.closingHandles.has(handle)) this.trackPage(handle);
     }
     return Array.from(this.pagesMap.values());
   }
 
-  async cookies(): Promise<NormalizedCookie[]> {
+  private trackPage(handle: string): SafariPage {
+    const identity = Symbol(handle);
+    const page = new SafariPage(
+      this.driver,
+      this.wdId(),
+      handle,
+      this.pendingCookieSeeds,
+      this.queue,
+      () => {
+        if (this.pagesMap.get(handle) !== page) return;
+        this.pagesMap.delete(handle);
+        this.closingHandles.set(handle, identity);
+      },
+      () => {
+        if (this.closingHandles.get(handle) === identity) this.closingHandles.delete(handle);
+      }
+    );
+    this.pagesMap.set(handle, page);
+    return page;
+  }
+
+  cookies(): Promise<NormalizedCookie[]> {
+    return this.queue.run(
+      () => this.cookiesUnlocked(),
+      () => this.assertOpen()
+    );
+  }
+
+  private async cookiesUnlocked(): Promise<NormalizedCookie[]> {
     this.assertOpen();
     const value = await this.request<Array<Record<string, unknown>>>('/cookie');
     return value.map((c) => ({
@@ -290,26 +392,28 @@ class SafariSession implements EngineSession {
     })) as NormalizedCookie[];
   }
 
-  async close(_reason?: string): Promise<void> {
-    if (this.closed) {
-      return;
-    }
+  close(_reason?: string): Promise<void> {
+    if (this.closePromise) return this.closePromise;
     this.closed = true;
-    try {
-      await this.request('', 'DELETE');
-    } catch {
-      // driver may already be gone; the process kill below is the backstop
-    }
-    for (const page of this.pagesMap.values()) {
-      page.markClosed();
-    }
+    for (const page of this.pagesMap.values()) page.markClosed();
     this.pagesMap.clear();
-    this.onSessionGone();
+    this.closingHandles.clear();
+    this.pendingCookieSeeds.length = 0;
+    this.closePromise = this.queue.finish(async () => {
+      try {
+        await this.request('', 'DELETE');
+      } catch {
+        // driver may already be gone; the process kill below is the backstop
+      } finally {
+        this.onSessionGone();
+      }
+    });
+    return this.closePromise;
   }
 
   private assertOpen(): void {
     if (this.closed) {
-      throw new Error('Session is closed');
+      throw new EngineError('SESSION_NOT_FOUND', 'Session is closed');
     }
   }
 }
@@ -319,43 +423,76 @@ class SafariPage implements EnginePage {
   private revision = 0;
   private lastElements = new Map<string, StoredElement>();
   private closed = false;
+  private closePromise: Promise<void> | undefined;
+  private readonly closeWaiters = new Set<() => void>();
 
   constructor(
-    private readonly driver: SafaridriverProcess,
+    private readonly driver: WebDriverTransport,
     private readonly wdSessionId: string,
     readonly handle: string,
     private readonly pendingCookieSeeds: NormalizedCookie[],
-    private readonly onClosed: () => void
+    private readonly queue: OperationQueue,
+    private readonly onClosed: () => void,
+    private readonly onWindowGone: () => void
   ) {
     this.id = handle;
   }
 
   markClosed(): void {
+    if (this.closed) return;
     this.closed = true;
+    this.lastElements.clear();
+    for (const wake of this.closeWaiters) wake();
+    this.closeWaiters.clear();
     this.onClosed();
   }
 
   async switchTo(): Promise<void> {
+    this.assertOpen();
     await this.driver.request(`/session/${this.wdSessionId}/window`, 'POST', {
       handle: this.handle,
     });
+    this.assertOpen();
   }
 
   private async execute<T>(script: string, args: unknown[] = []): Promise<T> {
     await this.switchTo();
-    return this.driver.request<T>('/execute/sync', 'POST', { script, args });
+    return this.driver.request<T>(`/session/${this.wdSessionId}/execute/sync`, 'POST', {
+      script,
+      args,
+    });
   }
 
   private assertOpen(): void {
     if (this.closed) {
-      throw new Error('Page is closed');
+      throw new EngineError('PAGE_NOT_FOUND', 'Page is closed');
     }
   }
 
-  async navigate(request: NavigationRequest): Promise<NavigationResult> {
+  getUrl(): Promise<string> {
+    return this.queue.run(
+      () => this.getUrlUnlocked(),
+      () => this.assertOpen()
+    );
+  }
+
+  private async getUrlUnlocked(): Promise<string> {
+    await this.switchTo();
+    return this.driver.request<string>(`/session/${this.wdSessionId}/url`, 'GET');
+  }
+
+  navigate(request: NavigationRequest): Promise<NavigationResult> {
+    return this.queue.run(
+      () => this.navigateUnlocked(request),
+      () => this.assertOpen()
+    );
+  }
+
+  private async navigateUnlocked(request: NavigationRequest): Promise<NavigationResult> {
     this.assertOpen();
     await this.switchTo();
     await this.driver.request(`/session/${this.wdSessionId}/url`, 'POST', { url: request.url });
+    this.assertOpen();
     this.revision += 1;
 
     // TD-BROWSER-7: safaridriver can only set cookies against the active
@@ -365,6 +502,7 @@ class SafariPage implements EnginePage {
       const host = new URL(request.url).hostname;
       const stillPending: NormalizedCookie[] = [];
       for (const cookie of this.pendingCookieSeeds) {
+        this.assertOpen();
         const applies = host === cookie.domain || host.endsWith(`.${cookie.domain}`);
         if (!applies) {
           stillPending.push(cookie);
@@ -387,6 +525,7 @@ class SafariPage implements EnginePage {
         }
       }
       this.pendingCookieSeeds.length = 0;
+      this.assertOpen();
       this.pendingCookieSeeds.push(...stillPending);
     }
 
@@ -397,7 +536,14 @@ class SafariPage implements EnginePage {
     return { status: 'success', url, redirectChain: [] };
   }
 
-  async observe(_request: ObservationRequest): Promise<RawPageState> {
+  observe(_request: ObservationRequest): Promise<RawPageState> {
+    return this.queue.run(
+      () => this.observeUnlocked(),
+      () => this.assertOpen()
+    );
+  }
+
+  private async observeUnlocked(): Promise<RawPageState> {
     this.assertOpen();
     await this.switchTo();
     this.revision += 1;
@@ -414,6 +560,7 @@ class SafariPage implements EnginePage {
       }>;
     }>(OBSERVE_SCRIPT, [this.revision]);
 
+    this.assertOpen();
     this.lastElements.clear();
     for (const element of result.elements) {
       this.lastElements.set(element.ref, element);
@@ -445,7 +592,14 @@ class SafariPage implements EnginePage {
     return descriptor;
   }
 
-  async resolve(target: EngineTarget): Promise<ResolvedTarget> {
+  resolve(target: EngineTarget): Promise<ResolvedTarget> {
+    return this.queue.run(
+      () => this.resolveUnlocked(target),
+      () => this.assertOpen()
+    );
+  }
+
+  private async resolveUnlocked(target: EngineTarget): Promise<ResolvedTarget> {
     this.assertOpen();
     const descriptor = this.descriptorFor(target.ref);
     return {
@@ -458,9 +612,14 @@ class SafariPage implements EnginePage {
     };
   }
 
-  async act(
-    action: import('@agentbrowser/engine').EngineAction
-  ): Promise<import('@agentbrowser/engine').ActionEffect> {
+  act(action: EngineAction): Promise<ActionEffect> {
+    return this.queue.run(
+      () => this.actUnlocked(action),
+      () => this.assertOpen()
+    );
+  }
+
+  private async actUnlocked(action: EngineAction): Promise<ActionEffect> {
     this.assertOpen();
     await this.switchTo();
     const actionId = `action-${Date.now()}`;
@@ -544,7 +703,14 @@ class SafariPage implements EnginePage {
     };
   }
 
-  async extract(request: ExtractionRequest): Promise<ExtractionResult> {
+  extract(request: ExtractionRequest): Promise<ExtractionResult> {
+    return this.queue.run(
+      () => this.extractUnlocked(request),
+      () => this.assertOpen()
+    );
+  }
+
+  private async extractUnlocked(request: ExtractionRequest): Promise<ExtractionResult> {
     this.assertOpen();
     await this.switchTo();
     const data = await this.execute<{ url: string; title: string; text: string; markdown: string }>(
@@ -557,9 +723,14 @@ class SafariPage implements EnginePage {
     return { data, evidence: [{ url: data.url, revision: this.revision }] };
   }
 
-  async screenshot(
-    request: ScreenshotRequest
-  ): Promise<import('@agentbrowser/engine').CapturedArtifact> {
+  screenshot(request: ScreenshotRequest): Promise<CapturedArtifact> {
+    return this.queue.run(
+      () => this.screenshotUnlocked(request),
+      () => this.assertOpen()
+    );
+  }
+
+  private async screenshotUnlocked(request: ScreenshotRequest): Promise<CapturedArtifact> {
     this.assertOpen();
     await this.switchTo();
     const value = await this.driver.request<string>(
@@ -587,18 +758,35 @@ class SafariPage implements EnginePage {
     // Documented gap (TD-BROWSER-7): safaridriver exposes no console or
     // network event stream. The stream stays open for consumers but yields
     // nothing.
-    await new Promise(() => {});
+    if (this.closed) return;
+    let wake: () => void = () => {};
+    try {
+      await new Promise<void>((resolve) => {
+        wake = resolve;
+        this.closeWaiters.add(wake);
+      });
+    } finally {
+      this.closeWaiters.delete(wake);
+    }
   }
 
-  async close(): Promise<void> {
-    this.assertOpen();
-    this.closed = true;
-    try {
-      await this.switchTo();
-      await this.driver.request(`/session/${this.wdSessionId}/window`, 'DELETE');
-    } catch {
-      // the window may already be gone
-    }
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    if (this.closed) return Promise.resolve();
     this.markClosed();
+    this.closePromise = this.queue.finish(async () => {
+      try {
+        // The public page is closed immediately; only this final transport
+        // sequence may select and delete its window after that transition.
+        await this.driver.request(`/session/${this.wdSessionId}/window`, 'POST', {
+          handle: this.handle,
+        });
+        await this.driver.request(`/session/${this.wdSessionId}/window`, 'DELETE');
+        this.onWindowGone();
+      } catch {
+        // the window may already be gone
+      }
+    });
+    return this.closePromise;
   }
 }

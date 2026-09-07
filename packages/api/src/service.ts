@@ -16,20 +16,23 @@ import {
   ActionExecutor,
   ApprovalGate,
   ArtifactStore,
+  JsonLedger,
   ObservationNormalizer,
-  RingBuffer,
   SecretManager,
   SessionCoordinator,
   SessionState,
+  budgetObservation,
 } from '@agentbrowser/core';
 import type { ArtifactMetadata } from '@agentbrowser/core';
 import type { InMemoryTracer, Span } from '@agentbrowser/core';
 import type { MetricsRegistry } from '@agentbrowser/core';
 import type { StructuredLogger } from '@agentbrowser/core';
+import { ActionRiskPolicy, type ActionRiskPolicyOptions } from '@agentbrowser/core';
 import type { BrowserEngine, EngineEvent, EnginePage } from '@agentbrowser/engine';
 import type { EngineSession, EngineSessionOptions, NormalizedCookie } from '@agentbrowser/engine';
 import type { RawPageState } from '@agentbrowser/engine';
 import type { RequestPolicy } from '@agentbrowser/engine';
+import { type ProtocolErrorCode, normalizeEngineError } from '@agentbrowser/engine';
 import { SchemaExtractor } from '@agentbrowser/extraction';
 import {
   extractForms,
@@ -51,15 +54,18 @@ import type {
 import {
   DELIVERED_EXTRACT_FORMATS,
   DELIVERED_OBSERVATION_MODES,
+  DELIVERED_WAIT_TYPES,
   type DeliveredExtractFormat,
   REF_PATTERN,
-  validateAction,
+  decodeWireAction,
+  parseRef,
 } from '@agentbrowser/protocol';
+import { type DownloadTransportOptions, downloadWithPolicy } from './download-transport.js';
 
 /** Typed failure carrying a protocol error code. */
 export class ServiceError extends Error {
   constructor(
-    public code: string,
+    public code: ProtocolErrorCode,
     message: string,
     public retryable = false,
     public details?: Record<string, unknown>
@@ -89,6 +95,7 @@ export interface ServiceSessionRequest {
   /** Per-session host rules, chained over the SSRF base (restrict-only). */
   allowedHosts?: string[];
   blockedHosts?: string[];
+  approval?: import('@agentbrowser/protocol').ApprovalPolicy;
 }
 
 export interface ServiceSessionView {
@@ -114,6 +121,9 @@ export interface ServiceActRequest {
   action: string;
   target?: { ref: string } | undefined;
   value?: string | undefined;
+  values?: string[] | undefined;
+  deltaX?: number | undefined;
+  deltaY?: number | undefined;
   key?: string | undefined;
   direction?: 'up' | 'down' | 'left' | 'right' | undefined;
   amount?: number | undefined;
@@ -146,6 +156,7 @@ export interface ServiceActResult {
 }
 
 export interface ServiceDependencies {
+  approvalPolicy?: ActionRiskPolicyOptions;
   engine: BrowserEngine;
   /**
    * TD-BROWSER-7 Phase 1: named auxiliary engines. createSession routes by
@@ -162,7 +173,10 @@ export interface ServiceDependencies {
   /** Artifact retention store; defaults to a bounded in-memory store. */
   artifactStore?: ArtifactStore;
   /** Payload fetcher for downloads; injectable for tests. */
-  downloader?(url: string): Promise<{ bytes: Uint8Array; contentType: string }>;
+  downloader?(
+    url: string,
+    options: DownloadTransportOptions
+  ): Promise<{ bytes: Uint8Array; contentType: string }>;
   /** Operation tracer; absent means tracing is disabled. */
   tracer?: InMemoryTracer;
   /** Operation metrics; absent means metrics are disabled. */
@@ -181,14 +195,6 @@ export interface ServiceDependencies {
   defaultIdleTimeoutMs?: number;
 }
 
-/** Risk classes that require an approval token before the action runs. */
-const HIGH_RISK_EFFECTS = new Set([
-  'transaction',
-  'account-security',
-  'external-message',
-  'destructive',
-]);
-
 interface PageContext {
   sessionId: string;
   enginePage: EnginePage;
@@ -197,6 +203,8 @@ interface PageContext {
   lastObservation?:
     | {
         revision: number;
+        url: string;
+        engineRevision?: number;
         /** normalized ref -> engine ref */
         refMap: Map<string, string>;
         byRef: Map<string, PageElement>;
@@ -246,6 +254,11 @@ export class AgentBrowserService {
   >();
   /** Per-session egress chain (fast-fail + engine choke point, one verdict). */
   private readonly sessionPolicies = new Map<string, RequestPolicy>();
+  private readonly sessionApprovalPolicies = new Map<
+    string,
+    import('@agentbrowser/protocol').ApprovalPolicy
+  >();
+  private readonly actionRiskPolicy: ActionRiskPolicy;
   private readonly pages = new Map<string, PageContext>();
   private pageCounter = 0;
   /** Audit log of sessions terminated by engine crashes (TD-024). */
@@ -255,6 +268,7 @@ export class AgentBrowserService {
   private sweepTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(deps: ServiceDependencies) {
+    this.actionRiskPolicy = new ActionRiskPolicy(deps.approvalPolicy);
     this.engine = deps.engine;
     for (const [name, engine] of Object.entries(deps.engines ?? {})) {
       this.engines.set(name, engine);
@@ -292,7 +306,7 @@ export class AgentBrowserService {
     // output boundary (observations, error messages, error details).
     this.secretManager = deps.secretManager ?? new SecretManager();
     this.artifacts = deps.artifactStore ?? new ArtifactStore();
-    this.downloader = deps.downloader ?? defaultDownloader;
+    this.downloader = deps.downloader ?? downloadWithPolicy;
     // Telemetry is opt-in per concern: each is wired only when provided.
     if (deps.tracer !== undefined) {
       this.tracer = deps.tracer;
@@ -362,6 +376,7 @@ export class AgentBrowserService {
     this.requestHistory.delete(sessionId);
     this.sessionDownloadPolicy.delete(sessionId);
     this.sessionPolicies.delete(sessionId);
+    this.sessionApprovalPolicies.delete(sessionId);
   }
 
   /**
@@ -373,7 +388,7 @@ export class AgentBrowserService {
     attributes: Record<string, unknown>,
     operation: (span: Span | undefined) => Promise<T>
   ): Promise<T> {
-    const span = this.tracer?.startSpan(name, attributes);
+    const span = this.tracer?.startSpan(name, this.secretManager.redact(attributes));
     const startedAt = Date.now();
     return operation(span).then(
       (value) => {
@@ -387,10 +402,14 @@ export class AgentBrowserService {
         const code = error instanceof ServiceError ? error.code : 'INTERNAL';
         this.telemetry(name, 'error', attributes, startedAt, code);
         if (span) {
-          this.tracer?.failSpan(span, code, error instanceof Error ? error.message : String(error));
+          this.tracer?.failSpan(
+            span,
+            code,
+            this.secretManager.redact(error instanceof Error ? error.message : String(error))
+          );
           this.tracer?.endSpan(span);
         }
-        throw error;
+        throw this.redactedError(this.mapError(error, name));
       }
     );
   }
@@ -411,7 +430,7 @@ export class AgentBrowserService {
       }
     }
     if (this.logger) {
-      const fields: Record<string, unknown> = { ...attributes, outcome };
+      const fields: Record<string, unknown> = this.secretManager.redact({ ...attributes, outcome });
       if (code !== undefined) {
         fields.code = code;
       }
@@ -447,7 +466,7 @@ export class AgentBrowserService {
    * "per-session event ledger"). Every engine event crosses pumpEvents;
    * console lines replay from here for late subscribers.
    */
-  private readonly eventHistory = new Map<string, RingBuffer<EngineEvent>>();
+  private readonly eventHistory = new Map<string, JsonLedger<EngineEvent>>();
   private static readonly EVENT_HISTORY_LIMIT = 500;
   /**
    * Request lifecycle events get their OWN bounded ledger (spec 5.1
@@ -455,10 +474,10 @@ export class AgentBrowserService {
    * per navigation, and sharing the console ledger would evict exactly
    * the console lines the replay buffer exists for.
    */
-  private readonly requestHistory = new Map<string, RingBuffer<EngineEvent>>();
+  private readonly requestHistory = new Map<string, JsonLedger<EngineEvent>>();
   private static readonly REQUEST_HISTORY_LIMIT = 1000;
 
-  private recordEvent(sessionId: string, event: EngineEvent): void {
+  private recordEvent(sessionId: string, event: EngineEvent): boolean {
     const isRequest = event.type.startsWith('request.');
     const store = isRequest ? this.requestHistory : this.eventHistory;
     const limit = isRequest
@@ -466,10 +485,35 @@ export class AgentBrowserService {
       : AgentBrowserService.EVENT_HISTORY_LIMIT;
     let buffer = store.get(sessionId);
     if (buffer === undefined) {
-      buffer = new RingBuffer<EngineEvent>({ capacity: limit });
+      buffer = new JsonLedger<EngineEvent>({
+        maxEntries: limit,
+        maxBytes: isRequest ? 2 * 1024 * 1024 : 1024 * 1024,
+        maxEntryBytes: 64 * 1024,
+      });
       store.set(sessionId, buffer);
     }
-    buffer.push(event);
+    const before = buffer.stats;
+    const accepted = buffer.push(event);
+    if (!accepted)
+      this.metrics?.incrementCounter('events_dropped_total', {
+        ledger: isRequest ? 'request' : 'other',
+        reason: 'oversized',
+      });
+    const evictions = buffer.stats.evicted - before.evicted;
+    for (let index = 0; index < evictions; index++)
+      this.metrics?.incrementCounter('events_evicted_total', {
+        ledger: isRequest ? 'request' : 'other',
+      });
+    return accepted;
+  }
+
+  getSessionEventStats(sessionId: string) {
+    this.requireSession(sessionId);
+    const empty = { entries: 0, bytes: 0, dropped: 0, evicted: 0 };
+    return {
+      other: this.eventHistory.get(sessionId)?.stats ?? empty,
+      request: this.requestHistory.get(sessionId)?.stats ?? empty,
+    };
   }
 
   /**
@@ -479,7 +523,7 @@ export class AgentBrowserService {
    * is not preserved, documented at the route).
    */
   getSessionEvents(sessionId: string, typeFilter?: string): EngineEvent[] {
-    this.coordinator.get(sessionId);
+    this.requireSession(sessionId);
     const others = this.eventHistory.get(sessionId)?.toArray() ?? [];
     const requests = this.requestHistory.get(sessionId)?.toArray() ?? [];
     if (typeFilter?.startsWith('request.')) {
@@ -495,13 +539,20 @@ export class AgentBrowserService {
     void (async () => {
       try {
         for await (const event of enginePage.events()) {
-          const stamped: EngineEvent = { ...event, sessionId, pageId };
-          this.recordEvent(sessionId, stamped);
+          const stamped: EngineEvent = this.secretManager.redact({
+            ...event,
+            sessionId,
+            pageId,
+            ...(event.data !== undefined
+              ? { data: this.secretManager.redactUntrusted(event.data) }
+              : {}),
+          });
+          if (!this.recordEvent(sessionId, stamped)) continue;
           const listeners = this.eventListeners.get(sessionId);
           if (listeners) {
             for (const listener of [...listeners]) {
               try {
-                listener(stamped);
+                listener(structuredClone(stamped));
               } catch {
                 // A misbehaving listener never breaks the stream.
               }
@@ -514,12 +565,8 @@ export class AgentBrowserService {
     })();
   }
 
-  /** Error messages that indicate the engine itself died. */
-  private static readonly CRASH_PATTERN =
-    /crash|browser (has been )?closed|browser.*disconnect|target (page|context).*closed|context.*closed/i;
-
-  private isCrash(message: string): boolean {
-    return AgentBrowserService.CRASH_PATTERN.test(message);
+  private isCrash(error: unknown): boolean {
+    return normalizeEngineError(error).code === 'ENGINE_CRASHED';
   }
 
   /**
@@ -601,6 +648,10 @@ export class AgentBrowserService {
 
     return this.traced('session.create', { tenantId: request.tenantId ?? '' }, async () => {
       const engineRequest: EngineSessionOptions & { engine: 'auto' } = { engine: 'auto' };
+      engineRequest.downloadPolicy = {
+        allow: request.allowDownloads ?? false,
+        maxBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
+      };
       const engine = this.resolveEngine(request.engine);
       if (request.viewport !== undefined) engineRequest.viewport = request.viewport;
       if (request.locale !== undefined) engineRequest.locale = request.locale;
@@ -643,6 +694,7 @@ export class AgentBrowserService {
         maxDownloadBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
       });
       this.sessionPolicies.set(session.sessionId, sessionPolicy);
+      this.sessionApprovalPolicies.set(session.sessionId, { ...request.approval });
 
       return {
         sessionId: session.sessionId,
@@ -672,15 +724,18 @@ export class AgentBrowserService {
     };
   }
 
-  listSessions(): ServiceSessionView[] {
-    return this.coordinator.getAllSessions().map((metadata) => ({
-      sessionId: metadata.id,
-      status: metadata.state.toLowerCase(),
-      engine: { name: metadata.engineName, version: this.engine.version },
-      createdAt: new Date(metadata.createdAt).toISOString(),
-      ttlMs: metadata.ttlMs,
-      idleTimeoutMs: metadata.idleTimeoutMs,
-    }));
+  listSessions(tenantId?: string): ServiceSessionView[] {
+    return this.coordinator
+      .getAllSessions()
+      .filter((metadata) => tenantId === undefined || metadata.tenantId === tenantId)
+      .map((metadata) => ({
+        sessionId: metadata.id,
+        status: metadata.state.toLowerCase(),
+        engine: { name: metadata.engineName, version: this.engine.version },
+        createdAt: new Date(metadata.createdAt).toISOString(),
+        ttlMs: metadata.ttlMs,
+        idleTimeoutMs: metadata.idleTimeoutMs,
+      }));
   }
 
   async closeSession(sessionId: string): Promise<void> {
@@ -711,17 +766,17 @@ export class AgentBrowserService {
    * the standard store (TTL, size bounds, token-gated serving).
    */
   async exportTrace(sessionId: string): Promise<ArtifactMetadata> {
-    this.coordinator.get(sessionId); // liveness + ownership via mapError
+    this.requireSession(sessionId);
     const spans = (this.tracer?.completedSpans() ?? []).filter(
       (span) => span.attributes.sessionId === sessionId
     );
     const payload = JSON.stringify(
-      { sessionId, exportedAt: new Date().toISOString(), spans },
+      this.secretManager.redact({ sessionId, exportedAt: new Date().toISOString(), spans }),
       null,
       2
     );
     return this.traced('trace.export', { sessionId }, async () =>
-      this.artifacts.put('trace', 'application/json', new TextEncoder().encode(payload), {
+      this.putArtifact(sessionId, 'trace', 'application/json', new TextEncoder().encode(payload), {
         filename: `trace-${sessionId}.json`,
         sessionId,
       })
@@ -742,7 +797,7 @@ export class AgentBrowserService {
       try {
         raw = await page.enginePage.observe({});
       } catch (error) {
-        if (this.isCrash(error instanceof Error ? error.message : String(error))) {
+        if (this.isCrash(error)) {
           await this.recoverFromCrash(sessionId, 'exportHtml: engine crashed');
           throw new ServiceError(
             'ENGINE_CRASHED',
@@ -754,7 +809,8 @@ export class AgentBrowserService {
         throw error;
       }
       const html = raw.content ?? '';
-      const metadata = this.artifacts.put(
+      const metadata = this.putArtifact(
+        sessionId,
         'html',
         'text/html; charset=utf-8',
         new TextEncoder().encode(html),
@@ -1177,7 +1233,11 @@ export class AgentBrowserService {
       }
 
       const hostname = this.hostnameOf(url);
-      const policySpan = this.tracer?.startSpan('policy.check', { hostname }, span);
+      const policySpan = this.tracer?.startSpan(
+        'policy.check',
+        this.secretManager.redact({ hostname }),
+        span
+      );
       try {
         await this.networkPolicy.checkRequest({ hostname, url });
         if (policySpan) {
@@ -1188,7 +1248,7 @@ export class AgentBrowserService {
           this.tracer?.failSpan(
             policySpan,
             'POLICY_DENIED',
-            error instanceof Error ? error.message : String(error)
+            this.secretManager.redact(error instanceof Error ? error.message : String(error))
           );
           this.tracer?.endSpan(policySpan);
         }
@@ -1202,7 +1262,7 @@ export class AgentBrowserService {
           ...(request.waitUntil !== undefined ? { waitUntil: request.waitUntil } : {}),
         });
       } catch (error) {
-        if (this.isCrash(error instanceof Error ? error.message : String(error))) {
+        if (this.isCrash(error)) {
           await this.recoverFromCrash(sessionId, 'navigate: engine crashed');
           throw new ServiceError(
             'ENGINE_CRASHED',
@@ -1216,7 +1276,11 @@ export class AgentBrowserService {
       page.revision += 1;
       page.lastObservation = undefined;
 
-      return { status: result.status, url: result.url, redirectChain: result.redirectChain };
+      return this.secretManager.redact({
+        status: result.status,
+        url: result.url,
+        redirectChain: result.redirectChain,
+      });
     });
   }
 
@@ -1249,7 +1313,7 @@ export class AgentBrowserService {
     try {
       raw = await page.enginePage.observe(observationRequest);
     } catch (error) {
-      if (this.isCrash(error instanceof Error ? error.message : String(error))) {
+      if (this.isCrash(error)) {
         await this.recoverFromCrash(sessionId, 'observe: engine crashed');
         throw new ServiceError(
           'ENGINE_CRASHED',
@@ -1261,8 +1325,17 @@ export class AgentBrowserService {
       throw error;
     }
 
+    if (
+      raw.revision !== undefined &&
+      page.lastObservation?.engineRevision !== undefined &&
+      raw.revision !== page.lastObservation.engineRevision &&
+      page.revision === page.lastObservation.revision
+    ) {
+      page.revision += 1;
+    }
     const observation = this.normalizer.normalize(raw, {
       ...(request.mode !== undefined ? { mode: request.mode } : {}),
+      retainAllElements: true,
       revision: page.revision,
       sessionId,
       pageId,
@@ -1272,15 +1345,22 @@ export class AgentBrowserService {
     const refMap = new Map<string, string>();
     const byRef = new Map<string, PageElement>();
     const byEngineRef = new Map<string, PageElement>();
-    observation.elements.forEach((element, index) => {
+    for (const element of observation.elements) {
       byRef.set(element.ref, element);
-      const engineRef = raw.elements[index]?.ref;
+      const ordinal = parseRef(element.ref)?.ordinal;
+      const engineRef = ordinal !== undefined ? raw.elements[ordinal]?.ref : undefined;
       if (engineRef !== undefined) {
         refMap.set(element.ref, engineRef);
         byEngineRef.set(engineRef, element);
       }
-    });
-    page.lastObservation = { revision: page.revision, refMap, byRef };
+    }
+    page.lastObservation = {
+      revision: page.revision,
+      url: raw.url,
+      ...(raw.revision !== undefined ? { engineRevision: raw.revision } : {}),
+      refMap,
+      byRef,
+    };
 
     // Retain the snapshot for sinceRevision diffs (bounded history).
     page.history.set(page.revision, { byRef, byEngineRef });
@@ -1294,14 +1374,13 @@ export class AgentBrowserService {
     if (request.sinceRevision !== undefined) {
       // The diff path accepts maxBytes but previously returned unbounded;
       // paginateObservation applies the same byte budget to the diff result.
-      return this.secretManager.redact(
-        this.paginateObservation(this.diffObservation(page, observation, request.sinceRevision), {
-          maxBytes: request.maxBytes,
-        })
+      return this.paginateObservation(
+        this.diffObservation(page, observation, request.sinceRevision),
+        request
       );
     }
 
-    return this.secretManager.redact(this.paginateObservation(observation, request));
+    return this.paginateObservation(observation, request);
   }
 
   /**
@@ -1379,131 +1458,16 @@ export class AgentBrowserService {
    * cursor when elements remain.
    */
   private paginateObservation(observation: PageState, request: PartialObservation): PageState {
-    const { continueFrom, maxElements } = request;
-    if (continueFrom !== undefined && (!Number.isInteger(continueFrom) || continueFrom < 0)) {
-      throw new ServiceError(
-        'INVALID_REQUEST',
-        `Invalid continueFrom ${continueFrom}: expected a non-negative integer.`
-      );
+    try {
+      return budgetObservation(this.secretManager.redact(observation), {
+        maxBytes: request.maxBytes,
+        maxElements: request.maxElements,
+        continueFrom: request.continueFrom,
+      });
+    } catch (error) {
+      const detail = normalizeEngineError(error);
+      throw new ServiceError(detail.code, detail.message, detail.retryable, detail.details);
     }
-    if (maxElements !== undefined && (!Number.isInteger(maxElements) || maxElements < 1)) {
-      throw new ServiceError(
-        'INVALID_REQUEST',
-        `Invalid maxElements ${maxElements}: expected a positive integer.`
-      );
-    }
-    if (
-      request.maxBytes !== undefined &&
-      (!Number.isInteger(request.maxBytes) || request.maxBytes < 1)
-    ) {
-      throw new ServiceError(
-        'INVALID_REQUEST',
-        `Invalid maxBytes ${request.maxBytes}: expected a positive integer.`
-      );
-    }
-
-    // Byte budget first (spec 10): trim serialized size while keeping
-    // document order, then apply the element-count budget. Truncation must
-    // happen AFTER ref bridging (which is positional), which is why this
-    // lives here and not in the normalizer.
-    let elements = observation.elements;
-    let truncated = false;
-    let working = observation;
-    if (request.maxBytes !== undefined) {
-      const budget = request.maxBytes;
-      let low = 0;
-      let high = elements.length;
-      // Binary search for the largest prefix fitting the byte budget.
-      // Measured in REAL bytes (Buffer.byteLength of the serialized form):
-      // string .length counts UTF-16 code units, so a multibyte page could
-      // previously return up to ~3x the budget.
-      while (low < high) {
-        const mid = Math.ceil((low + high) / 2);
-        const size = Buffer.byteLength(
-          JSON.stringify({ ...observation, elements: elements.slice(0, mid) }),
-          'utf8'
-        );
-        if (size <= budget) {
-          low = mid;
-        } else {
-          high = mid - 1;
-        }
-      }
-      if (low < elements.length) {
-        elements = elements.slice(0, low);
-        truncated = true;
-        working = { ...observation, elements, truncated: true };
-      }
-      // Budget the fixed fields too: if the element prefix alone is empty
-      // and the payload is still over budget, trim whole trailing
-      // paragraphs of text (content mode's byte-dominant field), then as a
-      // last resort the summary. Never fail the request.
-      if (elements.length === 0 && Buffer.byteLength(JSON.stringify(working), 'utf8') > budget) {
-        const text = observation.text ?? [];
-        let keep = text.length;
-        while (keep > 0) {
-          const candidate = {
-            ...working,
-            text: text.slice(0, keep - 1),
-            truncated: true,
-          };
-          if (Buffer.byteLength(JSON.stringify(candidate), 'utf8') <= budget) {
-            working = candidate;
-            break;
-          }
-          keep--;
-        }
-        if (keep > 0) {
-          working = { ...working, text: text.slice(0, keep), truncated: true };
-        } else if (Buffer.byteLength(JSON.stringify({ ...working, text: [] }), 'utf8') <= budget) {
-          working = { ...working, text: [], truncated: true };
-        }
-      }
-      // Diff-mode payloads carry their weight in `changes` (each entry a
-      // full old/new element pair); trim trailing changes the same way.
-      const changes = observation.changes;
-      if (
-        changes !== undefined &&
-        changes.length > 0 &&
-        Buffer.byteLength(JSON.stringify(working), 'utf8') > budget
-      ) {
-        let keepChanges = changes.length;
-        while (keepChanges > 0) {
-          const candidate = {
-            ...working,
-            changes: changes.slice(0, keepChanges - 1),
-            truncated: true,
-          };
-          if (Buffer.byteLength(JSON.stringify(candidate), 'utf8') <= budget) {
-            working = candidate;
-            break;
-          }
-          keepChanges--;
-        }
-        if (keepChanges === 0) {
-          working = { ...working, changes: [], truncated: true };
-        }
-      }
-    }
-    // The working observation carries any byte-budget trimming above.
-    const start = continueFrom ?? 0;
-    if (maxElements === undefined) {
-      return working === observation ? observation : working;
-    }
-
-    const slice = elements.slice(start, start + maxElements);
-    const remaining = elements.length - (start + slice.length);
-
-    if (remaining <= 0) {
-      // `truncated` mirrors the cursor semantics: true iff more to fetch.
-      return { ...working, elements: slice, truncated: truncated || working.truncated };
-    }
-    return {
-      ...working,
-      elements: slice,
-      truncated: true,
-      continuation: { nextOrdinal: start + slice.length, remaining },
-    };
   }
 
   // ---- actions ------------------------------------------------------------
@@ -1536,8 +1500,6 @@ export class AgentBrowserService {
         }
       }
 
-      await this.checkApproval(sessionId, page, request, span);
-
       // The adapter projects the engine into service revision space: refs are
       // translated before they reach the engine, and action effects come back
       // stamped with the service's revision rather than the engine's counter.
@@ -1555,7 +1517,9 @@ export class AgentBrowserService {
           const secretError = error as { name?: string; code?: string; message?: string };
           throw this.redactedError(
             secretError?.name === 'SecretError' && secretError.code
-              ? new ServiceError(secretError.code, secretError.message ?? 'secret error', false)
+              ? new ServiceError('INVALID_REQUEST', secretError.message ?? 'secret error', false, {
+                  reason: secretError.code,
+                })
               : new ServiceError('INTERNAL', String(error))
           );
         }
@@ -1563,7 +1527,7 @@ export class AgentBrowserService {
 
       // Wait validation (spec 11.1): unknown conditions are rejected before
       // anything runs; every wait carries a deadline.
-      const DELIVERED_WAITS = new Set(['settled', 'domcontentloaded', 'load', 'networkidle']);
+      const DELIVERED_WAITS = new Set<string>(DELIVERED_WAIT_TYPES);
       if (request.wait !== undefined && !DELIVERED_WAITS.has(request.wait.until)) {
         throw new ServiceError(
           'INVALID_REQUEST',
@@ -1584,8 +1548,7 @@ export class AgentBrowserService {
       // for REST /act, /plan (which loops through this method), and direct
       // service callers. Structural failures (missing target, bad param
       // shape) are schema-driven for every delivered action.
-      const constructedAction = this.toProtocolAction(actRequest);
-      const actionValidation = validateAction(constructedAction);
+      const actionValidation = decodeWireAction(actRequest);
       if (!actionValidation.ok) {
         const details = actionValidation.issues
           .map((issue) => `${issue.path || '(root)'}: ${issue.message}`)
@@ -1606,6 +1569,8 @@ export class AgentBrowserService {
           enginePage: adapter,
           observation: this.lastObservationOf(page),
           currentRevision: page.revision,
+          beforeAction: (resolved) =>
+            this.checkApproval(sessionId, pageId, page, request, resolved?.fingerprint, span),
           // TD-BROWSER-9, A7: reuse the map already built in observe() rather
           // than let the executor re-scan observation.elements per action.
           ...(page.lastObservation !== undefined
@@ -1617,7 +1582,7 @@ export class AgentBrowserService {
       if (result.error) {
         // A crash inside the executor surfaces as an INTERNAL whose message
         // names the crash; recover before rethrowing the typed error.
-        if (result.error.code === 'INTERNAL' && this.isCrash(result.error.message)) {
+        if (result.error.code === 'ENGINE_CRASHED') {
           await this.recoverFromCrash(sessionId, 'act: engine crashed');
           throw this.redactedError(
             new ServiceError(
@@ -1744,7 +1709,7 @@ export class AgentBrowserService {
       try {
         captured = await page.enginePage.pdf(request);
       } catch (error) {
-        if (this.isCrash(error instanceof Error ? error.message : String(error))) {
+        if (this.isCrash(error)) {
           await this.recoverFromCrash(sessionId, 'pdf: engine crashed');
           throw new ServiceError(
             'ENGINE_CRASHED',
@@ -1770,7 +1735,7 @@ export class AgentBrowserService {
         );
       }
       const bytes = Buffer.from(captured.bytesBase64, 'base64');
-      return this.artifacts.put('pdf', 'application/pdf', new Uint8Array(bytes), {
+      return this.putArtifact(sessionId, 'pdf', 'application/pdf', new Uint8Array(bytes), {
         sessionId,
       });
     });
@@ -1824,7 +1789,10 @@ export class AgentBrowserService {
         throw this.mapError(error);
       }
 
-      const { bytes, contentType } = await this.downloader(request.url);
+      const { bytes, contentType } = await this.downloader(request.url, {
+        policy: this.sessionPolicies.get(sessionId) ?? this.rootRequestPolicy,
+        maxBytes: policy.maxDownloadBytes,
+      });
 
       if (bytes.length > policy.maxDownloadBytes) {
         throw new ServiceError(
@@ -1836,7 +1804,7 @@ export class AgentBrowserService {
       }
 
       try {
-        return this.artifacts.put('download', contentType, bytes, {
+        return this.putArtifact(sessionId, 'download', contentType, bytes, {
           ...(request.filename !== undefined ? { filename: request.filename } : {}),
           sessionId,
         });
@@ -1864,22 +1832,14 @@ export class AgentBrowserService {
       const page = this.requirePage(sessionId, pageId);
       this.coordinator.updateActivity(sessionId);
 
-      const pull = (
-        page.enginePage as unknown as {
-          downloadBytes?: (pageId: string, filename: string) => Promise<Uint8Array | undefined>;
-        }
-      ).downloadBytes;
-      const sessionPull = (
-        page.enginePage as unknown as {
-          session?: {
-            downloadBytes?: (pageId: string, filename: string) => Promise<Uint8Array | undefined>;
-          };
-        }
-      ).session;
-
-      const bytes =
-        (await pull?.call(page.enginePage, page.enginePage.id, filename)) ??
-        (await sessionPull?.downloadBytes?.call(sessionPull, page.enginePage.id, filename));
+      const policy = this.sessionDownloadPolicy.get(sessionId);
+      if (!policy?.allowDownloads)
+        throw new ServiceError('DOWNLOAD_BLOCKED', 'Downloads are disabled for this session');
+      const captured = await this.requireSession(sessionId).engineSession.takeDownload?.(
+        page.enginePage.id,
+        filename
+      );
+      const bytes = captured?.bytes;
 
       if (bytes === undefined) {
         throw new ServiceError(
@@ -1887,27 +1847,55 @@ export class AgentBrowserService {
           `No captured download '${filename}' on this page. Downloads appear as download.finished events; collect after the event fires.`
         );
       }
+      if (bytes.byteLength > policy.maxDownloadBytes)
+        throw new ServiceError(
+          'DOWNLOAD_BLOCKED',
+          'Captured download exceeds the session byte limit'
+        );
+      const capturedFilename = captured?.filename ?? filename;
 
-      const contentType = filename.endsWith('.csv')
+      const contentType = capturedFilename.endsWith('.csv')
         ? 'text/csv'
-        : filename.endsWith('.json')
+        : capturedFilename.endsWith('.json')
           ? 'application/json'
           : 'application/octet-stream';
 
-      return this.artifacts.put('download', contentType, bytes, { filename, sessionId });
+      return this.putArtifact(sessionId, 'download', contentType, bytes, {
+        filename: capturedFilename,
+        sessionId,
+      });
     });
   }
 
   /** Retrieve a stored artifact, scoped to its session. */
   getArtifact(
     sessionId: string,
-    artifactId: string
+    artifactId: string,
+    tenantId?: string
   ): { metadata: ArtifactMetadata; bytes: Uint8Array } | undefined {
     const entry = this.artifacts.get(artifactId);
     if (!entry || entry.metadata.sessionId !== sessionId) {
       return undefined;
     }
+    if (tenantId !== undefined && entry.metadata.tenantId !== tenantId) {
+      throw new ServiceError('FORBIDDEN', 'Artifact belongs to another tenant.');
+    }
     return entry;
+  }
+
+  private putArtifact(
+    sessionId: string,
+    type: ArtifactMetadata['type'],
+    contentType: string,
+    bytes: Uint8Array,
+    labels: { filename?: string; sessionId?: string } = {}
+  ): ArtifactMetadata {
+    const owner = this.requireSession(sessionId).metadata.tenantId;
+    return this.artifacts.put(type, contentType, bytes, {
+      ...labels,
+      sessionId,
+      ...(owner !== undefined ? { tenantId: owner } : {}),
+    });
   }
 
   // ---- extraction ---------------------------------------------------------
@@ -1933,7 +1921,7 @@ export class AgentBrowserService {
       try {
         raw = await page.enginePage.observe({});
       } catch (error) {
-        if (this.isCrash(error instanceof Error ? error.message : String(error))) {
+        if (this.isCrash(error)) {
           await this.recoverFromCrash(sessionId, 'extract: engine crashed');
           throw new ServiceError(
             'ENGINE_CRASHED',
@@ -1953,17 +1941,19 @@ export class AgentBrowserService {
 
       switch (request.format) {
         case 'text':
-          return extractVisibleText(sourced);
+          return this.secretManager.redact(extractVisibleText(sourced));
         case 'markdown':
-          return extractMarkdown(sourced);
+          return this.secretManager.redact(extractMarkdown(sourced));
         case 'links':
-          return extractLinks(sourced);
+          return this.secretManager.redact(extractLinks(sourced));
         case 'tables':
-          return extractTables(sourced);
+          return this.secretManager.redact(extractTables(sourced));
         case 'forms':
-          return extractForms(sourced);
-        case 'jsonld':
-          return extractJsonLd(sourced);
+          return this.secretManager.redact(extractForms(sourced));
+        case 'jsonld': {
+          const result = this.secretManager.redact(extractJsonLd(sourced));
+          return { ...result, data: this.secretManager.redactUntrusted(result.data) };
+        }
         case 'schema': {
           this.validateExtractSchema(request.schema);
           const extractor = new SchemaExtractor({
@@ -2030,7 +2020,7 @@ export class AgentBrowserService {
       try {
         captured = await page.enginePage.screenshot(request);
       } catch (error) {
-        if (this.isCrash(error instanceof Error ? error.message : String(error))) {
+        if (this.isCrash(error)) {
           await this.recoverFromCrash(sessionId, 'screenshot: engine crashed');
           throw new ServiceError(
             'ENGINE_CRASHED',
@@ -2076,7 +2066,8 @@ export class AgentBrowserService {
         }
       }
 
-      const metadata = this.artifacts.put(
+      const metadata = this.putArtifact(
+        sessionId,
         'screenshot',
         captured.contentType,
         new Uint8Array(bytes),
@@ -2126,27 +2117,49 @@ export class AgentBrowserService {
   /** Gate high-risk elements behind single-use approval tokens (ADR-007). */
   private async checkApproval(
     sessionId: string,
+    pageId: string,
     page: PageContext,
     request: ServiceActRequest,
+    identity?: string,
     span?: import('@agentbrowser/core').Span | undefined
   ): Promise<void> {
     const ref = request.target?.ref;
-    if (ref === undefined || !page.lastObservation) {
-      return;
-    }
-
-    const element = page.lastObservation.byRef.get(ref);
-    const risk = element?.risk;
-    if (risk === undefined || !HIGH_RISK_EFFECTS.has(risk)) {
-      return;
-    }
+    const element = ref !== undefined ? page.lastObservation?.byRef.get(ref) : undefined;
+    // Cached observations can precede history or out-of-band navigation.
+    // Older adapters fall back to a live observation, never an empty/stale URL.
+    const currentUrl = page.enginePage.getUrl
+      ? await page.enginePage.getUrl()
+      : (await page.enginePage.observe({})).url;
+    const { effect: risk, decision } = this.actionRiskPolicy.evaluate(
+      {
+        action: request.action,
+        url: currentUrl,
+        ...(element ? { element } : {}),
+      },
+      this.sessionApprovalPolicies.get(sessionId)
+    );
+    if (decision === 'allow') return;
+    if (decision === 'deny')
+      throw new ServiceError(
+        'POLICY_DENIED',
+        `Operator/session approval policy denies '${risk}' actions.`,
+        false,
+        { effect: risk }
+      );
+    const decoded = decodeWireAction(request);
+    if (!decoded.ok) throw new ServiceError('INVALID_REQUEST', 'Invalid approval action');
 
     const approvalRequest = {
       sessionId,
       action: {
         type: request.action,
         effect: risk,
-        target: { ref },
+        ...(ref !== undefined ? { target: { ref } } : {}),
+        pageId,
+        revision: page.revision,
+        url: currentUrl,
+        ...(identity !== undefined ? { identity } : {}),
+        parameters: { ...decoded.value },
         ...(request.value !== undefined ? { value: request.value } : {}),
       },
     };
@@ -2177,30 +2190,6 @@ export class AgentBrowserService {
       false,
       { tokenId: token.tokenId, effect: risk, ref }
     );
-  }
-
-  private toProtocolAction(request: ServiceActRequest) {
-    const action: Record<string, unknown> = { type: request.action };
-    if (request.target !== undefined) action.target = { ref: request.target.ref };
-    if (request.value !== undefined) action.value = request.value;
-    if (request.key !== undefined) action.key = request.key;
-    if (request.direction !== undefined) action.direction = request.direction;
-    if (request.amount !== undefined) action.amount = request.amount;
-    if (request.promptText !== undefined) action.promptText = request.promptText;
-    if (request.condition !== undefined) action.condition = request.condition;
-    // The flat transport carries a single `value`; the protocol's select
-    // takes `values`. Coerce here - without it every HTTP select was
-    // rejected by the executor (SelectAction requires non-empty values),
-    // a latent bug since select shipped.
-    if (request.action === 'select' && request.value !== undefined) {
-      // SelectAction takes `values`; a stray `value` on a constructed
-      // action is additionalProperties-excess the schema tolerates, but
-      // drop it so the executor sees exactly the protocol shape.
-      const { value: _dropped, ...rest } = action;
-      Object.assign(action, rest);
-      action.values = [request.value];
-    }
-    return action as unknown as Parameters<ActionExecutor['execute']>[0]['action'];
   }
 
   private lastObservationOf(page: PageContext): PageState {
@@ -2246,50 +2235,20 @@ export class AgentBrowserService {
       error.code,
       this.secretManager.redact(error.message),
       error.retryable,
-      error.details !== undefined ? this.secretManager.redact(error.details) : undefined
+      error.details !== undefined ? this.secretManager.redactUntrusted(error.details) : undefined
     );
   }
 
-  private mapError(error: unknown): ServiceError {
+  private mapError(error: unknown, operation = 'act'): ServiceError {
     if (error instanceof ServiceError) {
       return this.redactedError(error);
     }
-    const message = error instanceof Error ? error.message : String(error);
-    const code =
-      error instanceof Error && 'code' in error ? String((error as { code: string }).code) : '';
-
-    if (code === 'QUOTA_EXCEEDED') {
-      return new ServiceError('QUOTA_EXCEEDED', message);
-    }
-    if (message === 'SESSION_NOT_FOUND') {
-      return new ServiceError('SESSION_NOT_FOUND', 'Session does not exist.');
-    }
-    if (code === 'POLICY_DENIED') {
-      return new ServiceError(
-        'POLICY_DENIED',
-        message,
-        false,
-        (error as { details?: Record<string, unknown> }).details
-      );
-    }
-    return new ServiceError('INTERNAL', message);
+    const failure = normalizeEngineError(error, operation);
+    return this.redactedError(
+      new ServiceError(failure.code, failure.message, failure.retryable, failure.details)
+    );
   }
 }
-
-/** Production download fetcher; tests inject their own. */
-const defaultDownloader = async (
-  url: string
-): Promise<{ bytes: Uint8Array; contentType: string }> => {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new ServiceError('INTERNAL', `Download failed: HTTP ${response.status}`);
-  }
-  const buffer = new Uint8Array(await response.arrayBuffer());
-  return {
-    bytes: buffer,
-    contentType: response.headers.get('content-type') ?? 'application/octet-stream',
-  };
-};
 
 /** Redact credentials from a URL before it enters an error payload. */
 function redactUrl(url: string): string {

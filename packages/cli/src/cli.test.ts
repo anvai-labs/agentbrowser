@@ -8,6 +8,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildCli } from './cli';
 import type { CliDependencies } from './cli';
+import { PRODUCT_VERSION } from './product-version.js';
 
 describe('AgentBrowser CLI', () => {
   let out: string[];
@@ -19,6 +20,12 @@ describe('AgentBrowser CLI', () => {
   const run = (...argv: string[]) => buildCli(deps).run(argv);
 
   const lastJson = () => JSON.parse(out.join('\n'));
+
+  it('reports the product version without constructing a service client', async () => {
+    expect(await run('--version')).toBe(0);
+    expect(out).toEqual([PRODUCT_VERSION]);
+    expect(deps.createClient).not.toHaveBeenCalled();
+  });
 
   beforeEach(() => {
     out = [];

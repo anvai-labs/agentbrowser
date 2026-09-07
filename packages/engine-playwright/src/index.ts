@@ -4,6 +4,7 @@
  * This implements the BrowserEngine interface using Playwright and Chromium.
  */
 
+import { randomUUID } from 'node:crypto';
 import type {
   ActionEffect,
   ArtifactRef,
@@ -29,8 +30,16 @@ import type {
   ScreenshotRequest,
 } from '@agentbrowser/engine';
 import type { RequestPolicy } from '@agentbrowser/engine';
+import { EngineError, normalizeEngineError } from '@agentbrowser/engine';
 import { DELIVERED_ACTION_TYPES, DELIVERED_OBSERVATION_MODES } from '@agentbrowser/protocol';
-import { type Browser, type BrowserContext, Locator, type Page, chromium } from 'playwright';
+import {
+  type Browser,
+  type BrowserContext,
+  type ElementHandle,
+  type Locator,
+  type Page,
+  chromium,
+} from 'playwright';
 
 // Re-export engine types
 export * from '@agentbrowser/engine';
@@ -43,6 +52,12 @@ interface StoredElement {
   value?: string;
   visible: boolean;
   enabled: boolean;
+}
+
+interface NodeBinding {
+  handle: ElementHandle;
+  locator: Locator;
+  snapshot: string;
 }
 
 /** Strip surrounding quotes and unescape from an aria snapshot value. */
@@ -109,14 +124,15 @@ export interface PlaywrightEngineOptions {
    * WebSocket connections outright (upstream Playwright limitation,
    * verified empirically), so upgrades are closed cleanly instead of
    * failing opaquely. Selective forwarding (connectToServer) is likewise
-   * broken under the proxy - deny-all is the honest shippable gate.
+   * broken under the proxy. Coverage is limited to Playwright's page
+   * WebSocket routing; this is not a transport-wide containment guarantee.
    */
   webSocketPolicy?: 'off' | 'deny-all';
   /**
-   * Root egress policy: enforced as a network choke point over EVERY
-   * outbound request in every session (documents, redirects,
-   * subresources, fetch/XHR). Sessions may override via
-   * EngineSessionOptions.requestPolicy.
+   * Root policy for routed requests in every session. Initial requests
+   * and their first redirect targets are checked; later redirect hops
+   * bypass Playwright routing. DNS checks do not pin browser connections.
+   * Sessions may override via EngineSessionOptions.requestPolicy.
    */
   egress?: RequestPolicy;
   /**
@@ -136,7 +152,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   private browser: Browser | undefined;
   readonly dialogGraceMs: number;
   private readonly rootEgress: RequestPolicy | undefined;
-  private readonly webSocketPolicy: 'off' | 'deny-all';
+  private readonly webSocketPolicy: 'off' | 'deny-all' | undefined;
   private readonly browserFamily: 'chromium' | 'firefox' | 'webkit';
   private readonly cdpEndpoint: string | undefined;
   private readonly chromeBinaryPath: string;
@@ -144,8 +160,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   constructor(options: PlaywrightEngineOptions = {}) {
     this.dialogGraceMs = options.dialogGraceMs ?? 5000;
     this.rootEgress = options.egress;
-    this.webSocketPolicy =
-      options.webSocketPolicy ?? (options.egress !== undefined ? 'deny-all' : 'off');
+    this.webSocketPolicy = options.webSocketPolicy;
     this.browserFamily = options.browser ?? 'chromium';
     this.cdpEndpoint = options.cdpEndpoint;
     this.chromeBinaryPath =
@@ -270,7 +285,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       context,
       this,
       options.headless === false ? browser : undefined,
-      requestSink
+      requestSink,
+      options.downloadPolicy
     );
   }
 
@@ -331,39 +347,24 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   }
 
   /**
-   * Network choke point. Every request the context makes - documents,
-   * redirect targets, subresources, fetch/XHR - is proxied through the
-   * policy: the engine fetches each request itself with redirects NOT
-   * followed (route.fetch follows them silently otherwise, which would
-   * bypass the choke point - verified empirically), vets every redirect
-   * hop's real target hostname, and fulfills the response. Denied hosts
-   * (direct or as redirect targets) receive a synthetic 403 marked with
+   * Partial browser egress gate. For each routed request, fetch without
+   * following redirects, check the response and first Location target,
+   * then fulfill. Playwright does not route later hops in that chain;
+   * this path does not enforce all-hop host, redirect-count or byte limits.
+   * Denied routed requests receive a synthetic 403 marked with
    * x-agentbrowser-blocked, which navigate() maps to `blocked`.
    *
-   * Verdicts are memoized per host: policies must keep verdicts a pure
-   * function of hostname. Cost: routing disables Chromium's HTTP cache and
-   * adds one in-process hop per request (benchmarks re-baselined).
+   * Verdicts and addresses are rechecked per routed request, but the
+   * browser connection is not DNS-pinned. Body checks occur after buffering.
+   * Routing disables Chromium's HTTP cache and adds an in-process hop.
    */
   private async installEgress(
     context: BrowserContext,
     egress: RequestPolicy,
     sink: RequestEventSink
   ): Promise<void> {
-    // Verdict cache keys on hostname + resolved-IP set: a changed DNS
-    // resolution (rebinding) re-validates instead of replaying a stale
-    // allow.
-    //
-    // Bounded by construction (TD-BROWSER-9, A5): both maps below are local
-    // to one installEgress() call, and installEgress() runs once per
-    // BrowserContext (one per session). They grow only with the distinct
-    // hostnames one session visits and are garbage the moment the context
-    // closes - not a general-purpose cache, so no eviction policy is added
-    // here on top of the session lifetime bound.
-    const verdicts = new Map<string, 'allow' | 'deny'>();
-    // Denial reason per hostname (spec 6: "Records allow/deny decisions";
-    // ADR-015 B9: engines surface the policy's code/rule, not just 'deny').
-    const denyReasons = new Map<string, string>();
-    const resolutionCache = new Map<string, string[]>();
+    // Validate each request afresh. Host memoization hid DNS changes and
+    // retained an unbounded set of names in long-lived sessions.
     const dns = await import('node:dns/promises');
 
     const resolveOf = async (hostname: string): Promise<string[]> => {
@@ -373,18 +374,9 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       }
       try {
         const result = await dns.lookup(hostname, { all: true });
-        const addresses = result.map((entry) => entry.address).sort();
-        const cached = resolutionCache.get(hostname);
-        const key = addresses.join(',');
-        if (cached !== undefined && cached.join(',') === key) {
-          return cached;
-        }
-        resolutionCache.set(hostname, addresses);
-        // Address-set change invalidates the memoized verdict.
-        verdicts.delete(hostname);
-        return addresses;
+        return result.map((entry) => entry.address);
       } catch {
-        return []; // resolution failure: hostname checks still apply
+        throw new EngineError('POLICY_DENIED', 'Cannot validate unresolved hostname');
       }
     };
 
@@ -392,13 +384,6 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       hostname: string,
       url: string
     ): Promise<{ verdict: 'allow' | 'deny'; reason?: string }> => {
-      const cached = verdicts.get(hostname);
-      if (cached !== undefined) {
-        const cachedReason = denyReasons.get(hostname);
-        return cachedReason !== undefined
-          ? { verdict: cached, reason: cachedReason }
-          : { verdict: cached };
-      }
       let verdict: 'allow' | 'deny';
       let reason: string | undefined;
       try {
@@ -420,9 +405,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
           err.code !== undefined
             ? `${err.code}${err.details?.rule !== undefined ? ` (${err.details.rule})` : ''}`
             : (err.message ?? 'denied by egress policy');
-        denyReasons.set(hostname, reason);
       }
-      verdicts.set(hostname, verdict);
       return reason !== undefined ? { verdict, reason } : { verdict };
     };
 
@@ -463,10 +446,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     // routeWebSocket forwarding (connectToServer) is broken when the http
     // choke point uses route.fetch - verified empirically: ANY fetch/fulfill
     // in context.route makes allowed-WS forwarding fail (upstream Playwright
-    // coexistence bug, 1.62.1). The honest, shippable gate is deny-all:
-    // when enabled, every upgrade is closed before connecting, closing the
-    // WS-based exfiltration residual at the cost of legitimate WebSockets.
-    if (this.webSocketPolicy === 'deny-all') {
+    // coexistence bug, 1.62.1). Close upgrades intercepted by Playwright's
+    // page routing. Do not infer worker coverage or network containment
+    // from a page-level deny fixture; those need independent verification.
+    if (this.webSocketPolicy !== 'off') {
       const routeWebSocket = (
         context as unknown as {
           routeWebSocket?: (
@@ -491,81 +474,95 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
 
       emitRequest('request.started', request, {});
 
-      const initial = await verdictOf(hostname, url);
-      if (initial.verdict === 'deny') {
-        emitRequest('request.failed', request, { blocked: true, reason: initial.reason });
-        await route.fulfill(BLOCKED_RESPONSE);
-        return;
-      }
+      // Playwright marks a terminal route operation handled before awaiting
+      // transport completion. A failed fulfill/dispose must not abort it again.
+      let terminalStarted = false;
+      const fulfill = (options: Parameters<typeof route.fulfill>[0]) => {
+        terminalStarted = true;
+        return route.fulfill(options);
+      };
 
       try {
-        const response = await route.fetch({ maxRedirects: 0 });
-        const headers = await response.headers();
-
-        // Response-cap enforcement (spec 17): oversized responses are
-        // blocked at the choke point, not merely observed.
-        if (egress.checkResponse !== undefined) {
-          try {
-            await egress.checkResponse({ headers });
-          } catch {
-            emitRequest('request.failed', request, {
-              blocked: true,
-              reason: 'RESPONSE_TOO_LARGE (response-size cap)',
-            });
-            await route.fulfill(BLOCKED_RESPONSE);
-            return;
-          }
-        }
-
-        // Actual-byte cap when the size is not declared (chunked/streamed):
-        // buffer the body - bounded by the policy's own cap accessor when
-        // available - and enforce the true size.
-        if (egress.checkBodySize !== undefined && headers['content-length'] === undefined) {
-          const body = await response.body();
-          try {
-            await egress.checkBodySize(body.byteLength);
-          } catch {
-            emitRequest('request.failed', request, {
-              blocked: true,
-              reason: 'RESPONSE_TOO_LARGE (actual-byte cap)',
-            });
-            await route.fulfill(BLOCKED_RESPONSE);
-            return;
-          }
-          emitRequest('request.finished', request, {
-            status: response.status(),
-            bytes: body.byteLength,
-          });
-          await route.fulfill({ response, body: body.toString('base64') });
+        const initial = await verdictOf(hostname, url);
+        if (initial.verdict === 'deny') {
+          emitRequest('request.failed', request, { blocked: true, reason: initial.reason });
+          await fulfill(BLOCKED_RESPONSE);
           return;
         }
+        const response = await route.fetch({ maxRedirects: 0 });
+        try {
+          const headers = await response.headers();
+          const location = headers.location;
+          if (response.status() >= 300 && response.status() < 400 && location !== undefined) {
+            const absolute = new URL(location, url);
+            const hop = await verdictOf(absolute.hostname, absolute.toString());
+            if (hop.verdict === 'deny') {
+              emitRequest('request.failed', request, {
+                blocked: true,
+                reason: hop.reason,
+                redirect: absolute.origin + absolute.pathname,
+              });
+              await fulfill(BLOCKED_RESPONSE);
+              return;
+            }
+          }
 
-        const location = headers.location;
-        if (response.status() >= 300 && response.status() < 400 && location !== undefined) {
-          const absolute = new URL(location, url);
-          const hop = await verdictOf(absolute.hostname, absolute.toString());
-          if (hop.verdict === 'deny') {
-            emitRequest('request.failed', request, {
-              blocked: true,
-              reason: hop.reason,
-              redirect: absolute.origin + absolute.pathname,
+          // Response-cap enforcement (spec 17): oversized responses are
+          // blocked at the choke point, not merely observed.
+          if (egress.checkResponse !== undefined) {
+            try {
+              await egress.checkResponse({ headers });
+            } catch {
+              emitRequest('request.failed', request, {
+                blocked: true,
+                reason: 'RESPONSE_TOO_LARGE (response-size cap)',
+              });
+              await fulfill(BLOCKED_RESPONSE);
+              return;
+            }
+          }
+
+          // Playwright buffers route.fetch before this gate; this limits what
+          // reaches the page, NOT peak transport memory (ADR-008 residual).
+          if (egress.checkBodySize !== undefined) {
+            const body = await response.body();
+            try {
+              await egress.checkBodySize(body.byteLength);
+            } catch {
+              emitRequest('request.failed', request, {
+                blocked: true,
+                reason: 'RESPONSE_TOO_LARGE (actual-byte cap)',
+              });
+              await fulfill(BLOCKED_RESPONSE);
+              return;
+            }
+            emitRequest('request.finished', request, {
+              status: response.status(),
+              bytes: body.byteLength,
             });
-            await route.fulfill(BLOCKED_RESPONSE);
+            await fulfill({ response, body });
             return;
           }
+
+          const declaredLength = headers['content-length'];
+          emitRequest('request.finished', request, {
+            status: response.status(),
+            ...(declaredLength !== undefined ? { bytes: Number.parseInt(declaredLength, 10) } : {}),
+          });
+          await fulfill({ response });
+        } finally {
+          await response.dispose();
         }
-        const declaredLength = headers['content-length'];
-        emitRequest('request.finished', request, {
-          status: response.status(),
-          ...(declaredLength !== undefined ? { bytes: Number.parseInt(declaredLength, 10) } : {}),
-        });
-        await route.fulfill({ response });
       } catch (error) {
         emitRequest('request.failed', request, {
           blocked: false,
           reason: error instanceof Error ? error.message : 'fetch failed',
         });
-        await route.abort('failed');
+        if (!terminalStarted) {
+          // Best effort after recording the failure: the context may already
+          // be closed, in which case abort itself rejects too.
+          await route.abort('failed').catch(() => {});
+        }
       }
     });
   }
@@ -586,8 +583,13 @@ class PlaywrightSession implements EngineSession {
   private context: BrowserContext;
   private engine: PlaywrightChromiumEngine;
   private pageMap: Map<string, PlaywrightPage> = new Map();
-  /** Completed in-page downloads by suggested filename, per page id. */
-  private readonly downloads = new Map<string, Map<string, () => Promise<Buffer>>>();
+  private readonly downloads = new Map<
+    string,
+    {
+      entries: Map<string, { downloadId: string; filename: string; bytes: Uint8Array }>;
+      bytes: number;
+    }
+  >();
   private pageCounter = 0;
   private closed = false;
 
@@ -600,7 +602,11 @@ class PlaywrightSession implements EngineSession {
     context: BrowserContext,
     engine: PlaywrightChromiumEngine,
     ownedBrowser?: Browser,
-    requestSink?: RequestEventSink
+    requestSink?: RequestEventSink,
+    private readonly downloadPolicy: EngineSessionOptions['downloadPolicy'] = {
+      allow: true,
+      maxBytes: 10 * 1024 * 1024,
+    }
   ) {
     this.id = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     this.context = context;
@@ -647,29 +653,61 @@ class PlaywrightSession implements EngineSession {
     const pageId = `page-${this.pageCounter++}`;
     const page = new PlaywrightPage(pageId, playwrightPage, this.engine);
     this.pageMap.set(pageId, page);
-    page.registerRemoval(() => this.pageMap.delete(pageId));
-    this.downloads.set(pageId, new Map());
+    page.registerRemoval(() => {
+      this.pageMap.delete(pageId);
+      this.downloads.delete(pageId);
+      playwrightPage.off('download', onDownload);
+    });
+    this.downloads.set(pageId, { entries: new Map(), bytes: 0 });
 
     // In-page download interception (spec 10): accept the download, hold
     // its bytes, and surface created/finished events on the page stream.
-    playwrightPage.on('download', (download) => {
+    const onDownload = (download: import('playwright').Download) => {
       const held = this.downloads.get(pageId);
       if (held === undefined) {
         return;
       }
-      page.notifyDownloadCreated(download.suggestedFilename());
+      const downloadId = `dl_${randomUUID()}`;
+      const filename = download.suggestedFilename();
+      page.notifyDownloadCreated(filename, downloadId);
       const saver = async () => {
+        if (!this.downloadPolicy?.allow) {
+          await download.cancel();
+          throw new EngineError('DOWNLOAD_BLOCKED', 'Downloads are disabled');
+        }
         const path = await download.path();
-        const { readFile } = await import('node:fs/promises');
-        const bytes = path !== null ? await readFile(path) : Buffer.alloc(0);
-        held.set(download.suggestedFilename(), () => Promise.resolve(bytes));
-        return bytes;
+        if (path === null || (await download.failure()))
+          throw new EngineError('DOWNLOAD_BLOCKED', 'Browser download failed');
+        if (this.downloads.get(pageId) !== held) return;
+        const { readFile, stat } = await import('node:fs/promises');
+        const size = (await stat(path)).size;
+        if (size > this.downloadPolicy.maxBytes || size > 20 * 1024 * 1024)
+          throw new EngineError('DOWNLOAD_BLOCKED', 'Captured download exceeds the byte limit');
+        const bytes = await readFile(path);
+        if (this.downloads.get(pageId) !== held) return;
+        while (held.entries.size >= 100 || held.bytes + bytes.byteLength > 20 * 1024 * 1024) {
+          const oldest = held.entries.values().next().value;
+          if (!oldest) break;
+          held.bytes -= oldest.bytes.byteLength;
+          held.entries.delete(oldest.downloadId);
+        }
+        held.entries.set(downloadId, { downloadId, filename, bytes });
+        held.bytes += bytes.byteLength;
+        page.notifyDownloadFinished(filename, downloadId);
       };
-      void saver().then(
-        () => page.notifyDownloadFinished(download.suggestedFilename()),
-        () => page.notifyDownloadFinished(download.suggestedFilename())
-      );
-    });
+      void saver()
+        .catch((error) =>
+          page.emitExternalEvent({
+            type: 'download.failed',
+            timestamp: new Date().toISOString(),
+            sessionId: this.id,
+            pageId,
+            data: { downloadId, filename, code: normalizeEngineError(error).code },
+          })
+        )
+        .finally(() => download.delete().catch(() => {}));
+    };
+    playwrightPage.on('download', onDownload);
 
     return page;
   }
@@ -683,12 +721,28 @@ class PlaywrightSession implements EngineSession {
   }
 
   /** Bytes of a completed in-page download (by suggested filename). */
+  async takeDownload(pageId: string, id: string) {
+    const held = this.downloads.get(pageId);
+    if (!held) return undefined;
+    const direct = held.entries.get(id);
+    const matches = direct
+      ? [direct]
+      : [...held.entries.values()].filter((entry) => entry.filename === id);
+    if (matches.length > 1)
+      throw new EngineError(
+        'INVALID_REQUEST',
+        'Ambiguous download filename; collect by downloadId'
+      );
+    const entry = matches[0];
+    if (!entry) return undefined;
+    held.entries.delete(entry.downloadId);
+    held.bytes -= entry.bytes.byteLength;
+    return entry;
+  }
+
+  /** Legacy adapter helper; the service uses the typed consuming port. */
   async downloadBytes(pageId: string, filename: string): Promise<Uint8Array | undefined> {
-    const held = this.downloads.get(pageId)?.get(filename);
-    if (held === undefined) {
-      return undefined;
-    }
-    return new Uint8Array(await held());
+    return (await this.takeDownload(pageId, filename))?.bytes;
   }
 
   async close(reason?: string): Promise<void> {
@@ -701,6 +755,7 @@ class PlaywrightSession implements EngineSession {
       await page.close();
     }
     this.pageMap.clear();
+    this.downloads.clear();
 
     // Close context
     await this.context.close();
@@ -733,6 +788,7 @@ class PlaywrightPage implements EnginePage {
    */
   private revision = 1;
   private refStore = new Map<string, StoredElement>();
+  private bindings = new Map<string, NodeBinding>();
   private eventWaiters: Array<() => void> = [];
   private eventsClosed = false;
   private removeSelf: () => void = () => {};
@@ -855,7 +911,21 @@ class PlaywrightPage implements EnginePage {
     }
   }
 
+  async getUrl(): Promise<string> {
+    if (this.page.isClosed()) throw new EngineError('PAGE_NOT_FOUND', 'Page is closed');
+    return this.page.url();
+  }
+
   async navigate(request: NavigationRequest): Promise<NavigationResult> {
+    try {
+      return await this.performNavigation(request);
+    } catch (error) {
+      const failure = normalizeEngineError(error, 'navigate');
+      throw new EngineError(failure.code, failure.message, failure.retryable, failure.details);
+    }
+  }
+
+  private async performNavigation(request: NavigationRequest): Promise<NavigationResult> {
     const waitUntil = request.waitUntil || 'load';
     const response = await this.page.goto(request.url, {
       waitUntil: waitUntil as 'load' | 'domcontentloaded' | 'networkidle',
@@ -890,6 +960,15 @@ class PlaywrightPage implements EnginePage {
 
   private bumpRevision(): void {
     this.revision += 1;
+    this.releaseRefs();
+  }
+
+  private releaseRefs(): void {
+    for (const { handle } of this.bindings.values()) {
+      // Disposal is best effort after document/context teardown.
+      void handle.dispose().catch(() => {});
+    }
+    this.bindings.clear();
     this.refStore.clear();
   }
 
@@ -899,7 +978,7 @@ class PlaywrightPage implements EnginePage {
     // Get accessibility tree if requested
     let elements: StoredElement[] = [];
 
-    if (mode === 'interactive' || mode === 'accessibility') {
+    if (mode === 'interactive' || mode === 'accessibility' || mode === 'content') {
       try {
         // Playwright's accessibility surface is the aria snapshot (YAML).
         const yaml = await this.page.locator('body').ariaSnapshot();
@@ -908,26 +987,76 @@ class PlaywrightPage implements EnginePage {
         // Fallback if the aria snapshot is not available
         elements = await this.getContentElements();
       }
-    } else if (mode === 'content') {
-      // Get content-focused elements
-      elements = await this.getContentElements();
     }
 
     // Rebuild the ref store from this observation: refs are deterministic
     // within a revision (document order), so the same element maps to the
     // same ref until the page mutates.
+    const previous = this.bindings;
+    const previousCount = this.refStore.size;
+    this.bindings = new Map();
     this.refStore.clear();
-    for (const [index, element] of elements.entries()) {
-      this.refStore.set(element.ref ?? `e${this.revision}_${index}`, {
-        role: element.role,
-        ...(element.name !== undefined ? { name: element.name } : {}),
-        ...(element.value !== undefined ? { value: element.value } : {}),
-        visible: element.visible,
-        enabled: element.enabled,
-      });
+    let changed = previousCount > 0 && previousCount !== elements.length;
+    const ordinals = new Map<string, number>();
+    try {
+      for (const [index, element] of elements.entries()) {
+        const ref = element.ref ?? `e${this.revision}_${index}`;
+        const key = JSON.stringify([element.role, element.name ?? '']);
+        const ordinal = ordinals.get(key) ?? 0;
+        ordinals.set(key, ordinal + 1);
+        const locator = this.page
+          .getByRole(element.role as never, { name: element.name ?? '', exact: true })
+          .nth(ordinal);
+        // Bind once to an actual node. An ordinal is never resolved anew at act time.
+        if (await locator.count()) {
+          const handle = await locator.elementHandle();
+          if (handle) {
+            const snapshot = await locator.ariaSnapshot({ timeout: 1000 });
+            const prior = previous.get(ref);
+            if (
+              previous.size > 0 &&
+              (!prior ||
+                prior.snapshot !== snapshot ||
+                !(await handle
+                  .evaluate((node, old) => node.isSameNode(old), prior.handle)
+                  .catch(() => false)))
+            )
+              changed = true;
+            this.bindings.set(ref, { handle, locator, snapshot });
+            element.visible = await handle.isVisible();
+            element.enabled = await handle.isEnabled();
+          }
+        }
+        this.refStore.set(ref, {
+          role: element.role,
+          ...(element.name !== undefined ? { name: element.name } : {}),
+          ...(element.value !== undefined ? { value: element.value } : {}),
+          visible: element.visible,
+          enabled: element.enabled,
+        });
+      }
+    } finally {
+      for (const { handle } of previous.values()) void handle.dispose().catch(() => {});
+    }
+    if (changed) {
+      this.revision += 1;
+      const bindings = new Map<string, NodeBinding>();
+      const states = new Map<string, StoredElement>();
+      for (const [index, element] of elements.entries()) {
+        const oldRef = element.ref ?? '';
+        const newRef = `e${this.revision}_${index}`;
+        const binding = this.bindings.get(oldRef);
+        const state = this.refStore.get(oldRef);
+        if (binding) bindings.set(newRef, binding);
+        if (state) states.set(newRef, state);
+        element.ref = newRef;
+      }
+      this.bindings = bindings;
+      this.refStore = states;
     }
 
     return {
+      revision: this.revision,
       url: this.page.url(),
       title: await this.page.title(),
       status: 'interactive',
@@ -968,7 +1097,8 @@ class PlaywrightPage implements EnginePage {
 
       // Element line: `role`, `role "name"`, `role "name": inline-value`,
       // or with a trailing bare colon when the node has children.
-      const elementMatch = /^([a-zA-Z][\w-]*)(?:\s+"((?:[^"\\]|\\.)*)")?(?::\s*(.*))?$/.exec(text);
+      const elementMatch =
+        /^([a-zA-Z][\w-]*)(?:\s+"((?:[^"\\]|\\.)*)")?(?:\s+\[[^\]]*\])*(?::\s*(.*))?$/.exec(text);
       if (!elementMatch?.[1]) {
         continue;
       }
@@ -1036,32 +1166,87 @@ class PlaywrightPage implements EnginePage {
 
   async resolve(target: EngineTarget): Promise<ResolvedTarget> {
     const stored = this.refStore.get(target.ref);
-    if (!stored) {
-      throw new Error(`Element not found: ${target.ref} (observe the page to mint refs)`);
+    const binding = this.bindings.get(target.ref);
+    if (!stored || !binding) {
+      throw new EngineError(
+        'TARGET_NOT_FOUND',
+        `Element not found: ${target.ref} (observe the page to mint refs)`
+      );
+    }
+    if (!(await binding.handle.evaluate((node) => node.isConnected))) {
+      throw new EngineError(
+        'STALE_TARGET',
+        'Observed node was detached or replaced; observe again.'
+      );
+    }
+    const visible = await binding.handle.isVisible();
+    const enabled = await binding.handle.isEnabled();
+    if (visible && enabled) {
+      // Some CDP adapters materialize fresh JavaScript wrappers for the same
+      // DOM node. Compare DOM identity, not wrapper-object equality.
+      const current =
+        (await binding.locator.count()) === 1
+          ? await binding.locator.elementHandle({ timeout: 1000 })
+          : null;
+      let matchesOriginal = false;
+      try {
+        matchesOriginal =
+          current !== null &&
+          (await binding.handle.evaluate(
+            (original, candidate) => original.isSameNode(candidate),
+            current
+          ));
+      } finally {
+        await current?.dispose();
+      }
+      if (
+        !matchesOriginal ||
+        (await binding.locator.ariaSnapshot({ timeout: 1000 })) !== binding.snapshot
+      ) {
+        throw new EngineError(
+          'STALE_TARGET',
+          'Observed target identity or semantic state changed; observe again.'
+        );
+      }
     }
 
     return {
       ref: target.ref,
-      fingerprint: canonicalFingerprint(stored),
+      fingerprint: canonicalFingerprint({ ...stored, visible, enabled }),
       role: stored.role,
       ...(stored.name !== undefined ? { name: stored.name } : {}),
-      visible: stored.visible,
-      enabled: stored.enabled,
+      visible,
+      enabled,
     };
   }
 
   /** Locator for a stored element, addressed semantically (never selectors). */
   private locatorFor(ref: string) {
-    const stored = this.refStore.get(ref);
-    if (!stored) {
-      throw new Error(`Element not found: ${ref} (observe the page to mint refs)`);
+    const binding = this.bindings.get(ref);
+    if (!binding) {
+      throw new EngineError(
+        'TARGET_NOT_FOUND',
+        `Element not found: ${ref} (observe the page to mint refs)`
+      );
     }
-    return this.page
-      .getByRole(stored.role as never, stored.name !== undefined ? { name: stored.name } : {})
-      .first();
+    return binding.handle;
   }
 
   async act(action: EngineAction): Promise<ActionEffect> {
+    try {
+      return await this.performAction(action);
+    } catch (error) {
+      const failure = normalizeEngineError(error);
+      throw new EngineError(failure.code, failure.message, failure.retryable, failure.details);
+    }
+  }
+
+  private async performAction(action: EngineAction): Promise<ActionEffect> {
+    if (action.target) {
+      const live = await this.resolve(action.target);
+      if (!live.visible) throw new EngineError('TARGET_NOT_VISIBLE', 'Target is not visible');
+      if (!live.enabled) throw new EngineError('TARGET_DISABLED', 'Target is disabled');
+    }
     const actionId = `action-${Date.now()}`;
     const startTimestamp = new Date().toISOString();
     const oldRevision = this.revision;
@@ -1137,7 +1322,23 @@ class PlaywrightPage implements EnginePage {
         break;
       }
       case 'scroll': {
-        await this.page.mouse.wheel(Number(action.deltaX ?? 0), Number(action.deltaY ?? 0));
+        const amount = Number(action.amount ?? 500);
+        const deltaX = Number(
+          action.deltaX ??
+            (action.direction === 'left' ? -amount : action.direction === 'right' ? amount : 0)
+        );
+        const deltaY = Number(
+          action.deltaY ??
+            (action.direction === 'up' ? -amount : action.direction === 'down' ? amount : 0)
+        );
+        if (action.target) {
+          await this.locatorFor(action.target.ref).evaluate(
+            (element, delta) => element.scrollBy(delta.x, delta.y),
+            { x: deltaX, y: deltaY }
+          );
+        } else {
+          await this.page.mouse.wheel(deltaX, deltaY);
+        }
         this.bumpRevision();
         break;
       }
@@ -1269,23 +1470,23 @@ class PlaywrightPage implements EnginePage {
   }
 
   /** Emit download.created/finished into the event stream. */
-  notifyDownloadCreated(filename: string): void {
+  notifyDownloadCreated(filename: string, downloadId: string): void {
     this.enqueueEvent({
       type: 'download.created',
       timestamp: new Date().toISOString(),
       sessionId: 'unknown',
       pageId: this.id,
-      data: { filename },
+      data: { filename, downloadId },
     });
   }
 
-  notifyDownloadFinished(filename: string): void {
+  notifyDownloadFinished(filename: string, downloadId: string): void {
     this.enqueueEvent({
       type: 'download.finished',
       timestamp: new Date().toISOString(),
       sessionId: 'unknown',
       pageId: this.id,
-      data: { filename },
+      data: { filename, downloadId },
     });
   }
 
@@ -1304,6 +1505,7 @@ class PlaywrightPage implements EnginePage {
 
   async close(): Promise<void> {
     this.eventsClosed = true;
+    this.releaseRefs();
     this.removeSelf();
     if (this.pendingDialog) {
       clearTimeout(this.pendingDialog.timer);
