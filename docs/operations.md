@@ -90,7 +90,7 @@ config file.
 | `AGENTBROWSER_CHROME_PATH` | service (Playwright engine) | Prefer a specific real Chrome for headed sessions ([ADR-013](adr/013-headed-sessions-and-walled-logins.md)). |
 | `AGENTBROWSER_ARTIFACT_KEY` | service | Bearer key guarding artifact download URLs, when set. |
 | `AGENTBROWSER_DEFAULT_TTL_MS` | service | Operator-level default session TTL (ms); per-session `ttlMs` still wins. Unset/garbage → the 15-min default. |
-| `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS` | service | Operator-level default idle timeout (ms); per-session `idleTimeoutMs` still wins. Unset/garbage → the 2-min default. Useful for deployments that are mostly headed human-in-the-loop flows. |
+| `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS` | service | Operator-level default idle timeout (ms); per-session `idleTimeoutMs` still wins. Unset/garbage → the 10-min default. Useful for deployments that are mostly headed human-in-the-loop flows. |
 | `AGENTBROWSER_SNAPSHOT_TIMEOUT_MS` | service (Playwright engine) | Per-element aria-snapshot timeout in ms (default 1000). Pages whose elements never stabilize — a perpetually animating header, a hydration loop — cannot produce these snapshots at any timeout; the engine then binds those elements by DOM identity alone instead of failing the whole observation. Raise it only if 1s visibly truncates change detection on slow-but-stable pages. |
 
 Port and bind address default to `3000` on `0.0.0.0`
@@ -144,7 +144,7 @@ returns `QUOTA_EXCEEDED` until used or expired tokens can be reclaimed.
 
 Sessions are **ephemeral by default** ([ADR-005](adr/005-ephemeral-sessions-explicit-persistence.md)):
 
-- default TTL **15 minutes**, default idle timeout **2 minutes** — both
+- default TTL **15 minutes**, default idle timeout **10 minutes** — both
   overridable per session (`ttlMs`, `idleTimeoutMs` on create), and the
   defaults themselves are operator-tunable
   (`AGENTBROWSER_DEFAULT_TTL_MS` / `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS`);
@@ -262,7 +262,7 @@ seed future headless sessions with them — [TD-BROWSER-6](td/TD-BROWSER-6-heade
 | Symptom | Likely cause / fix |
 | --- | --- |
 | Startup warns `/v1 is UNAUTHENTICATED` | `AGENTBROWSER_API_KEYS` unset — set `key:tenant` pairs before exposing the service. |
-| `404 SESSION_NOT_FOUND` for a session that existed | The session TTL/idle expired (15 min / 2 min defaults). Create a fresh session; seed cookies if continuity matters. |
+| `404 SESSION_NOT_FOUND` for a session that existed | The session TTL/idle expired (15 min / 10 min defaults). Create a fresh session; seed cookies if continuity matters. |
 | `STALE_TARGET` on every action on a dynamic page | Refs die with their revision — re-observe, or prefer `browser_snapshot` + `browser_plan`, which self-heals stale refs once per step. |
 | Plan aborts with `AMBIGUOUS_REMAP` | The page churned enough to enter `verified` mode and no remap candidate matched the original element's role+label. Re-observe and rebuild the plan — the executor refused to guess rather than act on the wrong element. |
 | Browser download slow/failing | First service start bootstraps Chromium; on Homebrew installs it lands in `$(brew --prefix)/var/agentbrowser/browsers`. |
