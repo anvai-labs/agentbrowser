@@ -229,8 +229,11 @@ peers. Real loopback HTTP/TLS tests verify Host/SNI, DNS-name and IP certificate
 identity, denied-before-connect counters, and raw/TLS/upstream socket closure
 during a stalled handshake. Their TLS adapter is **test-only**: it binds lease
 cancellation to the TLS wrapper and wrapper closure back to the TCP lease.
-Ephemeral certificates are generated in memory through the local OpenSSL command;
-tests install no host CA and never disable certificate verification.
+Ephemeral certificates are generated through the local OpenSSL command, using a
+mode-0600 key file in a uniquely created test directory. The exact file and empty
+directory are removed in `finally`; tests install no host CA and never disable
+certificate verification. This avoids Linux's inability to reopen Node's
+socket-backed child `/dev/stdin` as a key file, found by the first PR CI run.
 
 Validation: 55 deterministic and nine real-I/O cases pass; independent lifecycle
 and HTTP/TLS reviewers approved after rerunning their suites. A native Bun 1.4.0
