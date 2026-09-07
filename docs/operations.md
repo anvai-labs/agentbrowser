@@ -113,14 +113,15 @@ node packages/mcp-server/dist/bin.js  # the MCP server (stdio)
 
 ## Configuration
 
-Everything is configured through environment variables; there is no
-config file.
+The service and MCP process use environment variables; there is no config file.
+The CLI also has explicit flags. SDK embedders provide `ClientOptions.baseUrl`
+and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 
 | Variable | Who reads it | Meaning |
 | --- | --- | --- |
 | `AGENTBROWSER_API_KEYS` | service | Bearer auth for `/v1`, format `key:tenant[,key:tenant...]`. **Without it, `/v1` is unauthenticated** — the service logs a loud warning at startup. Each key maps to one tenant; sessions are isolated per tenant. |
-| `AGENTBROWSER_API_KEY` | MCP server, CLI, SDK | The bearer key sent to the service. |
-| `AGENTBROWSER_BASE_URL` | MCP server, CLI, SDK | Service location; default `http://localhost:3000`. |
+| `AGENTBROWSER_API_KEY` | MCP server, CLI | The bearer key sent to the service; CLI `--api-key` takes precedence. |
+| `AGENTBROWSER_BASE_URL` | MCP server | Service location; default `http://localhost:3000`. The CLI uses `--base-url`, not this variable. |
 | `AGENTBROWSER_LOG_LEVEL` | service | `debug` or `info` (default). Logs are structured JSON, scrubbed of registered secrets. |
 | `AGENTBROWSER_CHROME_PATH` | service (Playwright engine) | Prefer a specific real Chrome for headed sessions ([ADR-013](adr/013-headed-sessions-and-walled-logins.md)). |
 | `AGENTBROWSER_ARTIFACT_KEY` | service | Bearer key guarding artifact download URLs, when set. |
@@ -255,17 +256,20 @@ then `node packages/cli/dist/bin.js`. The CLI connects to a separately running
 API service:
 
 ```bash
-export AGENTBROWSER_BASE_URL=http://localhost:3000
 # The bearer is the KEY segment only - the server parses `key:tenant` pairs
 # and matches on the key's hash, so sending `key1:tenant1` as the bearer 401s.
 export AGENTBROWSER_API_KEY=key1
 
-agentbrowser session create --tenant tenant1 --json
+agentbrowser --base-url http://localhost:3000 session create --tenant tenant1 --json
 agentbrowser navigate <sessionId> <pageId> https://example.com
 agentbrowser act click <sessionId> <pageId> <ref>
 agentbrowser session list
 agentbrowser session close <sessionId>
 ```
+
+The remaining commands use the default local URL. For a nondefault service,
+pass `--base-url` on every command; exporting `AGENTBROWSER_BASE_URL` configures
+the MCP process only.
 
 `--json` emits raw API payloads for scripting; `--no-headless` opens a
 headed session for interactive logins (export the cookies afterward and
@@ -291,6 +295,47 @@ exact version, all eleven tools, valid output and clean shutdown, clearing the
 runtime version override to prevent false version evidence. These checks do
 not launch a browser or certify API connectivity, downloads, containment or a
 Homebrew upgrade. Those are separate [release acceptance gates](release-milestones.md).
+
+### Extracted-package candidate checks
+
+PR CI and release packaging use the same packager and real-Chromium harness.
+From a clean, built checkout, with compiled CLI/MCP binaries and `qpdf` and
+`openssl` on PATH:
+
+```sh
+RUN_DIR="$(mktemp -d /private/tmp/agentbrowser-acceptance.XXXXXX)"
+# On Linux, use /tmp in place of /private/tmp.
+VERSION="$(node -p "require('./package.json').version")"
+TARGET="$(node -p "process.platform + '-' + process.arch")"
+COMMIT="$(git rev-parse HEAD)"
+node scripts/package-server.mjs --output-dir "$RUN_DIR/package" --target "$TARGET" --expected-version "$VERSION" --commit "$COMMIT"
+tar -xzf "$RUN_DIR/package/agentbrowser-server-$TARGET.tar.gz" -C "$RUN_DIR"
+node scripts/package-acceptance.mjs --server-root "$RUN_DIR/server" --expected-version "$VERSION" --expected-commit "$COMMIT" \
+  --cli "$PWD/packages/cli/dist-bin/agentbrowser" --mcp "$PWD/packages/mcp-server/dist-bin/agentbrowser-mcp" --install-browser --report "$RUN_DIR/acceptance.json"
+```
+
+The packager refuses existing output directories, mismatched versions/commits
+and dirty source. `--allow-dirty` is for explicitly unverified local work only;
+the archive is marked dirty and acceptance cannot report release evidence.
+Retain the JSON report and archive checksum with the candidate SHA. Remove the
+allocated `RUN_DIR` after recording evidence and confirming it is no longer used.
+This is a shared packaging procedure, not a byte-for-byte reproducible-build claim.
+
+The stock launcher checks authentication and private-address/default-download
+denial. A separate process imports only extracted modules and uses trusted
+`buildServer({ networkPolicy })` injection for deterministic loopback fixtures;
+session rules remain restrict-only. Fixture TLS trust is child-local, never a
+host CA change. This process exercises browser actions, PNG/PDF validation,
+HTTP/TLS downloads, cancellation, snapshot fault injection and live CLI/MCP calls.
+`qpdf` is an acceptance-only parser dependency, not a new server requirement;
+its checks do not establish that every PDF renderer accepts a document.
+Cleanup failures fail acceptance; forced API termination leaves browser-descendant
+cleanup unverified. No existing Homebrew service is restarted.
+
+Published/npm and installed upgrade checks remain separate delivery gates.
+The exact 1.8.4 server archive has an escaping pnpm self-link and cannot pass the
+strict package-tree audit; its baseline profile also lacks injected-workflow
+support. Record these limitations rather than substituting workspace code.
 
 ## Deployment notes
 

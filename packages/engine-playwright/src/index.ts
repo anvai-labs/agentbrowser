@@ -1200,10 +1200,19 @@ class PlaywrightPage implements EnginePage {
   async resolve(target: EngineTarget): Promise<ResolvedTarget> {
     const stored = this.refStore.get(target.ref);
     const binding = this.bindings.get(target.ref);
-    if (!stored || !binding) {
+    if (!stored) {
       throw new EngineError(
         'TARGET_NOT_FOUND',
         `Element not found: ${target.ref} (observe the page to mint refs)`
+      );
+    }
+    if (!binding) {
+      // DOM-only fallback can discover a control without enough semantics to
+      // bind it. The ref was observed, but is not safe to act on yet.
+      throw new EngineError(
+        'STALE_TARGET',
+        'Observed target could not be bound safely; observe again.',
+        true
       );
     }
     if (!(await binding.handle.evaluate((node) => node.isConnected))) {

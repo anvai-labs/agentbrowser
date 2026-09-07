@@ -12,7 +12,7 @@ test('npm publication waits for tag validation and executable/server acceptance'
   const dependencies = job.match(/^    needs: \[([^\]]+)\]\s*$/m)?.[1].split(',').map((value) => value.trim());
   assert.deepEqual(dependencies?.sort(), ['binaries', 'server-packages', 'tag-guard']);
   const server = workflow.split(/\n(?=  [\w-]+:)/).find((block) => block.startsWith('  server-packages:\n'));
-  assert.match(server ?? '', /^    needs: tag-guard\s*$/m);
+  assert.match(server ?? '', /^    needs: \[tag-guard, binaries\]\s*$/m);
 });
 
 test('synchronizes manifests and generated runtime stamps; check is non-mutating and catches drift', () => {

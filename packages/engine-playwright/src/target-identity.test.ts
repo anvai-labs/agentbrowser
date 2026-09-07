@@ -32,6 +32,33 @@ function degradeElements(page: EnginePage) {
 }
 
 describe('snapshot-degraded binding', () => {
+  it('returns retryable staleness for a named observed control without any snapshot evidence', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const page = await (await engine.createSession({ headless: true })).newPage();
+      await page.navigate({
+        url: 'data:text/html,<button onclick="document.title=1">Continue</button>',
+      });
+      interceptSnapshots(page, () => {
+        throw new errors.TimeoutError('Injected total snapshot failure');
+      });
+      const ref = (await page.observe({})).elements.find(
+        (element) => element.role === 'button'
+      )?.ref;
+      if (!ref) throw new Error('Missing observed button');
+      await expect(page.act({ type: 'click', target: { ref } })).rejects.toMatchObject({
+        code: 'STALE_TARGET',
+        retryable: true,
+      });
+      expect(await backingPage(page).title()).toBe('');
+      await expect(page.resolve({ ref: 'e999999_999' })).rejects.toMatchObject({
+        code: 'TARGET_NOT_FOUND',
+      });
+    } finally {
+      await engine.close();
+    }
+  });
+
   it('validates document evidence before clicking an element whose snapshot times out', async () => {
     const engine = new PlaywrightChromiumEngine();
     try {

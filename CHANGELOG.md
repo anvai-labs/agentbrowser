@@ -26,6 +26,10 @@ before deployment; private package manifests do not waive embedding compatibilit
   URL metadata is secret-redacted, may lag navigation, and is omitted when the
   engine has no synchronous cache; listing never waits for browser URL I/O.
 
+- Trusted in-process `buildServer({ networkPolicy })` configuration now forwards
+  the existing service policy option; session policy remains restrict-only.
+  No HTTP option or stock-default relaxation is introduced.
+
 ### Changed
 
 - The default session idle timeout is now 10 minutes (previously 2). The
@@ -53,6 +57,15 @@ before deployment; private package manifests do not waive embedding compatibilit
   `AGENTBROWSER_SNAPSHOT_TIMEOUT_MS` (or the `snapshotTimeoutMs` engine
   option) accepts integer values 1–30000 ms; invalid environment values fall
   back to the default while invalid explicit options throw.
+  An observed named control that cannot be safely rebound after total snapshot
+  timeout also returns retryable `STALE_TARGET`; unknown refs remain missing.
+
+- Server tarball packaging no longer retains pnpm's API self-link back into the
+  build checkout. PR and release CI share extracted-package real-browser checks,
+  artifact validation and matching-client workflows before publication.
+
+- CLI commands forward `--api-key` (or `AGENTBROWSER_API_KEY` when no flag is
+  supplied) to the SDK, allowing commands against authenticated servers.
 
 - Cancel direct downloads on session termination and prevent late artifact
   publication. Preserve one overall deadline across redirect/body policy work,

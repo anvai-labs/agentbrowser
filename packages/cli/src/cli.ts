@@ -128,10 +128,12 @@ export function buildCli(deps: CliDependencies): Cli {
         <A extends unknown[]>(handler: (ctx: CommandContext, ...args: A) => Promise<void>) =>
         async (...args: A) => {
           const globals = program.opts();
+          const apiKey = globals.apiKey ?? process.env.AGENTBROWSER_API_KEY;
           const ctx: CommandContext = {
             client: deps.createClient({
               baseUrl: globals.baseUrl,
               timeout: Number.parseInt(globals.timeout, 10),
+              ...(apiKey ? { apiKey } : {}),
             }),
             json: Boolean(globals.json),
             out: deps.out,
