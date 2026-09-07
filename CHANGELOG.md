@@ -5,6 +5,50 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [1.8.4] — 2026-09-07
+
+Patch release of the independently reviewed engineering corrections in PRs
+77–83 and transport-feasibility evidence in PRs 84–88. This release does not
+introduce a contained browser profile or close the remaining egress gaps.
+
+### Fixed
+
+- Preserve tenant ownership of retained artifacts and traces after session
+  closure; redact structured evidence, events and extraction boundaries using
+  the configured secret registry.
+- Bind Playwright element references to live node identity and enforce
+  operator-controlled approval rules with page/action-bound consent.
+- Unify action wire semantics and adapter error normalization; keep SDK
+  deadlines active through response-body consumption and preserve error details.
+- Preserve policy delegation and bound direct-download redirects, response
+  collection and retained downloads; expose captured downloads through a typed
+  engine contract.
+- Centralize observation byte/element budgets and continuation handling; bound
+  event retention and approval-token admission.
+- Correct Safari session-scoped transport and lifecycle races, with explicit
+  refusal when the guarded deployment requires unsupported egress enforcement.
+
+### Changed
+
+- Synchronize all first-party package versions and generated API/CLI stamps
+  with the root product version. CI verifies runtime versions and release-tag
+  consistency; npm publication depends on the tag guard.
+- Retain independently reviewed worker-policy/startup probes, raw evidence and
+  79 offline regression tests. The sole-owner comparison does not reproduce
+  the earlier early-execution result and does not establish production enforcement.
+
+### Known limitations
+
+- **R4 and T1 remain open:** later browser redirect hops and worker WS/WSS
+  coverage are not fully enforced. Execution startup pauses do not gate the
+  initial worker-script request. Do not rely on this release for required SSRF
+  containment of hostile browsing.
+- Native local operation remains supported. A contained Linux Chromium profile
+  still requires the accepted transport gates and OS-enforced gateway-only
+  egress; full multi-tenant ADR-008 isolation remains deferred. See the
+  [remediation tracker](docs/engineering-review-remediation.md) and
+  [transport reassessment](docs/egress-transport-reassessment.md).
+
 ## [1.8.3] — 2026-09-05
 
 Closes the 2026-08-31 engineering-hygiene audit in full — every finding is now
