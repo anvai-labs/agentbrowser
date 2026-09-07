@@ -26,14 +26,14 @@ validation record below. A checked status never means merely documented.
 
 ### Next milestone: T1 policy inheritance feasibility
 
-Fresh baseline: merged `develop` at `5cc837d` ([PR 85](https://github.com/anvai-labs/agentbrowser/pull/85)), with all eight post-merge CI
+Fresh baseline: merged `develop` at `4e2ec00` ([PR 86](https://github.com/anvai-labs/agentbrowser/pull/86)), with all eight post-merge CI
 checks green. Reuse the single clean worktree; do not recreate the A-G stack.
 
 | Unit | Scope | Acceptance / stop condition | Status |
 | --- | --- | --- | --- |
 | T1a | Compare policy delivery and diagnose replay failures | Preserve HTTP controls; correlate browser failures, CSP violations and server hits | Merged in PR 85; 36-case comparison, 27-case worker follow-up, 20 offline tests; all eight post-merge CI checks green; T1/R4 remain open |
-| T1b | Test target startup ownership and nested-worker coverage | Independent review of startup ordering and all-target controls; no production claim from page-only coverage | Diagnostic unit independently reviewed; 47 offline tests and two 27-worker runs pass fixture integrity. **Startup gate failed:** all 12 attached workers issue HTTP before this client's release; recursion observes both children but cannot hold startup; shared controls uncovered |
-| T1c | Reassess transport feasibility against the complete acceptance matrix | T1 remains open until semantics and coverage pass; revisit design explicitly if they cannot | Pending |
+| T1b | Test target startup ownership and nested-worker coverage | Independent review of startup ordering and all-target controls; no production claim from page-only coverage | Merged in PR 86; independent review, 47 offline tests, two 27-worker runs and all eight post-merge checks pass. **Startup gate failed:** all 12 attached workers issue HTTP before this client's release; shared controls uncovered |
+| T1c | Reassess transport feasibility against the complete acceptance matrix | T1 remains open until semantics and coverage pass; revisit design explicitly if they cannot | [Reassessment independently reviewed](egress-transport-reassessment.md). Assessment artifact complete, not T1 closure. Separate lifecycle ownership from semantic compatibility; recommend one bounded ownership comparison before choosing integration or maintenance commitments |
 
 T1a is a bounded probe/evidence PR, not a production adapter change. Keep
 historical evidence immutable. No gateway deployment, host networking changes,

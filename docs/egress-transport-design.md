@@ -7,6 +7,8 @@ Chromium profile; do not block unrelated fixes on full Phase 4 delivery.
 The [review tracker](engineering-review-remediation.md) retains R4 as open.
 T1's tested page-CDP/WebSocket and appended-CSP candidates failed worker
 coverage; see the [feasibility evidence](egress-transport-feasibility.md).
+The [T1c reassessment](egress-transport-reassessment.md) maps that evidence to
+the full matrix and separates startup ownership from semantic compatibility.
 Approval covers staged engineering work, not a production deployment, host-wide
 firewall change, certificate installation, or release. Existing guarded browsing
 must not be described as complete SSRF containment while the gap below remains.
@@ -165,7 +167,7 @@ instead of silently reducing its guarantees. No production rollout is implied.
 | Unit | Scope | Risk / effort | Exit evidence | Status |
 | --- | --- | --- | --- | --- |
 | T0 | Correct current guarantees; retain multi-hop repro; agree threat/capability contract | High-priority truthfulness / small | Reviewer can reproduce bypass; docs distinguish shipped and proposed behavior | Design baseline and durable fixture complete; independent review passed; not runtime enforcement |
-| T1 | Bounded Chromium request/response lifecycle feasibility, pinned-version compatibility | High / medium | All target types, redirects and response gates; clean shutdown; no dual-owner race | Gate failed: worker WS/WSS coverage gaps; body-fulfillment comparison also breaks a data-worker HTTP control; investigation required |
+| T1 | Bounded Chromium request/response lifecycle feasibility, pinned-version compatibility | High / medium | All target types, redirects and response gates; clean shutdown; no dual-owner race | Gate failed: worker WS/WSS and replay-compatibility gaps; T1b also falsifies second-client startup gating. T1c reassessment precedes mechanism selection |
 | T2 | Authenticated gateway and shared connection primitives | High / large | DNS rebind, host/TLS identity, session revocation, concurrency and byte limits | Not started |
 | T3 | Compose guarded Chromium mode; retire old route-fetch path for that mode | High / large | End-to-end acceptance matrix below, including normal site semantics | Blocked on T1/T2 |
 | T4 | Forced-egress Linux deployment profile, ADR-008-compatible | High / large | Deliberate proxy/DNS/UDP bypass attempts fail at network boundary; cannot alter rules; fail-closed startup and teardown | Required for contained-profile release; not started |
