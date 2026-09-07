@@ -9,6 +9,32 @@ import { describe, expect, it } from 'vitest';
 import { NetworkPolicy, NetworkPolicyError, SessionHostPolicy } from './network-policy';
 
 describe('Network Policy', () => {
+  it('captures fixed rules without multiplying retained raw request logs', async () => {
+    const policy = new NetworkPolicy({ blockLoopback: true, enableLogging: true });
+    const snapshot = policy.snapshot();
+    policy.updateConfig({ blockLoopback: false });
+    await policy.checkRequest({ hostname: '127.0.0.1' });
+    await expect(snapshot.checkRequest({ hostname: '127.0.0.1' })).rejects.toMatchObject({
+      code: 'POLICY_DENIED',
+    });
+    expect(() => snapshot.updateConfig({ blockLoopback: false })).toThrow();
+    await snapshot.checkRequest({ hostname: 'example.com' });
+    expect(snapshot.getLogs()).toEqual([]);
+  });
+
+  it('refuses config-only snapshots that would discard custom policy restrictions', () => {
+    class CustomPolicy extends NetworkPolicy {
+      override async checkRequest() {
+        throw new Error('custom deny');
+      }
+    }
+    expect(() => new CustomPolicy().snapshot()).toThrow(/immutable snapshot/);
+    const policy = new NetworkPolicy();
+    policy.checkRequest = async () => {
+      throw new Error('custom deny');
+    };
+    expect(() => policy.snapshot()).toThrow(/immutable snapshot/);
+  });
   describe('loopback protection', () => {
     it('should block localhost hostname', async () => {
       const policy = new NetworkPolicy({ blockLoopback: true });
