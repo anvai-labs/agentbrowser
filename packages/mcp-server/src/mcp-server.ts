@@ -132,7 +132,7 @@ function buildTools(client: McpClient): ToolDefinition[] {
           idleTimeoutMs: {
             type: 'number',
             description:
-              'Idle timeout in ms (default 120000 = 2 min; max 3600000). Raise for ' +
+              'Idle timeout in ms (default 600000 = 10 min; max 3600000). Raise for ' +
               'headed human-in-the-loop flows where the user thinks between steps.',
           },
           cookies: {

@@ -11,12 +11,20 @@ Observation resilience for pages whose elements never stabilize, page
 discovery, a longer default idle window, and validated semantic evidence
 behind the recovered bindings (PRs 91–98).
 
+**Upgrade notice:** 1.8.5 is the owner-selected release label, not a bug-fix-only
+SemVer patch. The page-listing API is additive, idle sessions live longer by
+default, and custom network-policy embeddings require migration for downloads.
+See [upgrade requirements](docs/operations.md#upgrading-from-184-to-the-185-candidate)
+before deployment; private package manifests do not waive embedding compatibility.
+
 ### Added
 
 - `GET /v1/sessions/:sessionId/pages` lists a session's pages in creation
-  order with each page's live URL when cheaply available — the discovery path
+  order with each page's cached URL when available — the discovery path
   when a create-page response was lost, and the answer to which page ids are
   live in a session.
+  URL metadata is secret-redacted, may lag navigation, and is omitted when the
+  engine has no synchronous cache; listing never waits for browser URL I/O.
 
 ### Changed
 

@@ -7,8 +7,10 @@ Initial review: **changes required** despite green CI. A concurrent delivery
 merged that head at `9eeb624` before corrections were delivered. The focused
 `fix/snapshot-evidence-safety` follow-up is based on develop `b754262`, preserving
 the subsequent page-listing and idle-timeout changes. Its implementation has
-independent review approval and local regression evidence below; fresh PR and
-post-merge CI remain required. Keep [M1](release-milestones.md) gated on this fix.
+independent review approval and local regression evidence below. It merged in
+[PR 98](https://github.com/anvai-labs/agentbrowser/pull/98) at `0b65103`; all eight
+[post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/34160978203)
+passed. S1 is complete; [M1](release-milestones.md) still requires release acceptance.
 
 Locations below refer to the reviewed commit, not the changing shared checkout.
 
@@ -22,8 +24,9 @@ Locations below refer to the reviewed commit, not the changing shared checkout.
 
 Additional S1-R4 (medium): recovering every element timeout sequentially added
 approximately N times the configured wait. The shared snapshot budget and
-deterministic body/element budget-exhaustion controls close this gap locally;
-fresh CI remains pending with the other corrections.
+deterministic body/element budget-exhaustion controls close this gap. All four
+corrections completed review, PR CI and post-merge CI in PR 98. The table above
+records their pre-merge implementation status, superseded by this closure record.
 
 The main review extracted the exact `resolve()` method from the PR head and its
 parent with `git show`, stripped TypeScript in memory, and executed it against
@@ -41,9 +44,9 @@ tests; a broad exception handler is not such evidence.
 
 ## Delivery boundary
 
-Corrections are one follow-up PR, not mixed into release automation. An approved
-temporary worktree isolates this work from the other task's shared checkout;
-remove it after delivery. No existing work was overwritten or stashed. No
+Corrections shipped in one follow-up PR, not mixed into release automation. Its
+approved temporary worktree was removed after merge and green CI, reclaiming
+about 146 MB. No existing work was overwritten or stashed. No
 release, Homebrew change, managed-service restart or containment rollout is
 part of this unit.
 
@@ -69,4 +72,5 @@ part of this unit.
 - Independent code re-review approved the correction with no blocking findings.
   Workspace build passes. Local Obscura integration reported eight skips because
   its binary is unavailable in this worktree; this is not real-Obscura proof.
-  Full hooks and fresh CI are the remaining delivery gates.
+  Full pre-commit/pre-push hooks and all eight PR/post-merge CI checks subsequently
+  passed; the correction is delivered to develop, not yet a published release.

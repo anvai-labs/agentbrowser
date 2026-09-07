@@ -349,6 +349,13 @@ export interface EnginePage {
   getUrl?(): Promise<string>;
 
   /**
+   * Best-effort cached URL for page discovery. Synchronous: no browser I/O,
+   * operation queue, observation, or ref changes. May lag navigation; omit
+   * when unavailable or closed. Never use this cache for security decisions.
+   */
+  getCachedUrl?(): string | undefined;
+
+  /**
    * Navigate to URL
    */
   navigate(request: NavigationRequest): Promise<NavigationResult>;

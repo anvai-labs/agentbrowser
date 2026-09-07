@@ -115,7 +115,7 @@ jobs:
       - name: Compile the CLI binary
         run: node packages/cli/scripts/compile.mjs --target=${{ matrix.target }} --outfile=packages/cli/dist-bin/${{ matrix.cli_artifact }}
 
-      - name: CLI smoke (--help)
+      - name: CLI smoke (version + help)
         if: ${{ matrix.smoke }}
         run: node packages/cli/scripts/smoke.mjs packages/cli/dist-bin/${{ matrix.cli_artifact }}
 
@@ -126,6 +126,7 @@ jobs:
           if-no-files-found: error
 
   server-packages:
+    needs: tag-guard
     # TD-BROWSER-5 shipped only the MCP adapter; consumers still needed a repo
     # checkout for the service it drives. Each target is a self-contained
     # "fat tarball": the built API server plus its pruned production
@@ -229,7 +230,8 @@ jobs:
 
   npm-publish:
     name: npm (@anvailabs/agentbrowser-mcp)
-    needs: tag-guard
+    # Publication must not race ahead of failed executable or packaged-server smoke.
+    needs: [tag-guard, binaries, server-packages]
     runs-on: ubuntu-latest
     # OIDC Trusted Publishing (ADR-014): the npm binding pins (repository
     # anvai-labs/agentbrowser, workflow release.yml, environment npm) — no
@@ -360,11 +362,11 @@ jobs:
           | agentbrowser-mcp-windows-x64.exe | run natively on the build runner |
 
           The CLI (`agentbrowser-cli-<target>`) ships from this release too —
-          `--help` smoke-tested wherever the runner can execute it (same
+          `--version` and `--help` smoke-tested wherever the runner can execute it (same
           targets/omissions as the MCP binary).
 
           Each smoke ran `initialize` + `tools/list` against the compiled
-          artifact and required the full 9-tool catalog and a release version
+          artifact and required the full 11-tool catalog and the exact release version
           in `serverInfo`.
 
           ### Install

@@ -106,6 +106,13 @@ describe('AgentBrowser CLI', () => {
   });
 
   describe('session commands', () => {
+    it('documents the ten-minute default while preserving explicit idle overrides', async () => {
+      expect(await run('session', 'create', '--help')).toBe(0);
+      expect(out.join('\n')).toContain('600000 = 10 min');
+      expect(out.join('\n')).not.toContain('120000 = 2 min');
+      expect(deps.createClient).not.toHaveBeenCalled();
+    });
+
     it('should create a session', async () => {
       const code = await run('session', 'create', '--tenant', 'tenant_1');
 

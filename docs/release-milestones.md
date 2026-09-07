@@ -1,8 +1,8 @@
 # Release milestones and acceptance gates
 
-Status: release sequencing proposal, updated 2026-09-07. The owner selected
+Status: release acceptance in progress, updated 2026-09-07. The owner selected
 including snapshot resilience in the next release **after independent review
-and CI**. This record does not mark snapshot work complete or authorize a tag,
+and CI**. This record does not itself authorize a tag,
 publication, managed-service restart, or containment deployment.
 
 ## Baseline and release boundaries
@@ -17,8 +17,15 @@ passed. Those changes are not yet released. Snapshot resilience merged in
 [PR 95](https://github.com/anvai-labs/agentbrowser/pull/95) at `9eeb624`, followed
 by page listing (PR 97) and the idle-timeout change (PR 96), bringing develop to
 `b754262`. [Release review](snapshot-release-review.md) found snapshot validation
-and timeout/test gaps. A focused correction is implemented and independently
-approved; fresh follow-up PR/post-merge CI still gates its release acceptance.
+and timeout/test gaps. The independently reviewed correction merged in
+[PR 98](https://github.com/anvai-labs/agentbrowser/pull/98) at `0b65103`; all eight
+[post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/34160978203)
+passed. Version preparation subsequently merged in PR 100 at `ae5bcda`.
+Promotion [PR 99](https://github.com/anvai-labs/agentbrowser/pull/99) is held in
+draft until acceptance and upgrade documentation are complete. The owner retained
+1.8.5 after reviewing compatibility: this is an explicit versioning exception,
+not a universally drop-in or bug-fix-only SemVer patch. Custom-policy embedders
+must follow the [upgrade requirements](operations.md#upgrading-from-184-to-the-185-candidate).
 Review the additional integrated changes in the final release compatibility check.
 
 Ship a coherent, usable improvement, not an arbitrary number of PRs. Do not
@@ -26,7 +33,7 @@ hold verified local-mode fixes for the gateway/containment program.
 
 | Milestone | Cohesive scope | Promotion / release condition | Version guidance |
 | --- | --- | --- | --- |
-| M1: local reliability checkpoint | T2b0–T2b2, reviewed snapshot resilience, packaged/installed acceptance checks | Snapshot and smoke units independently reviewed and merged; exact candidate and post-merge CI green; release gates below satisfied | Tentatively `v1.8.5`, only after confirming supported public contracts remain compatible |
+| M1: local reliability checkpoint | T2b0–T2b2, reviewed snapshot resilience, packaged/installed acceptance checks | Snapshot and smoke units independently reviewed and merged; exact candidate and post-merge CI green; release gates below satisfied | Owner selected `v1.8.5` with explicit additive-API exception and custom-policy migration notice |
 | M2: gateway design checkpoint | T2c authentication, ownership, revocation, resource bounds and integration contract | Independently reviewed design with explicit failure/acceptance matrix | No release solely for a design document or unused internal primitive |
 | M3: usable opt-in gateway | Small end-to-end gateway capability with installation, lifecycle and cross-session tests | Supported consumer can install and exercise the capability; guarantees and limitations documented | Usually minor for a new public capability; otherwise wait for a usable slice |
 | M4: contained-browser checkpoint | Supported browser integration, gateway enforcement and OS-enforced gateway-only egress | T1–T4 acceptance passes, including worker/redirect/WS/WSS coverage and bypass controls; deployment approval obtained | Decide from actual public contract; never label an earlier milestone “contained” |
@@ -48,15 +55,46 @@ security scope; this document tracks release completion, not R4 closure.
 
 | Unit | Deliverable and acceptance | Dependency / current status |
 | --- | --- | --- |
-| S1: snapshot resilience | Finish the existing branch; failing-before/fixed-after regression with real Playwright for the claimed failure; verify stable refs, semantic-staleness safety, timeout versus unrelated-error handling and inherited Obscura behavior where affected; independent adversarial review, eight PR checks and post-merge CI | PR 95 merged; follow-up safety correction independently approved; fresh CI pending |
-| S2: release acceptance | Reusable version-aware smoke harness and release-workflow wiring; deterministic fixtures, bounded deadlines, unconditional cleanup and machine-readable evidence; independently reviewed | Proposed next implementation unit; candidate snapshot assertion depends on S1's accepted behavior |
-| S3: release preparation | Version synchronization, compatibility/release notes and operator documentation; exact candidate verification and develop-to-main promotion PR | After S1/S2 merge and post-merge CI; do not mix gateway implementation into this unit |
+| S1: snapshot resilience | Failing-before/fixed-after real Playwright regressions, stable-ref/semantic-staleness safety and bounded timeout recovery; independent adversarial review, eight PR checks and post-merge CI | Complete: PR 98, `0b65103`, all eight post-merge checks green (linked above); local Obscura limitation retained in review record |
+| S2a: executable acceptance | Shared exact-version CLI/MCP checks, supported protocol/catalog, bounded output/deadlines, validated shutdown, failure-path tests and publication dependency ordering | Implemented on `ci/release-executable-acceptance`; independent re-review approved after correcting reproduced false passes; PR/post-merge CI pending |
+| S2b: packaged workflow acceptance | Extracted-package real-browser/download/snapshot workflow, stock default-deny control, pre-tag candidate packaging CI, published/npm and installed profiles; explicit platform coverage | Pending; S2a handshake/help checks are not browser or installed-workflow proof. Both S2a and S2b are required before release |
+| S3: release preparation | Version synchronization, compatibility/migration notes and operator documentation; exact candidate verification and develop-to-main promotion PR | PR 100 prepared 1.8.5 early; owner retained this label with explicit compatibility exceptions. Upgrade notes and corrected CLI/MCP ten-minute help implemented; review/CI pending. PR 99 remains draft until acceptance completes |
 | S4: consumer delivery | Verify published artifacts/npm, update all twelve Homebrew artifact references together, run tap CI and controlled installed-version smoke | After successful release gates; separate tap PR, then final evidence and merged-branch cleanup |
 
 Prefer one worktree sequentially; do not create another delivery stack. The
-snapshot correction uses one approved temporary worktree because another task
-is actively editing the main checkout. Remove that worktree after delivery.
+merged snapshot worktree was removed, reclaiming about 146 MB. A concurrently
+created release-preparation worktree is now owned by this release effort;
+remove it after confirming its merged content and clean state.
 Record review/CI URLs against each row as evidence becomes available.
+
+## Adversarial release review ledger
+
+Independent review covers the executable harness separately from the integrated
+release contracts. Fixes require regression evidence and re-review; green CI
+does not waive a confirmed finding. No row below closes the S2b gate.
+
+| ID | Finding / severity | Fix and acceptance | Status |
+| --- | --- | --- | --- |
+| RA1 | MCP smoke can pass with trailing malformed output or unsuccessful exit / high | Close stdin, drain output, validate zero exit and complete frames before success; malformed-tail, exit-7 and stalled-shutdown controls | Fixed; independent S2a re-review approved; CI pending |
+| RA2 | MCP smoke accepts an incompatible protocol string / medium | Require negotiated `2024-11-05`; incompatible-version control | Fixed; independent S2a re-review approved; CI pending |
+| RA3 | npm can publish before binary/server acceptance / high | Gate npm on tag guard and both build/acceptance matrices; server also depends on tag guard; workflow dependency regression | Fixed; independent S2a re-review approved; CI pending |
+| RA4 | CLI/MCP still advertise a two-minute idle default / medium | Correct both descriptions to ten minutes without adding a client-side override; failing-before/passing-after surface tests | Fixed; final review/CI pending |
+| RA5 | Custom-policy migration and additive-version exception not visible to operators / high | Owner retained 1.8.5; link explicit upgrade requirements from changelog, preserve all custom rules in immutable snapshots and close/recreate after policy changes | Documented; final review pending; no universal compatibility claim |
+| RA6 | Page listing returns registered secrets in live URLs / high | Redact returned views; synthetic registered-secret service/REST regression | Fixed; nine focused API regressions pass; independent re-review/CI pending |
+| RA7 | Optional URL acquisition can block page-ID discovery indefinitely / medium | Optional synchronous cached-URL capability, no backend I/O; verify hanging async getter is never called and unavailable URL is omitted | Fixed; API regressions and one real-Chromium cache/ref test pass; independent re-review/CI pending |
+| RA8 | Malformed custom cached-URL values can violate the response schema / low | Omit non-string metadata; null and promise-valued adapter controls | Fixed; both controls failed before normalization and pass afterward; independent re-review/CI pending |
+
+Final correction review: **approved, no remaining blocking findings in RA1–RA8**.
+The status cells above preserve the implementation checkpoints; this re-review
+supersedes their pending-review labels, but not CI gates. Independent checks:
+16 executable/version tests, 36 CLI tests, 43 MCP tests, nine page-listing API
+regressions, one real-Chromium cache/ref regression and 163 documentation links.
+Native Bun CLI/MCP 1.8.5 version/protocol smokes also pass. Obscura cache
+inheritance was inspected in source, not runtime-tested locally. Full hooks and
+fresh PR/post-merge CI are required before merging this correction unit.
+
+Page listing still scans the service's global page map;
+a session index remains lower-priority debt, not a claim of indexed lookup.
 
 ## What the smoke unit must prove
 
@@ -65,7 +103,7 @@ Existing checks are useful but cover different layers:
 | Existing evidence | Missing release acceptance |
 | --- | --- |
 | `release:artifacts` checks built workspace versions using FakeEngine | Exact downloaded/installed server, CLI and MCP versions agree with an explicitly supplied expected release version |
-| Compiled MCP initialize/catalog smoke; CLI help smoke | Installed MCP tool call and CLI command reach the real installed API/browser, not just boot successfully |
+| Version-aware compiled MCP initialize/catalog/shutdown and CLI version/help smoke (S2a) | Installed MCP tool call and CLI command reach the real installed API/browser, not just boot successfully |
 | Extracted server tarball navigates to example.com and observes its title | Snapshot, safe action, valid nonempty screenshot/PDF artifacts where supported, download behavior and session cleanup |
 | Native Bun HTTP/HTTPS transport controls | Packaged production Node server exercises T2b behavior; Bun remains additional runtime evidence |
 | Tap CI audits, freshly installs and runs formula help tests on Linux | Controlled prior-version upgrade and real installed workflow, with platform/runtime coverage stated explicitly |
@@ -96,9 +134,10 @@ Expose candidate packaging and the same acceptance harness in PR CI or an
 untagged candidate invocation. Wiring only the current tag-triggered release
 workflow cannot establish the required pre-tag acceptance evidence.
 
-Workflow alignment belongs with S2: make server packaging depend on tag guard,
-and gate npm publication behind candidate artifact acceptance. Today npm can
-publish before binary/server smoke finishes. Cross-registry publication cannot
+S2a makes server packaging depend on tag guard and gates npm publication behind
+the existing binary/server acceptance jobs. The previous workflow allowed npm
+to publish before those jobs finished; S2b still must deepen their acceptance
+and add pre-tag execution. Cross-registry publication cannot
 be atomic; record partial publication and recover deliberately. Investigate
 Linux ARM binary runtime coverage (currently skipped despite an ARM server job)
 and distinguish Darwin x64 tarball smoke on ARM Node from actual x64 runtime

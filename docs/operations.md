@@ -42,6 +42,39 @@ and generated stamps together. `pnpm release:check` is read-only; after building
 CI rejects drift and release tags must equal `v<product-version>`. Matching package
 versions identify one shipped product; they do not claim every package changed.
 
+### Upgrading from 1.8.4 to the 1.8.5 candidate
+
+The owner retained the 1.8.5 release label after compatibility review. This is
+an explicit versioning exception, not a claim of a bug-fix-only SemVer patch:
+page listing adds a public REST endpoint, and custom-policy embeddings have a
+migration requirement. The packages' private npm status does not establish that
+exported embedding interfaces are unsupported. No unchanged-behavior guarantee
+is made for those integrations.
+
+- Existing REST/CLI/MCP request shapes remain supported; page listing is additive.
+- The built-in idle default changes from two to ten minutes, retaining idle
+  browser resources longer. Set `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS=120000` or
+  per-session `idleTimeoutMs: 120000` to retain the previous idle window. Explicit
+  overrides still win; session TTL is a separate limit.
+- Snapshot recovery requires fresh semantic evidence before acting.
+  On `STALE_TARGET`, obtain a new observation and reconsider the action. Do not
+  blindly retry a mutation after a timeout: failure does not prove no side effect.
+- Embedders injecting custom `NetworkPolicy` subclasses or overridden methods
+  must implement `snapshot()` with immutable rules preserving **all** custom
+  checks before creating download-enabled sessions. Otherwise creation fails
+  with `ENGINE_UNSUPPORTED`. Do not bypass this refusal by copying only base
+  configuration or returning a mutable policy. Built-in policies need no custom
+  implementation; sessions without downloads retain injected-policy behavior.
+- Download-enabled sessions capture policy before engine creation. Later base
+  `updateConfig()` calls affect new sessions, not existing captured generations;
+  close/recreate those sessions to apply updated rules, including deny changes.
+
+See the [production integration contract](connection-authority-design.md#t2b2-production-integration-boundary)
+for policy snapshot and cancellation semantics. Validate custom integrations
+before upgrading. The [release tracker](release-milestones.md) distinguishes
+candidate integration checks from published and installed acceptance; version
+preparation alone is not release completion.
+
 ### Homebrew (macOS / Linux)
 
 ```bash
@@ -49,13 +82,15 @@ brew install anvai-labs/tap/agentbrowser
 brew services start anvai-labs/tap/agentbrowser   # the service, on 127.0.0.1:3000
 ```
 
-One install ships both halves:
+One install ships all three surfaces:
 
 - the **browser service** (`agentbrowser-server`) — REST + WebSocket on
   port 3000; first start bootstraps Chromium into
   `$(brew --prefix)/var/agentbrowser/browsers`;
 - the **MCP server binary** (`agentbrowser-mcp`) — a standalone stdio
-  binary that proxies to the service; no Node runtime needed.
+  binary that proxies to the service; no Node runtime needed;
+- the **CLI binary** (`agentbrowser`) — scriptable commands that also connect
+  to the service; no Node runtime needed for the compiled client.
 
 ### Release assets
 
@@ -213,10 +248,11 @@ including per-engine egress guarantees, is in the
 ## Operating through the CLI
 
 The `agentbrowser` CLI (`packages/cli`) is a thin, scriptable surface over
-the SDK — useful for smoke checks and ad-hoc automation. It currently
-ships from a source checkout only (`pnpm --filter @agentbrowser/cli build`,
-then `node packages/cli/dist/bin.js`); it is not yet in the Homebrew
-formula or the release tarballs:
+the SDK — useful for smoke checks and ad-hoc automation. It ships as a compiled
+binary in GitHub Releases and with `brew install anvai-labs/tap/agentbrowser`.
+Source-checkout use remains available: `pnpm --filter @agentbrowser/cli build`,
+then `node packages/cli/dist/bin.js`. The CLI connects to a separately running
+API service:
 
 ```bash
 export AGENTBROWSER_BASE_URL=http://localhost:3000
@@ -234,6 +270,27 @@ agentbrowser session close <sessionId>
 `--json` emits raw API payloads for scripting; `--no-headless` opens a
 headed session for interactive logins (export the cookies afterward and
 seed future headless sessions with them — [TD-BROWSER-6](td/TD-BROWSER-6-headed-sessions-and-credential-handoff.md)).
+
+### Executable release checks
+
+From a source checkout, test downloaded or installed executables against an
+explicit expected release version, independently of the checkout's version:
+
+```bash
+node packages/cli/scripts/smoke.mjs --expected-version 1.8.4 /absolute/path/to/agentbrowser
+node packages/mcp-server/scripts/smoke.mjs --expected-version 1.8.4 /absolute/path/to/agentbrowser-mcp
+```
+
+Omit `--expected-version` only for builds matching the checkout. A Node entry
+point is also supported: pass the absolute Node executable followed by the
+entry-point path. Success emits JSON evidence; failures exit nonzero.
+Each child has a 20-second deadline and a combined 1 MiB stdout/stderr limit;
+failure cleanup escalates from termination to forced termination with bounded
+waits. CLI checks exact version and help. MCP checks the negotiated protocol,
+exact version, all eleven tools, valid output and clean shutdown, clearing the
+runtime version override to prevent false version evidence. These checks do
+not launch a browser or certify API connectivity, downloads, containment or a
+Homebrew upgrade. Those are separate [release acceptance gates](release-milestones.md).
 
 ## Deployment notes
 

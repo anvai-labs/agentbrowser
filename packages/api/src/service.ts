@@ -117,6 +117,7 @@ export interface ServicePageView {
   pageId: string;
   sessionId: string;
   status: string;
+  /** Optional best-effort cached URL; may lag navigation and is not security evidence. */
   url?: string;
   title?: string;
 }
@@ -1245,24 +1246,31 @@ export class AgentBrowserService {
    * Pages of a session in creation order. Pages exist only once created
    * through the create-page endpoint; this listing is the discovery path
    * when that response was lost and the answer to "which page ids are
-   * live here". `url` rides on the engine's optional live getUrl and is
-   * omitted for pages (or engines) that cannot provide it cheaply.
+   * live here". `url` uses only the engine's optional synchronous cache;
+   * discovery never queues browser I/O or waits for a live URL lookup.
    */
   async listPages(sessionId: string): Promise<ServicePageView[]> {
     this.requireSession(sessionId);
-    return Promise.all(
-      [...this.pages.entries()]
-        .filter(([, page]) => page.sessionId === sessionId)
-        .map(async ([pageId, page]): Promise<ServicePageView> => {
-          let url: string | undefined;
-          try {
-            url = (await page.enginePage.getUrl?.()) ?? undefined;
-          } catch {
-            // Listing must not fail because one page's live URL is unavailable.
-          }
-          return { pageId, sessionId, status: 'active', ...(url !== undefined ? { url } : {}) };
+    const result: ServicePageView[] = [];
+    for (const [pageId, page] of this.pages) {
+      if (page.sessionId !== sessionId) continue;
+      let url: string | undefined;
+      try {
+        const cached = page.enginePage.getCachedUrl?.();
+        url = typeof cached === 'string' ? cached : undefined;
+      } catch {
+        // Optional metadata must not prevent discovery of a live page ID.
+      }
+      result.push(
+        this.secretManager.redact({
+          pageId,
+          sessionId,
+          status: 'active',
+          ...(url !== undefined ? { url } : {}),
         })
-    );
+      );
+    }
+    return result;
   }
 
   async closePage(sessionId: string, pageId: string): Promise<void> {
