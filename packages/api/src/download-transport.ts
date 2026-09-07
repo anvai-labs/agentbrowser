@@ -55,6 +55,21 @@ export async function downloadWithPolicy(
         : await (options.resolve ?? ((name) => lookup(name, { all: true })))(hostname);
       if (!addresses.length)
         throw new EngineError('POLICY_DENIED', 'Download hostname did not resolve');
+      // Validate the entire answer set before selection, even for a custom
+      // policy without an address hook. Mapped IPv4 remains family 6 on the wire.
+      for (const entry of addresses) {
+        if (
+          !entry ||
+          typeof entry.address !== 'string' ||
+          entry.address.includes('%') ||
+          (entry.family !== 4 && entry.family !== 6) ||
+          isIP(entry.address) !== entry.family
+        ) {
+          throw new EngineError('POLICY_DENIED', 'Invalid resolved download address', false, {
+            rule: 'resolvedAddressInvalid',
+          });
+        }
+      }
       await options.policy.checkResolvedAddresses?.(addresses.map((entry) => entry.address));
       controller.signal.throwIfAborted();
       const pinned = addresses[0];
