@@ -91,7 +91,7 @@ config file.
 | `AGENTBROWSER_ARTIFACT_KEY` | service | Bearer key guarding artifact download URLs, when set. |
 | `AGENTBROWSER_DEFAULT_TTL_MS` | service | Operator-level default session TTL (ms); per-session `ttlMs` still wins. Unset/garbage → the 15-min default. |
 | `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS` | service | Operator-level default idle timeout (ms); per-session `idleTimeoutMs` still wins. Unset/garbage → the 10-min default. Useful for deployments that are mostly headed human-in-the-loop flows. |
-| `AGENTBROWSER_SNAPSHOT_TIMEOUT_MS` | service (Playwright engine) | Per-element aria-snapshot timeout in ms (default 1000). Pages whose elements never stabilize — a perpetually animating header, a hydration loop — cannot produce these snapshots at any timeout; the engine then binds those elements by DOM identity alone instead of failing the whole observation. Raise it only if 1s visibly truncates change detection on slow-but-stable pages. |
+| `AGENTBROWSER_SNAPSHOT_TIMEOUT_MS` | service (Playwright engine) | Shared snapshot-wait budget per observation and timeout per action-time semantic check, in integer ms (1–30000; default 1000). Invalid environment values use the default; invalid explicit engine options throw. Timed-out element captures use a successful whole-document accessibility snapshot as fallback evidence, which must still match before acting. Unrelated document changes can therefore stale a fallback ref; observe again. Missing semantic evidence refuses actions, and non-timeout errors propagate. This bounds snapshot waiting, not all observation DOM work. |
 
 Port and bind address default to `3000` on `0.0.0.0`
 (`ServerOptions`); when exposing the service beyond localhost, set

@@ -40,6 +40,13 @@ import {
   type Page,
   chromium,
 } from 'playwright';
+import {
+  SnapshotBudget,
+  type SnapshotEvidence,
+  sameSnapshotEvidence,
+  snapshotDigest,
+  snapshotTimeout,
+} from './snapshot-evidence.js';
 
 // Re-export engine types
 export * from '@agentbrowser/engine';
@@ -54,10 +61,9 @@ interface StoredElement {
   enabled: boolean;
 }
 
-interface NodeBinding {
+interface NodeBinding extends SnapshotEvidence {
   handle: ElementHandle;
   locator: Locator;
-  snapshot: string;
 }
 
 /** Strip surrounding quotes and unescape from an aria snapshot value. */
@@ -145,26 +151,14 @@ export interface PlaywrightEngineOptions {
    */
   chromeBinaryPath?: string;
   /**
-   * Timeout in ms for the per-element aria snapshots that observe() takes to
-   * detect semantic change and act() takes to detect staleness (default
-   * 1000, overridable via AGENTBROWSER_SNAPSHOT_TIMEOUT_MS). A page whose
-   * elements never stabilize — a perpetually animating shared header, a
-   * hydration loop — cannot produce these snapshots at any timeout;
-   * observe() therefore degrades to identity-only binding for such elements
-   * instead of failing the whole page.
+   * Shared snapshot-wait budget per observation and timeout per action-time
+   * semantic check (1..30000 ms, default 1000; environment fallback via
+   * AGENTBROWSER_SNAPSHOT_TIMEOUT_MS). Timed-out element captures use successful
+   * whole-document evidence, never DOM identity alone. Other observation work
+   * is not covered by this budget.
    */
   snapshotTimeoutMs?: number;
 }
-
-/** Positive-int env fallback; the fallback itself when unset or garbage. */
-const envPositiveInt = (name: string, fallback: number): number => {
-  const raw = process.env[name];
-  if (raw === undefined || raw.trim() === '') {
-    return fallback;
-  }
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-};
 
 export class PlaywrightChromiumEngine implements BrowserEngine {
   private _name = 'playwright-chromium';
@@ -188,8 +182,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       options.chromeBinaryPath ??
       process.env.AGENTBROWSER_CHROME_PATH ??
       '/opt/google/chrome/chrome';
-    this.snapshotTimeoutMs =
-      options.snapshotTimeoutMs ?? envPositiveInt('AGENTBROWSER_SNAPSHOT_TIMEOUT_MS', 1000);
+    this.snapshotTimeoutMs = snapshotTimeout(options.snapshotTimeoutMs);
   }
 
   get name(): string {
@@ -997,17 +990,19 @@ class PlaywrightPage implements EnginePage {
 
   async observe(request: ObservationRequest): Promise<RawPageState> {
     const mode = request.mode || 'interactive';
+    const snapshotBudget = new SnapshotBudget(this.engine.snapshotTimeoutMs);
+    let documentSnapshot: string | undefined;
 
     // Get accessibility tree if requested
     let elements: StoredElement[] = [];
 
     if (mode === 'interactive' || mode === 'accessibility' || mode === 'content') {
-      try {
-        // Playwright's accessibility surface is the aria snapshot (YAML).
-        const yaml = await this.page.locator('body').ariaSnapshot();
+      // Only timeouts can recover. Transport/context errors are not evidence.
+      const yaml = await snapshotBudget.capture(this.page.locator('body'));
+      documentSnapshot = snapshotDigest(yaml);
+      if (yaml !== undefined) {
         elements = this.parseAriaSnapshot(yaml, this.revision);
-      } catch {
-        // Fallback if the aria snapshot is not available
+      } else {
         elements = await this.getContentElements();
       }
     }
@@ -1034,14 +1029,15 @@ class PlaywrightPage implements EnginePage {
         if (await locator.count()) {
           const handle = await locator.elementHandle();
           if (handle) {
-            // '' marks an element whose snapshot never stabilized (perpetual
-            // CSS animation, hydration loop): the element stays bound and
-            // clickable, but semantic change detection for it degrades to
-            // DOM-identity comparison. One unstable element must not fail
-            // the whole observation.
-            const snapshot = await locator
-              .ariaSnapshot({ timeout: this.engine.snapshotTimeoutMs })
-              .catch(() => '');
+            // Register the handle before more I/O so a capture failure releases it.
+            const binding: NodeBinding = {
+              handle,
+              locator,
+              snapshot: undefined,
+              documentSnapshot,
+            };
+            this.bindings.set(ref, binding);
+            binding.snapshot = snapshotDigest(await snapshotBudget.capture(locator));
             const prior = previous.get(ref);
             if (
               previous.size > 0 &&
@@ -1049,10 +1045,9 @@ class PlaywrightPage implements EnginePage {
                 !(await handle
                   .evaluate((node, old) => node.isSameNode(old), prior.handle)
                   .catch(() => false)) ||
-                (snapshot !== '' && prior.snapshot !== '' && prior.snapshot !== snapshot))
+                !sameSnapshotEvidence(prior, binding))
             )
               changed = true;
-            this.bindings.set(ref, { handle, locator, snapshot });
             element.visible = await handle.isVisible();
             element.enabled = await handle.isEnabled();
           }
@@ -1065,6 +1060,10 @@ class PlaywrightPage implements EnginePage {
           enabled: element.enabled,
         });
       }
+    } catch (error) {
+      // Never expose a partly rebuilt set of refs after capture/context failure.
+      this.bumpRevision();
+      throw error;
     } finally {
       for (const { handle } of previous.values()) void handle.dispose().catch(() => {});
     }
@@ -1229,22 +1228,34 @@ class PlaywrightPage implements EnginePage {
       } finally {
         await current?.dispose();
       }
-      // Semantic staleness is a refinement on top of DOM identity. When the
-      // element had no stable snapshot at observe() time ('' sentinel) or the
-      // fresh snapshot itself cannot stabilize, identity is the only check
-      // available — the same page that made observe degrade makes the fresh
-      // snapshot fail here too, and that must not read as staleness.
-      let semanticallyChanged = false;
-      if (binding.snapshot !== '') {
-        semanticallyChanged =
-          (await binding.locator
-            .ariaSnapshot({ timeout: this.engine.snapshotTimeoutMs })
-            .catch(() => binding.snapshot)) !== binding.snapshot;
-      }
-      if (!matchesOriginal || semanticallyChanged) {
+      if (!matchesOriginal) {
         throw new EngineError(
           'STALE_TARGET',
           'Observed target identity or semantic state changed; observe again.'
+        );
+      }
+      const expectedSnapshot = binding.snapshot ?? binding.documentSnapshot;
+      if (expectedSnapshot === undefined) {
+        throw new EngineError(
+          'STALE_TARGET',
+          'Semantic evidence is unavailable; observe again.',
+          true
+        );
+      }
+      // Evidence provenance is fixed at observation. A failed fresh element check
+      // cannot switch to document evidence or substitute the old value.
+      const semanticLocator =
+        binding.snapshot !== undefined ? binding.locator : this.page.locator('body');
+      const liveSnapshot = snapshotDigest(
+        await semanticLocator.ariaSnapshot({
+          timeout: this.engine.snapshotTimeoutMs,
+        })
+      );
+      if (liveSnapshot !== expectedSnapshot) {
+        throw new EngineError(
+          'STALE_TARGET',
+          'Observed semantic state changed; observe again.',
+          true
         );
       }
     }
