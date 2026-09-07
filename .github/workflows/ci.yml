@@ -72,6 +72,9 @@ jobs:
       - name: Check release version consistency
         run: pnpm release:check && pnpm test:release
 
+      - name: Test executable acceptance failures and cleanup
+        run: node --test scripts/release-smoke.test.mjs
+
       # Offline evidence validation only; does not certify browser containment.
       - name: Check worker feasibility evidence verifier
         run: pnpm test:probes

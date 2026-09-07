@@ -932,6 +932,10 @@ class PlaywrightPage implements EnginePage {
     return this.page.url();
   }
 
+  getCachedUrl(): string | undefined {
+    return this.page.isClosed() ? undefined : this.page.url();
+  }
+
   async navigate(request: NavigationRequest): Promise<NavigationResult> {
     try {
       return await this.performNavigation(request);

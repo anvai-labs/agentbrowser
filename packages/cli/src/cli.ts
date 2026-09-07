@@ -171,7 +171,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .option('--ttl <ms>', 'session TTL in milliseconds')
         .option(
           '--idle-timeout <ms>',
-          'idle timeout in ms (server default 120000 = 2 min — raise this for headed human-in-the-loop logins; server caps at 3600000)'
+          'idle timeout in ms (server default 600000 = 10 min — raise this for headed human-in-the-loop logins; server caps at 3600000)'
         )
         .option('--locale <tag>', 'locale, e.g. en-US')
         .option('--timezone-id <tz>', 'IANA timezone, e.g. America/New_York')

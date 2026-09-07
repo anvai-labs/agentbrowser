@@ -588,7 +588,9 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           description:
             'Creation order. Pages exist once created through the create-page endpoint; ' +
             'this is the discovery path when that response was lost and the answer to ' +
-            '"which page ids are live here".',
+            '"which page ids are live here". Optional URL metadata is secret-redacted ' +
+            'and comes only from a synchronous engine cache: it may lag navigation ' +
+            'and is omitted when unavailable. Listing never waits for browser URL I/O.',
           tags: ['pages'],
           parameters: [sessionIdParam],
           responses: {

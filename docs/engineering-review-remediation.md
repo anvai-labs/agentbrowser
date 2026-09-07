@@ -41,7 +41,11 @@ eight PR checks and all eight [post-merge CI checks](https://github.com/anvai-la
 green. T2b1 merged in [PR 93](https://github.com/anvai-labs/agentbrowser/pull/93)
 at `8361f38`, with all eight PR and all eight
 [post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/34112948325)
-green. T2b2 is the current runtime delivery unit. A new T1 mechanism,
+green. T2b2 merged in [PR 94](https://github.com/anvai-labs/agentbrowser/pull/94)
+at `e38189c`, with all eight PR and
+[post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/34143841691)
+green. Release acceptance is tracked in [release milestones](release-milestones.md).
+A new T1 mechanism,
 private patch or fork still requires a separate decision.
 
 | Unit | Scope | Acceptance / stop condition | Status |
@@ -54,7 +58,7 @@ private patch or fork still requires a separate decision.
 | T2a | Connection-authority design and test contract | Ground extraction in the direct-download caller; define DNS/peer/TLS ownership, revocation, admission and failure tests | [Design independently reviewed](connection-authority-design.md) and merged in PR 91. Source review reproduced R14; no T1/R4 closure |
 | T2b0 | Canonical IP policy and resolver-record validation (R14) | Equivalent addresses obey configured rules; malformed or denied answer sets cause zero TCP accepts/HTTP requests; permitted local controls succeed | Merged in PR 92, unreleased; independent approval and all eight PR/post-merge checks green |
 | T2b1 | Private connection authority | Admission, revocation, DNS/peer identity and real HTTP/TLS acceptance contract | Merged in PR 93 with independent approvals, 55 deterministic/nine real-I/O cases, all eight PR and post-merge checks green; unreleased |
-| T2b2 | Direct-download and session integration | Use the primitive per session generation and one runtime budget; retain transfer/redirect/TLS semantics and owner-aware terminal diagnostics | In progress on one branch from merged T2b1; independent review and PR/post-merge CI required |
+| T2b2 | Direct-download and session integration | Use the primitive per session generation and one runtime budget; retain transfer/redirect/TLS semantics and owner-aware terminal diagnostics | Merged in PR 94 with independent approvals and all eight PR/post-merge checks green; unreleased |
 
 T2b2 cohesive implementation checklist (one PR, no release or gateway changes):
 
@@ -63,7 +67,7 @@ T2b2 cohesive implementation checklist (one PR, no release or gateway changes):
 | Lifecycle | Coordinator-owned cancellation at close/expiry/termination, before engine teardown; service generation cleanup | Implemented and independently approved; lifecycle and late-artifact regressions pass |
 | Transport | Verified socket handoff, logical TLS identity, per-hop authorization, one total deadline and bounded late callbacks | Implemented and independently approved; 46 focused download tests and four native Bun acceptance controls pass |
 | Diagnostics | One redacted terminal outcome with generation/connection identity; no raw transport errors | Implemented with separate cleanup diagnostics; privacy/outcome regressions pass |
-| Acceptance | Production HTTP/TLS and session regressions, independent adversarial review, eight PR and post-merge checks | Pending |
+| Acceptance | Production HTTP/TLS and session regressions, independent adversarial review, eight PR and post-merge checks | Complete in PR 94; packaged/installed acceptance remains a separate release gate |
 
 T2b2 review evidence: the initial coordinator cancellation cases failed before
 implementation. Independent transport review reproduced encoded-size overflow
@@ -71,8 +75,8 @@ waiting behind a stalled body-policy callback. The durable regression failed
 before the fix; overflow now aborts all I/O promptly while callback admission
 remains reserved until actual completion. Both reviewers approved the correction.
 Native Bun HTTP/HTTPS positive/cancellation checks now run in the existing Bun
-CI job. Full PR and post-merge CI remain delivery gates, not inferred from these
-local controls. See the [integration boundary](connection-authority-design.md#t2b2-production-integration-boundary)
+CI job. Full PR and post-merge CI subsequently passed (linked above); packaged
+and installed acceptance remain separate. See the [integration boundary](connection-authority-design.md#t2b2-production-integration-boundary)
 for policy snapshot compatibility and expiry/containment limitations.
 
 T1a is a bounded probe/evidence PR, not a production adapter change. Keep
