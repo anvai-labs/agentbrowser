@@ -216,6 +216,33 @@ describe('AgentBrowser REST API', () => {
       expect(data.sessionId).toBe(sessionId);
     });
 
+    it('should list pages in creation order', async () => {
+      const first = await (
+        await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages`, { method: 'POST' })
+      ).json();
+      const second = await (
+        await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages`, { method: 'POST' })
+      ).json();
+
+      const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages`);
+
+      expect(response.status).toBe(200);
+
+      const data = await response.json();
+      expect(data.pages.map((page: { pageId: string }) => page.pageId)).toEqual([
+        first.pageId,
+        second.pageId,
+      ]);
+      for (const page of data.pages) {
+        expect(page).toMatchObject({ sessionId, status: 'active' });
+      }
+    });
+
+    it('should reject listing pages of an unknown session', async () => {
+      const response = await fetch(`${baseUrl}/v1/sessions/no-such-session/pages`);
+      expect(response.status).toBe(404);
+    });
+
     it('should close a page', async () => {
       // First create a page
       const createResponse = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages`, {
