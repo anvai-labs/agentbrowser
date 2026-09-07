@@ -686,6 +686,17 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       );
 
       // Page management endpoints
+      v1.get(
+        '/sessions/:sessionId/pages',
+        route(async (request, reply) => {
+          const { sessionId } = params(request, 'sessionId');
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+            return reply;
+          }
+          return reply.send({ pages: await service.listPages(sessionId) });
+        })
+      );
+
       v1.post(
         '/sessions/:sessionId/pages',
         route(async (request, reply) => {

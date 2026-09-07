@@ -582,6 +582,28 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
       },
 
       '/v1/sessions/{sessionId}/pages': {
+        get: {
+          operationId: 'listPages',
+          summary: 'List the pages of a session',
+          description:
+            'Creation order. Pages exist once created through the create-page endpoint; ' +
+            'this is the discovery path when that response was lost and the answer to ' +
+            '"which page ids are live here".',
+          tags: ['pages'],
+          parameters: [sessionIdParam],
+          responses: {
+            '200': {
+              description: 'The current pages.',
+              content: json({
+                type: 'object',
+                required: ['pages'],
+                properties: { pages: { type: 'array', items: ref('PageSummary') } },
+              }),
+            },
+            '404': NOT_FOUND,
+            '500': INTERNAL,
+          },
+        },
         post: {
           operationId: 'createPage',
           summary: 'Create a page in a session',
