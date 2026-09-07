@@ -5,9 +5,24 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
-## [Unreleased]
+## [1.8.5] — 2026-09-07
+
+Observation resilience for pages whose elements never stabilize, page
+discovery, a longer default idle window, and validated semantic evidence
+behind the recovered bindings (PRs 91–98).
 
 ### Added
+
+- `GET /v1/sessions/:sessionId/pages` lists a session's pages in creation
+  order with each page's live URL when cheaply available — the discovery path
+  when a create-page response was lost, and the answer to which page ids are
+  live in a session.
+
+### Changed
+
+- The default session idle timeout is now 10 minutes (previously 2). The
+  default remains operator-tunable via `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS`
+  and per-session `idleTimeoutMs` still wins.
 
 - Private, bounded TCP connection-authority primitive with revocation, retained
   in-flight admission and connected-peer verification, backed by deterministic
@@ -17,6 +32,19 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   browser-containment guarantee or public route is exposed.
 
 ### Fixed
+
+- Pages whose elements never stabilize — a perpetually animating shared
+  header, a hydration loop — no longer fail the whole observation. Per-element
+  aria snapshots that cannot stabilize degrade instead of erroring, and the
+  recovered bindings act only on validated semantic evidence: evidence is
+  fixed-size and provenance-locked at observation, timed-out element captures
+  fall back to whole-document evidence that must still match at action time,
+  and actions without available semantic evidence refuse with a retryable
+  `STALE_TARGET` instead of proceeding on DOM identity alone. One monotonic
+  budget bounds snapshot waiting across the document and all elements, and
+  `AGENTBROWSER_SNAPSHOT_TIMEOUT_MS` (or the `snapshotTimeoutMs` engine
+  option) accepts integer values 1–30000 ms; invalid environment values fall
+  back to the default while invalid explicit options throw.
 
 - Cancel direct downloads on session termination and prevent late artifact
   publication. Preserve one overall deadline across redirect/body policy work,
