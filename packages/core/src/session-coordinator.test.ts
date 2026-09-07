@@ -247,6 +247,16 @@ describe('SessionCoordinator', () => {
       expect(response.idleTimeoutMs).toBe(120000);
     });
 
+    it('defaults the idle timeout to 10 minutes without configuration', async () => {
+      const unconfigured = new SessionCoordinator({ maxSessions: 1 });
+      try {
+        const response = await unconfigured.create({ engine: 'mock-engine' }, mockEngine);
+        expect(response.idleTimeoutMs).toBe(600000);
+      } finally {
+        await unconfigured.shutdown();
+      }
+    });
+
     it('should enforce max session limit', async () => {
       const coordinator = new SessionCoordinator({ maxSessions: 2 });
       const request: SessionRequest = { engine: 'mock-engine' };

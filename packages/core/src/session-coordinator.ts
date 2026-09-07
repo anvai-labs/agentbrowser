@@ -74,7 +74,7 @@ export class SessionCoordinator {
     this.config = {
       maxSessions: config.maxSessions ?? 1000,
       defaultTtlMs: config.defaultTtlMs ?? 900000, // 15 minutes
-      defaultIdleTimeoutMs: config.defaultIdleTimeoutMs ?? 120000, // 2 minutes
+      defaultIdleTimeoutMs: config.defaultIdleTimeoutMs ?? 600000, // 10 minutes
       cleanupCheckIntervalMs: config.cleanupCheckIntervalMs ?? 30000, // 30 seconds
     };
     this.logger = config.logger;

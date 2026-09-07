@@ -193,7 +193,7 @@ export interface ServiceDependencies {
    * Operator-level session defaults (env-plumbed via bin.ts). A request
    * still overrides either per session; these just move the baseline for
    * deployments whose workloads systematically need longer (e.g. headed
-   * human-in-the-loop flows vs the 2-min default idle).
+   * human-in-the-loop flows vs the 10-min default idle).
    */
   defaultTtlMs?: number;
   defaultIdleTimeoutMs?: number;
