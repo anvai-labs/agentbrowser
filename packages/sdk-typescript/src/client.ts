@@ -65,6 +65,8 @@ export interface ObservationRequest {
   sinceRevision?: number;
   /** Resume a truncated observation from the cursor's nextOrdinal. */
   continueFrom?: number;
+  /** Optional enrichments, e.g. ["overlays"]. */
+  include?: string[];
 }
 
 export interface ObservationResponse {
@@ -82,9 +84,20 @@ export interface ObservationResponse {
     visible: boolean;
     enabled: boolean;
     value?: string;
+    /** Link destination, present on role:"link" elements. */
+    href?: string;
+    /** True when the captured href exceeded the 2048-char capture limit. */
+    hrefTruncated?: boolean;
   }>;
   truncated: boolean;
   untrustedContent: boolean;
+  /** Present only when requested via include:["overlays"]. */
+  overlays?: Array<{
+    tag: string;
+    role?: string;
+    name?: string;
+    covers: number;
+  }>;
   /** Present only when the observation is truncated. */
   continuation?: { nextOrdinal: number; remaining: number };
 }

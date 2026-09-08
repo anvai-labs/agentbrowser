@@ -339,6 +339,18 @@ describe('AgentBrowser MCP server', () => {
       expect(observation.untrustedContent).toBe(true);
     });
 
+    it('should forward the include enrichments to observe', async () => {
+      await call('8', 'browser_observe', {
+        sessionId: 'ses_1',
+        pageId: 'pg_1',
+        include: ['overlays'],
+      });
+
+      expect(sessions.observe).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        include: ['overlays'],
+      });
+    });
+
     it('should act through a ref', async () => {
       const response = JSON.parse(
         await call('9', 'browser_act', {

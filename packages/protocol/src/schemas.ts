@@ -220,6 +220,15 @@ export const PageElementSchema = Type.Object({
   enabled: Type.Boolean(),
   focused: Type.Optional(Type.Boolean()),
   risk: Type.Optional(ActionEffectSchema),
+  href: Type.Optional(Type.String()),
+  hrefTruncated: Type.Optional(Type.Boolean()),
+});
+
+export const OverlayBlockerSchema = Type.Object({
+  tag: Type.String(),
+  role: Type.Optional(Type.String()),
+  name: Type.Optional(Type.String()),
+  covers: Type.Integer({ minimum: 1 }),
 });
 
 export const ElementChangeSchema = Type.Object({
@@ -251,6 +260,7 @@ export const PageStateSchema = Type.Object({
   elements: Type.Array(PageElementSchema),
   text: Type.Optional(Type.Array(Type.String())),
   changes: Type.Optional(Type.Array(ElementChangeSchema)),
+  overlays: Type.Optional(Type.Array(OverlayBlockerSchema)),
   truncated: Type.Boolean(),
   untrustedContent: Type.Boolean(),
   continuation: Type.Optional(ContinuationCursorSchema),

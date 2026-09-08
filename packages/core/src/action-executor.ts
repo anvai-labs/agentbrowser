@@ -286,7 +286,13 @@ export class ActionExecutor {
     if (resolvedTarget.fingerprint !== expectedFingerprint) {
       return staleTarget(
         `Element fingerprint mismatch for ${ref}. Expected '${expectedFingerprint}', got '${resolvedTarget.fingerprint}'. The element has changed.`,
-        { ref, expectedFingerprint, actualFingerprint: resolvedTarget.fingerprint }
+        {
+          ref,
+          expectedFingerprint,
+          actualFingerprint: resolvedTarget.fingerprint,
+          role: resolvedTarget.role,
+          ...(resolvedTarget.name !== undefined ? { name: resolvedTarget.name } : {}),
+        }
       );
     }
 

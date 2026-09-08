@@ -24,6 +24,7 @@ import type {
   NewPageOptions,
   NormalizedCookie,
   ObservationRequest,
+  OverlayBlocker,
   PdfRequest,
   RawPageState,
   ResolvedTarget,
@@ -59,6 +60,8 @@ interface StoredElement {
   value?: string;
   visible: boolean;
   enabled: boolean;
+  href?: string;
+  hrefTruncated?: boolean;
 }
 
 interface NodeBinding extends SnapshotEvidence {
@@ -71,6 +74,20 @@ function unquote(value: string): string {
   const trimmed = value.trim();
   const match = /^"((?:[^"\\]|\\.)*)"$/.exec(trimmed);
   return match?.[1] !== undefined ? match[1] : trimmed;
+}
+
+/** Bound a diagnostic promise; Playwright evaluate has no timeout of its own. */
+async function withDeadline<T>(promise: Promise<T>, deadlineMs: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('deadline exceeded')), deadlineMs);
+    timer.unref();
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -1020,6 +1037,9 @@ class PlaywrightPage implements EnginePage {
     this.refStore.clear();
     let changed = previousCount > 0 && previousCount !== elements.length;
     const ordinals = new Map<string, number>();
+    // href capture is one round-trip per link; bound it so link-heavy pages
+    // cannot stretch an observation unboundedly.
+    let hrefCaptures = 0;
     try {
       for (const [index, element] of elements.entries()) {
         const ref = element.ref ?? `e${this.revision}_${index}`;
@@ -1054,6 +1074,16 @@ class PlaywrightPage implements EnginePage {
               changed = true;
             element.visible = await handle.isVisible();
             element.enabled = await handle.isEnabled();
+            if (element.role === 'link' && hrefCaptures < 50) {
+              const href = await locator.getAttribute('href').catch(() => undefined);
+              if (typeof href === 'string' && href !== '') {
+                hrefCaptures += 1;
+                element.href = href.slice(0, 2048);
+                if (href.length > 2048) {
+                  element.hrefTruncated = true;
+                }
+              }
+            }
           }
         }
         this.refStore.set(ref, {
@@ -1088,6 +1118,11 @@ class PlaywrightPage implements EnginePage {
       this.refStore = states;
     }
 
+    const overlays =
+      request.include?.includes('overlays') === true
+        ? await this.collectOverlays(elements)
+        : undefined;
+
     return {
       revision: this.revision,
       url: this.page.url(),
@@ -1095,6 +1130,7 @@ class PlaywrightPage implements EnginePage {
       status: 'interactive',
       content: await this.page.content(),
       elements: elements,
+      ...(overlays !== undefined ? { overlays } : {}),
     };
   }
 
@@ -1197,13 +1233,26 @@ class PlaywrightPage implements EnginePage {
     return elements;
   }
 
+  /** Client-facing context for a refusal: which ref, in which revision, what it was. */
+  private refusalDetails(ref: string, stored?: { role: string; name?: string }) {
+    return {
+      ref,
+      revision: this.revision,
+      ...(stored
+        ? { role: stored.role, ...(stored.name !== undefined ? { name: stored.name } : {}) }
+        : {}),
+    };
+  }
+
   async resolve(target: EngineTarget): Promise<ResolvedTarget> {
     const stored = this.refStore.get(target.ref);
     const binding = this.bindings.get(target.ref);
     if (!stored) {
       throw new EngineError(
         'TARGET_NOT_FOUND',
-        `Element not found: ${target.ref} (observe the page to mint refs)`
+        `Element not found: ${target.ref} (observe the page to mint refs)`,
+        false,
+        this.refusalDetails(target.ref)
       );
     }
     if (!binding) {
@@ -1212,13 +1261,16 @@ class PlaywrightPage implements EnginePage {
       throw new EngineError(
         'STALE_TARGET',
         'Observed target could not be bound safely; observe again.',
-        true
+        true,
+        this.refusalDetails(target.ref, stored)
       );
     }
     if (!(await binding.handle.evaluate((node) => node.isConnected))) {
       throw new EngineError(
         'STALE_TARGET',
-        'Observed node was detached or replaced; observe again.'
+        'Observed node was detached or replaced; observe again.',
+        false,
+        this.refusalDetails(target.ref, stored)
       );
     }
     const visible = await binding.handle.isVisible();
@@ -1244,7 +1296,9 @@ class PlaywrightPage implements EnginePage {
       if (!matchesOriginal) {
         throw new EngineError(
           'STALE_TARGET',
-          'Observed target identity or semantic state changed; observe again.'
+          'Observed target identity or semantic state changed; observe again.',
+          false,
+          this.refusalDetails(target.ref, stored)
         );
       }
       const expectedSnapshot = binding.snapshot ?? binding.documentSnapshot;
@@ -1252,7 +1306,8 @@ class PlaywrightPage implements EnginePage {
         throw new EngineError(
           'STALE_TARGET',
           'Semantic evidence is unavailable; observe again.',
-          true
+          true,
+          this.refusalDetails(target.ref, stored)
         );
       }
       // Evidence provenance is fixed at observation. A failed fresh element check
@@ -1268,7 +1323,8 @@ class PlaywrightPage implements EnginePage {
         throw new EngineError(
           'STALE_TARGET',
           'Observed semantic state changed; observe again.',
-          true
+          true,
+          this.refusalDetails(target.ref, stored)
         );
       }
     }
@@ -1289,7 +1345,9 @@ class PlaywrightPage implements EnginePage {
     if (!binding) {
       throw new EngineError(
         'TARGET_NOT_FOUND',
-        `Element not found: ${ref} (observe the page to mint refs)`
+        `Element not found: ${ref} (observe the page to mint refs)`,
+        false,
+        this.refusalDetails(ref, this.refStore.get(ref))
       );
     }
     return binding.handle;
@@ -1300,8 +1358,132 @@ class PlaywrightPage implements EnginePage {
       return await this.performAction(action);
     } catch (error) {
       const failure = normalizeEngineError(error);
-      throw new EngineError(failure.code, failure.message, failure.retryable, failure.details);
+      let details = failure.details;
+      if (failure.code === 'ACTION_TIMEOUT' && action.target && details?.blockedBy === undefined) {
+        // A blocked main thread is a common CAUSE of the timeout we are
+        // describing; bound the diagnostic so it cannot outlive the error.
+        const blockedBy = await withDeadline(this.describeBlocker(action.target.ref), 2_000).catch(
+          () => undefined
+        );
+        details = {
+          ...details,
+          ref: action.target.ref,
+          ...(blockedBy ? { blockedBy } : {}),
+        };
+      }
+      throw new EngineError(failure.code, failure.message, failure.retryable, details);
     }
+  }
+
+  /**
+   * Name whatever covers a timed-out target's click point. Purely diagnostic:
+   * every failure path throws, which the caller turns into "no blocker
+   * reported" so diagnostics can never mask or alter the underlying timeout.
+   */
+  private async describeBlocker(
+    ref: string
+  ): Promise<{ tag: string; role?: string; name?: string }> {
+    const binding = this.bindings.get(ref);
+    if (!binding) {
+      throw new Error(`no binding for ${ref}`);
+    }
+    return binding.handle.evaluate((node) => {
+      const doc = node.ownerDocument;
+      const win = doc.defaultView;
+      if (!win) {
+        throw new Error('no view');
+      }
+      const box = node.getBoundingClientRect();
+      if (box.width <= 0 || box.height <= 0) {
+        throw new Error('no box');
+      }
+      const cx = box.left + box.width / 2;
+      const cy = box.top + box.height / 2;
+      if (cx < 0 || cy < 0 || cx > win.innerWidth || cy > win.innerHeight) {
+        throw new Error('off viewport');
+      }
+      for (const element of doc.elementsFromPoint(cx, cy)) {
+        if (element === node || node.contains(element) || element.contains(node)) continue;
+        const name = (element.getAttribute('aria-label') ?? element.textContent ?? '').trim();
+        const role = element.getAttribute('role');
+        return {
+          tag: element.tagName.toLowerCase(),
+          ...(role ? { role } : {}),
+          ...(name ? { name: name.slice(0, 100) } : {}),
+        };
+      }
+      throw new Error('unoccluded');
+    });
+  }
+
+  /**
+   * Opt-in occlusion census (F5): probe up to 30 visible observed elements
+   * and aggregate whatever covers their click points. Purely diagnostic:
+   * probe failures skip the element and never fail the observation.
+   */
+  private async collectOverlays(elements: StoredElement[]): Promise<OverlayBlocker[]> {
+    const EXAMINE_CAP = 30;
+    const blockers = new Map<string, OverlayBlocker>();
+    let examined = 0;
+    for (const element of elements) {
+      if (examined >= EXAMINE_CAP) {
+        break;
+      }
+      if (!element.visible) {
+        continue;
+      }
+      const binding = this.bindings.get(element.ref ?? '');
+      if (!binding) {
+        continue;
+      }
+      examined += 1;
+      const blocker = await binding.locator
+        .evaluate((node) => {
+          const doc = node.ownerDocument;
+          const win = doc.defaultView;
+          if (!win) {
+            return undefined;
+          }
+          const box = node.getBoundingClientRect();
+          if (box.width <= 0 || box.height <= 0) {
+            return undefined;
+          }
+          const cx = box.left + box.width / 2;
+          const cy = box.top + box.height / 2;
+          if (cx < 0 || cy < 0 || cx > win.innerWidth || cy > win.innerHeight) {
+            return undefined;
+          }
+          for (const candidate of doc.elementsFromPoint(cx, cy)) {
+            if (candidate === node || node.contains(candidate) || candidate.contains(node)) {
+              continue;
+            }
+            const name = (
+              candidate.getAttribute('aria-label') ??
+              candidate.textContent ??
+              ''
+            ).trim();
+            const role = candidate.getAttribute('role');
+            return {
+              tag: candidate.tagName.toLowerCase(),
+              ...(role ? { role } : {}),
+              ...(name ? { name: name.slice(0, 100) } : {}),
+            };
+          }
+          return undefined;
+        })
+        .catch(() => undefined);
+      if (blocker === undefined) {
+        continue;
+      }
+      const key = JSON.stringify([blocker.tag, blocker.role ?? '', blocker.name ?? '']);
+      const existing = blockers.get(key);
+      if (existing) {
+        existing.covers += 1;
+      } else {
+        blockers.set(key, { ...blocker, covers: 1 });
+      }
+    }
+    return [...blockers.values()];
   }
 
   private async performAction(action: EngineAction): Promise<ActionEffect> {

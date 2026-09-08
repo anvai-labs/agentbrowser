@@ -235,7 +235,11 @@ export type PartialObservation = {
   maxBytes?: number | undefined;
   sinceRevision?: number | undefined;
   continueFrom?: number | undefined;
+  include?: string[] | undefined;
 };
+
+/** Optional observation enrichments the stack actually delivers. */
+const DELIVERED_INCLUDES = new Set<string>(['overlays']);
 
 export class AgentBrowserService {
   private readonly engine: BrowserEngine;
@@ -1386,8 +1390,20 @@ export class AgentBrowserService {
         `Observation mode '${request.mode}' is not delivered. Supported: ${[...DELIVERED_MODES].join(', ')}.`
       );
     }
+    if (request.include !== undefined) {
+      const unknown = request.include.filter((token) => !DELIVERED_INCLUDES.has(token));
+      if (unknown.length > 0) {
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `Observation include token(s) not delivered: ${unknown.join(', ')}. Supported: ${[...DELIVERED_INCLUDES].join(', ')}.`,
+          false,
+          { include: request.include, validIncludes: [...DELIVERED_INCLUDES].sort() }
+        );
+      }
+    }
     const observationRequest: ObservationRequest = {
       ...(request.mode !== undefined ? { mode: request.mode } : {}),
+      ...(request.include !== undefined ? { include: request.include } : {}),
     };
     let raw: Awaited<ReturnType<EnginePage['observe']>>;
     try {
@@ -1484,7 +1500,13 @@ export class AgentBrowserService {
       );
     }
 
-    const snapshot = page.history.get(current.revision)!;
+    const snapshot = page.history.get(current.revision);
+    if (snapshot === undefined) {
+      throw new ServiceError(
+        'INTERNAL',
+        `Missing retained observation at revision ${current.revision}.`
+      );
+    }
     const changes: import('@agentbrowser/protocol').ElementChange[] = [];
 
     // Removed: in previous, not in current.
@@ -1672,6 +1694,18 @@ export class AgentBrowserService {
               { sessionId }
             )
           );
+        }
+        if (result.error.code === 'ACTION_TIMEOUT') {
+          // One-round-trip diagnostics (F4): the page state at timeout is
+          // evidence the client cannot recover later. Capture is best-effort
+          // and must never mask or replace the underlying failure.
+          const screenshotArtifactId = await this.diagnosticScreenshot(sessionId, pageId);
+          if (screenshotArtifactId !== undefined) {
+            result.error = {
+              ...result.error,
+              details: { ...result.error.details, screenshotArtifactId },
+            };
+          }
         }
         throw this.redactedError(
           new ServiceError(
@@ -1958,6 +1992,43 @@ export class AgentBrowserService {
       sessionId,
       ...(owner !== undefined ? { tenantId: owner } : {}),
     });
+  }
+
+  /**
+   * Best-effort evidence capture for ACTION_TIMEOUT diagnostics (F4): a
+   * screenshot artifact of the page as the action deadline hit. Every
+   * failure path returns undefined so the underlying timeout is reported
+   * untouched.
+   */
+  private async diagnosticScreenshot(
+    sessionId: string,
+    pageId: string
+  ): Promise<string | undefined> {
+    try {
+      const page = this.requirePage(sessionId, pageId);
+      // Diagnostics must never extend the failure they describe: bound the
+      // capture the same way the engine bounds its blocker probe.
+      const captured = await Promise.race([
+        page.enginePage.screenshot({ format: 'png' }),
+        new Promise<undefined>((resolve) => {
+          const timer = setTimeout(() => resolve(undefined), 2_000);
+          timer.unref();
+        }),
+      ]);
+      if (captured === undefined || typeof captured.bytesBase64 !== 'string') {
+        return undefined;
+      }
+      const metadata = this.putArtifact(
+        sessionId,
+        'screenshot',
+        captured.contentType,
+        new Uint8Array(Buffer.from(captured.bytesBase64, 'base64')),
+        { sessionId }
+      );
+      return metadata.artifactId;
+    } catch {
+      return undefined;
+    }
   }
 
   // ---- extraction ---------------------------------------------------------
