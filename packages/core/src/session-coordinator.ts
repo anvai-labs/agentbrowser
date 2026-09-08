@@ -6,6 +6,7 @@
  */
 
 import type { BrowserEngine } from '@agentbrowser/engine';
+import { SESSION_IDLE_TIMEOUT_MS_DEFAULT, SESSION_TTL_MS_DEFAULT } from '@agentbrowser/protocol';
 import type { SessionRequest, SessionResponse } from '@agentbrowser/protocol';
 
 /**
@@ -63,8 +64,8 @@ export class SessionCoordinator {
   constructor(config: CoordinatorConfig = {}) {
     this.config = {
       maxSessions: config.maxSessions ?? 1000,
-      defaultTtlMs: config.defaultTtlMs ?? 900000, // 15 minutes
-      defaultIdleTimeoutMs: config.defaultIdleTimeoutMs ?? 120000, // 2 minutes
+      defaultTtlMs: config.defaultTtlMs ?? SESSION_TTL_MS_DEFAULT, // 15 minutes
+      defaultIdleTimeoutMs: config.defaultIdleTimeoutMs ?? SESSION_IDLE_TIMEOUT_MS_DEFAULT, // 2 minutes
       cleanupCheckIntervalMs: config.cleanupCheckIntervalMs ?? 30000, // 30 seconds
     };
 

@@ -84,10 +84,23 @@ export const SessionPolicySchema = Type.Object({
   approval: Type.Optional(ApprovalPolicySchema),
 });
 
+// Session-lifecycle knob bounds and defaults. These are the single source of
+// truth (ADR-011): the coordinator's defaults and the MCP/CLI surfaces all
+// reference these constants rather than re-typing the literals, so the bounds
+// an agent reads in the tool manifest cannot drift from what validation enforces.
+export const SESSION_TTL_MS_MIN = 1000; // 1 second
+export const SESSION_TTL_MS_MAX = 86_400_000; // 1 day
+export const SESSION_TTL_MS_DEFAULT = 900_000; // 15 minutes
+export const SESSION_IDLE_TIMEOUT_MS_MIN = 1000; // 1 second
+export const SESSION_IDLE_TIMEOUT_MS_MAX = 3_600_000; // 1 hour
+export const SESSION_IDLE_TIMEOUT_MS_DEFAULT = 120_000; // 2 minutes
+
 export const SessionRequestSchema = Type.Object({
   engine: Type.Optional(EngineTypeSchema),
-  ttlMs: Type.Optional(Type.Number({ minimum: 1000, maximum: 86400000 })),
-  idleTimeoutMs: Type.Optional(Type.Number({ minimum: 1000, maximum: 3600000 })),
+  ttlMs: Type.Optional(Type.Number({ minimum: SESSION_TTL_MS_MIN, maximum: SESSION_TTL_MS_MAX })),
+  idleTimeoutMs: Type.Optional(
+    Type.Number({ minimum: SESSION_IDLE_TIMEOUT_MS_MIN, maximum: SESSION_IDLE_TIMEOUT_MS_MAX })
+  ),
   viewport: Type.Optional(ViewportSchema),
   locale: Type.Optional(Type.String({ pattern: '^[a-z]{2}-[A-Z]{2}$' })),
   timezoneId: Type.Optional(Type.String()),

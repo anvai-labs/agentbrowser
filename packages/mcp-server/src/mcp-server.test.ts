@@ -165,6 +165,18 @@ describe('AgentBrowser MCP server', () => {
       expect(response.result.isError).toBeFalsy();
     });
 
+    it('should forward ttlMs and idleTimeoutMs to sessions.create (TD-BROWSER-7)', async () => {
+      await call('6b', 'browser_create', {
+        tenantId: 'tenant_1',
+        ttlMs: 86_400_000,
+        idleTimeoutMs: 3_600_000,
+      });
+
+      expect(sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({ ttlMs: 86_400_000, idleTimeoutMs: 3_600_000 })
+      );
+    });
+
     it('should navigate', async () => {
       const response = JSON.parse(
         await call('7', 'browser_navigate', {

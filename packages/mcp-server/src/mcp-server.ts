@@ -9,7 +9,15 @@
  * JSON-RPC line (or null for notifications), so any transport can drive it.
  */
 
-import { DELIVERED_ACTION_TYPES } from '@agentbrowser/protocol';
+import {
+  DELIVERED_ACTION_TYPES,
+  SESSION_IDLE_TIMEOUT_MS_DEFAULT,
+  SESSION_IDLE_TIMEOUT_MS_MAX,
+  SESSION_IDLE_TIMEOUT_MS_MIN,
+  SESSION_TTL_MS_DEFAULT,
+  SESSION_TTL_MS_MAX,
+  SESSION_TTL_MS_MIN,
+} from '@agentbrowser/protocol';
 import type {
   ActionRequest,
   ActionResult,
@@ -100,7 +108,18 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
           tenantId: { type: 'string', description: 'Tenant that owns the session.' },
           engine: { type: 'string', description: 'Engine to use, e.g. playwright-chromium.' },
           headless: { type: 'boolean' },
-          ttlMs: { type: 'number' },
+          ttlMs: {
+            type: 'number',
+            minimum: SESSION_TTL_MS_MIN,
+            maximum: SESSION_TTL_MS_MAX,
+            description: `Total session lifetime in ms, closed regardless of activity when reached. Default ${SESSION_TTL_MS_DEFAULT} (15 min); range ${SESSION_TTL_MS_MIN}-${SESSION_TTL_MS_MAX} (max 1 day).`,
+          },
+          idleTimeoutMs: {
+            type: 'number',
+            minimum: SESSION_IDLE_TIMEOUT_MS_MIN,
+            maximum: SESSION_IDLE_TIMEOUT_MS_MAX,
+            description: `Close the session after this many ms of inactivity (no tool calls on it). Default ${SESSION_IDLE_TIMEOUT_MS_DEFAULT} (2 min); range ${SESSION_IDLE_TIMEOUT_MS_MIN}-${SESSION_IDLE_TIMEOUT_MS_MAX} (max 1 h). Raise it for interactive headed logins where the caller stays idle while a human completes SSO/2FA.`,
+          },
           cookies: {
             type: 'array',
             description:
@@ -130,6 +149,7 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
         if (typeof args.engine === 'string') request.engine = args.engine;
         if (typeof args.headless === 'boolean') request.headless = args.headless;
         if (typeof args.ttlMs === 'number') request.ttlMs = args.ttlMs;
+        if (typeof args.idleTimeoutMs === 'number') request.idleTimeoutMs = args.idleTimeoutMs;
         if (Array.isArray(args.cookies))
           request.cookies = args.cookies as NonNullable<SessionRequest['cookies']>;
 

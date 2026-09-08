@@ -133,6 +133,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .option('--headless', 'run headless')
         .option('--viewport <WxH>', 'viewport size, e.g. 1280x720')
         .option('--ttl <ms>', 'session TTL in milliseconds')
+        .option('--idle-timeout <ms>', 'close after this many ms of inactivity')
         .action(
           action(async (ctx, options: Record<string, string | boolean | undefined>) => {
             const request: SessionRequest = { tenantId: String(options.tenant) };
@@ -148,6 +149,9 @@ export function buildCli(deps: CliDependencies): Cli {
             }
             if (options.ttl) {
               request.ttlMs = Number.parseInt(String(options.ttl), 10);
+            }
+            if (options.idleTimeout) {
+              request.idleTimeoutMs = Number.parseInt(String(options.idleTimeout), 10);
             }
 
             const created = await ctx.client.sessions.create(request);
