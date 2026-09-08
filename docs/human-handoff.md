@@ -56,7 +56,12 @@ will reap the session mid-handoff. Pass a larger `idleTimeoutMs` at session crea
 **Popups are pages too.** SSO and payment flows open popup windows. Popups are
 auto-adopted: they appear in `GET /v1/sessions/{id}/pages` with the `openerPageId` of
 the window that opened them, and they are fully operable (observe/act) like any other
-page. Follow the human across windows through the same page list.
+page. Follow the human across windows through the same page list. One exception:
+popups opened with `rel="noopener"` (or `window.open(..., "noopener")`) have no
+opener linkage, so adoption cannot attribute them — they never appear in the page
+list and the agent cannot observe or operate them. If a handoff flow opens one, the
+human completes it in that window; have them return to an observable page before the
+agent resumes, and re-observe.
 
 **Anticipate `isTrusted`.** After the human's part is done, the agent's remaining
 clicks may still hit controls that reject synthetic events —

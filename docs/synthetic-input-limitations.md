@@ -31,8 +31,9 @@ rejected synthetic clicks outright.
 2. **Click the real submit control rather than pressing Enter.** Form handlers that
    check `isTrusted` on *keyboard* events are rarer than ones checking clicks — and a
    submit control's handler is the one the page's authors most often wired to accept
-   genuine interaction of either kind. Prefer `act click` on the button; use
-   `pressKey Enter` as the fallback, not the default.
+   genuine interaction of either kind. Prefer `act click` on the button; use the
+   `press` action with `key: "Enter"` on the field's ref as the fallback, not the
+   default.
 3. **Observe the outcome; never assume.** A synthetic action that was silently
    swallowed still returns `success` — the event *was* dispatched. The only truth is
    the next observation: new URL, new elements, revision bump. Where an action is
