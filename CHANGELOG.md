@@ -5,6 +5,70 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [1.8.6] — 2026-09-08
+
+Act and wait robustness, richer observations, popup lifecycle, and inline
+artifact payloads (PRs 104–107, adversarially reviewed), plus the T2c1
+destination-policy and session-owned TCP admission prerequisite (PR 108).
+Everything user-facing is additive or strictly opt-in: new wait conditions and
+act options default off, new observation fields ride `include`, and existing
+error semantics only gain detail fields. No route was removed and no default
+behavior changed.
+
+### Added
+
+- New delivered wait conditions, usable both in `wait` and per-act:
+  `urlPattern` (glob or `/regex/`), `selectorVisible`, and `minElements`.
+  Conditions the engine cannot evaluate natively are polled by the service
+  with a bounded deadline; a `timeoutMs` of 0 no longer means "wait forever"
+  anywhere (floored at 1ms).
+- Opt-in act remap (`remap: true`): when a reference's binding went stale, the
+  service takes a fresh observation and re-targets only when exactly one
+  candidate matches the original role + name; the response reports
+  `remap {from, to}`. Live semantic evidence (a fingerprint mismatch) is never
+  remapped — only binding staleness is healable.
+- `/act` batch form: `{"steps": [...]}` of 1–20 flat actions, executed
+  sequentially with stop-on-first-error, per-step results, and the plan-grade
+  self-heal for pre-observed references.
+- ACTION_TIMEOUT diagnostics: when an action times out on a target, the error
+  details carry `blockedBy {tag, role, name}` from an engine hit-test and a
+  diagnostic screenshot artifact id. Diagnostics are best-effort and can never
+  outlive the error itself.
+- Observe opt-ins via `include`: `"overlays"` returns aggregate blockers
+  `{tag, name, covers}` (capped at 30 visible elements), and link elements
+  carry their raw `href` (capped at 2048 chars with `hrefTruncated`).
+- Act validation errors now list the sorted `validActions`, and the deprecated
+  `type` alias is accepted (with a warning) when `action` is absent.
+- Inline artifacts: screenshot, pdf, and html responses carry
+  `inline {contentBase64, byteSize}` when the artifact is under
+  `AGENTBROWSER_INLINE_ARTIFACT_MAX_BYTES` (default 256 KiB, clamped to
+  0–10 MiB, invalid values fall back to the default). The artifact is still
+  registered in the store either way.
+- Popup lifecycle: popups opened by session pages are auto-adopted — they
+  appear in the page list with `openerPageId`, emit `page.created`, and are
+  fully operable. `page.crashed` is emitted, and a silent engine stream end
+  fans out `page.destroyed {reason: "streamEnded"}`. Adoption is serialized
+  per session and capped at 20 popups per session. Popups opened with
+  `rel="noopener"` have no opener and are never adopted.
+- T2c1 gateway prerequisite: destination-policy adaptation produces explicit
+  immutable request/destination pairs (TCP-only coverage; one extracted host
+  predicate preserves exact/suffix, deny-first and empty-allowlist semantics),
+  and sessions own a shared TCP admission scope (8 concurrent slots under the
+  32-slot cap) used by downloads. No CONNECT listener — T2c2/T2c3 remain open.
+
+### Changed
+
+- `STALE_TARGET` and `TARGET_NOT_FOUND` refusals carry structured details
+  `{ref, revision, role, name}` and a `remapEligible` marker restricted to
+  binding staleness; a caller's own `expectedRevision` mismatch or a live
+  fingerprint mismatch stays ineligible for remap.
+
+### Docs
+
+- New guides: [human handoff](docs/human-handoff.md) (working a session with a
+  person in the loop) and [synthetic input limitations](docs/synthetic-input-limitations.md)
+  (what `isTrusted: false` costs and what works).
+
 ## [1.8.5] — 2026-09-07
 
 Observation resilience for pages whose elements never stabilize, page
