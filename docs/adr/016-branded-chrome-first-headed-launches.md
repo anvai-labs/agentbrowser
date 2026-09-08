@@ -1,6 +1,6 @@
 # ADR-016: Headed Sessions Prefer the Operator's Chrome; Window-True Viewport
 
-**Status:** Proposed (owner-directed 2026-09-08)
+**Status:** Accepted (implemented 2026-09-08)
 **Context:** 2026-09-08
 **Related:** [ADR-013](013-headed-sessions-and-walled-logins.md) (headed
 sessions / de-fingerprinting — its turnstile conclusion is unaffected here),
@@ -65,8 +65,10 @@ geometry), not anti-detection.
   Playwright driver. Acceptable — Playwright tolerates nearby versions, and
   TD-BROWSER-10's wrapper path has been running branded Chrome in production
   use since 2026-09-08 without protocol issues. The first-launch-after-update
-  wrinkle (Chrome's one-time post-update work) should get a launch-time
-  retry/budget when this lands.
+  wrinkle (Chrome's one-time post-update work) originally sketched a
+  launch-time retry/budget; that is superseded — TD-BROWSER-11's correction
+  established there is no create-then-navigate race to trip over, so no
+  retry code ships.
 - Binary detection must be logged at session create (which binary won), so
   machine-dependent behavior is explainable after the fact.
 - Test suites that assert launch args need the escape hatch in CI.

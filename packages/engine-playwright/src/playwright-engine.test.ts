@@ -6,7 +6,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PlaywrightChromiumEngine } from './index';
+import { PlaywrightChromiumEngine, resolveContextViewport } from './index';
 
 describe('PlaywrightChromiumEngine', () => {
   let engine: PlaywrightChromiumEngine;
@@ -1246,4 +1246,115 @@ describe('multi-browser and remote CDP options', () => {
     const engine = new PlaywrightChromiumEngine({ browser: 'firefox' });
     await expect(runEngineContractSuite(engine)).resolves.toBeUndefined();
   }, 60_000);
+});
+
+// ADR-016: headed launches prefer a real branded Chrome — explicit override
+// (option / AGENTBROWSER_CHROME_PATH) > detected well-known branded path >
+// bundled Chromium — with AGENTBROWSER_PREFER_BUNDLED as the CI escape
+// hatch. Headed sessions default to a window-true viewport (null +
+// --start-maximized) instead of the pinned 1280x720; headless is unchanged.
+// All selection cases are hermetic: the probe list is injectable, so no
+// real Chrome install is needed.
+describe('headed binary selection (ADR-016)', () => {
+  const existingFile = import.meta.url.replace('file://', '');
+  const opts = async (
+    engine: PlaywrightChromiumEngine,
+    startMaximized = false
+  ): Promise<Record<string, unknown>> =>
+    (
+      engine as unknown as {
+        headedChromiumOptions(b?: boolean): Promise<Record<string, unknown>>;
+      }
+    ).headedChromiumOptions(startMaximized);
+
+  it('explicit chromeBinaryPath still wins when it exists', async () => {
+    const probed = new PlaywrightChromiumEngine({
+      chromeBinaryPath: existingFile,
+      brandedChromeCandidates: ['/nonexistent/never'],
+    });
+    expect((await opts(probed)).executablePath).toBe(existingFile);
+  });
+
+  it('detects the first existing branded candidate when no explicit path is set', async () => {
+    const probed = new PlaywrightChromiumEngine({
+      brandedChromeCandidates: ['/nonexistent/a', existingFile, '/nonexistent/b'],
+    });
+    expect((await opts(probed)).executablePath).toBe(existingFile);
+  });
+
+  it('preferBundled skips detection and launches bundled', async () => {
+    const probed = new PlaywrightChromiumEngine({
+      preferBundled: true,
+      brandedChromeCandidates: [existingFile],
+    });
+    expect((await opts(probed)).executablePath).toBeUndefined();
+  });
+
+  it('preferBundled does not defeat an explicit path', async () => {
+    const probed = new PlaywrightChromiumEngine({
+      preferBundled: true,
+      chromeBinaryPath: existingFile,
+      brandedChromeCandidates: [existingFile],
+    });
+    expect((await opts(probed)).executablePath).toBe(existingFile);
+  });
+
+  it('falls back to bundled when nothing exists and nothing is set', async () => {
+    const probed = new PlaywrightChromiumEngine({
+      brandedChromeCandidates: ['/nonexistent/a', '/nonexistent/b'],
+    });
+    expect((await opts(probed)).executablePath).toBeUndefined();
+  });
+
+  it('AGENTBROWSER_PREFER_BUNDLED=1 env skips detection like the option', async () => {
+    vi.stubEnv('AGENTBROWSER_PREFER_BUNDLED', '1');
+    try {
+      const probed = new PlaywrightChromiumEngine({
+        brandedChromeCandidates: [existingFile],
+      });
+      expect((await opts(probed)).executablePath).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('--start-maximized is chromium-only and follows the request flag', async () => {
+    const withFlag = await opts(
+      new PlaywrightChromiumEngine({ brandedChromeCandidates: [] }),
+      true
+    );
+    expect(withFlag.args).toContain('--start-maximized');
+    expect(withFlag.args).toContain('--disable-blink-features=AutomationControlled');
+    const withoutFlag = await opts(
+      new PlaywrightChromiumEngine({ brandedChromeCandidates: [] }),
+      false
+    );
+    expect(withoutFlag.args).not.toContain('--start-maximized');
+  });
+
+  it('non-chromium families never get executablePath or --start-maximized', async () => {
+    const probed = new PlaywrightChromiumEngine({
+      browser: 'firefox',
+      brandedChromeCandidates: [existingFile],
+    });
+    const options = await opts(probed, true);
+    expect(options.executablePath).toBeUndefined();
+    expect(options.args).not.toContain('--start-maximized');
+  });
+});
+
+describe('headed viewport resolution (ADR-016)', () => {
+  it('headless keeps the pinned 1280x720 default', () => {
+    expect(resolveContextViewport(undefined, true)).toEqual({ width: 1280, height: 720 });
+  });
+
+  it('headed defaults to window-true rendering (null viewport)', () => {
+    expect(resolveContextViewport(undefined, false)).toBeNull();
+  });
+
+  it('an explicit viewport wins in both modes', () => {
+    const explicit = { width: 800, height: 600 };
+    expect(resolveContextViewport(explicit, true)).toEqual(explicit);
+    expect(resolveContextViewport(explicit, false)).toEqual(explicit);
+  });
 });
