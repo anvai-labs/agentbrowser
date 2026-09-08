@@ -105,6 +105,38 @@ describe('popup lifecycle (F10)', () => {
     expect(remaining.find((p) => p.pageId === pageId)).toBeDefined();
   });
 
+  it('fans page.destroyed into replay when the engine stream ends silently', async () => {
+    const { engine, service, session, pageId, fakePage } = await setup();
+
+    await fakePage.openPopup();
+    const view = await waitFor(() =>
+      service
+        .listPages(session.sessionId)
+        .then((pages) => pages.find((p) => p.openerPageId === pageId))
+    );
+    const engineSessionId = engine.getSessionIds()[0];
+    const popupPage = engine.getFakePage(engineSessionId as string, view.pageId);
+    if (!popupPage) throw new Error('popup fake page missing');
+
+    popupPage.endStream();
+
+    const destroyed = await waitFor(() => {
+      const events = service.getSessionEvents(session.sessionId, 'page.destroyed');
+      return events.some((e) => e.pageId === view.pageId) ? events : undefined;
+    });
+    const synthesized = destroyed.find((e) => e.pageId === view.pageId);
+    expect(synthesized?.data).toMatchObject({ reason: 'streamEnded' });
+    await vi.waitFor(async () => {
+      const remaining = await service.listPages(session.sessionId);
+      if (remaining.some((p) => p.pageId === view.pageId)) {
+        throw new Error('popup still registered');
+      }
+    });
+    expect(
+      (await service.listPages(session.sessionId)).find((p) => p.pageId === pageId)
+    ).toBeDefined();
+  });
+
   it('tears down both pumps when the session closes', async () => {
     const { service, session, pageId, fakePage } = await setup();
 

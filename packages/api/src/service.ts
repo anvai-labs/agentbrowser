@@ -600,6 +600,7 @@ export class AgentBrowserService {
 
   private pumpEvents(sessionId: string, pageId: string, enginePage: EnginePage): void {
     void (async () => {
+      let sawDestroyed = false;
       try {
         for await (const event of enginePage.events()) {
           const stamped: EngineEvent = this.secretManager.redact({
@@ -626,15 +627,41 @@ export class AgentBrowserService {
               // Adoption is best-effort; the popup stays engine-side only.
             });
           } else if (stamped.type === 'page.destroyed') {
+            sawDestroyed = true;
             this.reapPage(sessionId, pageId);
           }
         }
-        // The iterator ended (page closed engine-side): drop the registry
-        // entry so listPages stops reporting a dead page id.
-        this.reapPage(sessionId, pageId);
       } catch {
         // The engine page went away; the pump simply ends.
       }
+      // Real engines close pages without announcing it - the stream just
+      // ends. Fan the declared page.destroyed so replay and WS clients see
+      // the same lifecycle for every engine. Skipped post-session-teardown
+      // so an abandoned pump cannot resurrect a deleted ledger.
+      if (!sawDestroyed && this.coordinator.get(sessionId) !== undefined) {
+        const synthesized: EngineEvent = this.secretManager.redact({
+          type: 'page.destroyed',
+          timestamp: new Date().toISOString(),
+          sessionId,
+          pageId,
+          data: { reason: 'streamEnded' },
+        });
+        if (this.recordEvent(sessionId, synthesized)) {
+          const listeners = this.eventListeners.get(sessionId);
+          if (listeners) {
+            for (const listener of [...listeners]) {
+              try {
+                listener(structuredClone(synthesized));
+              } catch {
+                // A misbehaving listener never breaks the stream.
+              }
+            }
+          }
+        }
+      }
+      // Stream ended (page closed engine-side): drop the registry entry so
+      // listPages stops reporting a dead page id.
+      this.reapPage(sessionId, pageId);
     })();
   }
 

@@ -237,6 +237,19 @@ class FakePage implements EnginePage {
     this.emitEvent('page.crashed');
   }
 
+  /**
+   * Test hook: end the event stream WITHOUT announcing page.destroyed -
+   * real engines close pages silently; only the stream ending says so.
+   */
+  endStream(): void {
+    this.eventsFinished = true;
+    const waiters = this.eventWaiters;
+    this.eventWaiters = [];
+    for (const wake of waiters) {
+      wake();
+    }
+  }
+
   /** Set by the owning session so page-initiated popups can be created. */
   attachSession(session: FakeSession): void {
     this.ownerSession = session;
