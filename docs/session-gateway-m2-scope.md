@@ -1,11 +1,17 @@
 # M2 design: authenticated session gateway
 
-Status: **M2 complete in PR 103; T2c1 implementation and acceptance in progress.**
+Status (2026-09-08): **M2 and T2c1 complete; gateway follow-on deferred.**
 The [M2 closeout](https://github.com/anvai-labs/agentbrowser/pull/103#issuecomment-5579683896)
 records both clean reviews, all eight PR checks, and merge `46807ea` to develop.
-The owner subsequently authorized T2c1 only: policy adaptation and shared TCP
-admission with failing tests first. The original design boundary below remains
-historical; it does not prohibit that separately authorized implementation.
+T2c1 policy adaptation and shared TCP admission completed in PR 108, merge
+`92a845a`, with failing tests first, two clean reviews and all eight PR/post-merge
+checks green; see its [closeout](https://github.com/anvai-labs/agentbrowser/pull/108#issuecomment-5585656070).
+The owner subsequently prioritized local/intranet functional delivery and
+deferred T2c2/T2c3, browser enforcement and containment. Resume from the
+[local functional sequence](release-milestones.md#local-functional-pivot-priority-and-sequence),
+not the gateway units below. Existing code/safeguards remain; R4/T1 are not closed.
+
+The original M2 design boundary below remains historical:
 One documentation-only unit from develop. The owner reports the v1.8.5 Homebrew
 upgrade and service restart complete; this is not a new installed-server
 acceptance run. This document specifies future implementation, not passing
@@ -425,18 +431,23 @@ real sockets validate the behavior mocks cannot establish.
 
 ## G8: sequential implementation units after M2
 
+**Parked sequence, not the active plan.** T2c1 is complete; T2c2 and T2c3/M3
+are deferred by the 2026-09-08 owner pivot. The requirements below still apply
+if that work is explicitly resumed; they are not local-release prerequisites.
+
 | Later unit | Cohesive change | Exit | Release treatment |
 | --- | --- | --- | --- |
-| T2c1 | Destination-policy adaptation and joint ownership/admission, preserving downloads | Failing-before policy/ownership contracts and existing real download regressions pass; no listener | Internal prerequisite; no release solely for this unit |
-| T2c2 | Authenticated CONNECT parser/relay, credential registry and bounded cancellation | Real two-session TCP/TLS matrix, auth failures, revoke, backpressure and no origin credential leakage | Candidate only; no browser/containment claim |
-| T2c3 / M3 | Explicit opt-in lifecycle and supported synthetic-client delivery | Installable end-to-end workflow, honest capabilities, independent review and exact-head/post-merge CI | Consider minor release for the usable new public capability |
+| T2c1 — complete | Destination-policy adaptation and joint ownership/admission, preserving downloads | PR 108; independent reviews and eight PR/post-merge checks passed; no listener | Retained internal prerequisite; no release solely for this unit |
+| T2c2 — deferred | Authenticated CONNECT parser/relay, credential registry and bounded cancellation | Real two-session TCP/TLS matrix, auth failures, revoke, backpressure and no origin credential leakage | No candidate scheduled; no browser/containment claim |
+| T2c3 / M3 — deferred | Explicit opt-in lifecycle and supported synthetic-client delivery | Installable end-to-end workflow, honest capabilities, independent review and exact-head/post-merge CI | No gateway release scheduled |
 
 Do not stack all implementation branches now. If an ownership contract cannot
 be meaningfully exercised without its gateway consumer, combine the necessary
 code instead of shipping speculative exports. Each unit requires independent
 review and green CI before merge; revise scope together if evidence warrants.
 
-T1 inquiry remains separately blocked on support-channel access. No private
+Further T1 inquiry is now deferred as well; its prepared message remains unsent.
+No private
 Playwright patch, replacement engine, worker-topology experiment, host firewall
 change, CA installation or deployment follows implicitly. T3 waits for supported
 T1 evidence and T2c acceptance. T4 adds scoped Linux forced egress and the complete
@@ -480,7 +491,7 @@ version change or release. No unrelated worktree is changed by this unit.
 | C7: sparse port configuration / low | Validate every entry including array holes, bounded before copying | One failing-before sparse-array case, then fixed |
 | C8: suppressed abort notification / medium | Admission checks the signal's current aborted state as well as its owned closed flag; retained reservations still drain normally | One failing-before suppressed-event case, then fixed; not a claim that hostile in-process code is contained |
 | C9: private authority ceilings / medium | Enforce 16 DNS answers and 10-second setup as maximum private configuration values; keep the existing defaults and independent overall download deadline | Two failing-before ceiling cases, then fixed |
-| C10: adversarial review and delivery | Independent policy and transport/lifecycle reviews, full workspace hooks, native Bun download smoke, exact-head eight-check PR CI and post-merge CI | Both independent code reviews clean; local workspace builds/tests and Bun smoke pass; commit/push hooks and CI/merge gates pending |
+| C10: adversarial review and delivery | Independent policy and transport/lifecycle reviews, full workspace hooks, native Bun download smoke, exact-head eight-check PR CI and post-merge CI | Complete in PR 108: both reviews clean; workspace builds/tests, Bun smoke and normal commit/push hooks pass; all eight PR and all eight post-merge checks green |
 
 The new mixed-consumer real fixture runs seven actual HTTP downloads and one
 raw TCP lease against independent accept/request counters. A ninth attempt
@@ -512,5 +523,10 @@ positive and abort controls pass. Existing environment/backend skips remain;
 these results are not all-browser or Node 22 CI evidence. Independent policy
 review reran all 149 policy tests; transport review separately reran focused
 authority/session and download regression suites. All 172 relative documentation
-links across 47 Markdown files pass. Versions remain 1.8.5. The exact final
-head still requires normal hooks and all eight PR and post-merge CI jobs.
+links across 47 Markdown files passed at implementation time. Versions remained
+1.8.5. Reviewed head `1199fa0` passed normal hooks and all eight
+[PR checks](https://github.com/anvai-labs/agentbrowser/actions/runs/34219078275).
+Merge `92a845a` has the identical tree and all eight
+[post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/34222956375)
+green. Its local/remote task branch was removed after verification; unrelated
+worktrees were preserved. This closes T2c1 only, not the deferred gateway.

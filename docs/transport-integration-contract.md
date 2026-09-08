@@ -1,15 +1,22 @@
 # Post-v1.8.4 transport milestones: integration contract for co-design
 
-Status: **T2a and T2b0-T2b2 shipped in v1.8.5; M2 complete; T2c1 in progress.**
+Status (2026-09-08): **T2a/T2b shipped; M2/T2c1 complete; further transport work deferred.**
 Current release baseline: `v1.8.5`, commit `b9ef2fd`; see the
 [verified delivery checkpoint](release-milestones.md#baseline-and-release-boundaries).
 The [M2 gateway design](session-gateway-m2-scope.md) merged in PR 103.
-T2c1 now implements policy/admission prerequisites; no CONNECT listener or
-upstream-supported browser API is selected.
+T2c1 completed in PR 108 with clean reviews and eight green PR/post-merge checks.
+No CONNECT listener or upstream-supported browser API is selected.
 T1/R4 remain open. The inquiry and T1d evidence below are historical decision
 artifacts, not authorization for another diagnostic experiment.
 
-## Recommendation
+The owner has pivoted to trusted local/intranet functional delivery. The
+[active release sequence](release-milestones.md#local-functional-pivot-priority-and-sequence)
+starts at L1, validating merged functional PRs 104-107. T2c2/T2c3, further T1
+inquiry/probes, T3 and T4 are parked until an explicit new decision. Existing
+network policy, access controls and resource bounds stay enabled; no containment
+claim is made. The recommendations below apply only if that program resumes.
+
+## Recommendation if resumed
 
 Seek a supported lifecycle integration with Playwright before committing to a
 private patch or replacement driver. Preserve the existing engine-neutral
@@ -108,16 +115,18 @@ Silence or an unsupported answer is not permission to maintain a private patch.
 
 ## Cohesive next milestones
 
-The owner approved T1 inquiry and T2a design work. Later implementation rows
-remain proposed review boundaries, not an approved fork or deployment plan.
+This is the **deferred transport sequence**, not the next active work. The owner
+previously approved T1 inquiry and T2a design work; the local-functional pivot
+supersedes that sequencing. Later rows remain review boundaries for a possible
+resumption, not an approved fork or deployment plan.
 Keep one active delivery branch and independently review each completed unit.
 
 | Unit | Proposed scope | Risk / effort | Exit and dependency |
 | --- | --- | --- | --- |
-| T1e | This integration contract and owner decision | High decision impact / small documentation unit | Inquiry authorized and prepared; sending awaits support-channel access. No maintained fork/patch approved; T1 remains open |
+| T1e | This integration contract and owner decision | High decision impact / small documentation unit | Deferred by owner pivot; prepared inquiry remains unsent (support access was unavailable). No maintained fork/patch approved; T1 remains open |
 | T2a | [Connection-authority design and test contract](connection-authority-design.md), grounded in the existing direct-download transport | High security risk / small-to-medium design unit | Complete, PR 91; T2b prerequisites also delivered |
 | T2b | Implement the approved connection primitive and regression fixtures | High / medium | T2b0-T2b2 complete, PRs 92-94, shipped v1.8.5; does not certify browser traffic |
-| T2c | Authenticated session gateway with bounded admission and revocation | High / large; three sequential units after design acceptance | [M2 design](session-gateway-m2-scope.md) complete in PR 103; T2c1 policy/admission in progress; CONNECT wire, credentials and gateway lifecycle remain T2c2/T2c3 |
+| T2c | Authenticated session gateway with bounded admission and revocation | High / large | [M2 design](session-gateway-m2-scope.md) and T2c1 complete, PRs 103/108; CONNECT wire, credentials and gateway lifecycle (T2c2/T2c3) deferred |
 | T1 implementation candidate | Supported lifecycle and semantic-gate prototype | High / unknown until a concrete supported seam exists | Requires T1e decision; full target/native-positive controls and pinned-browser evidence, not only worker pause timing |
 | T3 | Compose guarded Chromium and retire competing request owners for that mode | High / large | Blocked on passing T1 and T2; complete end-to-end matrix before availability |
 | T4 | Scoped Linux forced-egress profile | High / large | Required before contained release; actual DNS/UDP/loopback/proxy-bypass tests; separate deployment authorization |
@@ -144,7 +153,7 @@ be forwarded to the origin. T2a must settle these boundaries before extraction.
 
 | Path | Continuing obligation | Recommendation |
 | --- | --- | --- |
-| Supported upstream integration | Pin supported Playwright/browser versions; exercise lifecycle, native-semantics and egress matrix on every upgrade | Inquiry authorized; support-channel access pending. No delivery estimate until the seam is concrete |
+| Supported upstream integration | Pin supported Playwright/browser versions; exercise lifecycle, native-semantics and egress matrix on every upgrade | Further inquiry deferred by owner pivot; no supported seam or delivery estimate |
 | Private patch/fork | Own patch rebases, security update turnaround, distribution/provenance, compatibility matrix, rollback and a named maintainer | Not approved; return a concrete cost/ownership proposal before code or vendoring |
 | Replacement CDP engine | Own actions, refs, observations, downloads and every engine contract as well as transport | Not approved; a separate product/maintenance decision, not a fallback hidden in T1 |
 
