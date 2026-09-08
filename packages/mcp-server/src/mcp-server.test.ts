@@ -289,7 +289,13 @@ describe('AgentBrowser MCP server', () => {
       const act = response.result.tools.find((t: { name: string }) => t.name === 'browser_act');
 
       expect(act.inputSchema.properties.target.properties.ref.pattern).toBe('^e\\d+_\\d+$');
-      expect(JSON.stringify(act.inputSchema)).not.toMatch(/selector|xpath/i);
+      expect(JSON.stringify(act.inputSchema.properties.target)).not.toMatch(/selector|xpath/i);
+      expect(JSON.stringify(act.inputSchema)).not.toMatch(/xpath/i);
+      // F6: the ONE deliberate exception - selectorVisible is a wait poll,
+      // never a way to address an action target. Assert it stays confined
+      // to the wait/condition properties.
+      expect(act.inputSchema.properties.wait.properties.selector).toBeDefined();
+      expect(act.inputSchema.properties.target.properties.selector).toBeUndefined();
     });
   });
 

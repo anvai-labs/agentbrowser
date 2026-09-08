@@ -373,6 +373,9 @@ function buildTools(client: McpClient): ToolDefinition[] {
         'Elements are addressed by the ref from browser_observe, never by CSS selector or ' +
         'XPath. If the page changed since the observation, the action fails with ' +
         'STALE_TARGET: call browser_observe again and use the new refs; do not retry the old one. ' +
+        'Pass remap: true to opt into healing a replaced control: the stack re-observes, ' +
+        'matches the original element by role and name, and retries when exactly one ' +
+        'candidate survives; the response reports the ref span as remap {from, to}. ' +
         'When a targeted action times out (ACTION_TIMEOUT), the failure details name the ref, ' +
         'what element covers it (blockedBy) and a screenshot artifact id captured at the ' +
         'deadline, so one retry after observing is usually enough.',

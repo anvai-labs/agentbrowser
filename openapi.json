@@ -1725,12 +1725,39 @@
                           {
                             "const": "networkidle",
                             "type": "string"
+                          },
+                          {
+                            "const": "urlPattern",
+                            "type": "string"
+                          },
+                          {
+                            "const": "selectorVisible",
+                            "type": "string"
+                          },
+                          {
+                            "const": "minElements",
+                            "type": "string"
                           }
                         ]
                       },
                       "timeoutMs": {
                         "minimum": 0,
                         "maximum": 300000,
+                        "type": "integer"
+                      },
+                      "pattern": {
+                        "minLength": 1,
+                        "maxLength": 2048,
+                        "type": "string"
+                      },
+                      "selector": {
+                        "minLength": 1,
+                        "maxLength": 500,
+                        "type": "string"
+                      },
+                      "count": {
+                        "minimum": 1,
+                        "maximum": 10000,
                         "type": "integer"
                       }
                     }
@@ -1758,6 +1785,18 @@
                           {
                             "const": "networkidle",
                             "type": "string"
+                          },
+                          {
+                            "const": "urlPattern",
+                            "type": "string"
+                          },
+                          {
+                            "const": "selectorVisible",
+                            "type": "string"
+                          },
+                          {
+                            "const": "minElements",
+                            "type": "string"
                           }
                         ]
                       },
@@ -1765,8 +1804,26 @@
                         "minimum": 0,
                         "maximum": 300000,
                         "type": "integer"
+                      },
+                      "pattern": {
+                        "minLength": 1,
+                        "maxLength": 2048,
+                        "type": "string"
+                      },
+                      "selector": {
+                        "minLength": 1,
+                        "maxLength": 500,
+                        "type": "string"
+                      },
+                      "count": {
+                        "minimum": 1,
+                        "maximum": 10000,
+                        "type": "integer"
                       }
                     }
+                  },
+                  "remap": {
+                    "type": "boolean"
                   }
                 }
               }
@@ -4216,12 +4273,39 @@
                           {
                             "const": "settled",
                             "type": "string"
+                          },
+                          {
+                            "const": "urlPattern",
+                            "type": "string"
+                          },
+                          {
+                            "const": "selectorVisible",
+                            "type": "string"
+                          },
+                          {
+                            "const": "minElements",
+                            "type": "string"
                           }
                         ]
                       },
                       "timeoutMs": {
                         "minimum": 0,
                         "maximum": 300000,
+                        "type": "integer"
+                      },
+                      "pattern": {
+                        "minLength": 1,
+                        "maxLength": 2048,
+                        "type": "string"
+                      },
+                      "selector": {
+                        "minLength": 1,
+                        "maxLength": 500,
+                        "type": "string"
+                      },
+                      "count": {
+                        "minimum": 1,
+                        "maximum": 10000,
                         "type": "integer"
                       }
                     }
@@ -4332,12 +4416,39 @@
                   {
                     "const": "settled",
                     "type": "string"
+                  },
+                  {
+                    "const": "urlPattern",
+                    "type": "string"
+                  },
+                  {
+                    "const": "selectorVisible",
+                    "type": "string"
+                  },
+                  {
+                    "const": "minElements",
+                    "type": "string"
                   }
                 ]
               },
               "timeoutMs": {
                 "minimum": 0,
                 "maximum": 300000,
+                "type": "integer"
+              },
+              "pattern": {
+                "minLength": 1,
+                "maxLength": 2048,
+                "type": "string"
+              },
+              "selector": {
+                "minLength": 1,
+                "maxLength": 500,
+                "type": "string"
+              },
+              "count": {
+                "minimum": 1,
+                "maximum": 10000,
                 "type": "integer"
               }
             }

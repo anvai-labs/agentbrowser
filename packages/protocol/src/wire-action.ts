@@ -1,6 +1,6 @@
 /** Canonical flat /act vocabulary. Surfaces validate here, not by assertion. */
 import type { DeliveredWaitCondition, SelectAction, SupportedAction } from './types.js';
-import { ACTION_TYPE_LITERALS } from './schemas.js';
+import { ACTION_TYPE_LITERALS, DELIVERED_WAIT_TYPES } from './schemas.js';
 import { type Validated, validateAction, validatePlanStep } from './validators.js';
 
 type Flat<A> = A extends { type: infer T } ? Omit<A, 'type'> & { action: T } : never;
@@ -17,6 +17,15 @@ export type WireActionRequest = (
   approvalToken?: string;
   wait?: DeliveredWaitCondition;
 };
+
+/** F3: a /act batch envelope - bounded short sequence, not an unbounded plan. */
+export interface WireActionBatchRequest {
+  steps: WireActionRequest[];
+  observe?: 'after' | 'none';
+  wait?: DeliveredWaitCondition;
+}
+
+export const MAX_BATCH_STEPS = 20;
 
 /**
  * The engine-facing `type` key leaks into client code often enough that the
@@ -80,4 +89,77 @@ export function validateWireAction(body: unknown): Validated<WireActionRequest> 
     value: (alias ? alias.value : body) as WireActionRequest,
     ...(result.warnings ? { warnings: result.warnings } : {}),
   };
+}
+
+function isValidDeliveredWait(wait: unknown): boolean {
+  if (typeof wait !== 'object' || wait === null) return false;
+  const record = wait as Record<string, unknown>;
+  if (
+    typeof record.until !== 'string' ||
+    !(DELIVERED_WAIT_TYPES as readonly string[]).includes(record.until)
+  ) {
+    return false;
+  }
+  if (
+    record.timeoutMs !== undefined &&
+    (typeof record.timeoutMs !== 'number' ||
+      !Number.isInteger(record.timeoutMs) ||
+      record.timeoutMs < 0 ||
+      record.timeoutMs > 300000)
+  ) {
+    return false;
+  }
+  if (record.pattern !== undefined && typeof record.pattern !== 'string') return false;
+  if (record.selector !== undefined && typeof record.selector !== 'string') return false;
+  if (
+    record.count !== undefined &&
+    (typeof record.count !== 'number' || !Number.isInteger(record.count) || record.count < 1)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * F3: structural validation for the batch envelope. Every step must stand
+ * alone as a wire action; `action`/`type` alongside `steps` is an ambiguous
+ * envelope and rejected. The service still re-validates each step when it
+ * runs it - this gate exists to reject garbage with a 400 before anything
+ * executes.
+ */
+export function validateWireActionBatch(body: unknown): Validated<WireActionBatchRequest> {
+  const issues: Array<{ path: string; message: string }> = [];
+  const record = body as Record<string, unknown>;
+  if ('action' in record || 'type' in record) {
+    issues.push({
+      path: '/steps',
+      message: 'A batch envelope carries steps only; action/type is ambiguous here.',
+    });
+  }
+  if (!Array.isArray(record.steps)) {
+    issues.push({ path: '/steps', message: "Batch requires a 'steps' array." });
+  } else {
+    if (record.steps.length < 1 || record.steps.length > MAX_BATCH_STEPS) {
+      issues.push({
+        path: '/steps',
+        message: `Batch requires 1..${MAX_BATCH_STEPS} steps; got ${record.steps.length}.`,
+      });
+    }
+    for (const [index, step] of record.steps.entries()) {
+      const check = decodeWireAction(step);
+      if (!check.ok) {
+        for (const issue of check.issues) {
+          issues.push({ path: `/steps/${index}${issue.path}`, message: issue.message });
+        }
+      }
+    }
+  }
+  if (record.wait !== undefined && !isValidDeliveredWait(record.wait)) {
+    issues.push({ path: '/wait', message: 'Invalid delivered wait condition.' });
+  }
+  if (record.observe !== undefined && record.observe !== 'after' && record.observe !== 'none') {
+    issues.push({ path: '/observe', message: "observe must be 'after' or 'none'." });
+  }
+  if (issues.length > 0) return { ok: false, issues };
+  return { ok: true, value: body as WireActionBatchRequest };
 }

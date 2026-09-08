@@ -551,10 +551,24 @@ export interface WaitCondition {
   timeoutMs?: number;
 }
 
-export const DELIVERED_WAIT_TYPES = ['settled', 'domcontentloaded', 'load', 'networkidle'] as const;
+export const DELIVERED_WAIT_TYPES = [
+  'settled',
+  'domcontentloaded',
+  'load',
+  'networkidle',
+  'urlPattern',
+  'selectorVisible',
+  'minElements',
+] as const;
 export type DeliveredWaitCondition = {
   until: (typeof DELIVERED_WAIT_TYPES)[number];
   timeoutMs?: number;
+  /** urlPattern only: glob (wildcards) or a slash-delimited regex. */
+  pattern?: string;
+  /** selectorVisible only: CSS selector polled for visibility. */
+  selector?: string;
+  /** minElements only: minimum observed element count. */
+  count?: number;
 };
 
 /**
@@ -568,7 +582,10 @@ export type WaitType =
   | 'url'
   | 'text'
   | 'function'
-  | 'settled';
+  | 'settled'
+  | 'urlPattern'
+  | 'selectorVisible'
+  | 'minElements';
 
 /**
  * Observation request
@@ -600,6 +617,8 @@ export interface ActionResult {
   approvalDecision?: ApprovalDecision;
   observation?: PageState;
   artifacts?: ArtifactRef[];
+  /** Present only when the engine healed a replaced target (F2, opt-in). */
+  remap?: { from: string; to: string };
   error?: import('./errors').ApiErrorDetail;
 }
 

@@ -141,6 +141,10 @@ export class ActionExecutor {
         result.targetFingerprint = resolvedTarget.fingerprint;
       }
 
+      if (effect.remap !== undefined) {
+        result.remap = effect.remap;
+      }
+
       if (request.observeAfter) {
         result.observation = await this.observeAfter(request, context, effect, result.newRevision);
       }

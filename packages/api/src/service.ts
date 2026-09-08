@@ -122,6 +122,22 @@ export interface ServicePageView {
   title?: string;
 }
 
+/**
+ * A delivered wait condition (spec 11.1 + F6/F7). Which extra field is
+ * meaningful depends on `until`; the service validates that pairing before
+ * anything runs.
+ */
+export interface ServiceWaitCondition {
+  until: string;
+  timeoutMs?: number | undefined;
+  /** urlPattern: glob (wildcards) or a slash-delimited regex. */
+  pattern?: string | undefined;
+  /** selectorVisible: CSS selector polled for visibility. */
+  selector?: string | undefined;
+  /** minElements: minimum observed element count. */
+  count?: number | undefined;
+}
+
 export interface ServiceActRequest {
   action: string;
   target?: { ref: string } | undefined;
@@ -138,9 +154,11 @@ export interface ServiceActRequest {
   /** Prompt answer for acceptDialog. */
   promptText?: string | undefined;
   /** Post-action wait condition (spec 11.1). */
-  wait?: { until: string; timeoutMs?: number | undefined } | undefined;
+  wait?: ServiceWaitCondition | undefined;
   /** Wait-action condition (the `wait` ACTION; distinct from post-action wait). */
-  condition?: { until: string; timeoutMs?: number | undefined } | undefined;
+  condition?: ServiceWaitCondition | undefined;
+  /** F2: opt-in healing when the targeted control was replaced. */
+  remap?: boolean | undefined;
   /**
    * TD-BROWSER-8 Phase 2: wait (before this plan step runs) until an
    * element whose name contains this substring appears - for fields
@@ -149,6 +167,12 @@ export interface ServiceActRequest {
    */
   waitForLabel?: string | undefined;
   waitMs?: number | undefined;
+  /**
+   * F3: batch envelope - a bounded 1..20 step sequence run through
+   * executePlan's machinery. Exclusive with `action`; when present, act()
+   * dispatches to the batch path before anything reads `action`.
+   */
+  steps?: ServiceActRequest[] | undefined;
 }
 
 export interface ServiceActResult {
@@ -158,6 +182,30 @@ export interface ServiceActResult {
   observation?: PageState | undefined;
   /** Why the post-action wait completed (spec 11.1). */
   waitReason?: string | undefined;
+  /** Present only when the engine healed a replaced target (F2). */
+  remap?: { from: string; to: string } | undefined;
+}
+
+/** One step's outcome inside a batch (F3); failures are in-band. */
+export interface ServiceBatchStepResult {
+  step: number;
+  ok: boolean;
+  actionId?: string;
+  /** Present when this step was healed by the opt-in remap (F2). */
+  remap?: { from: string; to: string } | undefined;
+  error?: string;
+}
+
+export interface ServiceBatchActResult {
+  status: 'success' | 'failed';
+  completed: number;
+  results: ServiceBatchStepResult[];
+  oldRevision: number;
+  newRevision: number;
+  mode: 'stable' | 'verified';
+  waitReason?: string | undefined;
+  observation?: PageState | undefined;
+  error?: { code: string; message: string } | undefined;
 }
 
 export interface ServiceDependencies {
@@ -914,13 +962,25 @@ export class AgentBrowserService {
   ): Promise<{
     ok: boolean;
     completed: number;
-    results: Array<{ step: number; ok: boolean; actionId?: string; error?: string }>;
+    results: Array<{
+      step: number;
+      ok: boolean;
+      actionId?: string;
+      remap?: { from: string; to: string };
+      error?: string;
+    }>;
     mode: 'stable' | 'verified';
     /** Payload economics (pressure matrix row 4): the plan's cheap "final state" signal. */
     newRevision: number;
     error?: { code: string; message: string };
   }> {
-    const results: Array<{ step: number; ok: boolean; actionId?: string; error?: string }> = [];
+    const results: Array<{
+      step: number;
+      ok: boolean;
+      actionId?: string;
+      remap?: { from: string; to: string };
+      error?: string;
+    }> = [];
     const churnKey = this.churnKey(sessionId, pageId);
     const finalRevision = (): number => this.pages.get(pageId)?.revision ?? 0;
     for (const [index, step] of steps.entries()) {
@@ -954,10 +1014,29 @@ export class AgentBrowserService {
           };
         }
       }
+      if (step.steps !== undefined) {
+        // F3: batch envelopes are the /act surface's own shortcut - nesting
+        // one inside a plan (or a batch) would double-apply orchestration.
+        const message = "'steps' cannot be nested inside a plan step.";
+        results.push({ step: index, ok: false, error: message });
+        return {
+          ok: false,
+          completed: index,
+          results,
+          mode: this.churnMode(churnKey),
+          newRevision: finalRevision(),
+          error: { code: 'PLAN_STEP_FAILED', message },
+        };
+      }
       try {
-        const effect = await this.act(sessionId, pageId, effectiveStep);
+        const effect = (await this.act(sessionId, pageId, effectiveStep)) as ServiceActResult;
         this.decayChurn(churnKey);
-        results.push({ step: index, ok: true, actionId: effect.actionId });
+        results.push({
+          step: index,
+          ok: true,
+          actionId: effect.actionId,
+          ...(effect.remap !== undefined ? { remap: effect.remap } : {}),
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const ordinal = /(?:^|e\d+)_(\d+)$/.exec(effectiveStep.target?.ref ?? '')?.[1];
@@ -1035,15 +1114,20 @@ export class AgentBrowserService {
             // expectedRevision). A failure must surface as the plan
             // envelope, not as a thrown error escaping the catch.
             try {
-              const retry = await this.act(sessionId, pageId, {
+              const retry = (await this.act(sessionId, pageId, {
                 ...effectiveStep,
                 target: { ref: remapped },
-              });
+              })) as ServiceActResult;
               // Fix: the primary success path decays churn (below); the
               // remap-retry success path did not, so a plan of repeated
               // remapped steps never cooled back down out of VERIFIED mode.
               this.decayChurn(churnKey);
-              results.push({ step: index, ok: true, actionId: retry.actionId });
+              results.push({
+                step: index,
+                ok: true,
+                actionId: retry.actionId,
+                ...(retry.remap !== undefined ? { remap: retry.remap } : {}),
+              });
               continue;
             } catch (retryError) {
               const retryMessage =
@@ -1577,10 +1661,17 @@ export class AgentBrowserService {
     sessionId: string,
     pageId: string,
     request: ServiceActRequest
-  ): Promise<ServiceActResult> {
+  ): Promise<ServiceActResult | ServiceBatchActResult> {
     return this.traced('act', { sessionId, pageId, action: request.action }, async (span) => {
       const page = this.requirePage(sessionId, pageId);
       this.coordinator.updateActivity(sessionId);
+
+      // F3: the batch envelope dispatches before any single-action work -
+      // a batch body has no `action`, and the single-action gates below
+      // would misread it.
+      if (request.steps !== undefined) {
+        return await this.executeActBatch(sessionId, pageId, request);
+      }
 
       const ref = request.target?.ref;
       if (ref !== undefined) {
@@ -1627,21 +1718,16 @@ export class AgentBrowserService {
       }
 
       // Wait validation (spec 11.1): unknown conditions are rejected before
-      // anything runs; every wait carries a deadline.
+      // anything runs; every wait carries a deadline. F6/F7: the new
+      // conditions are checked for their required field pairing too.
       const DELIVERED_WAITS = new Set<string>(DELIVERED_WAIT_TYPES);
-      if (request.wait !== undefined && !DELIVERED_WAITS.has(request.wait.until)) {
-        throw new ServiceError(
-          'INVALID_REQUEST',
-          `Unknown wait condition '${request.wait.until}'. Supported: ${[...DELIVERED_WAITS].join(', ')}.`
-        );
+      if (request.wait !== undefined) {
+        this.validateWaitCondition(request.wait, DELIVERED_WAITS);
       }
       // The wait ACTION shares the delivered condition set (schema checks
       // the shape; this checks the semantics).
-      if (request.condition !== undefined && !DELIVERED_WAITS.has(request.condition.until)) {
-        throw new ServiceError(
-          'INVALID_REQUEST',
-          `Unknown wait condition '${request.condition.until}'. Supported: ${[...DELIVERED_WAITS].join(', ')}.`
-        );
+      if (request.condition !== undefined) {
+        this.validateWaitCondition(request.condition, DELIVERED_WAITS);
       }
 
       // ADR-015 B4b: construct-then-validate. The wire body is flat, so
@@ -1706,6 +1792,17 @@ export class AgentBrowserService {
             };
           }
         }
+        // F2: opt-in heal (raw-act parity with executePlan's self-heal). The
+        // executor refuses a stale target BEFORE the engine acts, so the
+        // engine-level remap inside act() is unreachable here - the heal has
+        // to live at this layer, where the refusal is already a result.
+        if (
+          actRequest.remap === true &&
+          ref !== undefined &&
+          (result.error.code === 'STALE_TARGET' || result.error.code === 'TARGET_NOT_FOUND')
+        ) {
+          return await this.remapAct(sessionId, pageId, actRequest, ref, result.error);
+        }
         throw this.redactedError(
           new ServiceError(
             result.error.code,
@@ -1724,7 +1821,11 @@ export class AgentBrowserService {
       // off the deterministic path - engines that need real settling take
       // an explicit wait.
       const waitReason =
-        request.wait !== undefined ? await this.waitFor(page.enginePage, request.wait) : 'settled';
+        request.wait !== undefined
+          ? await this.waitFor(page.enginePage, request.wait)
+          : request.action === 'wait' && request.condition !== undefined
+            ? await this.waitFor(page.enginePage, request.condition)
+            : 'settled';
 
       // A requested post-action observation goes through the service's own
       // observe(), so its refs are minted, mapped and immediately actionable.
@@ -1739,8 +1840,185 @@ export class AgentBrowserService {
         newRevision: result.newRevision,
         observation,
         waitReason,
+        ...(result.remap !== undefined ? { remap: result.remap } : {}),
       };
     });
+  }
+
+  /**
+   * F3: the `steps` batch path. Deliberately a thin adapter over
+   * executePlan - one implementation of sequencing, stop-on-first-error,
+   * churn gating and the bounded self-heal - with the batch envelope's
+   * own concerns (size limit, end-of-batch wait and observe) layered on
+   * top. A failed step never throws: it is reported in-band.
+   */
+  private async executeActBatch(
+    sessionId: string,
+    pageId: string,
+    request: ServiceActRequest
+  ): Promise<ServiceBatchActResult> {
+    const page = this.requirePage(sessionId, pageId);
+    const steps = request.steps;
+    if (!Array.isArray(steps) || steps.length < 1 || steps.length > 20) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `'steps' must be an array of 1..20 actions; got ${steps?.length ?? 'non-array'}.`,
+        false,
+        { count: Array.isArray(steps) ? steps.length : undefined }
+      );
+    }
+    if (request.wait !== undefined) {
+      this.validateWaitCondition(request.wait, new Set<string>(DELIVERED_WAIT_TYPES));
+    }
+
+    const oldRevision = page.revision;
+    const plan = await this.executePlan(sessionId, pageId, steps);
+
+    // The top-level wait and observe belong to the batch, not to any step:
+    // they run only when every step applied, so a failed batch reports its
+    // failure without post-action noise masking it.
+    let waitReason: string | undefined;
+    if (plan.ok && request.wait !== undefined) {
+      waitReason = await this.waitFor(page.enginePage, request.wait);
+    }
+    let observation: PageState | undefined;
+    if (plan.ok && request.observe === 'after') {
+      observation = await this.observe(sessionId, pageId, { mode: 'interactive' });
+    }
+
+    return {
+      status: plan.ok ? 'success' : 'failed',
+      completed: plan.completed,
+      results: plan.results,
+      oldRevision,
+      newRevision: observation?.revision ?? plan.newRevision,
+      mode: plan.mode,
+      ...(waitReason !== undefined ? { waitReason } : {}),
+      ...(observation !== undefined ? { observation } : {}),
+      ...(plan.error !== undefined ? { error: plan.error } : {}),
+    };
+  }
+
+  /**
+   * F2: the opt-in heal behind `remap: true`. Re-observes, matches the
+   * mint-time element by role + name (candidates arrive redacted from
+   * observe(), the history baseline does not - compare on the redacted
+   * form, or a label embedding a secret could never match itself), and
+   * retries once when exactly one candidate survives. Zero or several
+   * candidates refuse to guess with the candidate count in details; a
+   * retry that itself fails propagates that failure honestly.
+   */
+  private async remapAct(
+    sessionId: string,
+    pageId: string,
+    request: ServiceActRequest,
+    staleRef: string,
+    refusal: { code: ProtocolErrorCode; message: string }
+  ): Promise<ServiceActResult> {
+    const page = this.pages.get(pageId);
+    if (page === undefined) {
+      throw this.redactedError(new ServiceError(refusal.code, refusal.message));
+    }
+    // The observation the stale ref was minted from, via the ref's own
+    // revision prefix - lastObservation may have been replaced by a heal or
+    // observe-after since (same lookup executePlan's self-heal uses).
+    const refRevision = /(?:^|e)(\d+)_/.exec(staleRef)?.[1];
+    const baseline =
+      (refRevision !== undefined
+        ? page.history.get(Number.parseInt(refRevision, 10))?.byRef.get(staleRef)
+        : undefined) ?? page.lastObservation?.byRef.get(staleRef);
+    if (baseline === undefined) {
+      throw this.redactedError(new ServiceError(refusal.code, refusal.message));
+    }
+
+    const observed = await this.observe(sessionId, pageId, { mode: 'interactive' });
+    const redactedName = this.secretManager.redact(baseline.name ?? '');
+    const matches = observed.elements.filter(
+      (e) => e.role === baseline.role && e.name === redactedName
+    );
+    if (matches.length !== 1) {
+      throw this.redactedError(
+        new ServiceError(
+          'STALE_TARGET',
+          matches.length === 0
+            ? `Remap found no element matching role '${baseline.role}' and name '${redactedName}'; the control is gone.`
+            : `Remap found ${matches.length} candidates matching role '${baseline.role}' and name '${redactedName}'; refusing to guess.`,
+          true,
+          {
+            ref: staleRef,
+            revision: page.revision,
+            role: baseline.role,
+            name: redactedName,
+            candidates: matches.length,
+          }
+        )
+      );
+    }
+    const fresh = matches[0];
+    if (fresh === undefined) {
+      throw this.redactedError(new ServiceError(refusal.code, refusal.message));
+    }
+    // remap is stripped from the retry: one heal per action, and a retry
+    // failure surfaces instead of recursing. The retry is always the
+    // single-action variant - remapAct is unreachable from the batch path.
+    const retry = (await this.act(sessionId, pageId, {
+      ...request,
+      target: { ref: fresh.ref },
+      remap: undefined,
+    })) as ServiceActResult;
+    return { ...retry, remap: { from: staleRef, to: fresh.ref } };
+  }
+
+  /**
+   * Shape-and-pairing check for a delivered wait condition. The wire schema
+   * constrains field types; this catches semantic misses that the schema
+   * cannot express (minElements without count, urlPattern without a
+   * pattern) BEFORE any step runs - a mid-plan failure here would leave a
+   * half-applied batch behind.
+   */
+  private validateWaitCondition(wait: ServiceWaitCondition, delivered: Set<string>): void {
+    if (!delivered.has(wait.until)) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `Unknown wait condition '${wait.until}'. Supported: ${[...delivered].join(', ')}.`
+      );
+    }
+    if (wait.until === 'urlPattern' && typeof wait.pattern !== 'string') {
+      throw new ServiceError('INVALID_REQUEST', "Wait 'urlPattern' requires a string 'pattern'.");
+    }
+    if (wait.until === 'selectorVisible' && typeof wait.selector !== 'string') {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        "Wait 'selectorVisible' requires a string 'selector'."
+      );
+    }
+    if (
+      wait.until === 'minElements' &&
+      (typeof wait.count !== 'number' || !Number.isInteger(wait.count) || wait.count < 1)
+    ) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        "Wait 'minElements' requires an integer 'count' >= 1."
+      );
+    }
+  }
+
+  /** Glob (`*` = within one path segment, `**` = anything) or `/regex/`. */
+  private compileUrlPattern(pattern: string): RegExp {
+    const regexForm = /^\/(.*)\/([a-z]*)$/.exec(pattern);
+    if (regexForm) {
+      return new RegExp(regexForm[1] ?? '', regexForm[2] ?? '');
+    }
+    const source = pattern
+      .split('*')
+      .map((segment) => segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join(pattern.includes('**') ? '[\\s\\S]*' : '[^/]*');
+    return new RegExp(`^${source}$`);
+  }
+
+  /** Poll helper shared by the deadline-bounded F6/F7 conditions. */
+  private async pollInterval(ms = 150): Promise<void> {
+    await new Promise((wake) => setTimeout(wake, ms));
   }
 
   /**
@@ -1750,10 +2028,7 @@ export class AgentBrowserService {
    * immediately (an explicit, bounded best-effort - recorded in the
    * reason, never a silent hang).
    */
-  private async waitFor(
-    enginePage: EnginePage,
-    wait: { until: string; timeoutMs?: number | undefined }
-  ): Promise<string> {
+  private async waitFor(enginePage: EnginePage, wait: ServiceWaitCondition): Promise<string> {
     const deadlineMs = wait.timeoutMs ?? 5000;
 
     if (wait.until === 'settled') {
@@ -1794,6 +2069,77 @@ export class AgentBrowserService {
         }
       }
       return wait.until;
+    }
+
+    if (wait.until === 'urlPattern') {
+      const regex = this.compileUrlPattern(wait.pattern ?? '');
+      const start = Date.now();
+      let url = '';
+      for (;;) {
+        url = (await enginePage.getUrl?.()) ?? '';
+        if (regex.test(url)) {
+          return 'urlPattern';
+        }
+        if (Date.now() - start >= deadlineMs) {
+          throw new ServiceError(
+            'ACTION_TIMEOUT',
+            `Wait 'urlPattern' did not match within ${deadlineMs}ms.`,
+            true,
+            { until: 'urlPattern', timeoutMs: deadlineMs, url }
+          );
+        }
+        await this.pollInterval();
+      }
+    }
+
+    if (wait.until === 'selectorVisible') {
+      const selector = wait.selector ?? '';
+      const anyPage = enginePage as unknown as {
+        waitForSelector?: (selector: string, options: { timeoutMs?: number }) => Promise<void>;
+      };
+      if (typeof anyPage.waitForSelector !== 'function') {
+        throw new ServiceError(
+          'ENGINE_UNSUPPORTED',
+          'The active engine does not support selector waits.'
+        );
+      }
+      try {
+        await anyPage.waitForSelector(selector, { timeoutMs: deadlineMs });
+        return 'selectorVisible';
+      } catch {
+        throw new ServiceError(
+          'ACTION_TIMEOUT',
+          `Wait 'selectorVisible' did not complete within ${deadlineMs}ms.`,
+          true,
+          { until: 'selectorVisible', timeoutMs: deadlineMs, selector }
+        );
+      }
+    }
+
+    if (wait.until === 'minElements') {
+      const required = wait.count ?? 1;
+      const start = Date.now();
+      let observed = 0;
+      for (;;) {
+        try {
+          const raw = await enginePage.observe({ mode: 'interactive' });
+          observed = raw.elements.length;
+        } catch {
+          observed = 0;
+        }
+        if (observed >= required) {
+          return 'minElements';
+        }
+        if (Date.now() - start >= deadlineMs) {
+          throw new ServiceError(
+            'ACTION_TIMEOUT',
+            `Wait 'minElements' did not reach ${required} elements within ${deadlineMs}ms.`,
+            true,
+            { until: 'minElements', timeoutMs: deadlineMs, count: required, observed }
+          );
+        }
+        await this.pollInterval();
+      }
     }
 
     // Unknown conditions are validated before execution; unreachable.

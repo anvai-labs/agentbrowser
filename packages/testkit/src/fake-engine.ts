@@ -192,6 +192,8 @@ class FakePage implements EnginePage {
   private revision = 1;
   private elements: FakeElement[] = [];
   private elementByRef = new Map<string, FakeElement>();
+  /** Tombstones of elements dropped from the set, for F2 remap emulation. */
+  private removedByRef = new Map<string, { role: string; name: string }>();
   private closed = false;
   private crashed = false;
   private contentOverride: string | undefined;
@@ -427,6 +429,30 @@ class FakePage implements EnginePage {
     const actionId = `action-${Date.now()}`;
     const startTimestamp = new Date().toISOString();
     const oldRevision = this.revision;
+
+    // F2 remap emulation: a dead ref with remap opted in heals onto the
+    // single surviving element matching the dropped element's role+name.
+    const target = action.target as EngineTarget | undefined;
+    if (action.remap === true && target !== undefined && !this.elementByRef.has(target.ref)) {
+      const baseline = this.removedByRef.get(target.ref);
+      if (baseline === undefined) {
+        throw new Error('Element not found');
+      }
+      const candidates = this.elements.filter(
+        (e) => e.role === baseline.role && e.name === baseline.name
+      );
+      if (candidates.length !== 1) {
+        throw new Error(`Element not found: ${candidates.length} remap candidate(s)`);
+      }
+      const healed = candidates[0] as FakeElement;
+      const retried: Record<string, unknown> = {
+        ...(action as Record<string, unknown>),
+        target: { ref: healed.ref },
+      };
+      delete retried.remap;
+      const effect = await this.act(retried as EngineAction);
+      return { ...effect, remap: { from: target.ref, to: healed.ref } };
+    }
 
     // Process action
     switch (action.type) {
@@ -717,6 +743,38 @@ class FakePage implements EnginePage {
     this.pendingReveals.push({ matchName, elements, delayMs });
   }
 
+  private revealedSelectors = new Set<string>();
+
+  /**
+   * Test hook for the `selectorVisible` wait condition: `selector` becomes
+   * "visible" after `delayMs`. Emulated - a FakeElement has no CSS box - so
+   * waitForSelector polls this registry rather than the DOM.
+   */
+  revealSelector(selector: string, delayMs = 0): void {
+    if (delayMs <= 0) {
+      this.revealedSelectors.add(selector);
+      return;
+    }
+    setTimeout(() => this.revealedSelectors.add(selector), delayMs);
+  }
+
+  /** Emulated `selectorVisible` primitive: polls the revealSelector registry. */
+  async waitForSelector(selector: string, options: { timeoutMs?: number } = {}): Promise<void> {
+    const deadline = Date.now() + (options.timeoutMs ?? 5000);
+    for (;;) {
+      if (this.revealedSelectors.has(selector)) return;
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Timeout ${options.timeoutMs ?? 5000}ms exceeded waiting for selector '${selector}'`
+        );
+      }
+      await new Promise((wake) => setTimeout(wake, 25));
+    }
+  }
+
+  /** Emulated load-state wait: the fake page is always settled. */
+  async waitForLoadState(): Promise<void> {}
+
   /**
    * Replace the page's elements (test hook for injecting specific state,
    * including risk classification).
@@ -740,6 +798,11 @@ class FakePage implements EnginePage {
 
   /** Rebuild the ref->element index after this.elements is replaced. */
   private syncElementIndex(): void {
+    for (const [ref, element] of this.elementByRef) {
+      if (!this.elements.includes(element)) {
+        this.removedByRef.set(ref, { role: element.role, name: element.name });
+      }
+    }
     this.elementByRef.clear();
     for (const element of this.elements) {
       this.elementByRef.set(element.ref, element);
