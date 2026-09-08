@@ -1,32 +1,41 @@
 # Release milestones and acceptance gates
 
-Status: release acceptance in progress, updated 2026-09-07. The owner selected
-including snapshot resilience in the next release **after independent review
-and CI**. This record does not itself authorize a tag,
-publication, managed-service restart, or containment deployment.
+Status: **v1.8.5 publication and tap delivery verified; M2 design independently reviewed.**
+The owner reports the local Homebrew upgrade and service restart are complete.
+A full installed-server workflow was not supplied with that confirmation and
+is not inferred from it. M2 is a documentation-only unit, not authorization for
+a gateway listener, browser integration or containment deployment.
 
 ## Baseline and release boundaries
 
-Published baseline: `v1.8.4` on GitHub, npm and Homebrew. `develop` at
-`e38189c` contains T2b0–T2b2 ([PR 92](https://github.com/anvai-labs/agentbrowser/pull/92),
-[PR 93](https://github.com/anvai-labs/agentbrowser/pull/93),
-[PR 94](https://github.com/anvai-labs/agentbrowser/pull/94)). PR 94 received
-independent lifecycle and transport approval; all eight PR and
-[post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/34143841691)
-passed. Those changes are not yet released. Snapshot resilience merged in
-[PR 95](https://github.com/anvai-labs/agentbrowser/pull/95) at `9eeb624`, followed
-by page listing (PR 97) and the idle-timeout change (PR 96), bringing develop to
-`b754262`. [Release review](snapshot-release-review.md) found snapshot validation
-and timeout/test gaps. The independently reviewed correction merged in
-[PR 98](https://github.com/anvai-labs/agentbrowser/pull/98) at `0b65103`; all eight
-[post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/34160978203)
-passed. Version preparation subsequently merged in PR 100 at `ae5bcda`.
-Promotion [PR 99](https://github.com/anvai-labs/agentbrowser/pull/99) is held in
-draft until acceptance and upgrade documentation are complete. The owner retained
-1.8.5 after reviewing compatibility: this is an explicit versioning exception,
-not a universally drop-in or bug-fix-only SemVer patch. Custom-policy embedders
-must follow the [upgrade requirements](operations.md#upgrading-from-184-to-the-185-candidate).
-Review the additional integrated changes in the final release compatibility check.
+Published baseline: **v1.8.5**, exact release commit
+`b9ef2fde1ee8a3fcfc65ba9dd6cddaffa3ab337d`, with main/develop synchronized after
+[promotion PR 99](https://github.com/anvai-labs/agentbrowser/pull/99).
+T2b0-T2b2 (PRs 92-94), snapshot resilience/review corrections (PRs 95/98), idle
+timeout/page discovery (PRs 96/97), version preparation (PR 100), and adversarial
+release acceptance (PRs 101/102) are shipped. All eight
+[main checks](https://github.com/anvai-labs/agentbrowser/actions/runs/34172753251)
+and all twelve [release jobs](https://github.com/anvai-labs/agentbrowser/actions/runs/34176426799)
+passed. All fourteen downloaded assets matched published hashes; all four server
+archives stamped the exact clean release commit. Published Darwin ARM binaries
+and the exact npm MCP package each passed the six-group real-browser workflow.
+Registry integrity, signature and provenance attestation were verified.
+
+[Tap PR 30](https://github.com/anvai-labs/homebrew-tap/pull/30) updated all twelve
+references, passed two independent reviews and all three
+[PR](https://github.com/anvai-labs/homebrew-tap/actions/runs/34179182998) and
+[post-merge checks](https://github.com/anvai-labs/homebrew-tap/actions/runs/34181374079).
+Linux CI performed actual Homebrew installation and CLI/MCP tests. The
+[delivery closeout](https://github.com/anvai-labs/agentbrowser/pull/99#issuecomment-5578850103)
+records exact evidence and limitations. Temporary merged work and generated
+assets were removed, reclaiming approximately 1.05 GiB; reports and original
+server/npm archives were retained. The owner subsequently reported the local
+upgrade and restart complete; full installed-server workflow evidence remains
+unverified, not a blocker to independently scoped M2 design work.
+
+The owner retained 1.8.5 as an explicit versioning exception, not a universally
+drop-in or bug-fix-only SemVer patch. Custom-policy embedders must follow the
+[upgrade requirements](operations.md#upgrading-from-184-to-the-185-candidate).
 
 Ship a coherent, usable improvement, not an arbitrary number of PRs. Do not
 hold verified local-mode fixes for the gateway/containment program.
@@ -34,7 +43,7 @@ hold verified local-mode fixes for the gateway/containment program.
 | Milestone | Cohesive scope | Promotion / release condition | Version guidance |
 | --- | --- | --- | --- |
 | M1: local reliability checkpoint | T2b0–T2b2, reviewed snapshot resilience, packaged/installed acceptance checks | Snapshot and smoke units independently reviewed and merged; exact candidate and post-merge CI green; release gates below satisfied | Owner selected `v1.8.5` with explicit additive-API exception and custom-policy migration notice |
-| M2: gateway design checkpoint | T2c authentication, ownership, revocation, resource bounds and integration contract | Independently reviewed design with explicit failure/acceptance matrix | No release solely for a design document or unused internal primitive |
+| M2: gateway design checkpoint | [T2c authentication, ownership, revocation, resource bounds and integration contract](session-gateway-m2-scope.md) | G1-G8 resolved and independently reviewed; eight-check docs PR CI and merge pending before implementation | No release solely for a design document or unused internal primitive |
 | M3: usable opt-in gateway | Small end-to-end gateway capability with installation, lifecycle and cross-session tests | Supported consumer can install and exercise the capability; guarantees and limitations documented | Usually minor for a new public capability; otherwise wait for a usable slice |
 | M4: contained-browser checkpoint | Supported browser integration, gateway enforcement and OS-enforced gateway-only egress | T1–T4 acceptance passes, including worker/redirect/WS/WSS coverage and bypass controls; deployment approval obtained | Decide from actual public contract; never label an earlier milestone “contained” |
 
@@ -55,11 +64,11 @@ security scope; this document tracks release completion, not R4 closure.
 
 | Unit | Deliverable and acceptance | Dependency / current status |
 | --- | --- | --- |
-| S1: snapshot resilience | Failing-before/fixed-after real Playwright regressions, stable-ref/semantic-staleness safety and bounded timeout recovery; independent adversarial review, eight PR checks and post-merge CI | Complete: PR 98, `0b65103`, all eight post-merge checks green (linked above); local Obscura limitation retained in review record |
+| S1: snapshot resilience | Failing-before/fixed-after real Playwright regressions, stable-ref/semantic-staleness safety and bounded timeout recovery; independent adversarial review, eight PR checks and post-merge CI | Complete: PR 98, `0b65103`, all eight [post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/34160978203) green; shipped v1.8.5; local Obscura limitation retained |
 | S2a: executable acceptance | Shared exact-version CLI/MCP checks, supported protocol/catalog, bounded output/deadlines, validated shutdown, failure-path tests and publication dependency ordering | Complete: independently reviewed PR 101 merged at `c0c4ac4`; all eight PR and post-merge checks green |
-| S2b: packaged workflow acceptance | Extracted-package real-browser/download/snapshot workflow, stock default-deny control and pre-tag candidate packaging CI; explicit platform coverage and baseline limitations | Implemented on `ci/packaged-release-acceptance`; adversarial review and exact-head CI pending. Published/npm and installed verification remains S4, not pre-tag proof |
-| S3: release preparation | Version synchronization, compatibility/migration notes and operator documentation; exact candidate verification and develop-to-main promotion PR | PR 100 prepared 1.8.5 early; owner retained this label with explicit compatibility exceptions. Upgrade notes and corrected ten-minute help reviewed and merged in PR 101. PR 99 remains draft until candidate acceptance completes |
-| S4: consumer delivery | Verify published artifacts/npm, update all twelve Homebrew artifact references together, run tap CI and controlled installed-version smoke | After successful release gates; separate tap PR, then final evidence and merged-branch cleanup |
+| S2b: packaged workflow acceptance | Extracted-package real-browser/download/snapshot workflow, stock default-deny control and pre-tag candidate packaging CI; explicit platform coverage and baseline limitations | Complete: independently reviewed PR 102, all eight [PR](https://github.com/anvai-labs/agentbrowser/actions/runs/34166795074) and [post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/34171582012) green; shipped v1.8.5 |
+| S3: release preparation | Version synchronization, compatibility/migration notes and operator documentation; exact candidate verification and develop-to-main promotion PR | Complete: PRs 100/101/102 followed by promotion PR 99; main CI and release gates green; compatibility exception retained |
+| S4: consumer delivery | Verify published artifacts/npm, update all twelve Homebrew artifact references together, run tap CI and controlled installed-version smoke | Published/npm acceptance, tap PR/post-merge CI and cleanup complete; owner reports local upgrade/restart done; full installed-server workflow evidence not yet verified |
 
 Prefer one worktree sequentially; do not create another delivery stack. The
 merged snapshot and release-preparation worktrees were each removed after
@@ -70,7 +79,8 @@ Record review/CI URLs against each row as evidence becomes available.
 
 Independent review covers the executable harness separately from the integrated
 release contracts. Fixes require regression evidence and re-review; green CI
-does not waive a confirmed finding. No row below closes the S2b gate.
+does not waive a confirmed finding. RA1-RA8 close S2a; S2b has its separate
+PA1-PA10 review and completed CI evidence below.
 
 | ID | Finding / severity | Fix and acceptance | Status |
 | --- | --- | --- | --- |
@@ -100,8 +110,9 @@ a session index remains lower-priority debt, not a claim of indexed lookup.
 
 ## Packaged acceptance review ledger (S2b)
 
-These changes form one packaging/acceptance PR; none authorize publication.
-Implementation results remain provisional until independent re-review and CI.
+These changes formed packaging/acceptance PR 102. The table preserves historical
+implementation evidence; its intermediate pending labels are superseded by the
+final approval and completed PR/post-merge CI recorded here and in S2b above.
 
 | ID | Finding / severity | Fix and acceptance | Status |
 | --- | --- | --- | --- |
@@ -117,15 +128,17 @@ Implementation results remain provisional until independent re-review and CI.
 | PA10 | Operator guide claims CLI/SDK environment-variable behavior they do not implement / medium | Document explicit SDK `ClientOptions`; CLI URL uses `--base-url`, API key uses flag/env; MCP retains its environment contract | Documentation corrected; no additional runtime behavior introduced |
 
 Final independent S2b code review: **approved; no remaining confirmed blocking
-findings in PA1–PA10**. This supersedes the intermediate review labels above,
-not the pending exact-head PR/post-merge CI gates. Forty release/packaging/
+findings in PA1–PA10**. Exact-head PR and post-merge CI also passed (S2b links
+above), superseding all intermediate pending labels. Forty release/packaging/
 acceptance tests pass, as do two API policy tests, 41 CLI tests and 36 real-
 Chromium snapshot tests. The extracted Darwin ARM candidate passes all six
 workflow groups with Node 24.11.1 and qpdf 12.3.1; its dependency audit finds
 76 contained packages and 101 dependency edges. Native CLI and MCP report 1.8.5,
 the PDF parser reports one page, and API/fixture cleanup completed gracefully.
-The local archive was built from dirty work at base `c0c4ac4` and explicitly
-reports `releaseEvidence: false`; only fresh clean CI can supply that gate.
+The initial local archive was built from dirty work at base `c0c4ac4` and explicitly
+reports `releaseEvidence: false`; it was not release proof. Subsequent clean
+candidate CI, tagged release acceptance and downloaded-package validation
+passed; see the current release checkpoint above.
 The JSON report is retained at
 `/private/tmp/agentbrowser-s2b-v3.GfoHFV/acceptance.json` until evidence cleanup.
 

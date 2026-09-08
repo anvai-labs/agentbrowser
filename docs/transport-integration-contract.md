@@ -1,10 +1,12 @@
 # Post-v1.8.4 transport milestones: integration contract for co-design
 
-Status: **Owner authorized focused upstream inquiry and local T2a design work;
-no implementation or upstream-supported API selected.**
-Baseline: `v1.8.4`, commit `085b8e1`, with main CI and release publication green.
-The native/Brew release is shipped; T1/R4 remain open. This document supplies the
-decision artifact after T1d's stop condition, not another diagnostic experiment.
+Status: **T2a and T2b0-T2b2 shipped in v1.8.5; M2 design independently reviewed.**
+Current release baseline: `v1.8.5`, commit `b9ef2fd`; see the
+[verified delivery checkpoint](release-milestones.md#baseline-and-release-boundaries).
+The next documentation-only unit is the [M2 gateway design](session-gateway-m2-scope.md).
+No gateway implementation or upstream-supported browser API is selected.
+T1/R4 remain open. The inquiry and T1d evidence below are historical decision
+artifacts, not authorization for another diagnostic experiment.
 
 ## Recommendation
 
@@ -112,20 +114,21 @@ Keep one active delivery branch and independently review each completed unit.
 | Unit | Proposed scope | Risk / effort | Exit and dependency |
 | --- | --- | --- | --- |
 | T1e | This integration contract and owner decision | High decision impact / small documentation unit | Inquiry authorized and prepared; sending awaits support-channel access. No maintained fork/patch approved; T1 remains open |
-| T2a | [Connection-authority design and test contract](connection-authority-design.md), grounded in the existing direct-download transport | High security risk / small-to-medium design unit | Design prepared; identifies R14 canonical-address prerequisite and T2b0-T2b2 review boundaries; no public listener or production wiring |
-| T2b | Implement the approved connection primitive and regression fixtures | High / medium | Mixed DNS answers, rebinding, literals, wrong TLS identity and close-during-connect pass; preserve direct-download behavior; does not certify browser traffic |
-| T2c | Authenticated session gateway with bounded admission and revocation | High / large; may need smaller reviewed units | Reuses T2b; cross-session auth and live-tunnel revocation pass; no browser integration, deployment or containment claim |
+| T2a | [Connection-authority design and test contract](connection-authority-design.md), grounded in the existing direct-download transport | High security risk / small-to-medium design unit | Complete, PR 91; T2b prerequisites also delivered |
+| T2b | Implement the approved connection primitive and regression fixtures | High / medium | T2b0-T2b2 complete, PRs 92-94, shipped v1.8.5; does not certify browser traffic |
+| T2c | Authenticated session gateway with bounded admission and revocation | High / large; three sequential units after design acceptance | [M2 design](session-gateway-m2-scope.md) resolves G1-G8, independent review clean, docs CI/merge pending; implementation and cross-session/live-tunnel acceptance remain future work |
 | T1 implementation candidate | Supported lifecycle and semantic-gate prototype | High / unknown until a concrete supported seam exists | Requires T1e decision; full target/native-positive controls and pinned-browser evidence, not only worker pause timing |
 | T3 | Compose guarded Chromium and retire competing request owners for that mode | High / large | Blocked on passing T1 and T2; complete end-to-end matrix before availability |
 | T4 | Scoped Linux forced-egress profile | High / large | Required before contained release; actual DNS/UDP/loopback/proxy-bypass tests; separate deployment authorization |
 
-T2a starts from [download-transport.ts](../packages/api/src/download-transport.ts),
-not a speculative utility package. That caller currently owns redirect loops,
-DNS validation, pinned lookup, response decoding and buffering. Distinguish
-request semantics from lower-level connection authority before moving code.
-Keep `policy` free of sockets and concrete engines. Extract a shared transport
-package only when direct downloads and the gateway actually consume it; never
-make an engine import `api` to reuse the helper. Capability and error contracts
+T2a started from [download-transport.ts](../packages/api/src/download-transport.ts),
+not a speculative utility package. The shipped caller now delegates TCP
+authority while retaining redirects, HTTP/TLS semantics, response decoding
+and buffering. Preserve that separation when scoping the gateway consumer.
+Keep `policy` free of sockets and concrete engines. A same-runtime API gateway
+shares private transport modules in place; extract a package only with a real
+second package/runtime consumer. Never make an engine import `api` to reuse
+the helper. Capability and error contracts
 belong in `engine`/`protocol` only when their real consumers are identified.
 
 Separate TCP destination authority from TLS ownership: the direct HTTPS client
@@ -149,5 +152,6 @@ decision-changing hypothesis, fixed controls and stop condition before running.
 T2 completion cannot compensate for missing T1 browser semantics; an opaque
 CONNECT tunnel cannot inspect encrypted redirects, body sizes or WSS upgrades.
 The accepted ADR-008 network-isolation slice remains necessary for T4; full
-multi-tenant scheduling/resource isolation stays deferred. Native/Brew use and
-the published v1.8.4 limitations remain unchanged throughout.
+multi-tenant scheduling/resource isolation stays deferred. Native/Brew use
+remains supported; the open browser T1/R4 limitations are not closed by the
+direct-download improvements shipped in v1.8.5.
