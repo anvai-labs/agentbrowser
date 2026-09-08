@@ -24,23 +24,38 @@ validation record below. A checked status never means merely documented.
 
 ## Findings and acceptance criteria
 
-### Current baseline and next decision milestone
+### Current baseline and active priority
 
-Current release: **v1.8.5**, main/develop release commit `b9ef2fd`.
+Current release: **v1.8.5**, release/main commit `b9ef2fd`; develop has advanced.
 PRs 92-94 (R14/T2b0-T2b2) and release corrections are shipped; all eight main
 checks, twelve release jobs, and tap PR/post-merge CI passed. See the
 [delivery checkpoint](release-milestones.md#baseline-and-release-boundaries).
 The owner reports local Homebrew upgrade/restart complete; a full installed
 workflow is not inferred from that report. [M2 gateway design](session-gateway-m2-scope.md)
 is complete in PR 103 (two clean reviews, eight green PR checks, merge `46807ea`).
-The owner authorized T2c1 policy/admission implementation, now tracked in its
-[review ledger](session-gateway-m2-scope.md#t2c1-implementation-and-review-ledger).
-No CONNECT listener or containment is shipped; R4 remains open.
+T2c1 policy/admission completed in PR 108, merge `92a845a`: two clean independent
+reviews and all eight PR/post-merge checks passed; see the
+[closeout](https://github.com/anvai-labs/agentbrowser/pull/108#issuecomment-5585656070)
+and [review ledger](session-gateway-m2-scope.md#t2c1-implementation-and-review-ledger).
+Functional PRs 104-107 are also merged, through develop `763bfa7`, but unreleased.
+
+**Owner pivot, 2026-09-08:** local/intranet functional usage is the priority.
+Resume at L1 integrated functional acceptance in the
+[active sequence](release-milestones.md#local-functional-pivot-priority-and-sequence),
+then reproduced functional fixes if needed, release preparation and authorized
+delivery. Do not reimplement the merged functional units.
+
+T2c2/T2c3 gateway work, further T1 inquiry/probes, T3 browser enforcement and
+T4 containment are **deferred**, not prerequisites for local functional releases.
+Keep existing safeguards, bounds and download behavior; do not disable them or
+roll back T2c1. No CONNECT listener or containment is shipped; R4/T1 remain open
+limitations. Deferred work resumes only after a new explicit owner decision.
 
 #### Historical v1.8.4-to-v1.8.5 integration record
 
 The narrative below preserves sequencing evidence. Its former unreleased labels
-are superseded by the current v1.8.5 checkpoint above.
+are superseded by the current checkpoint above. Its next-work recommendations
+are historical and do not override the local-functional pivot.
 
 Fresh baseline: `v1.8.4`, with `main` and `develop` synchronized at `085b8e1`
 ([promotion PR 90](https://github.com/anvai-labs/agentbrowser/pull/90)). All eight
