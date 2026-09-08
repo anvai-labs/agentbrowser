@@ -12,6 +12,7 @@ import { InMemoryTracer, MetricsRegistry, type SecretManager } from '@agentbrows
 import type { StructuredLogger } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
 import {
+  DELIVERED_ACTION_TYPES,
   DELIVERED_EXTRACT_FORMATS,
   ErrorCode,
   validatePlanStep,
@@ -816,9 +817,13 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           if (!validated.ok) {
             throw new ServiceError('INVALID_REQUEST', 'Invalid action request', false, {
               issues: validated.issues,
+              validActions: [...DELIVERED_ACTION_TYPES].sort(),
             });
           }
           const result = await service.act(sessionId, pageId, validated.value);
+          if (validated.warnings?.length) {
+            return reply.send({ ...result, warnings: validated.warnings });
+          }
           return reply.send(result);
         })
       );

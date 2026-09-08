@@ -18,7 +18,9 @@ export interface ValidationIssue {
   message: string;
 }
 
-export type Validated<T> = { ok: true; value: T } | { ok: false; issues: ValidationIssue[] };
+export type Validated<T> =
+  | { ok: true; value: T; warnings?: string[] }
+  | { ok: false; issues: ValidationIssue[] };
 
 const sessionRequest = TypeCompiler.Compile(SessionRequestSchema);
 

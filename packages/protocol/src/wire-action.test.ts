@@ -22,6 +22,28 @@ describe('wire action contract', () => {
   ])('rejects invalid $action', (action) => {
     expect(validateWireAction(action).ok).toBe(false);
   });
+  it('accepts type as a deprecated alias for action', () => {
+    const result = decodeWireAction({ type: 'click', target: { ref: 'e1_0' } });
+    expect(result).toMatchObject({ ok: true, value: { type: 'click', target: { ref: 'e1_0' } } });
+    if (result.ok) {
+      expect(result.warnings).toEqual(["Field 'type' is deprecated; use 'action'."]);
+    }
+  });
+  it('accepts an untargeted type alias', () => {
+    const result = decodeWireAction({ type: 'reload' });
+    expect(result).toMatchObject({ ok: true, value: { type: 'reload' } });
+    if (result.ok) {
+      expect(result.warnings).toEqual(["Field 'type' is deprecated; use 'action'."]);
+    }
+  });
+  it('rejects type when action is also present', () => {
+    expect(decodeWireAction({ action: 'click', type: 'click', target: { ref: 'e1_0' } }).ok).toBe(
+      false
+    );
+  });
+  it('does not translate an unknown type value', () => {
+    expect(decodeWireAction({ type: 'detonate' }).ok).toBe(false);
+  });
   it('normalizes legacy select without leaking orchestration to the adapter', () => {
     expect(
       decodeWireAction({

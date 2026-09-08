@@ -487,6 +487,34 @@ describe('AgentBrowser REST API', () => {
       });
     });
 
+    it('enriches invalid action requests with the accepted vocabulary', async () => {
+      const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/act`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'yolo' }),
+      });
+
+      expect(response.status).toBe(400);
+      const data = await response.json();
+      expect(data.error.code).toBe('INVALID_REQUEST');
+      const validActions: string[] = data.error.details.validActions;
+      expect(validActions).toContain('click');
+      expect([...validActions].sort()).toEqual(validActions);
+    });
+
+    it('accepts a deprecated type alias and warns', async () => {
+      const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/act`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'reload' }),
+      });
+
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(data.status).toBe('success');
+      expect(data.warnings).toEqual(["Field 'type' is deprecated; use 'action'."]);
+    });
+
     it('should execute fill action', async () => {
       // First get an observation to find textbox refs
       const obsResponse = await fetch(
