@@ -26,6 +26,20 @@ validation record below. A checked status never means merely documented.
 
 ### Current baseline and next decision milestone
 
+Current release: **v1.8.5**, main/develop release commit `b9ef2fd`.
+PRs 92-94 (R14/T2b0-T2b2) and release corrections are shipped; all eight main
+checks, twelve release jobs, and tap PR/post-merge CI passed. See the
+[delivery checkpoint](release-milestones.md#baseline-and-release-boundaries).
+The owner reports local Homebrew upgrade/restart complete; a full installed
+workflow is not inferred from that report. Next: [M2 gateway design](session-gateway-m2-scope.md),
+one documentation-only unit with resolved, independently reviewed G1-G8 decisions,
+not runtime implementation. R4 remains open.
+
+#### Historical v1.8.4-to-v1.8.5 integration record
+
+The narrative below preserves sequencing evidence. Its former unreleased labels
+are superseded by the current v1.8.5 checkpoint above.
+
 Fresh baseline: `v1.8.4`, with `main` and `develop` synchronized at `085b8e1`
 ([promotion PR 90](https://github.com/anvai-labs/agentbrowser/pull/90)). All eight
 [main CI checks](https://github.com/anvai-labs/agentbrowser/actions/runs/34077686481)
@@ -56,9 +70,9 @@ private patch or fork still requires a separate decision.
 | T1d | Bounded sole-owner / competing-resumer comparison from T1c | Three arms, three repeats; native positive controls, all-owner command/target identity; stop without expanding if the T1b distinction is not reproduced | Merged in PR 88 and shipped in v1.8.4; independent review and all eight post-merge checks passed. Two 27-worker runs preserve controls but do not reproduce early execution; 79 offline tests pass. Stop condition reached; T1 remains open |
 | T1e | Supported integration contract and maintenance decision | Separate first-request admission, execution initialization and browser-semantic enforcement; no automatic probe expansion or private patch | Owner authorized focused inquiry. [Message prepared](playwright-integration-inquiry.md), not sent: upstream support requires Discord access unavailable here. No upstream-supported mechanism selected |
 | T2a | Connection-authority design and test contract | Ground extraction in the direct-download caller; define DNS/peer/TLS ownership, revocation, admission and failure tests | [Design independently reviewed](connection-authority-design.md) and merged in PR 91. Source review reproduced R14; no T1/R4 closure |
-| T2b0 | Canonical IP policy and resolver-record validation (R14) | Equivalent addresses obey configured rules; malformed or denied answer sets cause zero TCP accepts/HTTP requests; permitted local controls succeed | Merged in PR 92, unreleased; independent approval and all eight PR/post-merge checks green |
-| T2b1 | Private connection authority | Admission, revocation, DNS/peer identity and real HTTP/TLS acceptance contract | Merged in PR 93 with independent approvals, 55 deterministic/nine real-I/O cases, all eight PR and post-merge checks green; unreleased |
-| T2b2 | Direct-download and session integration | Use the primitive per session generation and one runtime budget; retain transfer/redirect/TLS semantics and owner-aware terminal diagnostics | Merged in PR 94 with independent approvals and all eight PR/post-merge checks green; unreleased |
+| T2b0 | Canonical IP policy and resolver-record validation (R14) | Equivalent addresses obey configured rules; malformed or denied answer sets cause zero TCP accepts/HTTP requests; permitted local controls succeed | Merged in PR 92, shipped v1.8.5; independent approval and all eight PR/post-merge checks green |
+| T2b1 | Private connection authority | Admission, revocation, DNS/peer identity and real HTTP/TLS acceptance contract | Merged in PR 93 with independent approvals, 55 deterministic/nine real-I/O cases, all eight PR and post-merge checks green; shipped v1.8.5 |
+| T2b2 | Direct-download and session integration | Use the primitive per session generation and one runtime budget; retain transfer/redirect/TLS semantics and owner-aware terminal diagnostics | Merged in PR 94 with independent approvals and all eight PR/post-merge checks green; shipped v1.8.5 |
 
 T2b2 cohesive implementation checklist (one PR, no release or gateway changes):
 
@@ -115,7 +129,7 @@ event, so it cannot establish race-free startup or all-target enforcement.
 | R11 | Safari transport and deployment contract; engine-safari, api | M | Unscoped execute URL; service rejects all Safari sessions as INTERNAL | Session-prefixed transport, lifecycle checks; explicit typed egress refusal and documented supported deployment; mock transport tests | Merged in F |
 | R12 | Retention/admission limits; api/service.ts, core/approval-gate.ts | M | Event count does not bound bytes; maxTokens=2 admits 3 pending tokens | Per-event and aggregate byte bounds, drop counters, hard token admission after cleanup; capacity tests | Merged in E |
 | R13 | Fragmented error taxonomy; engine, core, api, SDK | M | Error behavior varies by operation; SDK discards approval details | Typed adapter errors, shared normalization/recovery, full protocol error envelope; cross-operation error tests | Merged in B |
-| R14 | Resolved-address representation gaps; policy/network-policy.ts | H | Strict policy denied ordinary loopback but allowed mapped/expanded loopback and malformed address text; independently reproduced at policy level, not as an end-to-end network exploit | T2b0: fixed-size native IP range tables, strict literal validation, all-record transport validation; policy and real TCP/HTTP regressions | Merged in PR 92 with independent approval and green PR/post-merge CI; unreleased, not fixed by v1.8.4 |
+| R14 | Resolved-address representation gaps; policy/network-policy.ts | H | Strict policy denied ordinary loopback but allowed mapped/expanded loopback and malformed address text; independently reproduced at policy level, not as an end-to-end network exploit | T2b0: fixed-size native IP range tables, strict literal validation, all-record transport validation; policy and real TCP/HTTP regressions | Merged in PR 92 with independent approval and green PR/post-merge CI; shipped v1.8.5, not fixed by v1.8.4 |
 
 T2b0 validation: 38 of the initial 58 new policy cases failed before the fix.
 Independent review found a raw leading-zero dotted-quad fallthrough introduced
@@ -127,8 +141,9 @@ controls. The independent reviewer reran both suites and approved after the
 correction; Bun 1.4.0 built-policy compatibility controls also pass locally.
 The private classifier uses native `net.BlockList` identity comparisons
 rather than a second handwritten IP parser. These are address-policy and direct
-transport guarantees only; connection-peer verification, bounded authority
-admission/revocation, and browser T1/R4 remain separate unfinished work.
+transport guarantees only. Connection-peer verification and bounded authority
+admission/revocation subsequently shipped in T2b1/T2b2; browser T1/R4 remain
+separate unfinished work.
 
 ## Design decisions
 
