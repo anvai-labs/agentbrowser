@@ -8,9 +8,39 @@ import {
 import { NetworkPolicy } from '@agentbrowser/policy';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { describe, expect, it, vi } from 'vitest';
+import { ConnectionBudget } from './connection-authority.js';
 import { AgentBrowserService } from './service.js';
 
 describe('session-owned downloads', () => {
+  it('creates admission at the session root and closes it before engine teardown', async () => {
+    const coordinator = new SessionCoordinator({ cleanupCheckIntervalMs: 3_600_000 });
+    const createScope = vi.spyOn(ConnectionBudget.prototype, 'createSessionScope');
+    const service = new AgentBrowserService({
+      coordinator,
+      engine: new FakeEngine(),
+      networkPolicy: new NetworkPolicy(),
+      sweepIntervalMs: 0,
+    });
+    try {
+      const session = await service.createSession({ allowDownloads: true });
+      const context = coordinator.get(session.sessionId);
+      if (!context) throw new Error('Missing session context');
+      expect(createScope).toHaveBeenCalledWith(8, context.signal);
+      const scope = createScope.mock.results[0]?.value;
+      if (!scope) throw new Error('Missing session admission');
+      const close = context.engineSession.close.bind(context.engineSession);
+      vi.spyOn(context.engineSession, 'close').mockImplementation(async () => {
+        expect(() => scope.reserve()).toThrowError(
+          expect.objectContaining({ code: 'SESSION_NOT_FOUND' })
+        );
+        await close();
+      });
+      await service.closeSession(session.sessionId);
+    } finally {
+      await service.shutdown();
+      createScope.mockRestore();
+    }
+  });
   it('keeps navigation and downloads on the same old-versus-new policy generation', async () => {
     const base = new NetworkPolicy();
     const service = new AgentBrowserService({

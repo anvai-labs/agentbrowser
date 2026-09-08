@@ -11,7 +11,11 @@ import {
   type RequestPolicy,
   normalizeEngineError,
 } from '@agentbrowser/engine';
-import { ConnectionAuthority, ConnectionBudget } from './connection-authority.js';
+import {
+  ConnectionAuthority,
+  ConnectionBudget,
+  type SessionTcpAdmission,
+} from './connection-authority.js';
 
 export interface DownloadOptions {
   maxBytes: number;
@@ -55,6 +59,7 @@ export class DownloadBudget {
 interface TransportOwner {
   policy: RequestPolicy;
   budget: DownloadBudget;
+  admission?: SessionTcpAdmission;
   maxConnections?: number;
   signal?: AbortSignal;
   onOutcome?(outcome: DownloadOutcome): void;
@@ -107,7 +112,8 @@ export class DownloadTransport {
     this.authority = new ConnectionAuthority(
       {
         policy: this.policy,
-        budget: owner.budget.connections,
+        admission:
+          owner.admission ?? owner.budget.connections.createSessionScope(owner.maxConnections ?? 8),
         ...(owner.maxConnections !== undefined ? { maxConnections: owner.maxConnections } : {}),
       },
       dependencies.resolve ? { resolve: dependencies.resolve } : {}
@@ -227,6 +233,7 @@ export class DownloadTransport {
         stage = 'connect';
         const lease = await this.authority.connect(
           {
+            kind: 'request',
             url: current.href,
             hostname: current.hostname,
             port: Number(current.port || (current.protocol === 'https:' ? 443 : 80)),

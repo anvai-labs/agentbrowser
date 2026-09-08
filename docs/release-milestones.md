@@ -1,10 +1,11 @@
 # Release milestones and acceptance gates
 
-Status: **v1.8.5 publication and tap delivery verified; M2 design independently reviewed.**
+Status: **v1.8.5 delivered; M2 complete; T2c1 implementation in progress.**
 The owner reports the local Homebrew upgrade and service restart are complete.
 A full installed-server workflow was not supplied with that confirmation and
-is not inferred from it. M2 is a documentation-only unit, not authorization for
-a gateway listener, browser integration or containment deployment.
+is not inferred from it. M2 merged as a documentation-only unit. The owner
+subsequently authorized T2c1 policy/admission implementation, not a gateway
+listener, browser integration or containment deployment.
 
 ## Baseline and release boundaries
 
@@ -43,9 +44,14 @@ hold verified local-mode fixes for the gateway/containment program.
 | Milestone | Cohesive scope | Promotion / release condition | Version guidance |
 | --- | --- | --- | --- |
 | M1: local reliability checkpoint | T2b0–T2b2, reviewed snapshot resilience, packaged/installed acceptance checks | Snapshot and smoke units independently reviewed and merged; exact candidate and post-merge CI green; release gates below satisfied | Owner selected `v1.8.5` with explicit additive-API exception and custom-policy migration notice |
-| M2: gateway design checkpoint | [T2c authentication, ownership, revocation, resource bounds and integration contract](session-gateway-m2-scope.md) | G1-G8 resolved and independently reviewed; eight-check docs PR CI and merge pending before implementation | No release solely for a design document or unused internal primitive |
+| M2: gateway design checkpoint | [T2c authentication, ownership, revocation, resource bounds and integration contract](session-gateway-m2-scope.md) | Complete: [PR 103](https://github.com/anvai-labs/agentbrowser/pull/103), two clean independent reviews, eight green PR checks, merge `46807ea`; docs-only post-merge push skips CI by design | No release solely for a design document or unused internal primitive |
 | M3: usable opt-in gateway | Small end-to-end gateway capability with installation, lifecycle and cross-session tests | Supported consumer can install and exercise the capability; guarantees and limitations documented | Usually minor for a new public capability; otherwise wait for a usable slice |
 | M4: contained-browser checkpoint | Supported browser integration, gateway enforcement and OS-enforced gateway-only egress | T1–T4 acceptance passes, including worker/redirect/WS/WSS coverage and bypass controls; deployment approval obtained | Decide from actual public contract; never label an earlier milestone “contained” |
+
+Current M3 prerequisite: T2c1 destination-policy adaptation and joint TCP
+admission, tracked in the [implementation ledger](session-gateway-m2-scope.md#t2c1-implementation-and-review-ledger).
+This internal unit preserves downloads and requires independent review plus
+green PR/post-merge CI. It does not itself warrant a main promotion or release.
 
 Maintain lockstep first-party package versions using the existing root version
 and synchronization script. A patch is not automatic: review snapshot behavior
