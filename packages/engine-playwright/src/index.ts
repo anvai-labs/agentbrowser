@@ -76,6 +76,20 @@ function unquote(value: string): string {
   return match?.[1] !== undefined ? match[1] : trimmed;
 }
 
+/** Bound a diagnostic promise; Playwright evaluate has no timeout of its own. */
+async function withDeadline<T>(promise: Promise<T>, deadlineMs: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('deadline exceeded')), deadlineMs);
+    timer.unref();
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Canonical semantic fingerprint required by the engine contract:
  * `role_name_visible_X_enabled_Y[_value_Z]`.
@@ -1023,6 +1037,9 @@ class PlaywrightPage implements EnginePage {
     this.refStore.clear();
     let changed = previousCount > 0 && previousCount !== elements.length;
     const ordinals = new Map<string, number>();
+    // href capture is one round-trip per link; bound it so link-heavy pages
+    // cannot stretch an observation unboundedly.
+    let hrefCaptures = 0;
     try {
       for (const [index, element] of elements.entries()) {
         const ref = element.ref ?? `e${this.revision}_${index}`;
@@ -1057,9 +1074,10 @@ class PlaywrightPage implements EnginePage {
               changed = true;
             element.visible = await handle.isVisible();
             element.enabled = await handle.isEnabled();
-            if (element.role === 'link') {
+            if (element.role === 'link' && hrefCaptures < 50) {
               const href = await locator.getAttribute('href').catch(() => undefined);
               if (typeof href === 'string' && href !== '') {
+                hrefCaptures += 1;
                 element.href = href.slice(0, 2048);
                 if (href.length > 2048) {
                   element.hrefTruncated = true;
@@ -1342,7 +1360,11 @@ class PlaywrightPage implements EnginePage {
       const failure = normalizeEngineError(error);
       let details = failure.details;
       if (failure.code === 'ACTION_TIMEOUT' && action.target && details?.blockedBy === undefined) {
-        const blockedBy = await this.describeBlocker(action.target.ref).catch(() => undefined);
+        // A blocked main thread is a common CAUSE of the timeout we are
+        // describing; bound the diagnostic so it cannot outlive the error.
+        const blockedBy = await withDeadline(this.describeBlocker(action.target.ref), 2_000).catch(
+          () => undefined
+        );
         details = {
           ...details,
           ref: action.target.ref,

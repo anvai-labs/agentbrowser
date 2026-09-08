@@ -2005,8 +2005,16 @@ export class AgentBrowserService {
   ): Promise<string | undefined> {
     try {
       const page = this.requirePage(sessionId, pageId);
-      const captured = await page.enginePage.screenshot({ format: 'png' });
-      if (typeof captured.bytesBase64 !== 'string') {
+      // Diagnostics must never extend the failure they describe: bound the
+      // capture the same way the engine bounds its blocker probe.
+      const captured = await Promise.race([
+        page.enginePage.screenshot({ format: 'png' }),
+        new Promise<undefined>((resolve) => {
+          const timer = setTimeout(() => resolve(undefined), 2_000);
+          timer.unref();
+        }),
+      ]);
+      if (captured === undefined || typeof captured.bytesBase64 !== 'string') {
         return undefined;
       }
       const metadata = this.putArtifact(
