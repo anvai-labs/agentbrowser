@@ -12,6 +12,7 @@ import type {
   ElementTarget,
   EngineCapabilities,
   ObservationRequest,
+  OverlayBlocker,
   PageState,
   PdfRequest,
   ScreenshotRequest,
@@ -27,6 +28,7 @@ export type {
   ActionResult,
   ArtifactRef,
   ObservationRequest,
+  OverlayBlocker,
   ScreenshotRequest,
   PdfRequest,
 };
@@ -127,6 +129,8 @@ export interface RawPageState {
   status: 'loading' | 'interactive' | 'complete';
   content: string;
   elements: RawElement[];
+  /** Aggregated occluders, present only when the request included "overlays". */
+  overlays?: OverlayBlocker[];
   metadata?: Record<string, unknown>;
 }
 
@@ -153,6 +157,10 @@ export interface RawElement {
     | 'destructive';
   bounds?: ElementBounds;
   attributes?: Record<string, string>;
+  /** Link destination, captured at observation time on role:"link" elements. */
+  href?: string;
+  /** True when the captured href exceeded the 2048-char capture limit. */
+  hrefTruncated?: boolean;
 }
 
 /**

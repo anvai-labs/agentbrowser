@@ -92,6 +92,12 @@ export class ObservationNormalizer {
       }
     }
 
+    // Aggregated occluders (F5) are diagnostic metadata: pass through
+    // untouched and never derive from them.
+    if (rawState.overlays !== undefined) {
+      observation.overlays = rawState.overlays;
+    }
+
     // Add focusedRef only if there is a focused element
     const focusedRef = this.getFocusedRef(prioritizedElements);
     if (focusedRef !== undefined) {
@@ -137,6 +143,14 @@ export class ObservationNormalizer {
       // Add risk classification if present
       if (rawEl.risk !== undefined) {
         element.risk = rawEl.risk;
+      }
+
+      if (rawEl.href !== undefined) {
+        element.href = rawEl.href;
+      }
+
+      if (rawEl.hrefTruncated !== undefined) {
+        element.hrefTruncated = rawEl.hrefTruncated;
       }
 
       return element;

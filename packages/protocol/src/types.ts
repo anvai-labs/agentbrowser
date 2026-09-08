@@ -193,6 +193,8 @@ export interface PageState {
   elements: PageElement[];
   text?: string[];
   changes?: ElementChange[];
+  /** Present only when requested via include:["overlays"]. */
+  overlays?: OverlayBlocker[];
   truncated: boolean;
   untrustedContent: boolean;
   /**
@@ -229,6 +231,22 @@ export interface PageElement {
   enabled: boolean;
   focused?: boolean;
   risk?: ActionEffect;
+  /** Link destination, captured at observation time on role:"link" elements. */
+  href?: string;
+  /** True when the captured href exceeded the 2048-char capture limit. */
+  hrefTruncated?: boolean;
+}
+
+/**
+ * An element that intercepts pointer events over observed targets, aggregated
+ * across the examined elements (F5).
+ */
+export interface OverlayBlocker {
+  tag: string;
+  role?: string;
+  name?: string;
+  /** Number of examined elements this blocker was found over. */
+  covers: number;
 }
 
 /**
