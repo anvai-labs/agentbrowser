@@ -142,7 +142,29 @@ class FakeSession implements EngineSession {
     const page = new FakePage(pageId, this.options, pageOptions);
     this._pages.set(pageId, page);
     page.registerRemoval(() => this._pages.delete(pageId));
+    page.attachSession(this);
     return page;
+  }
+
+  /**
+   * Emulate window.open from `openerPageId`: create a popup page in this
+   * session and announce page.created on the opener's event stream.
+   */
+  async openPopup(openerPageId: string): Promise<FakePage> {
+    if (this.closed) {
+      throw new Error('Session is closed');
+    }
+    const opener = this._pages.get(openerPageId);
+    if (!opener) {
+      throw new Error(`Unknown opener page: ${openerPageId}`);
+    }
+    const popup = (await this.newPage()) as FakePage;
+    opener.emitEvent('page.created', {
+      openerPageId,
+      pageId: popup.id,
+      url: 'about:blank',
+    });
+    return popup;
   }
 
   async pages(): Promise<EnginePage[]> {
@@ -181,6 +203,8 @@ class FakeSession implements EngineSession {
 class FakePage implements EnginePage {
   readonly id: string;
   private removeSelf: () => void = () => {};
+  private ownerSession: FakeSession | undefined;
+  private destroyedAnnounced = false;
   private sessionOptions: EngineSessionOptions;
   private pageOptions: NewPageOptions | undefined;
   private currentUrl = 'about:blank';
@@ -210,6 +234,27 @@ class FakePage implements EnginePage {
   /** Test hook: simulate a renderer crash. All subsequent ops throw. */
   crash(): void {
     this.crashed = true;
+    this.emitEvent('page.crashed');
+  }
+
+  /** Set by the owning session so page-initiated popups can be created. */
+  attachSession(session: FakeSession): void {
+    this.ownerSession = session;
+  }
+
+  /**
+   * Test hook: emulate window.open from this page - the session gains a
+   * popup page and this (opener) page's stream announces page.created.
+   */
+  async openPopup(): Promise<FakePage> {
+    if (this.closed || this.crashed) {
+      throw new Error('Page closed');
+    }
+    const owner = this.ownerSession;
+    if (!owner) {
+      throw new Error('openPopup requires an owning session');
+    }
+    return owner.openPopup(this.id);
   }
 
   /** Test hook: pin the page's HTML content for extraction-style consumers. */
@@ -649,6 +694,10 @@ class FakePage implements EnginePage {
   }
 
   async close(): Promise<void> {
+    if (!this.destroyedAnnounced && !this.crashed) {
+      this.destroyedAnnounced = true;
+      this.emitEvent('page.destroyed', { reason: 'closed' });
+    }
     this.closed = true;
     this.eventsFinished = true;
     if (this.pendingDialog) {
@@ -735,11 +784,7 @@ class FakePage implements EnginePage {
    * service.ts observe()), so a caller-visible ref never equals the raw
    * ref this engine's click case receives.
    */
-  revealAfterClick(
-    matchName: string,
-    elements: Array<Partial<FakeElement>>,
-    delayMs = 100
-  ): void {
+  revealAfterClick(matchName: string, elements: Array<Partial<FakeElement>>, delayMs = 100): void {
     this.pendingReveals.push({ matchName, elements, delayMs });
   }
 

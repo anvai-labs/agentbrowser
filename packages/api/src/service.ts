@@ -120,6 +120,8 @@ export interface ServicePageView {
   /** Optional best-effort cached URL; may lag navigation and is not security evidence. */
   url?: string;
   title?: string;
+  /** Present on popup pages: the service page id of the window.open opener. */
+  openerPageId?: string;
 }
 
 /**
@@ -251,6 +253,8 @@ export interface ServiceDependencies {
 interface PageContext {
   sessionId: string;
   enginePage: EnginePage;
+  /** Service page id of the window.open opener, when adopted as a popup. */
+  openerPageId?: string;
   revision: number;
   /** The last observation handed to a client, in service revision space. */
   lastObservation?:
@@ -617,11 +621,65 @@ export class AgentBrowserService {
               }
             }
           }
+          if (stamped.type === 'page.created') {
+            await this.adoptPopup(sessionId, stamped.data).catch(() => {
+              // Adoption is best-effort; the popup stays engine-side only.
+            });
+          } else if (stamped.type === 'page.destroyed') {
+            this.reapPage(sessionId, pageId);
+          }
         }
+        // The iterator ended (page closed engine-side): drop the registry
+        // entry so listPages stops reporting a dead page id.
+        this.reapPage(sessionId, pageId);
       } catch {
         // The engine page went away; the pump simply ends.
       }
     })();
+  }
+
+  /**
+   * Adopt a page the engine created on its own (a popup): register it in
+   * service page space under its opener and start its event pump. The
+   * popup never round-trips through createPage; listPages is the client's
+   * discovery path to its id.
+   */
+  private async adoptPopup(sessionId: string, data: unknown): Promise<void> {
+    const openerEnginePageId = (data as { openerPageId?: unknown } | null)?.openerPageId;
+    if (typeof openerEnginePageId !== 'string') {
+      return;
+    }
+    const engineSession = this.requireSession(sessionId).engineSession;
+    const owned = [...this.pages.entries()].filter(([, page]) => page.sessionId === sessionId);
+    const known = new Set(owned.map(([, page]) => page.enginePage.id));
+    const opener = owned.find(([, page]) => page.enginePage.id === openerEnginePageId);
+    let popup: EnginePage | undefined;
+    try {
+      popup = (await engineSession.pages()).find((page) => !known.has(page.id));
+    } catch {
+      return; // The engine session is gone; nothing to adopt.
+    }
+    if (!popup) {
+      return;
+    }
+    const popupPageId = `pg_${++this.pageCounter}_${popup.id}`;
+    this.pages.set(popupPageId, {
+      sessionId,
+      enginePage: popup,
+      revision: 1,
+      history: new Map(),
+      ...(opener !== undefined ? { openerPageId: opener[0] } : {}),
+    });
+    this.pumpEvents(sessionId, popupPageId, popup);
+  }
+
+  /** Drop a page's registry and churn state (page.destroyed or pump end). */
+  private reapPage(sessionId: string, pageId: string): void {
+    const page = this.pages.get(pageId);
+    if (page?.sessionId === sessionId) {
+      this.pages.delete(pageId);
+    }
+    this.churn.delete(this.churnKey(sessionId, pageId));
   }
 
   private isCrash(error: unknown): boolean {
@@ -917,10 +975,12 @@ export class AgentBrowserService {
           sessionId,
         }
       );
+      const inline = this.inlineFor(Buffer.from(html, 'utf8').toString('base64'), html.length);
       return {
         ...metadata,
         description:
           'Raw page HTML; NOT secret-redacted - values typed into forms are captured verbatim.',
+        ...(inline !== undefined ? { inline } : {}),
       };
     });
   }
@@ -1327,7 +1387,12 @@ export class AgentBrowserService {
     if (!page || page.sessionId !== sessionId) {
       return undefined;
     }
-    return { pageId, sessionId, status: 'active' };
+    return {
+      pageId,
+      sessionId,
+      status: 'active',
+      ...(page.openerPageId !== undefined ? { openerPageId: page.openerPageId } : {}),
+    };
   }
 
   /**
@@ -1355,6 +1420,7 @@ export class AgentBrowserService {
           sessionId,
           status: 'active',
           ...(url !== undefined ? { url } : {}),
+          ...(page.openerPageId !== undefined ? { openerPageId: page.openerPageId } : {}),
         })
       );
     }
@@ -2224,9 +2290,17 @@ export class AgentBrowserService {
         );
       }
       const bytes = Buffer.from(captured.bytesBase64, 'base64');
-      return this.putArtifact(sessionId, 'pdf', 'application/pdf', new Uint8Array(bytes), {
+      const metadata = this.putArtifact(
         sessionId,
-      });
+        'pdf',
+        'application/pdf',
+        new Uint8Array(bytes),
+        {
+          sessionId,
+        }
+      );
+      const inline = this.inlineFor(captured.bytesBase64, bytes.byteLength);
+      return { ...metadata, ...(inline !== undefined ? { inline } : {}) };
     });
   }
 
@@ -2515,6 +2589,32 @@ export class AgentBrowserService {
 
   // ---- screenshots --------------------------------------------------------
 
+  /**
+   * F8: transport economics - small evidence rides the response body so a
+   * screenshot/pdf/html round trip is one call, not capture + fetch. The
+   * artifact is registered either way; the threshold only decides whether
+   * the bytes ALSO travel inline. Env knob follows the snapshot-evidence
+   * pattern: invalid or negative values fall back to the default, large
+   * values clamp at the artifact store's own 10MiB ceiling.
+   */
+  private inlineArtifactMaxBytes(): number {
+    const DEFAULT = 262144;
+    const CEILING = 10 * 1024 * 1024;
+    const raw = process.env.AGENTBROWSER_INLINE_ARTIFACT_MAX_BYTES;
+    if (raw === undefined || raw.trim() === '') return DEFAULT;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT;
+    return Math.min(parsed, CEILING);
+  }
+
+  private inlineFor(
+    base64: string,
+    byteSize: number
+  ): { contentBase64: string; byteSize: number } | undefined {
+    if (byteSize > this.inlineArtifactMaxBytes()) return undefined;
+    return { contentBase64: base64, byteSize };
+  }
+
   async screenshot(
     sessionId: string,
     pageId: string,
@@ -2583,7 +2683,12 @@ export class AgentBrowserService {
           sessionId,
         }
       );
-      return warnings.length > 0 ? { ...metadata, warnings } : metadata;
+      const inline = this.inlineFor(captured.bytesBase64, bytes.byteLength);
+      return {
+        ...metadata,
+        ...(warnings.length > 0 ? { warnings } : {}),
+        ...(inline !== undefined ? { inline } : {}),
+      };
     });
   }
 

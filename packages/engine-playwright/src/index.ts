@@ -646,6 +646,12 @@ class PlaywrightSession implements EngineSession {
     this.engine = engine;
     this.ownedBrowser = ownedBrowser;
     this.requestSink = requestSink;
+    // F10: pages the browser opens on its own (window.open) still belong to
+    // this session; pages opened via newPage() have no opener and are
+    // skipped inside the handler.
+    this.context.on('page', (page) => {
+      void this.adoptPopupPage(page);
+    });
     if (requestSink !== undefined) {
       requestSink.emit = (event) => {
         const page = this.pageForPlaywrightPage(event.playwrightPage);
@@ -672,15 +678,50 @@ class PlaywrightSession implements EngineSession {
     return undefined;
   }
 
+  /**
+   * F10: adopt a page the browser created on its own (window.open). Pages
+   * opened via newPage() have no opener and are skipped, so this listener
+   * can sit on the context for the session's lifetime. The opener's event
+   * stream announces page.created with engine page ids; the service adopts
+   * from there.
+   */
+  private async adoptPopupPage(playwrightPage: Page): Promise<void> {
+    if (this.closed) {
+      return;
+    }
+    try {
+      const opener = await playwrightPage.opener();
+      if (opener === null) {
+        return;
+      }
+      const popup = await this.registerPlaywrightPage(playwrightPage);
+      const openerPage = this.pageForPlaywrightPage(opener);
+      openerPage?.emitExternalEvent({
+        type: 'page.created',
+        timestamp: new Date().toISOString(),
+        sessionId: this.id,
+        pageId: popup.id,
+        data: { openerPageId: openerPage.id, pageId: popup.id, url: playwrightPage.url() },
+      });
+    } catch {
+      // Adoption is best-effort; an unadoptable popup stays browser-side.
+    }
+  }
+
   async newPage(options?: NewPageOptions): Promise<EnginePage> {
     if (this.closed) {
       throw new Error('Session is closed');
     }
-
     const playwrightPage = await this.context.newPage();
+    return this.registerPlaywrightPage(playwrightPage, options?.viewport);
+  }
 
-    if (options?.viewport) {
-      await playwrightPage.setViewportSize(options.viewport);
+  private async registerPlaywrightPage(
+    playwrightPage: Page,
+    viewport?: NewPageOptions['viewport']
+  ): Promise<PlaywrightPage> {
+    if (viewport) {
+      await playwrightPage.setViewportSize(viewport);
     }
 
     const pageId = `page-${this.pageCounter++}`;
@@ -838,6 +879,7 @@ class PlaywrightPage implements EnginePage {
   private onPageDialog: (dialog: import('playwright').Dialog) => void = () => {};
   private onPageLoad: () => void = () => {};
   private onPageConsole: (msg: import('playwright').ConsoleMessage) => void = () => {};
+  private onPageCrashed: () => void = () => {};
 
   /** Registered by the owning session so close() removes it from the map. */
   registerRemoval(remove: () => void): void {
@@ -879,6 +921,18 @@ class PlaywrightPage implements EnginePage {
       }
     };
     this.page.on('close', this.onPageClose);
+
+    // F10: a renderer crash reaches subscribers as the declared-but-never-
+    // emitted page.crashed event; the service records it in the replay.
+    this.onPageCrashed = () => {
+      this.enqueueEvent({
+        type: 'page.crashed',
+        timestamp: new Date().toISOString(),
+        sessionId: 'unknown',
+        pageId: this.id,
+      });
+    };
+    this.page.on('crash', this.onPageCrashed);
 
     this.onPageDialog = (dialog) => {
       // Hold the dialog so an agent can accept or dismiss it; settle it
@@ -1883,6 +1937,7 @@ class PlaywrightPage implements EnginePage {
     this.page.off('dialog', this.onPageDialog);
     this.page.off('load', this.onPageLoad);
     this.page.off('console', this.onPageConsole);
+    this.page.off('crash', this.onPageCrashed);
     await this.page.close();
   }
 }
