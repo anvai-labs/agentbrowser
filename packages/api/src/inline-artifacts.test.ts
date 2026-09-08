@@ -15,7 +15,7 @@ async function setup() {
   const session = await service.createSession({ tenantId: 't1' });
   const pageId = (await service.createPage(session.sessionId)).pageId;
   await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
-  return { service, session, pageId };
+  return { engine, service, session, pageId };
 }
 
 afterEach(() => {
@@ -104,5 +104,22 @@ describe('inline artifact payloads (F8)', () => {
     const inline = (html as { inline?: { contentBase64: string; byteSize: number } }).inline;
     expect(inline).toBeDefined();
     expect(Buffer.from(inline?.contentBase64 ?? '', 'base64').toString('utf8')).toContain('<');
+  });
+
+  it('reports html inline byteSize as the UTF-8 byte count, not the string length', async () => {
+    const { engine, service, session, pageId } = await setup();
+    const engineSessionId = engine.getSessionIds()[0];
+    const fakePage = engine.getFakePage(engineSessionId as string, pageId);
+    if (!fakePage) throw new Error('no fake page');
+    // Multi-byte characters make UTF-8 byte length diverge from the JS
+    // string length (UTF-16 code units); each 'é' is 1 code unit, 2 bytes.
+    fakePage.setContent('<html><body>café — naïve</body></html>');
+
+    const html = await service.exportHtml(session.sessionId, pageId);
+    const inline = (html as { inline?: { contentBase64: string; byteSize: number } }).inline;
+    expect(inline).toBeDefined();
+    const decoded = Buffer.from(inline?.contentBase64 ?? '', 'base64');
+    expect(inline?.byteSize).toBe(decoded.byteLength);
+    expect(inline?.byteSize).not.toBe(decoded.toString('utf8').length);
   });
 });

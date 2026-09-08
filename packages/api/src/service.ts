@@ -539,6 +539,18 @@ export class AgentBrowserService {
    */
   private readonly requestHistory = new Map<string, JsonLedger<EngineEvent>>();
   private static readonly REQUEST_HISTORY_LIMIT = 1000;
+  /**
+   * F10 guard: a page gone wild with window.open must not translate into
+   * unbounded service pages. Further popups are closed engine-side.
+   */
+  private static readonly MAX_POPUPS_PER_SESSION = 20;
+  /**
+   * F10 guard: adoption is async (it round-trips the engine's page list),
+   * so concurrent page.created events would otherwise race on the
+   * first-unknown-page selection. Chained per session, adoptions run in
+   * event order and observe each other's registrations.
+   */
+  private readonly adoptionChains = new Map<string, Promise<void>>();
 
   private recordEvent(sessionId: string, event: EngineEvent): boolean {
     const isRequest = event.type.startsWith('request.');
@@ -623,7 +635,7 @@ export class AgentBrowserService {
             }
           }
           if (stamped.type === 'page.created') {
-            await this.adoptPopup(sessionId, stamped.data).catch(() => {
+            this.adoptPopupSerialized(sessionId, stamped.data).catch(() => {
               // Adoption is best-effort; the popup stays engine-side only.
             });
           } else if (stamped.type === 'page.destroyed') {
@@ -636,9 +648,11 @@ export class AgentBrowserService {
       }
       // Real engines close pages without announcing it - the stream just
       // ends. Fan the declared page.destroyed so replay and WS clients see
-      // the same lifecycle for every engine. Skipped post-session-teardown
-      // so an abandoned pump cannot resurrect a deleted ledger.
-      if (!sawDestroyed && this.coordinator.get(sessionId) !== undefined) {
+      // the same lifecycle for every engine. Gated on an EXISTING ledger:
+      // recordEvent creates on demand, so a pump outliving its session
+      // (teardown or crash-recovery race) would otherwise resurrect a
+      // deleted ledger with a lone synthetic event.
+      if (!sawDestroyed && this.eventHistory.has(sessionId)) {
         const synthesized: EngineEvent = this.secretManager.redact({
           type: 'page.destroyed',
           timestamp: new Date().toISOString(),
@@ -671,22 +685,66 @@ export class AgentBrowserService {
    * popup never round-trips through createPage; listPages is the client's
    * discovery path to its id.
    */
+  /**
+   * Serialize a session's adoptions: each page.created is adopted after the
+   * previous one settles, in event order, so concurrent popups cannot race
+   * on the engine page list. Never throws; the pump keeps flowing.
+   */
+  private adoptPopupSerialized(sessionId: string, data: unknown): Promise<void> {
+    const previous = this.adoptionChains.get(sessionId) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(() => this.adoptPopup(sessionId, data))
+      .finally(() => {
+        if (this.adoptionChains.get(sessionId) === next) {
+          this.adoptionChains.delete(sessionId);
+        }
+      });
+    this.adoptionChains.set(sessionId, next);
+    return next;
+  }
+
   private async adoptPopup(sessionId: string, data: unknown): Promise<void> {
-    const openerEnginePageId = (data as { openerPageId?: unknown } | null)?.openerPageId;
-    if (typeof openerEnginePageId !== 'string') {
+    const payload = data as { openerPageId?: unknown; pageId?: unknown } | null;
+    const openerEnginePageId = payload?.openerPageId;
+    const popupEnginePageId = payload?.pageId;
+    if (typeof openerEnginePageId !== 'string' || typeof popupEnginePageId !== 'string') {
       return;
     }
-    const engineSession = this.requireSession(sessionId).engineSession;
     const owned = [...this.pages.entries()].filter(([, page]) => page.sessionId === sessionId);
-    const known = new Set(owned.map(([, page]) => page.enginePage.id));
     const opener = owned.find(([, page]) => page.enginePage.id === openerEnginePageId);
+    if (opener === undefined) {
+      return; // Opener already gone; nothing to attach the popup under.
+    }
+    // Idempotence: a replayed or raced page.created must not double-register.
+    if (owned.some(([, page]) => page.enginePage.id === popupEnginePageId)) {
+      return;
+    }
+    // Cap: runaway popup storms are closed engine-side, never adopted.
+    const popupCount = owned.filter(([, page]) => page.openerPageId !== undefined).length;
+    if (popupCount >= AgentBrowserService.MAX_POPUPS_PER_SESSION) {
+      this.metrics?.incrementCounter('popups_rejected_total', { sessionId });
+      this.logger?.warn('popup.cap-reached', {
+        sessionId,
+        cap: AgentBrowserService.MAX_POPUPS_PER_SESSION,
+      });
+      try {
+        const engineSession = this.requireSession(sessionId).engineSession;
+        const stray = (await engineSession.pages()).find((page) => page.id === popupEnginePageId);
+        await stray?.close();
+      } catch {
+        // Engine gone or close failed; nothing further to do.
+      }
+      return;
+    }
     let popup: EnginePage | undefined;
     try {
-      popup = (await engineSession.pages()).find((page) => !known.has(page.id));
+      const engineSession = this.requireSession(sessionId).engineSession;
+      popup = (await engineSession.pages()).find((page) => page.id === popupEnginePageId);
     } catch {
       return; // The engine session is gone; nothing to adopt.
     }
-    if (!popup) {
+    if (popup === undefined) {
       return;
     }
     const popupPageId = `pg_${++this.pageCounter}_${popup.id}`;
@@ -695,7 +753,7 @@ export class AgentBrowserService {
       enginePage: popup,
       revision: 1,
       history: new Map(),
-      ...(opener !== undefined ? { openerPageId: opener[0] } : {}),
+      openerPageId: opener[0],
     });
     this.pumpEvents(sessionId, popupPageId, popup);
   }
@@ -1002,7 +1060,11 @@ export class AgentBrowserService {
           sessionId,
         }
       );
-      const inline = this.inlineFor(Buffer.from(html, 'utf8').toString('base64'), html.length);
+      // byteSize must be the UTF-8 byte length (what contentBase64
+      // encodes), not the UTF-16 code-unit count of the JS string - the
+      // two diverge on every non-ASCII page.
+      const htmlBytes = Buffer.byteLength(html, 'utf8');
+      const inline = this.inlineFor(Buffer.from(html, 'utf8').toString('base64'), htmlBytes);
       return {
         ...metadata,
         description:

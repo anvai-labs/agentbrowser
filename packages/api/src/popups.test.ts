@@ -152,4 +152,70 @@ describe('popup lifecycle (F10)', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(service.getPage(session.sessionId, pageId)).toBeUndefined();
   });
+
+  it('adopts back-to-back popups without cross-wiring openers', async () => {
+    const { service, session, pageId, fakePage } = await setup();
+
+    const first = await fakePage.openPopup();
+    const second = await fakePage.openPopup();
+
+    const views = await waitFor(async () => {
+      const pages = await service.listPages(session.sessionId);
+      const adopted = pages.filter((p) => p.openerPageId === pageId);
+      return adopted.length === 2 ? adopted : undefined;
+    });
+    const registryIds = views.map((v) => v.pageId);
+    expect(new Set(registryIds).size).toBe(2);
+    // Each registry entry wraps exactly one of the two engine popups.
+    for (const popup of [first, second]) {
+      expect(registryIds.some((id) => typeof id === 'string' && id.endsWith(`_${popup.id}`))).toBe(
+        true
+      );
+    }
+  });
+
+  it('caps adopted popups per session and refuses the overflow', async () => {
+    const { service, session, pageId, fakePage } = await setup();
+
+    const popups: Awaited<ReturnType<typeof fakePage.openPopup>>[] = [];
+    for (let index = 0; index < 21; index += 1) {
+      popups.push(await fakePage.openPopup());
+    }
+
+    const adopted = await waitFor(async () => {
+      const pages = await service.listPages(session.sessionId);
+      const found = pages.filter((p) => p.openerPageId === pageId);
+      return found.length >= 20 ? found : undefined;
+    });
+    expect(adopted.length).toBe(20);
+    // Every page.created reached the replay; adoption (not the event) is capped.
+    const created = service.getSessionEvents(session.sessionId, 'page.created');
+    expect(created.length).toBe(21);
+    // The 21st popup was never registered.
+    const overflow = popups[20];
+    expect(overflow).toBeDefined();
+    const registryIds = (await service.listPages(session.sessionId)).map((p) => p.pageId);
+    expect(
+      registryIds.some((id) => typeof id === 'string' && id.endsWith(`_${overflow?.id}`))
+    ).toBe(false);
+  });
+
+  it('does not resurrect the event ledger when an abandoned pump ends after close', async () => {
+    const { service, session, pageId, fakePage } = await setup();
+
+    await fakePage.openPopup();
+    await waitFor(() =>
+      service
+        .listPages(session.sessionId)
+        .then((pages) => pages.find((p) => p.openerPageId === pageId))
+    );
+
+    await service.closeSession(session.sessionId);
+    // Abandoned pumps observe the closed iterators on their own tick; a
+    // synthetic page.destroyed must not recreate the deleted ledger
+    // (recordEvent creates on demand - the guard has to refuse).
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const ledgers = (service as unknown as { eventHistory: Map<string, unknown> }).eventHistory;
+    expect(ledgers.has(session.sessionId)).toBe(false);
+  });
 });
