@@ -1,6 +1,11 @@
 # M2 design: authenticated session gateway
 
-Status: **Independently reviewed design; exact-head docs PR CI and merge pending.**
+Status: **M2 complete in PR 103; T2c1 implementation and acceptance in progress.**
+The [M2 closeout](https://github.com/anvai-labs/agentbrowser/pull/103#issuecomment-5579683896)
+records both clean reviews, all eight PR checks, and merge `46807ea` to develop.
+The owner subsequently authorized T2c1 only: policy adaptation and shared TCP
+admission with failing tests first. The original design boundary below remains
+historical; it does not prohibit that separately authorized implementation.
 One documentation-only unit from develop. The owner reports the v1.8.5 Homebrew
 upgrade and service restart complete; this is not a new installed-server
 acceptance run. This document specifies future implementation, not passing
@@ -443,7 +448,7 @@ browser bypass matrix before a contained release.
 - [x] Independent final adversarial design reviews: authentication/policy and lifecycle/resources.
 - [x] Claimed guarantees mapped to required falsifying tests, owners and residuals in G7; tests not yet implemented.
 - [x] Documentation links pass; no runtime, manifest or lockfile changes.
-- [ ] Exact-head eight-check docs PR CI green, then merge to develop.
+- [x] Exact-head eight-check docs PR CI green, then merge to develop (PR 103).
 
 The earlier two independent scoping reviews were clean but did not approve
 this final contract or run implementation tests. Their refinements are retained:
@@ -456,4 +461,56 @@ generation records, and define idle progress by successful write callbacks.
 Validation: 170 relative links across 47 Markdown files pass, diff whitespace
 checks pass, and all first-party package versions remain 1.8.5. No implementation
 tests were run by the design reviewers. Exact-head CI and merge evidence belong
-on the PR; design approval alone does not mark M2 complete.
+on the PR; the linked closeout supersedes the pre-merge labels above.
+
+## T2c1 implementation and review ledger
+
+One cohesive implementation PR from merged develop. No credential registry,
+CONNECT listener/parser/relay, browser integration, new package, main promotion,
+version change or release. No unrelated worktree is changed by this unit.
+
+| Item | Fix shape and evidence | Status |
+| --- | --- | --- |
+| C1: immutable paired policy | Explicit gateway snapshot on existing policy classes; one shared host predicate; built-in config copied once; custom adapters required | Implemented; 24 initial failing-before policy cases, expanded review coverage below |
+| C2: fixed authorization modes | Private authority binds request or tunnel mode; discriminated destination rejects mismatch and URL-bearing tunnel input before admission; common DNS/literal-dial/peer/lease mechanics | Implemented; mixed-consumer and mode contract tests |
+| C3: joint session admission | Runtime budget creates an 8-slot session scope under the existing 32-slot TCP cap; authorities share it across generation replacement; release only after actual drain | Implemented; nine initial failing-before admission cases and cancellation regressions |
+| C4: download composition | Service creates the scope from the coordinator signal and injects it into downloads; keep separate transfer quotas and 30-second deadline | Implemented; two additional failing-before session/abort cases; existing real HTTP/TLS and callback-tail tests retained |
+| C5: custom adapter port bypass / high | Session composition independently validates and captures operator ports before invoking the custom provider; provider cannot widen them | Reproduced as allowed 8443 under operator [443], then fixed |
+| C6: malformed custom capability / medium | Validate coverage marker and complete request/destination/address gates; safe ENGINE_UNSUPPORTED before returning a composed pair | Four failing-before invalid-capability cases, then fixed |
+| C7: sparse port configuration / low | Validate every entry including array holes, bounded before copying | One failing-before sparse-array case, then fixed |
+| C8: suppressed abort notification / medium | Admission checks the signal's current aborted state as well as its owned closed flag; retained reservations still drain normally | One failing-before suppressed-event case, then fixed; not a claim that hostile in-process code is contained |
+| C9: private authority ceilings / medium | Enforce 16 DNS answers and 10-second setup as maximum private configuration values; keep the existing defaults and independent overall download deadline | Two failing-before ceiling cases, then fixed |
+| C10: adversarial review and delivery | Independent policy and transport/lifecycle reviews, full workspace hooks, native Bun download smoke, exact-head eight-check PR CI and post-merge CI | Both independent code reviews clean; local workspace builds/tests and Bun smoke pass; commit/push hooks and CI/merge gates pending |
+
+The new mixed-consumer real fixture runs seven actual HTTP downloads and one
+raw TCP lease against independent accept/request counters. A ninth attempt
+fails before policy/DNS; replacing only the tunnel authority preserves the
+seven download slots. This is a destination-authority fixture, **not CONNECT
+wire acceptance**. The first 36 new tests failed against absent T2c1 contracts;
+subsequent behavioral regressions were written and observed failing before their
+corrections. Local socket fixtures require loopback permission; an initial
+sandbox EPERM is environment failure, not passing or failing transport evidence.
+
+Implementation details relative to the conceptual interfaces: a TCP reservation
+is an idempotent release closure, preserving the existing budget convention;
+scope creation optionally binds the coordinator cancellation signal. No extra
+session index or strong retired-scope registry is introduced. The service creates
+download scopes now; M3 must retain/share the owner when adding a real gateway
+consumer, including sessions with downloads disabled. Gateway credential rotation,
+registration, full custom-provider publishing validation, wire deadlines and
+OS containment remain future acceptance, not certified by C1-C4.
+
+Custom gateway providers remain trusted extension code: their immutable closure
+semantics and conservative treatment of request-only restrictions are obligations,
+not properties TypeScript or Object.freeze can prove. Session composition checks
+the concrete adapter bundle and enforces its own host/port intersection. Direct
+download-only snapshots and service defaults remain unchanged.
+
+Local validation on Node 24.11.1: full workspace build/test pass, including
+149 policy tests (31 new gateway cases) and 421 API tests. Native Bun HTTP/HTTPS
+positive and abort controls pass. Existing environment/backend skips remain;
+these results are not all-browser or Node 22 CI evidence. Independent policy
+review reran all 149 policy tests; transport review separately reran focused
+authority/session and download regression suites. All 172 relative documentation
+links across 47 Markdown files pass. Versions remain 1.8.5. The exact final
+head still requires normal hooks and all eight PR and post-merge CI jobs.

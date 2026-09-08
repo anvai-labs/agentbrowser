@@ -1,10 +1,11 @@
 # Post-v1.8.4 transport milestones: integration contract for co-design
 
-Status: **T2a and T2b0-T2b2 shipped in v1.8.5; M2 design independently reviewed.**
+Status: **T2a and T2b0-T2b2 shipped in v1.8.5; M2 complete; T2c1 in progress.**
 Current release baseline: `v1.8.5`, commit `b9ef2fd`; see the
 [verified delivery checkpoint](release-milestones.md#baseline-and-release-boundaries).
-The next documentation-only unit is the [M2 gateway design](session-gateway-m2-scope.md).
-No gateway implementation or upstream-supported browser API is selected.
+The [M2 gateway design](session-gateway-m2-scope.md) merged in PR 103.
+T2c1 now implements policy/admission prerequisites; no CONNECT listener or
+upstream-supported browser API is selected.
 T1/R4 remain open. The inquiry and T1d evidence below are historical decision
 artifacts, not authorization for another diagnostic experiment.
 
@@ -116,7 +117,7 @@ Keep one active delivery branch and independently review each completed unit.
 | T1e | This integration contract and owner decision | High decision impact / small documentation unit | Inquiry authorized and prepared; sending awaits support-channel access. No maintained fork/patch approved; T1 remains open |
 | T2a | [Connection-authority design and test contract](connection-authority-design.md), grounded in the existing direct-download transport | High security risk / small-to-medium design unit | Complete, PR 91; T2b prerequisites also delivered |
 | T2b | Implement the approved connection primitive and regression fixtures | High / medium | T2b0-T2b2 complete, PRs 92-94, shipped v1.8.5; does not certify browser traffic |
-| T2c | Authenticated session gateway with bounded admission and revocation | High / large; three sequential units after design acceptance | [M2 design](session-gateway-m2-scope.md) resolves G1-G8, independent review clean, docs CI/merge pending; implementation and cross-session/live-tunnel acceptance remain future work |
+| T2c | Authenticated session gateway with bounded admission and revocation | High / large; three sequential units after design acceptance | [M2 design](session-gateway-m2-scope.md) complete in PR 103; T2c1 policy/admission in progress; CONNECT wire, credentials and gateway lifecycle remain T2c2/T2c3 |
 | T1 implementation candidate | Supported lifecycle and semantic-gate prototype | High / unknown until a concrete supported seam exists | Requires T1e decision; full target/native-positive controls and pinned-browser evidence, not only worker pause timing |
 | T3 | Compose guarded Chromium and retire competing request owners for that mode | High / large | Blocked on passing T1 and T2; complete end-to-end matrix before availability |
 | T4 | Scoped Linux forced-egress profile | High / large | Required before contained release; actual DNS/UDP/loopback/proxy-bypass tests; separate deployment authorization |

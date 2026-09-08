@@ -712,6 +712,7 @@ export class AgentBrowserService {
             {
               policy: sessionPolicy,
               budget: this.downloadBudget,
+              admission: this.downloadBudget.connections.createSessionScope(8, context.signal),
               signal: context.signal,
               onOutcome: (outcome) => {
                 const fields = this.secretManager.redact({

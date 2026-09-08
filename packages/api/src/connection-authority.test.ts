@@ -14,7 +14,12 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-const destination = { url: 'http://download.invalid/file', hostname: 'download.invalid', port: 80 };
+const destination = {
+  kind: 'request' as const,
+  url: 'http://download.invalid/file',
+  hostname: 'download.invalid',
+  port: 80,
+};
 const answer = { address: '127.0.0.1', family: 4 };
 const strict = () =>
   new NetworkPolicy({ blockLoopback: true, blockPrivateIPs: true, blockMetadata: true });
@@ -38,7 +43,11 @@ function harness(
   const resolve = vi.fn(options.resolve ?? (async () => [answer]));
   const budget = options.budget ?? new ConnectionBudget();
   const authority = new ConnectionAuthority(
-    { policy: options.policy ?? new NetworkPolicy(), budget, ...options },
+    {
+      policy: options.policy ?? new NetworkPolicy(),
+      admission: budget.createSessionScope(options.maxConnections ?? 8),
+      ...options,
+    },
     {
       resolve,
       createSocket: () => {
@@ -420,7 +429,9 @@ describe('connection authority destination, DNS and peer', () => {
     { url: 'http://127.0.0.1/', hostname: '[127.0.0.1]', port: 80 },
   ])('denies invalid destination before DNS: $url $hostname $port', async (input) => {
     const h = harness();
-    await expect(h.authority.connect(input, { deadline: deadline() })).rejects.toMatchObject({
+    await expect(
+      h.authority.connect({ ...input, kind: 'request' }, { deadline: deadline() })
+    ).rejects.toMatchObject({
       code: 'INVALID_REQUEST',
     });
     expect(h.resolve).not.toHaveBeenCalled();
@@ -467,7 +478,7 @@ describe('connection authority destination, DNS and peer', () => {
   it('skips DNS for literals, verifies equivalent mapped peers and dials once without fallback', async () => {
     const h = harness();
     const lease = await h.authority.connect(
-      { url: 'http://127.0.0.1/', hostname: '127.0.0.1', port: 80 },
+      { kind: 'request', url: 'http://127.0.0.1/', hostname: '127.0.0.1', port: 80 },
       { deadline: deadline() }
     );
     expect(h.resolve).not.toHaveBeenCalled();

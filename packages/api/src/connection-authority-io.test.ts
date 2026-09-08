@@ -51,12 +51,15 @@ async function listen(server: Server) {
 function authority() {
   const budget = new ConnectionBudget();
   const resolve = vi.fn(async () => [{ address: '127.0.0.1', family: 4 }]);
-  const authority = new ConnectionAuthority({ policy: new NetworkPolicy(), budget }, { resolve });
+  const authority = new ConnectionAuthority(
+    { policy: new NetworkPolicy(), admission: budget.createSessionScope() },
+    { resolve }
+  );
   return { authority, budget, resolve };
 }
 
 function destination(hostname: string, port: number, scheme = 'https') {
-  return { hostname, port, url: `${scheme}://${hostname}:${port}/file` };
+  return { kind: 'request' as const, hostname, port, url: `${scheme}://${hostname}:${port}/file` };
 }
 
 /** Test-only caller adapter. T2b2 must integrate and test this ownership itself. */
@@ -204,7 +207,10 @@ describe('connection authority real TCP/HTTP/TLS contract', () => {
     );
     const budget = new ConnectionBudget();
     const denied = new ConnectionAuthority(
-      { budget, policy: new NetworkPolicy({ blockLoopback: true }) },
+      {
+        admission: budget.createSessionScope(),
+        policy: new NetworkPolicy({ blockLoopback: true }),
+      },
       {
         resolve: async () => [
           { address: '127.0.0.1', family: 4 },

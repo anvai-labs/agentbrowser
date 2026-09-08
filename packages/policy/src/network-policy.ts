@@ -29,6 +29,22 @@ export interface NetworkRequest {
   timestamp?: number;
 }
 
+/** TCP-only authorization: never substitute a fabricated URL for a request. */
+export interface DestinationPolicy {
+  checkDestination(destination: Readonly<{ hostname: string; port: number }>): Promise<void>;
+  checkResolvedAddresses(addresses: readonly string[]): Promise<void>;
+}
+
+export interface GatewayPolicyOptions {
+  allowedPorts?: readonly number[];
+}
+
+export interface GatewayPolicySnapshot<T = NetworkPolicy> {
+  readonly requestPolicy: T;
+  readonly destinationPolicy: DestinationPolicy;
+  readonly coverage: 'tcp-destination-only';
+}
+
 export interface NetworkResponse {
   headers?: Record<string, string>;
 }
@@ -96,6 +112,11 @@ export class NetworkPolicy {
    */
   async checkRequest(request: NetworkRequest): Promise<void> {
     const { hostname } = request;
+    this.checkHostname(hostname);
+    if (this.options.enableLogging) this.logRequest({ ...request, action: 'allowed' });
+  }
+
+  private checkHostname(hostname: string): void {
     const address = classifyIPAddress(hostname);
     // Do not fall through as a DNS name after rejecting malformed IP syntax.
     // Raw dotted quads with leading zeroes are ambiguous; URL callers already
@@ -134,13 +155,6 @@ export class NetworkPolicy {
         false,
         { hostname, rule: 'blockMetadata' }
       );
-    }
-
-    if (this.options.enableLogging) {
-      this.logRequest({
-        ...request,
-        action: 'allowed',
-      });
     }
   }
 
@@ -320,6 +334,31 @@ export class NetworkPolicy {
     return snapshot;
   }
 
+  /** Explicit trusted opt-in; custom rules require their own conservative adapter. */
+  snapshotForGateway(options: GatewayPolicyOptions = {}): GatewayPolicySnapshot {
+    assertGatewayBuiltin(this, NetworkPolicy.prototype);
+    const allowedPorts = portGate(options.allowedPorts);
+    // Do not dispatch overridable snapshot/getConfig methods or infer that a
+    // download snapshot confers gateway capability. Both views share this copy.
+    const snapshot = new NetworkPolicy({ ...this.options, enableLogging: false, maxLogEntries: 1 });
+    Object.freeze(snapshot.options);
+    const checkHostname = snapshot.checkHostname.bind(snapshot);
+    const checkAddresses = snapshot.checkResolvedAddresses.bind(snapshot);
+    const destinationPolicy: DestinationPolicy = Object.freeze({
+      async checkDestination({ hostname, port }: Readonly<{ hostname: string; port: number }>) {
+        allowedPorts(port);
+        checkHostname(hostname.toLowerCase());
+      },
+      checkResolvedAddresses: (addresses: readonly string[]) => checkAddresses([...addresses]),
+    });
+    Object.freeze(snapshot);
+    return Object.freeze({
+      requestPolicy: snapshot,
+      destinationPolicy,
+      coverage: 'tcp-destination-only',
+    });
+  }
+
   /**
    * Update policy configuration
    */
@@ -350,16 +389,93 @@ export interface SessionHostRules {
  * runs. Satisfies the engine RequestPolicy port structurally.
  */
 export class SessionHostPolicy {
+  private readonly hosts: HostRules;
+
+  constructor(
+    private readonly base: NetworkPolicy,
+    rules: SessionHostRules
+  ) {
+    this.hosts = new HostRules(rules);
+  }
+
+  async checkResponse(response: { headers?: Record<string, string> }): Promise<void> {
+    await this.base.checkResponse({
+      ...(response.headers !== undefined ? { headers: response.headers } : {}),
+    });
+  }
+
+  async checkBodySize(bytes: number): Promise<void> {
+    await this.base.checkBodySize(bytes);
+  }
+  async checkRedirectChain(requests: RedirectRequest[]): Promise<void> {
+    await this.base.checkRedirectChain(requests);
+  }
+  async checkResolvedAddresses(addresses: string[]): Promise<void> {
+    await this.base.checkResolvedAddresses(addresses);
+  }
+
+  async checkRequest(request: { hostname: string; url?: string }): Promise<void> {
+    const hostname = request.hostname.toLowerCase();
+    this.hosts.check(hostname);
+    await this.base.checkRequest({
+      hostname,
+      ...(request.url !== undefined ? { url: request.url } : {}),
+    });
+  }
+
+  snapshotForGateway(options: GatewayPolicyOptions = {}): GatewayPolicySnapshot<SessionHostPolicy> {
+    assertGatewayBuiltin(this, SessionHostPolicy.prototype);
+    const allowedPorts = portGate(options.allowedPorts);
+    const pair = this.base.snapshotForGateway(options);
+    if (
+      pair?.coverage !== 'tcp-destination-only' ||
+      ![
+        'checkRequest',
+        'checkResolvedAddresses',
+        'checkResponse',
+        'checkBodySize',
+        'checkRedirectChain',
+      ].every((name) => typeof pair.requestPolicy?.[name as keyof NetworkPolicy] === 'function') ||
+      typeof pair.destinationPolicy?.checkDestination !== 'function' ||
+      typeof pair.destinationPolicy.checkResolvedAddresses !== 'function'
+    ) {
+      throw new NetworkPolicyError(
+        'ENGINE_UNSUPPORTED',
+        'Invalid immutable gateway policy capability'
+      );
+    }
+    const requestPolicy = new SessionHostPolicy(pair.requestPolicy, this.hosts.rules());
+    const checkDestination = pair.destinationPolicy.checkDestination.bind(pair.destinationPolicy);
+    const checkResolvedAddresses = pair.destinationPolicy.checkResolvedAddresses.bind(
+      pair.destinationPolicy
+    );
+    const hosts = this.hosts;
+    Object.freeze(requestPolicy);
+    return Object.freeze({
+      requestPolicy,
+      coverage: 'tcp-destination-only',
+      destinationPolicy: Object.freeze({
+        async checkDestination({ hostname, port }: Readonly<{ hostname: string; port: number }>) {
+          allowedPorts(port);
+          const normalized = hostname.toLowerCase();
+          hosts.check(normalized);
+          await checkDestination({ hostname: normalized, port });
+        },
+        checkResolvedAddresses,
+      }),
+    });
+  }
+}
+
+/** Single immutable host predicate shared by request and destination views. */
+class HostRules {
   private readonly allowedExact = new Set<string>();
   private readonly allowedSuffixes = new Set<string>();
   private readonly blockedExact = new Set<string>();
   private readonly blockedSuffixes = new Set<string>();
   private readonly hasAllowList: boolean;
 
-  constructor(
-    private readonly base: NetworkPolicy,
-    rules: SessionHostRules
-  ) {
+  constructor(rules: SessionHostRules) {
     for (const host of rules.allowedHosts ?? []) {
       if (host.startsWith('.')) {
         this.allowedSuffixes.add(host.toLowerCase());
@@ -377,28 +493,7 @@ export class SessionHostPolicy {
     this.hasAllowList = this.allowedExact.size > 0 || this.allowedSuffixes.size > 0;
   }
 
-  async checkResponse(response: { headers?: Record<string, string> }): Promise<void> {
-    // Session rules are host-scoped; response caps come from the base.
-    await this.base.checkResponse({
-      ...(response.headers !== undefined ? { headers: response.headers } : {}),
-    });
-  }
-
-  async checkBodySize(bytes: number): Promise<void> {
-    await this.base.checkBodySize(bytes);
-  }
-
-  async checkRedirectChain(requests: RedirectRequest[]): Promise<void> {
-    await this.base.checkRedirectChain(requests);
-  }
-
-  async checkResolvedAddresses(addresses: string[]): Promise<void> {
-    await this.base.checkResolvedAddresses(addresses);
-  }
-
-  async checkRequest(request: { hostname: string; url?: string }): Promise<void> {
-    const hostname = request.hostname.toLowerCase();
-
+  check(hostname: string): void {
     if (this.blockedExact.has(hostname) || this.matchesSuffix(this.blockedSuffixes, hostname)) {
       throw new NetworkPolicyError(
         'POLICY_DENIED',
@@ -420,12 +515,13 @@ export class SessionHostPolicy {
         );
       }
     }
+  }
 
-    // The base SSRF policy always runs last: sessions cannot weaken it.
-    await this.base.checkRequest({
-      hostname,
-      ...(request.url !== undefined ? { url: request.url } : {}),
-    });
+  rules(): SessionHostRules {
+    return {
+      allowedHosts: [...this.allowedExact, ...this.allowedSuffixes],
+      blockedHosts: [...this.blockedExact, ...this.blockedSuffixes],
+    };
   }
 
   private matchesSuffix(suffixes: Set<string>, hostname: string): boolean {
@@ -436,4 +532,33 @@ export class SessionHostPolicy {
     }
     return false;
   }
+}
+
+function assertGatewayBuiltin(value: object, prototype: object): void {
+  if (
+    Object.getPrototypeOf(value) !== prototype ||
+    Object.getOwnPropertyNames(prototype).some((name) => Object.hasOwn(value, name))
+  ) {
+    throw new NetworkPolicyError(
+      'ENGINE_UNSUPPORTED',
+      'Custom policy requires an explicit immutable gateway adapter'
+    );
+  }
+}
+
+function portGate(input: readonly number[] = [443]): (port: number) => void {
+  if (
+    !Array.isArray(input) ||
+    input.length < 1 ||
+    input.length > 64 ||
+    Array.from(input).some((port) => !Number.isSafeInteger(port) || port < 1 || port > 65535) ||
+    new Set(input).size !== input.length
+  ) {
+    throw new NetworkPolicyError('INVALID_REQUEST', 'Invalid gateway port allowlist');
+  }
+  const ports = new Set(input);
+  return (port) => {
+    if (!ports.has(port))
+      throw new NetworkPolicyError('POLICY_DENIED', 'Destination port is not allowed');
+  };
 }

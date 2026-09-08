@@ -3,8 +3,9 @@
 Status: **T2a and T2b0-T2b2 merged, independently reviewed and shipped in v1.8.5.**
 The [release checkpoint](release-milestones.md#baseline-and-release-boundaries)
 records completed CI and publication. The next design-only unit is
-[M2 gateway design](session-gateway-m2-scope.md), independently reviewed with docs
-CI/merge pending; T1/R4 remain open.
+[M2 gateway design](session-gateway-m2-scope.md), merged in PR 103 after two clean
+reviews and eight green PR checks. T2c1 now extends this private authority with
+destination mode and shared session admission; T1/R4 remain open.
 Owner approved progressing T2a locally after v1.8.4. This unit selects the
 smallest connection boundary behind direct downloads, not a browser transport,
 public proxy or contained deployment. T1/R4 remain open. The

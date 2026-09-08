@@ -31,9 +31,11 @@ PRs 92-94 (R14/T2b0-T2b2) and release corrections are shipped; all eight main
 checks, twelve release jobs, and tap PR/post-merge CI passed. See the
 [delivery checkpoint](release-milestones.md#baseline-and-release-boundaries).
 The owner reports local Homebrew upgrade/restart complete; a full installed
-workflow is not inferred from that report. Next: [M2 gateway design](session-gateway-m2-scope.md),
-one documentation-only unit with resolved, independently reviewed G1-G8 decisions,
-not runtime implementation. R4 remains open.
+workflow is not inferred from that report. [M2 gateway design](session-gateway-m2-scope.md)
+is complete in PR 103 (two clean reviews, eight green PR checks, merge `46807ea`).
+The owner authorized T2c1 policy/admission implementation, now tracked in its
+[review ledger](session-gateway-m2-scope.md#t2c1-implementation-and-review-ledger).
+No CONNECT listener or containment is shipped; R4 remains open.
 
 #### Historical v1.8.4-to-v1.8.5 integration record
 
