@@ -19,6 +19,22 @@ describe('PlaywrightChromiumEngine', () => {
     await engine.close();
   });
 
+  it('returns the cached URL synchronously without observing or changing refs', async () => {
+    const session = await engine.createSession({ headless: true });
+    const page = await session.newPage();
+    const url = 'data:text/html,<title>Cached URL</title><button>Continue</button>';
+    await page.navigate({ url });
+    const observation = await page.observe({ mode: 'interactive' });
+    const observe = vi.spyOn(page, 'observe');
+    const getUrl = vi.spyOn(page, 'getUrl');
+    expect(page.getCachedUrl?.()).toBe(url);
+    expect(observe).not.toHaveBeenCalled();
+    expect(getUrl).not.toHaveBeenCalled();
+    expect((await page.observe({ mode: 'interactive' })).revision).toBe(observation.revision);
+    await page.close();
+    expect(page.getCachedUrl?.()).toBeUndefined();
+  });
+
   it('removes its Playwright page listeners on close (hygiene D1)', async () => {
     const session = await engine.createSession({ headless: true });
     const page = await session.newPage();

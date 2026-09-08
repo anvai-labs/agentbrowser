@@ -75,6 +75,55 @@ class MockEngineSession implements EngineSession {
 }
 
 describe('SessionCoordinator', () => {
+  it('cancels consumers when the background sweep detects expiry', async () => {
+    vi.useFakeTimers();
+    const owner = new SessionCoordinator({ cleanupCheckIntervalMs: 10 });
+    try {
+      const created = await owner.create({ engine: 'auto', ttlMs: 20 }, new MockEngine());
+      const context = owner.get(created.sessionId);
+      if (!context) throw new Error('Missing session context');
+      await vi.advanceTimersByTimeAsync(30);
+      expect(context.signal.aborted).toBe(true);
+      expect(context.signal.reason).toMatchObject({ code: 'SESSION_EXPIRED' });
+    } finally {
+      await owner.shutdown();
+      vi.useRealTimers();
+    }
+  });
+  it.each(['close', 'terminate', 'expiry', 'shutdown'])(
+    'cancels session consumers before engine teardown: %s',
+    async (mode) => {
+      const owner = new SessionCoordinator({ cleanupCheckIntervalMs: 3_600_000 });
+      const created = await owner.create({ engine: 'auto', ttlMs: 60_000 }, new MockEngine());
+      const context = owner.get(created.sessionId);
+      if (!context) throw new Error('Missing session context');
+      let finish!: () => void;
+      const stalled = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const close = vi.spyOn(context.engineSession, 'close').mockImplementation(() => {
+        expect(context.signal.aborted).toBe(true);
+        return stalled;
+      });
+      let completion: Promise<void> | undefined;
+      try {
+        if (mode === 'close') completion = owner.close(created.sessionId);
+        else if (mode === 'terminate')
+          completion = owner.terminate(created.sessionId, SessionState.ENGINE_CRASHED, 'crash');
+        else if (mode === 'shutdown') completion = owner.shutdown();
+        else {
+          context.metadata.expiresAt = 0;
+          expect(owner.get(created.sessionId)).toBeUndefined();
+        }
+        expect(context.signal.aborted).toBe(true);
+        expect(close).toHaveBeenCalledTimes(1);
+      } finally {
+        finish();
+        await completion;
+        await owner.shutdown();
+      }
+    }
+  );
   let coordinator: SessionCoordinator;
   let mockEngine: MockEngine;
 
@@ -196,6 +245,16 @@ describe('SessionCoordinator', () => {
 
       expect(session?.metadata.idleTimeoutMs).toBe(120000); // Default
       expect(response.idleTimeoutMs).toBe(120000);
+    });
+
+    it('defaults the idle timeout to 10 minutes without configuration', async () => {
+      const unconfigured = new SessionCoordinator({ maxSessions: 1 });
+      try {
+        const response = await unconfigured.create({ engine: 'mock-engine' }, mockEngine);
+        expect(response.idleTimeoutMs).toBe(600000);
+      } finally {
+        await unconfigured.shutdown();
+      }
     });
 
     it('should enforce max session limit', async () => {

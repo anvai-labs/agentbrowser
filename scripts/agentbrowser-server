@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+: "${PLAYWRIGHT_BROWSERS_PATH:=${XDG_CACHE_HOME:-$HOME/.cache}/agentbrowser/browsers}"
+export PLAYWRIGHT_BROWSERS_PATH
+exec node "$HERE/dist/bin.js" "$@"

@@ -1,10 +1,140 @@
 import { createServer } from 'node:http';
 import { gzipSync } from 'node:zlib';
 import { NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
-import { describe, expect, it } from 'vitest';
-import { downloadWithPolicy } from './download-transport.js';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  DownloadBudget,
+  DownloadTransport,
+  type DownloadTransportOptions,
+} from './download-transport.js';
+
+async function downloadWithPolicy(
+  url: string,
+  options: DownloadTransportOptions & {
+    resolve?(hostname: string): Promise<Array<{ address: string; family: number }>>;
+  }
+) {
+  const transport = new DownloadTransport(
+    { policy: options.policy, budget: new DownloadBudget() },
+    options.resolve ? { resolve: options.resolve } : {}
+  );
+  try {
+    return await transport.download(url, options);
+  } finally {
+    transport.revoke();
+  }
+}
 
 describe('bounded download transport', () => {
+  it('rejects every malformed resolver record before TCP with the required address-policy hook', async () => {
+    let accepts = 0;
+    let requests = 0;
+    const server = createServer((_request, response) => {
+      requests += 1;
+      response.end('ok');
+    });
+    server.on('connection', () => {
+      accepts += 1;
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const endpoint = server.address();
+      if (!endpoint || typeof endpoint === 'string') throw new Error('Missing address');
+      const valid = { address: '127.0.0.1', family: 4 };
+      const invalid: unknown[] = [
+        null,
+        undefined,
+        {},
+        { address: 127001, family: 4 },
+        { address: 'not-an-ip', family: 4 },
+        { address: '127.0.0.1', family: 6 },
+        { address: '::ffff:127.0.0.1', family: 4 },
+        { address: '::1', family: 0 },
+        { address: '[::1]', family: 6 },
+        { address: 'fe80::1%en0', family: 6 },
+      ];
+      const origin = `http://download.invalid:${endpoint.port}`;
+      for (const bad of invalid) {
+        for (const records of [
+          [valid, bad],
+          [bad, valid],
+        ]) {
+          // Exercise malformed runtime output despite the typed resolver port.
+          const resolve = vi.fn(async () => records as Array<{ address: string; family: number }>);
+          await expect(
+            downloadWithPolicy(origin, {
+              policy: { checkRequest: async () => {}, checkResolvedAddresses: async () => {} },
+              maxBytes: 1024,
+              resolve,
+            })
+          ).rejects.toMatchObject({
+            code: 'POLICY_DENIED',
+            details: { stage: 'connect', reason: 'transferFailed' },
+          });
+          expect(resolve).toHaveBeenCalledOnce();
+          expect(accepts).toBe(0);
+          expect(requests).toBe(0);
+        }
+      }
+      // The same live fixture is reachable when its complete answer set is valid.
+      await downloadWithPolicy(origin, {
+        policy: new NetworkPolicy(),
+        maxBytes: 1024,
+        resolve: async () => [valid],
+      });
+      expect(accepts).toBe(1);
+      expect(requests).toBe(1);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('blocks mapped loopback literals and DNS answers before TCP, while preserving permitted local access', async () => {
+    let accepts = 0;
+    let requests = 0;
+    const server = createServer((_request, response) => {
+      requests += 1;
+      response.end('ok');
+    });
+    server.on('connection', () => {
+      accepts += 1;
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const endpoint = server.address();
+      if (!endpoint || typeof endpoint === 'string') throw new Error('Missing address');
+      const strict = new NetworkPolicy({ blockLoopback: true });
+      const mapped = { address: '::ffff:127.0.0.1', family: 6 };
+      const resolve = vi.fn(async () => [mapped]);
+      const literal = `http://[::ffff:127.0.0.1]:${endpoint.port}`;
+      await expect(
+        downloadWithPolicy(literal, { policy: strict, maxBytes: 1024, resolve })
+      ).rejects.toMatchObject({ code: 'POLICY_DENIED' });
+      expect(resolve).not.toHaveBeenCalled();
+      const named = `http://download.invalid:${endpoint.port}`;
+      // Mapped first: any regression can only dial this owned loopback fixture.
+      for (const records of [[mapped], [mapped, { address: '93.184.216.34', family: 4 }]]) {
+        await expect(
+          downloadWithPolicy(named, {
+            policy: strict,
+            maxBytes: 1024,
+            resolve: async () => records,
+          })
+        ).rejects.toMatchObject({ code: 'POLICY_DENIED' });
+      }
+      expect(accepts).toBe(0);
+      expect(requests).toBe(0);
+      await downloadWithPolicy(named, { policy: new NetworkPolicy(), maxBytes: 1024, resolve });
+      await downloadWithPolicy(literal, { policy: new NetworkPolicy(), maxBytes: 1024 });
+      expect(accepts).toBe(2);
+      expect(requests).toBe(2);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it('honors the composed policy redirect limit before contacting the next hop', async () => {
     const hits: string[] = [];
     const server = createServer((request, response) => {
@@ -21,7 +151,7 @@ describe('bounded download transport', () => {
           policy: new SessionHostPolicy(new NetworkPolicy({ maxRedirects: 0 }), {}),
           maxBytes: 1024,
         })
-      ).rejects.toMatchObject({ code: 'MAX_REDIRECTS' });
+      ).rejects.toMatchObject({ code: 'POLICY_DENIED' });
       expect(hits).toEqual(['/start']);
     } finally {
       server.closeAllConnections();

@@ -102,6 +102,15 @@ describe('AgentBrowser MCP server', () => {
   });
 
   describe('initialize', () => {
+    it('advertises the ten-minute idle default without imposing a client-side default', async () => {
+      const response = JSON.parse(await request('idle-help', 'tools/list'));
+      const create = response.result.tools.find(
+        (tool: { name: string }) => tool.name === 'browser_create'
+      );
+      expect(create.inputSchema.properties.idleTimeoutMs.description).toContain('600000 = 10 min');
+      expect(create.inputSchema.properties.idleTimeoutMs.default).toBeUndefined();
+    });
+
     it('should complete the initialize handshake', async () => {
       const response = JSON.parse(
         await request('1', 'initialize', {

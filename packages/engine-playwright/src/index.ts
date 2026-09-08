@@ -40,6 +40,13 @@ import {
   type Page,
   chromium,
 } from 'playwright';
+import {
+  SnapshotBudget,
+  type SnapshotEvidence,
+  sameSnapshotEvidence,
+  snapshotDigest,
+  snapshotTimeout,
+} from './snapshot-evidence.js';
 
 // Re-export engine types
 export * from '@agentbrowser/engine';
@@ -54,10 +61,9 @@ interface StoredElement {
   enabled: boolean;
 }
 
-interface NodeBinding {
+interface NodeBinding extends SnapshotEvidence {
   handle: ElementHandle;
   locator: Locator;
-  snapshot: string;
 }
 
 /** Strip surrounding quotes and unescape from an aria snapshot value. */
@@ -144,6 +150,14 @@ export interface PlaywrightEngineOptions {
    * file they control). Headless sessions never consult it.
    */
   chromeBinaryPath?: string;
+  /**
+   * Shared snapshot-wait budget per observation and timeout per action-time
+   * semantic check (1..30000 ms, default 1000; environment fallback via
+   * AGENTBROWSER_SNAPSHOT_TIMEOUT_MS). Timed-out element captures use successful
+   * whole-document evidence, never DOM identity alone. Other observation work
+   * is not covered by this budget.
+   */
+  snapshotTimeoutMs?: number;
 }
 
 export class PlaywrightChromiumEngine implements BrowserEngine {
@@ -156,6 +170,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   private readonly browserFamily: 'chromium' | 'firefox' | 'webkit';
   private readonly cdpEndpoint: string | undefined;
   private readonly chromeBinaryPath: string;
+  readonly snapshotTimeoutMs: number;
 
   constructor(options: PlaywrightEngineOptions = {}) {
     this.dialogGraceMs = options.dialogGraceMs ?? 5000;
@@ -167,6 +182,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       options.chromeBinaryPath ??
       process.env.AGENTBROWSER_CHROME_PATH ??
       '/opt/google/chrome/chrome';
+    this.snapshotTimeoutMs = snapshotTimeout(options.snapshotTimeoutMs);
   }
 
   get name(): string {
@@ -916,6 +932,10 @@ class PlaywrightPage implements EnginePage {
     return this.page.url();
   }
 
+  getCachedUrl(): string | undefined {
+    return this.page.isClosed() ? undefined : this.page.url();
+  }
+
   async navigate(request: NavigationRequest): Promise<NavigationResult> {
     try {
       return await this.performNavigation(request);
@@ -974,17 +994,19 @@ class PlaywrightPage implements EnginePage {
 
   async observe(request: ObservationRequest): Promise<RawPageState> {
     const mode = request.mode || 'interactive';
+    const snapshotBudget = new SnapshotBudget(this.engine.snapshotTimeoutMs);
+    let documentSnapshot: string | undefined;
 
     // Get accessibility tree if requested
     let elements: StoredElement[] = [];
 
     if (mode === 'interactive' || mode === 'accessibility' || mode === 'content') {
-      try {
-        // Playwright's accessibility surface is the aria snapshot (YAML).
-        const yaml = await this.page.locator('body').ariaSnapshot();
+      // Only timeouts can recover. Transport/context errors are not evidence.
+      const yaml = await snapshotBudget.capture(this.page.locator('body'));
+      documentSnapshot = snapshotDigest(yaml);
+      if (yaml !== undefined) {
         elements = this.parseAriaSnapshot(yaml, this.revision);
-      } catch {
-        // Fallback if the aria snapshot is not available
+      } else {
         elements = await this.getContentElements();
       }
     }
@@ -1011,18 +1033,25 @@ class PlaywrightPage implements EnginePage {
         if (await locator.count()) {
           const handle = await locator.elementHandle();
           if (handle) {
-            const snapshot = await locator.ariaSnapshot({ timeout: 1000 });
+            // Register the handle before more I/O so a capture failure releases it.
+            const binding: NodeBinding = {
+              handle,
+              locator,
+              snapshot: undefined,
+              documentSnapshot,
+            };
+            this.bindings.set(ref, binding);
+            binding.snapshot = snapshotDigest(await snapshotBudget.capture(locator));
             const prior = previous.get(ref);
             if (
               previous.size > 0 &&
               (!prior ||
-                prior.snapshot !== snapshot ||
                 !(await handle
                   .evaluate((node, old) => node.isSameNode(old), prior.handle)
-                  .catch(() => false)))
+                  .catch(() => false)) ||
+                !sameSnapshotEvidence(prior, binding))
             )
               changed = true;
-            this.bindings.set(ref, { handle, locator, snapshot });
             element.visible = await handle.isVisible();
             element.enabled = await handle.isEnabled();
           }
@@ -1035,6 +1064,10 @@ class PlaywrightPage implements EnginePage {
           enabled: element.enabled,
         });
       }
+    } catch (error) {
+      // Never expose a partly rebuilt set of refs after capture/context failure.
+      this.bumpRevision();
+      throw error;
     } finally {
       for (const { handle } of previous.values()) void handle.dispose().catch(() => {});
     }
@@ -1167,10 +1200,19 @@ class PlaywrightPage implements EnginePage {
   async resolve(target: EngineTarget): Promise<ResolvedTarget> {
     const stored = this.refStore.get(target.ref);
     const binding = this.bindings.get(target.ref);
-    if (!stored || !binding) {
+    if (!stored) {
       throw new EngineError(
         'TARGET_NOT_FOUND',
         `Element not found: ${target.ref} (observe the page to mint refs)`
+      );
+    }
+    if (!binding) {
+      // DOM-only fallback can discover a control without enough semantics to
+      // bind it. The ref was observed, but is not safe to act on yet.
+      throw new EngineError(
+        'STALE_TARGET',
+        'Observed target could not be bound safely; observe again.',
+        true
       );
     }
     if (!(await binding.handle.evaluate((node) => node.isConnected))) {
@@ -1199,13 +1241,34 @@ class PlaywrightPage implements EnginePage {
       } finally {
         await current?.dispose();
       }
-      if (
-        !matchesOriginal ||
-        (await binding.locator.ariaSnapshot({ timeout: 1000 })) !== binding.snapshot
-      ) {
+      if (!matchesOriginal) {
         throw new EngineError(
           'STALE_TARGET',
           'Observed target identity or semantic state changed; observe again.'
+        );
+      }
+      const expectedSnapshot = binding.snapshot ?? binding.documentSnapshot;
+      if (expectedSnapshot === undefined) {
+        throw new EngineError(
+          'STALE_TARGET',
+          'Semantic evidence is unavailable; observe again.',
+          true
+        );
+      }
+      // Evidence provenance is fixed at observation. A failed fresh element check
+      // cannot switch to document evidence or substitute the old value.
+      const semanticLocator =
+        binding.snapshot !== undefined ? binding.locator : this.page.locator('body');
+      const liveSnapshot = snapshotDigest(
+        await semanticLocator.ariaSnapshot({
+          timeout: this.engine.snapshotTimeoutMs,
+        })
+      );
+      if (liveSnapshot !== expectedSnapshot) {
+        throw new EngineError(
+          'STALE_TARGET',
+          'Observed semantic state changed; observe again.',
+          true
         );
       }
     }

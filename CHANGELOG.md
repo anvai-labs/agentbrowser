@@ -5,6 +5,81 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [1.8.5] — 2026-09-07
+
+Observation resilience for pages whose elements never stabilize, page
+discovery, a longer default idle window, and validated semantic evidence
+behind the recovered bindings (PRs 91–98).
+
+**Upgrade notice:** 1.8.5 is the owner-selected release label, not a bug-fix-only
+SemVer patch. The page-listing API is additive, idle sessions live longer by
+default, and custom network-policy embeddings require migration for downloads.
+See [upgrade requirements](docs/operations.md#upgrading-from-184-to-the-185-candidate)
+before deployment; private package manifests do not waive embedding compatibility.
+
+### Added
+
+- `GET /v1/sessions/:sessionId/pages` lists a session's pages in creation
+  order with each page's cached URL when available — the discovery path
+  when a create-page response was lost, and the answer to which page ids are
+  live in a session.
+  URL metadata is secret-redacted, may lag navigation, and is omitted when the
+  engine has no synchronous cache; listing never waits for browser URL I/O.
+
+- Trusted in-process `buildServer({ networkPolicy })` configuration now forwards
+  the existing service policy option; session policy remains restrict-only.
+  No HTTP option or stock-default relaxation is introduced.
+
+### Changed
+
+- The default session idle timeout is now 10 minutes (previously 2). The
+  default remains operator-tunable via `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS`
+  and per-session `idleTimeoutMs` still wins.
+
+- Private, bounded TCP connection-authority primitive with revocation, retained
+  in-flight admission and connected-peer verification, backed by deterministic
+  and real HTTP/TLS tests. Direct downloads now use it per session generation,
+  with shared transfer/socket admission, cancellation before engine teardown,
+  logical-host TLS verification and bounded terminal diagnostics. No new
+  browser-containment guarantee or public route is exposed.
+
+### Fixed
+
+- Pages whose elements never stabilize — a perpetually animating shared
+  header, a hydration loop — no longer fail the whole observation. Per-element
+  aria snapshots that cannot stabilize degrade instead of erroring, and the
+  recovered bindings act only on validated semantic evidence: evidence is
+  fixed-size and provenance-locked at observation, timed-out element captures
+  fall back to whole-document evidence that must still match at action time,
+  and actions without available semantic evidence refuse with a retryable
+  `STALE_TARGET` instead of proceeding on DOM identity alone. One monotonic
+  budget bounds snapshot waiting across the document and all elements, and
+  `AGENTBROWSER_SNAPSHOT_TIMEOUT_MS` (or the `snapshotTimeoutMs` engine
+  option) accepts integer values 1–30000 ms; invalid environment values fall
+  back to the default while invalid explicit options throw.
+  An observed named control that cannot be safely rebound after total snapshot
+  timeout also returns retryable `STALE_TARGET`; unknown refs remain missing.
+
+- Server tarball packaging no longer retains pnpm's API self-link back into the
+  build checkout. PR and release CI share extracted-package real-browser checks,
+  artifact validation and matching-client workflows before publication.
+
+- CLI commands forward `--api-key` (or `AGENTBROWSER_API_KEY` when no flag is
+  supplied) to the SDK, allowing commands against authenticated servers.
+
+- Cancel direct downloads on session termination and prevent late artifact
+  publication. Preserve one overall deadline across redirect/body policy work,
+  enforce encoded and decoded byte limits, and drain each redirect's lease.
+  Download-enabled sessions capture a fixed policy snapshot; custom policies
+  must explicitly support immutable snapshots instead of silently losing rules.
+
+- Classify mapped/expanded IPv6 addresses consistently for configured loopback,
+  private-network and metadata policy rules. Reject malformed or scoped resolved
+  addresses, ambiguous raw dotted-quad hostnames and invalid download resolver
+  address/family pairs before connection. Preserve explicitly permitted local
+  downloads. This R14/T2b0 correction does not close browser egress gap R4 or
+  introduce OS-enforced containment.
+
 ## [1.8.4] — 2026-09-07
 
 Patch release of the independently reviewed engineering corrections in PRs

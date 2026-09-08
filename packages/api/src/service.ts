@@ -60,7 +60,11 @@ import {
   decodeWireAction,
   parseRef,
 } from '@agentbrowser/protocol';
-import { type DownloadTransportOptions, downloadWithPolicy } from './download-transport.js';
+import {
+  DownloadBudget,
+  DownloadTransport,
+  type DownloadTransportOptions,
+} from './download-transport.js';
 
 /** Typed failure carrying a protocol error code. */
 export class ServiceError extends Error {
@@ -113,6 +117,7 @@ export interface ServicePageView {
   pageId: string;
   sessionId: string;
   status: string;
+  /** Optional best-effort cached URL; may lag navigation and is not security evidence. */
   url?: string;
   title?: string;
 }
@@ -189,7 +194,7 @@ export interface ServiceDependencies {
    * Operator-level session defaults (env-plumbed via bin.ts). A request
    * still overrides either per session; these just move the baseline for
    * deployments whose workloads systematically need longer (e.g. headed
-   * human-in-the-loop flows vs the 2-min default idle).
+   * human-in-the-loop flows vs the 10-min default idle).
    */
   defaultTtlMs?: number;
   defaultIdleTimeoutMs?: number;
@@ -239,11 +244,13 @@ export class AgentBrowserService {
   private readonly normalizer: ObservationNormalizer;
   private readonly executor: ActionExecutor;
   private readonly networkPolicy: NetworkPolicy;
-  private readonly rootRequestPolicy: RequestPolicy;
   private readonly approvalGate: ApprovalGate;
   private readonly secretManager: SecretManager;
   private readonly artifacts: ArtifactStore;
-  private readonly downloader: NonNullable<ServiceDependencies['downloader']>;
+  private readonly downloader: ServiceDependencies['downloader'];
+  private readonly downloadBudget = new DownloadBudget();
+  private readonly downloads = new Map<string, DownloadTransport>();
+  private shuttingDown = false;
   private readonly tracer?: InMemoryTracer;
   private readonly metrics?: MetricsRegistry;
   private readonly logger?: StructuredLogger;
@@ -293,9 +300,6 @@ export class AgentBrowserService {
     this.networkPolicy =
       deps.networkPolicy ??
       new NetworkPolicy({ blockLoopback: true, blockPrivateIPs: true, blockMetadata: true });
-    // The root policy is both the service fast-fail and the engine choke
-    // point's base: one verdict, enforced at both layers.
-    this.rootRequestPolicy = this.networkPolicy;
     this.approvalGate =
       deps.approvalGate ??
       new ApprovalGate({
@@ -306,7 +310,7 @@ export class AgentBrowserService {
     // output boundary (observations, error messages, error details).
     this.secretManager = deps.secretManager ?? new SecretManager();
     this.artifacts = deps.artifactStore ?? new ArtifactStore();
-    this.downloader = deps.downloader ?? downloadWithPolicy;
+    this.downloader = deps.downloader;
     // Telemetry is opt-in per concern: each is wired only when provided.
     if (deps.tracer !== undefined) {
       this.tracer = deps.tracer;
@@ -365,6 +369,8 @@ export class AgentBrowserService {
    * reintroduce the leak class TD-BROWSER-9 (A8) closed.
    */
   private deleteSessionState(sessionId: string): void {
+    this.downloads.get(sessionId)?.revoke(new ServiceError('SESSION_NOT_FOUND', 'Session closed'));
+    this.downloads.delete(sessionId);
     for (const [pageId, page] of this.pages) {
       if (page.sessionId === sessionId) {
         this.pages.delete(pageId);
@@ -399,7 +405,8 @@ export class AgentBrowserService {
         return value;
       },
       (error) => {
-        const code = error instanceof ServiceError ? error.code : 'INTERNAL';
+        const mapped = this.mapError(error, name);
+        const code = mapped.code;
         this.telemetry(name, 'error', attributes, startedAt, code);
         if (span) {
           this.tracer?.failSpan(
@@ -409,7 +416,7 @@ export class AgentBrowserService {
           );
           this.tracer?.endSpan(span);
         }
-        throw this.redactedError(this.mapError(error, name));
+        throw this.redactedError(mapped);
       }
     );
   }
@@ -642,11 +649,18 @@ export class AgentBrowserService {
 
   // ---- sessions -----------------------------------------------------------
 
-  async createSession(request: ServiceSessionRequest): Promise<ServiceSessionView> {
+  async createSession(input: ServiceSessionRequest): Promise<ServiceSessionView> {
+    const request = { ...input, ...(input.approval ? { approval: { ...input.approval } } : {}) };
     // Validate tenant ID format (lightweight security)
     this.validateTenantId(request.tenantId);
 
     return this.traced('session.create', { tenantId: request.tenantId ?? '' }, async () => {
+      if (this.shuttingDown)
+        throw new ServiceError('SESSION_NOT_FOUND', 'Service is shutting down');
+      // Snapshot before awaiting engine creation; all session consumers share it.
+      const basePolicy = request.allowDownloads
+        ? this.networkPolicy.snapshot()
+        : this.networkPolicy;
       const engineRequest: EngineSessionOptions & { engine: 'auto' } = { engine: 'auto' };
       engineRequest.downloadPolicy = {
         allow: request.allowDownloads ?? false,
@@ -662,11 +676,11 @@ export class AgentBrowserService {
       // Per-session chain: session rules restrict; the SSRF base always runs.
       const sessionPolicy =
         request.allowedHosts !== undefined || request.blockedHosts !== undefined
-          ? new SessionHostPolicy(this.networkPolicy, {
+          ? new SessionHostPolicy(basePolicy, {
               ...(request.allowedHosts !== undefined ? { allowedHosts: request.allowedHosts } : {}),
               ...(request.blockedHosts !== undefined ? { blockedHosts: request.blockedHosts } : {}),
             })
-          : this.rootRequestPolicy;
+          : basePolicy;
 
       let session: import('@agentbrowser/protocol').SessionResponse;
       try {
@@ -685,6 +699,37 @@ export class AgentBrowserService {
       } catch (error) {
         throw this.mapError(error);
       }
+
+      const context = this.coordinator.get(session.sessionId);
+      if (this.shuttingDown || !context || context.signal.aborted) {
+        await this.coordinator.close(session.sessionId).catch(() => {});
+        throw new ServiceError('SESSION_NOT_FOUND', 'Session ended during creation');
+      }
+      if (request.allowDownloads)
+        this.downloads.set(
+          session.sessionId,
+          new DownloadTransport(
+            {
+              policy: sessionPolicy,
+              budget: this.downloadBudget,
+              signal: context.signal,
+              onOutcome: (outcome) => {
+                const fields = this.secretManager.redact({
+                  sessionId: session.sessionId,
+                  ...outcome,
+                });
+                if (outcome.outcome === 'error') this.logger?.warn('download.transport', fields);
+                else this.logger?.info('download.transport', fields);
+              },
+              onCleanupFailure: (fields) =>
+                this.logger?.warn(
+                  'download.cleanup-failed',
+                  this.secretManager.redact({ sessionId: session.sessionId, ...fields })
+                ),
+            },
+            this.downloader ? { fetch: this.downloader } : {}
+          )
+        );
 
       this.metrics?.incrementCounter('sessions_created_total');
       this.metrics?.setGauge('sessions_active', this.coordinator.getSessionCount());
@@ -743,8 +788,9 @@ export class AgentBrowserService {
       await this.coordinator.close(sessionId);
     } catch (error) {
       throw this.mapError(error);
+    } finally {
+      this.deleteSessionState(sessionId);
     }
-    this.deleteSessionState(sessionId);
     this.metrics?.incrementCounter('sessions_closed_total');
     this.metrics?.setGauge('sessions_active', this.coordinator.getSessionCount());
   }
@@ -1196,6 +1242,37 @@ export class AgentBrowserService {
     return { pageId, sessionId, status: 'active' };
   }
 
+  /**
+   * Pages of a session in creation order. Pages exist only once created
+   * through the create-page endpoint; this listing is the discovery path
+   * when that response was lost and the answer to "which page ids are
+   * live here". `url` uses only the engine's optional synchronous cache;
+   * discovery never queues browser I/O or waits for a live URL lookup.
+   */
+  async listPages(sessionId: string): Promise<ServicePageView[]> {
+    this.requireSession(sessionId);
+    const result: ServicePageView[] = [];
+    for (const [pageId, page] of this.pages) {
+      if (page.sessionId !== sessionId) continue;
+      let url: string | undefined;
+      try {
+        const cached = page.enginePage.getCachedUrl?.();
+        url = typeof cached === 'string' ? cached : undefined;
+      } catch {
+        // Optional metadata must not prevent discovery of a live page ID.
+      }
+      result.push(
+        this.secretManager.redact({
+          pageId,
+          sessionId,
+          status: 'active',
+          ...(url !== undefined ? { url } : {}),
+        })
+      );
+    }
+    return result;
+  }
+
   async closePage(sessionId: string, pageId: string): Promise<void> {
     const page = this.requirePage(sessionId, pageId);
     this.coordinator.updateActivity(sessionId);
@@ -1239,7 +1316,9 @@ export class AgentBrowserService {
         span
       );
       try {
-        await this.networkPolicy.checkRequest({ hostname, url });
+        const policy = this.sessionPolicies.get(sessionId);
+        if (!policy) throw new ServiceError('SESSION_NOT_FOUND', 'Session policy is unavailable');
+        await policy.checkRequest({ hostname, url });
         if (policySpan) {
           this.tracer?.endSpan(policySpan, { allowed: true });
         }
@@ -1766,33 +1845,15 @@ export class AgentBrowserService {
         );
       }
 
-      let parsed: URL;
-      try {
-        parsed = new URL(request.url);
-      } catch {
-        throw new ServiceError(
-          'INVALID_REQUEST',
-          `Invalid download URL: ${request.url.slice(0, 100)}`
-        );
-      }
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        throw new ServiceError(
-          'POLICY_DENIED',
-          `Downloads accept http(s) URLs only; '${parsed.protocol}' is not permitted.`
-        );
-      }
-
-      try {
-        const egress = this.sessionPolicies.get(sessionId) ?? this.rootRequestPolicy;
-        await egress.checkRequest({ hostname: parsed.hostname, url: request.url });
-      } catch (error) {
-        throw this.mapError(error);
-      }
-
-      const { bytes, contentType } = await this.downloader(request.url, {
-        policy: this.sessionPolicies.get(sessionId) ?? this.rootRequestPolicy,
+      const owner = this.requireSession(sessionId);
+      const transport = this.downloads.get(sessionId);
+      if (!transport)
+        throw new ServiceError('SESSION_NOT_FOUND', 'Session download owner is unavailable');
+      const { bytes, contentType } = await transport.download(request.url, {
         maxBytes: policy.maxDownloadBytes,
       });
+      owner.signal.throwIfAborted();
+      this.requirePage(sessionId, pageId);
 
       if (bytes.length > policy.maxDownloadBytes) {
         throw new ServiceError(
@@ -2082,10 +2143,14 @@ export class AgentBrowserService {
   // ---- shutdown -----------------------------------------------------------
 
   async shutdown(): Promise<void> {
+    this.shuttingDown = true;
+    for (const transport of this.downloads.values())
+      transport.revoke(new ServiceError('SESSION_NOT_FOUND', 'Service shutdown'));
     if (this.sweepTimer !== undefined) {
       clearInterval(this.sweepTimer);
     }
     await this.coordinator.shutdown();
+    for (const sessionId of this.sessionDownloadPolicy.keys()) this.deleteSessionState(sessionId);
     this.pages.clear();
     await this.approvalGate.shutdown();
     await this.engine.close();

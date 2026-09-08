@@ -298,6 +298,10 @@ class FakePage implements EnginePage {
     return this.currentUrl;
   }
 
+  getCachedUrl(): string | undefined {
+    return this.closed || this.crashed ? undefined : this.currentUrl;
+  }
+
   async navigate(request: NavigationRequest): Promise<NavigationResult> {
     this.assertNotDead();
     if (this.closed) {

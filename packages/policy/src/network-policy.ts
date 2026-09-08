@@ -6,6 +6,7 @@
  */
 
 import { RingBuffer } from '@agentbrowser/core';
+import { classifyIPAddress } from './ip-address.js';
 
 export interface NetworkPolicyOptions {
   blockLoopback?: boolean;
@@ -95,8 +96,20 @@ export class NetworkPolicy {
    */
   async checkRequest(request: NetworkRequest): Promise<void> {
     const { hostname } = request;
+    const address = classifyIPAddress(hostname);
+    // Do not fall through as a DNS name after rejecting malformed IP syntax.
+    // Raw dotted quads with leading zeroes are ambiguous; URL callers already
+    // supply WHATWG-normalized hosts, while raw policy callers must be explicit.
+    if (!address && (/[:\[\]%]/.test(hostname) || /^\d+(?:\.\d+){3}$/.test(hostname))) {
+      throw new NetworkPolicyError('POLICY_DENIED', 'Invalid or scoped IP hostname', false, {
+        rule: 'requestAddressInvalid',
+      });
+    }
 
-    if (this.options.blockLoopback && this.isLoopback(hostname)) {
+    if (
+      this.options.blockLoopback &&
+      (address?.loopback || hostname === 'localhost' || hostname === 'localhost.localdomain')
+    ) {
       throw new NetworkPolicyError(
         'POLICY_DENIED',
         `Loopback addresses are blocked: ${hostname}`,
@@ -105,7 +118,7 @@ export class NetworkPolicy {
       );
     }
 
-    if (this.options.blockPrivateIPs && this.isPrivateIP(hostname)) {
+    if (this.options.blockPrivateIPs && address?.privateIP) {
       throw new NetworkPolicyError(
         'POLICY_DENIED',
         `Private IP addresses are blocked: ${hostname}`,
@@ -114,7 +127,7 @@ export class NetworkPolicy {
       );
     }
 
-    if (this.options.blockMetadata && this.isMetadataEndpoint(hostname)) {
+    if (this.options.blockMetadata && (address?.metadata || this.isMetadataEndpoint(hostname))) {
       throw new NetworkPolicyError(
         'POLICY_DENIED',
         `Cloud metadata endpoints are blocked: ${hostname}`,
@@ -164,8 +177,19 @@ export class NetworkPolicy {
    * loopback/private/metadata IP checks, regardless of the hostname.
    */
   async checkResolvedAddresses(addresses: string[]): Promise<void> {
+    if (addresses.length === 0) {
+      throw new NetworkPolicyError('POLICY_DENIED', 'No resolved addresses', false, {
+        rule: 'resolvedAddressInvalid',
+      });
+    }
     for (const address of addresses) {
-      if (this.options.blockLoopback && this.isLoopback(address)) {
+      const classification = classifyIPAddress(address);
+      if (!classification) {
+        throw new NetworkPolicyError('POLICY_DENIED', 'Invalid or scoped resolved address', false, {
+          rule: 'resolvedAddressInvalid',
+        });
+      }
+      if (this.options.blockLoopback && classification.loopback) {
         throw new NetworkPolicyError(
           'POLICY_DENIED',
           `Resolved address is loopback (DNS rebinding): ${address}`,
@@ -173,7 +197,7 @@ export class NetworkPolicy {
           { address, rule: 'resolvedLoopback' }
         );
       }
-      if (this.options.blockPrivateIPs && this.isPrivateIP(address)) {
+      if (this.options.blockPrivateIPs && classification.privateIP) {
         throw new NetworkPolicyError(
           'POLICY_DENIED',
           `Resolved address is private (DNS rebinding): ${address}`,
@@ -181,7 +205,7 @@ export class NetworkPolicy {
           { address, rule: 'resolvedPrivate' }
         );
       }
-      if (this.options.blockMetadata && this.isMetadataEndpoint(address)) {
+      if (this.options.blockMetadata && classification.metadata) {
         throw new NetworkPolicyError(
           'POLICY_DENIED',
           `Resolved address is a metadata endpoint: ${address}`,
@@ -257,117 +281,6 @@ export class NetworkPolicy {
   }
 
   /**
-   * Check if hostname is a loopback address
-   */
-  private isLoopback(hostname: string): boolean {
-    // Check hostname variants
-    if (hostname === 'localhost' || hostname === 'localhost.localdomain') {
-      return true;
-    }
-
-    // Check IP address
-    if (this.isIPAddress(hostname)) {
-      const parts = hostname.split('.').map(Number);
-
-      // 127.0.0.0/8
-      if (parts[0] === 127) {
-        return true;
-      }
-
-      // 0.0.0.0/8 (special case)
-      if (parts[0] === 0 && parts[1] === 0 && parts[2] === 0 && parts[3] === 0) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  /**
-   * Check if hostname is a private / non-routable IP address.
-   *
-   * Covers the full SSRF-relevant set, not just RFC1918 (hygiene C3): the
-   * gaps below were previously ALLOWED through blockPrivateIPs —
-   * 169.254.0.0/16 link-local (which also guards metadata endpoints
-   * beyond the exact ones listed in METADATA_ENDPOINTS, e.g. ECS task
-   * metadata at 169.254.170.2), 100.64.0.0/10 CGNAT, 0.0.0.0/8
-   * "this network" (only exact 0.0.0.0 was loopback-checked), and
-   * 198.18.0.0/15 benchmarking. IPv6 literals are checked too: ::1
-   * loopback, fe80::/10 link-local, fc00::/7 ULA (URL hostnames may
-   * arrive bracketed).
-   */
-  private isPrivateIP(hostname: string): boolean {
-    // IPv6 (possibly bracketed, as URL hostnames are).
-    const unbracketed =
-      hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
-    if (unbracketed.includes(':')) {
-      const expanded = unbracketed.toLowerCase();
-      if (expanded === '::1' || expanded === '::') {
-        return true; // loopback / unspecified
-      }
-      if (
-        expanded.startsWith('fe8') ||
-        expanded.startsWith('fe9') ||
-        expanded.startsWith('fea') ||
-        expanded.startsWith('feb')
-      ) {
-        return true; // fe80::/10 link-local
-      }
-      if (expanded.startsWith('fc') || expanded.startsWith('fd')) {
-        return true; // fc00::/7 unique local
-      }
-      return false;
-    }
-
-    if (!this.isIPAddress(hostname)) {
-      return false;
-    }
-
-    const parts = hostname.split('.').map(Number);
-    const [a, b] = parts;
-
-    // 10.0.0.0/8
-    if (a === 10) {
-      return true;
-    }
-
-    // 172.16.0.0/12
-    if (a === 172 && b !== undefined && b >= 16 && b <= 31) {
-      return true;
-    }
-
-    // 192.168.0.0/16
-    if (a === 192 && b === 168) {
-      return true;
-    }
-
-    // 169.254.0.0/16 link-local
-    if (a === 169 && b === 254) {
-      return true;
-    }
-
-    // 100.64.0.0/10 CGNAT
-    if (a === 100 && b !== undefined && b >= 64 && b <= 127) {
-      return true;
-    }
-
-    // 0.0.0.0/8 "this network"
-    if (a === 0) {
-      return true;
-    }
-
-    // 198.18.0.0/15 benchmarking
-    if (a === 198 && b === 18) {
-      return true;
-    }
-    if (a === 198 && b === 19) {
-      return true;
-    }
-
-    return false;
-  }
-
-  /**
    * Check if hostname is a cloud metadata endpoint
    */
   private isMetadataEndpoint(hostname: string): boolean {
@@ -377,26 +290,34 @@ export class NetworkPolicy {
   }
 
   /**
-   * Check if string is an IPv4 address
-   */
-  private isIPAddress(hostname: string): boolean {
-    const ipv4Regex = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
-    const match = hostname.match(ipv4Regex);
-
-    if (!match) {
-      return false;
-    }
-
-    // Check each octet is 0-255
-    const octets = match.slice(1).map(Number);
-    return octets.every((octet) => octet >= 0 && octet <= 255);
-  }
-
-  /**
    * Get current policy configuration
    */
   getConfig(): Readonly<NetworkPolicyOptions> {
     return { ...this.options };
+  }
+
+  /** Fixed session-generation rules, without multiplying raw request-log buffers. */
+  snapshot(): NetworkPolicy {
+    // An inherited config-only clone must never silently drop a custom deny.
+    // Custom policies must explicitly implement their own immutable snapshot.
+    if (
+      Object.getPrototypeOf(this) !== NetworkPolicy.prototype ||
+      [
+        'checkRequest',
+        'checkResolvedAddresses',
+        'checkResponse',
+        'checkBodySize',
+        'checkRedirectChain',
+      ].some((name) => Object.hasOwn(this, name))
+    ) {
+      throw new NetworkPolicyError(
+        'ENGINE_UNSUPPORTED',
+        'Custom policy requires an immutable snapshot implementation'
+      );
+    }
+    const snapshot = new NetworkPolicy({ ...this.options, enableLogging: false, maxLogEntries: 1 });
+    Object.freeze(snapshot.options);
+    return snapshot;
   }
 
   /**

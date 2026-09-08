@@ -5,7 +5,7 @@
  * with comprehensive state tracking and cleanup verification.
  */
 
-import type { BrowserEngine } from '@agentbrowser/engine';
+import { type BrowserEngine, EngineError } from '@agentbrowser/engine';
 import type { SessionRequest, SessionResponse } from '@agentbrowser/protocol';
 import type { StructuredLogger } from './logger.js';
 
@@ -65,7 +65,7 @@ export interface CoordinatorConfig {
  * Manages session lifecycle, state transitions, and cleanup.
  */
 export class SessionCoordinator {
-  private sessions: Map<string, SessionContext> = new Map();
+  private sessions = new Map<string, SessionContext & { cancellation: AbortController }>();
   private config: Required<Omit<CoordinatorConfig, 'logger'>>;
   private readonly logger: StructuredLogger | undefined;
   private cleanupTimer?: NodeJS.Timeout;
@@ -74,7 +74,7 @@ export class SessionCoordinator {
     this.config = {
       maxSessions: config.maxSessions ?? 1000,
       defaultTtlMs: config.defaultTtlMs ?? 900000, // 15 minutes
-      defaultIdleTimeoutMs: config.defaultIdleTimeoutMs ?? 120000, // 2 minutes
+      defaultIdleTimeoutMs: config.defaultIdleTimeoutMs ?? 600000, // 10 minutes
       cleanupCheckIntervalMs: config.cleanupCheckIntervalMs ?? 30000, // 30 seconds
     };
     this.logger = config.logger;
@@ -144,7 +144,10 @@ export class SessionCoordinator {
     const idleTimeoutMs = request.idleTimeoutMs ?? this.config.defaultIdleTimeoutMs;
 
     // Create session context
-    const session: SessionContext = {
+    const cancellation = new AbortController();
+    const session = {
+      cancellation,
+      signal: cancellation.signal,
       id: sessionId,
       state: SessionState.READY,
       engine,
@@ -204,6 +207,7 @@ export class SessionCoordinator {
         // Mark as expired and remove
         session.state = SessionState.EXPIRED;
         this.sessions.delete(sessionId);
+        session.cancellation.abort(new EngineError('SESSION_EXPIRED', 'Session expired'));
         // Close engine session asynchronously without calling close()
         session.engineSession.close('expired').catch(() => {
           // Ignore close errors during expiration
@@ -227,6 +231,7 @@ export class SessionCoordinator {
 
     // Mark as closing
     session.state = SessionState.CLOSING;
+    session.cancellation.abort(new EngineError('SESSION_NOT_FOUND', 'Session closed'));
 
     try {
       // Close engine session
@@ -256,6 +261,12 @@ export class SessionCoordinator {
 
     session.state = state;
     this.sessions.delete(sessionId);
+    session.cancellation.abort(
+      new EngineError(
+        state === SessionState.ENGINE_CRASHED ? 'ENGINE_CRASHED' : 'SESSION_NOT_FOUND',
+        'Session terminated'
+      )
+    );
 
     try {
       await session.engineSession.close(`terminated:${reason}`);
@@ -330,6 +341,7 @@ export class SessionCoordinator {
         session.state = SessionState.EXPIRED;
         // Remove from sessions map first
         this.sessions.delete(id);
+        session.cancellation.abort(new EngineError('SESSION_EXPIRED', 'Session expired'));
         // Then close the engine session asynchronously without calling close()
         session.engineSession.close('expired').catch((error) => {
           this.logger?.error('session.cleanup-close-failed', {
@@ -374,6 +386,8 @@ export class SessionCoordinator {
  * Session context
  */
 export interface SessionContext {
+  /** Consumer cancellation occurs synchronously before asynchronous engine teardown. */
+  readonly signal: AbortSignal;
   id: string;
   state: SessionState;
   engine: BrowserEngine;

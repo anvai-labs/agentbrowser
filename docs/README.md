@@ -16,6 +16,8 @@ start with the [root README](../README.md).
 | Understand why a design decision was made | ADRs, below |
 | Understand the security posture and its limits | [Threat model](threat-model.md) |
 | See what changed in a release | [Changelog](../CHANGELOG.md) |
+| Track post-release transport milestones and the integration decision | [Integration contract](transport-integration-contract.md) and [remediation tracker](engineering-review-remediation.md) |
+| Implement the next connection-policy prerequisite and transport boundary | [T2a connection-authority design](connection-authority-design.md) |
 
 ## Architecture Decision Records (ADRs)
 

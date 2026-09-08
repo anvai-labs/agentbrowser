@@ -24,19 +24,60 @@ validation record below. A checked status never means merely documented.
 
 ## Findings and acceptance criteria
 
-### Next milestone: T1 policy inheritance feasibility
+### Current baseline and next decision milestone
 
-Fresh baseline: merged `develop` at `9420cda` ([PR 87](https://github.com/anvai-labs/agentbrowser/pull/87)), with all eight PR checks green.
-Its docs-only merge was excluded from post-merge CI by the existing path filter;
-the preceding runtime baseline `4e2ec00` passed all eight post-merge checks.
-Reuse the single clean worktree; do not recreate the A-G stack.
+Fresh baseline: `v1.8.4`, with `main` and `develop` synchronized at `085b8e1`
+([promotion PR 90](https://github.com/anvai-labs/agentbrowser/pull/90)). All eight
+[main CI checks](https://github.com/anvai-labs/agentbrowser/actions/runs/34077686481)
+and all twelve [release jobs](https://github.com/anvai-labs/agentbrowser/actions/runs/34081727897)
+passed. GitHub artifacts, npm and the [Homebrew formula](https://github.com/anvai-labs/homebrew-tap/pull/24)
+are published. Release completion does not close T1/R4.
+Reuse the single worktree; do not recreate the A-G stack. The
+[integration contract](transport-integration-contract.md) and T2a design merged
+in [PR 91](https://github.com/anvai-labs/agentbrowser/pull/91), with all eight PR
+checks green (docs-only post-merge CI correctly excluded). R14/T2b0 merged in
+[PR 92](https://github.com/anvai-labs/agentbrowser/pull/92) at `3195bf8`, with all
+eight PR checks and all eight [post-merge CI checks](https://github.com/anvai-labs/agentbrowser/actions/runs/34106663675)
+green. T2b1 merged in [PR 93](https://github.com/anvai-labs/agentbrowser/pull/93)
+at `8361f38`, with all eight PR and all eight
+[post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/34112948325)
+green. T2b2 merged in [PR 94](https://github.com/anvai-labs/agentbrowser/pull/94)
+at `e38189c`, with all eight PR and
+[post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/34143841691)
+green. Release acceptance is tracked in [release milestones](release-milestones.md).
+A new T1 mechanism,
+private patch or fork still requires a separate decision.
 
 | Unit | Scope | Acceptance / stop condition | Status |
 | --- | --- | --- | --- |
 | T1a | Compare policy delivery and diagnose replay failures | Preserve HTTP controls; correlate browser failures, CSP violations and server hits | Merged in PR 85; 36-case comparison, 27-case worker follow-up, 20 offline tests; all eight post-merge CI checks green; T1/R4 remain open |
 | T1b | Test target startup ownership and nested-worker coverage | Independent review of startup ordering and all-target controls; no production claim from page-only coverage | Merged in PR 86; independent review, 47 offline tests, two 27-worker runs and all eight post-merge checks pass. **Startup gate failed:** all 12 attached workers issue HTTP before this client's release; shared controls uncovered |
 | T1c | Reassess transport feasibility against the complete acceptance matrix | T1 remains open until semantics and coverage pass; revisit design explicitly if they cannot | [Reassessment independently reviewed](egress-transport-reassessment.md). Assessment artifact complete, not T1 closure. Separate lifecycle ownership from semantic compatibility; recommend one bounded ownership comparison before choosing integration or maintenance commitments |
-| T1d | Bounded sole-owner / competing-resumer comparison from T1c | Three arms, three repeats; native positive controls, all-owner command/target identity; stop without expanding if the T1b distinction is not reproduced | Implemented and independently approved as bounded diagnostic evidence. Two 27-worker runs preserve controls but do not reproduce early execution; 79 offline tests pass. Integration decision required; T1 remains open and no production mechanism selected |
+| T1d | Bounded sole-owner / competing-resumer comparison from T1c | Three arms, three repeats; native positive controls, all-owner command/target identity; stop without expanding if the T1b distinction is not reproduced | Merged in PR 88 and shipped in v1.8.4; independent review and all eight post-merge checks passed. Two 27-worker runs preserve controls but do not reproduce early execution; 79 offline tests pass. Stop condition reached; T1 remains open |
+| T1e | Supported integration contract and maintenance decision | Separate first-request admission, execution initialization and browser-semantic enforcement; no automatic probe expansion or private patch | Owner authorized focused inquiry. [Message prepared](playwright-integration-inquiry.md), not sent: upstream support requires Discord access unavailable here. No upstream-supported mechanism selected |
+| T2a | Connection-authority design and test contract | Ground extraction in the direct-download caller; define DNS/peer/TLS ownership, revocation, admission and failure tests | [Design independently reviewed](connection-authority-design.md) and merged in PR 91. Source review reproduced R14; no T1/R4 closure |
+| T2b0 | Canonical IP policy and resolver-record validation (R14) | Equivalent addresses obey configured rules; malformed or denied answer sets cause zero TCP accepts/HTTP requests; permitted local controls succeed | Merged in PR 92, unreleased; independent approval and all eight PR/post-merge checks green |
+| T2b1 | Private connection authority | Admission, revocation, DNS/peer identity and real HTTP/TLS acceptance contract | Merged in PR 93 with independent approvals, 55 deterministic/nine real-I/O cases, all eight PR and post-merge checks green; unreleased |
+| T2b2 | Direct-download and session integration | Use the primitive per session generation and one runtime budget; retain transfer/redirect/TLS semantics and owner-aware terminal diagnostics | Merged in PR 94 with independent approvals and all eight PR/post-merge checks green; unreleased |
+
+T2b2 cohesive implementation checklist (one PR, no release or gateway changes):
+
+| Item | Scope / evidence | Status |
+| --- | --- | --- |
+| Lifecycle | Coordinator-owned cancellation at close/expiry/termination, before engine teardown; service generation cleanup | Implemented and independently approved; lifecycle and late-artifact regressions pass |
+| Transport | Verified socket handoff, logical TLS identity, per-hop authorization, one total deadline and bounded late callbacks | Implemented and independently approved; 46 focused download tests and four native Bun acceptance controls pass |
+| Diagnostics | One redacted terminal outcome with generation/connection identity; no raw transport errors | Implemented with separate cleanup diagnostics; privacy/outcome regressions pass |
+| Acceptance | Production HTTP/TLS and session regressions, independent adversarial review, eight PR and post-merge checks | Complete in PR 94; packaged/installed acceptance remains a separate release gate |
+
+T2b2 review evidence: the initial coordinator cancellation cases failed before
+implementation. Independent transport review reproduced encoded-size overflow
+waiting behind a stalled body-policy callback. The durable regression failed
+before the fix; overflow now aborts all I/O promptly while callback admission
+remains reserved until actual completion. Both reviewers approved the correction.
+Native Bun HTTP/HTTPS positive/cancellation checks now run in the existing Bun
+CI job. Full PR and post-merge CI subsequently passed (linked above); packaged
+and installed acceptance remain separate. See the [integration boundary](connection-authority-design.md#t2b2-production-integration-boundary)
+for policy snapshot compatibility and expiry/containment limitations.
 
 T1a is a bounded probe/evidence PR, not a production adapter change. Keep
 historical evidence immutable. No gateway deployment, host networking changes,
@@ -74,6 +115,20 @@ event, so it cannot establish race-free startup or all-target enforcement.
 | R11 | Safari transport and deployment contract; engine-safari, api | M | Unscoped execute URL; service rejects all Safari sessions as INTERNAL | Session-prefixed transport, lifecycle checks; explicit typed egress refusal and documented supported deployment; mock transport tests | Merged in F |
 | R12 | Retention/admission limits; api/service.ts, core/approval-gate.ts | M | Event count does not bound bytes; maxTokens=2 admits 3 pending tokens | Per-event and aggregate byte bounds, drop counters, hard token admission after cleanup; capacity tests | Merged in E |
 | R13 | Fragmented error taxonomy; engine, core, api, SDK | M | Error behavior varies by operation; SDK discards approval details | Typed adapter errors, shared normalization/recovery, full protocol error envelope; cross-operation error tests | Merged in B |
+| R14 | Resolved-address representation gaps; policy/network-policy.ts | H | Strict policy denied ordinary loopback but allowed mapped/expanded loopback and malformed address text; independently reproduced at policy level, not as an end-to-end network exploit | T2b0: fixed-size native IP range tables, strict literal validation, all-record transport validation; policy and real TCP/HTTP regressions | Merged in PR 92 with independent approval and green PR/post-merge CI; unreleased, not fixed by v1.8.4 |
+
+T2b0 validation: 38 of the initial 58 new policy cases failed before the fix.
+Independent review found a raw leading-zero dotted-quad fallthrough introduced
+by strict parsing; five additional failing tests reproduced it before correction.
+The policy suite now has 116 tests. Seven direct-download tests include separate
+TCP-accept and HTTP-request counters, valid-first/invalid-second DNS records,
+mapped IPv6 literals and named destinations, and successful permitted-local
+controls. The independent reviewer reran both suites and approved after the
+correction; Bun 1.4.0 built-policy compatibility controls also pass locally.
+The private classifier uses native `net.BlockList` identity comparisons
+rather than a second handwritten IP parser. These are address-policy and direct
+transport guarantees only; connection-peer verification, bounded authority
+admission/revocation, and browser T1/R4 remain separate unfinished work.
 
 ## Design decisions
 
@@ -114,7 +169,7 @@ page WebSocket tests do not establish all-hop browser or worker enforcement.
 Its operational limitations are documented in [engines](engines.md),
 [operations](operations.md), and the [threat model](threat-model.md).
 
-### Independent review and integration update
+### Historical independent review and integration update (before v1.8.4)
 
 A merged into `develop` at `b72510c`, B at `c0798d8`, C at `b865868`, and partial D
 at `d04d77f`, E at `c7903f8`, F at `92e7efa`, and G at `d9ddfc5`, each after

@@ -53,13 +53,12 @@ jobs:
             artifact: agentbrowser-mcp-linux-x64
             cli_artifact: agentbrowser-cli-linux-x64
             smoke: true
-          # No arm64 Linux runners are available to private repos: the arm64
-          # build is cross-compiled and its smoke is explicitly skipped.
+          # Same native ARM runner already used by server packaging.
           - target: bun-linux-arm64
-            os: ubuntu-latest
+            os: ubuntu-24.04-arm
             artifact: agentbrowser-mcp-linux-arm64
             cli_artifact: agentbrowser-cli-linux-arm64
-            smoke: false
+            smoke: true
           - target: bun-windows-x64
             os: windows-latest
             artifact: agentbrowser-mcp-windows-x64.exe
@@ -115,7 +114,7 @@ jobs:
       - name: Compile the CLI binary
         run: node packages/cli/scripts/compile.mjs --target=${{ matrix.target }} --outfile=packages/cli/dist-bin/${{ matrix.cli_artifact }}
 
-      - name: CLI smoke (--help)
+      - name: CLI smoke (version + help)
         if: ${{ matrix.smoke }}
         run: node packages/cli/scripts/smoke.mjs packages/cli/dist-bin/${{ matrix.cli_artifact }}
 
@@ -126,28 +125,30 @@ jobs:
           if-no-files-found: error
 
   server-packages:
+    needs: [tag-guard, binaries]
     # TD-BROWSER-5 shipped only the MCP adapter; consumers still needed a repo
     # checkout for the service it drives. Each target is a self-contained
     # "fat tarball": the built API server plus its pruned production
     # node_modules (Playwright is bundler-hostile — its package tree must ship
-    # intact, so no esbuild/bun single-file trick here). All four targets are
-    # native builds, so every tarball gets the full browser smoke.
+    # intact, so no esbuild/bun single-file trick here). The same packager and
+    # real-browser harness run pre-tag in PR CI. Darwin x64 server execution
+    # here uses ARM Node; the matching client binaries execute through Rosetta.
     name: Server ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: server-darwin-arm64
+          - target: darwin-arm64
             os: macos-latest
-          - target: server-darwin-x64
+          - target: darwin-x64
             # The fat tarball is pure JS plus a universal optional fsevents —
             # no arch-specific build step — and macos-13 runners starve
             # (see sandhi's release.yml). Build x64 on the arm64 runner.
             os: macos-latest
-          - target: server-linux-x64
+          - target: linux-x64
             os: ubuntu-latest
-          - target: server-linux-arm64
+          - target: linux-arm64
             os: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
@@ -167,69 +168,56 @@ jobs:
       - name: Build workspace packages
         run: pnpm -r build
 
-      - name: Deploy the API server with pruned production dependencies
-        run: pnpm --filter @agentbrowser/api deploy --prod out/server
+      - name: Package the versioned server
+        run: node scripts/package-server.mjs --output-dir out-packages --target "${{ matrix.target }}" --expected-version "${GITHUB_REF_NAME#v}"
 
-      - name: Stamp version and commit
+      - name: Install Chromium system dependencies on Linux
+        if: runner.os == 'Linux'
+        run: pnpm --filter @agentbrowser/engine-playwright exec playwright install-deps chromium
+
+      - name: Install the acceptance-only PDF parser
         run: |
-          node -p "JSON.stringify({ version: require('./packages/mcp-server/package.json').version, commit: process.env.GITHUB_SHA }, null, 2)" > out/server/VERSION.json
+          if ! command -v qpdf >/dev/null; then
+            if [ "$RUNNER_OS" = Linux ]; then
+              sudo apt-get update && sudo apt-get install -y qpdf
+            else
+              HOMEBREW_NO_AUTO_UPDATE=1 brew install qpdf
+            fi
+          fi
+          qpdf --version
 
-      - name: Bundle the generic launcher
-        run: |
-          # For non-Homebrew consumers: keeps the Playwright browser cache out
-          # of the package tree and requires only `node` on PATH.
-          cat > out/server/agentbrowser-server <<'LAUNCH'
-          #!/bin/sh
-          set -eu
-          HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-          : "${PLAYWRIGHT_BROWSERS_PATH:=${XDG_CACHE_HOME:-$HOME/.cache}/agentbrowser/browsers}"
-          export PLAYWRIGHT_BROWSERS_PATH
-          exec node "$HERE/dist/bin.js" "$@"
-          LAUNCH
-          chmod +x out/server/agentbrowser-server
+      - uses: actions/download-artifact@v4
+        with:
+          name: agentbrowser-cli-${{ matrix.target }}
+          path: out-clients
 
-      - name: Tar
-        # matrix.target carries a server- prefix (it names the artifact);
-        # strip it so the published file is agentbrowser-server-<target>.
-        run: |
-          FILE="agentbrowser-server-${{ matrix.target }}.tar.gz"
-          FILE="${FILE/agentbrowser-server-server-/agentbrowser-server-}"
-          echo "FILE=$FILE" >> "$GITHUB_ENV"
-          tar -czf "$FILE" -C out server
+      - uses: actions/download-artifact@v4
+        with:
+          name: agentbrowser-mcp-${{ matrix.target }}
+          path: out-clients
 
-      - name: Smoke — real browser session from the extracted tarball
+      - name: Accept the extracted release package with its matching clients
         env:
-          FILE: ${{ env.FILE }}
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/release-browsers
         run: |
-          rm -rf /tmp/abserver && mkdir -p /tmp/abserver
-          tar -xzf "$FILE" -C /tmp/abserver
-          export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/browsers"
-          # pnpm deploy keeps transitive deps under .pnpm; resolve the CLI there.
-          PW_CLI="$(echo /tmp/abserver/server/node_modules/.pnpm/playwright@*/node_modules/playwright/cli.js)"
-          node "$PW_CLI" install chromium
-          /tmp/abserver/server/agentbrowser-server &
-          SERVER_PID=$!
-          for i in $(seq 1 30); do
-            curl -fsS -o /dev/null http://127.0.0.1:3000/openapi.json && break
-            sleep 1
-          done
-          curl -fsS -o /dev/null http://127.0.0.1:3000/openapi.json
-          SID="$(curl -fsS -X POST http://127.0.0.1:3000/v1/sessions -H 'content-type: application/json' -d '{"tenantId":"release-smoke"}' | node -e "process.stdin.on('data',d=>process.stdout.write(JSON.parse(d).sessionId))")"
-          PID="$(curl -fsS -X POST http://127.0.0.1:3000/v1/sessions/$SID/pages -H 'content-type: application/json' -d '{}' | node -e "process.stdin.on('data',d=>process.stdout.write(JSON.parse(d).pageId))")"
-          curl -fsS -X POST http://127.0.0.1:3000/v1/sessions/$SID/pages/$PID/navigate -H 'content-type: application/json' -d '{"url":"https://example.com"}' >/dev/null
-          OBS="$(curl -fsS -X POST http://127.0.0.1:3000/v1/sessions/$SID/pages/$PID/observe -H 'content-type: application/json' -d '{}')"
-          echo "$OBS" | grep -q '"title":"Example Domain"' || { echo "::error::observe did not return the expected page"; exit 1; }
-          kill $SERVER_PID
+          EXTRACTED="$(mktemp -d "$RUNNER_TEMP/agentbrowser-release.XXXXXX")"
+          trap 'rm -rf -- "$EXTRACTED"' EXIT
+          tar -xzf "out-packages/agentbrowser-server-${{ matrix.target }}.tar.gz" -C "$EXTRACTED"
+          chmod +x "out-clients/agentbrowser-cli-${{ matrix.target }}" "out-clients/agentbrowser-mcp-${{ matrix.target }}"
+          node scripts/package-acceptance.mjs --server-root "$EXTRACTED/server" --expected-version "${GITHUB_REF_NAME#v}" --expected-commit "$GITHUB_SHA" \
+            --cli "$GITHUB_WORKSPACE/out-clients/agentbrowser-cli-${{ matrix.target }}" \
+            --mcp "$GITHUB_WORKSPACE/out-clients/agentbrowser-mcp-${{ matrix.target }}" --install-browser
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.target }}
-          path: ${{ env.FILE }}
+          name: server-${{ matrix.target }}
+          path: out-packages/agentbrowser-server-${{ matrix.target }}.tar.gz
           if-no-files-found: error
 
   npm-publish:
     name: npm (@anvailabs/agentbrowser-mcp)
-    needs: tag-guard
+    # Publication must not race ahead of failed executable or packaged-server smoke.
+    needs: [tag-guard, binaries, server-packages]
     runs-on: ubuntu-latest
     # OIDC Trusted Publishing (ADR-014): the npm binding pins (repository
     # anvai-labs/agentbrowser, workflow release.yml, environment npm) — no
@@ -335,8 +323,11 @@ jobs:
 
           The service is now installable too: `agentbrowser-server-<target>.tar.gz`
           is a self-contained server build (pruned production `node_modules` +
-          compiled `dist/`) whose every artifact passed a real-browser smoke —
-          create a session, navigate to example.com, observe semantic elements.
+          compiled `dist/`) whose every artifact passed extracted-package acceptance:
+          real Chromium navigation/snapshot/action, valid screenshot/PDF bytes,
+          HTTP/TLS downloads, denial/cancellation controls and matching CLI/MCP calls.
+          Stock-launcher default denial and instrumented snapshot recovery are
+          distinct checks. This is not hostile-browser containment evidence.
 
           ```sh
           tar -xzf agentbrowser-server-<target>.tar.gz && ./server/agentbrowser-server
@@ -345,7 +336,7 @@ jobs:
           # (override with PLAYWRIGHT_BROWSERS_PATH)
           ```
 
-          Homebrew users get both halves in one command:
+          Homebrew users get the server, CLI and MCP in one command:
           `brew install anvai-labs/tap/agentbrowser`
           (`brew services start anvai-labs/tap/agentbrowser` runs the service).
 
@@ -356,16 +347,21 @@ jobs:
           | agentbrowser-mcp-darwin-arm64 | run natively on the build runner |
           | agentbrowser-mcp-darwin-x64 | run via Rosetta on the arm64 runner |
           | agentbrowser-mcp-linux-x64 | run natively on the build runner |
-          | agentbrowser-mcp-linux-arm64 | **skipped** - cross-compiled; private repos have no arm64 Linux runners |
+          | agentbrowser-mcp-linux-arm64 | run natively on the ARM build runner |
           | agentbrowser-mcp-windows-x64.exe | run natively on the build runner |
 
           The CLI (`agentbrowser-cli-<target>`) ships from this release too —
-          `--help` smoke-tested wherever the runner can execute it (same
+          `--version` and `--help` smoke-tested wherever the runner can execute it (same
           targets/omissions as the MCP binary).
 
           Each smoke ran `initialize` + `tools/list` against the compiled
-          artifact and required the full 9-tool catalog and a release version
+          artifact and required the full 11-tool catalog and the exact release version
           in `serverInfo`.
+
+          Server acceptance uses Node 22 on native Linux x64/ARM and Darwin ARM.
+          The Darwin x64 tarball is exercised on ARM Node with Rosetta x64 clients;
+          this is not native Intel server-runtime proof. Windows has executable
+          acceptance only: no Windows server tarball is shipped.
 
           ### Install
 

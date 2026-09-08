@@ -72,6 +72,12 @@ jobs:
       - name: Check release version consistency
         run: pnpm release:check && pnpm test:release
 
+      - name: Test executable acceptance failures and cleanup
+        run: node --test scripts/release-smoke.test.mjs
+
+      - name: Test candidate packaging and acceptance failure controls
+        run: node --test scripts/package-server.test.mjs scripts/package-acceptance.test.mjs
+
       # Offline evidence validation only; does not certify browser containment.
       - name: Check worker feasibility evidence verifier
         run: pnpm test:probes
@@ -272,5 +278,48 @@ jobs:
       - name: Compile the MCP server binary (version-stamped)
         run: node packages/mcp-server/scripts/compile.mjs
 
+      - name: Native Bun download HTTP/TLS acceptance
+        run: bun scripts/check-download-bun.ts
+
       - name: Stdio smoke (initialize + tools/list)
         run: node packages/mcp-server/scripts/smoke.mjs packages/mcp-server/dist-bin/agentbrowser-mcp
+
+      - name: Compile the CLI for packaged workflow acceptance
+        run: node packages/cli/scripts/compile.mjs
+
+      - name: Install Chromium system dependencies on Linux
+        if: runner.os == 'Linux'
+        run: pnpm --filter @agentbrowser/engine-playwright exec playwright install-deps chromium
+
+      - name: Install the acceptance-only PDF parser
+        run: |
+          if ! command -v qpdf >/dev/null; then
+            if [ "$RUNNER_OS" = Linux ]; then
+              sudo apt-get update && sudo apt-get install -y qpdf
+            else
+              HOMEBREW_NO_AUTO_UPDATE=1 brew install qpdf
+            fi
+          fi
+          qpdf --version
+
+      - name: Test malformed capture rejection with the PDF parser
+        run: node --test scripts/artifact-validation.test.mjs
+
+      - name: Package the untagged server candidate
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          TARGET="$(node -p "process.platform + '-' + process.arch")"
+          node scripts/package-server.mjs --output-dir out-packages --target "$TARGET" --expected-version "$VERSION"
+
+      - name: Accept the extracted candidate with real Chromium and client binaries
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/candidate-browsers
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          TARGET="$(node -p "process.platform + '-' + process.arch")"
+          EXTRACTED="$(mktemp -d "$RUNNER_TEMP/agentbrowser-candidate.XXXXXX")"
+          trap 'rm -rf -- "$EXTRACTED"' EXIT
+          tar -xzf "out-packages/agentbrowser-server-$TARGET.tar.gz" -C "$EXTRACTED"
+          node scripts/package-acceptance.mjs --server-root "$EXTRACTED/server" --expected-version "$VERSION" --expected-commit "$GITHUB_SHA" \
+            --cli "$GITHUB_WORKSPACE/packages/cli/dist-bin/agentbrowser" \
+            --mcp "$GITHUB_WORKSPACE/packages/mcp-server/dist-bin/agentbrowser-mcp" --install-browser

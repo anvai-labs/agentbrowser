@@ -106,6 +106,13 @@ describe('AgentBrowser CLI', () => {
   });
 
   describe('session commands', () => {
+    it('documents the ten-minute default while preserving explicit idle overrides', async () => {
+      expect(await run('session', 'create', '--help')).toBe(0);
+      expect(out.join('\n')).toContain('600000 = 10 min');
+      expect(out.join('\n')).not.toContain('120000 = 2 min');
+      expect(deps.createClient).not.toHaveBeenCalled();
+    });
+
     it('should create a session', async () => {
       const code = await run('session', 'create', '--tenant', 'tenant_1');
 
@@ -386,6 +393,28 @@ describe('AgentBrowser CLI', () => {
   });
 
   describe('global options', () => {
+    it.each([
+      { flag: 'flag-key', environment: undefined, expected: 'flag-key' },
+      { flag: undefined, environment: 'environment-key', expected: 'environment-key' },
+      { flag: 'flag-key', environment: 'environment-key', expected: 'flag-key' },
+      { flag: undefined, environment: undefined, expected: undefined },
+      { flag: undefined, environment: '', expected: undefined },
+    ])(
+      'passes authentication to the SDK with flag precedence ($expected)',
+      async ({ flag, environment, expected }) => {
+        vi.stubEnv('AGENTBROWSER_API_KEY', environment);
+        try {
+          expect(await run(...(flag ? ['--api-key', flag] : []), 'session', 'list')).toBe(0);
+          const options = vi.mocked(deps.createClient).mock.calls[0]?.[0];
+          if (expected === undefined) expect(options).not.toHaveProperty('apiKey');
+          else expect(options).toMatchObject({ apiKey: expected });
+          expect([...out, ...err].join('\n')).not.toMatch(/flag-key|environment-key/);
+        } finally {
+          vi.unstubAllEnvs();
+        }
+      }
+    );
+
     it('should default to the local server', async () => {
       await run('session', 'list');
 
