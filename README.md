@@ -142,6 +142,8 @@ surface; the rest depends on who you are.
 - [Architecture decisions](docs/README.md#architecture-decision-records-adrs) - ADR-001…015
 - [Technical designs](docs/td/) - TD-BROWSER-5…9 feature records
 - [Threat model](docs/threat-model.md) - the security posture and its named limits
+- [Human handoff](docs/human-handoff.md) - working a session with a person in the loop: approval gates, headed credential entry, re-observe discipline
+- [Synthetic input limitations](docs/synthetic-input-limitations.md) - what `isTrusted: false` costs, what works around it, and why trusted input is deferred
 
 ## License
 
