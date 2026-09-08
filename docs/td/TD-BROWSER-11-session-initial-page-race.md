@@ -1,77 +1,72 @@
-# TD-BROWSER-11: Initial Page Not Registered at Session Create (First-Launch Race)
+# TD-BROWSER-11: Sessions Are Page-Less by Default (Initial-Page Contract Gap)
 
-**Status:** Observed live — root cause not yet isolated; workaround documented
-**Context:** 2026-09-08, brew-installed 1.8.6 against real branded Chrome
+**Status:** Corrected 2026-09-08 — original "first-launch race" framing was
+wrong; see [Correction](#correction-2026-09-08). The underlying client-facing
+problem is real and unresolved: nothing tells a client a fresh session has no
+pages.
+**Context:** 2026-09-08, brew-installed 1.8.6 and develop tip (identical
+runtime code), macOS
 **Related:** [TD-BROWSER-10](TD-BROWSER-10-session-extension-loading.md)
 (same headed-session testbed),
 [human handoff](../human-handoff.md)
 
-## Observation (reproduced twice, same conditions)
+## Correction {#correction-2026-09-08}
 
-A headed session create on macOS returned a healthy-looking session whose
-page list stayed empty indefinitely:
+The original version of this TD hypothesized a first-launch-after-update
+race in which the engine's initial page failed to register. Further testing
+against the develop tip — headless and headed, wrapper-free, four consecutive
+creates, pages polled at +5s/+15s/+30s/+45s — reproduced the empty page list
+every time, and reading the code settled it:
 
-- `POST /v1/sessions` → 201, `status: "ready"`, engine `playwright-chromium`.
-- The engine's Chrome process tree was fully up — main process plus GPU and
-  utility helpers, launched with the wrapper's `--load-extension` args
-  (the TD-BROWSER-10 `AGENTBROWSER_CHROME_PATH` path).
-- `GET /v1/sessions/{id}/pages` → `{"pages":[]}` at +8s, +23s, +56s.
-- `GET /v1/sessions/{id}/events/replay` → `{"events":[]}` — the page never
-  even emitted lifecycle events.
-- Client navigations addressed at the assumed initial page 404'd
-  (`NOT_FOUND`, empty `pageId`).
-- A second create under identical conditions behaved identically.
+- The Playwright engine creates a browser and a context in `launchBrowser()`
+  but **no page**. Pages come into existence only via `newPage()`, which the
+  service calls only in `createPage` (the `POST /v1/sessions/{id}/pages`
+  route), plus popup adoption.
+- There is no eager initial page anywhere in the service or engine, no
+  timeout, no retry — because there is no bootstrap at all.
 
-The trigger condition is believed to be Chrome's first launch after an
-in-place browser update (152.0.7977.82 → 152.0.7977.83 had landed between the
-last good create and these). Earlier the same day, the same binary path and
-wrapper auto-registered `pg_N_page-0` about 3 seconds after create. Not
-reproduced on demand yet — the update only lands once.
+The "worked earlier the same day" observation that motivated the race theory
+was an earlier session whose page had been created explicitly by the driving
+client — indistinguishable from auto-registration after the fact. The Chrome
+auto-update (152.0.7977.82 → .83) was coincidence.
 
-## Why this matters
+What survives from the original TD is the actual defect: **the contract is
+invisible**. `POST /v1/sessions` returns `ready` with no `pageId`, no hint
+that the next step is `POST /pages`, and `GET /pages` returns `[]` — a
+client that assumes a fresh session comes with a page (as every flow in the
+handoff docs implicitly does) stalls with no error to act on.
 
-- Anything that assumes `pages[0]` exists after a `201` create — which
-  includes every flow in the handoff docs that observes "the" page — has no
-  page to act on, with no error surfaced: the session just looks empty.
-- The failure is silent by construction: engine construction resolved (the
-  session is `ready`), so the bootstrap's stall lives downstream of the
-  readiness signal. There is no timeout, retry, or diagnostic around the
-  initial-page registration.
+## The gap, precisely
 
-## Workaround (verified live)
+1. A fresh session is `ready` and page-less. `GET /pages` → `[]` is the only
+   signal, and empty-list-reads-as-broken is a natural misreading.
+2. `POST /v1/sessions/{id}/pages` is the supported creation path and works
+   immediately — but its `url` request field is **ignored** (the page lands
+   on `about:blank`); the client must navigate separately.
+3. No documentation surface states either fact.
 
-`POST /v1/sessions/{id}/pages` creates a page explicitly and returned 201
-immediately on the very session that was stuck; the created page is fully
-operable (navigate/observe/act). Two quirks worth keeping in any first-class
-fix or doc:
+## Resolution options
 
-- The route's `url` field is **ignored** — the page comes up on
-  `about:blank`; navigate separately.
-- `GET /pages` before the explicit create kept returning `[]`, so
-  "list, then act if non-empty" is a sound guard: treat an empty list as
-  "create one explicitly", not as an error.
+- **Document the contract** (cheapest): create → `POST /pages` → navigate is
+  the flow; empty `GET /pages` is normal for a fresh session. Update the
+  handoff docs' step 1 accordingly.
+- **Restore an eager initial page**: engine creates one page in
+  `launchBrowser()` and the service registers it before returning the
+  session. Matches client intuition (and the old default-browser mental
+  model), costs one tab per session. Decide whether `GET /pages` on a fresh
+  session returning `[]` is ever desirable.
+- **Echo the contract at create**: even without an eager page, the create
+  response could carry `pages: []` + a link/hint, making the empty list
+  legible.
 
-## Open questions for a first-class fix
+Until one lands, clients should treat an empty page list as "create one
+explicitly", not as an error — that workaround is verified end to end.
 
-1. Where exactly does the bootstrap stall — engine `newPage()` on a
-   first-launch-after-update Chrome, or the service's registration of the
-   page it returns? The empty event stream suggests the page object never
-   reached the engine's ledger.
-2. Should the service ensure the initial page with a bounded retry (the
-   SnapshotBudget pattern), or is create-then-explicit-create the supported
-   contract that belongs in the docs? The current state is the worst of
-   both: an implicit page that is neither guaranteed nor documented.
-3. Does the headless pool share the bootstrap path? All observations here
-   are headed/wrapper launches; headless creates have not shown the stall.
-4. Reproduction harness: launch a build of Chrome marked "updated"
-   (fresh-user-dir first run) under the engine and instrument
-   `newPage()` timing; alternatively simulate a slow CDP attach in the
-   testkit to exercise the service side.
+## Original observations (kept, reinterpreted)
 
-## Non-goals
-
-- Changing the session `ready` semantics (readiness ≠ page-exists is a
-  separate, arguably correct, contract — but it must be documented either
-  way).
-- Auto-retrying inside `POST /sessions` beyond a bounded initial-page
-  bootstrap.
+- `POST /v1/sessions` → 201, `status: "ready"`, healthy Chrome process tree.
+- `GET /pages` → `{"pages":[]}` across 45+ seconds, six+ sessions, headed
+  (branded Chrome via wrapper) and headless (bundled), brew and develop tip.
+- `GET /events/replay` → `{"events":[]}` (no page lifecycle, because no page).
+- Navigations addressed at an assumed initial page 404 (`NOT_FOUND`).
+- Explicit `POST /pages` → 201 immediately; created page fully operable.
