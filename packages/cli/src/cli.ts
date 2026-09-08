@@ -100,7 +100,7 @@ export interface Cli {
   run(argv: string[]): Promise<number>;
 }
 
-const DEFAULT_BASE_URL = 'http://localhost:3000';
+const DEFAULT_BASE_URL = 'http://localhost:5709';
 
 export function buildCli(deps: CliDependencies): Cli {
   return {

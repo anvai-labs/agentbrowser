@@ -154,12 +154,12 @@ jobs:
             --name agentbrowser-smoke \
             --read-only \
             --tmpfs /tmp \
-            -p 3000:3000 \
+            -p 5709:5709 \
             agentbrowser:${{ github.sha }}
           for i in $(seq 1 30); do
-            if curl -sf http://127.0.0.1:3000/health/live > /dev/null; then
+            if curl -sf http://127.0.0.1:5709/health/live > /dev/null; then
               echo "liveness OK"
-              curl -sf http://127.0.0.1:3000/health/ready | head -c 200
+              curl -sf http://127.0.0.1:5709/health/ready | head -c 200
               echo
               docker stop agentbrowser-smoke
               exit 0

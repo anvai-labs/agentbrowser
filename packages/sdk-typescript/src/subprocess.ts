@@ -81,7 +81,7 @@ export async function createManagedServer(
     }
   };
 
-  const port = options.port ?? options.defaultPort ?? 3000;
+  const port = options.port ?? options.defaultPort ?? 5709;
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
     throw new Error(`Invalid port ${port}: expected an integer between 1 and 65535.`);
   }

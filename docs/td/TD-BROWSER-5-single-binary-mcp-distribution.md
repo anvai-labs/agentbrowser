@@ -81,7 +81,7 @@ The compiled binary was driven end-to-end through Victor's `MCPClient`
 
 The binary packages **only the MCP stdio adapter**. It still requires a
 reachable AgentBrowser server (`AGENTBROWSER_BASE_URL`, default
-`http://localhost:3000`) for anything beyond the handshake — the server owns
+`http://localhost:5709`) for anything beyond the handshake — the server owns
 sessions, the engine, Playwright/Chromium, egress policy, and approval gates
 (ADR-006, ADR-007, ADR-008). Compiling the REST server + Playwright into the
 binary is explicitly rejected: Playwright needs per-platform browser downloads
@@ -98,7 +98,7 @@ mcpServers:
   agentbrowser:
     command: /usr/local/bin/agentbrowser-mcp   # from the GitHub Release
     env:
-      AGENTBROWSER_BASE_URL: http://localhost:3000
+      AGENTBROWSER_BASE_URL: http://localhost:5709
 ```
 
 ## Acceptance criteria

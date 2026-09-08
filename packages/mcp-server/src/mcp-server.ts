@@ -522,7 +522,7 @@ function buildTools(client: McpClient): ToolDefinition[] {
  * Build the MCP server with its tool catalog.
  */
 export function buildMcpServer(deps: McpDependencies): McpServer {
-  const client = deps.createClient({ baseUrl: deps.baseUrl ?? 'http://localhost:3000' });
+  const client = deps.createClient({ baseUrl: deps.baseUrl ?? 'http://localhost:5709' });
   const serverInfo = deps.serverInfo ?? { name: 'agentbrowser', version: '1.0.0' };
 
   const tools = buildTools(client);
