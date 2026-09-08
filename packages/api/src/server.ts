@@ -18,6 +18,7 @@ import {
   validatePlanStep,
   validateSessionRequest,
   validateWireAction,
+  validateWireActionBatch,
 } from '@agentbrowser/protocol';
 import type { SessionPolicy } from '@agentbrowser/protocol';
 import cors from '@fastify/cors';
@@ -813,14 +814,19 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             return reply;
           }
 
-          const validated = validateWireAction(body);
+          const validated =
+            typeof body === 'object' &&
+            body !== null &&
+            'steps' in (body as Record<string, unknown>)
+              ? validateWireActionBatch(body)
+              : validateWireAction(body);
           if (!validated.ok) {
             throw new ServiceError('INVALID_REQUEST', 'Invalid action request', false, {
               issues: validated.issues,
               validActions: [...DELIVERED_ACTION_TYPES].sort(),
             });
           }
-          const result = await service.act(sessionId, pageId, validated.value);
+          const result = await service.act(sessionId, pageId, validated.value as ServiceActRequest);
           if (validated.warnings?.length) {
             return reply.send({ ...result, warnings: validated.warnings });
           }

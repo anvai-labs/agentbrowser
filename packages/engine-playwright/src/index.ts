@@ -1252,7 +1252,9 @@ class PlaywrightPage implements EnginePage {
         'TARGET_NOT_FOUND',
         `Element not found: ${target.ref} (observe the page to mint refs)`,
         false,
-        this.refusalDetails(target.ref)
+        // An unknown ref carries no contradicting live evidence - the engine
+        // simply lost track of it - so a remap heal may consume this refusal.
+        { ...this.refusalDetails(target.ref), remapEligible: true }
       );
     }
     if (!binding) {
@@ -1262,7 +1264,10 @@ class PlaywrightPage implements EnginePage {
         'STALE_TARGET',
         'Observed target could not be bound safely; observe again.',
         true,
-        this.refusalDetails(target.ref, stored)
+        {
+          ...this.refusalDetails(target.ref, stored),
+          remapEligible: true,
+        }
       );
     }
     if (!(await binding.handle.evaluate((node) => node.isConnected))) {
@@ -1270,7 +1275,10 @@ class PlaywrightPage implements EnginePage {
         'STALE_TARGET',
         'Observed node was detached or replaced; observe again.',
         false,
-        this.refusalDetails(target.ref, stored)
+        {
+          ...this.refusalDetails(target.ref, stored),
+          remapEligible: true,
+        }
       );
     }
     const visible = await binding.handle.isVisible();
@@ -1298,7 +1306,10 @@ class PlaywrightPage implements EnginePage {
           'STALE_TARGET',
           'Observed target identity or semantic state changed; observe again.',
           false,
-          this.refusalDetails(target.ref, stored)
+          {
+            ...this.refusalDetails(target.ref, stored),
+            remapEligible: true,
+          }
         );
       }
       const expectedSnapshot = binding.snapshot ?? binding.documentSnapshot;
@@ -1359,6 +1370,41 @@ class PlaywrightPage implements EnginePage {
     } catch (error) {
       const failure = normalizeEngineError(error);
       let details = failure.details;
+      // F2: opt-in healing. resolve() fails BEFORE any locator action runs,
+      // so the remap retry cannot double-fire on the dead control. Live
+      // semantic-evidence mismatches never carry remapEligible and are
+      // therefore never healed.
+      if (
+        action.remap === true &&
+        action.target !== undefined &&
+        failure.code === 'STALE_TARGET' &&
+        details?.remapEligible === true
+      ) {
+        let remap: Awaited<ReturnType<PlaywrightPage['tryRemap']>>;
+        try {
+          remap = await this.tryRemap(action);
+        } catch {
+          throw new EngineError(failure.code, failure.message, failure.retryable, details);
+        }
+        if ('action' in remap) {
+          try {
+            const effect = await this.performAction(remap.action);
+            return { ...effect, remap: { from: action.target.ref, to: remap.to } };
+          } catch (retryError) {
+            const retryFailure = normalizeEngineError(retryError);
+            throw new EngineError(
+              retryFailure.code,
+              retryFailure.message,
+              retryFailure.retryable,
+              retryFailure.details
+            );
+          }
+        }
+        throw new EngineError(failure.code, failure.message, failure.retryable, {
+          ...details,
+          candidates: remap.candidates,
+        });
+      }
       if (failure.code === 'ACTION_TIMEOUT' && action.target && details?.blockedBy === undefined) {
         // A blocked main thread is a common CAUSE of the timeout we are
         // describing; bound the diagnostic so it cannot outlive the error.
@@ -1373,6 +1419,33 @@ class PlaywrightPage implements EnginePage {
       }
       throw new EngineError(failure.code, failure.message, failure.retryable, details);
     }
+  }
+
+  /**
+   * Re-observe and match the refused element by role+name. Exactly one
+   * match heals; zero or several candidates refuse with the count rather
+   * than guess. Returns the rebuilt action targeting the fresh ref.
+   */
+  private async tryRemap(
+    action: EngineAction
+  ): Promise<{ action: EngineAction; to: string } | { candidates: number }> {
+    const target = action.target;
+    if (target === undefined) {
+      return { candidates: 0 };
+    }
+    const stored = this.refStore.get(target.ref);
+    if (stored === undefined) {
+      return { candidates: 0 };
+    }
+    const fresh = await this.observe({});
+    const candidates = fresh.elements.filter(
+      (e) => e.role === stored.role && (stored.name === undefined || e.name === stored.name)
+    );
+    const match = candidates.length === 1 ? candidates[0] : undefined;
+    if (match?.ref === undefined || match.ref === target.ref) {
+      return { candidates: candidates.length };
+    }
+    return { action: { ...action, target: { ref: match.ref } }, to: match.ref };
   }
 
   /**
@@ -1620,8 +1693,21 @@ class PlaywrightPage implements EnginePage {
       case 'wait': {
         // Non-mutating; bounded by the condition's timeout.
         const condition = action.condition as { until?: string; timeoutMs?: number };
-        const state = condition?.until === 'networkidle' ? 'networkidle' : 'load';
-        await this.waitForLoadState(state, { timeout: condition?.timeoutMs });
+        // urlPattern/selectorVisible/minElements are service-evaluated (the
+        // service polls engine state to its own deadline). Waiting for
+        // 'load' here would double-wait and can fail the act before the
+        // real poll ever runs.
+        const serviceEvaluated =
+          condition?.until === 'urlPattern' ||
+          condition?.until === 'selectorVisible' ||
+          condition?.until === 'minElements';
+        if (!serviceEvaluated) {
+          const state = condition?.until === 'networkidle' ? 'networkidle' : 'load';
+          // Playwright reads an explicit 0 as "wait forever" - clamp.
+          const timeout =
+            condition?.timeoutMs !== undefined ? Math.max(1, condition.timeoutMs) : undefined;
+          await this.waitForLoadState(state, { timeout });
+        }
         break;
       }
       case 'goBack':
@@ -1746,6 +1832,30 @@ class PlaywrightPage implements EnginePage {
     await this.page.waitForLoadState(state, {
       ...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
     });
+  }
+
+  /**
+   * Wait until a CSS selector is visible (the `selectorVisible` wait
+   * primitive). Real locator visibility, not a sleep; the service maps
+   * missed deadlines to ACTION_TIMEOUT.
+   */
+  async waitForSelector(selector: string, options: { timeoutMs?: number } = {}): Promise<void> {
+    // Playwright reads an explicit 0 as "wait forever" - clamp to a floor.
+    const timeoutMs = Math.max(1, options.timeoutMs ?? 5000);
+    try {
+      await this.page.locator(selector).waitFor({
+        state: 'visible',
+        timeout: timeoutMs,
+      });
+    } catch (error) {
+      const failure = normalizeEngineError(error);
+      throw new EngineError(
+        'ACTION_TIMEOUT',
+        `Selector '${selector}' did not become visible within ${timeoutMs}ms.`,
+        true,
+        { selector, timeoutMs, ...failure.details }
+      );
+    }
   }
 
   async close(): Promise<void> {

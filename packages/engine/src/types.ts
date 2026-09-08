@@ -185,6 +185,13 @@ export type EngineTarget = ElementTarget;
 export interface EngineAction {
   type: string;
   target?: EngineTarget;
+  /**
+   * Opt-in healing (F2): when the targeted control was replaced, re-observe
+   * and act on the single role+name match. Engines that decline report the
+   * refusal with candidate counts; live semantic-evidence mismatches are
+   * never remapped.
+   */
+  remap?: boolean;
   [key: string]: unknown;
 }
 
@@ -195,6 +202,8 @@ export interface EngineAction {
  */
 export interface ActionEffect extends ActionResult {
   effect?: string;
+  /** Present only when the engine healed a replaced target (F2). */
+  remap?: { from: string; to: string };
 }
 
 /**
@@ -355,6 +364,13 @@ export interface EnginePage {
 
   /** Live document URL without creating an observation or changing refs. */
   getUrl?(): Promise<string>;
+
+  /**
+   * Wait until a CSS selector is visible. Optional primitive backing the
+   * `selectorVisible` wait condition; engines without it degrade to
+   * ENGINE_UNSUPPORTED at the service boundary.
+   */
+  waitForSelector?(selector: string, options?: { timeoutMs?: number }): Promise<void>;
 
   /**
    * Best-effort cached URL for page discovery. Synchronous: no browser I/O,
