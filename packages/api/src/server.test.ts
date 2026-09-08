@@ -1207,6 +1207,40 @@ describe('AgentBrowser REST API safety integration', () => {
       expect(badSchema.status).toBe(400);
     });
 
+    it('should extract records over HTTP and reject a malformed records param', async () => {
+      const { sessionId, pageId } = await setupPage();
+
+      const ok = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/extract`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          format: 'records',
+          records: { container: 'body', fields: { text: 'p' } },
+        }),
+      });
+      expect(ok.status).toBe(200);
+      const result = await ok.json();
+      expect(Array.isArray(result.data)).toBe(true);
+      expect(Array.isArray(result.evidence)).toBe(true);
+
+      const missing = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/extract`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ format: 'records' }),
+      });
+      expect(missing.status).toBe(400);
+
+      const empty = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/extract`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          format: 'records',
+          records: { container: 'body', fields: {} },
+        }),
+      });
+      expect(empty.status).toBe(400);
+    });
+
     it('should reject an unknown format', async () => {
       const { sessionId, pageId } = await setupPage();
 

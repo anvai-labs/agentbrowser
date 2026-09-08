@@ -233,6 +233,8 @@ export interface ExtractionEvidence {
   url: string;
   revision: number;
   ref?: string;
+  /** Zero-based position within a repeating extraction (records mode). */
+  index?: number;
   text?: string;
   hash?: string;
 }
