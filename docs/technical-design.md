@@ -787,7 +787,7 @@ describe('AgentBrowser SDK', () => {
 
   beforeEach(() => {
     client = new AgentBrowserClient({
-      baseUrl: 'http://localhost:3000'
+      baseUrl: 'http://localhost:5709'
     });
   });
 

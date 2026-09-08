@@ -1078,7 +1078,7 @@ export async function startServer(options: ServerOptions = {}): Promise<FastifyI
   const server = await buildServer(options);
   // PORT/HOST let a supervisor (the SDK's managed launcher, containers)
   // place the server without code changes.
-  const port = options.port ?? envPort() ?? 3000;
+  const port = options.port ?? envPort() ?? 5709;
   const host = options.host ?? process.env.HOST ?? '0.0.0.0';
 
   await server.listen({ port, host });

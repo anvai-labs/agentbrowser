@@ -456,7 +456,7 @@ export class AgentBrowserClient {
   private customHeaders: Record<string, string>;
 
   constructor(options: ClientOptions = {}) {
-    this.baseUrl = options.baseUrl || 'http://localhost:3000';
+    this.baseUrl = options.baseUrl || 'http://localhost:5709';
     this.timeout = options.timeout || 30000;
     this.customHeaders = {
       ...(options.apiKey !== undefined ? { Authorization: `Bearer ${options.apiKey}` } : {}),

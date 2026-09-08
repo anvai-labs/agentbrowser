@@ -419,7 +419,7 @@ describe('AgentBrowser CLI', () => {
       await run('session', 'list');
 
       expect(deps.createClient).toHaveBeenCalledWith(
-        expect.objectContaining({ baseUrl: 'http://localhost:3000' })
+        expect.objectContaining({ baseUrl: 'http://localhost:5709' })
       );
     });
 

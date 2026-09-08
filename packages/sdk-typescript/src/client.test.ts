@@ -21,7 +21,7 @@ describe('AgentBrowser SDK', () => {
     mockFetch = global.fetch as Record<string, unknown>;
 
     client = new AgentBrowserClient({
-      baseUrl: 'http://localhost:3000',
+      baseUrl: 'http://localhost:5709',
     });
   });
 
@@ -30,7 +30,7 @@ describe('AgentBrowser SDK', () => {
       const defaultClient = new AgentBrowserClient();
 
       expect(defaultClient).toBeDefined();
-      expect(defaultClient.baseUrl).toBe('http://localhost:3000');
+      expect(defaultClient.baseUrl).toBe('http://localhost:5709');
     });
 
     it('should create client with custom baseUrl', () => {
@@ -43,7 +43,7 @@ describe('AgentBrowser SDK', () => {
 
     it('should create client with timeout option', () => {
       const clientWithTimeout = new AgentBrowserClient({
-        baseUrl: 'http://localhost:3000',
+        baseUrl: 'http://localhost:5709',
         timeout: 10000,
       });
 
@@ -101,7 +101,7 @@ describe('AgentBrowser SDK', () => {
       });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/v1/sessions',
+        'http://localhost:5709/v1/sessions',
         expect.objectContaining({
           method: 'POST',
           headers: expect.objectContaining({
@@ -130,7 +130,7 @@ describe('AgentBrowser SDK', () => {
       const session = await client.sessions.get('ses_test123');
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/v1/sessions/ses_test123',
+        'http://localhost:5709/v1/sessions/ses_test123',
         expect.objectContaining({
           method: 'GET',
         })
@@ -156,7 +156,7 @@ describe('AgentBrowser SDK', () => {
       const sessions = await client.sessions.list();
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/v1/sessions',
+        'http://localhost:5709/v1/sessions',
         expect.objectContaining({
           method: 'GET',
         })
@@ -181,7 +181,7 @@ describe('AgentBrowser SDK', () => {
       await client.sessions.close('ses_test123');
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/v1/sessions/ses_test123',
+        'http://localhost:5709/v1/sessions/ses_test123',
         expect.objectContaining({
           method: 'DELETE',
         })
@@ -224,7 +224,7 @@ describe('AgentBrowser SDK', () => {
       const page = await client.sessions.createPage('ses_test123');
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/v1/sessions/ses_test123/pages',
+        'http://localhost:5709/v1/sessions/ses_test123/pages',
         expect.objectContaining({
           method: 'POST',
         })
@@ -250,7 +250,7 @@ describe('AgentBrowser SDK', () => {
       const page = await client.sessions.getPage('ses_test123', 'pg_test123');
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/v1/sessions/ses_test123/pages/pg_test123',
+        'http://localhost:5709/v1/sessions/ses_test123/pages/pg_test123',
         expect.objectContaining({
           method: 'GET',
         })
@@ -275,7 +275,7 @@ describe('AgentBrowser SDK', () => {
       await client.sessions.closePage('ses_test123', 'pg_test123');
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/v1/sessions/ses_test123/pages/pg_test123',
+        'http://localhost:5709/v1/sessions/ses_test123/pages/pg_test123',
         expect.objectContaining({
           method: 'DELETE',
         })
@@ -302,7 +302,7 @@ describe('AgentBrowser SDK', () => {
       });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/v1/sessions/ses_test123/pages/pg_test123/navigate',
+        'http://localhost:5709/v1/sessions/ses_test123/pages/pg_test123/navigate',
         expect.objectContaining({
           method: 'POST',
           headers: expect.objectContaining({
@@ -371,7 +371,7 @@ describe('AgentBrowser SDK', () => {
       });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/v1/sessions/ses_test123/pages/pg_test123/observe',
+        'http://localhost:5709/v1/sessions/ses_test123/pages/pg_test123/observe',
         expect.objectContaining({
           method: 'POST',
           headers: expect.objectContaining({
@@ -428,7 +428,7 @@ describe('AgentBrowser SDK', () => {
       });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/v1/sessions/ses_test123/pages/pg_test123/act',
+        'http://localhost:5709/v1/sessions/ses_test123/pages/pg_test123/act',
         expect.objectContaining({
           method: 'POST',
           headers: expect.objectContaining({
@@ -593,7 +593,7 @@ describe('AgentBrowser SDK', () => {
       });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/v1/sessions/ses_test123/pages/pg_test123/screenshot',
+        'http://localhost:5709/v1/sessions/ses_test123/pages/pg_test123/screenshot',
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify({ fullPage: true, format: 'png' }),
@@ -654,7 +654,7 @@ describe('AgentBrowser SDK', () => {
 
     it('should handle timeout errors', async () => {
       const clientWithTimeout = new AgentBrowserClient({
-        baseUrl: 'http://localhost:3000',
+        baseUrl: 'http://localhost:5709',
         timeout: 1,
       });
 
@@ -712,7 +712,7 @@ describe('SessionsClient.extract schema passthrough', () => {
       json: async () => ({ data: {}, evidence: [] }),
     });
 
-    const localClient = new AgentBrowserClient({ baseUrl: 'http://localhost:3000' });
+    const localClient = new AgentBrowserClient({ baseUrl: 'http://localhost:5709' });
     await localClient.sessions.extract('ses_1', 'pg_1', {
       format: 'schema',
       schema: { properties: { price: { type: 'string' } } },
@@ -738,11 +738,11 @@ describe('SessionsClient.extract schema passthrough', () => {
         ok: true,
         json: async () => ({ artifactId: 'trace_1', type: 'trace' }),
       });
-      const localClient = new AgentBrowserClient({ baseUrl: 'http://localhost:3000' });
+      const localClient = new AgentBrowserClient({ baseUrl: 'http://localhost:5709' });
       await localClient.sessions.trace('ses_1');
       const calls = fetchMock.mock.calls;
       const call = calls[calls.length - 1] as unknown[];
-      expect(call[0]).toBe('http://localhost:3000/v1/sessions/ses_1/trace');
+      expect(call[0]).toBe('http://localhost:5709/v1/sessions/ses_1/trace');
       expect((call[1] as { method: string }).method).toBe('POST');
     });
 
@@ -754,17 +754,17 @@ describe('SessionsClient.extract schema passthrough', () => {
       };
       fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ artifactId: 'h_1' }) });
       fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ events: [] }) });
-      const localClient = new AgentBrowserClient({ baseUrl: 'http://localhost:3000' });
+      const localClient = new AgentBrowserClient({ baseUrl: 'http://localhost:5709' });
       await localClient.sessions.html('ses_1', 'pg_1');
       await localClient.sessions.events('ses_1', 'request.finished');
 
       const calls = fetchMock.mock.calls;
       const htmlCall = calls[calls.length - 2] as unknown[];
-      expect(htmlCall[0]).toBe('http://localhost:3000/v1/sessions/ses_1/pages/pg_1/html');
+      expect(htmlCall[0]).toBe('http://localhost:5709/v1/sessions/ses_1/pages/pg_1/html');
       expect((htmlCall[1] as { method: string }).method).toBe('POST');
       const eventsCall = calls[calls.length - 1] as unknown[];
       expect(eventsCall[0]).toBe(
-        'http://localhost:3000/v1/sessions/ses_1/events/replay?type=request.finished'
+        'http://localhost:5709/v1/sessions/ses_1/events/replay?type=request.finished'
       );
     });
   });

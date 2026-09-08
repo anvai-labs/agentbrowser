@@ -79,13 +79,13 @@ preparation alone is not release completion.
 
 ```bash
 brew install anvai-labs/tap/agentbrowser
-brew services start anvai-labs/tap/agentbrowser   # the service, on 127.0.0.1:3000
+brew services start anvai-labs/tap/agentbrowser   # the service, on 127.0.0.1:5709
 ```
 
 One install ships all three surfaces:
 
 - the **browser service** (`agentbrowser-server`) — REST + WebSocket on
-  port 3000; first start bootstraps Chromium into
+  port 5709; first start bootstraps Chromium into
   `$(brew --prefix)/var/agentbrowser/browsers`;
 - the **MCP server binary** (`agentbrowser-mcp`) — a standalone stdio
   binary that proxies to the service; no Node runtime needed;
@@ -121,7 +121,7 @@ and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 | --- | --- | --- |
 | `AGENTBROWSER_API_KEYS` | service | Bearer auth for `/v1`, format `key:tenant[,key:tenant...]`. **Without it, `/v1` is unauthenticated** — the service logs a loud warning at startup. Each key maps to one tenant; sessions are isolated per tenant. |
 | `AGENTBROWSER_API_KEY` | MCP server, CLI | The bearer key sent to the service; CLI `--api-key` takes precedence. |
-| `AGENTBROWSER_BASE_URL` | MCP server | Service location; default `http://localhost:3000`. The CLI uses `--base-url`, not this variable. |
+| `AGENTBROWSER_BASE_URL` | MCP server | Service location; default `http://localhost:5709`. The CLI uses `--base-url`, not this variable. |
 | `AGENTBROWSER_LOG_LEVEL` | service | `debug` or `info` (default). Logs are structured JSON, scrubbed of registered secrets. |
 | `AGENTBROWSER_CHROME_PATH` | service (Playwright engine) | Prefer a specific real Chrome for headed sessions ([ADR-013](adr/013-headed-sessions-and-walled-logins.md)). |
 | `AGENTBROWSER_ARTIFACT_KEY` | service | Bearer key guarding artifact download URLs, when set. |
@@ -129,8 +129,10 @@ and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 | `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS` | service | Operator-level default idle timeout (ms); per-session `idleTimeoutMs` still wins. Unset/garbage → the 10-min default. Useful for deployments that are mostly headed human-in-the-loop flows. |
 | `AGENTBROWSER_SNAPSHOT_TIMEOUT_MS` | service (Playwright engine) | Shared snapshot-wait budget per observation and timeout per action-time semantic check, in integer ms (1–30000; default 1000). Invalid environment values use the default; invalid explicit engine options throw. Timed-out element captures use a successful whole-document accessibility snapshot as fallback evidence, which must still match before acting. Unrelated document changes can therefore stale a fallback ref; observe again. Missing semantic evidence refuses actions, and non-timeout errors propagate. This bounds snapshot waiting, not all observation DOM work. |
 
-Port and bind address default to `3000` on `0.0.0.0`
-(`ServerOptions`); when exposing the service beyond localhost, set
+Port and bind address default to `5709` on `0.0.0.0`
+(`ServerOptions`; port selection rationale in
+[ADR-017](adr/017-default-port-5709.md)); when exposing the service
+beyond localhost, set
 `AGENTBROWSER_API_KEYS` first — the egress policy constrains what
 *browser sessions* may reach, not who may reach the *service*.
 
@@ -260,7 +262,7 @@ API service:
 # and matches on the key's hash, so sending `key1:tenant1` as the bearer 401s.
 export AGENTBROWSER_API_KEY=key1
 
-agentbrowser --base-url http://localhost:3000 session create --tenant tenant1 --json
+agentbrowser --base-url http://localhost:5709 session create --tenant tenant1 --json
 agentbrowser navigate <sessionId> <pageId> https://example.com
 agentbrowser act click <sessionId> <pageId> <ref>
 agentbrowser session list

@@ -7,7 +7,7 @@ npm i -g @anvailabs/agentbrowser-mcp   # Node >= 18
 # or: download the bun-compiled standalone binary from the GitHub Releases
 ```
 
-The package is **only the MCP stdio adapter** — it proxies to an AgentBrowser service. Point it at one with `AGENTBROWSER_BASE_URL` (default `http://localhost:3000`).
+The package is **only the MCP stdio adapter** — it proxies to an AgentBrowser service. Point it at one with `AGENTBROWSER_BASE_URL` (default `http://localhost:5709`).
 
 Exposes AgentBrowser as a small set of high-level, safe, composable MCP tools
 (ADR-009). Raw engine operations — evaluate, routing, selectors, low-level
@@ -48,7 +48,7 @@ mcpServers:
   agentbrowser:
     command: /usr/local/bin/agentbrowser-mcp
     env:
-      AGENTBROWSER_BASE_URL: http://localhost:3000
+      AGENTBROWSER_BASE_URL: http://localhost:5709
 ```
 
 The binary is **only the MCP adapter** (TD-BROWSER-5 scope boundary): it needs
@@ -67,7 +67,7 @@ node packages/mcp-server/dist/bin.js
 
 | Variable | Meaning |
 |---|---|
-| `AGENTBROWSER_BASE_URL` | AgentBrowser server to proxy to (default `http://localhost:3000`) |
+| `AGENTBROWSER_BASE_URL` | AgentBrowser server to proxy to (default `http://localhost:5709`) |
 | `AGENTBROWSER_API_KEY` | Bearer key for the service, when it has `AGENTBROWSER_API_KEYS` configured |
 | `AGENTBROWSER_MCP_VERSION` | Override the reported `serverInfo.version` (debugging; the binary is otherwise stamped at build time from `package.json`) |
 
