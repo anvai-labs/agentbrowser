@@ -1,7 +1,7 @@
 # TD-BROWSER-11: Sessions Are Page-Less by Default (Initial-Page Contract Gap)
 
 **Status:** Corrected 2026-09-08 — original "first-launch race" framing was
-wrong; see [Correction](#correction-2026-09-08). The underlying client-facing
+wrong; see [Correction](#correction). The underlying client-facing
 problem is real and unresolved: nothing tells a client a fresh session has no
 pages.
 **Context:** 2026-09-08, brew-installed 1.8.6 and develop tip (identical
@@ -10,7 +10,7 @@ runtime code), macOS
 (same headed-session testbed),
 [human handoff](../human-handoff.md)
 
-## Correction {#correction-2026-09-08}
+## Correction
 
 The original version of this TD hypothesized a first-launch-after-update
 race in which the engine's initial page failed to register. Further testing
