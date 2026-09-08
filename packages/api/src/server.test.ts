@@ -1701,3 +1701,74 @@ describe('authentication and tenancy (P0-1)', () => {
     expect(response.status).toBe(401);
   });
 });
+
+describe('request body tolerance', () => {
+  let server: FastifyInstance;
+  let baseUrl: string;
+
+  beforeAll(async () => {
+    server = await buildServer();
+    const address = await server.listen({ port: 0, host: '127.0.0.1' });
+    baseUrl = address;
+  });
+
+  afterAll(async () => {
+    await server.close();
+  });
+
+  async function createSession(): Promise<string> {
+    const response = await fetch(`${baseUrl}/v1/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenantId: 'tenant_body_tolerance' }),
+    });
+    expect(response.status).toBe(201);
+    return (await response.json()).sessionId;
+  }
+
+  it('accepts DELETE with a JSON content-type and an empty body', async () => {
+    const sessionId = await createSession();
+    const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(response.status).toBe(200);
+  });
+
+  it('accepts POST /pages with a JSON content-type and an empty body', async () => {
+    const sessionId = await createSession();
+    const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(response.status).toBe(201);
+  });
+
+  it('accepts an empty JSON body with an explicit charset parameter', async () => {
+    const sessionId = await createSession();
+    const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    });
+    expect(response.status).toBe(201);
+  });
+
+  it('still rejects malformed JSON with 400', async () => {
+    const sessionId = await createSession();
+    const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{not json',
+    });
+    expect(response.status).toBe(400);
+    expect(response.headers.get('content-type')).toContain('application/json');
+  });
+
+  it('still rejects an empty body on a route that requires one with 400', async () => {
+    const response = await fetch(`${baseUrl}/v1/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(response.status).toBe(400);
+  });
+});
