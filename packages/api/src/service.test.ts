@@ -2307,3 +2307,52 @@ describe('request-event ledger separation (spec 5.1 network summary)', () => {
     expect(internal.eventHistory.has(session.sessionId)).toBe(false);
   });
 });
+
+describe('session page visibility (TD-BROWSER-11)', () => {
+  let engine: FakeEngine;
+  let service: AgentBrowserService;
+
+  beforeEach(() => {
+    engine = new FakeEngine();
+    service = new AgentBrowserService({ engine });
+  });
+
+  it('reports pages: 0 on the create response', async () => {
+    const session = await service.createSession({ tenantId: 't1' });
+    expect(session.pages).toBe(0);
+  });
+
+  it('reports a live pages count on getSession and listSessions', async () => {
+    const session = await service.createSession({ tenantId: 't1' });
+    await service.createPage(session.sessionId);
+    await service.createPage(session.sessionId);
+
+    expect(service.getSession(session.sessionId)?.pages).toBe(2);
+    const listed = service.listSessions('t1').find((s) => s.sessionId === session.sessionId);
+    expect(listed?.pages).toBe(2);
+  });
+
+  it('createPage honors a requested url by navigating before returning', async () => {
+    const session = await service.createSession({ tenantId: 't1' });
+    const page = await service.createPage(session.sessionId, {
+      url: 'https://x.example.com/landing',
+    });
+    const ids = engine.getSessionIds();
+    const fakePage = engine.getFakePage(ids[ids.length - 1] as string, page.pageId);
+    expect(await fakePage?.getUrl()).toBe('https://x.example.com/landing');
+  });
+
+  it('createPage rejects an invalid url with INVALID_REQUEST', async () => {
+    const session = await service.createSession({ tenantId: 't1' });
+    await expect(service.createPage(session.sessionId, { url: 'not a url' })).rejects.toMatchObject(
+      { code: 'INVALID_REQUEST' }
+    );
+  });
+
+  it('createPage rejects a non-http(s) url with POLICY_DENIED', async () => {
+    const session = await service.createSession({ tenantId: 't1' });
+    await expect(
+      service.createPage(session.sessionId, { url: 'file:///etc/passwd' })
+    ).rejects.toMatchObject({ code: 'POLICY_DENIED' });
+  });
+});
