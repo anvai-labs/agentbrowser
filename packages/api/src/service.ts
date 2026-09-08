@@ -1799,7 +1799,12 @@ export class AgentBrowserService {
         if (
           actRequest.remap === true &&
           ref !== undefined &&
-          (result.error.code === 'STALE_TARGET' || result.error.code === 'TARGET_NOT_FOUND')
+          (result.error.code === 'STALE_TARGET' || result.error.code === 'TARGET_NOT_FOUND') &&
+          // Only binding staleness may be healed. A refusal without the
+          // flag carries live contradicting evidence (fingerprint mismatch,
+          // the caller's own expectedRevision assertion) - remapping it
+          // would overwrite semantics the executor deliberately refused on.
+          result.error.details?.remapEligible === true
         ) {
           return await this.remapAct(sessionId, pageId, actRequest, ref, result.error);
         }
@@ -1932,23 +1937,28 @@ export class AgentBrowserService {
     }
 
     const observed = await this.observe(sessionId, pageId, { mode: 'interactive' });
-    const redactedName = this.secretManager.redact(baseline.name ?? '');
+    // An unnamed baseline must match unnamed candidates (undefined ===
+    // undefined), not the redacted empty string - redact('') would compare
+    // '' against every candidate's undefined name and never match.
+    const baselineName =
+      baseline.name === undefined ? undefined : this.secretManager.redact(baseline.name);
+    const nameForMessages = baselineName ?? '<unnamed>';
     const matches = observed.elements.filter(
-      (e) => e.role === baseline.role && e.name === redactedName
+      (e) => e.role === baseline.role && e.name === baselineName
     );
     if (matches.length !== 1) {
       throw this.redactedError(
         new ServiceError(
           'STALE_TARGET',
           matches.length === 0
-            ? `Remap found no element matching role '${baseline.role}' and name '${redactedName}'; the control is gone.`
-            : `Remap found ${matches.length} candidates matching role '${baseline.role}' and name '${redactedName}'; refusing to guess.`,
+            ? `Remap found no element matching role '${baseline.role}' and name '${nameForMessages}'; the control is gone.`
+            : `Remap found ${matches.length} candidates matching role '${baseline.role}' and name '${nameForMessages}'; refusing to guess.`,
           true,
           {
             ref: staleRef,
             revision: page.revision,
             role: baseline.role,
-            name: redactedName,
+            ...(baselineName !== undefined ? { name: baselineName } : {}),
             candidates: matches.length,
           }
         )
@@ -1986,6 +1996,17 @@ export class AgentBrowserService {
     if (wait.until === 'urlPattern' && typeof wait.pattern !== 'string') {
       throw new ServiceError('INVALID_REQUEST', "Wait 'urlPattern' requires a string 'pattern'.");
     }
+    if (wait.until === 'urlPattern' && typeof wait.pattern === 'string') {
+      // Pre-flight the pattern (size cap + compile) so a bad regex fails as
+      // INVALID_REQUEST before any step runs instead of mid-wait.
+      if (wait.pattern.length > 512) {
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          "Wait 'urlPattern' pattern exceeds the 512-character limit."
+        );
+      }
+      this.compileUrlPattern(wait.pattern);
+    }
     if (wait.until === 'selectorVisible' && typeof wait.selector !== 'string') {
       throw new ServiceError(
         'INVALID_REQUEST',
@@ -2007,7 +2028,13 @@ export class AgentBrowserService {
   private compileUrlPattern(pattern: string): RegExp {
     const regexForm = /^\/(.*)\/([a-z]*)$/.exec(pattern);
     if (regexForm) {
-      return new RegExp(regexForm[1] ?? '', regexForm[2] ?? '');
+      try {
+        return new RegExp(regexForm[1] ?? '', regexForm[2] ?? '');
+      } catch {
+        // Caller-supplied regex bodies can be syntactically invalid; that is
+        // a bad request, not a mid-wait engine failure.
+        throw new ServiceError('INVALID_REQUEST', `Wait 'urlPattern' regex is invalid: ${pattern}`);
+      }
     }
     const source = pattern
       .split('*')
@@ -2029,7 +2056,10 @@ export class AgentBrowserService {
    * reason, never a silent hang).
    */
   private async waitFor(enginePage: EnginePage, wait: ServiceWaitCondition): Promise<string> {
-    const deadlineMs = wait.timeoutMs ?? 5000;
+    // A wire-supplied 0 would disable the underlying engine timeouts
+    // (Playwright treats explicit 0 as "wait forever"); every condition is
+    // deadline-bounded, so clamp to a positive floor.
+    const deadlineMs = Math.max(1, wait.timeoutMs ?? 5000);
 
     if (wait.until === 'settled') {
       // Quiet-window approximation: wait for the network to go idle via

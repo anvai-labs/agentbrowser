@@ -199,4 +199,67 @@ describe('wait condition vocabulary (F6/F7)', () => {
       .catch((e: unknown) => e as { code: string });
     expect(noPattern.code).toBe('INVALID_REQUEST');
   });
+
+  it('rejects a syntactically invalid /regex/ pattern before anything runs', async () => {
+    const { service, session, pageId, ref } = await setup(new FakeEngine());
+
+    const error = await service
+      .act(session.sessionId, pageId, {
+        action: 'click',
+        target: { ref },
+        wait: { until: 'urlPattern', pattern: '/([/', timeoutMs: 100 } satisfies WaitShape,
+      })
+      .catch((e: unknown) => e as { code: string });
+    expect(error.code).toBe('INVALID_REQUEST');
+  });
+
+  it('rejects an over-long urlPattern before anything runs', async () => {
+    const { service, session, pageId, ref } = await setup(new FakeEngine());
+
+    const error = await service
+      .act(session.sessionId, pageId, {
+        action: 'click',
+        target: { ref },
+        wait: {
+          until: 'urlPattern',
+          pattern: `/${'a'.repeat(513)}/`,
+          timeoutMs: 100,
+        } satisfies WaitShape,
+      })
+      .catch((e: unknown) => e as { code: string });
+    expect(error.code).toBe('INVALID_REQUEST');
+  });
+
+  it('clamps a wire-supplied timeoutMs of 0 for urlPattern so the wait stays deadline-bounded', async () => {
+    // Playwright reads an explicit 0 as "wait forever"; the service must
+    // floor every condition deadline. A never-matching pattern with a
+    // zero timeout has to fail fast with ACTION_TIMEOUT, not hang.
+    const { service, session, pageId, ref } = await setup(new FakeEngine());
+
+    const error = await service
+      .act(session.sessionId, pageId, {
+        action: 'click',
+        target: { ref },
+        wait: {
+          until: 'urlPattern',
+          pattern: '/never-in-a-timely-manner/',
+          timeoutMs: 0,
+        } satisfies WaitShape,
+      })
+      .catch((e: unknown) => e as { code: string });
+    expect(error.code).toBe('ACTION_TIMEOUT');
+  });
+
+  it('clamps a wire-supplied timeoutMs of 0 for selectorVisible so the wait stays deadline-bounded', async () => {
+    const { service, session, pageId, ref } = await setup(new FakeEngine());
+
+    const error = await service
+      .act(session.sessionId, pageId, {
+        action: 'click',
+        target: { ref },
+        wait: { until: 'selectorVisible', selector: '#absent', timeoutMs: 0 } satisfies WaitShape,
+      })
+      .catch((e: unknown) => e as { code: string });
+    expect(error.code).toBe('ACTION_TIMEOUT');
+  });
 });

@@ -258,7 +258,12 @@ export class ActionExecutor {
     if (refRevision !== currentRevision) {
       return staleTarget(
         `Element reference ${target.ref} belongs to revision ${refRevision}, but the page is at revision ${currentRevision}`,
-        { ref: target.ref, refRevision, currentRevision }
+        // remapEligible marks this as binding staleness (the page moved on,
+        // the ref did not) - the only refusal shape a remap heal may consume.
+        // The expectedRevision mismatch above is the caller's own concurrency
+        // assertion and stays ineligible; live semantic-evidence mismatches
+        // (fingerprint) are produced elsewhere and never carry the flag.
+        { ref: target.ref, refRevision, currentRevision, remapEligible: true }
       );
     }
 

@@ -1252,7 +1252,9 @@ class PlaywrightPage implements EnginePage {
         'TARGET_NOT_FOUND',
         `Element not found: ${target.ref} (observe the page to mint refs)`,
         false,
-        this.refusalDetails(target.ref)
+        // An unknown ref carries no contradicting live evidence - the engine
+        // simply lost track of it - so a remap heal may consume this refusal.
+        { ...this.refusalDetails(target.ref), remapEligible: true }
       );
     }
     if (!binding) {
@@ -1691,8 +1693,21 @@ class PlaywrightPage implements EnginePage {
       case 'wait': {
         // Non-mutating; bounded by the condition's timeout.
         const condition = action.condition as { until?: string; timeoutMs?: number };
-        const state = condition?.until === 'networkidle' ? 'networkidle' : 'load';
-        await this.waitForLoadState(state, { timeout: condition?.timeoutMs });
+        // urlPattern/selectorVisible/minElements are service-evaluated (the
+        // service polls engine state to its own deadline). Waiting for
+        // 'load' here would double-wait and can fail the act before the
+        // real poll ever runs.
+        const serviceEvaluated =
+          condition?.until === 'urlPattern' ||
+          condition?.until === 'selectorVisible' ||
+          condition?.until === 'minElements';
+        if (!serviceEvaluated) {
+          const state = condition?.until === 'networkidle' ? 'networkidle' : 'load';
+          // Playwright reads an explicit 0 as "wait forever" - clamp.
+          const timeout =
+            condition?.timeoutMs !== undefined ? Math.max(1, condition.timeoutMs) : undefined;
+          await this.waitForLoadState(state, { timeout });
+        }
         break;
       }
       case 'goBack':
@@ -1825,18 +1840,20 @@ class PlaywrightPage implements EnginePage {
    * missed deadlines to ACTION_TIMEOUT.
    */
   async waitForSelector(selector: string, options: { timeoutMs?: number } = {}): Promise<void> {
+    // Playwright reads an explicit 0 as "wait forever" - clamp to a floor.
+    const timeoutMs = Math.max(1, options.timeoutMs ?? 5000);
     try {
       await this.page.locator(selector).waitFor({
         state: 'visible',
-        ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
+        timeout: timeoutMs,
       });
     } catch (error) {
       const failure = normalizeEngineError(error);
       throw new EngineError(
         'ACTION_TIMEOUT',
-        `Selector '${selector}' did not become visible within ${options.timeoutMs ?? 5000}ms.`,
+        `Selector '${selector}' did not become visible within ${timeoutMs}ms.`,
         true,
-        { selector, timeoutMs: options.timeoutMs ?? 5000, ...failure.details }
+        { selector, timeoutMs, ...failure.details }
       );
     }
   }

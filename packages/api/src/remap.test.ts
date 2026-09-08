@@ -42,20 +42,22 @@ describe('opt-in remap end to end', () => {
     expect(result.remap?.to).not.toBe(ref);
   });
 
-  it('heals a replaced control within one revision when remap is opted in', async () => {
+  it('refuses a live semantic mismatch (fingerprint drift) even when remap is opted in', async () => {
     const { service, session, pageId, ref, fakePage } = await setup();
-    // Same role + name, different fingerprint: the fingerprint gate refuses,
-    // the remap re-observation still finds exactly one semantic match.
+    // Same revision, but the control's live fingerprint no longer matches
+    // what was observed: the refusal carries contradicting semantic
+    // evidence, so remapping it would overwrite evidence the executor
+    // deliberately refused on. Structural replacement (which bumps the
+    // revision) stays healable; content drift does not.
     fakePage.setElements([{ role: 'button', name: 'Element 1', value: 'replaced' }]);
 
-    const result = await service.act(session.sessionId, pageId, {
-      action: 'click',
-      target: { ref },
-      remap: true,
-    });
-    expect(result.status).toBe('success');
-    expect(result.remap?.from).toBe(ref);
-    expect(result.remap?.to).toEqual(expect.any(String));
+    const error = await service
+      .act(session.sessionId, pageId, { action: 'click', target: { ref }, remap: true })
+      .catch((e: unknown) => e as { code: string; details?: Record<string, unknown> });
+
+    expect(error.code).toBe('STALE_TARGET');
+    expect(error.details?.expectedFingerprint).toBeDefined();
+    expect(error.details?.remapEligible).toBeUndefined();
   });
 
   it('still refuses by default when remap is absent', async () => {
@@ -72,12 +74,15 @@ describe('opt-in remap end to end', () => {
 
   it('refuses with a candidate count when the semantic match is ambiguous', async () => {
     const { service, session, pageId, ref, fakePage } = await setup();
-    // Fingerprint drift forces the refusal; two same-named controls then
-    // make the remap ambiguous, so it must refuse to guess.
+    // A revision bump makes the old ref a binding-staleness refusal (the
+    // healable shape); two same-named controls then make the remap
+    // ambiguous, so it must refuse to guess.
+    await service.navigate(session.sessionId, pageId, { url: 'https://example.com/next' });
     fakePage.setElements([
       { role: 'button', name: 'Element 1', value: 'a' },
       { role: 'button', name: 'Element 1', value: 'b' },
     ]);
+    await service.observe(session.sessionId, pageId, { mode: 'interactive' });
 
     const error = await service
       .act(session.sessionId, pageId, { action: 'click', target: { ref }, remap: true })
