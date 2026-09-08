@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Context:** 2025-01-23
 **Superseded by:** N/A
+**Related:** [Human handoff](../human-handoff.md) - the operating loop that uses approval tokens for human-in-the-loop steps
 
 ## Context
 

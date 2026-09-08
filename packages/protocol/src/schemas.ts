@@ -220,6 +220,15 @@ export const PageElementSchema = Type.Object({
   enabled: Type.Boolean(),
   focused: Type.Optional(Type.Boolean()),
   risk: Type.Optional(ActionEffectSchema),
+  href: Type.Optional(Type.String()),
+  hrefTruncated: Type.Optional(Type.Boolean()),
+});
+
+export const OverlayBlockerSchema = Type.Object({
+  tag: Type.String(),
+  role: Type.Optional(Type.String()),
+  name: Type.Optional(Type.String()),
+  covers: Type.Integer({ minimum: 1 }),
 });
 
 export const ElementChangeSchema = Type.Object({
@@ -251,6 +260,7 @@ export const PageStateSchema = Type.Object({
   elements: Type.Array(PageElementSchema),
   text: Type.Optional(Type.Array(Type.String())),
   changes: Type.Optional(Type.Array(ElementChangeSchema)),
+  overlays: Type.Optional(Type.Array(OverlayBlockerSchema)),
   truncated: Type.Boolean(),
   untrustedContent: Type.Boolean(),
   continuation: Type.Optional(ContinuationCursorSchema),
@@ -339,11 +349,17 @@ export const WaitTypeSchema = Type.Union([
   Type.Literal('text'),
   Type.Literal('function'),
   Type.Literal('settled'),
+  Type.Literal('urlPattern'),
+  Type.Literal('selectorVisible'),
+  Type.Literal('minElements'),
 ]);
 
 export const WaitConditionSchema = Type.Object({
   until: WaitTypeSchema,
   timeoutMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 300000 })),
+  pattern: Type.Optional(Type.String({ minLength: 1, maxLength: 2048 })),
+  selector: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
+  count: Type.Optional(Type.Integer({ minimum: 1, maximum: 10000 })),
 });
 
 /**
@@ -357,6 +373,9 @@ export const WaitConditionSchema = Type.Object({
 export const DeliveredWaitConditionSchema = Type.Object({
   until: Type.Union(DELIVERED_WAIT_TYPES.map((value) => Type.Literal(value))),
   timeoutMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 300000 })),
+  pattern: Type.Optional(Type.String({ minLength: 1, maxLength: 2048 })),
+  selector: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
+  count: Type.Optional(Type.Integer({ minimum: 1, maximum: 10000 })),
 });
 
 export const PlanStepSchema = Type.Object({
@@ -386,6 +405,8 @@ export const PlanStepSchema = Type.Object({
   waitForLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
   /** Bounded hard (100-60000): garbage here wedged the poll loop pre-v1.8.2. */
   waitMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 60000 })),
+  /** F2: opt-in healing for replaced controls (never on by default). */
+  remap: Type.Optional(Type.Boolean()),
 });
 
 /** Shared transport fields; decodeWireAction additionally enforces each action branch. */

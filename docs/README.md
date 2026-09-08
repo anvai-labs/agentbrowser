@@ -15,9 +15,12 @@ start with the [root README](../README.md).
 | Call the REST API | `GET /openapi.json` on a running service |
 | Understand why a design decision was made | ADRs, below |
 | Understand the security posture and its limits | [Threat model](threat-model.md) |
+| Hand a step of a workflow to a human (credentials, approvals) | [Human handoff](human-handoff.md) |
+| Understand why a synthetic click can be ignored by a page | [Synthetic input limitations](synthetic-input-limitations.md) |
 | See what changed in a release | [Changelog](../CHANGELOG.md) |
-| Track post-release transport milestones and the integration decision | [Integration contract](transport-integration-contract.md) and [remediation tracker](engineering-review-remediation.md) |
-| Implement the next connection-policy prerequisite and transport boundary | [T2a connection-authority design](connection-authority-design.md) |
+| Resume active work: local functional validation, priorities and release sequence | [Release milestones and local-functional pivot](release-milestones.md#local-functional-pivot-priority-and-sequence) |
+| Review deferred transport work and unresolved limitations | [Integration contract](transport-integration-contract.md) and [remediation tracker](engineering-review-remediation.md) |
+| Understand the completed connection-policy prerequisite and transport boundary | [T2a connection-authority design](connection-authority-design.md) |
 
 ## Architecture Decision Records (ADRs)
 

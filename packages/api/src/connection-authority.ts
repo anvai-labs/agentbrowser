@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { BlockList, Socket, isIP } from 'node:net';
 import { EngineError, type ProtocolErrorCode, type RequestPolicy } from '@agentbrowser/engine';
+import type { DestinationPolicy } from '@agentbrowser/policy';
 import { ErrorCode } from '@agentbrowser/protocol';
 
 // Internal TCP ownership primitive. Intentionally not re-exported by api/index.
@@ -10,7 +11,10 @@ const MAX_TIMER_MS = 2_147_483_647;
 const codes = new Set<string>(Object.values(ErrorCode));
 type Stage = 'admission' | 'policy' | 'dns' | 'addressPolicy' | 'tcp' | 'lease';
 type Endpoint = Readonly<{ address: string; family: 4 | 6; port: number }>;
-export type ConnectionDestination = Readonly<{ url: string; hostname: string; port: number }>;
+export type ConnectionDestination = Readonly<
+  | { kind: 'request'; url: string; hostname: string; port: number }
+  | { kind: 'tunnel'; hostname: string; port: number }
+>;
 export interface ConnectionLease {
   readonly id: string;
   readonly socket: Socket;
@@ -63,8 +67,40 @@ function literal(input: unknown): { address: string; family: 4 | 6 } | undefined
   };
 }
 
-function destinationOf(input: ConnectionDestination): ConnectionDestination {
+function destinationOf(
+  input: ConnectionDestination,
+  mode: 'request' | 'tunnel'
+): ConnectionDestination {
   try {
+    if (input.kind !== mode) throw new Error('Wrong authorization mode');
+    if (input.kind === 'tunnel') {
+      if (
+        'url' in input ||
+        !Number.isSafeInteger(input.port) ||
+        input.port < 1 ||
+        input.port > 65535
+      )
+        throw new Error('Invalid tunnel destination');
+      const hostname = input.hostname;
+      // No WHATWG URL parser for tunnel DNS names: it accepts legacy numeric
+      // hosts and would fabricate request semantics. IP syntax uses native net.
+      const ip = literal(hostname);
+      if (
+        !ip &&
+        (hostname.length > 253 ||
+          !hostname
+            .split('.')
+            .every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label)) ||
+          /^(?:[0-9]+|0x[0-9a-f]+)$/i.test(hostname.split('.').at(-1) ?? ''))
+      ) {
+        throw new Error('Invalid tunnel hostname');
+      }
+      return Object.freeze({
+        kind: 'tunnel',
+        hostname: ip?.address ?? hostname.toLowerCase(),
+        port: input.port,
+      });
+    }
     const url = new URL(input.url);
     const hostname = url.hostname.replace(/^\[|\]$/g, '');
     if (
@@ -91,7 +127,7 @@ function destinationOf(input: ConnectionDestination): ConnectionDestination {
       port > 65_535
     )
       throw new Error('Invalid destination');
-    return Object.freeze({ url: url.href, hostname, port });
+    return Object.freeze({ kind: 'request', url: url.href, hostname, port });
   } catch {
     throw error('INVALID_REQUEST', 'admission', 'invalidDestination');
   }
@@ -108,6 +144,9 @@ export class ConnectionBudget {
     return this.count;
   }
   reserve(): () => void {
+    return this.#reserve();
+  }
+  #reserve(): () => void {
     if (this.count >= this.limit) throw error('QUOTA_EXCEEDED', 'admission', 'runtimeCapacity');
     this.count += 1;
     let released = false;
@@ -118,17 +157,60 @@ export class ConnectionBudget {
       }
     };
   }
+
+  createSessionScope(limit = 8, signal?: AbortSignal): SessionTcpAdmission {
+    positiveInteger(limit, 'maxSessionConnections', 8);
+    positiveInteger(this.limit, 'maxRuntimeConnections', 32);
+    let count = 0;
+    let closed = false;
+    const close = () => {
+      closed = true;
+      signal?.removeEventListener('abort', close);
+    };
+    signal?.addEventListener('abort', close, { once: true });
+    if (signal?.aborted) close();
+    return Object.freeze({
+      get inUse() {
+        return count;
+      },
+      reserve: () => {
+        if (closed || signal?.aborted) {
+          close();
+          throw error('SESSION_NOT_FOUND', 'admission', 'sessionAdmissionClosed');
+        }
+        if (count >= limit) throw error('QUOTA_EXCEEDED', 'admission', 'sessionCapacity');
+        const releaseRuntime = this.#reserve();
+        count++;
+        let released = false;
+        return () => {
+          if (released) return;
+          released = true;
+          count--;
+          releaseRuntime();
+        };
+      },
+      closeAdmission: close,
+    });
+  }
 }
 
-interface AuthorityOptions {
+export interface SessionTcpAdmission {
+  readonly inUse: number;
+  reserve(): () => void;
+  closeAdmission(): void;
+}
+
+type AuthorityOptions = (
+  | { mode?: 'request'; policy: RequestPolicy }
+  | { mode: 'tunnel'; policy: DestinationPolicy }
+) & {
   // The trusted composition root supplies a fixed effective policy snapshot.
   // Capturing bound methods does not freeze arbitrary callback closure state.
-  policy: RequestPolicy;
-  budget: ConnectionBudget;
+  admission: SessionTcpAdmission;
   maxConnections?: number;
   maxDnsAnswers?: number;
   setupTimeoutMs?: number;
-}
+};
 interface Dependencies {
   resolve(hostname: string): Promise<Array<{ address: string; family: number }>>;
   // Trusted, synchronous construction of an unconnected socket; not a caller port.
@@ -143,7 +225,7 @@ interface AttemptOptions {
   caller: ConnectOptions;
   setupTimeoutMs: number;
   maxDnsAnswers: number;
-  checkRequest: RequestPolicy['checkRequest'];
+  authorize(destination: ConnectionDestination): Promise<void>;
   checkAddresses: NonNullable<RequestPolicy['checkResolvedAddresses']>;
   dependencies: Dependencies;
   drained(): void;
@@ -156,8 +238,9 @@ export class ConnectionAuthority {
   private readonly maxConnections: number;
   private readonly maxDnsAnswers: number;
   private readonly setupTimeoutMs: number;
-  private readonly budget: ConnectionBudget;
-  private readonly checkRequest: RequestPolicy['checkRequest'];
+  private readonly admission: SessionTcpAdmission;
+  private readonly mode: 'request' | 'tunnel';
+  private readonly authorize: AttemptOptions['authorize'];
   private readonly checkAddresses: NonNullable<RequestPolicy['checkResolvedAddresses']>;
   private readonly dependencies: Dependencies;
   private revoked: EngineError | undefined;
@@ -165,20 +248,38 @@ export class ConnectionAuthority {
 
   constructor(options: AuthorityOptions, dependencies: Partial<Dependencies> = {}) {
     if (
-      typeof options.policy?.checkRequest !== 'function' ||
-      typeof options.policy.checkResolvedAddresses !== 'function'
+      (options.mode !== undefined && options.mode !== 'request' && options.mode !== 'tunnel') ||
+      typeof options.policy?.checkResolvedAddresses !== 'function' ||
+      (options.mode === 'tunnel'
+        ? typeof options.policy.checkDestination !== 'function'
+        : typeof options.policy.checkRequest !== 'function')
     ) {
       throw error('ENGINE_UNSUPPORTED', 'admission', 'strictPolicyRequired');
     }
     this.maxConnections = positiveInteger(options.maxConnections ?? 8, 'maxConnections');
-    this.maxDnsAnswers = positiveInteger(options.maxDnsAnswers ?? 16, 'maxDnsAnswers');
+    this.maxDnsAnswers = positiveInteger(options.maxDnsAnswers ?? 16, 'maxDnsAnswers', 16);
     this.setupTimeoutMs = positiveInteger(
       options.setupTimeoutMs ?? 10_000,
       'setupTimeoutMs',
-      MAX_TIMER_MS
+      10_000
     );
-    this.budget = options.budget;
-    this.checkRequest = options.policy.checkRequest.bind(options.policy);
+    this.admission = options.admission;
+    this.mode = options.mode ?? 'request';
+    if (options.mode === 'tunnel') {
+      const check = options.policy.checkDestination.bind(options.policy);
+      this.authorize = async (destination) => {
+        if (destination.kind !== 'tunnel')
+          throw error('INVALID_REQUEST', 'admission', 'modeMismatch');
+        await check({ hostname: destination.hostname, port: destination.port });
+      };
+    } else {
+      const check = options.policy.checkRequest.bind(options.policy);
+      this.authorize = async (destination) => {
+        if (destination.kind !== 'request')
+          throw error('INVALID_REQUEST', 'admission', 'modeMismatch');
+        await check({ hostname: new URL(destination.url).hostname, url: destination.url });
+      };
+    }
     this.checkAddresses = options.policy.checkResolvedAddresses.bind(options.policy);
     this.dependencies = Object.freeze({
       resolve: dependencies.resolve ?? ((hostname: string) => lookup(hostname, { all: true })),
@@ -195,16 +296,16 @@ export class ConnectionAuthority {
     }
     if (caller.deadline <= performance.now())
       throw error('ACTION_TIMEOUT', 'admission', 'deadline');
-    const destination = destinationOf(input);
+    const destination = destinationOf(input, this.mode);
     if (this.attempts.size >= this.maxConnections)
       throw error('QUOTA_EXCEEDED', 'admission', 'authorityCapacity');
-    const release = this.budget.reserve();
+    const release = this.admission.reserve();
     const attempt = new ConnectionAttempt({
       destination,
       caller: { ...caller },
       setupTimeoutMs: this.setupTimeoutMs,
       maxDnsAnswers: this.maxDnsAnswers,
-      checkRequest: this.checkRequest,
+      authorize: this.authorize,
       checkAddresses: this.checkAddresses,
       dependencies: this.dependencies,
       drained: () => {
@@ -308,12 +409,7 @@ class ConnectionAttempt {
   private async run(): Promise<void> {
     try {
       const { destination, dependencies } = this.options;
-      await this.external('policy', () =>
-        this.options.checkRequest({
-          hostname: new URL(destination.url).hostname,
-          url: destination.url,
-        })
-      );
+      await this.external('policy', () => this.options.authorize(destination));
       this.assertActive();
       const ip = literal(destination.hostname);
       const answers = ip

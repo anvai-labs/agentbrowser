@@ -142,7 +142,29 @@ class FakeSession implements EngineSession {
     const page = new FakePage(pageId, this.options, pageOptions);
     this._pages.set(pageId, page);
     page.registerRemoval(() => this._pages.delete(pageId));
+    page.attachSession(this);
     return page;
+  }
+
+  /**
+   * Emulate window.open from `openerPageId`: create a popup page in this
+   * session and announce page.created on the opener's event stream.
+   */
+  async openPopup(openerPageId: string): Promise<FakePage> {
+    if (this.closed) {
+      throw new Error('Session is closed');
+    }
+    const opener = this._pages.get(openerPageId);
+    if (!opener) {
+      throw new Error(`Unknown opener page: ${openerPageId}`);
+    }
+    const popup = (await this.newPage()) as FakePage;
+    opener.emitEvent('page.created', {
+      openerPageId,
+      pageId: popup.id,
+      url: 'about:blank',
+    });
+    return popup;
   }
 
   async pages(): Promise<EnginePage[]> {
@@ -181,6 +203,8 @@ class FakeSession implements EngineSession {
 class FakePage implements EnginePage {
   readonly id: string;
   private removeSelf: () => void = () => {};
+  private ownerSession: FakeSession | undefined;
+  private destroyedAnnounced = false;
   private sessionOptions: EngineSessionOptions;
   private pageOptions: NewPageOptions | undefined;
   private currentUrl = 'about:blank';
@@ -192,6 +216,8 @@ class FakePage implements EnginePage {
   private revision = 1;
   private elements: FakeElement[] = [];
   private elementByRef = new Map<string, FakeElement>();
+  /** Tombstones of elements dropped from the set, for F2 remap emulation. */
+  private removedByRef = new Map<string, { role: string; name: string }>();
   private closed = false;
   private crashed = false;
   private contentOverride: string | undefined;
@@ -208,6 +234,40 @@ class FakePage implements EnginePage {
   /** Test hook: simulate a renderer crash. All subsequent ops throw. */
   crash(): void {
     this.crashed = true;
+    this.emitEvent('page.crashed');
+  }
+
+  /**
+   * Test hook: end the event stream WITHOUT announcing page.destroyed -
+   * real engines close pages silently; only the stream ending says so.
+   */
+  endStream(): void {
+    this.eventsFinished = true;
+    const waiters = this.eventWaiters;
+    this.eventWaiters = [];
+    for (const wake of waiters) {
+      wake();
+    }
+  }
+
+  /** Set by the owning session so page-initiated popups can be created. */
+  attachSession(session: FakeSession): void {
+    this.ownerSession = session;
+  }
+
+  /**
+   * Test hook: emulate window.open from this page - the session gains a
+   * popup page and this (opener) page's stream announces page.created.
+   */
+  async openPopup(): Promise<FakePage> {
+    if (this.closed || this.crashed) {
+      throw new Error('Page closed');
+    }
+    const owner = this.ownerSession;
+    if (!owner) {
+      throw new Error('openPopup requires an owning session');
+    }
+    return owner.openPopup(this.id);
   }
 
   /** Test hook: pin the page's HTML content for extraction-style consumers. */
@@ -428,6 +488,30 @@ class FakePage implements EnginePage {
     const startTimestamp = new Date().toISOString();
     const oldRevision = this.revision;
 
+    // F2 remap emulation: a dead ref with remap opted in heals onto the
+    // single surviving element matching the dropped element's role+name.
+    const target = action.target as EngineTarget | undefined;
+    if (action.remap === true && target !== undefined && !this.elementByRef.has(target.ref)) {
+      const baseline = this.removedByRef.get(target.ref);
+      if (baseline === undefined) {
+        throw new Error('Element not found');
+      }
+      const candidates = this.elements.filter(
+        (e) => e.role === baseline.role && e.name === baseline.name
+      );
+      if (candidates.length !== 1) {
+        throw new Error(`Element not found: ${candidates.length} remap candidate(s)`);
+      }
+      const healed = candidates[0] as FakeElement;
+      const retried: Record<string, unknown> = {
+        ...(action as Record<string, unknown>),
+        target: { ref: healed.ref },
+      };
+      delete retried.remap;
+      const effect = await this.act(retried as EngineAction);
+      return { ...effect, remap: { from: target.ref, to: healed.ref } };
+    }
+
     // Process action
     switch (action.type) {
       case 'acceptDialog':
@@ -623,6 +707,10 @@ class FakePage implements EnginePage {
   }
 
   async close(): Promise<void> {
+    if (!this.destroyedAnnounced && !this.crashed) {
+      this.destroyedAnnounced = true;
+      this.emitEvent('page.destroyed', { reason: 'closed' });
+    }
     this.closed = true;
     this.eventsFinished = true;
     if (this.pendingDialog) {
@@ -709,13 +797,41 @@ class FakePage implements EnginePage {
    * service.ts observe()), so a caller-visible ref never equals the raw
    * ref this engine's click case receives.
    */
-  revealAfterClick(
-    matchName: string,
-    elements: Array<Partial<FakeElement>>,
-    delayMs = 100
-  ): void {
+  revealAfterClick(matchName: string, elements: Array<Partial<FakeElement>>, delayMs = 100): void {
     this.pendingReveals.push({ matchName, elements, delayMs });
   }
+
+  private revealedSelectors = new Set<string>();
+
+  /**
+   * Test hook for the `selectorVisible` wait condition: `selector` becomes
+   * "visible" after `delayMs`. Emulated - a FakeElement has no CSS box - so
+   * waitForSelector polls this registry rather than the DOM.
+   */
+  revealSelector(selector: string, delayMs = 0): void {
+    if (delayMs <= 0) {
+      this.revealedSelectors.add(selector);
+      return;
+    }
+    setTimeout(() => this.revealedSelectors.add(selector), delayMs);
+  }
+
+  /** Emulated `selectorVisible` primitive: polls the revealSelector registry. */
+  async waitForSelector(selector: string, options: { timeoutMs?: number } = {}): Promise<void> {
+    const deadline = Date.now() + (options.timeoutMs ?? 5000);
+    for (;;) {
+      if (this.revealedSelectors.has(selector)) return;
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Timeout ${options.timeoutMs ?? 5000}ms exceeded waiting for selector '${selector}'`
+        );
+      }
+      await new Promise((wake) => setTimeout(wake, 25));
+    }
+  }
+
+  /** Emulated load-state wait: the fake page is always settled. */
+  async waitForLoadState(): Promise<void> {}
 
   /**
    * Replace the page's elements (test hook for injecting specific state,
@@ -740,6 +856,11 @@ class FakePage implements EnginePage {
 
   /** Rebuild the ref->element index after this.elements is replaced. */
   private syncElementIndex(): void {
+    for (const [ref, element] of this.elementByRef) {
+      if (!this.elements.includes(element)) {
+        this.removedByRef.set(ref, { role: element.role, name: element.name });
+      }
+    }
     this.elementByRef.clear();
     for (const element of this.elements) {
       this.elementByRef.set(element.ref, element);

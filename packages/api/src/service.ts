@@ -120,6 +120,24 @@ export interface ServicePageView {
   /** Optional best-effort cached URL; may lag navigation and is not security evidence. */
   url?: string;
   title?: string;
+  /** Present on popup pages: the service page id of the window.open opener. */
+  openerPageId?: string;
+}
+
+/**
+ * A delivered wait condition (spec 11.1 + F6/F7). Which extra field is
+ * meaningful depends on `until`; the service validates that pairing before
+ * anything runs.
+ */
+export interface ServiceWaitCondition {
+  until: string;
+  timeoutMs?: number | undefined;
+  /** urlPattern: glob (wildcards) or a slash-delimited regex. */
+  pattern?: string | undefined;
+  /** selectorVisible: CSS selector polled for visibility. */
+  selector?: string | undefined;
+  /** minElements: minimum observed element count. */
+  count?: number | undefined;
 }
 
 export interface ServiceActRequest {
@@ -138,9 +156,11 @@ export interface ServiceActRequest {
   /** Prompt answer for acceptDialog. */
   promptText?: string | undefined;
   /** Post-action wait condition (spec 11.1). */
-  wait?: { until: string; timeoutMs?: number | undefined } | undefined;
+  wait?: ServiceWaitCondition | undefined;
   /** Wait-action condition (the `wait` ACTION; distinct from post-action wait). */
-  condition?: { until: string; timeoutMs?: number | undefined } | undefined;
+  condition?: ServiceWaitCondition | undefined;
+  /** F2: opt-in healing when the targeted control was replaced. */
+  remap?: boolean | undefined;
   /**
    * TD-BROWSER-8 Phase 2: wait (before this plan step runs) until an
    * element whose name contains this substring appears - for fields
@@ -149,6 +169,12 @@ export interface ServiceActRequest {
    */
   waitForLabel?: string | undefined;
   waitMs?: number | undefined;
+  /**
+   * F3: batch envelope - a bounded 1..20 step sequence run through
+   * executePlan's machinery. Exclusive with `action`; when present, act()
+   * dispatches to the batch path before anything reads `action`.
+   */
+  steps?: ServiceActRequest[] | undefined;
 }
 
 export interface ServiceActResult {
@@ -158,6 +184,30 @@ export interface ServiceActResult {
   observation?: PageState | undefined;
   /** Why the post-action wait completed (spec 11.1). */
   waitReason?: string | undefined;
+  /** Present only when the engine healed a replaced target (F2). */
+  remap?: { from: string; to: string } | undefined;
+}
+
+/** One step's outcome inside a batch (F3); failures are in-band. */
+export interface ServiceBatchStepResult {
+  step: number;
+  ok: boolean;
+  actionId?: string;
+  /** Present when this step was healed by the opt-in remap (F2). */
+  remap?: { from: string; to: string } | undefined;
+  error?: string;
+}
+
+export interface ServiceBatchActResult {
+  status: 'success' | 'failed';
+  completed: number;
+  results: ServiceBatchStepResult[];
+  oldRevision: number;
+  newRevision: number;
+  mode: 'stable' | 'verified';
+  waitReason?: string | undefined;
+  observation?: PageState | undefined;
+  error?: { code: string; message: string } | undefined;
 }
 
 export interface ServiceDependencies {
@@ -203,6 +253,8 @@ export interface ServiceDependencies {
 interface PageContext {
   sessionId: string;
   enginePage: EnginePage;
+  /** Service page id of the window.open opener, when adopted as a popup. */
+  openerPageId?: string;
   revision: number;
   /** The last observation handed to a client, in service revision space. */
   lastObservation?:
@@ -235,7 +287,11 @@ export type PartialObservation = {
   maxBytes?: number | undefined;
   sinceRevision?: number | undefined;
   continueFrom?: number | undefined;
+  include?: string[] | undefined;
 };
+
+/** Optional observation enrichments the stack actually delivers. */
+const DELIVERED_INCLUDES = new Set<string>(['overlays']);
 
 export class AgentBrowserService {
   private readonly engine: BrowserEngine;
@@ -483,6 +539,18 @@ export class AgentBrowserService {
    */
   private readonly requestHistory = new Map<string, JsonLedger<EngineEvent>>();
   private static readonly REQUEST_HISTORY_LIMIT = 1000;
+  /**
+   * F10 guard: a page gone wild with window.open must not translate into
+   * unbounded service pages. Further popups are closed engine-side.
+   */
+  private static readonly MAX_POPUPS_PER_SESSION = 20;
+  /**
+   * F10 guard: adoption is async (it round-trips the engine's page list),
+   * so concurrent page.created events would otherwise race on the
+   * first-unknown-page selection. Chained per session, adoptions run in
+   * event order and observe each other's registrations.
+   */
+  private readonly adoptionChains = new Map<string, Promise<void>>();
 
   private recordEvent(sessionId: string, event: EngineEvent): boolean {
     const isRequest = event.type.startsWith('request.');
@@ -544,6 +612,7 @@ export class AgentBrowserService {
 
   private pumpEvents(sessionId: string, pageId: string, enginePage: EnginePage): void {
     void (async () => {
+      let sawDestroyed = false;
       try {
         for await (const event of enginePage.events()) {
           const stamped: EngineEvent = this.secretManager.redact({
@@ -565,11 +634,137 @@ export class AgentBrowserService {
               }
             }
           }
+          if (stamped.type === 'page.created') {
+            this.adoptPopupSerialized(sessionId, stamped.data).catch(() => {
+              // Adoption is best-effort; the popup stays engine-side only.
+            });
+          } else if (stamped.type === 'page.destroyed') {
+            sawDestroyed = true;
+            this.reapPage(sessionId, pageId);
+          }
         }
       } catch {
         // The engine page went away; the pump simply ends.
       }
+      // Real engines close pages without announcing it - the stream just
+      // ends. Fan the declared page.destroyed so replay and WS clients see
+      // the same lifecycle for every engine. Gated on an EXISTING ledger:
+      // recordEvent creates on demand, so a pump outliving its session
+      // (teardown or crash-recovery race) would otherwise resurrect a
+      // deleted ledger with a lone synthetic event.
+      if (!sawDestroyed && this.eventHistory.has(sessionId)) {
+        const synthesized: EngineEvent = this.secretManager.redact({
+          type: 'page.destroyed',
+          timestamp: new Date().toISOString(),
+          sessionId,
+          pageId,
+          data: { reason: 'streamEnded' },
+        });
+        if (this.recordEvent(sessionId, synthesized)) {
+          const listeners = this.eventListeners.get(sessionId);
+          if (listeners) {
+            for (const listener of [...listeners]) {
+              try {
+                listener(structuredClone(synthesized));
+              } catch {
+                // A misbehaving listener never breaks the stream.
+              }
+            }
+          }
+        }
+      }
+      // Stream ended (page closed engine-side): drop the registry entry so
+      // listPages stops reporting a dead page id.
+      this.reapPage(sessionId, pageId);
     })();
+  }
+
+  /**
+   * Adopt a page the engine created on its own (a popup): register it in
+   * service page space under its opener and start its event pump. The
+   * popup never round-trips through createPage; listPages is the client's
+   * discovery path to its id.
+   */
+  /**
+   * Serialize a session's adoptions: each page.created is adopted after the
+   * previous one settles, in event order, so concurrent popups cannot race
+   * on the engine page list. Never throws; the pump keeps flowing.
+   */
+  private adoptPopupSerialized(sessionId: string, data: unknown): Promise<void> {
+    const previous = this.adoptionChains.get(sessionId) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(() => this.adoptPopup(sessionId, data))
+      .finally(() => {
+        if (this.adoptionChains.get(sessionId) === next) {
+          this.adoptionChains.delete(sessionId);
+        }
+      });
+    this.adoptionChains.set(sessionId, next);
+    return next;
+  }
+
+  private async adoptPopup(sessionId: string, data: unknown): Promise<void> {
+    const payload = data as { openerPageId?: unknown; pageId?: unknown } | null;
+    const openerEnginePageId = payload?.openerPageId;
+    const popupEnginePageId = payload?.pageId;
+    if (typeof openerEnginePageId !== 'string' || typeof popupEnginePageId !== 'string') {
+      return;
+    }
+    const owned = [...this.pages.entries()].filter(([, page]) => page.sessionId === sessionId);
+    const opener = owned.find(([, page]) => page.enginePage.id === openerEnginePageId);
+    if (opener === undefined) {
+      return; // Opener already gone; nothing to attach the popup under.
+    }
+    // Idempotence: a replayed or raced page.created must not double-register.
+    if (owned.some(([, page]) => page.enginePage.id === popupEnginePageId)) {
+      return;
+    }
+    // Cap: runaway popup storms are closed engine-side, never adopted.
+    const popupCount = owned.filter(([, page]) => page.openerPageId !== undefined).length;
+    if (popupCount >= AgentBrowserService.MAX_POPUPS_PER_SESSION) {
+      this.metrics?.incrementCounter('popups_rejected_total', { sessionId });
+      this.logger?.warn('popup.cap-reached', {
+        sessionId,
+        cap: AgentBrowserService.MAX_POPUPS_PER_SESSION,
+      });
+      try {
+        const engineSession = this.requireSession(sessionId).engineSession;
+        const stray = (await engineSession.pages()).find((page) => page.id === popupEnginePageId);
+        await stray?.close();
+      } catch {
+        // Engine gone or close failed; nothing further to do.
+      }
+      return;
+    }
+    let popup: EnginePage | undefined;
+    try {
+      const engineSession = this.requireSession(sessionId).engineSession;
+      popup = (await engineSession.pages()).find((page) => page.id === popupEnginePageId);
+    } catch {
+      return; // The engine session is gone; nothing to adopt.
+    }
+    if (popup === undefined) {
+      return;
+    }
+    const popupPageId = `pg_${++this.pageCounter}_${popup.id}`;
+    this.pages.set(popupPageId, {
+      sessionId,
+      enginePage: popup,
+      revision: 1,
+      history: new Map(),
+      openerPageId: opener[0],
+    });
+    this.pumpEvents(sessionId, popupPageId, popup);
+  }
+
+  /** Drop a page's registry and churn state (page.destroyed or pump end). */
+  private reapPage(sessionId: string, pageId: string): void {
+    const page = this.pages.get(pageId);
+    if (page?.sessionId === sessionId) {
+      this.pages.delete(pageId);
+    }
+    this.churn.delete(this.churnKey(sessionId, pageId));
   }
 
   private isCrash(error: unknown): boolean {
@@ -712,6 +907,7 @@ export class AgentBrowserService {
             {
               policy: sessionPolicy,
               budget: this.downloadBudget,
+              admission: this.downloadBudget.connections.createSessionScope(8, context.signal),
               signal: context.signal,
               onOutcome: (outcome) => {
                 const fields = this.secretManager.redact({
@@ -865,10 +1061,16 @@ export class AgentBrowserService {
           sessionId,
         }
       );
+      // byteSize must be the UTF-8 byte length (what contentBase64
+      // encodes), not the UTF-16 code-unit count of the JS string - the
+      // two diverge on every non-ASCII page.
+      const htmlBytes = Buffer.byteLength(html, 'utf8');
+      const inline = this.inlineFor(Buffer.from(html, 'utf8').toString('base64'), htmlBytes);
       return {
         ...metadata,
         description:
           'Raw page HTML; NOT secret-redacted - values typed into forms are captured verbatim.',
+        ...(inline !== undefined ? { inline } : {}),
       };
     });
   }
@@ -910,13 +1112,25 @@ export class AgentBrowserService {
   ): Promise<{
     ok: boolean;
     completed: number;
-    results: Array<{ step: number; ok: boolean; actionId?: string; error?: string }>;
+    results: Array<{
+      step: number;
+      ok: boolean;
+      actionId?: string;
+      remap?: { from: string; to: string };
+      error?: string;
+    }>;
     mode: 'stable' | 'verified';
     /** Payload economics (pressure matrix row 4): the plan's cheap "final state" signal. */
     newRevision: number;
     error?: { code: string; message: string };
   }> {
-    const results: Array<{ step: number; ok: boolean; actionId?: string; error?: string }> = [];
+    const results: Array<{
+      step: number;
+      ok: boolean;
+      actionId?: string;
+      remap?: { from: string; to: string };
+      error?: string;
+    }> = [];
     const churnKey = this.churnKey(sessionId, pageId);
     const finalRevision = (): number => this.pages.get(pageId)?.revision ?? 0;
     for (const [index, step] of steps.entries()) {
@@ -950,10 +1164,29 @@ export class AgentBrowserService {
           };
         }
       }
+      if (step.steps !== undefined) {
+        // F3: batch envelopes are the /act surface's own shortcut - nesting
+        // one inside a plan (or a batch) would double-apply orchestration.
+        const message = "'steps' cannot be nested inside a plan step.";
+        results.push({ step: index, ok: false, error: message });
+        return {
+          ok: false,
+          completed: index,
+          results,
+          mode: this.churnMode(churnKey),
+          newRevision: finalRevision(),
+          error: { code: 'PLAN_STEP_FAILED', message },
+        };
+      }
       try {
-        const effect = await this.act(sessionId, pageId, effectiveStep);
+        const effect = (await this.act(sessionId, pageId, effectiveStep)) as ServiceActResult;
         this.decayChurn(churnKey);
-        results.push({ step: index, ok: true, actionId: effect.actionId });
+        results.push({
+          step: index,
+          ok: true,
+          actionId: effect.actionId,
+          ...(effect.remap !== undefined ? { remap: effect.remap } : {}),
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const ordinal = /(?:^|e\d+)_(\d+)$/.exec(effectiveStep.target?.ref ?? '')?.[1];
@@ -1031,15 +1264,20 @@ export class AgentBrowserService {
             // expectedRevision). A failure must surface as the plan
             // envelope, not as a thrown error escaping the catch.
             try {
-              const retry = await this.act(sessionId, pageId, {
+              const retry = (await this.act(sessionId, pageId, {
                 ...effectiveStep,
                 target: { ref: remapped },
-              });
+              })) as ServiceActResult;
               // Fix: the primary success path decays churn (below); the
               // remap-retry success path did not, so a plan of repeated
               // remapped steps never cooled back down out of VERIFIED mode.
               this.decayChurn(churnKey);
-              results.push({ step: index, ok: true, actionId: retry.actionId });
+              results.push({
+                step: index,
+                ok: true,
+                actionId: retry.actionId,
+                ...(retry.remap !== undefined ? { remap: retry.remap } : {}),
+              });
               continue;
             } catch (retryError) {
               const retryMessage =
@@ -1239,7 +1477,12 @@ export class AgentBrowserService {
     if (!page || page.sessionId !== sessionId) {
       return undefined;
     }
-    return { pageId, sessionId, status: 'active' };
+    return {
+      pageId,
+      sessionId,
+      status: 'active',
+      ...(page.openerPageId !== undefined ? { openerPageId: page.openerPageId } : {}),
+    };
   }
 
   /**
@@ -1267,6 +1510,7 @@ export class AgentBrowserService {
           sessionId,
           status: 'active',
           ...(url !== undefined ? { url } : {}),
+          ...(page.openerPageId !== undefined ? { openerPageId: page.openerPageId } : {}),
         })
       );
     }
@@ -1385,8 +1629,20 @@ export class AgentBrowserService {
         `Observation mode '${request.mode}' is not delivered. Supported: ${[...DELIVERED_MODES].join(', ')}.`
       );
     }
+    if (request.include !== undefined) {
+      const unknown = request.include.filter((token) => !DELIVERED_INCLUDES.has(token));
+      if (unknown.length > 0) {
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `Observation include token(s) not delivered: ${unknown.join(', ')}. Supported: ${[...DELIVERED_INCLUDES].join(', ')}.`,
+          false,
+          { include: request.include, validIncludes: [...DELIVERED_INCLUDES].sort() }
+        );
+      }
+    }
     const observationRequest: ObservationRequest = {
       ...(request.mode !== undefined ? { mode: request.mode } : {}),
+      ...(request.include !== undefined ? { include: request.include } : {}),
     };
     let raw: Awaited<ReturnType<EnginePage['observe']>>;
     try {
@@ -1483,7 +1739,13 @@ export class AgentBrowserService {
       );
     }
 
-    const snapshot = page.history.get(current.revision)!;
+    const snapshot = page.history.get(current.revision);
+    if (snapshot === undefined) {
+      throw new ServiceError(
+        'INTERNAL',
+        `Missing retained observation at revision ${current.revision}.`
+      );
+    }
     const changes: import('@agentbrowser/protocol').ElementChange[] = [];
 
     // Removed: in previous, not in current.
@@ -1555,10 +1817,17 @@ export class AgentBrowserService {
     sessionId: string,
     pageId: string,
     request: ServiceActRequest
-  ): Promise<ServiceActResult> {
+  ): Promise<ServiceActResult | ServiceBatchActResult> {
     return this.traced('act', { sessionId, pageId, action: request.action }, async (span) => {
       const page = this.requirePage(sessionId, pageId);
       this.coordinator.updateActivity(sessionId);
+
+      // F3: the batch envelope dispatches before any single-action work -
+      // a batch body has no `action`, and the single-action gates below
+      // would misread it.
+      if (request.steps !== undefined) {
+        return await this.executeActBatch(sessionId, pageId, request);
+      }
 
       const ref = request.target?.ref;
       if (ref !== undefined) {
@@ -1605,21 +1874,16 @@ export class AgentBrowserService {
       }
 
       // Wait validation (spec 11.1): unknown conditions are rejected before
-      // anything runs; every wait carries a deadline.
+      // anything runs; every wait carries a deadline. F6/F7: the new
+      // conditions are checked for their required field pairing too.
       const DELIVERED_WAITS = new Set<string>(DELIVERED_WAIT_TYPES);
-      if (request.wait !== undefined && !DELIVERED_WAITS.has(request.wait.until)) {
-        throw new ServiceError(
-          'INVALID_REQUEST',
-          `Unknown wait condition '${request.wait.until}'. Supported: ${[...DELIVERED_WAITS].join(', ')}.`
-        );
+      if (request.wait !== undefined) {
+        this.validateWaitCondition(request.wait, DELIVERED_WAITS);
       }
       // The wait ACTION shares the delivered condition set (schema checks
       // the shape; this checks the semantics).
-      if (request.condition !== undefined && !DELIVERED_WAITS.has(request.condition.until)) {
-        throw new ServiceError(
-          'INVALID_REQUEST',
-          `Unknown wait condition '${request.condition.until}'. Supported: ${[...DELIVERED_WAITS].join(', ')}.`
-        );
+      if (request.condition !== undefined) {
+        this.validateWaitCondition(request.condition, DELIVERED_WAITS);
       }
 
       // ADR-015 B4b: construct-then-validate. The wire body is flat, so
@@ -1672,6 +1936,34 @@ export class AgentBrowserService {
             )
           );
         }
+        if (result.error.code === 'ACTION_TIMEOUT') {
+          // One-round-trip diagnostics (F4): the page state at timeout is
+          // evidence the client cannot recover later. Capture is best-effort
+          // and must never mask or replace the underlying failure.
+          const screenshotArtifactId = await this.diagnosticScreenshot(sessionId, pageId);
+          if (screenshotArtifactId !== undefined) {
+            result.error = {
+              ...result.error,
+              details: { ...result.error.details, screenshotArtifactId },
+            };
+          }
+        }
+        // F2: opt-in heal (raw-act parity with executePlan's self-heal). The
+        // executor refuses a stale target BEFORE the engine acts, so the
+        // engine-level remap inside act() is unreachable here - the heal has
+        // to live at this layer, where the refusal is already a result.
+        if (
+          actRequest.remap === true &&
+          ref !== undefined &&
+          (result.error.code === 'STALE_TARGET' || result.error.code === 'TARGET_NOT_FOUND') &&
+          // Only binding staleness may be healed. A refusal without the
+          // flag carries live contradicting evidence (fingerprint mismatch,
+          // the caller's own expectedRevision assertion) - remapping it
+          // would overwrite semantics the executor deliberately refused on.
+          result.error.details?.remapEligible === true
+        ) {
+          return await this.remapAct(sessionId, pageId, actRequest, ref, result.error);
+        }
         throw this.redactedError(
           new ServiceError(
             result.error.code,
@@ -1690,7 +1982,11 @@ export class AgentBrowserService {
       // off the deterministic path - engines that need real settling take
       // an explicit wait.
       const waitReason =
-        request.wait !== undefined ? await this.waitFor(page.enginePage, request.wait) : 'settled';
+        request.wait !== undefined
+          ? await this.waitFor(page.enginePage, request.wait)
+          : request.action === 'wait' && request.condition !== undefined
+            ? await this.waitFor(page.enginePage, request.condition)
+            : 'settled';
 
       // A requested post-action observation goes through the service's own
       // observe(), so its refs are minted, mapped and immediately actionable.
@@ -1705,8 +2001,207 @@ export class AgentBrowserService {
         newRevision: result.newRevision,
         observation,
         waitReason,
+        ...(result.remap !== undefined ? { remap: result.remap } : {}),
       };
     });
+  }
+
+  /**
+   * F3: the `steps` batch path. Deliberately a thin adapter over
+   * executePlan - one implementation of sequencing, stop-on-first-error,
+   * churn gating and the bounded self-heal - with the batch envelope's
+   * own concerns (size limit, end-of-batch wait and observe) layered on
+   * top. A failed step never throws: it is reported in-band.
+   */
+  private async executeActBatch(
+    sessionId: string,
+    pageId: string,
+    request: ServiceActRequest
+  ): Promise<ServiceBatchActResult> {
+    const page = this.requirePage(sessionId, pageId);
+    const steps = request.steps;
+    if (!Array.isArray(steps) || steps.length < 1 || steps.length > 20) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `'steps' must be an array of 1..20 actions; got ${steps?.length ?? 'non-array'}.`,
+        false,
+        { count: Array.isArray(steps) ? steps.length : undefined }
+      );
+    }
+    if (request.wait !== undefined) {
+      this.validateWaitCondition(request.wait, new Set<string>(DELIVERED_WAIT_TYPES));
+    }
+
+    const oldRevision = page.revision;
+    const plan = await this.executePlan(sessionId, pageId, steps);
+
+    // The top-level wait and observe belong to the batch, not to any step:
+    // they run only when every step applied, so a failed batch reports its
+    // failure without post-action noise masking it.
+    let waitReason: string | undefined;
+    if (plan.ok && request.wait !== undefined) {
+      waitReason = await this.waitFor(page.enginePage, request.wait);
+    }
+    let observation: PageState | undefined;
+    if (plan.ok && request.observe === 'after') {
+      observation = await this.observe(sessionId, pageId, { mode: 'interactive' });
+    }
+
+    return {
+      status: plan.ok ? 'success' : 'failed',
+      completed: plan.completed,
+      results: plan.results,
+      oldRevision,
+      newRevision: observation?.revision ?? plan.newRevision,
+      mode: plan.mode,
+      ...(waitReason !== undefined ? { waitReason } : {}),
+      ...(observation !== undefined ? { observation } : {}),
+      ...(plan.error !== undefined ? { error: plan.error } : {}),
+    };
+  }
+
+  /**
+   * F2: the opt-in heal behind `remap: true`. Re-observes, matches the
+   * mint-time element by role + name (candidates arrive redacted from
+   * observe(), the history baseline does not - compare on the redacted
+   * form, or a label embedding a secret could never match itself), and
+   * retries once when exactly one candidate survives. Zero or several
+   * candidates refuse to guess with the candidate count in details; a
+   * retry that itself fails propagates that failure honestly.
+   */
+  private async remapAct(
+    sessionId: string,
+    pageId: string,
+    request: ServiceActRequest,
+    staleRef: string,
+    refusal: { code: ProtocolErrorCode; message: string }
+  ): Promise<ServiceActResult> {
+    const page = this.pages.get(pageId);
+    if (page === undefined) {
+      throw this.redactedError(new ServiceError(refusal.code, refusal.message));
+    }
+    // The observation the stale ref was minted from, via the ref's own
+    // revision prefix - lastObservation may have been replaced by a heal or
+    // observe-after since (same lookup executePlan's self-heal uses).
+    const refRevision = /(?:^|e)(\d+)_/.exec(staleRef)?.[1];
+    const baseline =
+      (refRevision !== undefined
+        ? page.history.get(Number.parseInt(refRevision, 10))?.byRef.get(staleRef)
+        : undefined) ?? page.lastObservation?.byRef.get(staleRef);
+    if (baseline === undefined) {
+      throw this.redactedError(new ServiceError(refusal.code, refusal.message));
+    }
+
+    const observed = await this.observe(sessionId, pageId, { mode: 'interactive' });
+    // An unnamed baseline must match unnamed candidates (undefined ===
+    // undefined), not the redacted empty string - redact('') would compare
+    // '' against every candidate's undefined name and never match.
+    const baselineName =
+      baseline.name === undefined ? undefined : this.secretManager.redact(baseline.name);
+    const nameForMessages = baselineName ?? '<unnamed>';
+    const matches = observed.elements.filter(
+      (e) => e.role === baseline.role && e.name === baselineName
+    );
+    if (matches.length !== 1) {
+      throw this.redactedError(
+        new ServiceError(
+          'STALE_TARGET',
+          matches.length === 0
+            ? `Remap found no element matching role '${baseline.role}' and name '${nameForMessages}'; the control is gone.`
+            : `Remap found ${matches.length} candidates matching role '${baseline.role}' and name '${nameForMessages}'; refusing to guess.`,
+          true,
+          {
+            ref: staleRef,
+            revision: page.revision,
+            role: baseline.role,
+            ...(baselineName !== undefined ? { name: baselineName } : {}),
+            candidates: matches.length,
+          }
+        )
+      );
+    }
+    const fresh = matches[0];
+    if (fresh === undefined) {
+      throw this.redactedError(new ServiceError(refusal.code, refusal.message));
+    }
+    // remap is stripped from the retry: one heal per action, and a retry
+    // failure surfaces instead of recursing. The retry is always the
+    // single-action variant - remapAct is unreachable from the batch path.
+    const retry = (await this.act(sessionId, pageId, {
+      ...request,
+      target: { ref: fresh.ref },
+      remap: undefined,
+    })) as ServiceActResult;
+    return { ...retry, remap: { from: staleRef, to: fresh.ref } };
+  }
+
+  /**
+   * Shape-and-pairing check for a delivered wait condition. The wire schema
+   * constrains field types; this catches semantic misses that the schema
+   * cannot express (minElements without count, urlPattern without a
+   * pattern) BEFORE any step runs - a mid-plan failure here would leave a
+   * half-applied batch behind.
+   */
+  private validateWaitCondition(wait: ServiceWaitCondition, delivered: Set<string>): void {
+    if (!delivered.has(wait.until)) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `Unknown wait condition '${wait.until}'. Supported: ${[...delivered].join(', ')}.`
+      );
+    }
+    if (wait.until === 'urlPattern' && typeof wait.pattern !== 'string') {
+      throw new ServiceError('INVALID_REQUEST', "Wait 'urlPattern' requires a string 'pattern'.");
+    }
+    if (wait.until === 'urlPattern' && typeof wait.pattern === 'string') {
+      // Pre-flight the pattern (size cap + compile) so a bad regex fails as
+      // INVALID_REQUEST before any step runs instead of mid-wait.
+      if (wait.pattern.length > 512) {
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          "Wait 'urlPattern' pattern exceeds the 512-character limit."
+        );
+      }
+      this.compileUrlPattern(wait.pattern);
+    }
+    if (wait.until === 'selectorVisible' && typeof wait.selector !== 'string') {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        "Wait 'selectorVisible' requires a string 'selector'."
+      );
+    }
+    if (
+      wait.until === 'minElements' &&
+      (typeof wait.count !== 'number' || !Number.isInteger(wait.count) || wait.count < 1)
+    ) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        "Wait 'minElements' requires an integer 'count' >= 1."
+      );
+    }
+  }
+
+  /** Glob (`*` = within one path segment, `**` = anything) or `/regex/`. */
+  private compileUrlPattern(pattern: string): RegExp {
+    const regexForm = /^\/(.*)\/([a-z]*)$/.exec(pattern);
+    if (regexForm) {
+      try {
+        return new RegExp(regexForm[1] ?? '', regexForm[2] ?? '');
+      } catch {
+        // Caller-supplied regex bodies can be syntactically invalid; that is
+        // a bad request, not a mid-wait engine failure.
+        throw new ServiceError('INVALID_REQUEST', `Wait 'urlPattern' regex is invalid: ${pattern}`);
+      }
+    }
+    const source = pattern
+      .split('*')
+      .map((segment) => segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join(pattern.includes('**') ? '[\\s\\S]*' : '[^/]*');
+    return new RegExp(`^${source}$`);
+  }
+
+  /** Poll helper shared by the deadline-bounded F6/F7 conditions. */
+  private async pollInterval(ms = 150): Promise<void> {
+    await new Promise((wake) => setTimeout(wake, ms));
   }
 
   /**
@@ -1716,11 +2211,11 @@ export class AgentBrowserService {
    * immediately (an explicit, bounded best-effort - recorded in the
    * reason, never a silent hang).
    */
-  private async waitFor(
-    enginePage: EnginePage,
-    wait: { until: string; timeoutMs?: number | undefined }
-  ): Promise<string> {
-    const deadlineMs = wait.timeoutMs ?? 5000;
+  private async waitFor(enginePage: EnginePage, wait: ServiceWaitCondition): Promise<string> {
+    // A wire-supplied 0 would disable the underlying engine timeouts
+    // (Playwright treats explicit 0 as "wait forever"); every condition is
+    // deadline-bounded, so clamp to a positive floor.
+    const deadlineMs = Math.max(1, wait.timeoutMs ?? 5000);
 
     if (wait.until === 'settled') {
       // Quiet-window approximation: wait for the network to go idle via
@@ -1760,6 +2255,77 @@ export class AgentBrowserService {
         }
       }
       return wait.until;
+    }
+
+    if (wait.until === 'urlPattern') {
+      const regex = this.compileUrlPattern(wait.pattern ?? '');
+      const start = Date.now();
+      let url = '';
+      for (;;) {
+        url = (await enginePage.getUrl?.()) ?? '';
+        if (regex.test(url)) {
+          return 'urlPattern';
+        }
+        if (Date.now() - start >= deadlineMs) {
+          throw new ServiceError(
+            'ACTION_TIMEOUT',
+            `Wait 'urlPattern' did not match within ${deadlineMs}ms.`,
+            true,
+            { until: 'urlPattern', timeoutMs: deadlineMs, url }
+          );
+        }
+        await this.pollInterval();
+      }
+    }
+
+    if (wait.until === 'selectorVisible') {
+      const selector = wait.selector ?? '';
+      const anyPage = enginePage as unknown as {
+        waitForSelector?: (selector: string, options: { timeoutMs?: number }) => Promise<void>;
+      };
+      if (typeof anyPage.waitForSelector !== 'function') {
+        throw new ServiceError(
+          'ENGINE_UNSUPPORTED',
+          'The active engine does not support selector waits.'
+        );
+      }
+      try {
+        await anyPage.waitForSelector(selector, { timeoutMs: deadlineMs });
+        return 'selectorVisible';
+      } catch {
+        throw new ServiceError(
+          'ACTION_TIMEOUT',
+          `Wait 'selectorVisible' did not complete within ${deadlineMs}ms.`,
+          true,
+          { until: 'selectorVisible', timeoutMs: deadlineMs, selector }
+        );
+      }
+    }
+
+    if (wait.until === 'minElements') {
+      const required = wait.count ?? 1;
+      const start = Date.now();
+      let observed = 0;
+      for (;;) {
+        try {
+          const raw = await enginePage.observe({ mode: 'interactive' });
+          observed = raw.elements.length;
+        } catch {
+          observed = 0;
+        }
+        if (observed >= required) {
+          return 'minElements';
+        }
+        if (Date.now() - start >= deadlineMs) {
+          throw new ServiceError(
+            'ACTION_TIMEOUT',
+            `Wait 'minElements' did not reach ${required} elements within ${deadlineMs}ms.`,
+            true,
+            { until: 'minElements', timeoutMs: deadlineMs, count: required, observed }
+          );
+        }
+        await this.pollInterval();
+      }
     }
 
     // Unknown conditions are validated before execution; unreachable.
@@ -1814,9 +2380,17 @@ export class AgentBrowserService {
         );
       }
       const bytes = Buffer.from(captured.bytesBase64, 'base64');
-      return this.putArtifact(sessionId, 'pdf', 'application/pdf', new Uint8Array(bytes), {
+      const metadata = this.putArtifact(
         sessionId,
-      });
+        'pdf',
+        'application/pdf',
+        new Uint8Array(bytes),
+        {
+          sessionId,
+        }
+      );
+      const inline = this.inlineFor(captured.bytesBase64, bytes.byteLength);
+      return { ...metadata, ...(inline !== undefined ? { inline } : {}) };
     });
   }
 
@@ -1959,6 +2533,43 @@ export class AgentBrowserService {
     });
   }
 
+  /**
+   * Best-effort evidence capture for ACTION_TIMEOUT diagnostics (F4): a
+   * screenshot artifact of the page as the action deadline hit. Every
+   * failure path returns undefined so the underlying timeout is reported
+   * untouched.
+   */
+  private async diagnosticScreenshot(
+    sessionId: string,
+    pageId: string
+  ): Promise<string | undefined> {
+    try {
+      const page = this.requirePage(sessionId, pageId);
+      // Diagnostics must never extend the failure they describe: bound the
+      // capture the same way the engine bounds its blocker probe.
+      const captured = await Promise.race([
+        page.enginePage.screenshot({ format: 'png' }),
+        new Promise<undefined>((resolve) => {
+          const timer = setTimeout(() => resolve(undefined), 2_000);
+          timer.unref();
+        }),
+      ]);
+      if (captured === undefined || typeof captured.bytesBase64 !== 'string') {
+        return undefined;
+      }
+      const metadata = this.putArtifact(
+        sessionId,
+        'screenshot',
+        captured.contentType,
+        new Uint8Array(Buffer.from(captured.bytesBase64, 'base64')),
+        { sessionId }
+      );
+      return metadata.artifactId;
+    } catch {
+      return undefined;
+    }
+  }
+
   // ---- extraction ---------------------------------------------------------
 
   /**
@@ -2068,6 +2679,32 @@ export class AgentBrowserService {
 
   // ---- screenshots --------------------------------------------------------
 
+  /**
+   * F8: transport economics - small evidence rides the response body so a
+   * screenshot/pdf/html round trip is one call, not capture + fetch. The
+   * artifact is registered either way; the threshold only decides whether
+   * the bytes ALSO travel inline. Env knob follows the snapshot-evidence
+   * pattern: invalid or negative values fall back to the default, large
+   * values clamp at the artifact store's own 10MiB ceiling.
+   */
+  private inlineArtifactMaxBytes(): number {
+    const DEFAULT = 262144;
+    const CEILING = 10 * 1024 * 1024;
+    const raw = process.env.AGENTBROWSER_INLINE_ARTIFACT_MAX_BYTES;
+    if (raw === undefined || raw.trim() === '') return DEFAULT;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT;
+    return Math.min(parsed, CEILING);
+  }
+
+  private inlineFor(
+    base64: string,
+    byteSize: number
+  ): { contentBase64: string; byteSize: number } | undefined {
+    if (byteSize > this.inlineArtifactMaxBytes()) return undefined;
+    return { contentBase64: base64, byteSize };
+  }
+
   async screenshot(
     sessionId: string,
     pageId: string,
@@ -2136,7 +2773,12 @@ export class AgentBrowserService {
           sessionId,
         }
       );
-      return warnings.length > 0 ? { ...metadata, warnings } : metadata;
+      const inline = this.inlineFor(captured.bytesBase64, bytes.byteLength);
+      return {
+        ...metadata,
+        ...(warnings.length > 0 ? { warnings } : {}),
+        ...(inline !== undefined ? { inline } : {}),
+      };
     });
   }
 

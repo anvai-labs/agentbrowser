@@ -614,7 +614,7 @@
       "get": {
         "operationId": "getSessionEvents",
         "summary": "Replay the session event ledger",
-        "description": "A3 evidence: the session's recent engine events (bounded ring, oldest first) - console lines and lifecycle events for late subscribers. Optional ?type= filters by event type.",
+        "description": "A3 evidence: the session's recent engine events (bounded rings, oldest first per ledger) - console lines and lifecycle events for late subscribers. Network summary (spec 5.1): request lifecycle events (request.started/finished/failed, URLs query-string-redacted, denials carrying the policy code/rule) live in their own bounded ledger - filter with ?type=request.finished etc. Unfiltered returns both ledgers (console first; cross-ledger ordering not preserved).",
         "tags": [
           "sessions"
         ],
@@ -1081,6 +1081,68 @@
       }
     },
     "/v1/sessions/{sessionId}/pages": {
+      "get": {
+        "operationId": "listPages",
+        "summary": "List the pages of a session",
+        "description": "Creation order. Pages exist once created through the create-page endpoint; this is the discovery path when that response was lost and the answer to \"which page ids are live here\". Optional URL metadata is secret-redacted and comes only from a synchronous engine cache: it may lag navigation and is omitted when unavailable. Listing never waits for browser URL I/O.",
+        "tags": [
+          "pages"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The current pages.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "pages"
+                  ],
+                  "properties": {
+                    "pages": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PageSummary"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected server error occurred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "operationId": "createPage",
         "summary": "Create a page in a session",
@@ -1497,94 +1559,271 @@
                 ],
                 "properties": {
                   "action": {
-                    "type": "string",
-                    "enum": [
-                      "click",
-                      "dblclick",
-                      "hover",
-                      "fill",
-                      "clear",
-                      "check",
-                      "uncheck",
-                      "select",
-                      "scroll",
-                      "press",
-                      "wait",
-                      "goBack",
-                      "goForward",
-                      "reload",
-                      "acceptDialog",
-                      "dismissDialog"
+                    "anyOf": [
+                      {
+                        "const": "click",
+                        "type": "string"
+                      },
+                      {
+                        "const": "dblclick",
+                        "type": "string"
+                      },
+                      {
+                        "const": "hover",
+                        "type": "string"
+                      },
+                      {
+                        "const": "fill",
+                        "type": "string"
+                      },
+                      {
+                        "const": "clear",
+                        "type": "string"
+                      },
+                      {
+                        "const": "check",
+                        "type": "string"
+                      },
+                      {
+                        "const": "uncheck",
+                        "type": "string"
+                      },
+                      {
+                        "const": "select",
+                        "type": "string"
+                      },
+                      {
+                        "const": "scroll",
+                        "type": "string"
+                      },
+                      {
+                        "const": "press",
+                        "type": "string"
+                      },
+                      {
+                        "const": "wait",
+                        "type": "string"
+                      },
+                      {
+                        "const": "goBack",
+                        "type": "string"
+                      },
+                      {
+                        "const": "goForward",
+                        "type": "string"
+                      },
+                      {
+                        "const": "reload",
+                        "type": "string"
+                      },
+                      {
+                        "const": "acceptDialog",
+                        "type": "string"
+                      },
+                      {
+                        "const": "dismissDialog",
+                        "type": "string"
+                      }
                     ]
                   },
                   "target": {
-                    "$ref": "#/components/schemas/ElementTarget"
-                  },
-                  "promptText": {
-                    "type": "string",
-                    "description": "Prompt answer for acceptDialog."
+                    "type": "object",
+                    "required": [
+                      "ref"
+                    ],
+                    "properties": {
+                      "ref": {
+                        "pattern": "^e\\d+_\\d+$",
+                        "type": "string"
+                      }
+                    }
                   },
                   "value": {
                     "type": "string"
                   },
+                  "values": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "deltaX": {
+                    "type": "number"
+                  },
+                  "deltaY": {
+                    "type": "number"
+                  },
                   "key": {
-                    "type": "string",
-                    "description": "Key for press."
+                    "type": "string"
                   },
                   "direction": {
-                    "type": "string",
-                    "enum": [
-                      "up",
-                      "down",
-                      "left",
-                      "right"
+                    "anyOf": [
+                      {
+                        "const": "up",
+                        "type": "string"
+                      },
+                      {
+                        "const": "down",
+                        "type": "string"
+                      },
+                      {
+                        "const": "left",
+                        "type": "string"
+                      },
+                      {
+                        "const": "right",
+                        "type": "string"
+                      }
                     ]
                   },
                   "amount": {
                     "type": "number"
                   },
                   "observe": {
-                    "type": "string",
-                    "enum": [
-                      "after",
-                      "none"
+                    "anyOf": [
+                      {
+                        "const": "after",
+                        "type": "string"
+                      },
+                      {
+                        "const": "none",
+                        "type": "string"
+                      }
                     ]
+                  },
+                  "expectedRevision": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "approvalToken": {
+                    "type": "string"
+                  },
+                  "promptText": {
+                    "type": "string"
                   },
                   "wait": {
                     "type": "object",
-                    "description": "Post-action wait condition.",
-                    "properties": {
-                      "until": {
-                        "type": "string"
-                      },
-                      "timeoutMs": {
-                        "type": "number"
-                      }
-                    },
                     "required": [
                       "until"
-                    ]
-                  },
-                  "condition": {
-                    "type": "object",
-                    "description": "Wait-action condition (action: \"wait\" only).",
+                    ],
                     "properties": {
                       "until": {
-                        "type": "string",
-                        "enum": [
-                          "settled",
-                          "domcontentloaded",
-                          "load",
-                          "networkidle"
+                        "anyOf": [
+                          {
+                            "const": "settled",
+                            "type": "string"
+                          },
+                          {
+                            "const": "domcontentloaded",
+                            "type": "string"
+                          },
+                          {
+                            "const": "load",
+                            "type": "string"
+                          },
+                          {
+                            "const": "networkidle",
+                            "type": "string"
+                          },
+                          {
+                            "const": "urlPattern",
+                            "type": "string"
+                          },
+                          {
+                            "const": "selectorVisible",
+                            "type": "string"
+                          },
+                          {
+                            "const": "minElements",
+                            "type": "string"
+                          }
                         ]
                       },
                       "timeoutMs": {
-                        "type": "number"
+                        "minimum": 0,
+                        "maximum": 300000,
+                        "type": "integer"
+                      },
+                      "pattern": {
+                        "minLength": 1,
+                        "maxLength": 2048,
+                        "type": "string"
+                      },
+                      "selector": {
+                        "minLength": 1,
+                        "maxLength": 500,
+                        "type": "string"
+                      },
+                      "count": {
+                        "minimum": 1,
+                        "maximum": 10000,
+                        "type": "integer"
                       }
-                    },
+                    }
+                  },
+                  "condition": {
+                    "type": "object",
                     "required": [
                       "until"
-                    ]
+                    ],
+                    "properties": {
+                      "until": {
+                        "anyOf": [
+                          {
+                            "const": "settled",
+                            "type": "string"
+                          },
+                          {
+                            "const": "domcontentloaded",
+                            "type": "string"
+                          },
+                          {
+                            "const": "load",
+                            "type": "string"
+                          },
+                          {
+                            "const": "networkidle",
+                            "type": "string"
+                          },
+                          {
+                            "const": "urlPattern",
+                            "type": "string"
+                          },
+                          {
+                            "const": "selectorVisible",
+                            "type": "string"
+                          },
+                          {
+                            "const": "minElements",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "timeoutMs": {
+                        "minimum": 0,
+                        "maximum": 300000,
+                        "type": "integer"
+                      },
+                      "pattern": {
+                        "minLength": 1,
+                        "maxLength": 2048,
+                        "type": "string"
+                      },
+                      "selector": {
+                        "minLength": 1,
+                        "maxLength": 500,
+                        "type": "string"
+                      },
+                      "count": {
+                        "minimum": 1,
+                        "maximum": 10000,
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  "remap": {
+                    "type": "boolean"
                   }
                 }
               }
@@ -3326,6 +3565,12 @@
                       "type": "string"
                     }
                   ]
+                },
+                "href": {
+                  "type": "string"
+                },
+                "hrefTruncated": {
+                  "type": "boolean"
                 }
               }
             }
@@ -3380,6 +3625,31 @@
                       }
                     }
                   }
+                }
+              }
+            }
+          },
+          "overlays": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "tag",
+                "covers"
+              ],
+              "properties": {
+                "tag": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "covers": {
+                  "minimum": 1,
+                  "type": "integer"
                 }
               }
             }
@@ -3470,6 +3740,12 @@
                 "type": "string"
               }
             ]
+          },
+          "href": {
+            "type": "string"
+          },
+          "hrefTruncated": {
+            "type": "boolean"
           }
         }
       },
@@ -3997,12 +4273,39 @@
                           {
                             "const": "settled",
                             "type": "string"
+                          },
+                          {
+                            "const": "urlPattern",
+                            "type": "string"
+                          },
+                          {
+                            "const": "selectorVisible",
+                            "type": "string"
+                          },
+                          {
+                            "const": "minElements",
+                            "type": "string"
                           }
                         ]
                       },
                       "timeoutMs": {
                         "minimum": 0,
                         "maximum": 300000,
+                        "type": "integer"
+                      },
+                      "pattern": {
+                        "minLength": 1,
+                        "maxLength": 2048,
+                        "type": "string"
+                      },
+                      "selector": {
+                        "minLength": 1,
+                        "maxLength": 500,
+                        "type": "string"
+                      },
+                      "count": {
+                        "minimum": 1,
+                        "maximum": 10000,
                         "type": "integer"
                       }
                     }
@@ -4113,12 +4416,39 @@
                   {
                     "const": "settled",
                     "type": "string"
+                  },
+                  {
+                    "const": "urlPattern",
+                    "type": "string"
+                  },
+                  {
+                    "const": "selectorVisible",
+                    "type": "string"
+                  },
+                  {
+                    "const": "minElements",
+                    "type": "string"
                   }
                 ]
               },
               "timeoutMs": {
                 "minimum": 0,
                 "maximum": 300000,
+                "type": "integer"
+              },
+              "pattern": {
+                "minLength": 1,
+                "maxLength": 2048,
+                "type": "string"
+              },
+              "selector": {
+                "minLength": 1,
+                "maxLength": 500,
+                "type": "string"
+              },
+              "count": {
+                "minimum": 1,
+                "maximum": 10000,
                 "type": "integer"
               }
             }
@@ -4418,6 +4748,12 @@
                           "type": "string"
                         }
                       ]
+                    },
+                    "href": {
+                      "type": "string"
+                    },
+                    "hrefTruncated": {
+                      "type": "boolean"
                     }
                   }
                 }
@@ -4472,6 +4808,31 @@
                           }
                         }
                       }
+                    }
+                  }
+                }
+              },
+              "overlays": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "tag",
+                    "covers"
+                  ],
+                  "properties": {
+                    "tag": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "covers": {
+                      "minimum": 1,
+                      "type": "integer"
                     }
                   }
                 }

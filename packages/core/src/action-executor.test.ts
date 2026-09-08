@@ -429,6 +429,28 @@ describe('ActionExecutor', () => {
       expect(result.error?.message).toContain('fingerprint');
       expect(mockEnginePage.act).not.toHaveBeenCalled();
     });
+
+    it('enriches the mismatch refusal with the resolved identity', async () => {
+      (mockEnginePage.resolve as any).mockResolvedValue({
+        ref: 'e1_0',
+        fingerprint: 'button_Cancel_visible_true_enabled_true', // name changed
+        role: 'button',
+        name: 'Cancel',
+        visible: true,
+        enabled: true,
+      });
+
+      const result = await executor.execute(req({ type: 'click', target: { ref: 'e1_0' } }), {
+        enginePage: mockEnginePage,
+        observation: mockObservation,
+      });
+
+      expect(result.error?.details).toMatchObject({
+        ref: 'e1_0',
+        role: 'button',
+        name: 'Cancel',
+      });
+    });
   });
 
   describe('element index (TD-BROWSER-9, A7)', () => {

@@ -1,8 +1,11 @@
 # T2a: connection authority and test contract
 
-Status: **Design merged in PR 91; T2b1 merged in PR 93 with green PR/post-merge CI; T2b2 integration implemented and independently approved, awaiting delivery CI.**
-The R14/T2b0 prerequisite correction merged in PR 92 (unreleased);
-see the [delivery tracker](engineering-review-remediation.md).
+Status: **T2a and T2b0-T2b2 merged, independently reviewed and shipped in v1.8.5.**
+The [release checkpoint](release-milestones.md#baseline-and-release-boundaries)
+records completed CI and publication. The next design-only unit is
+[M2 gateway design](session-gateway-m2-scope.md), merged in PR 103 after two clean
+reviews and eight green PR checks. T2c1 now extends this private authority with
+destination mode and shared session admission; T1/R4 remain open.
 Owner approved progressing T2a locally after v1.8.4. This unit selects the
 smallest connection boundary behind direct downloads, not a browser transport,
 public proxy or contained deployment. T1/R4 remain open. The
@@ -72,9 +75,11 @@ Implementation stays private under `packages/api/src/` while direct downloads
 are its sole real consumer. Split policy/address logic from runtime socket
 ownership: `policy` owns pure classification and performs no DNS or socket I/O.
 Do not add a package or export socket types through `engine`, core, protocol or
-surfaces. When a real gateway consumes the primitive, move the cohesive module
-with both consumers in the same reviewed change; an engine must never import
-`api` to obtain it.
+surfaces. M2 clarifies the extraction trigger: a same-runtime gateway inside
+the API can share the private module in place. When a real second package/runtime
+needs it, move the cohesive module with both consumers in the same reviewed
+change; an engine must never import `api` to obtain it. No speculative package
+is added by the design-only milestone.
 
 ## Ordering, identity and cancellation
 

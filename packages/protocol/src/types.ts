@@ -193,6 +193,8 @@ export interface PageState {
   elements: PageElement[];
   text?: string[];
   changes?: ElementChange[];
+  /** Present only when requested via include:["overlays"]. */
+  overlays?: OverlayBlocker[];
   truncated: boolean;
   untrustedContent: boolean;
   /**
@@ -229,6 +231,22 @@ export interface PageElement {
   enabled: boolean;
   focused?: boolean;
   risk?: ActionEffect;
+  /** Link destination, captured at observation time on role:"link" elements. */
+  href?: string;
+  /** True when the captured href exceeded the 2048-char capture limit. */
+  hrefTruncated?: boolean;
+}
+
+/**
+ * An element that intercepts pointer events over observed targets, aggregated
+ * across the examined elements (F5).
+ */
+export interface OverlayBlocker {
+  tag: string;
+  role?: string;
+  name?: string;
+  /** Number of examined elements this blocker was found over. */
+  covers: number;
 }
 
 /**
@@ -533,10 +551,24 @@ export interface WaitCondition {
   timeoutMs?: number;
 }
 
-export const DELIVERED_WAIT_TYPES = ['settled', 'domcontentloaded', 'load', 'networkidle'] as const;
+export const DELIVERED_WAIT_TYPES = [
+  'settled',
+  'domcontentloaded',
+  'load',
+  'networkidle',
+  'urlPattern',
+  'selectorVisible',
+  'minElements',
+] as const;
 export type DeliveredWaitCondition = {
   until: (typeof DELIVERED_WAIT_TYPES)[number];
   timeoutMs?: number;
+  /** urlPattern only: glob (wildcards) or a slash-delimited regex. */
+  pattern?: string;
+  /** selectorVisible only: CSS selector polled for visibility. */
+  selector?: string;
+  /** minElements only: minimum observed element count. */
+  count?: number;
 };
 
 /**
@@ -550,7 +582,10 @@ export type WaitType =
   | 'url'
   | 'text'
   | 'function'
-  | 'settled';
+  | 'settled'
+  | 'urlPattern'
+  | 'selectorVisible'
+  | 'minElements';
 
 /**
  * Observation request
@@ -582,6 +617,8 @@ export interface ActionResult {
   approvalDecision?: ApprovalDecision;
   observation?: PageState;
   artifacts?: ArtifactRef[];
+  /** Present only when the engine healed a replaced target (F2, opt-in). */
+  remap?: { from: string; to: string };
   error?: import('./errors').ApiErrorDetail;
 }
 

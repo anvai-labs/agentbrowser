@@ -24,6 +24,7 @@ import type {
   NewPageOptions,
   NormalizedCookie,
   ObservationRequest,
+  OverlayBlocker,
   PdfRequest,
   RawPageState,
   ResolvedTarget,
@@ -59,6 +60,8 @@ interface StoredElement {
   value?: string;
   visible: boolean;
   enabled: boolean;
+  href?: string;
+  hrefTruncated?: boolean;
 }
 
 interface NodeBinding extends SnapshotEvidence {
@@ -71,6 +74,20 @@ function unquote(value: string): string {
   const trimmed = value.trim();
   const match = /^"((?:[^"\\]|\\.)*)"$/.exec(trimmed);
   return match?.[1] !== undefined ? match[1] : trimmed;
+}
+
+/** Bound a diagnostic promise; Playwright evaluate has no timeout of its own. */
+async function withDeadline<T>(promise: Promise<T>, deadlineMs: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('deadline exceeded')), deadlineMs);
+    timer.unref();
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -629,6 +646,12 @@ class PlaywrightSession implements EngineSession {
     this.engine = engine;
     this.ownedBrowser = ownedBrowser;
     this.requestSink = requestSink;
+    // F10: pages the browser opens on its own (window.open) still belong to
+    // this session; pages opened via newPage() have no opener and are
+    // skipped inside the handler.
+    this.context.on('page', (page) => {
+      void this.adoptPopupPage(page);
+    });
     if (requestSink !== undefined) {
       requestSink.emit = (event) => {
         const page = this.pageForPlaywrightPage(event.playwrightPage);
@@ -655,15 +678,50 @@ class PlaywrightSession implements EngineSession {
     return undefined;
   }
 
+  /**
+   * F10: adopt a page the browser created on its own (window.open). Pages
+   * opened via newPage() have no opener and are skipped, so this listener
+   * can sit on the context for the session's lifetime. The opener's event
+   * stream announces page.created with engine page ids; the service adopts
+   * from there.
+   */
+  private async adoptPopupPage(playwrightPage: Page): Promise<void> {
+    if (this.closed) {
+      return;
+    }
+    try {
+      const opener = await playwrightPage.opener();
+      if (opener === null) {
+        return;
+      }
+      const popup = await this.registerPlaywrightPage(playwrightPage);
+      const openerPage = this.pageForPlaywrightPage(opener);
+      openerPage?.emitExternalEvent({
+        type: 'page.created',
+        timestamp: new Date().toISOString(),
+        sessionId: this.id,
+        pageId: popup.id,
+        data: { openerPageId: openerPage.id, pageId: popup.id, url: playwrightPage.url() },
+      });
+    } catch {
+      // Adoption is best-effort; an unadoptable popup stays browser-side.
+    }
+  }
+
   async newPage(options?: NewPageOptions): Promise<EnginePage> {
     if (this.closed) {
       throw new Error('Session is closed');
     }
-
     const playwrightPage = await this.context.newPage();
+    return this.registerPlaywrightPage(playwrightPage, options?.viewport);
+  }
 
-    if (options?.viewport) {
-      await playwrightPage.setViewportSize(options.viewport);
+  private async registerPlaywrightPage(
+    playwrightPage: Page,
+    viewport?: NewPageOptions['viewport']
+  ): Promise<PlaywrightPage> {
+    if (viewport) {
+      await playwrightPage.setViewportSize(viewport);
     }
 
     const pageId = `page-${this.pageCounter++}`;
@@ -821,6 +879,7 @@ class PlaywrightPage implements EnginePage {
   private onPageDialog: (dialog: import('playwright').Dialog) => void = () => {};
   private onPageLoad: () => void = () => {};
   private onPageConsole: (msg: import('playwright').ConsoleMessage) => void = () => {};
+  private onPageCrashed: () => void = () => {};
 
   /** Registered by the owning session so close() removes it from the map. */
   registerRemoval(remove: () => void): void {
@@ -862,6 +921,18 @@ class PlaywrightPage implements EnginePage {
       }
     };
     this.page.on('close', this.onPageClose);
+
+    // F10: a renderer crash reaches subscribers as the declared-but-never-
+    // emitted page.crashed event; the service records it in the replay.
+    this.onPageCrashed = () => {
+      this.enqueueEvent({
+        type: 'page.crashed',
+        timestamp: new Date().toISOString(),
+        sessionId: 'unknown',
+        pageId: this.id,
+      });
+    };
+    this.page.on('crash', this.onPageCrashed);
 
     this.onPageDialog = (dialog) => {
       // Hold the dialog so an agent can accept or dismiss it; settle it
@@ -1020,6 +1091,9 @@ class PlaywrightPage implements EnginePage {
     this.refStore.clear();
     let changed = previousCount > 0 && previousCount !== elements.length;
     const ordinals = new Map<string, number>();
+    // href capture is one round-trip per link; bound it so link-heavy pages
+    // cannot stretch an observation unboundedly.
+    let hrefCaptures = 0;
     try {
       for (const [index, element] of elements.entries()) {
         const ref = element.ref ?? `e${this.revision}_${index}`;
@@ -1054,6 +1128,16 @@ class PlaywrightPage implements EnginePage {
               changed = true;
             element.visible = await handle.isVisible();
             element.enabled = await handle.isEnabled();
+            if (element.role === 'link' && hrefCaptures < 50) {
+              const href = await locator.getAttribute('href').catch(() => undefined);
+              if (typeof href === 'string' && href !== '') {
+                hrefCaptures += 1;
+                element.href = href.slice(0, 2048);
+                if (href.length > 2048) {
+                  element.hrefTruncated = true;
+                }
+              }
+            }
           }
         }
         this.refStore.set(ref, {
@@ -1088,6 +1172,11 @@ class PlaywrightPage implements EnginePage {
       this.refStore = states;
     }
 
+    const overlays =
+      request.include?.includes('overlays') === true
+        ? await this.collectOverlays(elements)
+        : undefined;
+
     return {
       revision: this.revision,
       url: this.page.url(),
@@ -1095,6 +1184,7 @@ class PlaywrightPage implements EnginePage {
       status: 'interactive',
       content: await this.page.content(),
       elements: elements,
+      ...(overlays !== undefined ? { overlays } : {}),
     };
   }
 
@@ -1197,13 +1287,28 @@ class PlaywrightPage implements EnginePage {
     return elements;
   }
 
+  /** Client-facing context for a refusal: which ref, in which revision, what it was. */
+  private refusalDetails(ref: string, stored?: { role: string; name?: string }) {
+    return {
+      ref,
+      revision: this.revision,
+      ...(stored
+        ? { role: stored.role, ...(stored.name !== undefined ? { name: stored.name } : {}) }
+        : {}),
+    };
+  }
+
   async resolve(target: EngineTarget): Promise<ResolvedTarget> {
     const stored = this.refStore.get(target.ref);
     const binding = this.bindings.get(target.ref);
     if (!stored) {
       throw new EngineError(
         'TARGET_NOT_FOUND',
-        `Element not found: ${target.ref} (observe the page to mint refs)`
+        `Element not found: ${target.ref} (observe the page to mint refs)`,
+        false,
+        // An unknown ref carries no contradicting live evidence - the engine
+        // simply lost track of it - so a remap heal may consume this refusal.
+        { ...this.refusalDetails(target.ref), remapEligible: true }
       );
     }
     if (!binding) {
@@ -1212,13 +1317,22 @@ class PlaywrightPage implements EnginePage {
       throw new EngineError(
         'STALE_TARGET',
         'Observed target could not be bound safely; observe again.',
-        true
+        true,
+        {
+          ...this.refusalDetails(target.ref, stored),
+          remapEligible: true,
+        }
       );
     }
     if (!(await binding.handle.evaluate((node) => node.isConnected))) {
       throw new EngineError(
         'STALE_TARGET',
-        'Observed node was detached or replaced; observe again.'
+        'Observed node was detached or replaced; observe again.',
+        false,
+        {
+          ...this.refusalDetails(target.ref, stored),
+          remapEligible: true,
+        }
       );
     }
     const visible = await binding.handle.isVisible();
@@ -1244,7 +1358,12 @@ class PlaywrightPage implements EnginePage {
       if (!matchesOriginal) {
         throw new EngineError(
           'STALE_TARGET',
-          'Observed target identity or semantic state changed; observe again.'
+          'Observed target identity or semantic state changed; observe again.',
+          false,
+          {
+            ...this.refusalDetails(target.ref, stored),
+            remapEligible: true,
+          }
         );
       }
       const expectedSnapshot = binding.snapshot ?? binding.documentSnapshot;
@@ -1252,7 +1371,8 @@ class PlaywrightPage implements EnginePage {
         throw new EngineError(
           'STALE_TARGET',
           'Semantic evidence is unavailable; observe again.',
-          true
+          true,
+          this.refusalDetails(target.ref, stored)
         );
       }
       // Evidence provenance is fixed at observation. A failed fresh element check
@@ -1268,7 +1388,8 @@ class PlaywrightPage implements EnginePage {
         throw new EngineError(
           'STALE_TARGET',
           'Observed semantic state changed; observe again.',
-          true
+          true,
+          this.refusalDetails(target.ref, stored)
         );
       }
     }
@@ -1289,7 +1410,9 @@ class PlaywrightPage implements EnginePage {
     if (!binding) {
       throw new EngineError(
         'TARGET_NOT_FOUND',
-        `Element not found: ${ref} (observe the page to mint refs)`
+        `Element not found: ${ref} (observe the page to mint refs)`,
+        false,
+        this.refusalDetails(ref, this.refStore.get(ref))
       );
     }
     return binding.handle;
@@ -1300,8 +1423,194 @@ class PlaywrightPage implements EnginePage {
       return await this.performAction(action);
     } catch (error) {
       const failure = normalizeEngineError(error);
-      throw new EngineError(failure.code, failure.message, failure.retryable, failure.details);
+      let details = failure.details;
+      // F2: opt-in healing. resolve() fails BEFORE any locator action runs,
+      // so the remap retry cannot double-fire on the dead control. Live
+      // semantic-evidence mismatches never carry remapEligible and are
+      // therefore never healed.
+      if (
+        action.remap === true &&
+        action.target !== undefined &&
+        failure.code === 'STALE_TARGET' &&
+        details?.remapEligible === true
+      ) {
+        let remap: Awaited<ReturnType<PlaywrightPage['tryRemap']>>;
+        try {
+          remap = await this.tryRemap(action);
+        } catch {
+          throw new EngineError(failure.code, failure.message, failure.retryable, details);
+        }
+        if ('action' in remap) {
+          try {
+            const effect = await this.performAction(remap.action);
+            return { ...effect, remap: { from: action.target.ref, to: remap.to } };
+          } catch (retryError) {
+            const retryFailure = normalizeEngineError(retryError);
+            throw new EngineError(
+              retryFailure.code,
+              retryFailure.message,
+              retryFailure.retryable,
+              retryFailure.details
+            );
+          }
+        }
+        throw new EngineError(failure.code, failure.message, failure.retryable, {
+          ...details,
+          candidates: remap.candidates,
+        });
+      }
+      if (failure.code === 'ACTION_TIMEOUT' && action.target && details?.blockedBy === undefined) {
+        // A blocked main thread is a common CAUSE of the timeout we are
+        // describing; bound the diagnostic so it cannot outlive the error.
+        const blockedBy = await withDeadline(this.describeBlocker(action.target.ref), 2_000).catch(
+          () => undefined
+        );
+        details = {
+          ...details,
+          ref: action.target.ref,
+          ...(blockedBy ? { blockedBy } : {}),
+        };
+      }
+      throw new EngineError(failure.code, failure.message, failure.retryable, details);
     }
+  }
+
+  /**
+   * Re-observe and match the refused element by role+name. Exactly one
+   * match heals; zero or several candidates refuse with the count rather
+   * than guess. Returns the rebuilt action targeting the fresh ref.
+   */
+  private async tryRemap(
+    action: EngineAction
+  ): Promise<{ action: EngineAction; to: string } | { candidates: number }> {
+    const target = action.target;
+    if (target === undefined) {
+      return { candidates: 0 };
+    }
+    const stored = this.refStore.get(target.ref);
+    if (stored === undefined) {
+      return { candidates: 0 };
+    }
+    const fresh = await this.observe({});
+    const candidates = fresh.elements.filter(
+      (e) => e.role === stored.role && (stored.name === undefined || e.name === stored.name)
+    );
+    const match = candidates.length === 1 ? candidates[0] : undefined;
+    if (match?.ref === undefined || match.ref === target.ref) {
+      return { candidates: candidates.length };
+    }
+    return { action: { ...action, target: { ref: match.ref } }, to: match.ref };
+  }
+
+  /**
+   * Name whatever covers a timed-out target's click point. Purely diagnostic:
+   * every failure path throws, which the caller turns into "no blocker
+   * reported" so diagnostics can never mask or alter the underlying timeout.
+   */
+  private async describeBlocker(
+    ref: string
+  ): Promise<{ tag: string; role?: string; name?: string }> {
+    const binding = this.bindings.get(ref);
+    if (!binding) {
+      throw new Error(`no binding for ${ref}`);
+    }
+    return binding.handle.evaluate((node) => {
+      const doc = node.ownerDocument;
+      const win = doc.defaultView;
+      if (!win) {
+        throw new Error('no view');
+      }
+      const box = node.getBoundingClientRect();
+      if (box.width <= 0 || box.height <= 0) {
+        throw new Error('no box');
+      }
+      const cx = box.left + box.width / 2;
+      const cy = box.top + box.height / 2;
+      if (cx < 0 || cy < 0 || cx > win.innerWidth || cy > win.innerHeight) {
+        throw new Error('off viewport');
+      }
+      for (const element of doc.elementsFromPoint(cx, cy)) {
+        if (element === node || node.contains(element) || element.contains(node)) continue;
+        const name = (element.getAttribute('aria-label') ?? element.textContent ?? '').trim();
+        const role = element.getAttribute('role');
+        return {
+          tag: element.tagName.toLowerCase(),
+          ...(role ? { role } : {}),
+          ...(name ? { name: name.slice(0, 100) } : {}),
+        };
+      }
+      throw new Error('unoccluded');
+    });
+  }
+
+  /**
+   * Opt-in occlusion census (F5): probe up to 30 visible observed elements
+   * and aggregate whatever covers their click points. Purely diagnostic:
+   * probe failures skip the element and never fail the observation.
+   */
+  private async collectOverlays(elements: StoredElement[]): Promise<OverlayBlocker[]> {
+    const EXAMINE_CAP = 30;
+    const blockers = new Map<string, OverlayBlocker>();
+    let examined = 0;
+    for (const element of elements) {
+      if (examined >= EXAMINE_CAP) {
+        break;
+      }
+      if (!element.visible) {
+        continue;
+      }
+      const binding = this.bindings.get(element.ref ?? '');
+      if (!binding) {
+        continue;
+      }
+      examined += 1;
+      const blocker = await binding.locator
+        .evaluate((node) => {
+          const doc = node.ownerDocument;
+          const win = doc.defaultView;
+          if (!win) {
+            return undefined;
+          }
+          const box = node.getBoundingClientRect();
+          if (box.width <= 0 || box.height <= 0) {
+            return undefined;
+          }
+          const cx = box.left + box.width / 2;
+          const cy = box.top + box.height / 2;
+          if (cx < 0 || cy < 0 || cx > win.innerWidth || cy > win.innerHeight) {
+            return undefined;
+          }
+          for (const candidate of doc.elementsFromPoint(cx, cy)) {
+            if (candidate === node || node.contains(candidate) || candidate.contains(node)) {
+              continue;
+            }
+            const name = (
+              candidate.getAttribute('aria-label') ??
+              candidate.textContent ??
+              ''
+            ).trim();
+            const role = candidate.getAttribute('role');
+            return {
+              tag: candidate.tagName.toLowerCase(),
+              ...(role ? { role } : {}),
+              ...(name ? { name: name.slice(0, 100) } : {}),
+            };
+          }
+          return undefined;
+        })
+        .catch(() => undefined);
+      if (blocker === undefined) {
+        continue;
+      }
+      const key = JSON.stringify([blocker.tag, blocker.role ?? '', blocker.name ?? '']);
+      const existing = blockers.get(key);
+      if (existing) {
+        existing.covers += 1;
+      } else {
+        blockers.set(key, { ...blocker, covers: 1 });
+      }
+    }
+    return [...blockers.values()];
   }
 
   private async performAction(action: EngineAction): Promise<ActionEffect> {
@@ -1438,8 +1747,21 @@ class PlaywrightPage implements EnginePage {
       case 'wait': {
         // Non-mutating; bounded by the condition's timeout.
         const condition = action.condition as { until?: string; timeoutMs?: number };
-        const state = condition?.until === 'networkidle' ? 'networkidle' : 'load';
-        await this.waitForLoadState(state, { timeout: condition?.timeoutMs });
+        // urlPattern/selectorVisible/minElements are service-evaluated (the
+        // service polls engine state to its own deadline). Waiting for
+        // 'load' here would double-wait and can fail the act before the
+        // real poll ever runs.
+        const serviceEvaluated =
+          condition?.until === 'urlPattern' ||
+          condition?.until === 'selectorVisible' ||
+          condition?.until === 'minElements';
+        if (!serviceEvaluated) {
+          const state = condition?.until === 'networkidle' ? 'networkidle' : 'load';
+          // Playwright reads an explicit 0 as "wait forever" - clamp.
+          const timeout =
+            condition?.timeoutMs !== undefined ? Math.max(1, condition.timeoutMs) : undefined;
+          await this.waitForLoadState(state, { timeout });
+        }
         break;
       }
       case 'goBack':
@@ -1566,6 +1888,30 @@ class PlaywrightPage implements EnginePage {
     });
   }
 
+  /**
+   * Wait until a CSS selector is visible (the `selectorVisible` wait
+   * primitive). Real locator visibility, not a sleep; the service maps
+   * missed deadlines to ACTION_TIMEOUT.
+   */
+  async waitForSelector(selector: string, options: { timeoutMs?: number } = {}): Promise<void> {
+    // Playwright reads an explicit 0 as "wait forever" - clamp to a floor.
+    const timeoutMs = Math.max(1, options.timeoutMs ?? 5000);
+    try {
+      await this.page.locator(selector).waitFor({
+        state: 'visible',
+        timeout: timeoutMs,
+      });
+    } catch (error) {
+      const failure = normalizeEngineError(error);
+      throw new EngineError(
+        'ACTION_TIMEOUT',
+        `Selector '${selector}' did not become visible within ${timeoutMs}ms.`,
+        true,
+        { selector, timeoutMs, ...failure.details }
+      );
+    }
+  }
+
   async close(): Promise<void> {
     this.eventsClosed = true;
     this.releaseRefs();
@@ -1591,6 +1937,7 @@ class PlaywrightPage implements EnginePage {
     this.page.off('dialog', this.onPageDialog);
     this.page.off('load', this.onPageLoad);
     this.page.off('console', this.onPageConsole);
+    this.page.off('crash', this.onPageCrashed);
     await this.page.close();
   }
 }

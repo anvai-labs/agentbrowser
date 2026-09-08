@@ -368,4 +368,81 @@ describe('ObservationNormalizer', () => {
       expect(observation.elements[0].role).toBe('button');
     });
   });
+
+  describe('link href capture (F9)', () => {
+    it('copies href and hrefTruncated onto the normalized element', () => {
+      const rawState: RawPageState = {
+        url: 'https://example.com',
+        title: 'Test Page',
+        status: 'interactive',
+        content: '<html><body></body></html>',
+        elements: [
+          {
+            role: 'link',
+            name: 'Docs',
+            visible: true,
+            enabled: true,
+            href: 'https://example.com/docs',
+          },
+          {
+            role: 'link',
+            name: 'Long',
+            visible: true,
+            enabled: true,
+            href: 'https://example.com/very-long-path',
+            hrefTruncated: true,
+          },
+          { role: 'button', name: 'Plain', visible: true, enabled: true },
+        ],
+      };
+
+      const observation = normalizer.normalize(rawState, {
+        mode: 'interactive',
+        revision: 1,
+      });
+
+      expect(observation.elements[0].href).toBe('https://example.com/docs');
+      expect(observation.elements[0].hrefTruncated).toBeUndefined();
+      expect(observation.elements[1].href).toBe('https://example.com/very-long-path');
+      expect(observation.elements[1].hrefTruncated).toBe(true);
+      expect(observation.elements[2].href).toBeUndefined();
+    });
+  });
+
+  describe('overlay aggregation pass-through (F5)', () => {
+    it('carries aggregated overlay blockers onto the observation', () => {
+      const rawState: RawPageState = {
+        url: 'https://example.com',
+        title: 'Test Page',
+        status: 'interactive',
+        content: '<html><body></body></html>',
+        elements: [{ role: 'button', name: 'Covered', visible: true, enabled: true }],
+        overlays: [{ tag: 'div', covers: 2 }],
+      };
+
+      const observation = normalizer.normalize(rawState, {
+        mode: 'interactive',
+        revision: 1,
+      });
+
+      expect(observation.overlays).toEqual([{ tag: 'div', covers: 2 }]);
+    });
+
+    it('omits overlays when the engine reported none', () => {
+      const rawState: RawPageState = {
+        url: 'https://example.com',
+        title: 'Test Page',
+        status: 'interactive',
+        content: '<html><body></body></html>',
+        elements: [],
+      };
+
+      const observation = normalizer.normalize(rawState, {
+        mode: 'interactive',
+        revision: 1,
+      });
+
+      expect(observation.overlays).toBeUndefined();
+    });
+  });
 });

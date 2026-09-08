@@ -289,7 +289,13 @@ describe('AgentBrowser MCP server', () => {
       const act = response.result.tools.find((t: { name: string }) => t.name === 'browser_act');
 
       expect(act.inputSchema.properties.target.properties.ref.pattern).toBe('^e\\d+_\\d+$');
-      expect(JSON.stringify(act.inputSchema)).not.toMatch(/selector|xpath/i);
+      expect(JSON.stringify(act.inputSchema.properties.target)).not.toMatch(/selector|xpath/i);
+      expect(JSON.stringify(act.inputSchema)).not.toMatch(/xpath/i);
+      // F6: the ONE deliberate exception - selectorVisible is a wait poll,
+      // never a way to address an action target. Assert it stays confined
+      // to the wait/condition properties.
+      expect(act.inputSchema.properties.wait.properties.selector).toBeDefined();
+      expect(act.inputSchema.properties.target.properties.selector).toBeUndefined();
     });
   });
 
@@ -337,6 +343,18 @@ describe('AgentBrowser MCP server', () => {
       const observation = textOf(response);
       expect(observation.elements[0].ref).toBe('e1_0');
       expect(observation.untrustedContent).toBe(true);
+    });
+
+    it('should forward the include enrichments to observe', async () => {
+      await call('8', 'browser_observe', {
+        sessionId: 'ses_1',
+        pageId: 'pg_1',
+        include: ['overlays'],
+      });
+
+      expect(sessions.observe).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        include: ['overlays'],
+      });
     });
 
     it('should act through a ref', async () => {
