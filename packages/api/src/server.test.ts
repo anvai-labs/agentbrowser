@@ -1001,6 +1001,22 @@ describe('AgentBrowser REST API safety integration', () => {
       expect(response.status).toBe(400);
     });
 
+    it('should 400 (not 500) on an empty-body plan request (empty-json tolerance)', async () => {
+      // The empty-body parser resolves a zero-length JSON body to
+      // undefined; the plan route was the one handler that dereferenced
+      // request.body without a fallback, so the tolerance change turned
+      // its empty-body case from Fastify's 400 into a TypeError 500.
+      const { sessionId, pageId } = await setupPage();
+      const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '',
+      });
+      expect(response.status).toBe(400);
+      const data = await response.json();
+      expect(data.error.code).toBe('INVALID_REQUEST');
+    });
+
     it('should 400 (not 500) on an invalid tenant id — statusFor exhaustiveness (F3)', async () => {
       // INVALID_TENANT_ID was thrown by the service but absent from both
       // the ErrorCode enum and statusFor, so clients got a 500 for a
@@ -1699,5 +1715,76 @@ describe('authentication and tenancy (P0-1)', () => {
     // events route without credentials is rejected 401 before any upgrade.
     const response = await authFetch(`/v1/sessions/${sessionId}/events`);
     expect(response.status).toBe(401);
+  });
+});
+
+describe('request body tolerance', () => {
+  let server: FastifyInstance;
+  let baseUrl: string;
+
+  beforeAll(async () => {
+    server = await buildServer();
+    const address = await server.listen({ port: 0, host: '127.0.0.1' });
+    baseUrl = address;
+  });
+
+  afterAll(async () => {
+    await server.close();
+  });
+
+  async function createSession(): Promise<string> {
+    const response = await fetch(`${baseUrl}/v1/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenantId: 'tenant_body_tolerance' }),
+    });
+    expect(response.status).toBe(201);
+    return (await response.json()).sessionId;
+  }
+
+  it('accepts DELETE with a JSON content-type and an empty body', async () => {
+    const sessionId = await createSession();
+    const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(response.status).toBe(200);
+  });
+
+  it('accepts POST /pages with a JSON content-type and an empty body', async () => {
+    const sessionId = await createSession();
+    const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(response.status).toBe(201);
+  });
+
+  it('accepts an empty JSON body with an explicit charset parameter', async () => {
+    const sessionId = await createSession();
+    const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    });
+    expect(response.status).toBe(201);
+  });
+
+  it('still rejects malformed JSON with 400', async () => {
+    const sessionId = await createSession();
+    const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{not json',
+    });
+    expect(response.status).toBe(400);
+    expect(response.headers.get('content-type')).toContain('application/json');
+  });
+
+  it('still rejects an empty body on a route that requires one with 400', async () => {
+    const response = await fetch(`${baseUrl}/v1/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(response.status).toBe(400);
   });
 });

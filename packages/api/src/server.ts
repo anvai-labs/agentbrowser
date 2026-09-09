@@ -157,6 +157,30 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     logger: false, // Disable logging for cleaner test output
   });
 
+  // Fastify's default JSON parser rejects any request whose payload is
+  // empty while content-type is application/json (FST_ERR_CTP_EMPTY_JSON_BODY),
+  // which turns body-less calls from clients that set the header
+  // unconditionally (DELETE /sessions/{id}, POST /pages, ...) into
+  // pre-handler 400s. Treat an empty payload as no body; malformed JSON
+  // keeps its 400.
+  fastify.addContentTypeParser<string>(
+    'application/json',
+    { parseAs: 'string' },
+    (_request, body, done) => {
+      if (body.trim().length === 0) {
+        done(null, undefined);
+        return;
+      }
+      try {
+        done(null, JSON.parse(body));
+      } catch (error) {
+        const parseError: Error & { statusCode?: number } = new Error('Invalid JSON body');
+        parseError.statusCode = 400;
+        done(parseError, undefined);
+      }
+    }
+  );
+
   // Register CORS plugin
   await fastify.register(cors, {
     origin: options.corsOrigin || '*',
@@ -635,7 +659,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
-          const body = request.body as { actions?: Array<Record<string, unknown>> };
+          // Empty-body tolerance resolves a zero-length JSON body to
+          // undefined; every route must dereference defensively.
+          const body = (request.body ?? {}) as { actions?: Array<Record<string, unknown>> };
           if (!Array.isArray(body.actions)) {
             return reply.status(400).send({
               error: {
