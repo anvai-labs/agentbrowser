@@ -1516,7 +1516,22 @@ export class AgentBrowserService {
     // the caller asks for a url at creation, land the page on it instead
     // of silently ignoring the field.
     if (request?.url !== undefined) {
-      await this.navigate(sessionId, pageId, { url: request.url });
+      try {
+        await this.navigate(sessionId, pageId, { url: request.url });
+      } catch (error) {
+        // Runtime navigate failures (DNS, refused, egress policy) happen
+        // after registration; leaving the page in would surface a live
+        // about:blank page the caller believes was never created. Mirror
+        // closePage's teardown and rethrow the navigate error.
+        try {
+          await enginePage.close();
+        } catch {
+          // An engine that refuses the close must not mask the navigate error.
+        }
+        this.pages.delete(pageId);
+        this.churn.delete(this.churnKey(sessionId, pageId));
+        throw error;
+      }
     }
 
     return { pageId, sessionId, status: 'ready' };

@@ -2355,4 +2355,18 @@ describe('session page visibility (TD-BROWSER-11)', () => {
       service.createPage(session.sessionId, { url: 'file:///etc/passwd' })
     ).rejects.toMatchObject({ code: 'POLICY_DENIED' });
   });
+
+  it('createPage with a failed url navigation does not leave a registered page', async () => {
+    // The page is registered (and its event pump started) before navigate
+    // runs; a runtime failure after registration (DNS, refused, egress
+    // policy) must tear the page back out, or GET /pages surfaces a live
+    // about:blank page the caller believes was never created.
+    const session = await service.createSession({ tenantId: 't1' });
+    await expect(
+      service.createPage(session.sessionId, { url: 'http://127.0.0.1/loopback' })
+    ).rejects.toMatchObject({ code: 'POLICY_DENIED' });
+
+    expect(service.getSession(session.sessionId)?.pages).toBe(0);
+    await expect(service.listPages(session.sessionId)).resolves.toEqual([]);
+  });
 });
