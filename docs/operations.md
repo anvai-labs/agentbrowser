@@ -214,6 +214,26 @@ request accepts an optional `url` that lands the new page on it immediately —
 validated exactly like `navigate` (absolute http(s) URL, network policy
 applies); without it the page starts on `about:blank`.
 
+### Cookie seeding
+
+Sessions accept a `cookies` array at create time to start from an
+authenticated state ([ADR-005](adr/005-ephemeral-sessions-explicit-persistence.md),
+[TD-BROWSER-6](td/TD-BROWSER-6-headed-sessions-and-credential-handoff.md)).
+The wire form is strict — each cookie requires `name`, `value`, `domain`,
+and `path`; a cookie shaped `{url, ...}` (as some clients produce) fails
+validation with 400 `cookies[0]/domain: Required`. Convert by hand:
+`url: "https://example.com/"` becomes `domain: "example.com"`,
+`path: "/"`. The compatible form is exactly what
+`GET /v1/sessions/{id}/cookies` exports — always re-seed from an export
+rather than hand-building.
+
+Two engine-side behaviors worth knowing: an empty `cookies: []` is
+silently skipped (so exporting before the site has set anything yields
+nothing to seed), and `__Host-`-prefixed cookies are automatically
+rewritten to the host-only + Secure form Chromium demands (`__Secure-`
+cookies pass through unchanged and must already carry `secure: true`,
+which an export includes).
+
 ## Choosing an engine
 
 ### Egress and download limits

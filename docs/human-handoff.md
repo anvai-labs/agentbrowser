@@ -63,7 +63,9 @@ browser, the event stream ends, and the service reaps the session — there is
 no detach/reattach. A replacement session is a fresh context: seeded cookies
 are the only way it inherits a login, so export them
 (`GET /v1/sessions/{id}/cookies`) *before* the human closes anything worth
-keeping. A periodic `GET /v1/sessions/{id}` from the driving client doubles as
+keeping — the export's form re-seeds directly (see the "Cookie seeding"
+section of [operations.md](operations.md); `{url, ...}`-shaped cookies are
+rejected). A periodic `GET /v1/sessions/{id}` from the driving client doubles as
 an idle keepalive during long human-only stretches.
 
 **Password-manager autofill is possible without exposing secrets.** The human
