@@ -123,7 +123,8 @@ and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 | `AGENTBROWSER_API_KEY` | MCP server, CLI | The bearer key sent to the service; CLI `--api-key` takes precedence. |
 | `AGENTBROWSER_BASE_URL` | MCP server | Service location; default `http://localhost:5709`. The CLI uses `--base-url`, not this variable. |
 | `AGENTBROWSER_LOG_LEVEL` | service | `debug` or `info` (default). Logs are structured JSON, scrubbed of registered secrets. |
-| `AGENTBROWSER_CHROME_PATH` | service (Playwright engine) | Prefer a specific real Chrome for headed sessions ([ADR-013](adr/013-headed-sessions-and-walled-logins.md)). |
+| `AGENTBROWSER_CHROME_PATH` | service (Playwright engine) | Explicit Chrome binary for headed sessions; wrapper scripts included ([ADR-013](adr/013-headed-sessions-and-walled-logins.md)). When set, branded-Chrome auto-detection is skipped — an existing path launches that exact binary, a missing path falls back to bundled Chromium ([ADR-016](adr/016-branded-chrome-first-headed-launches.md)). |
+| `AGENTBROWSER_PREFER_BUNDLED` | service (Playwright engine) | `1`/`true` skips branded-Chrome auto-detection for headed sessions — always launches bundled Chromium, for deterministic CI and test farms ([ADR-016](adr/016-branded-chrome-first-headed-launches.md)). An explicit `AGENTBROWSER_CHROME_PATH` still wins. |
 | `AGENTBROWSER_ARTIFACT_KEY` | service | Bearer key guarding artifact download URLs, when set. |
 | `AGENTBROWSER_DEFAULT_TTL_MS` | service | Operator-level default session TTL (ms); per-session `ttlMs` still wins. Unset/garbage → the 15-min default. |
 | `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS` | service | Operator-level default idle timeout (ms); per-session `idleTimeoutMs` still wins. Unset/garbage → the 10-min default. Useful for deployments that are mostly headed human-in-the-loop flows. |

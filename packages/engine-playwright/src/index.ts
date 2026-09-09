@@ -159,14 +159,28 @@ export interface PlaywrightEngineOptions {
    */
   egress?: RequestPolicy;
   /**
-   * Where a real (branded) Google Chrome binary lives, preferred for HEADED
-   * sessions when present (see ADR-013: anti-bot walls flag Playwright's
-   * bundled Chromium harder than the branded binary). Defaults to
-   * /opt/google/chrome/chrome, overridable via AGENTBROWSER_CHROME_PATH or
-   * this option (the option exists mainly so tests can point the probe at a
-   * file they control). Headless sessions never consult it.
+   * Explicit override for the HEADED-session browser binary (see ADR-013,
+   * ADR-016). When set — here or via AGENTBROWSER_CHROME_PATH — detection is
+   * skipped entirely: an existing path launches that exact binary, a missing
+   * path falls back to bundled (no guessing behind an explicit answer).
+   * When unset, headed chromium launches prefer the first existing
+   * well-known branded-Chrome path (ADR-016 detection). Headless sessions
+   * never consult any of this.
    */
   chromeBinaryPath?: string;
+  /**
+   * Skip branded-Chrome detection for headed launches and use the bundled
+   * Chromium (ADR-016 escape hatch for CI / determinism). Does not defeat an
+   * explicit chromeBinaryPath. Environment fallback:
+   * AGENTBROWSER_PREFER_BUNDLED=1|true.
+   */
+  preferBundled?: boolean;
+  /**
+   * Candidate paths probed in order for branded-Chrome detection when no
+   * explicit chromeBinaryPath is set and preferBundled is false (ADR-016).
+   * Injectable so tests can point the probe at files they control.
+   */
+  brandedChromeCandidates?: string[];
   /**
    * Shared snapshot-wait budget per observation and timeout per action-time
    * semantic check (1..30000 ms, default 1000; environment fallback via
@@ -175,6 +189,39 @@ export interface PlaywrightEngineOptions {
    * is not covered by this budget.
    */
   snapshotTimeoutMs?: number;
+}
+
+/**
+ * ADR-016 context viewport policy: an explicit viewport always pins;
+ * otherwise headless keeps the historical 1280x720 while headed renders
+ * window-true (viewport null + --start-maximized) so the browser looks and
+ * lays out like a real user's window — fingerprints care about both.
+ */
+export function resolveContextViewport(
+  explicit: { width: number; height: number } | undefined,
+  headless: boolean
+): { width: number; height: number } | null {
+  return explicit ?? (headless ? { width: 1280, height: 720 } : null);
+}
+
+function defaultBrandedChromeCandidates(): string[] {
+  if (process.platform === 'darwin') {
+    return ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'];
+  }
+  if (process.platform === 'win32') {
+    const programFiles = process.env.ProgramFiles ?? 'C:\\Program Files';
+    const programFilesX86 = process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)';
+    return [
+      `${programFiles}\\Google\\Chrome\\Application\\chrome.exe`,
+      `${programFilesX86}\\Google\\Chrome\\Application\\chrome.exe`,
+    ];
+  }
+  return ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/opt/google/chrome/chrome'];
+}
+
+function preferBundledEnv(): boolean {
+  const value = process.env.AGENTBROWSER_PREFER_BUNDLED;
+  return value === '1' || value === 'true';
 }
 
 export class PlaywrightChromiumEngine implements BrowserEngine {
@@ -186,7 +233,9 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   private readonly webSocketPolicy: 'off' | 'deny-all' | undefined;
   private readonly browserFamily: 'chromium' | 'firefox' | 'webkit';
   private readonly cdpEndpoint: string | undefined;
-  private readonly chromeBinaryPath: string;
+  private readonly chromeBinaryPath: string | undefined;
+  private readonly preferBundled: boolean;
+  private readonly brandedChromeCandidates: string[];
   readonly snapshotTimeoutMs: number;
 
   constructor(options: PlaywrightEngineOptions = {}) {
@@ -195,10 +244,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     this.webSocketPolicy = options.webSocketPolicy;
     this.browserFamily = options.browser ?? 'chromium';
     this.cdpEndpoint = options.cdpEndpoint;
-    this.chromeBinaryPath =
-      options.chromeBinaryPath ??
-      process.env.AGENTBROWSER_CHROME_PATH ??
-      '/opt/google/chrome/chrome';
+    this.chromeBinaryPath = options.chromeBinaryPath ?? process.env.AGENTBROWSER_CHROME_PATH;
+    this.preferBundled = options.preferBundled ?? preferBundledEnv();
+    this.brandedChromeCandidates =
+      options.brandedChromeCandidates ?? defaultBrandedChromeCandidates();
     this.snapshotTimeoutMs = snapshotTimeout(options.snapshotTimeoutMs);
   }
 
@@ -243,6 +292,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     // instance (the old singleton silently launched every later session
     // headless). The dedicated browser is owned by the session and closed
     // with it, so an interactive crash cannot take the pool down.
+    const headless = options.headless !== false;
     let browser: Browser;
     if (this.cdpEndpoint !== undefined) {
       if (this.browserFamily !== 'chromium') {
@@ -252,11 +302,11 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         this.browser = await chromium.connectOverCDP(this.cdpEndpoint);
       }
       browser = this.browser;
-    } else if (options.headless === false) {
-      browser = await this.launchBrowser(false);
+    } else if (!headless) {
+      browser = await this.launchBrowser(false, options.viewport === undefined);
     } else {
       if (!this.browser) {
-        this.browser = await this.launchBrowser(true);
+        this.browser = await this.launchBrowser(true, false);
       }
       browser = this.browser;
     }
@@ -265,7 +315,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
 
     // Create browser context (incognito isolation)
     const context = await browser.newContext({
-      viewport: options.viewport || { width: 1280, height: 720 },
+      viewport: resolveContextViewport(options.viewport, headless),
       locale: options.locale || 'en-US',
       timezoneId: options.timezoneId || 'America/New_York',
       // Service-worker fetches bypass context.route; a choke point with a
@@ -328,7 +378,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
    * createSession so headed (dedicated) and headless (shared) launches share
    * one code path.
    */
-  private async launchBrowser(headless: boolean): Promise<Browser> {
+  private async launchBrowser(headless: boolean, startMaximized: boolean): Promise<Browser> {
     const launcher =
       this.browserFamily === 'firefox'
         ? (await import('playwright')).firefox
@@ -342,41 +392,68 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       // those challenges loop even with a real display and real clicks — observed
       // live against npmjs.com's turnstile. De-fingerprint headed only (ADR-013):
       // the headless pool keeps its defaults (detection there is honest).
-      ...(headless ? {} : await this.headedChromiumOptions()),
+      ...(headless ? {} : await this.headedChromiumOptions(startMaximized)),
     });
   }
 
   /**
-   * Headed-chromium launch options: when the configured binary path exists,
-   * launch THAT exact binary via `executablePath` (the API for "use this
-   * file" — `channel` resolves through Playwright's own registry and would
-   * ignore the path, adversarial-review finding); otherwise fall back to the
-   * bundled Chromium. Anti-bot walls flag Playwright's bundled build even
-   * headful with real clicks — the branded binary plus the
-   * AutomationControlled-disabled flag below is the strongest pass we field.
-   * NOT a guarantee: walls that fingerprint the CDP connection itself
-   * (Cloudflare turnstile, observed live 2026-09-03: even real Chrome failed)
-   * are handled by cookie-seeding instead — see ADR-013.
+   * Headed-chromium launch options (ADR-016). Binary precedence: explicit
+   * chromeBinaryPath / AGENTBROWSER_CHROME_PATH (probed; missing → bundled,
+   * no detection behind an explicit answer) > first existing well-known
+   * branded-Chrome path > bundled Chromium, with preferBundled skipping
+   * detection. The winner is logged so a mis-detected install is debuggable
+   * from the service log alone. An existing explicit path launches THAT
+   * exact binary via `executablePath` (the API for "use this file" —
+   * `channel` resolves through Playwright's own registry and would ignore
+   * the path, adversarial-review finding). Anti-bot walls flag Playwright's
+   * bundled build even headful with real clicks — the branded binary plus
+   * the AutomationControlled-disabled flag below is the strongest pass we
+   * field. NOT a guarantee: walls that fingerprint the CDP connection
+   * itself (Cloudflare turnstile, observed live 2026-09-03: even real
+   * Chrome failed) are handled by cookie-seeding instead — see ADR-013.
    */
-  private async headedChromiumOptions(): Promise<{
+  private async headedChromiumOptions(startMaximized = false): Promise<{
     args: string[];
     executablePath?: string;
   }> {
-    const base = {
-      // Playwright 1.62 does NOT pass --enable-automation (verified against
-      // its default switch list), so there is nothing to ignoreDefaultArgs —
-      // the live detectable signal was navigator.webdriver, which the init
-      // script rewrites to a real browser's `false`.
-      args: ['--disable-blink-features=AutomationControlled'],
+    // Playwright 1.62 does NOT pass --enable-automation (verified against
+    // its default switch list), so there is nothing to ignoreDefaultArgs —
+    // the live detectable signal was navigator.webdriver, which the init
+    // script rewrites to a real browser's `false`.
+    const args = ['--disable-blink-features=AutomationControlled'];
+    if (this.browserFamily !== 'chromium') return { args };
+    const resolved = await this.resolveHeadedExecutable();
+    console.info(`[agentbrowser] headed chromium binary: ${resolved ?? 'bundled Chromium'}`);
+    return {
+      args: startMaximized ? [...args, '--start-maximized'] : args,
+      ...(resolved !== undefined ? { executablePath: resolved } : {}),
     };
-    if (this.browserFamily !== 'chromium') return base;
-    const hasChrome = await import('node:fs/promises')
-      .then((fs) => fs.access(this.chromeBinaryPath))
-      .then(
-        () => true,
-        () => false
-      );
-    return hasChrome ? { ...base, executablePath: this.chromeBinaryPath } : base;
+  }
+
+  /**
+   * ADR-016 headed-binary precedence. Detection (branded candidates) runs
+   * only when no explicit path is set and preferBundled is false.
+   */
+  private async resolveHeadedExecutable(): Promise<string | undefined> {
+    const fs = await import('node:fs/promises');
+    if (this.chromeBinaryPath !== undefined) {
+      try {
+        await fs.access(this.chromeBinaryPath);
+        return this.chromeBinaryPath;
+      } catch {
+        return undefined;
+      }
+    }
+    if (this.preferBundled) return undefined;
+    for (const candidate of this.brandedChromeCandidates) {
+      try {
+        await fs.access(candidate);
+        return candidate;
+      } catch {
+        // candidate absent — keep probing
+      }
+    }
+    return undefined;
   }
 
   /**
