@@ -58,6 +58,20 @@ per search page. Three paths were exercised on the same live page:
   it silently returns plausible-looking garbage. Consider detecting
   repeated container structures and refusing/warning instead.
 
+## Implemented (2026-09-08)
+
+- `records` format shipped: container + per-field CSS selectors evaluated
+  over the DOM (linkedom), per-record evidence entries sharing the page's
+  url/revision/hash and carrying a zero-based `index`. Deterministic-only,
+  as argued above.
+- `links` now parses the DOM instead of regex-scanning the HTML string,
+  fixing the empty-text misfires on nested-anchor cards and `>` inside
+  attribute values.
+- **Deferred** (needs observe-element correlation, not selector
+  evaluation): per-record container refs for act reuse — evidence carries
+  `index` as the future join key. The `schema` repeated-container
+  warning is likewise deferred; use `records` on list pages today.
+
 ## Non-goals
 
 - Replacing the model-adapter path for unstructured pages.

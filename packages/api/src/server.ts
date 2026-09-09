@@ -995,6 +995,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
           const format = (body as { format?: string }).format;
           const schema = (body as { schema?: Record<string, unknown> }).schema;
+          const records = (
+            body as {
+              records?: { container: string; fields: Record<string, string>; limit?: number };
+            }
+          ).records;
           const supported: readonly string[] = DELIVERED_EXTRACT_FORMATS;
           if (typeof format !== 'string' || !supported.includes(format)) {
             return reply.status(400).send({
@@ -1009,6 +1014,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           const result = await service.extract(sessionId, pageId, {
             format: format as never,
             ...(schema !== undefined ? { schema } : {}),
+            ...(records !== undefined ? { records } : {}),
           });
           return reply.send(result);
         })

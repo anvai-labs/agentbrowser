@@ -438,6 +438,19 @@ function buildTools(client: McpClient): ToolDefinition[] {
               'JSON Schema constraining the extraction (format: "schema" only): ' +
               'properties to pick, with type/description/enum constraints.',
           },
+          records: {
+            type: 'object',
+            description:
+              'Repeating-structure selectors (format: "records" only): a container ' +
+              'CSS selector matching each repeated block, plus per-field CSS ' +
+              'selectors evaluated inside each block. Optional limit (1-1000).',
+            properties: {
+              container: { type: 'string' },
+              fields: { type: 'object', additionalProperties: { type: 'string' } },
+              limit: { type: 'integer', minimum: 1, maximum: 1000 },
+            },
+            required: ['container', 'fields'],
+          },
         },
         required: ['sessionId', 'pageId', 'format'],
       },
@@ -453,6 +466,13 @@ function buildTools(client: McpClient): ToolDefinition[] {
         const request: ExtractRequest = { format: format as ExtractRequest['format'] };
         if (args.schema !== undefined && typeof args.schema === 'object') {
           request.schema = args.schema as Record<string, unknown>;
+        }
+        if (args.records !== undefined && typeof args.records === 'object') {
+          request.records = args.records as {
+            container: string;
+            fields: Record<string, string>;
+            limit?: number;
+          };
         }
         return await client.sessions.extract(sessionId, pageId, request);
       },

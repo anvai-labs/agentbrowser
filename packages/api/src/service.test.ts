@@ -1786,6 +1786,83 @@ describe('AgentBrowserService', () => {
       expect(error?.message).toMatch(/format/i);
     });
 
+    it('should extract records from repeating structure (TD-BROWSER-12)', async () => {
+      const { service2, sessionId, pageId } = await extractSetup();
+
+      const result = await service2.extract(sessionId, pageId, {
+        format: 'records',
+        records: {
+          container: 'table tbody tr',
+          fields: { revenue: 'td' },
+        },
+      });
+
+      expect(result.data).toEqual([{ revenue: '1M' }]);
+      expect(result.evidence?.[0]).toMatchObject({
+        url: 'https://x.example.com/a',
+        index: 0,
+      });
+    });
+
+    it('should require a records object for format records', async () => {
+      const { service2, sessionId, pageId } = await extractSetup();
+
+      const error = await capture(() => service2.extract(sessionId, pageId, { format: 'records' }));
+
+      expect(error?.code).toBe('INVALID_REQUEST');
+      expect(error?.message).toMatch(/records/);
+    });
+
+    it('should reject malformed records shapes', async () => {
+      const { service2, sessionId, pageId } = await extractSetup();
+
+      const noFields = await capture(() =>
+        service2.extract(sessionId, pageId, {
+          format: 'records',
+          records: { container: 'tr', fields: {} },
+        })
+      );
+      expect(noFields?.code).toBe('INVALID_REQUEST');
+
+      const badLimit = await capture(() =>
+        service2.extract(sessionId, pageId, {
+          format: 'records',
+          records: { container: 'tr', fields: { a: 'td' }, limit: 0 },
+        })
+      );
+      expect(badLimit?.code).toBe('INVALID_REQUEST');
+
+      const nonStringSelector = await capture(() =>
+        service2.extract(sessionId, pageId, {
+          format: 'records',
+          records: { container: 'tr', fields: { a: 3 } } as never,
+        })
+      );
+      expect(nonStringSelector?.code).toBe('INVALID_REQUEST');
+    });
+
+    it('should 400 (not 500) on a syntactically invalid records selector', async () => {
+      // Selector validity can only be judged against the parser, so the
+      // extractor throws a typed error that must land as INVALID_REQUEST.
+      const { service2, sessionId, pageId } = await extractSetup();
+
+      const badContainer = await capture(() =>
+        service2.extract(sessionId, pageId, {
+          format: 'records',
+          records: { container: '>>>', fields: { a: 'td' } },
+        })
+      );
+      expect(badContainer?.code).toBe('INVALID_REQUEST');
+
+      const badField = await capture(() =>
+        service2.extract(sessionId, pageId, {
+          format: 'records',
+          records: { container: 'tr', fields: { a: '>>>' } },
+        })
+      );
+      expect(badField?.code).toBe('INVALID_REQUEST');
+    });
+
     it('should reject extraction for an unknown page', async () => {
       const { service2, sessionId } = await extractSetup();
 

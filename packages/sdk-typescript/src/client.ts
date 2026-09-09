@@ -118,9 +118,11 @@ export interface ActionResult {
 }
 
 export interface ExtractRequest {
-  format: 'text' | 'markdown' | 'links' | 'tables' | 'forms' | 'jsonld' | 'schema';
+  format: 'text' | 'markdown' | 'links' | 'tables' | 'forms' | 'jsonld' | 'schema' | 'records';
   /** JSON Schema constraining the extraction (format: 'schema' only). */
   schema?: Record<string, unknown>;
+  /** Repeating-structure selectors (format: 'records' only). */
+  records?: { container: string; fields: Record<string, string>; limit?: number };
 }
 
 // ADR-015 single-source-of-truth re-exports: surfaces (CLI, MCP) import
@@ -135,6 +137,7 @@ export interface ExtractResult {
     url: string;
     revision: number;
     ref?: string;
+    index?: number;
     text?: string;
     hash: string;
   }>;

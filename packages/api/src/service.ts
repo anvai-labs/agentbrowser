@@ -35,10 +35,12 @@ import type { RequestPolicy } from '@agentbrowser/engine';
 import { type ProtocolErrorCode, normalizeEngineError } from '@agentbrowser/engine';
 import { SchemaExtractor } from '@agentbrowser/extraction';
 import {
+  RecordsSelectorError,
   extractForms,
   extractJsonLd,
   extractLinks,
   extractMarkdown,
+  extractRecords,
   extractTables,
   extractVisibleText,
 } from '@agentbrowser/extraction';
@@ -2648,6 +2650,7 @@ export class AgentBrowserService {
     request: {
       format?: DeliveredExtractFormat;
       schema?: Record<string, unknown>;
+      records?: { container: string; fields: Record<string, string>; limit?: number };
     }
   ): Promise<import('@agentbrowser/engine').ExtractionResult> {
     return this.traced('extract', { sessionId, pageId, format: request.format }, async () => {
@@ -2698,13 +2701,73 @@ export class AgentBrowserService {
           });
           return await extractor.extract(sourced, request.schema as Record<string, unknown>);
         }
+        case 'records': {
+          const recordsRequest = this.validateRecordsRequest(request.records);
+          try {
+            return this.secretManager.redact(extractRecords(sourced, recordsRequest));
+          } catch (error) {
+            // Caller-supplied selectors that are not valid CSS are a
+            // request-shape problem: 400, never the parser's raw 500.
+            if (error instanceof RecordsSelectorError) {
+              throw new ServiceError('INVALID_REQUEST', error.message, false);
+            }
+            throw error;
+          }
+        }
         default:
           throw new ServiceError(
             'INVALID_REQUEST',
-            `Unknown extraction format: ${String(request.format)}. Supported: text, markdown, links, tables, forms, jsonld, schema.`
+            `Unknown extraction format: ${String(request.format)}. Supported: text, markdown, links, tables, forms, jsonld, schema, records.`
           );
       }
     });
+  }
+
+  /**
+   * Shape-check the records argument for format:'records' (TD-BROWSER-12):
+   * a non-empty container selector plus at least one field selector, with
+   * an optional integer limit (1–1000). Field values are collapsed text,
+   * so non-string selectors are rejected before any page work.
+   */
+  private validateRecordsRequest(
+    records: { container: string; fields: Record<string, string>; limit?: number } | undefined
+  ): { container: string; fields: Record<string, string>; limit?: number } {
+    if (records === undefined || typeof records !== 'object' || Array.isArray(records)) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        "format 'records' requires a records object: { container, fields }."
+      );
+    }
+    if (Buffer.byteLength(JSON.stringify(records), 'utf8') > 65_536) {
+      throw new ServiceError('INVALID_REQUEST', 'records exceeds the 64 KiB bound.');
+    }
+    if (typeof records.container !== 'string' || records.container.trim().length === 0) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        "records 'container' must be a non-empty CSS selector."
+      );
+    }
+    if (
+      records.fields === undefined ||
+      typeof records.fields !== 'object' ||
+      Array.isArray(records.fields) ||
+      Object.keys(records.fields).length === 0
+    ) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        "records 'fields' must be an object with at least one field → CSS selector entry."
+      );
+    }
+    if (Object.values(records.fields).some((selector) => typeof selector !== 'string')) {
+      throw new ServiceError('INVALID_REQUEST', 'every records field selector must be a string.');
+    }
+    if (
+      records.limit !== undefined &&
+      (!Number.isInteger(records.limit) || records.limit < 1 || records.limit > 1000)
+    ) {
+      throw new ServiceError('INVALID_REQUEST', "records 'limit' must be an integer 1–1000.");
+    }
+    return records;
   }
 
   /**

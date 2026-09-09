@@ -357,6 +357,7 @@ export const DELIVERED_EXTRACT_FORMATS = [
   'forms',
   'jsonld',
   'schema',
+  'records',
 ] as const;
 
 export type DeliveredExtractFormat = (typeof DELIVERED_EXTRACT_FORMATS)[number];

@@ -860,9 +860,10 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           description:
             'Pure-function extractors over a fresh observation: visible text, ' +
             'article markdown, links (text/absolute URL/rel), tables (headers ' +
-            'and rows), observed form controls with their refs, or JSON-LD. ' +
-            'Every result carries evidence - source URL, revision and a ' +
-            'content hash - so an extraction can be audited. No model calls.',
+            'and rows), observed form controls with their refs, JSON-LD, or ' +
+            'records (repeating structure via CSS selectors). Every result ' +
+            'carries evidence - source URL, revision and a content hash - so ' +
+            'an extraction can be audited. No model calls.',
           tags: ['observation'],
           parameters: [sessionIdParam, pageIdParam],
           requestBody: {
@@ -888,6 +889,30 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                     required: { type: 'array', items: { type: 'string' } },
                   },
                 },
+                records: {
+                  type: 'object',
+                  description:
+                    'Repeating-structure selectors for format=records: a ' +
+                    'container CSS selector matching each repeated block ' +
+                    '(job card, table row) plus per-field CSS selectors ' +
+                    'evaluated inside each block. Field values are the ' +
+                    'collapsed text of the first match; a field that ' +
+                    'matches nothing becomes "".',
+                  required: ['container', 'fields'],
+                  properties: {
+                    container: { type: 'string' },
+                    fields: {
+                      type: 'object',
+                      additionalProperties: { type: 'string' },
+                    },
+                    limit: {
+                      type: 'integer',
+                      minimum: 1,
+                      maximum: 1000,
+                      description: 'Optional cap on returned records.',
+                    },
+                  },
+                },
               },
             }),
           },
@@ -908,6 +933,10 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                         url: { type: 'string' },
                         revision: { type: 'integer' },
                         ref: { type: 'string' },
+                        index: {
+                          type: 'integer',
+                          description: 'Record position (records mode).',
+                        },
                         text: { type: 'string' },
                         hash: { type: 'string' },
                       },
