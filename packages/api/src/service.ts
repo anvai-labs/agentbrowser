@@ -35,6 +35,7 @@ import type { RequestPolicy } from '@agentbrowser/engine';
 import { type ProtocolErrorCode, normalizeEngineError } from '@agentbrowser/engine';
 import { SchemaExtractor } from '@agentbrowser/extraction';
 import {
+  RecordsSelectorError,
   extractForms,
   extractJsonLd,
   extractLinks,
@@ -2687,7 +2688,16 @@ export class AgentBrowserService {
         }
         case 'records': {
           const recordsRequest = this.validateRecordsRequest(request.records);
-          return this.secretManager.redact(extractRecords(sourced, recordsRequest));
+          try {
+            return this.secretManager.redact(extractRecords(sourced, recordsRequest));
+          } catch (error) {
+            // Caller-supplied selectors that are not valid CSS are a
+            // request-shape problem: 400, never the parser's raw 500.
+            if (error instanceof RecordsSelectorError) {
+              throw new ServiceError('INVALID_REQUEST', error.message, false);
+            }
+            throw error;
+          }
         }
         default:
           throw new ServiceError(

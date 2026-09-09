@@ -9,7 +9,7 @@
 
 import type { RawPageState } from '@agentbrowser/engine';
 import { describe, expect, it } from 'vitest';
-import { extractRecords } from './records-extraction';
+import { RecordsSelectorError, extractRecords } from './records-extraction';
 
 const CARDS: RawPageState = {
   url: 'https://jobs.example.com/search',
@@ -93,5 +93,28 @@ describe('extractRecords (TD-BROWSER-12)', () => {
     const first = extractRecords(CARDS, request);
     const second = extractRecords(CARDS, request);
     expect(first).toEqual(second);
+  });
+
+  it('throws RecordsSelectorError for an invalid container selector', () => {
+    // Callers control selectors; a syntactically invalid one must surface
+    // as a typed error the service can map to INVALID_REQUEST, not leak
+    // the parser's raw throw (which the API renders as a 500).
+    try {
+      extractRecords(CARDS, { container: '>>>', fields: { title: 'h2' } });
+      expect.unreachable('expected RecordsSelectorError');
+    } catch (error) {
+      expect(error).toBeInstanceOf(RecordsSelectorError);
+      expect((error as RecordsSelectorError).role).toBe('container');
+    }
+  });
+
+  it('throws RecordsSelectorError for an invalid field selector', () => {
+    try {
+      extractRecords(CARDS, { container: 'li.card', fields: { title: '>>>' } });
+      expect.unreachable('expected RecordsSelectorError');
+    } catch (error) {
+      expect(error).toBeInstanceOf(RecordsSelectorError);
+      expect((error as RecordsSelectorError).role).toBe('field');
+    }
   });
 });

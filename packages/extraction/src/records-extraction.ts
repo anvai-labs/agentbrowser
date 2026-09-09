@@ -24,6 +24,23 @@ export interface RecordsRequest {
 
 const MAX_LIMIT = 1000;
 
+/**
+ * A caller-supplied records selector is not valid CSS for the DOM parser.
+ * Typed so the service layer can map it to INVALID_REQUEST instead of
+ * letting the parser's raw throw surface as a 500.
+ */
+export class RecordsSelectorError extends Error {
+  constructor(
+    message: string,
+    readonly role: 'container' | 'field',
+    readonly selector: string,
+    options?: { cause?: unknown }
+  ) {
+    super(message, options);
+    this.name = 'RecordsSelectorError';
+  }
+}
+
 /** FNV-1a, identical to the other deterministic extractors' evidence hash. */
 function hash(content: string): string {
   let digest = 0x811c9dc5;
@@ -53,13 +70,35 @@ export function extractRecords(raw: RawPageState, request: RecordsRequest): Extr
   const shared = { url: raw.url, revision: revisionOf(raw), hash: hash(raw.content) };
 
   const records: Array<Record<string, string>> = [];
-  for (const container of document.querySelectorAll(request.container)) {
+  let containers: Iterable<{ querySelector(selector: string): { textContent: string } | null }>;
+  try {
+    containers = document.querySelectorAll(request.container);
+  } catch (error) {
+    throw new RecordsSelectorError(
+      `Invalid CSS selector for records container: '${request.container.slice(0, 100)}'`,
+      'container',
+      request.container,
+      { cause: error }
+    );
+  }
+  for (const container of containers) {
     if (records.length >= limit) {
       break;
     }
     const record: Record<string, string> = {};
     for (const [field, selector] of Object.entries(request.fields)) {
-      record[field] = collapse(container.querySelector(selector)?.textContent ?? '');
+      let match: { textContent: string } | null;
+      try {
+        match = container.querySelector(selector);
+      } catch (error) {
+        throw new RecordsSelectorError(
+          `Invalid CSS selector for records field '${field}': '${selector.slice(0, 100)}'`,
+          'field',
+          selector,
+          { cause: error }
+        );
+      }
+      record[field] = collapse(match?.textContent ?? '');
     }
     records.push(record);
   }

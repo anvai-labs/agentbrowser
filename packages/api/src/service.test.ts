@@ -1841,6 +1841,28 @@ describe('AgentBrowserService', () => {
       expect(nonStringSelector?.code).toBe('INVALID_REQUEST');
     });
 
+    it('should 400 (not 500) on a syntactically invalid records selector', async () => {
+      // Selector validity can only be judged against the parser, so the
+      // extractor throws a typed error that must land as INVALID_REQUEST.
+      const { service2, sessionId, pageId } = await extractSetup();
+
+      const badContainer = await capture(() =>
+        service2.extract(sessionId, pageId, {
+          format: 'records',
+          records: { container: '>>>', fields: { a: 'td' } },
+        })
+      );
+      expect(badContainer?.code).toBe('INVALID_REQUEST');
+
+      const badField = await capture(() =>
+        service2.extract(sessionId, pageId, {
+          format: 'records',
+          records: { container: 'tr', fields: { a: '>>>' } },
+        })
+      );
+      expect(badField?.code).toBe('INVALID_REQUEST');
+    });
+
     it('should reject extraction for an unknown page', async () => {
       const { service2, sessionId } = await extractSetup();
 
