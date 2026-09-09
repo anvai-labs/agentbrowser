@@ -1001,6 +1001,22 @@ describe('AgentBrowser REST API safety integration', () => {
       expect(response.status).toBe(400);
     });
 
+    it('should 400 (not 500) on an empty-body plan request (empty-json tolerance)', async () => {
+      // The empty-body parser resolves a zero-length JSON body to
+      // undefined; the plan route was the one handler that dereferenced
+      // request.body without a fallback, so the tolerance change turned
+      // its empty-body case from Fastify's 400 into a TypeError 500.
+      const { sessionId, pageId } = await setupPage();
+      const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '',
+      });
+      expect(response.status).toBe(400);
+      const data = await response.json();
+      expect(data.error.code).toBe('INVALID_REQUEST');
+    });
+
     it('should 400 (not 500) on an invalid tenant id — statusFor exhaustiveness (F3)', async () => {
       // INVALID_TENANT_ID was thrown by the service but absent from both
       // the ErrorCode enum and statusFor, so clients got a 500 for a

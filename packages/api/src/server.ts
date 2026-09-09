@@ -659,7 +659,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
-          const body = request.body as { actions?: Array<Record<string, unknown>> };
+          // Empty-body tolerance resolves a zero-length JSON body to
+          // undefined; every route must dereference defensively.
+          const body = (request.body ?? {}) as { actions?: Array<Record<string, unknown>> };
           if (!Array.isArray(body.actions)) {
             return reply.status(400).send({
               error: {
