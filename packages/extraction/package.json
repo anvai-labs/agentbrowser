@@ -18,7 +18,8 @@
   "dependencies": {
     "@agentbrowser/core": "workspace:^",
     "@agentbrowser/engine": "workspace:*",
-    "@agentbrowser/protocol": "workspace:*"
+    "@agentbrowser/protocol": "workspace:*",
+    "linkedom": "^0.18.13"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

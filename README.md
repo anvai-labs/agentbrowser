@@ -9,7 +9,7 @@ AgentBrowser lets AI agents safely and reliably operate **authorized** websites 
 
 ```bash
 brew install anvai-labs/tap/agentbrowser
-brew services start anvai-labs/tap/agentbrowser   # the service, on 127.0.0.1:3000
+brew services start anvai-labs/tap/agentbrowser   # the service, on 127.0.0.1:5709
 ```
 
 One install ships both halves: the **MCP server binary** (`agentbrowser-mcp`, no Node runtime needed) and the **browser service** (first start bootstraps Chromium into `$(brew --prefix)/var/agentbrowser/browsers`). Without Homebrew, grab the release assets: the `agentbrowser-mcp-<target>` binary needs no Node at all, and the `agentbrowser-server-<target>.tar.gz` needs only `node` on PATH.
@@ -30,7 +30,7 @@ One install ships both halves: the **MCP server binary** (`agentbrowser-mcp`, no
   ```
 - **Victor** (`~/.victor/mcp.yaml`): `command: /opt/homebrew/opt/agentbrowser/bin/agentbrowser-mcp`
 
-Tool calls drive the **AgentBrowser service** (default `http://localhost:3000`;
+Tool calls drive the **AgentBrowser service** (default `http://localhost:5709`;
 override with `AGENTBROWSER_BASE_URL`, authenticate with `AGENTBROWSER_API_KEY`).
 
 ## Engines

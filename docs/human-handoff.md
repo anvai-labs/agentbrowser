@@ -4,6 +4,7 @@
 **Related:** [ADR-007](adr/007-approval-tokens-side-effects.md) (approval tokens),
 [ADR-013](adr/013-headed-sessions-and-walled-logins.md) (headed sessions / walled logins),
 [TD-BROWSER-6](td/TD-BROWSER-6-headed-sessions-and-credential-handoff.md) (credential handoff),
+[TD-BROWSER-10](td/TD-BROWSER-10-session-extension-loading.md) (extension loading / password-manager autofill),
 [Synthetic input limitations](synthetic-input-limitations.md)
 
 Some steps of a workflow cannot be automated: the password box, the MFA prompt, the
@@ -24,6 +25,10 @@ session.
    - Credential entry happens in the **headed window**: launch the session with
      `headless: false` ([ADR-013](adr/013-headed-sessions-and-walled-logins.md)) and let
      the person type. The agent must never read, store, or type a password.
+     Headed windows launch the machine's real branded Chrome automatically
+     ([ADR-016](adr/016-branded-chrome-first-headed-launches.md)) — extensions
+     like password managers work there; `AGENTBROWSER_CHROME_PATH` still pins
+     a specific binary (wrapper scripts included).
 3. **The human works.** They may click, fill, navigate, open popups — none of it goes
    through the stack, so the stack does not see any of it.
 4. **Re-observe before acting again. Non-negotiable.** Every human interaction can
@@ -52,6 +57,26 @@ guess is not.
 window, the session looks idle to the server. The default idle timeout (10 minutes)
 will reap the session mid-handoff. Pass a larger `idleTimeoutMs` at session creation
 (or keep activity flowing) whenever a person is going to be in the loop.
+
+**The headed window is the session.** Closing the window ends the engine's
+browser, the event stream ends, and the service reaps the session — there is
+no detach/reattach. A replacement session is a fresh context: seeded cookies
+are the only way it inherits a login, so export them
+(`GET /v1/sessions/{id}/cookies`) *before* the human closes anything worth
+keeping — the export's form re-seeds directly (see the "Cookie seeding"
+section of [operations.md](operations.md); `{url, ...}`-shaped cookies are
+rejected). A periodic `GET /v1/sessions/{id}` from the driving client doubles as
+an idle keepalive during long human-only stretches.
+
+**Password-manager autofill is possible without exposing secrets.** The human
+unlocking their vault and autofilling inside the headed window is
+credential entry that never touches the control plane — same trust shape as
+typing. There is no request-level extension surface today
+([TD-BROWSER-10](td/TD-BROWSER-10-session-extension-loading.md) documents the
+`AGENTBROWSER_CHROME_PATH` wrapper workaround — rarely needed since
+[ADR-016](adr/016-branded-chrome-first-headed-launches.md) detects branded
+Chrome automatically — and the design questions a first-class surface must
+answer).
 
 **Popups are pages too.** SSO and payment flows open popup windows. Popups are
 auto-adopted: they appear in `GET /v1/sessions/{id}/pages` with the `openerPageId` of

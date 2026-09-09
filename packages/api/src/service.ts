@@ -35,10 +35,12 @@ import type { RequestPolicy } from '@agentbrowser/engine';
 import { type ProtocolErrorCode, normalizeEngineError } from '@agentbrowser/engine';
 import { SchemaExtractor } from '@agentbrowser/extraction';
 import {
+  RecordsSelectorError,
   extractForms,
   extractJsonLd,
   extractLinks,
   extractMarkdown,
+  extractRecords,
   extractTables,
   extractVisibleText,
 } from '@agentbrowser/extraction';
@@ -109,6 +111,8 @@ export interface ServiceSessionView {
   createdAt: string;
   ttlMs: number;
   idleTimeoutMs: number;
+  /** Number of live pages registered to the session right now. */
+  pages: number;
   /** Owning tenant, when the session was created under one. */
   tenantId?: string;
 }
@@ -944,9 +948,21 @@ export class AgentBrowserService {
         createdAt: session.createdAt,
         ttlMs: session.ttlMs,
         idleTimeoutMs: session.idleTimeoutMs,
+        pages: 0,
         ...(request.tenantId !== undefined ? { tenantId: request.tenantId } : {}),
       };
     });
+  }
+
+  /** Live pages are keyed by pageId and carry their owning sessionId. */
+  private countPages(sessionId: string): number {
+    let count = 0;
+    for (const page of this.pages.values()) {
+      if (page.sessionId === sessionId) {
+        count += 1;
+      }
+    }
+    return count;
   }
 
   getSession(sessionId: string): ServiceSessionView | undefined {
@@ -961,6 +977,7 @@ export class AgentBrowserService {
       createdAt: new Date(context.metadata.createdAt).toISOString(),
       ttlMs: context.metadata.ttlMs,
       idleTimeoutMs: context.metadata.idleTimeoutMs,
+      pages: this.countPages(sessionId),
       ...(context.metadata.tenantId !== undefined ? { tenantId: context.metadata.tenantId } : {}),
     };
   }
@@ -976,6 +993,7 @@ export class AgentBrowserService {
         createdAt: new Date(metadata.createdAt).toISOString(),
         ttlMs: metadata.ttlMs,
         idleTimeoutMs: metadata.idleTimeoutMs,
+        pages: this.countPages(metadata.id),
       }));
   }
 
@@ -1458,9 +1476,36 @@ export class AgentBrowserService {
 
   // ---- pages --------------------------------------------------------------
 
-  async createPage(sessionId: string): Promise<ServicePageView> {
+  async createPage(sessionId: string, request?: { url?: string }): Promise<ServicePageView> {
     const session = this.requireSession(sessionId);
     this.coordinator.updateActivity(sessionId);
+
+    // Validate a requested url before the page exists so a bad request
+    // creates nothing; navigate() below remains the enforcing path for
+    // egress policy once the page is live.
+    if (request?.url !== undefined) {
+      if (typeof request.url !== 'string') {
+        throw new ServiceError('INVALID_REQUEST', 'url must be a string', false);
+      }
+      let parsed: URL;
+      try {
+        parsed = new URL(request.url);
+      } catch {
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `Invalid URL: ${request.url.slice(0, 100)}`,
+          false
+        );
+      }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new ServiceError(
+          'POLICY_DENIED',
+          `Navigation accepts http(s) URLs only; '${parsed.protocol}' is not permitted.`,
+          false,
+          { url: redactUrl(request.url) }
+        );
+      }
+    }
 
     const enginePage = await session.engineSession.newPage();
     const pageId = `pg_${++this.pageCounter}_${enginePage.id}`;
@@ -1468,6 +1513,28 @@ export class AgentBrowserService {
 
     // Stream engine events to session subscribers until the page closes.
     this.pumpEvents(sessionId, pageId, enginePage);
+
+    // A page-less session contract is easy to miss (TD-BROWSER-11): when
+    // the caller asks for a url at creation, land the page on it instead
+    // of silently ignoring the field.
+    if (request?.url !== undefined) {
+      try {
+        await this.navigate(sessionId, pageId, { url: request.url });
+      } catch (error) {
+        // Runtime navigate failures (DNS, refused, egress policy) happen
+        // after registration; leaving the page in would surface a live
+        // about:blank page the caller believes was never created. Mirror
+        // closePage's teardown and rethrow the navigate error.
+        try {
+          await enginePage.close();
+        } catch {
+          // An engine that refuses the close must not mask the navigate error.
+        }
+        this.pages.delete(pageId);
+        this.churn.delete(this.churnKey(sessionId, pageId));
+        throw error;
+      }
+    }
 
     return { pageId, sessionId, status: 'ready' };
   }
@@ -2583,6 +2650,7 @@ export class AgentBrowserService {
     request: {
       format?: DeliveredExtractFormat;
       schema?: Record<string, unknown>;
+      records?: { container: string; fields: Record<string, string>; limit?: number };
     }
   ): Promise<import('@agentbrowser/engine').ExtractionResult> {
     return this.traced('extract', { sessionId, pageId, format: request.format }, async () => {
@@ -2633,13 +2701,73 @@ export class AgentBrowserService {
           });
           return await extractor.extract(sourced, request.schema as Record<string, unknown>);
         }
+        case 'records': {
+          const recordsRequest = this.validateRecordsRequest(request.records);
+          try {
+            return this.secretManager.redact(extractRecords(sourced, recordsRequest));
+          } catch (error) {
+            // Caller-supplied selectors that are not valid CSS are a
+            // request-shape problem: 400, never the parser's raw 500.
+            if (error instanceof RecordsSelectorError) {
+              throw new ServiceError('INVALID_REQUEST', error.message, false);
+            }
+            throw error;
+          }
+        }
         default:
           throw new ServiceError(
             'INVALID_REQUEST',
-            `Unknown extraction format: ${String(request.format)}. Supported: text, markdown, links, tables, forms, jsonld, schema.`
+            `Unknown extraction format: ${String(request.format)}. Supported: text, markdown, links, tables, forms, jsonld, schema, records.`
           );
       }
     });
+  }
+
+  /**
+   * Shape-check the records argument for format:'records' (TD-BROWSER-12):
+   * a non-empty container selector plus at least one field selector, with
+   * an optional integer limit (1–1000). Field values are collapsed text,
+   * so non-string selectors are rejected before any page work.
+   */
+  private validateRecordsRequest(
+    records: { container: string; fields: Record<string, string>; limit?: number } | undefined
+  ): { container: string; fields: Record<string, string>; limit?: number } {
+    if (records === undefined || typeof records !== 'object' || Array.isArray(records)) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        "format 'records' requires a records object: { container, fields }."
+      );
+    }
+    if (Buffer.byteLength(JSON.stringify(records), 'utf8') > 65_536) {
+      throw new ServiceError('INVALID_REQUEST', 'records exceeds the 64 KiB bound.');
+    }
+    if (typeof records.container !== 'string' || records.container.trim().length === 0) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        "records 'container' must be a non-empty CSS selector."
+      );
+    }
+    if (
+      records.fields === undefined ||
+      typeof records.fields !== 'object' ||
+      Array.isArray(records.fields) ||
+      Object.keys(records.fields).length === 0
+    ) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        "records 'fields' must be an object with at least one field → CSS selector entry."
+      );
+    }
+    if (Object.values(records.fields).some((selector) => typeof selector !== 'string')) {
+      throw new ServiceError('INVALID_REQUEST', 'every records field selector must be a string.');
+    }
+    if (
+      records.limit !== undefined &&
+      (!Number.isInteger(records.limit) || records.limit < 1 || records.limit > 1000)
+    ) {
+      throw new ServiceError('INVALID_REQUEST', "records 'limit' must be an integer 1–1000.");
+    }
+    return records;
   }
 
   /**

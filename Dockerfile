@@ -49,7 +49,7 @@ RUN pnpm --filter @agentbrowser/api deploy --prod /deploy \
 FROM mcr.microsoft.com/playwright:v1.62.1-noble
 
 ENV NODE_ENV=production \
-    PORT=3000 \
+    PORT=5709 \
     HOST=0.0.0.0 \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
@@ -59,10 +59,10 @@ COPY --from=build --chown=pwuser:pwuser /deploy ./
 
 USER pwuser
 
-EXPOSE 3000
+EXPOSE 5709
 
 # Liveness probe against the HTTP surface.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||5709)+'/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["node", "dist/bin.js"]

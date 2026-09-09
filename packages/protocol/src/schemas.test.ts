@@ -574,7 +574,7 @@ describe('ADR-015 single-source-of-truth exports', () => {
     expect(parseRef('')).toBeNull();
   });
 
-  it('DELIVERED_EXTRACT_FORMATS is the canonical format list, including schema', () => {
+  it('DELIVERED_EXTRACT_FORMATS is the canonical format list, including schema and records', () => {
     expect([...DELIVERED_EXTRACT_FORMATS]).toEqual([
       'text',
       'markdown',
@@ -583,6 +583,7 @@ describe('ADR-015 single-source-of-truth exports', () => {
       'forms',
       'jsonld',
       'schema',
+      'records',
     ]);
   });
 });

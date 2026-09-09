@@ -8,6 +8,7 @@
 
 import type { ExtractionResult } from '@agentbrowser/engine';
 import type { RawPageState } from '@agentbrowser/engine';
+import { parseHTML } from 'linkedom';
 
 /** FNV-1a: short, deterministic, dependency-free content hash. */
 function hash(content: string): string {
@@ -138,20 +139,25 @@ export function extractMarkdown(raw: RawPageState): ExtractionResult {
   };
 }
 
-/** Links with text, absolute URL and rel. */
+/**
+ * Links with text, absolute URL and rel. Parsed through the DOM (linkedom),
+ * not a regex over the HTML string: regex scanning emptied text on
+ * nested-anchor cards and corrupted it on `>` inside attribute values
+ * (TD-BROWSER-12, 32 of 138 live Dice cards). Attributes and textContent
+ * come back entity-decoded per the HTML spec.
+ */
 export function extractLinks(raw: RawPageState): ExtractionResult {
-  const cleaned = cleanHtml(raw.content);
+  const { document } = parseHTML(raw.content);
   const links: Array<{ text: string; url: string; rel?: string }> = [];
 
-  for (const match of cleaned.matchAll(/<a\s([^>]*)>([\s\S]*?)<\/a>/gi)) {
-    const attrs = match[1] ?? '';
-    const href = /href="([^"]*)"/i.exec(attrs)?.[1];
-    if (href === undefined) {
+  for (const anchor of document.querySelectorAll('a[href]')) {
+    const href = anchor.getAttribute('href');
+    if (href === null || href.length === 0) {
       continue;
     }
-    const rel = /rel="([^"]*)"/i.exec(attrs)?.[1];
+    const rel = anchor.getAttribute('rel') ?? undefined;
     links.push({
-      text: collapse(stripTags(match[2] ?? '')),
+      text: collapse(anchor.textContent ?? ''),
       url: absoluteUrl(raw, href),
       ...(rel !== undefined ? { rel } : {}),
     });

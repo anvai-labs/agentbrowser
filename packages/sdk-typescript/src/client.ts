@@ -36,6 +36,8 @@ export interface SessionResponse {
   createdAt: string;
   ttlMs?: number;
   idleTimeoutMs?: number;
+  /** Number of live pages registered to the session right now. */
+  pages?: number;
 }
 
 export interface PageResponse {
@@ -116,9 +118,11 @@ export interface ActionResult {
 }
 
 export interface ExtractRequest {
-  format: 'text' | 'markdown' | 'links' | 'tables' | 'forms' | 'jsonld' | 'schema';
+  format: 'text' | 'markdown' | 'links' | 'tables' | 'forms' | 'jsonld' | 'schema' | 'records';
   /** JSON Schema constraining the extraction (format: 'schema' only). */
   schema?: Record<string, unknown>;
+  /** Repeating-structure selectors (format: 'records' only). */
+  records?: { container: string; fields: Record<string, string>; limit?: number };
 }
 
 // ADR-015 single-source-of-truth re-exports: surfaces (CLI, MCP) import
@@ -133,6 +137,7 @@ export interface ExtractResult {
     url: string;
     revision: number;
     ref?: string;
+    index?: number;
     text?: string;
     hash: string;
   }>;
@@ -307,8 +312,11 @@ export class SessionsClient {
     await this.http.requestJson(`/v1/sessions/${sessionId}`, { method: 'DELETE' });
   }
 
-  async createPage(sessionId: string): Promise<PageResponse> {
-    return this.http.requestJson(`/v1/sessions/${sessionId}/pages`, { method: 'POST' });
+  async createPage(sessionId: string, request?: { url?: string }): Promise<PageResponse> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/pages`, {
+      method: 'POST',
+      ...(request !== undefined ? { body: request } : {}),
+    });
   }
 
   async getPage(sessionId: string, pageId: string): Promise<PageResponse> {
@@ -456,7 +464,7 @@ export class AgentBrowserClient {
   private customHeaders: Record<string, string>;
 
   constructor(options: ClientOptions = {}) {
-    this.baseUrl = options.baseUrl || 'http://localhost:3000';
+    this.baseUrl = options.baseUrl || 'http://localhost:5709';
     this.timeout = options.timeout || 30000;
     this.customHeaders = {
       ...(options.apiKey !== undefined ? { Authorization: `Bearer ${options.apiKey}` } : {}),

@@ -197,3 +197,54 @@ describe('determinism (spec: extraction is auditable)', () => {
     expect(a.evidence?.[0]?.hash).not.toBe(b.evidence?.[0]?.hash);
   });
 });
+
+/**
+ * TD-BROWSER-12: links were read with a regex over the HTML string, which
+ * corrupts or empties text whenever `>` appears inside an attribute value
+ * or the anchor text is nested in child elements (observed live: 32 of 138
+ * Dice job cards extracted with empty text). The DOM-based extractor reads
+ * attributes and text through a real parser.
+ */
+describe('extractLinks DOM-based (TD-BROWSER-12)', () => {
+  const page = (body: string): RawPageState => ({
+    url: 'https://cards.example.com/listing',
+    title: 'Listing',
+    status: 'complete',
+    content: `<html><body>${body}</body></html>`,
+    elements: [],
+    metadata: { revision: 1 },
+  });
+
+  it('reads text through nested elements', () => {
+    const result = extractLinks(page('<a href="/card"><span>Card</span> title</a>'));
+    expect(result.data).toEqual([{ text: 'Card title', url: 'https://cards.example.com/card' }]);
+  });
+
+  it('survives > inside attribute values', () => {
+    const result = extractLinks(page('<a href="/gt" data-tip="a>b">Greater</a>'));
+    expect(result.data).toEqual([{ text: 'Greater', url: 'https://cards.example.com/gt' }]);
+  });
+
+  it('matches single-quoted attribute values', () => {
+    const result = extractLinks(page("<a href='/sq'>Single</a>"));
+    expect(result.data).toEqual([{ text: 'Single', url: 'https://cards.example.com/sq' }]);
+  });
+
+  it('decodes entities in link text', () => {
+    const result = extractLinks(page('<a href="/ent">R&amp;D &lt;lab&gt;</a>'));
+    expect(result.data).toEqual([{ text: 'R&D <lab>', url: 'https://cards.example.com/ent' }]);
+  });
+
+  it('still skips anchors without an href and warns when none match', () => {
+    const result = extractLinks(page('<a name="anchor">No href</a>'));
+    expect(result.data).toEqual([]);
+    expect(result.warnings).toEqual(['no links found']);
+  });
+
+  it('keeps rel and resolves relative URLs against the page (parity with the regex era)', () => {
+    const result = extractLinks(page('<a href="next/page" rel="next">Next</a>'));
+    expect(result.data).toEqual([
+      { text: 'Next', url: 'https://cards.example.com/next/page', rel: 'next' },
+    ]);
+  });
+});

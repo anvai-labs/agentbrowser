@@ -319,7 +319,7 @@ jobs:
 
           Single-binary MCP server distribution (TD-BROWSER-5). The binary is
           **only the MCP stdio adapter**: point it at a reachable AgentBrowser
-          service via `AGENTBROWSER_BASE_URL` (default `http://localhost:3000`).
+          service via `AGENTBROWSER_BASE_URL` (default `http://localhost:5709`).
 
           The service is now installable too: `agentbrowser-server-<target>.tar.gz`
           is a self-contained server build (pruned production `node_modules` +
@@ -376,7 +376,7 @@ jobs:
             agentbrowser:
               command: /usr/local/bin/agentbrowser-mcp
               env:
-                AGENTBROWSER_BASE_URL: http://localhost:3000
+                AGENTBROWSER_BASE_URL: http://localhost:5709
           ```
 
           Built with bun 1.4.0.

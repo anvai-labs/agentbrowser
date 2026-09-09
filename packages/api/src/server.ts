@@ -157,6 +157,30 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     logger: false, // Disable logging for cleaner test output
   });
 
+  // Fastify's default JSON parser rejects any request whose payload is
+  // empty while content-type is application/json (FST_ERR_CTP_EMPTY_JSON_BODY),
+  // which turns body-less calls from clients that set the header
+  // unconditionally (DELETE /sessions/{id}, POST /pages, ...) into
+  // pre-handler 400s. Treat an empty payload as no body; malformed JSON
+  // keeps its 400.
+  fastify.addContentTypeParser<string>(
+    'application/json',
+    { parseAs: 'string' },
+    (_request, body, done) => {
+      if (body.trim().length === 0) {
+        done(null, undefined);
+        return;
+      }
+      try {
+        done(null, JSON.parse(body));
+      } catch (error) {
+        const parseError: Error & { statusCode?: number } = new Error('Invalid JSON body');
+        parseError.statusCode = 400;
+        done(parseError, undefined);
+      }
+    }
+  );
+
   // Register CORS plugin
   await fastify.register(cors, {
     origin: options.corsOrigin || '*',
@@ -635,7 +659,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
-          const body = request.body as { actions?: Array<Record<string, unknown>> };
+          // Empty-body tolerance resolves a zero-length JSON body to
+          // undefined; every route must dereference defensively.
+          const body = (request.body ?? {}) as { actions?: Array<Record<string, unknown>> };
           if (!Array.isArray(body.actions)) {
             return reply.status(400).send({
               error: {
@@ -709,7 +735,17 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
-          const page = await service.createPage(sessionId);
+          const { url } = (request.body ?? {}) as { url?: unknown };
+          if (url !== undefined && typeof url !== 'string') {
+            return reply.status(400).send({
+              error: {
+                code: 'INVALID_REQUEST',
+                message: 'url must be a string',
+                retryable: false,
+              },
+            });
+          }
+          const page = await service.createPage(sessionId, url !== undefined ? { url } : undefined);
           return reply.status(201).send(page);
         })
       );
@@ -959,6 +995,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
           const format = (body as { format?: string }).format;
           const schema = (body as { schema?: Record<string, unknown> }).schema;
+          const records = (
+            body as {
+              records?: { container: string; fields: Record<string, string>; limit?: number };
+            }
+          ).records;
           const supported: readonly string[] = DELIVERED_EXTRACT_FORMATS;
           if (typeof format !== 'string' || !supported.includes(format)) {
             return reply.status(400).send({
@@ -973,6 +1014,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           const result = await service.extract(sessionId, pageId, {
             format: format as never,
             ...(schema !== undefined ? { schema } : {}),
+            ...(records !== undefined ? { records } : {}),
           });
           return reply.send(result);
         })
@@ -1078,7 +1120,7 @@ export async function startServer(options: ServerOptions = {}): Promise<FastifyI
   const server = await buildServer(options);
   // PORT/HOST let a supervisor (the SDK's managed launcher, containers)
   // place the server without code changes.
-  const port = options.port ?? envPort() ?? 3000;
+  const port = options.port ?? envPort() ?? 5709;
   const host = options.host ?? process.env.HOST ?? '0.0.0.0';
 
   await server.listen({ port, host });

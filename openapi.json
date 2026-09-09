@@ -7,7 +7,7 @@
   },
   "servers": [
     {
-      "url": "http://localhost:3000",
+      "url": "http://localhost:5709",
       "description": "Local server"
     }
   ],
@@ -282,7 +282,7 @@
                   },
                   "cookies": {
                     "type": "array",
-                    "description": "Seed cookies so the session starts from an authenticated state (the credential handoff — ADR-005/TD-BROWSER-6; the prescribed route for logins the browser cannot satisfy, incl. turnstile-class walls per ADR-013). Export a session's cookies via GET /v1/sessions/{id}/cookies to re-seed future ones.",
+                    "description": "Seed cookies so the session starts from an authenticated state (the credential handoff — ADR-005/TD-BROWSER-6; the prescribed route for logins the browser cannot satisfy, incl. turnstile-class walls per ADR-013). Each cookie requires name, value, domain and path — a {url, ...} cookie fails validation; convert it to domain + path ('/') instead. The compatible form is exactly what GET /v1/sessions/{id}/cookies exports. An empty array is a silent no-op; __Host- cookies are rewritten to the host-only + Secure form.",
                     "items": {
                       "type": "object",
                       "required": [
@@ -1146,6 +1146,7 @@
       "post": {
         "operationId": "createPage",
         "summary": "Create a page in a session",
+        "description": "Sessions are page-less by default; create pages through this endpoint. An optional url lands the new page on it (validated like navigate); without it the page starts on about:blank.",
         "tags": [
           "pages"
         ],
@@ -1160,6 +1161,22 @@
             }
           }
         ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "format": "uri"
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
             "description": "Page created.",
@@ -1167,6 +1184,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PageSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was malformed or failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -2160,7 +2187,7 @@
       "post": {
         "operationId": "extractPage",
         "summary": "Extract deterministic structured data from the page",
-        "description": "Pure-function extractors over a fresh observation: visible text, article markdown, links (text/absolute URL/rel), tables (headers and rows), observed form controls with their refs, or JSON-LD. Every result carries evidence - source URL, revision and a content hash - so an extraction can be audited. No model calls.",
+        "description": "Pure-function extractors over a fresh observation: visible text, article markdown, links (text/absolute URL/rel), tables (headers and rows), observed form controls with their refs, JSON-LD, or records (repeating structure via CSS selectors). Every result carries evidence - source URL, revision and a content hash - so an extraction can be audited. No model calls.",
         "tags": [
           "observation"
         ],
@@ -2203,7 +2230,8 @@
                       "tables",
                       "forms",
                       "jsonld",
-                      "schema"
+                      "schema",
+                      "records"
                     ]
                   },
                   "schema": {
@@ -2218,6 +2246,31 @@
                         "items": {
                           "type": "string"
                         }
+                      }
+                    }
+                  },
+                  "records": {
+                    "type": "object",
+                    "description": "Repeating-structure selectors for format=records: a container CSS selector matching each repeated block (job card, table row) plus per-field CSS selectors evaluated inside each block. Field values are the collapsed text of the first match; a field that matches nothing becomes \"\".",
+                    "required": [
+                      "container",
+                      "fields"
+                    ],
+                    "properties": {
+                      "container": {
+                        "type": "string"
+                      },
+                      "fields": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      },
+                      "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1000,
+                        "description": "Optional cap on returned records."
                       }
                     }
                   }
@@ -2257,6 +2310,10 @@
                           },
                           "ref": {
                             "type": "string"
+                          },
+                          "index": {
+                            "type": "integer",
+                            "description": "Record position (records mode)."
                           },
                           "text": {
                             "type": "string"
@@ -5164,6 +5221,10 @@
             "minimum": 0
           },
           "idleTimeoutMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pages": {
             "type": "integer",
             "minimum": 0
           },

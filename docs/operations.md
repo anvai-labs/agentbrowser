@@ -79,13 +79,13 @@ preparation alone is not release completion.
 
 ```bash
 brew install anvai-labs/tap/agentbrowser
-brew services start anvai-labs/tap/agentbrowser   # the service, on 127.0.0.1:3000
+brew services start anvai-labs/tap/agentbrowser   # the service, on 127.0.0.1:5709
 ```
 
 One install ships all three surfaces:
 
 - the **browser service** (`agentbrowser-server`) — REST + WebSocket on
-  port 3000; first start bootstraps Chromium into
+  port 5709; first start bootstraps Chromium into
   `$(brew --prefix)/var/agentbrowser/browsers`;
 - the **MCP server binary** (`agentbrowser-mcp`) — a standalone stdio
   binary that proxies to the service; no Node runtime needed;
@@ -121,16 +121,19 @@ and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 | --- | --- | --- |
 | `AGENTBROWSER_API_KEYS` | service | Bearer auth for `/v1`, format `key:tenant[,key:tenant...]`. **Without it, `/v1` is unauthenticated** — the service logs a loud warning at startup. Each key maps to one tenant; sessions are isolated per tenant. |
 | `AGENTBROWSER_API_KEY` | MCP server, CLI | The bearer key sent to the service; CLI `--api-key` takes precedence. |
-| `AGENTBROWSER_BASE_URL` | MCP server | Service location; default `http://localhost:3000`. The CLI uses `--base-url`, not this variable. |
+| `AGENTBROWSER_BASE_URL` | MCP server | Service location; default `http://localhost:5709`. The CLI uses `--base-url`, not this variable. |
 | `AGENTBROWSER_LOG_LEVEL` | service | `debug` or `info` (default). Logs are structured JSON, scrubbed of registered secrets. |
-| `AGENTBROWSER_CHROME_PATH` | service (Playwright engine) | Prefer a specific real Chrome for headed sessions ([ADR-013](adr/013-headed-sessions-and-walled-logins.md)). |
+| `AGENTBROWSER_CHROME_PATH` | service (Playwright engine) | Explicit Chrome binary for headed sessions; wrapper scripts included ([ADR-013](adr/013-headed-sessions-and-walled-logins.md)). When set, branded-Chrome auto-detection is skipped — an existing path launches that exact binary, a missing path falls back to bundled Chromium ([ADR-016](adr/016-branded-chrome-first-headed-launches.md)). |
+| `AGENTBROWSER_PREFER_BUNDLED` | service (Playwright engine) | `1`/`true` skips branded-Chrome auto-detection for headed sessions — always launches bundled Chromium, for deterministic CI and test farms ([ADR-016](adr/016-branded-chrome-first-headed-launches.md)). An explicit `AGENTBROWSER_CHROME_PATH` still wins. |
 | `AGENTBROWSER_ARTIFACT_KEY` | service | Bearer key guarding artifact download URLs, when set. |
 | `AGENTBROWSER_DEFAULT_TTL_MS` | service | Operator-level default session TTL (ms); per-session `ttlMs` still wins. Unset/garbage → the 15-min default. |
 | `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS` | service | Operator-level default idle timeout (ms); per-session `idleTimeoutMs` still wins. Unset/garbage → the 10-min default. Useful for deployments that are mostly headed human-in-the-loop flows. |
 | `AGENTBROWSER_SNAPSHOT_TIMEOUT_MS` | service (Playwright engine) | Shared snapshot-wait budget per observation and timeout per action-time semantic check, in integer ms (1–30000; default 1000). Invalid environment values use the default; invalid explicit engine options throw. Timed-out element captures use a successful whole-document accessibility snapshot as fallback evidence, which must still match before acting. Unrelated document changes can therefore stale a fallback ref; observe again. Missing semantic evidence refuses actions, and non-timeout errors propagate. This bounds snapshot waiting, not all observation DOM work. |
 
-Port and bind address default to `3000` on `0.0.0.0`
-(`ServerOptions`); when exposing the service beyond localhost, set
+Port and bind address default to `5709` on `0.0.0.0`
+(`ServerOptions`; port selection rationale in
+[ADR-017](adr/017-default-port-5709.md)); when exposing the service
+beyond localhost, set
 `AGENTBROWSER_API_KEYS` first — the egress policy constrains what
 *browser sessions* may reach, not who may reach the *service*.
 
@@ -199,6 +202,38 @@ removed from tracking, counted in `sessions_crashed_total`, logged at
 error level, and recorded in the crash audit — callers get a typed
 `ENGINE_CRASHED` error, never a hang.
 
+### Pages: sessions are page-less by default
+
+Creating a session launches a browser context but **no page**
+([TD-BROWSER-11](td/TD-BROWSER-11-session-initial-page-race.md)). The create
+response reports `pages: 0`, and the same live count appears on
+`GET /v1/sessions` and `GET /v1/sessions/{id}`. Clients create pages
+explicitly with `POST /v1/sessions/{id}/pages` (the MCP adapter's
+`browser_create` does this automatically for its callers). The create-page
+request accepts an optional `url` that lands the new page on it immediately —
+validated exactly like `navigate` (absolute http(s) URL, network policy
+applies); without it the page starts on `about:blank`.
+
+### Cookie seeding
+
+Sessions accept a `cookies` array at create time to start from an
+authenticated state ([ADR-005](adr/005-ephemeral-sessions-explicit-persistence.md),
+[TD-BROWSER-6](td/TD-BROWSER-6-headed-sessions-and-credential-handoff.md)).
+The wire form is strict — each cookie requires `name`, `value`, `domain`,
+and `path`; a cookie shaped `{url, ...}` (as some clients produce) fails
+validation with 400 `cookies[0]/domain: Required`. Convert by hand:
+`url: "https://example.com/"` becomes `domain: "example.com"`,
+`path: "/"`. The compatible form is exactly what
+`GET /v1/sessions/{id}/cookies` exports — always re-seed from an export
+rather than hand-building.
+
+Two engine-side behaviors worth knowing: an empty `cookies: []` is
+silently skipped (so exporting before the site has set anything yields
+nothing to seed), and `__Host-`-prefixed cookies are automatically
+rewritten to the host-only + Secure form Chromium demands (`__Secure-`
+cookies pass through unchanged and must already carry `secure: true`,
+which an export includes).
+
 ## Choosing an engine
 
 ### Egress and download limits
@@ -260,7 +295,7 @@ API service:
 # and matches on the key's hash, so sending `key1:tenant1` as the bearer 401s.
 export AGENTBROWSER_API_KEY=key1
 
-agentbrowser --base-url http://localhost:3000 session create --tenant tenant1 --json
+agentbrowser --base-url http://localhost:5709 session create --tenant tenant1 --json
 agentbrowser navigate <sessionId> <pageId> https://example.com
 agentbrowser act click <sessionId> <pageId> <ref>
 agentbrowser session list

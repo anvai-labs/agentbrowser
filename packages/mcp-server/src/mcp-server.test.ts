@@ -481,6 +481,28 @@ describe('AgentBrowser MCP server', () => {
       });
     });
 
+    it('should forward records extraction with its selectors (TD-BROWSER-12)', async () => {
+      const records = {
+        container: 'li.card',
+        fields: { title: 'h2', company: '.co' },
+        limit: 25,
+      };
+      const response = JSON.parse(
+        await call('ex-r1', 'browser_extract', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          format: 'records',
+          records,
+        })
+      );
+
+      expect(response.result.isError).toBeUndefined();
+      expect(sessions.extract).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        format: 'records',
+        records,
+      });
+    });
+
     it('should reject an unknown extract format', async () => {
       const response = JSON.parse(
         await call('10c', 'browser_extract', {

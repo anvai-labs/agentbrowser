@@ -1786,6 +1786,83 @@ describe('AgentBrowserService', () => {
       expect(error?.message).toMatch(/format/i);
     });
 
+    it('should extract records from repeating structure (TD-BROWSER-12)', async () => {
+      const { service2, sessionId, pageId } = await extractSetup();
+
+      const result = await service2.extract(sessionId, pageId, {
+        format: 'records',
+        records: {
+          container: 'table tbody tr',
+          fields: { revenue: 'td' },
+        },
+      });
+
+      expect(result.data).toEqual([{ revenue: '1M' }]);
+      expect(result.evidence?.[0]).toMatchObject({
+        url: 'https://x.example.com/a',
+        index: 0,
+      });
+    });
+
+    it('should require a records object for format records', async () => {
+      const { service2, sessionId, pageId } = await extractSetup();
+
+      const error = await capture(() => service2.extract(sessionId, pageId, { format: 'records' }));
+
+      expect(error?.code).toBe('INVALID_REQUEST');
+      expect(error?.message).toMatch(/records/);
+    });
+
+    it('should reject malformed records shapes', async () => {
+      const { service2, sessionId, pageId } = await extractSetup();
+
+      const noFields = await capture(() =>
+        service2.extract(sessionId, pageId, {
+          format: 'records',
+          records: { container: 'tr', fields: {} },
+        })
+      );
+      expect(noFields?.code).toBe('INVALID_REQUEST');
+
+      const badLimit = await capture(() =>
+        service2.extract(sessionId, pageId, {
+          format: 'records',
+          records: { container: 'tr', fields: { a: 'td' }, limit: 0 },
+        })
+      );
+      expect(badLimit?.code).toBe('INVALID_REQUEST');
+
+      const nonStringSelector = await capture(() =>
+        service2.extract(sessionId, pageId, {
+          format: 'records',
+          records: { container: 'tr', fields: { a: 3 } } as never,
+        })
+      );
+      expect(nonStringSelector?.code).toBe('INVALID_REQUEST');
+    });
+
+    it('should 400 (not 500) on a syntactically invalid records selector', async () => {
+      // Selector validity can only be judged against the parser, so the
+      // extractor throws a typed error that must land as INVALID_REQUEST.
+      const { service2, sessionId, pageId } = await extractSetup();
+
+      const badContainer = await capture(() =>
+        service2.extract(sessionId, pageId, {
+          format: 'records',
+          records: { container: '>>>', fields: { a: 'td' } },
+        })
+      );
+      expect(badContainer?.code).toBe('INVALID_REQUEST');
+
+      const badField = await capture(() =>
+        service2.extract(sessionId, pageId, {
+          format: 'records',
+          records: { container: 'tr', fields: { a: '>>>' } },
+        })
+      );
+      expect(badField?.code).toBe('INVALID_REQUEST');
+    });
+
     it('should reject extraction for an unknown page', async () => {
       const { service2, sessionId } = await extractSetup();
 
@@ -2305,5 +2382,68 @@ describe('request-event ledger separation (spec 5.1 network summary)', () => {
     await service.closeSession(session.sessionId);
     expect(internal.requestHistory.has(session.sessionId)).toBe(false);
     expect(internal.eventHistory.has(session.sessionId)).toBe(false);
+  });
+});
+
+describe('session page visibility (TD-BROWSER-11)', () => {
+  let engine: FakeEngine;
+  let service: AgentBrowserService;
+
+  beforeEach(() => {
+    engine = new FakeEngine();
+    service = new AgentBrowserService({ engine });
+  });
+
+  it('reports pages: 0 on the create response', async () => {
+    const session = await service.createSession({ tenantId: 't1' });
+    expect(session.pages).toBe(0);
+  });
+
+  it('reports a live pages count on getSession and listSessions', async () => {
+    const session = await service.createSession({ tenantId: 't1' });
+    await service.createPage(session.sessionId);
+    await service.createPage(session.sessionId);
+
+    expect(service.getSession(session.sessionId)?.pages).toBe(2);
+    const listed = service.listSessions('t1').find((s) => s.sessionId === session.sessionId);
+    expect(listed?.pages).toBe(2);
+  });
+
+  it('createPage honors a requested url by navigating before returning', async () => {
+    const session = await service.createSession({ tenantId: 't1' });
+    const page = await service.createPage(session.sessionId, {
+      url: 'https://x.example.com/landing',
+    });
+    const ids = engine.getSessionIds();
+    const fakePage = engine.getFakePage(ids[ids.length - 1] as string, page.pageId);
+    expect(await fakePage?.getUrl()).toBe('https://x.example.com/landing');
+  });
+
+  it('createPage rejects an invalid url with INVALID_REQUEST', async () => {
+    const session = await service.createSession({ tenantId: 't1' });
+    await expect(service.createPage(session.sessionId, { url: 'not a url' })).rejects.toMatchObject(
+      { code: 'INVALID_REQUEST' }
+    );
+  });
+
+  it('createPage rejects a non-http(s) url with POLICY_DENIED', async () => {
+    const session = await service.createSession({ tenantId: 't1' });
+    await expect(
+      service.createPage(session.sessionId, { url: 'file:///etc/passwd' })
+    ).rejects.toMatchObject({ code: 'POLICY_DENIED' });
+  });
+
+  it('createPage with a failed url navigation does not leave a registered page', async () => {
+    // The page is registered (and its event pump started) before navigate
+    // runs; a runtime failure after registration (DNS, refused, egress
+    // policy) must tear the page back out, or GET /pages surfaces a live
+    // about:blank page the caller believes was never created.
+    const session = await service.createSession({ tenantId: 't1' });
+    await expect(
+      service.createPage(session.sessionId, { url: 'http://127.0.0.1/loopback' })
+    ).rejects.toMatchObject({ code: 'POLICY_DENIED' });
+
+    expect(service.getSession(session.sessionId)?.pages).toBe(0);
+    await expect(service.listPages(session.sessionId)).resolves.toEqual([]);
   });
 });
