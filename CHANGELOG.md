@@ -5,6 +5,50 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [1.8.7] — 2026-09-09
+
+Post-release smoke findings batch (PRs 119–123): empty-body request tolerance,
+session page visibility, branded-Chrome headed launches, and the deterministic
+`records` extraction format (TD-12), plus its docs. Behavior changes are
+strictly additive or fix incorrect rejections; no route was removed.
+
+### Added
+
+- `records` extraction format: list extraction with plain CSS selectors —
+  `container` plus per-field selectors evaluated within each matched record —
+  returning `Record<string,string>[]` with per-record evidence (`url`,
+  `revision`, `hash`, `index`). Available across the HTTP API, the
+  `browser_extract` MCP tool, and the TypeScript SDK types. Invalid selectors
+  are rejected with `INVALID_REQUEST` (400) naming the offending selector.
+- `pages` count on session create, get, and list responses (sessions are
+  page-less by default; the count makes that contract visible).
+- `url` parameter on page creation: the page navigates during creation, so the
+  listed page url is the requested one. A failed navigation tears the page
+  down and surfaces the error instead of stranding a registered page.
+- Branded Chrome support for headed sessions (ADR-016): detected Google
+  Chrome is preferred over bundled Chromium (`AGENTBROWSER_CHROME_PATH` still
+  wins; `AGENTBROWSER_PREFER_BUNDLED=1` forces bundled, e.g. for CI). The
+  selected binary is logged at headed session create.
+- Documentation: cookie seeding requires the `name/value/domain/path` wire
+  form (url-form is rejected), export via `GET /v1/sessions/{id}/cookies` is
+  compatible, and empty `cookies: []` is a silent no-op.
+
+### Changed
+
+- Headed sessions default to a window-true viewport (`viewport: null` plus
+  `--start-maximized`) instead of the pinned 1280×720; an explicit viewport
+  still pins in both modes and headless is unchanged.
+- `links` extraction parses anchors with a real DOM (linkedom) instead of a
+  regex, so nested-anchor text and `>` inside attribute values are extracted
+  correctly.
+
+### Fixed
+
+- Requests carrying `content-type: application/json` with a zero-length body
+  are no longer rejected with 400 (`FST_ERR_CTP_EMPTY_JSON_BODY`); the empty
+  body resolves to undefined and routes handle it, while malformed JSON is
+  still a 400.
+
 ## [1.8.6] — 2026-09-08
 
 Act and wait robustness, richer observations, popup lifecycle, and inline
