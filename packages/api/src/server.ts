@@ -735,7 +735,17 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
-          const page = await service.createPage(sessionId);
+          const { url } = (request.body ?? {}) as { url?: unknown };
+          if (url !== undefined && typeof url !== 'string') {
+            return reply.status(400).send({
+              error: {
+                code: 'INVALID_REQUEST',
+                message: 'url must be a string',
+                retryable: false,
+              },
+            });
+          }
+          const page = await service.createPage(sessionId, url !== undefined ? { url } : undefined);
           return reply.status(201).send(page);
         })
       );

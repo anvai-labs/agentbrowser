@@ -36,6 +36,8 @@ export interface SessionResponse {
   createdAt: string;
   ttlMs?: number;
   idleTimeoutMs?: number;
+  /** Number of live pages registered to the session right now. */
+  pages?: number;
 }
 
 export interface PageResponse {
@@ -307,8 +309,11 @@ export class SessionsClient {
     await this.http.requestJson(`/v1/sessions/${sessionId}`, { method: 'DELETE' });
   }
 
-  async createPage(sessionId: string): Promise<PageResponse> {
-    return this.http.requestJson(`/v1/sessions/${sessionId}/pages`, { method: 'POST' });
+  async createPage(sessionId: string, request?: { url?: string }): Promise<PageResponse> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/pages`, {
+      method: 'POST',
+      ...(request !== undefined ? { body: request } : {}),
+    });
   }
 
   async getPage(sessionId: string, pageId: string): Promise<PageResponse> {

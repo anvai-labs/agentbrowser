@@ -109,6 +109,8 @@ export interface ServiceSessionView {
   createdAt: string;
   ttlMs: number;
   idleTimeoutMs: number;
+  /** Number of live pages registered to the session right now. */
+  pages: number;
   /** Owning tenant, when the session was created under one. */
   tenantId?: string;
 }
@@ -944,9 +946,21 @@ export class AgentBrowserService {
         createdAt: session.createdAt,
         ttlMs: session.ttlMs,
         idleTimeoutMs: session.idleTimeoutMs,
+        pages: 0,
         ...(request.tenantId !== undefined ? { tenantId: request.tenantId } : {}),
       };
     });
+  }
+
+  /** Live pages are keyed by pageId and carry their owning sessionId. */
+  private countPages(sessionId: string): number {
+    let count = 0;
+    for (const page of this.pages.values()) {
+      if (page.sessionId === sessionId) {
+        count += 1;
+      }
+    }
+    return count;
   }
 
   getSession(sessionId: string): ServiceSessionView | undefined {
@@ -961,6 +975,7 @@ export class AgentBrowserService {
       createdAt: new Date(context.metadata.createdAt).toISOString(),
       ttlMs: context.metadata.ttlMs,
       idleTimeoutMs: context.metadata.idleTimeoutMs,
+      pages: this.countPages(sessionId),
       ...(context.metadata.tenantId !== undefined ? { tenantId: context.metadata.tenantId } : {}),
     };
   }
@@ -976,6 +991,7 @@ export class AgentBrowserService {
         createdAt: new Date(metadata.createdAt).toISOString(),
         ttlMs: metadata.ttlMs,
         idleTimeoutMs: metadata.idleTimeoutMs,
+        pages: this.countPages(metadata.id),
       }));
   }
 
@@ -1458,9 +1474,36 @@ export class AgentBrowserService {
 
   // ---- pages --------------------------------------------------------------
 
-  async createPage(sessionId: string): Promise<ServicePageView> {
+  async createPage(sessionId: string, request?: { url?: string }): Promise<ServicePageView> {
     const session = this.requireSession(sessionId);
     this.coordinator.updateActivity(sessionId);
+
+    // Validate a requested url before the page exists so a bad request
+    // creates nothing; navigate() below remains the enforcing path for
+    // egress policy once the page is live.
+    if (request?.url !== undefined) {
+      if (typeof request.url !== 'string') {
+        throw new ServiceError('INVALID_REQUEST', 'url must be a string', false);
+      }
+      let parsed: URL;
+      try {
+        parsed = new URL(request.url);
+      } catch {
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          `Invalid URL: ${request.url.slice(0, 100)}`,
+          false
+        );
+      }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new ServiceError(
+          'POLICY_DENIED',
+          `Navigation accepts http(s) URLs only; '${parsed.protocol}' is not permitted.`,
+          false,
+          { url: redactUrl(request.url) }
+        );
+      }
+    }
 
     const enginePage = await session.engineSession.newPage();
     const pageId = `pg_${++this.pageCounter}_${enginePage.id}`;
@@ -1468,6 +1511,28 @@ export class AgentBrowserService {
 
     // Stream engine events to session subscribers until the page closes.
     this.pumpEvents(sessionId, pageId, enginePage);
+
+    // A page-less session contract is easy to miss (TD-BROWSER-11): when
+    // the caller asks for a url at creation, land the page on it instead
+    // of silently ignoring the field.
+    if (request?.url !== undefined) {
+      try {
+        await this.navigate(sessionId, pageId, { url: request.url });
+      } catch (error) {
+        // Runtime navigate failures (DNS, refused, egress policy) happen
+        // after registration; leaving the page in would surface a live
+        // about:blank page the caller believes was never created. Mirror
+        // closePage's teardown and rethrow the navigate error.
+        try {
+          await enginePage.close();
+        } catch {
+          // An engine that refuses the close must not mask the navigate error.
+        }
+        this.pages.delete(pageId);
+        this.churn.delete(this.churnKey(sessionId, pageId));
+        throw error;
+      }
+    }
 
     return { pageId, sessionId, status: 'ready' };
   }

@@ -1788,3 +1788,87 @@ describe('request body tolerance', () => {
     expect(response.status).toBe(400);
   });
 });
+
+describe('session page visibility', () => {
+  let server: FastifyInstance;
+  let baseUrl: string;
+
+  beforeAll(async () => {
+    server = await buildServer();
+    const address = await server.listen({ port: 0, host: '127.0.0.1' });
+    baseUrl = address;
+  });
+
+  afterAll(async () => {
+    await server.close();
+  });
+
+  it('exposes pages counts on create, get, and list responses', async () => {
+    const createResponse = await fetch(`${baseUrl}/v1/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenantId: 'tenant_pages_visibility' }),
+    });
+    expect(createResponse.status).toBe(201);
+    const created = await createResponse.json();
+    expect(created.pages).toBe(0);
+
+    const pageResponse = await fetch(`${baseUrl}/v1/sessions/${created.sessionId}/pages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: 'https://x.example.com/a' }),
+    });
+    expect(pageResponse.status).toBe(201);
+    const page = await pageResponse.json();
+    expect(page.pageId).toEqual(expect.any(String));
+
+    const getResponse = await fetch(`${baseUrl}/v1/sessions/${created.sessionId}`);
+    expect((await getResponse.json()).pages).toBe(1);
+
+    const listResponse = await fetch(`${baseUrl}/v1/sessions?tenantId=tenant_pages_visibility`);
+    const list = await listResponse.json();
+    expect(
+      list.sessions.find((s: { sessionId: string }) => s.sessionId === created.sessionId)?.pages
+    ).toBe(1);
+  });
+
+  it('POST /pages with a url lands the page on it and GET /pages reports it', async () => {
+    const createResponse = await fetch(`${baseUrl}/v1/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenantId: 'tenant_pages_visibility' }),
+    });
+    const { sessionId } = await createResponse.json();
+
+    await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: 'https://x.example.com/landing' }),
+    });
+
+    const pagesResponse = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages`);
+    const { pages } = await pagesResponse.json();
+    expect(pages).toHaveLength(1);
+    expect(pages[0].url).toBe('https://x.example.com/landing');
+  });
+
+  it('POST /pages with an invalid url returns 400 and creates no page', async () => {
+    const createResponse = await fetch(`${baseUrl}/v1/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenantId: 'tenant_pages_visibility' }),
+    });
+    const { sessionId } = await createResponse.json();
+
+    const pageResponse = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: 'not a url' }),
+    });
+    expect(pageResponse.status).toBe(400);
+
+    const pagesResponse = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages`);
+    const { pages } = await pagesResponse.json();
+    expect(pages).toHaveLength(0);
+  });
+});

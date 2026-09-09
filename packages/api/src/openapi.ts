@@ -609,10 +609,22 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         post: {
           operationId: 'createPage',
           summary: 'Create a page in a session',
+          description:
+            'Sessions are page-less by default; create pages through this endpoint. ' +
+            'An optional url lands the new page on it (validated like navigate); ' +
+            'without it the page starts on about:blank.',
           tags: ['pages'],
           parameters: [sessionIdParam],
+          requestBody: {
+            required: false,
+            content: json({
+              type: 'object',
+              properties: { url: { type: 'string', format: 'uri' } },
+            }),
+          },
           responses: {
             '201': { description: 'Page created.', content: json(ref('PageSummary')) },
+            '400': INVALID_REQUEST,
             '404': NOT_FOUND,
             '500': INTERNAL,
           },
@@ -985,6 +997,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             createdAt: { type: 'string', format: 'date-time' },
             ttlMs: { type: 'integer', minimum: 0 },
             idleTimeoutMs: { type: 'integer', minimum: 0 },
+            pages: { type: 'integer', minimum: 0 },
             engine: { $ref: '#/components/schemas/EngineInfo' },
           },
         },

@@ -1146,6 +1146,7 @@
       "post": {
         "operationId": "createPage",
         "summary": "Create a page in a session",
+        "description": "Sessions are page-less by default; create pages through this endpoint. An optional url lands the new page on it (validated like navigate); without it the page starts on about:blank.",
         "tags": [
           "pages"
         ],
@@ -1160,6 +1161,22 @@
             }
           }
         ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "format": "uri"
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
             "description": "Page created.",
@@ -1167,6 +1184,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PageSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was malformed or failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -5164,6 +5191,10 @@
             "minimum": 0
           },
           "idleTimeoutMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pages": {
             "type": "integer",
             "minimum": 0
           },

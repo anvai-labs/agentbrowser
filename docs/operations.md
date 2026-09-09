@@ -201,6 +201,18 @@ removed from tracking, counted in `sessions_crashed_total`, logged at
 error level, and recorded in the crash audit — callers get a typed
 `ENGINE_CRASHED` error, never a hang.
 
+### Pages: sessions are page-less by default
+
+Creating a session launches a browser context but **no page**
+([TD-BROWSER-11](td/TD-BROWSER-11-session-initial-page-race.md)). The create
+response reports `pages: 0`, and the same live count appears on
+`GET /v1/sessions` and `GET /v1/sessions/{id}`. Clients create pages
+explicitly with `POST /v1/sessions/{id}/pages` (the MCP adapter's
+`browser_create` does this automatically for its callers). The create-page
+request accepts an optional `url` that lands the new page on it immediately —
+validated exactly like `navigate` (absolute http(s) URL, network policy
+applies); without it the page starts on `about:blank`.
+
 ## Choosing an engine
 
 ### Egress and download limits
