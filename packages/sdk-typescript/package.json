@@ -1,6 +1,6 @@
 {
   "name": "@agentbrowser/sdk-typescript",
-  "version": "1.8.6",
+  "version": "1.8.7",
   "private": true,
   "type": "module",
   "description": "TypeScript client SDK for AgentBrowser API",
