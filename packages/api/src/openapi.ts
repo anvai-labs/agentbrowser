@@ -230,7 +230,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                 cookies: {
                   type: 'array',
                   description:
-                    "Seed cookies so the session starts from an authenticated state (the credential handoff — ADR-005/TD-BROWSER-6; the prescribed route for logins the browser cannot satisfy, incl. turnstile-class walls per ADR-013). Export a session's cookies via GET /v1/sessions/{id}/cookies to re-seed future ones.",
+                    "Seed cookies so the session starts from an authenticated state (the credential handoff — ADR-005/TD-BROWSER-6; the prescribed route for logins the browser cannot satisfy, incl. turnstile-class walls per ADR-013). Each cookie requires name, value, domain and path — a {url, ...} cookie fails validation; convert it to domain + path ('/') instead. The compatible form is exactly what GET /v1/sessions/{id}/cookies exports. An empty array is a silent no-op; __Host- cookies are rewritten to the host-only + Secure form.",
                   items: {
                     type: 'object',
                     required: ['name', 'value', 'domain', 'path'],
