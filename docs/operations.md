@@ -404,6 +404,7 @@ support. Record these limitations rather than substituting workspace code.
 | Startup warns `/v1 is UNAUTHENTICATED` | `AGENTBROWSER_API_KEYS` unset — set `key:tenant` pairs before exposing the service. |
 | `404 SESSION_NOT_FOUND` for a session that existed | The session TTL/idle expired (15 min / 10 min defaults). Create a fresh session; seed cookies if continuity matters. |
 | `STALE_TARGET` on every action on a dynamic page | Refs die with their revision — re-observe, or prefer `browser_snapshot` + `browser_plan`, which self-heals stale refs once per step. |
+| `upload` fails with `TARGET_AMBIGUOUS` naming several file inputs | The page has more than one `input[type=file]` (hidden Dropzone inputs are common). Observe with `include:["fileInputs"]` to mint refs for every input — hidden ones included — then pass `target: {ref}`. |
 | Plan aborts with `AMBIGUOUS_REMAP` | The page churned enough to enter `verified` mode and no remap candidate matched the original element's role+label. Re-observe and rebuild the plan — the executor refused to guess rather than act on the wrong element. |
 | Browser download slow/failing | First service start bootstraps Chromium; on Homebrew installs it lands in `$(brew --prefix)/var/agentbrowser/browsers`. |
 | Engine crash loops | Check `sessions_crashed_total` and the JSON error log for the crash reason; the session is terminated cleanly — retry with a new session, and file an issue with the log line if it reproduces. |

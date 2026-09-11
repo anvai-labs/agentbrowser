@@ -320,6 +320,20 @@ describe('AgentBrowser CLI', () => {
       });
     });
 
+    it('should accumulate repeatable --include tokens', async () => {
+      await run('observe', 'ses_1', 'pg_1', '--include', 'fileInputs', '--include', 'overlays');
+
+      expect(sessions.observe).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        include: ['fileInputs', 'overlays'],
+      });
+    });
+
+    it('should omit include when the flag is absent', async () => {
+      await run('observe', 'ses_1', 'pg_1', '--mode', 'content');
+
+      expect(sessions.observe).toHaveBeenCalledWith('ses_1', 'pg_1', { mode: 'content' });
+    });
+
     it('should warn that page content is untrusted', async () => {
       await run('observe', 'ses_1', 'pg_1');
 

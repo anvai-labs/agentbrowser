@@ -329,6 +329,34 @@ describe('Schema Validation - Page State', () => {
     expect(result.success).toBe(true);
   });
 
+  it('should validate element attributes as a string record', () => {
+    const withAttributes = (attributes: unknown) =>
+      validate(PageStateSchema, {
+        sessionId: 'ses_01',
+        pageId: 'pg_01',
+        revision: 17,
+        url: 'https://example.com',
+        title: 'Example Page',
+        status: 'interactive',
+        elements: [
+          {
+            ref: 'e17_05',
+            role: 'fileinput',
+            name: 'Resume',
+            visible: false,
+            enabled: true,
+            attributes,
+          },
+        ],
+        truncated: false,
+        untrustedContent: true,
+      });
+
+    expect(withAttributes({ accept: '.pdf,.doc', multiple: 'true' }).success).toBe(true);
+    expect(withAttributes(undefined).success).toBe(true);
+    expect(withAttributes({ accept: 123 }).success).toBe(false);
+  });
+
   it('should validate element ref pattern', () => {
     const validRef = 'e17_01';
     const invalidRef1 = 'invalid';

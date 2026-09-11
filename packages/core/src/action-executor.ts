@@ -89,7 +89,10 @@ export class ActionExecutor {
       if (target) {
         resolvedTarget = await enginePage.resolve({ ref: target.ref });
 
-        if (!resolvedTarget.visible) {
+        // Upload is exempt from the visibility gate: Dropzone-style file
+        // inputs are hidden by design, and observe include:["fileInputs"]
+        // exists precisely so callers can target them by ref.
+        if (!resolvedTarget.visible && request.action.type !== 'upload') {
           return this.failure(
             createApiErrorDetail(
               ErrorCode.TARGET_NOT_VISIBLE,

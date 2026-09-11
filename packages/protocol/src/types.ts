@@ -235,6 +235,12 @@ export interface PageElement {
   href?: string;
   /** True when the captured href exceeded the 2048-char capture limit. */
   hrefTruncated?: boolean;
+  /**
+   * Engine-captured attributes; populated for role:"fileinput" elements
+   * requested via observe include:["fileInputs"] (carries id, accept, and
+   * multiple so callers can tell ambiguous file inputs apart).
+   */
+  attributes?: Record<string, string>;
 }
 
 /**
@@ -382,11 +388,11 @@ export interface SelectAction extends Action {
 }
 
 /**
- * Upload action: attach local file(s) to an <input type=file>. The target is
- * optional because file inputs are hidden by design (no ref from observe);
- * without a target the engine requires exactly one file input on the page.
- * Playwright setInputFiles semantics: the given paths REPLACE the input's
- * file list.
+ * Upload action: attach local file(s) to an <input type=file>. Hidden file
+ * inputs (the Dropzone-style common case) get refs from observe only when the
+ * request includes the "fileInputs" token; without a target the engine
+ * requires exactly one file input on the page. Playwright setInputFiles
+ * semantics: the given paths REPLACE the input's file list.
  */
 export interface UploadAction extends Action {
   type: 'upload';

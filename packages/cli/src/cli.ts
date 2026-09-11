@@ -422,13 +422,24 @@ export function buildCli(deps: CliDependencies): Cli {
         .option('--mode <mode>', 'interactive | content | accessibility')
         .option('--max-elements <n>', 'maximum elements to return')
         .option('--max-bytes <n>', 'maximum observation size in bytes')
+        .option(
+          '--include <token>',
+          'enrichment token, repeatable: overlays | fileInputs',
+          (token: string, acc: string[]) => [...acc, token],
+          []
+        )
         .action(
           action(
             async (
               ctx,
               sessionId: string,
               pageId: string,
-              options: { mode?: string; maxElements?: string; maxBytes?: string }
+              options: {
+                mode?: string;
+                maxElements?: string;
+                maxBytes?: string;
+                include?: string[];
+              }
             ) => {
               const request: ObservationRequest = {};
               if (options.mode) {
@@ -439,6 +450,9 @@ export function buildCli(deps: CliDependencies): Cli {
               }
               if (options.maxBytes) {
                 request.maxBytes = Number.parseInt(options.maxBytes, 10);
+              }
+              if (options.include && options.include.length > 0) {
+                request.include = options.include;
               }
 
               const observation = await ctx.client.sessions.observe(sessionId, pageId, request);

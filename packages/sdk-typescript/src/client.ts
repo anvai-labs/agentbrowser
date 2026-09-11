@@ -67,7 +67,7 @@ export interface ObservationRequest {
   sinceRevision?: number;
   /** Resume a truncated observation from the cursor's nextOrdinal. */
   continueFrom?: number;
-  /** Optional enrichments, e.g. ["overlays"]. */
+  /** Optional enrichments, e.g. ["overlays"] or ["fileInputs"]. */
   include?: string[];
 }
 
@@ -90,6 +90,12 @@ export interface ObservationResponse {
     href?: string;
     /** True when the captured href exceeded the 2048-char capture limit. */
     hrefTruncated?: boolean;
+    /**
+     * Engine-captured attributes; populated for role:"fileinput" elements
+     * requested via include:["fileInputs"] (carries id, accept, and multiple
+     * so callers can tell ambiguous file inputs apart).
+     */
+    attributes?: Record<string, string>;
   }>;
   truncated: boolean;
   untrustedContent: boolean;
