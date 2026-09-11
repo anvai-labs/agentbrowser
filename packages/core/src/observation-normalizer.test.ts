@@ -157,6 +157,60 @@ describe('ObservationNormalizer', () => {
     });
   });
 
+  describe('file input elements', () => {
+    it('should carry engine-captured attributes through normalization', () => {
+      const rawState: RawPageState = {
+        url: 'https://example.com',
+        title: 'Test Page',
+        status: 'interactive',
+        content: '<html><body></body></html>',
+        elements: [
+          {
+            role: 'fileinput',
+            name: 'Resume',
+            visible: false,
+            enabled: true,
+            attributes: { id: 'resume-upload', accept: '.pdf,.doc', multiple: 'true' },
+          },
+        ],
+      };
+
+      const observation = normalizer.normalize(rawState, { mode: 'interactive', revision: 1 });
+
+      expect(observation.elements[0].attributes).toEqual({
+        id: 'resume-upload',
+        accept: '.pdf,.doc',
+        multiple: 'true',
+      });
+    });
+
+    it('should treat fileinput as interactive when truncation prioritizes', () => {
+      const rawState: RawPageState = {
+        url: 'https://example.com',
+        title: 'Test Page',
+        status: 'interactive',
+        content: '<html><body></body></html>',
+        elements: [
+          ...Array.from({ length: 50 }, (_, i) => ({
+            role: 'text',
+            visible: true,
+            enabled: true,
+            name: `Text ${i}`,
+          })),
+          { role: 'fileinput', visible: false, enabled: true, name: 'Resume' },
+        ],
+      };
+
+      const observation = normalizer.normalize(rawState, {
+        mode: 'interactive',
+        revision: 1,
+        maxElements: 10,
+      });
+
+      expect(observation.elements.some((e) => e.role === 'fileinput')).toBe(true);
+    });
+  });
+
   describe('observation modes', () => {
     it('should support interactive mode with semantic elements', () => {
       const rawState: RawPageState = {

@@ -276,6 +276,24 @@ class FakePage implements EnginePage {
     this.contentOverride = html;
   }
 
+  /** Test hook: place elements (e.g. file inputs) on the page with explicit refs. */
+  seedElements(elements: Array<Partial<FakeElement> & { ref: string; role: string }>): void {
+    const added: FakeElement[] = elements.map((el) => ({
+      ref: el.ref,
+      role: el.role,
+      name: el.name ?? '',
+      value: el.value ?? '',
+      required: el.required ?? false,
+      visible: el.visible ?? true,
+      enabled: el.enabled ?? true,
+      focused: el.focused ?? false,
+      ...(el.risk !== undefined ? { risk: el.risk } : {}),
+      attributes: el.attributes ?? {},
+    }));
+    this.elements = [...this.elements, ...added];
+    this.syncElementIndex();
+  }
+
   /** Test hook: open a dialog as a page would (held until acted on or grace). */
   emitDialog(dialog: { type: string; message: string; defaultPrompt?: string }): void {
     const timer = setTimeout(() => {
@@ -400,7 +418,13 @@ class FakePage implements EnginePage {
       throw new Error('Page is closed');
     }
 
-    // Generate observation
+    // Generate observation. Parity with the real engines: the accessibility-
+    // derived observation never sees hidden <input type=file> elements - they
+    // appear only when the caller asks via include:["fileInputs"].
+    const includeFileInputs = request.include?.includes('fileInputs') === true;
+    const observed = includeFileInputs
+      ? this.elements
+      : this.elements.filter((el) => !(el.role === 'fileinput' && el.visible === false));
     const observation: RawPageState = {
       url: this.currentUrl,
       title: this.currentTitle,
@@ -408,7 +432,7 @@ class FakePage implements EnginePage {
       content:
         this.contentOverride ??
         `<html><head><title>${this.currentTitle}</title></head><body></body></html>`,
-      elements: this.elements.map((el) => {
+      elements: observed.map((el) => {
         const element: any = {
           ref: el.ref,
           role: el.role,
@@ -613,6 +637,44 @@ class FakePage implements EnginePage {
           } catch (error) {
             if (error instanceof EngineError) throw error;
             throw new EngineError('INVALID_REQUEST', `File not found: ${p}`);
+          }
+        }
+        // Refusal parity with the real engines, checked BEFORE the revision
+        // bump: a targeted ref must exist, and un-targeted uploads need
+        // exactly one file input on the page.
+        const uploadTarget = action.target as EngineTarget | undefined;
+        if (uploadTarget !== undefined) {
+          if (!this.elementByRef.has(uploadTarget.ref)) {
+            throw new EngineError('TARGET_NOT_FOUND', `Element not found: ${uploadTarget.ref}`);
+          }
+        } else {
+          const fileInputs = this.elements.filter((el) => el.role === 'fileinput');
+          if (fileInputs.length === 0) {
+            throw new EngineError('TARGET_NOT_FOUND', 'No file input found on the page');
+          }
+          if (fileInputs.length > 1) {
+            throw new EngineError(
+              'TARGET_AMBIGUOUS',
+              `Page has ${fileInputs.length} file inputs; observe with include:["fileInputs"] and target one by ref`,
+              false,
+              {
+                count: fileInputs.length,
+                inputs: fileInputs.map((el, index) => ({
+                  index,
+                  ...(el.name !== '' ? { name: el.name } : {}),
+                  ...(el.attributes.id !== undefined && el.attributes.id !== ''
+                    ? { id: el.attributes.id }
+                    : {}),
+                  ...(el.attributes.accept !== undefined && el.attributes.accept !== ''
+                    ? { accept: el.attributes.accept }
+                    : {}),
+                  multiple: el.attributes.multiple === 'true',
+                  visible: el.visible,
+                })),
+                advice:
+                  'Call observe with include:["fileInputs"] to mint refs for every file input (hidden ones included), then pass target: { ref } to upload.',
+              }
+            );
           }
         }
         this.revision++;

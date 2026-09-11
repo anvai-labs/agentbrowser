@@ -222,6 +222,7 @@ export const PageElementSchema = Type.Object({
   risk: Type.Optional(ActionEffectSchema),
   href: Type.Optional(Type.String()),
   hrefTruncated: Type.Optional(Type.Boolean()),
+  attributes: Type.Optional(Type.Record(Type.String(), Type.String())),
 });
 
 export const OverlayBlockerSchema = Type.Object({

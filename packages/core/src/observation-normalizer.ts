@@ -29,6 +29,7 @@ const INTERACTIVE_ROLES = new Set<string>([
   'menubar',
   'tab',
   'tablist',
+  'fileinput',
 ]);
 
 export interface NormalizationOptions {
@@ -151,6 +152,10 @@ export class ObservationNormalizer {
 
       if (rawEl.hrefTruncated !== undefined) {
         element.hrefTruncated = rawEl.hrefTruncated;
+      }
+
+      if (rawEl.attributes !== undefined) {
+        element.attributes = rawEl.attributes;
       }
 
       return element;

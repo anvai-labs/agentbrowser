@@ -128,6 +128,11 @@ describe('AgentBrowserService', () => {
       const session = await service.createSession({ tenantId: 't1' });
       const pageId = (await service.createPage(session.sessionId)).pageId;
       await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+      const engineSessionId = engine.getSessionIds().at(-1);
+      if (engineSessionId === undefined) throw new Error('no engine session');
+      engine
+        .getFakePage(engineSessionId, pageId)
+        ?.seedElements([{ ref: 'e2_80', role: 'fileinput', name: 'doc', visible: true }]);
 
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ab-plan-upload-'));
       const bytes = 'plan-upload-evidence';
@@ -778,6 +783,12 @@ describe('AgentBrowserService', () => {
     });
 
     it('should surface upload evidence in the act response and keep other actions clean', async () => {
+      const engineSessionId = engine.getSessionIds().at(-1);
+      if (engineSessionId === undefined) throw new Error('no engine session');
+      engine
+        .getFakePage(engineSessionId, pageId)
+        ?.seedElements([{ ref: 'e2_81', role: 'fileinput', name: 'doc', visible: true }]);
+
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ab-upload-'));
       const content = 'evidence-check';
       const file = path.join(dir, 'evidence.txt');

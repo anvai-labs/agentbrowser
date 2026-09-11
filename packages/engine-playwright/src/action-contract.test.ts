@@ -87,6 +87,14 @@ describe('real action wire semantics', () => {
       await writeFile(filePath, 'x');
       await expect(page.act({ type: 'upload', paths: [filePath] })).rejects.toMatchObject({
         code: 'TARGET_AMBIGUOUS',
+        details: {
+          count: 2,
+          inputs: [
+            { index: 0, name: 'a', visible: false },
+            { index: 1, name: 'b', visible: false },
+          ],
+          advice: expect.stringContaining('fileInputs'),
+        },
       });
     } finally {
       await engine.close();
@@ -162,6 +170,191 @@ describe('real action wire semantics', () => {
       ).rejects.toMatchObject({
         code: 'STALE_TARGET',
         details: { remapEligible: true },
+      });
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('mints refs for hidden and visible file inputs under include:["fileInputs"]', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      // Dropzone-style: a styled control backed by a display:none input plus
+      // a plain visible input - the shape that makes untargeted upload
+      // ambiguous on real pages.
+      await page.navigate({
+        url:
+          'data:text/html,<body>' +
+          '<label for="dropzone">Drop file</label>' +
+          '<input type="file" id="dropzone" accept=".pdf,.doc" multiple style="display:none">' +
+          '<input type="file" name="photo">' +
+          '</body>',
+      });
+
+      const observation = await page.observe({ include: ['fileInputs'] });
+      const fileInputs = observation.elements.filter((element) => element.role === 'fileinput');
+      expect(fileInputs).toHaveLength(2);
+      expect(new Set(fileInputs.map((element) => element.ref)).size).toBe(2);
+      expect(fileInputs.map((element) => element.name)).toEqual(['Drop file', 'photo']);
+      expect(fileInputs.map((element) => element.visible)).toEqual([false, true]);
+      expect(fileInputs[0].attributes).toEqual({
+        id: 'dropzone',
+        accept: '.pdf,.doc',
+        multiple: 'true',
+      });
+      expect(fileInputs[1].attributes).toEqual({});
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('omits file-input elements without the include token', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({
+        url:
+          'data:text/html,<body>' +
+          '<input type="file" id="dropzone" style="display:none">' +
+          '<input type="file" name="photo">' +
+          '</body>',
+      });
+      const observation = await page.observe({});
+      expect(observation.elements.some((element) => element.role === 'fileinput')).toBe(false);
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('attaches to a hidden file input through its minted ref', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({
+        url:
+          'data:text/html,<body>' +
+          '<input type="file" id="dropzone" style="display:none">' +
+          '<input type="file" name="photo">' +
+          '</body>',
+      });
+      const dir = await mkdtemp(join(tmpdir(), 'ab-upload-'));
+      const filePath = join(dir, 'sample.txt');
+      const bytes = 'hidden-ref-upload';
+      await writeFile(filePath, bytes);
+
+      const hidden = (await page.observe({ include: ['fileInputs'] })).elements.find(
+        (element) => element.role === 'fileinput' && element.visible === false
+      );
+      if (!hidden) throw new Error('Missing hidden file-input ref');
+
+      const effect = await page.act({
+        type: 'upload',
+        target: { ref: hidden.ref },
+        paths: [filePath],
+      });
+      const result = effect.result as { success?: boolean; inputFiles?: string[] };
+      expect(result.success).toBe(true);
+      expect(result.inputFiles).toEqual(['sample.txt']);
+      expect(effect.newRevision).toBeGreaterThan(effect.oldRevision);
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('reports STALE_TARGET for a hidden file-input ref whose element was replaced', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({
+        url:
+          'data:text/html,<body><input type="file" id="dropzone" style="display:none">' +
+          '<script>setTimeout(function(){' +
+          'var el=document.getElementById("dropzone");' +
+          'el.replaceWith(el.cloneNode(true));' +
+          '},400);</script></body>',
+      });
+      const hidden = (await page.observe({ include: ['fileInputs'] })).elements.find(
+        (element) => element.role === 'fileinput'
+      );
+      if (!hidden) throw new Error('Missing hidden file-input ref');
+      const ref = hidden.ref;
+
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      const dir = await mkdtemp(join(tmpdir(), 'ab-upload-'));
+      const filePath = join(dir, 'sample.txt');
+      await writeFile(filePath, 'x');
+
+      await expect(
+        page.act({ type: 'upload', target: { ref }, paths: [filePath] })
+      ).rejects.toMatchObject({
+        code: 'STALE_TARGET',
+        details: { remapEligible: true },
+      });
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('keeps the revision stable across consecutive token-observations of a static page', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({
+        url:
+          'data:text/html,<body>' +
+          '<input type="file" id="dropzone" style="display:none">' +
+          '</body>',
+      });
+      const first = await page.observe({ include: ['fileInputs'] });
+      const second = await page.observe({ include: ['fileInputs'] });
+      expect(second.revision).toBe(first.revision);
+      expect(second.elements.map((element) => element.ref)).toEqual(
+        first.elements.map((element) => element.ref)
+      );
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('honors the include token in content mode (DOM fallback path)', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({
+        url:
+          'data:text/html,<body><p>Upload your resume</p>' +
+          '<input type="file" id="dropzone" style="display:none">' +
+          '</body>',
+      });
+      const observation = await page.observe({ mode: 'content', include: ['fileInputs'] });
+      expect(
+        observation.elements.some(
+          (element) => element.role === 'fileinput' && element.visible === false
+        )
+      ).toBe(true);
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('still refuses an untargeted upload with TARGET_NOT_FOUND when no file input exists', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({ url: 'data:text/html,<body><p>No uploads here</p></body>' });
+      const dir = await mkdtemp(join(tmpdir(), 'ab-upload-'));
+      const filePath = join(dir, 'sample.txt');
+      await writeFile(filePath, 'x');
+      await expect(page.act({ type: 'upload', paths: [filePath] })).rejects.toMatchObject({
+        code: 'TARGET_NOT_FOUND',
       });
     } finally {
       await engine.close();

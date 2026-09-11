@@ -3643,6 +3643,14 @@
                 },
                 "hrefTruncated": {
                   "type": "boolean"
+                },
+                "attributes": {
+                  "type": "object",
+                  "patternProperties": {
+                    "^(.*)$": {
+                      "type": "string"
+                    }
+                  }
                 }
               }
             }
@@ -3818,6 +3826,14 @@
           },
           "hrefTruncated": {
             "type": "boolean"
+          },
+          "attributes": {
+            "type": "object",
+            "patternProperties": {
+              "^(.*)$": {
+                "type": "string"
+              }
+            }
           }
         }
       },
@@ -4859,6 +4875,14 @@
                     },
                     "hrefTruncated": {
                       "type": "boolean"
+                    },
+                    "attributes": {
+                      "type": "object",
+                      "patternProperties": {
+                        "^(.*)$": {
+                          "type": "string"
+                        }
+                      }
                     }
                   }
                 }
