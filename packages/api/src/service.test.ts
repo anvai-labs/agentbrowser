@@ -9,6 +9,9 @@
  * contract implementation.
  */
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   ArtifactStore,
   InMemoryTracer,
@@ -747,6 +750,38 @@ describe('AgentBrowserService', () => {
       // Before the fix, the executor rejected every HTTP select with
       // "Select action requires a non-empty values parameter".
       expect(result.status).toBe('success');
+    });
+
+    it('should surface upload evidence in the act response and keep other actions clean', async () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ab-upload-'));
+      const content = 'evidence-check';
+      const file = path.join(dir, 'evidence.txt');
+      fs.writeFileSync(file, content);
+
+      try {
+        const upload = await service.act(sessionId, pageId, {
+          action: 'upload',
+          paths: [file],
+        });
+        expect(upload.status).toBe('success');
+        expect(upload.result).toEqual({
+          success: true,
+          files: [{ name: 'evidence.txt', size: content.length }],
+        });
+
+        // Evidence passthrough is upload-only: the generic success flag
+        // every action produces must not leak onto the wire for others.
+        const observation = await service.observe(sessionId, pageId, {});
+        const ref = observation.elements[0]?.ref;
+        const click = await service.act(sessionId, pageId, {
+          action: 'click',
+          target: { ref },
+        });
+        expect(click.status).toBe('success');
+        expect(click.result).toBeUndefined();
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
     });
 
     it('should deliver hover and wait as non-mutating (revision unchanged)', async () => {

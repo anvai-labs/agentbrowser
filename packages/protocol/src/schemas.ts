@@ -318,6 +318,14 @@ export const SelectActionSchema = Type.Object({
   values: Type.Array(Type.String(), { minItems: 1 }),
 });
 
+export const UploadActionSchema = Type.Object({
+  type: Type.Literal('upload'),
+  // Optional: file inputs are hidden by design and get no ref from observe.
+  // Without a target the engine requires exactly one file input on the page.
+  target: Type.Optional(ElementTargetSchema),
+  paths: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+});
+
 export const ScrollActionSchema = Type.Object({
   type: Type.Literal('scroll'),
   target: Type.Optional(ElementTargetSchema),
@@ -383,6 +391,7 @@ export const PlanStepSchema = Type.Object({
   target: Type.Optional(Type.Object({ ref: Type.String({ pattern: REF_PATTERN.source }) })),
   value: Type.Optional(Type.String()),
   values: Type.Optional(Type.Array(Type.String(), { minItems: 1 })),
+  paths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
   deltaX: Type.Optional(Type.Number()),
   deltaY: Type.Optional(Type.Number()),
   key: Type.Optional(Type.String()),
@@ -476,6 +485,7 @@ export const ActionSchema = Type.Union([
   CheckActionSchema,
   UncheckActionSchema,
   SelectActionSchema,
+  UploadActionSchema,
   ScrollActionSchema,
   PressActionSchema,
   WaitActionSchema,

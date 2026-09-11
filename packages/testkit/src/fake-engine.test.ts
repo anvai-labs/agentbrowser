@@ -5,6 +5,9 @@
  * interface and behaves as expected for contract testing.
  */
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { BrowserEngine, EngineCapabilities } from '@agentbrowser/engine';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FakeEngine } from './fake-engine';
@@ -264,6 +267,33 @@ describe('FakeEngine', () => {
       expect(forwarded.url).toBe('https://example.com/page2');
 
       await page.act({ type: 'reload' });
+    });
+
+    it('should deliver upload with stat-based evidence and honest failure', async () => {
+      const session = await engine.createSession({});
+      const page = await session.newPage();
+      await page.navigate({ url: 'https://example.com' });
+
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ab-upload-'));
+      const content = '%PDF-fake';
+      const file = path.join(dir, 'resume.pdf');
+      fs.writeFileSync(file, content);
+
+      const before = page.revision;
+      const effect = await page.act({ type: 'upload', paths: [file] });
+      expect(effect.newRevision).toBe(before + 1);
+      expect(effect.result).toEqual({
+        success: true,
+        files: [{ name: 'resume.pdf', size: content.length }],
+      });
+
+      // A missing path fails without mutating state (failures never bump).
+      await expect(
+        page.act({ type: 'upload', paths: [path.join(dir, 'missing.pdf')] })
+      ).rejects.toThrow(/ENOENT/);
+      expect(page.revision).toBe(before + 1);
+
+      fs.rmSync(dir, { recursive: true, force: true });
     });
 
     it('should close page', async () => {

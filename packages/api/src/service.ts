@@ -190,6 +190,8 @@ export interface ServiceActResult {
   waitReason?: string | undefined;
   /** Present only when the engine healed a replaced target (F2). */
   remap?: { from: string; to: string } | undefined;
+  /** Evidence payload, present only for actions that produce one (upload: attached files). */
+  result?: unknown;
 }
 
 /** One step's outcome inside a batch (F3); failures are in-band. */
@@ -2069,6 +2071,9 @@ export class AgentBrowserService {
         observation,
         waitReason,
         ...(result.remap !== undefined ? { remap: result.remap } : {}),
+        // Evidence passthrough: only upload produces a per-action payload
+        // (attached files); other engines' {success:true} stays unreported.
+        ...(request.action === 'upload' && result.result != null ? { result: result.result } : {}),
       };
     });
   }

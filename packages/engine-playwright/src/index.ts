@@ -1691,7 +1691,10 @@ class PlaywrightPage implements EnginePage {
   }
 
   private async performAction(action: EngineAction): Promise<ActionEffect> {
-    if (action.target) {
+    // Upload skips the visibility gate: file inputs are hidden by design and
+    // a targeted upload addresses an observed ref whose handle was bound
+    // regardless of visibility.
+    if (action.target && action.type !== 'upload') {
       const live = await this.resolve(action.target);
       if (!live.visible) throw new EngineError('TARGET_NOT_VISIBLE', 'Target is not visible');
       if (!live.enabled) throw new EngineError('TARGET_DISABLED', 'Target is disabled');
@@ -1760,6 +1763,89 @@ class PlaywrightPage implements EnginePage {
         await locator.selectOption((action.values as string[]) ?? []);
         this.bumpRevision();
         break;
+      }
+      case 'upload': {
+        // Local path validation happens before any page contact: a missing
+        // file is a caller mistake, not page state, and must leave the page
+        // (and the revision) untouched.
+        const paths = (action.paths as string[] | undefined) ?? [];
+        if (paths.length === 0) {
+          throw new EngineError('INVALID_REQUEST', 'upload requires at least one path');
+        }
+        const { stat } = await import('node:fs/promises');
+        const { basename } = await import('node:path');
+        const files: Array<{ name: string; size: number }> = [];
+        for (const p of paths) {
+          try {
+            const s = await stat(p);
+            files.push({ name: basename(p), size: s.size });
+          } catch {
+            throw new EngineError('INVALID_REQUEST', `File not found: ${p}`);
+          }
+        }
+        // Browser-verified evidence, read BEFORE bumpRevision - releaseRefs
+        // disposes the handles the ref path binds. Structural casts: this
+        // package compiles without DOM lib, so the input's file-list shape
+        // is described locally.
+        let inputFiles: string[] | null = null;
+        if (action.target) {
+          const handle = this.locatorFor((action.target as EngineTarget).ref);
+          await handle.setInputFiles(paths);
+          inputFiles = await handle
+            .evaluate((el) => {
+              const input = el as unknown as {
+                type?: unknown;
+                files?: ArrayLike<{ name: unknown }> | null;
+              };
+              return String(input.type) === 'file' && input.files
+                ? Array.from(input.files, (f) => String(f.name))
+                : null;
+            })
+            .catch(() => null);
+          this.bumpRevision();
+        } else {
+          // Un-targeted mode: hidden inputs get no ref from observe, so the
+          // single-file-input page is the common case; ambiguity is refused
+          // rather than guessed.
+          const locator = this.page.locator('input[type=file]');
+          const count = await locator.count();
+          if (count === 0) {
+            throw new EngineError('TARGET_NOT_FOUND', 'No file input found on the page');
+          }
+          if (count > 1) {
+            throw new EngineError(
+              'TARGET_AMBIGUOUS',
+              `Page has ${count} file inputs; observe and target one by ref`,
+              false,
+              { count }
+            );
+          }
+          await locator.setInputFiles(paths);
+          inputFiles = await locator
+            .evaluate((el) => {
+              const input = el as unknown as {
+                type?: unknown;
+                files?: ArrayLike<{ name: unknown }> | null;
+              };
+              return String(input.type) === 'file' && input.files
+                ? Array.from(input.files, (f) => String(f.name))
+                : null;
+            })
+            .catch(() => null);
+          this.bumpRevision();
+        }
+        return {
+          actionId,
+          startTimestamp,
+          endTimestamp: new Date().toISOString(),
+          oldRevision,
+          newRevision: this.revision,
+          result: {
+            success: true,
+            files,
+            ...(inputFiles ? { inputFiles } : {}),
+          },
+        };
       }
       case 'press': {
         if (action.target) {

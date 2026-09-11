@@ -369,6 +369,7 @@ describe('Delivered capability truth (single source)', () => {
       'check',
       'uncheck',
       'select',
+      'upload',
       'scroll',
       'press',
       'wait',
@@ -647,6 +648,7 @@ describe('ADR-015 action-union drift coverage', () => {
       'check',
       'uncheck',
       'select',
+      'upload',
       'scroll',
       'press',
       'wait',
@@ -670,6 +672,8 @@ describe('ADR-015 action-union drift coverage', () => {
       { type: 'check', target: { ref: 'e1_0' } },
       { type: 'uncheck', target: { ref: 'e1_0' } },
       { type: 'select', target: { ref: 'e1_0' }, values: ['a'] },
+      { type: 'upload', paths: ['/tmp/x.pdf'] },
+      { type: 'upload', target: { ref: 'e1_0' }, paths: ['/tmp/a.pdf', '/tmp/b.pdf'] },
       { type: 'scroll', direction: 'down' },
       { type: 'press', key: 'Enter' },
       { type: 'wait', condition: { until: 'load' } },
@@ -689,6 +693,8 @@ describe('ADR-015 action-union drift coverage', () => {
     expect(validateAction({ type: 'click' }).ok).toBe(false); // missing target
     expect(validateAction({ type: 'hover', target: { ref: 'not-a-ref' } }).ok).toBe(false);
     expect(validateAction({ type: 'fill', target: { ref: 'e1_0' } }).ok).toBe(false); // missing value
+    expect(validateAction({ type: 'upload' }).ok).toBe(false); // missing paths
+    expect(validateAction({ type: 'upload', paths: [] }).ok).toBe(false); // empty paths
     expect(validateAction({ type: 'wait' }).ok).toBe(false); // missing condition
     expect(validateAction({ type: 'nope' }).ok).toBe(false);
     expect(validateAction('click').ok).toBe(false);

@@ -5,6 +5,48 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [1.8.8] — 2026-09-11
+
+Native file attachment for agents (PR #128, [ADR-018](docs/adr/018-upload-action.md)):
+the one capability the Dice-class real-world flows exposed as genuinely missing —
+attaching a local file to a page's `<input type=file>` without the native OS
+picker or any JS injection.
+
+### Added
+
+- The `upload` wire action: `{ action: "upload", target?: { ref }, paths: [...] }`.
+  `paths` **replace** the input's current file list (setInputFiles semantics).
+  `target` is optional because hidden file inputs — the common case — never
+  appear in the ARIA snapshot and therefore get no ref; no-target mode binds
+  the page's only `input[type=file]` and refuses honestly otherwise
+  (`TARGET_NOT_FOUND` at 0, `TARGET_AMBIGUOUS` with `{count}` at >1).
+- Path validation before page contact: each path is `fs.stat`-checked
+  server-side; a missing file is `INVALID_REQUEST` and the revision is
+  untouched.
+- Evidence over assertion: the act response carries
+  `result: { success, files: [{name, size}], inputFiles?: [names] }` —
+  `files` from stat of the validated paths, `inputFiles` read back from the
+  live input before the revision bump. Only `upload` produces a per-action
+  payload; other actions keep the bare wire shape.
+- Delivered across every surface from the single action-type tuple
+  ([ADR-015](docs/adr/015-cross-package-contract-single-source-of-truth.md)):
+  HTTP `act`/`plan`, `browser_act` MCP tool, CLI `agentbrowser act upload`,
+  OpenAPI schema, TypeScript SDK, and FakeEngine (which advertises the
+  delivered tuple, so it now delivers what it claims).
+- [ADR-018](docs/adr/018-upload-action.md) and a new section in
+  [synthetic input limitations](docs/synthetic-input-limitations.md): attach
+  files through `upload`, never by clicking the picker.
+
+### What this does not claim
+
+- No native-picker bypassing and no `isTrusted` claims: the input is set
+  through the browser's own file machinery, and events the page observes
+  remain synthetic.
+- Safari engine returns `ENGINE_UNSUPPORTED` for `upload` (safaridriver has
+  no equivalent primitive).
+- Risk classification is unchanged (ADR-007); operators who want to gate
+  uploads add an `{action: "upload"}` rule.
+
 ## [1.8.7] — 2026-09-09
 
 Post-release smoke findings batch (PRs 119–123): empty-body request tolerance,
