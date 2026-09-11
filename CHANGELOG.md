@@ -5,6 +5,43 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [1.8.9] — 2026-09-11
+
+Post-release hardening for the `upload` action and the hidden-file-input
+discoverability follow-up (PRs 130–132). Strictly additive or
+refusal-improving; no route was removed.
+
+### Added
+
+- `observe` enrichment token `fileInputs` (`include: ["fileInputs"]`): mints
+  revision-scoped refs for every `input[type=file]` on the page — hidden ones
+  included — as `role:"fileinput"` elements carrying `attributes`
+  (`id`, `accept`, `multiple`) and a resolved name (aria-label → `label[for]`
+  text → `name` → `id`). Available across the HTTP API, the `browser_observe`
+  MCP tool, the CLI (`observe --include fileInputs`), and the TypeScript SDK.
+  Untargeted `upload` on a multi-input page refuses with `TARGET_AMBIGUOUS`
+  details naming every discovered input (`count`, `inputs[]`, `advice`), so
+  the observe-and-target advice is actionable exactly where it fires.
+
+### Changed
+
+- Targeted `upload` is exempt from the targeted-action visibility gate:
+  hidden Dropzone-style inputs are targetable by ref. `TARGET_DISABLED` still
+  applies, and targeted upload now passes the executor's full staleness gates
+  like every targeted action — a detached ref refuses with retryable
+  `STALE_TARGET` instead of mis-attaching.
+- The CLI `act upload` accepts the file path(s) in the ref slot when no ref
+  is given, making the no-target single-input form reachable from positionals
+  (the empty-string `''` workaround is no longer needed).
+
+### Fixed
+
+- Upload adversarial-review hardening (#130): the server binds `127.0.0.1` by
+  default (was `0.0.0.0`; an explicit `HOST` still wins), non-regular files
+  refuse with `INVALID_REQUEST`, non-absolute paths are rejected before
+  engine contact, acting on a non-file element normalizes to
+  `INVALID_REQUEST`, and plan step results carry the upload evidence payload.
+
 ## [1.8.8] — 2026-09-11
 
 Native file attachment for agents (PR #128, [ADR-018](docs/adr/018-upload-action.md)):
