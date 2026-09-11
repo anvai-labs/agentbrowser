@@ -1,6 +1,6 @@
 /**
- * F5: include:["overlays"] is the only delivered enrichment token — unknown
- * tokens are rejected with the valid set, known tokens reach the engine.
+ * F5: include tokens are an allowlisted enrichment set — unknown tokens are
+ * rejected with the valid set, known tokens reach the engine.
  */
 import { FakeEngine } from '@agentbrowser/testkit';
 import { describe, expect, it, vi } from 'vitest';
@@ -17,7 +17,7 @@ describe('observe include tokens', () => {
       .catch((e: unknown) => e as { code: string; details?: { validIncludes?: string[] } });
 
     expect(error.code).toBe('INVALID_REQUEST');
-    expect(error.details?.validIncludes).toEqual(['overlays']);
+    expect(error.details?.validIncludes).toEqual(['fileInputs', 'overlays']);
   });
 
   it('forwards known include tokens to the engine', async () => {
@@ -32,7 +32,9 @@ describe('observe include tokens', () => {
     const observe = vi.spyOn(fakePage, 'observe');
 
     await service.observe(session.sessionId, pageId, { include: ['overlays'] });
+    await service.observe(session.sessionId, pageId, { include: ['fileInputs'] });
 
     expect(observe.mock.calls[0]?.[0]?.include).toEqual(['overlays']);
+    expect(observe.mock.calls[1]?.[0]?.include).toEqual(['fileInputs']);
   });
 });

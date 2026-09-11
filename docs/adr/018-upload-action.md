@@ -1,6 +1,7 @@
 # ADR-018: The `upload` Action — Native File Attachment Without the OS Picker
 
-**Status:** Accepted (implemented 2026-09-10)
+**Status:** Accepted (implemented 2026-09-10; amended 2026-09-11 — hidden-input
+targeting via `observe include:["fileInputs"]`)
 **Context:** 2026-09-10
 **Related:** [ADR-015](015-cross-package-contract-single-source-of-truth.md)
 (SSOT — the action set derives from `DELIVERED_ACTION_TYPES`),
@@ -44,9 +45,10 @@ every surface derives from the one `DELIVERED_ACTION_TYPES` tuple):
 { "action": "upload", "target": { "ref": "e3_7" }, "paths": ["/abs/a.pdf"] }
 ```
 
-- `paths` is required, 1..n, and **replaces** the input's file list
-  (Playwright `setInputFiles` semantics — a second `upload` swaps the
-  attachment, it does not append).
+- `paths` is required, 1..n, **absolute** (the server resolves relative
+  paths against its own process cwd, which is meaningless to the caller),
+  and **replaces** the input's file list (Playwright `setInputFiles`
+  semantics — a second `upload` swaps the attachment, it does not append).
 - `target` is **optional**. With a ref, the engine binds the observed
   element; the visibility pre-check is skipped for this action (hidden
   inputs are the normal case). Without a ref, the engine addresses
@@ -54,9 +56,14 @@ every surface derives from the one `DELIVERED_ACTION_TYPES` tuple):
   `TARGET_NOT_FOUND`, more than one is `TARGET_AMBIGUOUS` — ambiguity is
   refused, never guessed.
 - **Local paths are validated by `stat` before any page contact.** A missing
-  file is `INVALID_REQUEST` and leaves page and revision untouched; the
-  server already reads local files for screenshots/artifacts, so this
-  touches no new trust boundary.
+  path, or one that is not a regular file (a directory counts), is
+  `INVALID_REQUEST` and leaves page and revision untouched; the server
+  already reads local files for screenshots/artifacts, so this touches no
+  new trust boundary. A targeted `upload` still runs the same-revision
+  staleness gates (`resolve()` + binding liveness) as every other targeted
+  action — only the visibility pre-check is skipped for it, so a detached
+  ref fails `STALE_TARGET` with `remapEligible: true`, not a raw engine
+  error.
 - **Evidence, not assertion:** the result reports `files: [{name, size}]`
   from the stat'd paths *and* `inputFiles: [names]` read back from the live
   input via a bound handle before the revision bump — the same
@@ -94,3 +101,32 @@ every surface derives from the one `DELIVERED_ACTION_TYPES` tuple):
 - Reading back `inputFiles` must happen before the revision bump — refs and
   handles die with the bump (the ordering is load-bearing and asserted by
   the engine contract test).
+
+## Amendment (2026-09-11): targeting hidden inputs by ref
+
+Field use (Dropzone-style forms with several `input[type=file]`, most of them
+hidden) showed the "target one by ref" advice was unactionable: hidden inputs
+got **no ref from observe at all**, and an untargeted `upload` on a multi-input
+page could only refuse.
+
+- `observe` accepts the `include: ["fileInputs"]` token (same mechanism as
+  `"overlays"`). With it, the engine appends one `role:"fileinput"` element
+  per `input[type=file]` — hidden ones included — in document order, each
+  with a revision-scoped ref and `attributes` (`id`, `accept`, `multiple`)
+  so callers can tell ambiguous inputs apart. Resolved name precedence:
+  `aria-label` → `label[for]` text → `name` attribute → `id`. Without the
+  token, observation output is unchanged.
+- The executor's visibility pre-check is now skipped for `upload` at the
+  core layer too (the engine already skipped it); `TARGET_DISABLED` still
+  applies. This closes the gap where a minted hidden-input ref reached the
+  service and was refused before touching the engine.
+- Untargeted `upload` on a multi-input page refuses with an enriched
+  `TARGET_AMBIGUOUS`: `details.inputs` names every input (index, name, id,
+  accept, multiple, visible) and `details.advice` points at the token.
+- `PageElement.attributes` is an additive protocol extension; OpenAPI, SDK
+  and MCP derive it from the one schema.
+- Out of scope: remap healing of hidden file inputs. `remap: true` heals by
+  re-observing without the token, so a remapped upload still cannot see the
+  hidden input and fails closed — callers re-observe with the token instead.
+  The engine binds targeted uploads to the held element handle, so ordinal
+  drift can only cause a refusal, never a mis-attachment.

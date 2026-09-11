@@ -130,10 +130,13 @@ and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 | `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS` | service | Operator-level default idle timeout (ms); per-session `idleTimeoutMs` still wins. Unset/garbage → the 10-min default. Useful for deployments that are mostly headed human-in-the-loop flows. |
 | `AGENTBROWSER_SNAPSHOT_TIMEOUT_MS` | service (Playwright engine) | Shared snapshot-wait budget per observation and timeout per action-time semantic check, in integer ms (1–30000; default 1000). Invalid environment values use the default; invalid explicit engine options throw. Timed-out element captures use a successful whole-document accessibility snapshot as fallback evidence, which must still match before acting. Unrelated document changes can therefore stale a fallback ref; observe again. Missing semantic evidence refuses actions, and non-timeout errors propagate. This bounds snapshot waiting, not all observation DOM work. |
 
-Port and bind address default to `5709` on `0.0.0.0`
-(`ServerOptions`; port selection rationale in
-[ADR-017](adr/017-default-port-5709.md)); when exposing the service
-beyond localhost, set
+Port defaults to `5709`; the service binds loopback (`127.0.0.1`) by
+default because it reads local files on the operator's behalf
+(screenshots, upload paths) — network exposure is an explicit opt-in via
+`HOST=0.0.0.0` (or `options.host`; the Dockerfile sets this for
+container port publishing). See `ServerOptions`; port selection
+rationale in [ADR-017](adr/017-default-port-5709.md). When exposing the
+service beyond localhost, set
 `AGENTBROWSER_API_KEYS` first — the egress policy constrains what
 *browser sessions* may reach, not who may reach the *service*.
 
@@ -401,6 +404,7 @@ support. Record these limitations rather than substituting workspace code.
 | Startup warns `/v1 is UNAUTHENTICATED` | `AGENTBROWSER_API_KEYS` unset — set `key:tenant` pairs before exposing the service. |
 | `404 SESSION_NOT_FOUND` for a session that existed | The session TTL/idle expired (15 min / 10 min defaults). Create a fresh session; seed cookies if continuity matters. |
 | `STALE_TARGET` on every action on a dynamic page | Refs die with their revision — re-observe, or prefer `browser_snapshot` + `browser_plan`, which self-heals stale refs once per step. |
+| `upload` fails with `TARGET_AMBIGUOUS` naming several file inputs | The page has more than one `input[type=file]` (hidden Dropzone inputs are common). Observe with `include:["fileInputs"]` to mint refs for every input — hidden ones included — then pass `target: {ref}`. |
 | Plan aborts with `AMBIGUOUS_REMAP` | The page churned enough to enter `verified` mode and no remap candidate matched the original element's role+label. Re-observe and rebuild the plan — the executor refused to guess rather than act on the wrong element. |
 | Browser download slow/failing | First service start bootstraps Chromium; on Homebrew installs it lands in `$(brew --prefix)/var/agentbrowser/browsers`. |
 | Engine crash loops | Check `sessions_crashed_total` and the JSON error log for the crash reason; the session is terminated cleanly — retry with a new session, and file an issue with the log line if it reproduces. |

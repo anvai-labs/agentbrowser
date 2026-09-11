@@ -370,6 +370,30 @@ describe('ActionExecutor', () => {
       expect(mockEnginePage.act).not.toHaveBeenCalled();
     });
 
+    it('should let upload target an invisible element', async () => {
+      // Dropzone-style file inputs are hidden by design; refs for them only
+      // exist via observe include:["fileInputs"], and attaching files to a
+      // hidden input is the point of the feature.
+      mockObservation.elements[0]!.visible = false;
+      (mockEnginePage.resolve as any).mockResolvedValue({
+        ref: 'e1_0',
+        fingerprint: 'button_Submit_visible_false_enabled_true',
+        role: 'button',
+        name: 'Submit',
+        visible: false,
+        enabled: true,
+      });
+
+      (mockEnginePage.act as any).mockResolvedValue(effect());
+      const result = await executor.execute(
+        req({ type: 'upload', target: { ref: 'e1_0' }, paths: ['/tmp/resume.pdf'] }),
+        { enginePage: mockEnginePage, observation: mockObservation }
+      );
+
+      expect(result.error).toBeUndefined();
+      expect(mockEnginePage.act).toHaveBeenCalled();
+    });
+
     it('should map ambiguous resolution to TARGET_AMBIGUOUS', async () => {
       (mockEnginePage.resolve as any).mockRejectedValue(new Error('Multiple elements match ref'));
 
@@ -586,6 +610,38 @@ describe('ActionExecutor', () => {
       expect(mockEnginePage.observe).not.toHaveBeenCalled();
       expect(result.observation).toBeUndefined();
     });
+
+    it('should pass include tokens from observeAfter through to the engine', async () => {
+      (mockEnginePage.resolve as any).mockResolvedValue({
+        ref: 'e1_0',
+        fingerprint: 'button_Submit_visible_true_enabled_true',
+        role: 'button',
+        name: 'Submit',
+        visible: true,
+        enabled: true,
+      });
+      (mockEnginePage.act as any).mockResolvedValue(effect({ newRevision: 2 }));
+      (mockEnginePage.observe as any).mockResolvedValue({
+        url: 'https://example.com/done',
+        title: 'Done',
+        status: 'complete',
+        content: 'Done',
+        elements: [],
+      });
+
+      await executor.execute(
+        req(
+          { type: 'click', target: { ref: 'e1_0' } },
+          { observeAfter: { include: ['fileInputs'] } }
+        ),
+        { enginePage: mockEnginePage, observation: mockObservation }
+      );
+
+      // Known gap, pinned on purpose: observeAfter rides straight to the
+      // engine without the service-level DELIVERED_INCLUDES gate (true for
+      // the older overlays token too).
+      expect(mockEnginePage.observe).toHaveBeenCalledWith({ include: ['fileInputs'] });
+    });
   });
 
   describe('action validation', () => {
@@ -625,6 +681,28 @@ describe('ActionExecutor', () => {
 
       expect(result.error?.code).toBe('INVALID_REQUEST');
       expect(result.error?.message).toContain('evaluate');
+    });
+
+    it('should require a non-empty paths array for upload', async () => {
+      const result = await executor.execute(req({ type: 'upload', paths: [] } as any), {
+        enginePage: mockEnginePage,
+        observation: mockObservation,
+      });
+
+      expect(result.error?.code).toBe('INVALID_REQUEST');
+      expect(mockEnginePage.resolve).not.toHaveBeenCalled();
+    });
+
+    it('should reject relative upload paths before touching the engine', async () => {
+      const result = await executor.execute(
+        req({ type: 'upload', paths: ['/abs/resume.pdf', 'relative/evidence.txt'] } as any),
+        { enginePage: mockEnginePage, observation: mockObservation }
+      );
+
+      expect(result.error?.code).toBe('INVALID_REQUEST');
+      expect(result.error?.message).toContain('absolute');
+      expect(mockEnginePage.resolve).not.toHaveBeenCalled();
+      expect(result.newRevision).toBe(mockObservation.revision);
     });
   });
 });

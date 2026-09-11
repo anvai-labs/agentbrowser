@@ -124,6 +124,36 @@ describe('AgentBrowserService', () => {
       expect(result.results.every((r) => r.ok)).toBe(true);
     });
 
+    it('carries per-step evidence in plan results for an upload step', async () => {
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+      const engineSessionId = engine.getSessionIds().at(-1);
+      if (engineSessionId === undefined) throw new Error('no engine session');
+      engine
+        .getFakePage(engineSessionId, pageId)
+        ?.seedElements([{ ref: 'e2_80', role: 'fileinput', name: 'doc', visible: true }]);
+
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ab-plan-upload-'));
+      const bytes = 'plan-upload-evidence';
+      const file = path.join(dir, 'resume.pdf');
+      fs.writeFileSync(file, bytes);
+      try {
+        const result = await service.executePlan(session.sessionId, pageId, [
+          { action: 'upload', paths: [file] },
+        ]);
+        expect(result.ok).toBe(true);
+        // The plan step reports the same evidence payload as the single act:
+        // what was attached, not just that the step did not throw.
+        expect(result.results[0].result).toEqual({
+          success: true,
+          files: [{ name: 'resume.pdf', size: bytes.length }],
+        });
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
     it('pressure matrix row 1: a static 5-field form completes in one call with zero intermediate observations', async () => {
       const session = await service.createSession({ tenantId: 't1' });
       const pageId = (await service.createPage(session.sessionId)).pageId;
@@ -753,6 +783,12 @@ describe('AgentBrowserService', () => {
     });
 
     it('should surface upload evidence in the act response and keep other actions clean', async () => {
+      const engineSessionId = engine.getSessionIds().at(-1);
+      if (engineSessionId === undefined) throw new Error('no engine session');
+      engine
+        .getFakePage(engineSessionId, pageId)
+        ?.seedElements([{ ref: 'e2_81', role: 'fileinput', name: 'doc', visible: true }]);
+
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ab-upload-'));
       const content = 'evidence-check';
       const file = path.join(dir, 'evidence.txt');

@@ -273,6 +273,11 @@ describe('FakeEngine', () => {
       const session = await engine.createSession({});
       const page = await session.newPage();
       await page.navigate({ url: 'https://example.com' });
+      // Un-targeted upload needs exactly one file input on the page, like the
+      // real engines.
+      engine
+        .getFakePage(session.id, page.id)!
+        .seedElements([{ ref: 'e1_90', role: 'fileinput', name: 'doc' }]);
 
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ab-upload-'));
       const content = '%PDF-fake';
@@ -290,10 +295,89 @@ describe('FakeEngine', () => {
       // A missing path fails without mutating state (failures never bump).
       await expect(
         page.act({ type: 'upload', paths: [path.join(dir, 'missing.pdf')] })
-      ).rejects.toThrow(/ENOENT/);
+      ).rejects.toThrow(/File not found/);
+      expect(page.revision).toBe(before + 1);
+
+      // A directory is not a regular file: same INVALID_REQUEST shape,
+      // revision still untouched.
+      await expect(page.act({ type: 'upload', paths: [dir] })).rejects.toThrow(
+        /Not a regular file/
+      );
       expect(page.revision).toBe(before + 1);
 
       fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('should refuse an untargeted upload with no file input and mirror ambiguity detail', async () => {
+      const session = await engine.createSession({});
+      const page = await session.newPage();
+      await page.navigate({ url: 'https://example.com' });
+
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ab-upload-'));
+      const file = path.join(dir, 'resume.pdf');
+      fs.writeFileSync(file, 'x');
+
+      await expect(page.act({ type: 'upload', paths: [file] })).rejects.toMatchObject({
+        code: 'TARGET_NOT_FOUND',
+      });
+      const beforeAmbiguity = page.revision;
+
+      const fakePage = engine.getFakePage(session.id, page.id)!;
+      fakePage.seedElements([
+        { ref: 'e1_91', role: 'fileinput', name: 'doc', visible: false },
+        { ref: 'e1_92', role: 'fileinput', name: '', visible: true },
+      ]);
+      await expect(page.act({ type: 'upload', paths: [file] })).rejects.toMatchObject({
+        code: 'TARGET_AMBIGUOUS',
+        details: {
+          count: 2,
+          inputs: [
+            { index: 0, name: 'doc', visible: false },
+            { index: 1, visible: true },
+          ],
+          advice: expect.stringContaining('fileInputs'),
+        },
+      });
+      expect(page.revision).toBe(beforeAmbiguity);
+
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('should refuse a targeted upload whose ref was never minted', async () => {
+      const session = await engine.createSession({});
+      const page = await session.newPage();
+      await page.navigate({ url: 'https://example.com' });
+
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ab-upload-'));
+      const file = path.join(dir, 'resume.pdf');
+      fs.writeFileSync(file, 'x');
+      const before = page.revision;
+
+      await expect(
+        page.act({ type: 'upload', target: { ref: 'e1_77' }, paths: [file] })
+      ).rejects.toMatchObject({ code: 'TARGET_NOT_FOUND' });
+      expect(page.revision).toBe(before);
+
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('should hide file-input elements from observe unless the token asks for them', async () => {
+      const session = await engine.createSession({});
+      const page = await session.newPage();
+      await page.navigate({ url: 'https://example.com' });
+      engine.getFakePage(session.id, page.id)!.seedElements([
+        { ref: 'e1_93', role: 'fileinput', name: 'hidden', visible: false },
+        { ref: 'e1_94', role: 'fileinput', name: 'shown', visible: true },
+      ]);
+
+      const withoutToken = await page.observe({});
+      const without = withoutToken.elements.filter((el) => el.role === 'fileinput');
+      expect(without.map((el) => el.name)).toEqual(['shown']);
+
+      const withToken = await page.observe({ include: ['fileInputs'] });
+      const withEl = withToken.elements.filter((el) => el.role === 'fileinput');
+      expect(withEl.map((el) => el.name)).toEqual(['hidden', 'shown']);
+      expect(withEl[0].attributes).toEqual({});
     });
 
     it('should close page', async () => {

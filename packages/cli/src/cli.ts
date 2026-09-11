@@ -6,6 +6,7 @@
  * live server.
  */
 
+import { isAbsolute } from 'node:path';
 import type {
   ActionRequest,
   ActionResult,
@@ -421,13 +422,24 @@ export function buildCli(deps: CliDependencies): Cli {
         .option('--mode <mode>', 'interactive | content | accessibility')
         .option('--max-elements <n>', 'maximum elements to return')
         .option('--max-bytes <n>', 'maximum observation size in bytes')
+        .option(
+          '--include <token>',
+          'enrichment token, repeatable: overlays | fileInputs',
+          (token: string, acc: string[]) => [...acc, token],
+          []
+        )
         .action(
           action(
             async (
               ctx,
               sessionId: string,
               pageId: string,
-              options: { mode?: string; maxElements?: string; maxBytes?: string }
+              options: {
+                mode?: string;
+                maxElements?: string;
+                maxBytes?: string;
+                include?: string[];
+              }
             ) => {
               const request: ObservationRequest = {};
               if (options.mode) {
@@ -438,6 +450,9 @@ export function buildCli(deps: CliDependencies): Cli {
               }
               if (options.maxBytes) {
                 request.maxBytes = Number.parseInt(options.maxBytes, 10);
+              }
+              if (options.include && options.include.length > 0) {
+                request.include = options.include;
               }
 
               const observation = await ctx.client.sessions.observe(sessionId, pageId, request);
@@ -581,17 +596,38 @@ export function buildCli(deps: CliDependencies): Cli {
         .description('attach local file(s) to a file input (ref optional when the page has one)')
         .argument('<sessionId>')
         .argument('<pageId>')
-        .argument('[ref]', 'element ref of the file input; omitted = the only input[type=file]')
-        .argument('<paths...>', "local file path(s); they replace the input's current files")
+        .argument(
+          '[ref]',
+          'element ref of the file input; omitted = the only input[type=file] (an absolute path here is taken as the first file, not a ref)'
+        )
+        .argument(
+          '[paths...]',
+          "absolute local file path(s); they replace the input's current files"
+        )
         .action(
           action(
             async (
               ctx,
               sessionId: string,
               pageId: string,
-              ref: string | undefined,
-              paths: string[]
+              refArg: string | undefined,
+              pathsArg: string[]
             ) => {
+              // commander fills the optional [ref] before the variadic paths,
+              // so untargeted invocations parse their first path into the ref
+              // slot (`act upload SID PG /a.pdf /b.pdf` arrives as
+              // ref=/a.pdf, paths=[/b.pdf]). Refs are engine-minted short
+              // tokens and never absolute paths, so the reassignment is
+              // deterministic, not a guess.
+              let ref = refArg;
+              let paths = pathsArg;
+              if (ref !== undefined && isAbsolute(ref)) {
+                paths = [ref, ...paths];
+                ref = undefined;
+              }
+              if (paths.length === 0) {
+                throw new UsageError('upload requires at least one absolute file path');
+              }
               await runAction(ctx, sessionId, pageId, {
                 action: 'upload',
                 ...(ref ? { target: refTarget(ref) } : {}),

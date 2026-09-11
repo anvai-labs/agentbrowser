@@ -62,6 +62,19 @@ interface StoredElement {
   enabled: boolean;
   href?: string;
   hrefTruncated?: boolean;
+  /** Set on role:"fileinput" elements: binds by ordinal over input[type=file]. */
+  fileInputIndex?: number;
+  attributes?: Record<string, string>;
+}
+
+/** Per-input metadata shared by the fileInputs observe scan and ambiguity details. */
+interface FileInputInfo {
+  index: number;
+  name?: string;
+  id?: string;
+  accept?: string;
+  multiple?: boolean;
+  visible: boolean;
 }
 
 interface NodeBinding extends SnapshotEvidence {
@@ -1159,6 +1172,28 @@ class PlaywrightPage implements EnginePage {
       }
     }
 
+    // The ARIA snapshot never sees hidden <input type=file> elements, yet
+    // upload can attach to them through a bound ref - so include:["fileInputs"]
+    // scans the DOM for every file input, hidden ones included, and appends
+    // bindable elements after the accessibility-derived set.
+    if (request.include?.includes('fileInputs') === true) {
+      for (const info of await this.describeFileInputs()) {
+        elements.push({
+          ref: `e${this.revision}_${elements.length}`,
+          role: 'fileinput',
+          ...(info.name !== undefined ? { name: info.name } : {}),
+          visible: info.visible,
+          enabled: true,
+          fileInputIndex: info.index,
+          attributes: {
+            ...(info.id !== undefined ? { id: info.id } : {}),
+            ...(info.accept !== undefined ? { accept: info.accept } : {}),
+            ...(info.multiple ? { multiple: 'true' } : {}),
+          },
+        });
+      }
+    }
+
     // Rebuild the ref store from this observation: refs are deterministic
     // within a revision (document order), so the same element maps to the
     // same ref until the page mutates.
@@ -1177,9 +1212,14 @@ class PlaywrightPage implements EnginePage {
         const key = JSON.stringify([element.role, element.name ?? '']);
         const ordinal = ordinals.get(key) ?? 0;
         ordinals.set(key, ordinal + 1);
-        const locator = this.page
-          .getByRole(element.role as never, { name: element.name ?? '', exact: true })
-          .nth(ordinal);
+        // Role resolution excludes hidden nodes, so a file-input element can
+        // never be found via getByRole - bind it by ordinal instead.
+        const locator =
+          element.fileInputIndex !== undefined
+            ? this.page.locator('input[type=file]').nth(element.fileInputIndex)
+            : this.page
+                .getByRole(element.role as never, { name: element.name ?? '', exact: true })
+                .nth(ordinal);
         // Bind once to an actual node. An ordinal is never resolved anew at act time.
         if (await locator.count()) {
           const handle = await locator.elementHandle();
@@ -1192,7 +1232,14 @@ class PlaywrightPage implements EnginePage {
               documentSnapshot,
             };
             this.bindings.set(ref, binding);
-            binding.snapshot = snapshotDigest(await snapshotBudget.capture(locator));
+            // A display:none input has no stable aria snapshot and may make
+            // the capture throw outright; hidden targets never consult the
+            // snapshot gate in resolve(), so degrade to document evidence.
+            const captured =
+              element.fileInputIndex !== undefined
+                ? await snapshotBudget.capture(locator).catch(() => undefined)
+                : await snapshotBudget.capture(locator);
+            binding.snapshot = snapshotDigest(captured);
             const prior = previous.get(ref);
             if (
               previous.size > 0 &&
@@ -1362,6 +1409,45 @@ class PlaywrightPage implements EnginePage {
     }
 
     return elements;
+  }
+
+  /**
+   * One batched round-trip describing every <input type=file> in document
+   * order. Shared by the include:["fileInputs"] observe scan and the
+   * TARGET_AMBIGUOUS details so both surfaces report the same shapes.
+   * `visible` here is a layout-box heuristic; observe overwrites it with the
+   * authoritative Playwright isVisible for bound elements.
+   */
+  private async describeFileInputs(): Promise<FileInputInfo[]> {
+    return this.page.locator('input[type=file]').evaluateAll((nodes) =>
+      nodes.map((node, index) => {
+        const input = node as {
+          id: string;
+          accept: string;
+          multiple: boolean;
+          labels: ArrayLike<{ textContent: string | null }> | null;
+          getAttribute(name: string): string | null;
+          offsetWidth: number;
+          offsetHeight: number;
+        };
+        const firstLabel = input.labels === null ? undefined : input.labels[0];
+        const labelText = firstLabel?.textContent?.trim() || undefined;
+        const name =
+          input.getAttribute('aria-label')?.trim() ||
+          labelText ||
+          input.getAttribute('name')?.trim() ||
+          input.id.trim() ||
+          undefined;
+        return {
+          index,
+          ...(name !== undefined ? { name } : {}),
+          ...(input.id !== '' ? { id: input.id } : {}),
+          ...(input.accept !== '' ? { accept: input.accept } : {}),
+          multiple: input.multiple,
+          visible: input.offsetWidth > 0 || input.offsetHeight > 0,
+        };
+      })
+    );
   }
 
   /** Client-facing context for a refusal: which ref, in which revision, what it was. */
@@ -1778,8 +1864,12 @@ class PlaywrightPage implements EnginePage {
         for (const p of paths) {
           try {
             const s = await stat(p);
+            if (!s.isFile()) {
+              throw new EngineError('INVALID_REQUEST', `Not a regular file: ${p}`);
+            }
             files.push({ name: basename(p), size: s.size });
-          } catch {
+          } catch (error) {
+            if (error instanceof EngineError) throw error;
             throw new EngineError('INVALID_REQUEST', `File not found: ${p}`);
           }
         }
@@ -1789,6 +1879,12 @@ class PlaywrightPage implements EnginePage {
         // is described locally.
         let inputFiles: string[] | null = null;
         if (action.target) {
+          // Same-revision staleness gates still apply: resolve() passes
+          // hidden elements (its identity/snapshot checks only run for
+          // visible+enabled targets), so a detached ref refuses exactly like
+          // any other targeted action instead of failing inside Playwright.
+          // Only the visibility pre-check is skipped for this action.
+          await this.resolve(action.target as EngineTarget);
           const handle = this.locatorFor((action.target as EngineTarget).ref);
           await handle.setInputFiles(paths);
           inputFiles = await handle
@@ -1804,20 +1900,25 @@ class PlaywrightPage implements EnginePage {
             .catch(() => null);
           this.bumpRevision();
         } else {
-          // Un-targeted mode: hidden inputs get no ref from observe, so the
-          // single-file-input page is the common case; ambiguity is refused
-          // rather than guessed.
+          // Un-targeted mode: the single-file-input page is the common case;
+          // ambiguity is refused with per-input detail rather than guessed.
           const locator = this.page.locator('input[type=file]');
           const count = await locator.count();
           if (count === 0) {
             throw new EngineError('TARGET_NOT_FOUND', 'No file input found on the page');
           }
           if (count > 1) {
+            const inputs = await this.describeFileInputs();
             throw new EngineError(
               'TARGET_AMBIGUOUS',
-              `Page has ${count} file inputs; observe and target one by ref`,
+              `Page has ${count} file inputs; observe with include:["fileInputs"] and target one by ref`,
               false,
-              { count }
+              {
+                count,
+                inputs,
+                advice:
+                  'Call observe with include:["fileInputs"] to mint refs for every file input (hidden ones included), then pass target: { ref } to upload.',
+              }
             );
           }
           await locator.setInputFiles(paths);
