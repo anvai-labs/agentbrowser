@@ -7,6 +7,8 @@ describe('wire action contract', () => {
     { action: 'press', key: 'Enter' },
     { action: 'scroll', direction: 'down', amount: 250 },
     { action: 'wait', condition: { until: 'load' } },
+    { action: 'upload', paths: ['/tmp/x.pdf'] },
+    { action: 'upload', target: { ref: 'e1_0' }, paths: ['/tmp/a.pdf', '/tmp/b.pdf'] },
   ])('accepts untargeted $action', (action) => {
     expect(validateWireAction(action).ok).toBe(true);
   });
@@ -19,6 +21,9 @@ describe('wire action contract', () => {
     { action: 'wait' },
     { action: 'reload', target: {} },
     { action: 'click', target: { ref: 'e1_0' }, expectedRevision: -1 },
+    { action: 'upload' },
+    { action: 'upload', paths: [] },
+    { action: 'upload', paths: ['/tmp/x.pdf'], target: { ref: 'nope' } },
   ])('rejects invalid $action', (action) => {
     expect(validateWireAction(action).ok).toBe(false);
   });

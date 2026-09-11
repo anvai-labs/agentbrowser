@@ -1620,6 +1620,10 @@
                         "type": "string"
                       },
                       {
+                        "const": "upload",
+                        "type": "string"
+                      },
+                      {
                         "const": "scroll",
                         "type": "string"
                       },
@@ -1672,6 +1676,14 @@
                     "minItems": 1,
                     "type": "array",
                     "items": {
+                      "type": "string"
+                    }
+                  },
+                  "paths": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
                       "type": "string"
                     }
                   },
@@ -4201,6 +4213,39 @@
               {
                 "type": "object",
                 "required": [
+                  "type",
+                  "paths"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "upload",
+                    "type": "string"
+                  },
+                  "target": {
+                    "type": "object",
+                    "required": [
+                      "ref"
+                    ],
+                    "properties": {
+                      "ref": {
+                        "pattern": "^e\\d+_\\d+$",
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "paths": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
                   "type"
                 ],
                 "properties": {
@@ -5284,6 +5329,9 @@
           },
           "observation": {
             "$ref": "#/components/schemas/PageState"
+          },
+          "result": {
+            "description": "Evidence payload, present only for actions that produce one. upload reports the attached files: {success, files:[{name,size}], inputFiles?:[names]} (files from the validated local paths, inputFiles read back from the live input)."
           }
         }
       }

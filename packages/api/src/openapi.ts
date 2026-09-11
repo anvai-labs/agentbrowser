@@ -1054,6 +1054,12 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                 'The page revision after the action. Refs from earlier revisions are stale.',
             },
             observation: { $ref: '#/components/schemas/PageState' },
+            result: {
+              description:
+                'Evidence payload, present only for actions that produce one. ' +
+                'upload reports the attached files: {success, files:[{name,size}], inputFiles?:[names]} ' +
+                '(files from the validated local paths, inputFiles read back from the live input).',
+            },
           },
         },
       },

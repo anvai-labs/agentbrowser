@@ -382,6 +382,19 @@ export interface SelectAction extends Action {
 }
 
 /**
+ * Upload action: attach local file(s) to an <input type=file>. The target is
+ * optional because file inputs are hidden by design (no ref from observe);
+ * without a target the engine requires exactly one file input on the page.
+ * Playwright setInputFiles semantics: the given paths REPLACE the input's
+ * file list.
+ */
+export interface UploadAction extends Action {
+  type: 'upload';
+  target?: ElementTarget;
+  paths: string[];
+}
+
+/**
  * Scroll action
  */
 export interface ScrollAction extends Action {
@@ -426,6 +439,7 @@ export type SupportedAction =
   | CheckAction
   | UncheckAction
   | SelectAction
+  | UploadAction
   | ScrollAction
   | PressAction
   | WaitAction
@@ -528,6 +542,7 @@ export const DELIVERED_ACTION_TYPES = [
   'check',
   'uncheck',
   'select',
+  'upload',
   'scroll',
   'press',
   'wait',

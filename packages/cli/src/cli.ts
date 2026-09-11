@@ -577,6 +577,31 @@ export function buildCli(deps: CliDependencies): Cli {
         );
 
       act
+        .command('upload')
+        .description('attach local file(s) to a file input (ref optional when the page has one)')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('[ref]', 'element ref of the file input; omitted = the only input[type=file]')
+        .argument('<paths...>', "local file path(s); they replace the input's current files")
+        .action(
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              pageId: string,
+              ref: string | undefined,
+              paths: string[]
+            ) => {
+              await runAction(ctx, sessionId, pageId, {
+                action: 'upload',
+                ...(ref ? { target: refTarget(ref) } : {}),
+                paths,
+              });
+            }
+          )
+        );
+
+      act
         .command('hover')
         .description('hover an element (non-mutating)')
         .argument('<sessionId>')
