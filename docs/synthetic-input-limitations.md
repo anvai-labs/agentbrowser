@@ -39,7 +39,13 @@ rejected synthetic clicks outright.
    the next observation: new URL, new elements, revision bump. Where an action is
    critical, use `observe: 'after'` and check for the expected effect before
    proceeding.
-4. **Hand the step to a human.** When the control refuses synthetic input
+4. **Attach files through `upload`, never by clicking the picker.** File
+   attachment needs no synthetic click on a file input at all:
+   [ADR-018](adr/018-upload-action.md) sets the file list through the browser's own
+   machinery (the target ref is optional — hidden file inputs usually have no ref).
+   The result reports the attached files as evidence; verify the page accepted them
+   by observation, same rule as everything else.
+5. **Hand the step to a human.** When the control refuses synthetic input
    categorically (payment confirmations, MFA, turnstile-class walls), that step is not
    an automation problem — it is a
    [human handoff](human-handoff.md).

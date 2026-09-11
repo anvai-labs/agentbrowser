@@ -368,8 +368,11 @@ function buildTools(client: McpClient): ToolDefinition[] {
       name: 'browser_act',
       description:
         'Perform an action on an element by ref: click, dblclick, hover, fill, clear, ' +
-        'check, uncheck, select, scroll, press, wait, goBack, goForward, reload, or ' +
+        'check, uncheck, select, upload, scroll, press, wait, goBack, goForward, reload, or ' +
         'handle a dialog. ' +
+        'upload attaches local file(s) (paths array) to a file input; its target ref is ' +
+        'optional because hidden file inputs are not observed - with no ref the page must ' +
+        'have exactly one input[type=file]. ' +
         'Elements are addressed by the ref from browser_observe, never by CSS selector or ' +
         'XPath. If the page changed since the observation, the action fails with ' +
         'STALE_TARGET: call browser_observe again and use the new refs; do not retry the old one. ' +

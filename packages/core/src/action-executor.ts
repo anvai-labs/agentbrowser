@@ -201,6 +201,11 @@ export class ActionExecutor {
           return invalidRequest('Select action requires a non-empty values parameter');
         }
         break;
+      case 'upload':
+        if (!action.paths || action.paths.length === 0) {
+          return invalidRequest('Upload action requires a non-empty paths parameter');
+        }
+        break;
       case 'press':
         if (!action.key) {
           return invalidRequest('Press action requires a key parameter');
