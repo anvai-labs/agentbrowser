@@ -626,5 +626,27 @@ describe('ActionExecutor', () => {
       expect(result.error?.code).toBe('INVALID_REQUEST');
       expect(result.error?.message).toContain('evaluate');
     });
+
+    it('should require a non-empty paths array for upload', async () => {
+      const result = await executor.execute(req({ type: 'upload', paths: [] } as any), {
+        enginePage: mockEnginePage,
+        observation: mockObservation,
+      });
+
+      expect(result.error?.code).toBe('INVALID_REQUEST');
+      expect(mockEnginePage.resolve).not.toHaveBeenCalled();
+    });
+
+    it('should reject relative upload paths before touching the engine', async () => {
+      const result = await executor.execute(
+        req({ type: 'upload', paths: ['/abs/resume.pdf', 'relative/evidence.txt'] } as any),
+        { enginePage: mockEnginePage, observation: mockObservation }
+      );
+
+      expect(result.error?.code).toBe('INVALID_REQUEST');
+      expect(result.error?.message).toContain('absolute');
+      expect(mockEnginePage.resolve).not.toHaveBeenCalled();
+      expect(result.newRevision).toBe(mockObservation.revision);
+    });
   });
 });

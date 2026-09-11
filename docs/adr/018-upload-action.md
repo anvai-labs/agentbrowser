@@ -44,9 +44,10 @@ every surface derives from the one `DELIVERED_ACTION_TYPES` tuple):
 { "action": "upload", "target": { "ref": "e3_7" }, "paths": ["/abs/a.pdf"] }
 ```
 
-- `paths` is required, 1..n, and **replaces** the input's file list
-  (Playwright `setInputFiles` semantics — a second `upload` swaps the
-  attachment, it does not append).
+- `paths` is required, 1..n, **absolute** (the server resolves relative
+  paths against its own process cwd, which is meaningless to the caller),
+  and **replaces** the input's file list (Playwright `setInputFiles`
+  semantics — a second `upload` swaps the attachment, it does not append).
 - `target` is **optional**. With a ref, the engine binds the observed
   element; the visibility pre-check is skipped for this action (hidden
   inputs are the normal case). Without a ref, the engine addresses
@@ -54,9 +55,14 @@ every surface derives from the one `DELIVERED_ACTION_TYPES` tuple):
   `TARGET_NOT_FOUND`, more than one is `TARGET_AMBIGUOUS` — ambiguity is
   refused, never guessed.
 - **Local paths are validated by `stat` before any page contact.** A missing
-  file is `INVALID_REQUEST` and leaves page and revision untouched; the
-  server already reads local files for screenshots/artifacts, so this
-  touches no new trust boundary.
+  path, or one that is not a regular file (a directory counts), is
+  `INVALID_REQUEST` and leaves page and revision untouched; the server
+  already reads local files for screenshots/artifacts, so this touches no
+  new trust boundary. A targeted `upload` still runs the same-revision
+  staleness gates (`resolve()` + binding liveness) as every other targeted
+  action — only the visibility pre-check is skipped for it, so a detached
+  ref fails `STALE_TARGET` with `remapEligible: true`, not a raw engine
+  error.
 - **Evidence, not assertion:** the result reports `files: [{name, size}]`
   from the stat'd paths *and* `inputFiles: [names]` read back from the live
   input via a bound handle before the revision bump — the same

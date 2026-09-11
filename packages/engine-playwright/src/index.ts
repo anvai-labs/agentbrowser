@@ -1778,8 +1778,12 @@ class PlaywrightPage implements EnginePage {
         for (const p of paths) {
           try {
             const s = await stat(p);
+            if (!s.isFile()) {
+              throw new EngineError('INVALID_REQUEST', `Not a regular file: ${p}`);
+            }
             files.push({ name: basename(p), size: s.size });
-          } catch {
+          } catch (error) {
+            if (error instanceof EngineError) throw error;
             throw new EngineError('INVALID_REQUEST', `File not found: ${p}`);
           }
         }
@@ -1789,6 +1793,12 @@ class PlaywrightPage implements EnginePage {
         // is described locally.
         let inputFiles: string[] | null = null;
         if (action.target) {
+          // Same-revision staleness gates still apply: resolve() passes
+          // hidden elements (its identity/snapshot checks only run for
+          // visible+enabled targets), so a detached ref refuses exactly like
+          // any other targeted action instead of failing inside Playwright.
+          // Only the visibility pre-check is skipped for this action.
+          await this.resolve(action.target as EngineTarget);
           const handle = this.locatorFor((action.target as EngineTarget).ref);
           await handle.setInputFiles(paths);
           inputFiles = await handle

@@ -130,10 +130,13 @@ and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 | `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS` | service | Operator-level default idle timeout (ms); per-session `idleTimeoutMs` still wins. Unset/garbage → the 10-min default. Useful for deployments that are mostly headed human-in-the-loop flows. |
 | `AGENTBROWSER_SNAPSHOT_TIMEOUT_MS` | service (Playwright engine) | Shared snapshot-wait budget per observation and timeout per action-time semantic check, in integer ms (1–30000; default 1000). Invalid environment values use the default; invalid explicit engine options throw. Timed-out element captures use a successful whole-document accessibility snapshot as fallback evidence, which must still match before acting. Unrelated document changes can therefore stale a fallback ref; observe again. Missing semantic evidence refuses actions, and non-timeout errors propagate. This bounds snapshot waiting, not all observation DOM work. |
 
-Port and bind address default to `5709` on `0.0.0.0`
-(`ServerOptions`; port selection rationale in
-[ADR-017](adr/017-default-port-5709.md)); when exposing the service
-beyond localhost, set
+Port defaults to `5709`; the service binds loopback (`127.0.0.1`) by
+default because it reads local files on the operator's behalf
+(screenshots, upload paths) — network exposure is an explicit opt-in via
+`HOST=0.0.0.0` (or `options.host`; the Dockerfile sets this for
+container port publishing). See `ServerOptions`; port selection
+rationale in [ADR-017](adr/017-default-port-5709.md). When exposing the
+service beyond localhost, set
 `AGENTBROWSER_API_KEYS` first — the egress policy constrains what
 *browser sessions* may reach, not who may reach the *service*.
 

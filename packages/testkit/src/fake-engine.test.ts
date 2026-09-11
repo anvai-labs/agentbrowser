@@ -290,7 +290,14 @@ describe('FakeEngine', () => {
       // A missing path fails without mutating state (failures never bump).
       await expect(
         page.act({ type: 'upload', paths: [path.join(dir, 'missing.pdf')] })
-      ).rejects.toThrow(/ENOENT/);
+      ).rejects.toThrow(/File not found/);
+      expect(page.revision).toBe(before + 1);
+
+      // A directory is not a regular file: same INVALID_REQUEST shape,
+      // revision still untouched.
+      await expect(page.act({ type: 'upload', paths: [dir] })).rejects.toThrow(
+        /Not a regular file/
+      );
       expect(page.revision).toBe(before + 1);
 
       fs.rmSync(dir, { recursive: true, force: true });

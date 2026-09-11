@@ -8,7 +8,7 @@
 import { FakeEngine } from '@agentbrowser/testkit';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { buildServer } from './server';
+import { buildServer, startServer } from './server';
 
 describe('AgentBrowser REST API', () => {
   let server: FastifyInstance;
@@ -1904,5 +1904,26 @@ describe('session page visibility', () => {
     const pagesResponse = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages`);
     const { pages } = await pagesResponse.json();
     expect(pages).toHaveLength(0);
+  });
+});
+
+describe('startServer defaults', () => {
+  it('binds loopback when neither options nor HOST configure an interface', async () => {
+    const savedHost = process.env.HOST;
+    Reflect.deleteProperty(process.env, 'HOST');
+    let server: FastifyInstance | undefined;
+    try {
+      server = await startServer({ port: 0 });
+      // The service reads local files on the caller's behalf (screenshots,
+      // upload paths) - the unconfigured default must never be 0.0.0.0.
+      expect(server.server.address()).toMatchObject({ address: '127.0.0.1' });
+    } finally {
+      if (savedHost === undefined) {
+        Reflect.deleteProperty(process.env, 'HOST');
+      } else {
+        process.env.HOST = savedHost;
+      }
+      await server?.close();
+    }
   });
 });
