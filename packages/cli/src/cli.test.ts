@@ -366,6 +366,50 @@ describe('AgentBrowser CLI', () => {
       expect(err.join('\n')).toContain('button.submit');
     });
 
+    it('upload: takes a single absolute path as the file list, not a ref', async () => {
+      // commander fills [ref] before the variadic paths, so the natural
+      // no-ref invocation would otherwise die as "missing required argument
+      // 'paths'". Refs are never absolute paths, so the shift is safe.
+      const code = await run('act', 'upload', 'ses_1', 'pg_1', '/tmp/resume.pdf');
+
+      expect(code).toBe(0);
+      expect(sessions.executeAction).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        action: 'upload',
+        paths: ['/tmp/resume.pdf'],
+      });
+    });
+
+    it('upload: still targets by ref when a ref is given with paths', async () => {
+      const code = await run('act', 'upload', 'ses_1', 'pg_1', 'e1_0', '/tmp/resume.pdf');
+
+      expect(code).toBe(0);
+      expect(sessions.executeAction).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        action: 'upload',
+        target: { ref: 'e1_0' },
+        paths: ['/tmp/resume.pdf'],
+      });
+    });
+
+    it('upload: multiple paths bind untargeted', async () => {
+      // The first path lands in commander's [ref] slot; an absolute token
+      // there is reassigned to the paths list.
+      const code = await run('act', 'upload', 'ses_1', 'pg_1', '/tmp/a.pdf', '/tmp/b.pdf');
+
+      expect(code).toBe(0);
+      expect(sessions.executeAction).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        action: 'upload',
+        paths: ['/tmp/a.pdf', '/tmp/b.pdf'],
+      });
+    });
+
+    it('upload: refuses with a usage error when no path is given', async () => {
+      const code = await run('act', 'upload', 'ses_1', 'pg_1');
+
+      expect(code).toBe(1);
+      expect(sessions.executeAction).not.toHaveBeenCalled();
+      expect(err.join('\n')).toContain('at least one absolute file path');
+    });
+
     it('should surface the new revision', async () => {
       await run('act', 'click', 'ses_1', 'pg_1', 'e1_0');
 
