@@ -591,6 +591,30 @@ class FakePage implements EnginePage {
         this.revision++;
         break;
       }
+      case 'upload': {
+        // Evidence mirrors the real engines: stat the paths (honest ENOENT
+        // failure, revision untouched) and report what was attached.
+        const paths = (action.paths as string[] | undefined) ?? [];
+        if (paths.length === 0) {
+          throw new Error('upload requires at least one path');
+        }
+        const { stat } = await import('node:fs/promises');
+        const { basename } = await import('node:path');
+        const files: Array<{ name: string; size: number }> = [];
+        for (const p of paths) {
+          const s = await stat(p);
+          files.push({ name: basename(p), size: s.size });
+        }
+        this.revision++;
+        return {
+          actionId,
+          startTimestamp,
+          endTimestamp: new Date().toISOString(),
+          oldRevision,
+          newRevision: this.revision,
+          result: { success: true, files },
+        };
+      }
       case 'navigate':
         await this.navigate({ url: action.url as string });
         break;
