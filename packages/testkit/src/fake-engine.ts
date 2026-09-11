@@ -29,6 +29,7 @@ import type {
   ResolvedTarget,
   ScreenshotRequest,
 } from '@agentbrowser/engine';
+import { EngineError } from '@agentbrowser/engine';
 import { DELIVERED_ACTION_TYPES, DELIVERED_OBSERVATION_MODES } from '@agentbrowser/protocol';
 
 /**
@@ -592,8 +593,9 @@ class FakePage implements EnginePage {
         break;
       }
       case 'upload': {
-        // Evidence mirrors the real engines: stat the paths (honest ENOENT
-        // failure, revision untouched) and report what was attached.
+        // Evidence mirrors the real engines: stat the paths (honest caller
+        // mistakes fail as INVALID_REQUEST before page contact, revision
+        // untouched) and report what was attached.
         const paths = (action.paths as string[] | undefined) ?? [];
         if (paths.length === 0) {
           throw new Error('upload requires at least one path');
@@ -602,8 +604,16 @@ class FakePage implements EnginePage {
         const { basename } = await import('node:path');
         const files: Array<{ name: string; size: number }> = [];
         for (const p of paths) {
-          const s = await stat(p);
-          files.push({ name: basename(p), size: s.size });
+          try {
+            const s = await stat(p);
+            if (!s.isFile()) {
+              throw new EngineError('INVALID_REQUEST', `Not a regular file: ${p}`);
+            }
+            files.push({ name: basename(p), size: s.size });
+          } catch (error) {
+            if (error instanceof EngineError) throw error;
+            throw new EngineError('INVALID_REQUEST', `File not found: ${p}`);
+          }
         }
         this.revision++;
         return {

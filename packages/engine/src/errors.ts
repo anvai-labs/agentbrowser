@@ -51,6 +51,10 @@ export function normalizeEngineError(error: unknown, operation = 'act'): ApiErro
     code = operation === 'navigate' ? ErrorCode.NAVIGATION_TIMEOUT : ErrorCode.ACTION_TIMEOUT;
   } else if (/no dialog/i.test(message)) {
     code = ErrorCode.INVALID_REQUEST;
+  } else if (/not an <input type=['"]?file/i.test(message)) {
+    // Playwright's setInputFiles refusal on a non-file element - a caller
+    // mistake (wrong ref type), not a server fault.
+    code = ErrorCode.INVALID_REQUEST;
   }
   return {
     code,

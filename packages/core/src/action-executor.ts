@@ -7,6 +7,7 @@
  * `ActionResult` - the executor never throws for an expected failure mode.
  */
 
+import { isAbsolute } from 'node:path';
 import type { ActionEffect, EngineAction, EnginePage, ResolvedTarget } from '@agentbrowser/engine';
 import { normalizeEngineError } from '@agentbrowser/engine';
 import {
@@ -201,11 +202,18 @@ export class ActionExecutor {
           return invalidRequest('Select action requires a non-empty values parameter');
         }
         break;
-      case 'upload':
+      case 'upload': {
         if (!action.paths || action.paths.length === 0) {
           return invalidRequest('Upload action requires a non-empty paths parameter');
         }
+        // Paths must be absolute: the server resolves relative paths against
+        // its own process cwd, which is meaningless to the caller and a
+        // silent foot-gun when the server runs on another host.
+        if (action.paths.some((p) => !isAbsolute(p))) {
+          return invalidRequest('Upload paths must be absolute filesystem paths');
+        }
         break;
+      }
       case 'press':
         if (!action.key) {
           return invalidRequest('Press action requires a key parameter');

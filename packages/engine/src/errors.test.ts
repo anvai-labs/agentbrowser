@@ -29,4 +29,11 @@ describe('adapter error normalization', () => {
       retryable: false,
     });
   });
+  it('maps the non-file-input setInputFiles refusal to INVALID_REQUEST', () => {
+    const message = "File input element is not an <input type='file'> - check the element type";
+    expect(normalizeEngineError(new Error(message), 'act')).toMatchObject({
+      code: 'INVALID_REQUEST',
+      retryable: false,
+    });
+  });
 });

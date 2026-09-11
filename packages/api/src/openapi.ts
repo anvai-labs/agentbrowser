@@ -517,6 +517,11 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                         step: { type: 'integer' },
                         ok: { type: 'boolean' },
                         actionId: { type: 'string' },
+                        result: {
+                          description:
+                            'Per-step evidence payload, present only for steps that produce one ' +
+                            '(upload reports the attached files), matching the single-act result.',
+                        },
                         error: { type: 'string' },
                       },
                     },

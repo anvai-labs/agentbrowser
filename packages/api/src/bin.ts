@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Server entrypoint. Port and host can be set via the PORT/HOST environment
- * variables or the ServerOptions defaults (5709 on 0.0.0.0).
+ * variables or the ServerOptions defaults (5709 on 127.0.0.1; set HOST=0.0.0.0
+ * for network/container exposure).
  */
 
 import { MetricsRegistry, StructuredLogger } from '@agentbrowser/core';

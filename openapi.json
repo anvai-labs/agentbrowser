@@ -933,6 +933,9 @@
                           "actionId": {
                             "type": "string"
                           },
+                          "result": {
+                            "description": "Per-step evidence payload, present only for steps that produce one (upload reports the attached files), matching the single-act result."
+                          },
                           "error": {
                             "type": "string"
                           }

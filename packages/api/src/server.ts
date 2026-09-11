@@ -1121,7 +1121,12 @@ export async function startServer(options: ServerOptions = {}): Promise<FastifyI
   // PORT/HOST let a supervisor (the SDK's managed launcher, containers)
   // place the server without code changes.
   const port = options.port ?? envPort() ?? 5709;
-  const host = options.host ?? process.env.HOST ?? '0.0.0.0';
+  // Loopback by default: the service is a local agent's browser and reads
+  // local files on its behalf (screenshots, upload paths) - exposing that
+  // to every interface by default would make the LAN a trust boundary the
+  // operator never chose. Network exposure is an explicit HOST/options.host
+  // (the Dockerfile sets HOST=0.0.0.0 for container port publishing).
+  const host = options.host ?? process.env.HOST ?? '127.0.0.1';
 
   await server.listen({ port, host });
   console.log(`Server listening on ${host}:${port}`);

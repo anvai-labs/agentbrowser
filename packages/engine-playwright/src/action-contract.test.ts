@@ -108,4 +108,63 @@ describe('real action wire semantics', () => {
       await engine.close();
     }
   });
+
+  it('refuses a directory path as not a regular file, revision untouched', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({
+        url: 'data:text/html,<body><input type="file" style="display:none"></body>',
+      });
+      const dir = await mkdtemp(join(tmpdir(), 'ab-upload-'));
+      const before = (await page.observe({})).revision;
+      await expect(page.act({ type: 'upload', paths: [dir] })).rejects.toMatchObject({
+        code: 'INVALID_REQUEST',
+        message: expect.stringContaining('Not a regular file'),
+      });
+      expect((await page.observe({})).revision).toBe(before);
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('reports STALE_TARGET with remapEligible for a targeted upload whose element was detached', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      // Visible input so observe mints a ref. The page detaches it shortly
+      // after load WITHOUT any agent action (no revision bump): the binding
+      // outlives the node, and the targeted upload must refuse exactly like
+      // any other targeted action - STALE_TARGET, remap-eligible.
+      await page.navigate({
+        url:
+          'data:text/html,<body><input type="file" aria-label="Doc">' +
+          '<script>setTimeout(function(){' +
+          'var el=document.querySelector("input");' +
+          'el.replaceWith(el.cloneNode(true));' +
+          '},400);</script></body>',
+      });
+      const input = (await page.observe({ mode: 'interactive' })).elements.find(
+        (element) => element.name === 'Doc'
+      );
+      if (!input) throw new Error('Missing fixture file input');
+      const ref = input.ref;
+
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      const dir = await mkdtemp(join(tmpdir(), 'ab-upload-'));
+      const filePath = join(dir, 'sample.txt');
+      await writeFile(filePath, 'x');
+
+      await expect(
+        page.act({ type: 'upload', target: { ref }, paths: [filePath] })
+      ).rejects.toMatchObject({
+        code: 'STALE_TARGET',
+        details: { remapEligible: true },
+      });
+    } finally {
+      await engine.close();
+    }
+  });
 });

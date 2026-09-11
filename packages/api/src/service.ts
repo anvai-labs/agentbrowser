@@ -201,6 +201,8 @@ export interface ServiceBatchStepResult {
   actionId?: string;
   /** Present when this step was healed by the opt-in remap (F2). */
   remap?: { from: string; to: string } | undefined;
+  /** Per-action evidence (upload: attached files), matching single-act. */
+  result?: unknown;
   error?: string;
 }
 
@@ -1137,6 +1139,7 @@ export class AgentBrowserService {
       ok: boolean;
       actionId?: string;
       remap?: { from: string; to: string };
+      result?: unknown;
       error?: string;
     }>;
     mode: 'stable' | 'verified';
@@ -1149,6 +1152,7 @@ export class AgentBrowserService {
       ok: boolean;
       actionId?: string;
       remap?: { from: string; to: string };
+      result?: unknown;
       error?: string;
     }> = [];
     const churnKey = this.churnKey(sessionId, pageId);
@@ -1206,6 +1210,7 @@ export class AgentBrowserService {
           ok: true,
           actionId: effect.actionId,
           ...(effect.remap !== undefined ? { remap: effect.remap } : {}),
+          ...(effect.result !== undefined ? { result: effect.result } : {}),
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

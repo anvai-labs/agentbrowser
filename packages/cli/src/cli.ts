@@ -582,7 +582,10 @@ export function buildCli(deps: CliDependencies): Cli {
         .argument('<sessionId>')
         .argument('<pageId>')
         .argument('[ref]', 'element ref of the file input; omitted = the only input[type=file]')
-        .argument('<paths...>', "local file path(s); they replace the input's current files")
+        .argument(
+          '<paths...>',
+          "absolute local file path(s); they replace the input's current files"
+        )
         .action(
           action(
             async (
