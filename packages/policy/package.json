@@ -1,6 +1,6 @@
 {
   "name": "@agentbrowser/policy",
-  "version": "1.8.7",
+  "version": "1.8.9",
   "private": true,
   "type": "module",
   "description": "Network policy enforcement for SSRF defense and safety",
