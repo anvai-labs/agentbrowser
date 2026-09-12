@@ -1086,7 +1086,9 @@ export class AgentBrowserService {
         raw = await page.enginePage.observe({});
       } catch (error) {
         if (this.isCrash(error)) {
-          const errorDetail = error instanceof Error ? error.message : String(error);
+          const errorDetail = this.secretManager.redact(
+            error instanceof Error ? error.message : String(error)
+          );
           await this.recoverFromCrash(sessionId, 'exportHtml: engine crashed', errorDetail);
           throw new ServiceError(
             'ENGINE_CRASHED',
@@ -1685,7 +1687,9 @@ export class AgentBrowserService {
         });
       } catch (error) {
         if (this.isCrash(error)) {
-          const errorDetail = error instanceof Error ? error.message : String(error);
+          const errorDetail = this.secretManager.redact(
+            error instanceof Error ? error.message : String(error)
+          );
           await this.recoverFromCrash(sessionId, 'navigate: engine crashed', errorDetail);
           throw new ServiceError(
             'ENGINE_CRASHED',
@@ -1749,7 +1753,9 @@ export class AgentBrowserService {
       raw = await page.enginePage.observe(observationRequest);
     } catch (error) {
       if (this.isCrash(error)) {
-        const errorDetail = error instanceof Error ? error.message : String(error);
+        const errorDetail = this.secretManager.redact(
+          error instanceof Error ? error.message : String(error)
+        );
         await this.recoverFromCrash(sessionId, 'observe: engine crashed', errorDetail);
         throw new ServiceError(
           'ENGINE_CRASHED',
@@ -2027,13 +2033,14 @@ export class AgentBrowserService {
         // A crash inside the executor surfaces as an INTERNAL whose message
         // names the crash; recover before rethrowing the typed error.
         if (result.error.code === 'ENGINE_CRASHED') {
-          await this.recoverFromCrash(sessionId, 'act: engine crashed', result.error.message);
+          const errorDetail = this.secretManager.redact(result.error.message);
+          await this.recoverFromCrash(sessionId, 'act: engine crashed', errorDetail);
           throw this.redactedError(
             new ServiceError(
               'ENGINE_CRASHED',
               'The browser engine crashed; the session has been terminated.',
               false,
-              { sessionId, errorDetail: result.error.message }
+              { sessionId, errorDetail }
             )
           );
         }
@@ -2459,7 +2466,9 @@ export class AgentBrowserService {
         captured = await page.enginePage.pdf(request);
       } catch (error) {
         if (this.isCrash(error)) {
-          const errorDetail = error instanceof Error ? error.message : String(error);
+          const errorDetail = this.secretManager.redact(
+            error instanceof Error ? error.message : String(error)
+          );
           await this.recoverFromCrash(sessionId, 'pdf: engine crashed', errorDetail);
           throw new ServiceError(
             'ENGINE_CRASHED',
@@ -2700,7 +2709,9 @@ export class AgentBrowserService {
         raw = await page.enginePage.observe({});
       } catch (error) {
         if (this.isCrash(error)) {
-          const errorDetail = error instanceof Error ? error.message : String(error);
+          const errorDetail = this.secretManager.redact(
+            error instanceof Error ? error.message : String(error)
+          );
           await this.recoverFromCrash(sessionId, 'extract: engine crashed', errorDetail);
           throw new ServiceError(
             'ENGINE_CRASHED',
@@ -2886,7 +2897,9 @@ export class AgentBrowserService {
         captured = await page.enginePage.screenshot(request);
       } catch (error) {
         if (this.isCrash(error)) {
-          const errorDetail = error instanceof Error ? error.message : String(error);
+          const errorDetail = this.secretManager.redact(
+            error instanceof Error ? error.message : String(error)
+          );
           await this.recoverFromCrash(sessionId, 'screenshot: engine crashed', errorDetail);
           throw new ServiceError(
             'ENGINE_CRASHED',

@@ -1295,13 +1295,15 @@ describe('AgentBrowserService', () => {
 
   describe('secret-safe credential handling', () => {
     const SECRET_VALUE = 'correct-horse-battery-staple';
+    let secretEngine: FakeEngine;
     let secretService: AgentBrowserService;
     let secretSessionId: string;
     let secretPageId: string;
 
     beforeEach(async () => {
+      secretEngine = new FakeEngine();
       secretService = new AgentBrowserService({
-        engine: new FakeEngine(),
+        engine: secretEngine,
         secretManager: new SecretManager({ 'vault://tenant/login/password': SECRET_VALUE }),
       });
       secretSessionId = (await secretService.createSession({ tenantId: 'sec' })).sessionId;
@@ -1356,6 +1358,25 @@ describe('AgentBrowserService', () => {
 
       expect(error?.code).toBe('INVALID_REQUEST');
       expect(error?.details).toMatchObject({ reason: 'SECRET_NOT_FOUND' });
+    });
+
+    it('should redact a secret embedded in an engine crash message', async () => {
+      // A crash mid-fill could echo the in-flight page content (or, on a
+      // careless engine, the value itself) back in its error message -
+      // that message must not reach the crash log or the client raw.
+      const ids = secretEngine.getSessionIds();
+      secretEngine
+        .getFakePage(ids[ids.length - 1]!, secretPageId)
+        ?.crash(`target closed while bound to field value ${SECRET_VALUE}`);
+
+      const error = await capture(() => secretService.observe(secretSessionId, secretPageId, {}));
+
+      expect(error?.code).toBe('ENGINE_CRASHED');
+      expect(JSON.stringify(error?.details)).not.toContain(SECRET_VALUE);
+
+      const log = secretService.getCrashLog();
+      expect(JSON.stringify(log)).not.toContain(SECRET_VALUE);
+      expect(log[log.length - 1]?.errorDetail).toContain('***');
     });
 
     it('should redact secrets from error payloads', async () => {
