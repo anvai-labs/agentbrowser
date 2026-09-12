@@ -1,6 +1,6 @@
 {
   "name": "@agentbrowser/engine",
-  "version": "1.8.9",
+  "version": "1.8.10",
   "private": true,
   "description": "BrowserEngine interface and engine-neutral types",
   "main": "./dist/index.js",

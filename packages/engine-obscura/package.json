@@ -1,6 +1,6 @@
 {
   "name": "@agentbrowser/engine-obscura",
-  "version": "1.8.9",
+  "version": "1.8.10",
   "private": true,
   "type": "module",
   "description": "Obscura engine adapter: binary acquisition, process lifecycle, and a BrowserEngine composing the CDP path",
