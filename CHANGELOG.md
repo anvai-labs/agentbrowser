@@ -5,6 +5,23 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [1.8.10] — 2026-09-12
+
+### Fixed
+
+- Egress choke point (`installEgress()`) corrupted body-bearing uploads: its
+  `route.fetch()`/`route.fulfill()` replay did not preserve request bodies
+  with the fidelity some upload flows require, causing signature-checked
+  multipart uploads (e.g. S3 presigned-POST, a common direct-to-cloud-storage
+  pattern) to fail with a 400 even though the identical request succeeds when
+  sent natively (#137). `POST`/`PUT`/`PATCH` requests now take the same
+  hostname/IP-range verdict check but call `route.continue()` instead,
+  leaving `GET`/`HEAD` on the original fetch/fulfill path for redirect-hop
+  and response-size inspection. The SSRF-relevant guarantee is unchanged;
+  what's given up for these methods is redirect-hop re-checking and
+  response-size/body-size capping — see
+  [ADR-006](docs/adr/006-network-egress-policy-ssrf.md).
+
 ## [1.8.9] — 2026-09-11
 
 Post-release hardening for the `upload` action and the hidden-file-input
