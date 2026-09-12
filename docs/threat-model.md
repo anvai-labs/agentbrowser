@@ -52,6 +52,17 @@ proves the control works. Residual risks are named, not hidden.
   checks apply only to routed responses; actual bytes are checked after buffering,
   not as a peak-memory bound. Later redirect responses can bypass them. Direct
   downloads separately enforce streaming decoded-byte limits.
+- **Body-bearing request fidelity (RESOLVED 2026-09-12)**: the fetch/fulfill
+  choke point's response-inspection benefit came at the cost of request-body
+  fidelity for `POST`/`PUT`/`PATCH` — Playwright's `route.fetch()` re-issue does
+  not preserve some request bodies byte-for-byte (confirmed: an S3 presigned-POST
+  multipart upload, a common direct-to-cloud-storage pattern, fails S3's
+  signature check when replayed this way, though it succeeds natively). Unlike
+  the other gaps in this list, this was not a hole in the SSRF boundary itself —
+  it was the enforcement mechanism corrupting traffic it already intended to
+  allow. Fixed by routing these methods through `route.continue()` after the
+  same target-verdict check, trading away redirect-hop re-checking and
+  response-size capping for these methods specifically (see ADR-006).
 - **OS containment (NOT SHIPPED)**: the accepted contained Chromium profile
   requires an external gateway and OS-enforced gateway-only egress. Native local
   operation remains available without that guarantee. Full ADR-008 multi-tenant

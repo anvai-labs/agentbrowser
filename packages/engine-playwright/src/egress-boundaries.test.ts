@@ -40,7 +40,7 @@ describe('egress revalidation', () => {
     const fetch = vi.fn(async () => response);
     const fulfill = vi.fn(async () => {});
     const route = {
-      request: () => ({ url: () => 'https://example.test/' }),
+      request: () => ({ url: () => 'https://example.test/', method: () => 'GET' }),
       fetch,
       fulfill,
       abort: vi.fn(),
@@ -60,5 +60,95 @@ describe('egress revalidation', () => {
     fulfill.mockRejectedValueOnce(new Error('context closed during fulfill'));
     await expect(routeHandler(route)).resolves.toBeUndefined();
     expect(route.abort).not.toHaveBeenCalled();
+  });
+});
+
+describe('egress body-bearing request passthrough', () => {
+  async function installHandler(policy: {
+    checkRequest: () => Promise<void>;
+  }): Promise<(route: unknown) => Promise<void>> {
+    let routeHandler: ((route: unknown) => Promise<void>) | undefined;
+    const engine = new PlaywrightChromiumEngine();
+    await (
+      engine as unknown as {
+        installEgress(context: unknown, policy: unknown, sink: unknown): Promise<void>;
+      }
+    ).installEgress(
+      {
+        route: async (_pattern: string, handler: typeof routeHandler) => {
+          routeHandler = handler;
+        },
+      },
+      policy,
+      {}
+    );
+    if (!routeHandler) throw new Error('Missing route handler');
+    return routeHandler;
+  }
+
+  it.each(['POST', 'PUT', 'PATCH'])(
+    'continues an allowed %s request natively instead of replaying it through fetch/fulfill',
+    async (method) => {
+      const routeHandler = await installHandler({ checkRequest: async () => {} });
+      const fetch = vi.fn();
+      const fulfill = vi.fn();
+      const continueFn = vi.fn(async () => {});
+      const route = {
+        request: () => ({ url: () => 'https://s3.example.test/bucket', method: () => method }),
+        fetch,
+        fulfill,
+        continue: continueFn,
+        abort: vi.fn(),
+      };
+      await routeHandler(route);
+      expect(continueFn).toHaveBeenCalledOnce();
+      expect(fetch).not.toHaveBeenCalled();
+      expect(fulfill).not.toHaveBeenCalled();
+    }
+  );
+
+  it('still blocks a denied POST request rather than continuing it', async () => {
+    const routeHandler = await installHandler({
+      checkRequest: async () => {
+        throw new Error('denied');
+      },
+    });
+    const fetch = vi.fn();
+    const fulfill = vi.fn(async () => {});
+    const continueFn = vi.fn();
+    const route = {
+      request: () => ({ url: () => 'https://internal.example.test/', method: () => 'POST' }),
+      fetch,
+      fulfill,
+      continue: continueFn,
+      abort: vi.fn(),
+    };
+    await routeHandler(route);
+    expect(continueFn).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(fulfill.mock.calls[0]?.[0]).toMatchObject({ status: 403 });
+  });
+
+  it('leaves GET requests on the fetch/fulfill inspection path', async () => {
+    const routeHandler = await installHandler({ checkRequest: async () => {} });
+    const response = {
+      headers: () => ({}),
+      body: async () => Buffer.from(''),
+      status: () => 200,
+      dispose: vi.fn(async () => {}),
+    };
+    const fetch = vi.fn(async () => response);
+    const fulfill = vi.fn(async () => {});
+    const continueFn = vi.fn();
+    const route = {
+      request: () => ({ url: () => 'https://example.test/', method: () => 'GET' }),
+      fetch,
+      fulfill,
+      continue: continueFn,
+      abort: vi.fn(),
+    };
+    await routeHandler(route);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(continueFn).not.toHaveBeenCalled();
   });
 });

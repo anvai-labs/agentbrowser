@@ -594,6 +594,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       const request = route.request();
       const url = request.url();
       const hostname = new URL(url).hostname;
+      const method = request.method();
 
       emitRequest('request.started', request, {});
 
@@ -604,6 +605,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         terminalStarted = true;
         return route.fulfill(options);
       };
+      const continueRequest = () => {
+        terminalStarted = true;
+        return route.continue();
+      };
 
       try {
         const initial = await verdictOf(hostname, url);
@@ -612,6 +617,23 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
           await fulfill(BLOCKED_RESPONSE);
           return;
         }
+
+        // Body-bearing requests bypass response inspection (residual, ADR-006):
+        // route.fetch()'s Node-side re-issue does not preserve request bodies
+        // with the byte-for-byte fidelity some upload flows require - observed
+        // empirically, an S3 presigned-POST multipart upload that succeeds
+        // natively comes back 400 (signature mismatch) when replayed through
+        // route.fetch(). The hostname/IP-range verdict above still gates SSRF
+        // exposure for these requests; what's given up is response-size
+        // capping and redirect-hop target checking, since route.continue()
+        // hands the request to the browser's native network stack with no
+        // further server-side inspection.
+        if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
+          emitRequest('request.finished', request, { passthrough: true });
+          await continueRequest();
+          return;
+        }
+
         const response = await route.fetch({ maxRedirects: 0 });
         try {
           const headers = await response.headers();
