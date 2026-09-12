@@ -1712,6 +1712,23 @@ describe('AgentBrowserService', () => {
       expect(typeof log[0]?.timestamp).toBe('string');
     });
 
+    it('should record the underlying engine error message, not just a generic reason', async () => {
+      // Every crash previously logged as an identical "navigate: engine
+      // crashed" string, with the real cause (timeout, target closed,
+      // TTL/idle reaping, ...) thrown away - undiagnosable in production.
+      const { engine2, service2, sessionId, pageId, ids } = await crashSetup();
+
+      engine2.getFakePage(ids[ids.length - 1]!, pageId)?.crash();
+      const error = await capture(() =>
+        service2.navigate(sessionId, pageId, { url: 'https://x.example.com' })
+      );
+
+      expect(error?.details?.errorDetail).toBe('Page crashed');
+
+      const log = service2.getCrashLog();
+      expect(log[0]?.errorDetail).toBe('Page crashed');
+    });
+
     it('should map an act on a crashed page to ENGINE_CRASHED', async () => {
       const { engine2, service2, sessionId, pageId, ids } = await crashSetup();
       const observation = await service2.observe(sessionId, pageId, {});
