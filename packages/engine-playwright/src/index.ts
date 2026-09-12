@@ -1395,9 +1395,15 @@ class PlaywrightPage implements EnginePage {
         for (const node of nodes) {
           const isVisible = await node.isVisible().catch(() => false);
           if (isVisible) {
+            // A bracketed attribute selector (`[role="button"]`) has no bare
+            // tag name to fall back to: stripping the whole bracket left
+            // role as '' here, which crashes rebindRefs's getByRole('')
+            // the moment the ARIA snapshot times out and this DOM fallback
+            // fires (observed live against LinkedIn's auth wall).
+            const bracketRole = /\[role="([^"]+)"\]/.exec(selector)?.[1];
             elements.push({
               ref: `e${this.revision}_${elements.length}`,
-              role: selector.replace(/\[.*\]/, '').replace(/[^a-zA-Z]/g, ''),
+              role: bracketRole ?? selector.replace(/[^a-zA-Z]/g, ''),
               visible: true,
               enabled: await node.isEnabled().catch(() => true),
             });

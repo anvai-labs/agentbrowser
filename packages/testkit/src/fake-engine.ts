@@ -221,6 +221,7 @@ class FakePage implements EnginePage {
   private removedByRef = new Map<string, { role: string; name: string }>();
   private closed = false;
   private crashed = false;
+  private crashMessage = 'Page crashed';
   private contentOverride: string | undefined;
   private eventQueue: EngineEvent[] = [];
   private eventWaiters: Array<() => void> = [];
@@ -232,9 +233,14 @@ class FakePage implements EnginePage {
   /** Held-dialog auto-settle grace (short default suits tests). */
   private readonly dialogGraceMs = 60;
 
-  /** Test hook: simulate a renderer crash. All subsequent ops throw. */
-  crash(): void {
+  /**
+   * Test hook: simulate a renderer crash. All subsequent ops throw `message`
+   * (default: a fixed generic string) - pass one embedding page content or a
+   * secret to exercise redaction at the crash-reporting boundary.
+   */
+  crash(message = 'Page crashed'): void {
     this.crashed = true;
+    this.crashMessage = message;
     this.emitEvent('page.crashed');
   }
 
@@ -356,7 +362,7 @@ class FakePage implements EnginePage {
   /** Throws when the page has crashed or been closed by the engine. */
   private assertNotDead(): void {
     if (this.crashed) {
-      throw new Error('Page crashed');
+      throw new Error(this.crashMessage);
     }
   }
 

@@ -344,6 +344,32 @@ describe('real action wire semantics', () => {
     }
   });
 
+  it('derives a real role (not empty) for bracketed-selector elements in the DOM fallback', async () => {
+    // A near-zero snapshot budget forces every ariaSnapshot() call to time
+    // out, so this exercises getContentElements() deterministically rather
+    // than hoping a real page happens to time out. A bare <div role="button">
+    // is only ever found through the '[role="button"]' selector - the exact
+    // path that used to derive role as '' (stripping the whole bracket) and
+    // crash the next observation's getByRole('') rebind (observed live
+    // against LinkedIn's auth wall once its aria snapshot got slow).
+    const engine = new PlaywrightChromiumEngine({ snapshotTimeoutMs: 1 });
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({
+        url: 'data:text/html,<body><div role="button">Click me</div></body>',
+      });
+      const observation = await page.observe({ mode: 'interactive' });
+      const button = observation.elements.find((element) => element.role === 'button');
+      expect(button).toBeDefined();
+      // The empty-role bug surfaced one observation later, when rebindRefs
+      // tried to re-resolve every element via getByRole(element.role, ...).
+      await expect(page.observe({ mode: 'interactive' })).resolves.toBeDefined();
+    } finally {
+      await engine.close();
+    }
+  });
+
   it('still refuses an untargeted upload with TARGET_NOT_FOUND when no file input exists', async () => {
     const engine = new PlaywrightChromiumEngine();
     try {
