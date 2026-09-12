@@ -1,6 +1,6 @@
 {
   "name": "@agentbrowser/protocol",
-  "version": "1.8.9",
+  "version": "1.8.10",
   "private": true,
   "description": "Protocol schemas and types for AgentBrowser",
   "main": "./dist/index.js",

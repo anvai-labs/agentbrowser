@@ -66,6 +66,7 @@ The system must enforce network policy at a choke point where all outbound traff
 - **Restricted functionality**: Can't access all sites by default
 - **Configuration burden**: Must explicitly allow needed hosts
 - **Compatibility**: Some sites require complex redirect chains
+- **Body-bearing requests bypass response inspection** (added 2026-09-12): the shipped choke point (see "Chromium implementation" below) validates the request target, then re-issues the request via Playwright's `route.fetch()` and re-serves the result via `route.fulfill()` so it can inspect the response (redirect-hop target, size caps) before the page sees it. This re-issue does not preserve request bodies with the byte-for-byte fidelity some upload flows require — confirmed empirically: an S3 presigned-POST multipart upload (a common direct-to-cloud-storage upload pattern) that succeeds when sent natively comes back `400` (signature mismatch) when replayed through `route.fetch()`/`route.fulfill()`. `POST`/`PUT`/`PATCH` requests now skip the fetch/fulfill round-trip and go through `route.continue()` instead, after the same hostname/IP-range verdict check. The SSRF-relevant guarantee (is this request's target allowed) is unaffected; what's given up for these methods specifically is redirect-hop target re-checking and response-size/body-size capping, since `route.continue()` hands the request to the browser's native network stack with no further server-side inspection of the response.
 
 ### Trade-offs
 - Security over unrestricted access
@@ -200,6 +201,8 @@ class PolicyProxyServer {
   }
 }
 ```
+
+**As shipped** (`packages/engine-playwright/src/index.ts`, `installEgress()`): the request-interception path was taken, not a real proxy — `context.route('**', ...)`, checking the target via `checkRequest`/`checkResolvedAddresses`, then (for `GET`/`HEAD`/other non-body methods) `route.fetch({ maxRedirects: 0 })` followed by `route.fulfill({ response })` so redirect hops and response size can be checked before the page sees the response. As of 2026-09-12, `POST`/`PUT`/`PATCH` requests take the same target-verdict check but then call `route.continue()` instead of fetch/fulfill — see "Body-bearing requests bypass response inspection" under Consequences above for why.
 
 ### Metadata endpoint blocking
 
