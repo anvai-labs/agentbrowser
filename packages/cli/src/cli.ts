@@ -192,6 +192,11 @@ export function buildCli(deps: CliDependencies): Cli {
           '--blocked-hosts <a,b>',
           'block these hosts on top of the SSRF base (comma-separated)'
         )
+        .option(
+          '--allow-service-workers',
+          'ADR-019: allow service workers for this session (off by default whenever egress ' +
+            'policy applies; they bypass the choke point - opt in only for a trusted destination)'
+        )
         .action(
           action(async (ctx, options: Record<string, string | boolean | undefined>) => {
             const request: SessionRequest = { tenantId: String(options.tenant) };
@@ -249,6 +254,9 @@ export function buildCli(deps: CliDependencies): Cli {
                 .split(',')
                 .map((h) => h.trim())
                 .filter((h) => h.length > 0);
+            }
+            if (options.allowServiceWorkers !== undefined) {
+              policy.allowServiceWorkers = Boolean(options.allowServiceWorkers);
             }
             if (Object.keys(policy).length > 0) {
               request.policy = policy as unknown as NonNullable<SessionRequest['policy']>;

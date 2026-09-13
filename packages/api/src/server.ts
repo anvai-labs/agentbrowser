@@ -516,6 +516,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           if (policy?.maxDownloadBytes !== undefined) {
             createRequest.maxDownloadBytes = policy.maxDownloadBytes;
           }
+          if (policy?.allowServiceWorkers !== undefined) {
+            createRequest.allowServiceWorkers = policy.allowServiceWorkers;
+          }
           const session = await service.createSession(createRequest as never);
           return reply.status(201).send(session);
         })

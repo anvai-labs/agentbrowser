@@ -88,6 +88,11 @@ export const SessionPolicySchema = Type.Object({
   allowDownloads: Type.Optional(Type.Boolean()),
   maxDownloadBytes: Type.Optional(Type.Number({ minimum: 0 })),
   approval: Type.Optional(ApprovalPolicySchema),
+  // ADR-019: off by default. Explicit per-session acceptance that service
+  // workers bypass this session's egress choke point (Playwright cannot
+  // route service-worker-originated requests), needed by destinations whose
+  // anti-fraud tooling keys off service-worker presence.
+  allowServiceWorkers: Type.Optional(Type.Boolean()),
 });
 
 export const SessionCookieSchema = Type.Object({

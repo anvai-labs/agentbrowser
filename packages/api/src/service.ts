@@ -102,6 +102,12 @@ export interface ServiceSessionRequest {
   allowedHosts?: string[];
   blockedHosts?: string[];
   approval?: import('@agentbrowser/protocol').ApprovalPolicy;
+  /**
+   * ADR-019: off by default. Explicit per-session acceptance that service
+   * workers bypass the egress choke point, for destinations whose anti-fraud
+   * tooling keys off service-worker presence.
+   */
+  allowServiceWorkers?: boolean;
 }
 
 export interface ServiceSessionView {
@@ -899,6 +905,8 @@ export class AgentBrowserService {
       if (request.timezoneId !== undefined) engineRequest.timezoneId = request.timezoneId;
       if (request.headless !== undefined) engineRequest.headless = request.headless;
       if (request.cookies !== undefined) engineRequest.cookies = request.cookies;
+      if (request.allowServiceWorkers !== undefined)
+        engineRequest.allowServiceWorkers = request.allowServiceWorkers;
 
       // Per-session chain: session rules restrict; the SSRF base always runs.
       const sessionPolicy =
