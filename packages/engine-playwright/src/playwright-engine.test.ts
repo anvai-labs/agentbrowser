@@ -90,6 +90,39 @@ describe('PlaywrightChromiumEngine', () => {
       }
     );
 
+    it.runIf(headedSupported).each([
+      { locale: undefined, expected: ['en-US', 'en'] },
+      { locale: 'fr-CA', expected: ['fr-CA', 'fr'] },
+      { locale: 'en', expected: ['en'] },
+      { locale: 'zh-Hant-TW', expected: ['zh-Hant-TW', 'zh'] },
+    ])('sets headed page languages for locale $locale', async ({ locale, expected }) => {
+      const session = await engine.createSession({ headless: false, locale });
+      try {
+        const page = await (session as unknown as Ctx).context.newPage();
+        await page.goto(
+          'data:text/html,<script>window.initialLanguages = navigator.languages</script>'
+        );
+        expect(
+          await page.evaluate(() => ({
+            language: navigator.language,
+            languages: navigator.languages,
+            initialLanguages: (window as unknown as { initialLanguages: string[] })
+              .initialLanguages,
+            frozen: Object.isFrozen(navigator.languages),
+            webdriver: navigator.webdriver,
+          }))
+        ).toEqual({
+          language: expected[0],
+          languages: expected,
+          initialLanguages: expected,
+          frozen: true,
+          webdriver: false,
+        });
+      } finally {
+        await session.close();
+      }
+    });
+
     it('headless sessions still share one browser (performance anchor)', async () => {
       const a = await engine.createSession({ headless: true });
       const b = await engine.createSession({ headless: true });
@@ -937,6 +970,99 @@ describe('engine-level egress choke point (P0-4)', () => {
 
       const result = await page.navigate({ url: `http://127.0.0.1:${fixtures.port}/links` });
       expect(result.status).toBe('blocked');
+    } finally {
+      await engine.close();
+      await fixtures.stop();
+    }
+  });
+});
+
+// ADR-019: a request policy forces `serviceWorkers: 'block'` on the context
+// because Playwright cannot route service-worker-originated requests
+// (microsoft/playwright#1090) - an unblocked service worker would be a hole
+// in the egress choke point. `allowServiceWorkers: true` is the explicit,
+// off-by-default opt-out a caller takes when a destination's own behavior
+// (e.g. anti-fraud tooling that keys off service-worker presence) needs a
+// real service worker more than this session needs SW-traffic coverage.
+describe('service-worker choke-point opt-in (ADR-019)', () => {
+  const swFixture = async () => {
+    const http = await import('node:http');
+    const server = http.createServer((request, response) => {
+      if ((request.url ?? '/').startsWith('/sw.js')) {
+        response
+          .writeHead(200, { 'content-type': 'application/javascript' })
+          .end('self.addEventListener("install", () => self.skipWaiting());');
+        return;
+      }
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end('<!DOCTYPE html><html><body>ok</body></html>');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    return {
+      port: (server.address() as { port: number }).port,
+      stop: () => new Promise<void>((done) => server.close(() => done())),
+    };
+  };
+
+  const registerServiceWorker = (page: unknown) =>
+    (page as unknown as { page: import('playwright').Page }).page.evaluate(async () => {
+      try {
+        const reg = await navigator.serviceWorker.register('/sw.js');
+        const start = Date.now();
+        while (Date.now() - start < 4000) {
+          if (reg.active) return 'active';
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        return 'never-activated';
+      } catch (error) {
+        return `rejected:${(error as { name?: string })?.name ?? 'unknown'}`;
+      }
+    });
+
+  it('blocks service worker registration by default whenever a request policy is set', async () => {
+    const fixtures = await swFixture();
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({
+        headless: true,
+        requestPolicy: { async checkRequest() {} },
+      });
+      const page = await session.newPage();
+      await page.navigate({ url: `http://127.0.0.1:${fixtures.port}/` });
+      expect(await registerServiceWorker(page)).not.toBe('active');
+    } finally {
+      await engine.close();
+      await fixtures.stop();
+    }
+  });
+
+  it('leaves service workers untouched when there is no request policy at all', async () => {
+    const fixtures = await swFixture();
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({ url: `http://127.0.0.1:${fixtures.port}/` });
+      expect(await registerServiceWorker(page)).toBe('active');
+    } finally {
+      await engine.close();
+      await fixtures.stop();
+    }
+  });
+
+  it('allows service worker registration when allowServiceWorkers is explicitly requested', async () => {
+    const fixtures = await swFixture();
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({
+        headless: true,
+        requestPolicy: { async checkRequest() {} },
+        allowServiceWorkers: true,
+      });
+      const page = await session.newPage();
+      await page.navigate({ url: `http://127.0.0.1:${fixtures.port}/` });
+      expect(await registerServiceWorker(page)).toBe('active');
     } finally {
       await engine.close();
       await fixtures.stop();

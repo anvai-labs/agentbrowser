@@ -156,6 +156,17 @@ function buildTools(client: McpClient): ToolDefinition[] {
               required: ['name', 'value', 'domain', 'path'],
             },
           },
+          allowServiceWorkers: {
+            type: 'boolean',
+            description:
+              'ADR-019: allow service workers in this session (default: blocked whenever this ' +
+              "session's SSRF policy is active). Service-worker requests bypass this session's " +
+              'egress choke point (Playwright cannot intercept them - microsoft/playwright#1090), ' +
+              'so this is an explicit, disclosed trade-off, not a silent weakening: only opt in ' +
+              'for a session targeting a trusted destination. Some sites (bot-detection/anti-fraud ' +
+              'vendors that key off service-worker presence) reject submissions from sessions ' +
+              'with service workers blocked.',
+          },
         },
         required: ['tenantId'],
       },
@@ -170,6 +181,12 @@ function buildTools(client: McpClient): ToolDefinition[] {
         if (typeof args.idleTimeoutMs === 'number') request.idleTimeoutMs = args.idleTimeoutMs;
         if (Array.isArray(args.cookies))
           request.cookies = args.cookies as NonNullable<SessionRequest['cookies']>;
+        if (typeof args.allowServiceWorkers === 'boolean') {
+          request.policy = {
+            ...(request.policy ?? {}),
+            allowServiceWorkers: args.allowServiceWorkers,
+          };
+        }
 
         const session = await client.sessions.create(request);
 

@@ -63,6 +63,17 @@ proves the control works. Residual risks are named, not hidden.
   allow. Fixed by routing these methods through `route.continue()` after the
   same target-verdict check, trading away redirect-hop re-checking and
   response-size capping for these methods specifically (see ADR-006).
+- **Service-worker choke-point bypass (ACCEPTED, opt-in — 2026-09-13)**:
+  service-worker-originated requests bypass `context.route()` entirely (a
+  still-open Playwright limitation), so any session with a request policy
+  attached blocks service workers by default — an unblocked one would be a
+  hole in the choke point. Confirmed live: this default broke a real Ashby
+  ATS submission whose anti-fraud check treats a missing/blocked service
+  worker as a bot signal, flagging both an automated and a genuine human
+  click identically. `allowServiceWorkers` (ADR-019) is an explicit,
+  off-by-default per-session option a caller sets to accept this trade-off
+  for one session; the default session behavior is unchanged and still
+  blocks service workers whenever a request policy applies.
 - **OS containment (NOT SHIPPED)**: the accepted contained Chromium profile
   requires an external gateway and OS-enforced gateway-only egress. Native local
   operation remains available without that guarantee. Full ADR-008 multi-tenant

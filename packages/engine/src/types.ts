@@ -54,6 +54,18 @@ export interface EngineSessionOptions {
    * every outbound request, redirects and subresources included.
    */
   requestPolicy?: RequestPolicy;
+  /**
+   * ADR-019: engines that enforce a request policy via request interception
+   * disable service workers by default, because service-worker-originated
+   * requests bypass that interception (a still-open Playwright limitation -
+   * microsoft/playwright#1090) and would otherwise be a hole in the choke
+   * point. Set this to `true` to explicitly accept that trade-off for one
+   * session - e.g. a destination whose own behavior (anti-fraud tooling that
+   * keys off service-worker presence) needs a real service worker more than
+   * this session needs service-worker traffic covered by the policy. Off by
+   * default; never flips silently.
+   */
+  allowServiceWorkers?: boolean;
 }
 
 /**

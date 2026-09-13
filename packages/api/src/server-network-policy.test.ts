@@ -1,6 +1,6 @@
 import { NetworkPolicy } from '@agentbrowser/policy';
 import { FakeEngine } from '@agentbrowser/testkit';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { buildServer } from './server';
 
 it('allows trusted embedded policy injection while session host rules can only restrict it', async () => {
@@ -52,6 +52,44 @@ it('keeps private-address denial when no trusted policy is injected', async () =
     });
     expect(denied.statusCode).toBe(403);
     expect(denied.json().error.code).toBe('POLICY_DENIED');
+  } finally {
+    await server.close();
+  }
+});
+
+// ADR-019: allowServiceWorkers travels nested under `policy` on the wire,
+// same as allowedHosts/blockedHosts/allowDownloads, and must reach the
+// engine's createSession call unchanged - off by default, explicit when set.
+it('forwards policy.allowServiceWorkers through to the engine (ADR-019)', async () => {
+  const engine = new FakeEngine();
+  const createSession = vi.spyOn(engine, 'createSession');
+  const server = await buildServer({ engine });
+  try {
+    await server.inject({
+      method: 'POST',
+      url: '/v1/sessions',
+      payload: { tenantId: 'test', policy: { allowServiceWorkers: true } },
+    });
+    expect(createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ allowServiceWorkers: true })
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+it('does not set allowServiceWorkers on the engine call when the session omits it', async () => {
+  const engine = new FakeEngine();
+  const createSession = vi.spyOn(engine, 'createSession');
+  const server = await buildServer({ engine });
+  try {
+    await server.inject({
+      method: 'POST',
+      url: '/v1/sessions',
+      payload: { tenantId: 'test' },
+    });
+    const options = createSession.mock.calls.at(-1)?.[0];
+    expect(options?.allowServiceWorkers).toBeUndefined();
   } finally {
     await server.close();
   }

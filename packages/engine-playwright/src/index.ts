@@ -327,20 +327,29 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     const egress = options.requestPolicy ?? this.rootEgress;
 
     // Create browser context (incognito isolation)
+    const locale = options.locale || 'en-US';
     const context = await browser.newContext({
       viewport: resolveContextViewport(options.viewport, headless),
-      locale: options.locale || 'en-US',
+      locale,
       timezoneId: options.timezoneId || 'America/New_York',
       // Service-worker fetches bypass context.route; a choke point with a
-      // bypass hole is not a choke point.
-      ...(egress !== undefined ? { serviceWorkers: 'block' as const } : {}),
+      // bypass hole is not a choke point. ADR-019: a caller may explicitly
+      // accept that hole for one session via allowServiceWorkers - e.g. a
+      // destination whose anti-fraud tooling keys off service-worker
+      // presence and rejects sessions that block it. Off by default.
+      ...(egress !== undefined && options.allowServiceWorkers !== true
+        ? { serviceWorkers: 'block' as const }
+        : {}),
     });
     if (options.headless === false) {
-      // Second half of the headed de-fingerprinting (see launchBrowser):
-      // navigator.webdriver=true is the single most-checked automation signal.
-      await context.addInitScript(
-        "Object.defineProperty(navigator, 'webdriver', { get: () => false });"
-      );
+      // Keep the headed overrides aligned with the context locale. Playwright
+      // exposes only that locale in navigator.languages; include its base
+      // language as a fallback, without duplicating a language-only locale.
+      await context.addInitScript((locale: string) => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => false });
+        const languages = Object.freeze([...new Set([locale, locale.split('-')[0]])]);
+        Object.defineProperty(navigator, 'languages', { get: () => languages });
+      }, locale);
     }
 
     // Request-event sink (spec 5.1 network summary, Phase 3): the route

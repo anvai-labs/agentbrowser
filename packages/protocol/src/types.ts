@@ -88,6 +88,15 @@ export interface SessionPolicy {
   allowDownloads?: boolean;
   maxDownloadBytes?: number;
   approval?: ApprovalPolicy;
+  /**
+   * ADR-019: off by default. Service workers bypass this session's egress
+   * choke point (Playwright cannot route service-worker-originated
+   * requests - microsoft/playwright#1090), so it is disabled whenever a
+   * policy is in effect. Set true to explicitly accept that trade-off for
+   * one session, e.g. a destination whose anti-fraud tooling keys off
+   * service-worker presence and rejects sessions that block it.
+   */
+  allowServiceWorkers?: boolean;
 }
 
 /**
