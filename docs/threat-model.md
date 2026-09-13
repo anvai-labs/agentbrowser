@@ -67,10 +67,9 @@ proves the control works. Residual risks are named, not hidden.
   service-worker-originated requests bypass `context.route()` entirely (a
   still-open Playwright limitation), so any session with a request policy
   attached blocks service workers by default — an unblocked one would be a
-  hole in the choke point. Confirmed live: this default broke a real Ashby
-  ATS submission whose anti-fraud check treats a missing/blocked service
-  worker as a bot signal, flagging both an automated and a genuine human
-  click identically. `allowServiceWorkers` (ADR-019) is an explicit,
+  hole in the choke point. This restriction was identified while investigating
+  Ashby ATS rejections affecting both automated and human clicks in the same
+  browser session; its contribution to those rejections remains unproven. `allowServiceWorkers` (ADR-019) is an explicit,
   off-by-default per-session option a caller sets to accept this trade-off
   for one session; the default session behavior is unchanged and still
   blocks service workers whenever a request policy applies.

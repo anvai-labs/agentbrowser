@@ -11,14 +11,12 @@ de-fingerprinting, and walled logins - "the probe is configuration, not detectio
 Real job-application submissions on a live Ashby-hosted ATS (`jobs.ashbyhq.com`) were
 rejected at "Submit Application" with "flagged as possible spam" - reproduced twice, on
 two different postings, once from an accidental automated click and once from a human
-deliberately clicking Submit inside the same headed session. Because it reproduced
-identically for a genuine human click, the browser *context* itself was the trigger, not
-the actor.
+deliberately clicking Submit inside the same headed session. Reproduction with a genuine human click suggests a browser-context or session
+factor, but does not establish which signal caused the rejection.
 
-Investigation ruled out a repeat of the v1.8.10 body-corruption bug (ADR-006's
-Implementation Notes): that fix already made every POST/PUT/PATCH request, to any host,
-take a native `route.continue()` passthrough with no body replay, so the Submit
-request's bytes were not being mangled. The actual mechanism: `createSession()` sets
+The v1.8.10 body-corruption fix (ADR-006's Implementation Notes) already routes
+POST/PUT/PATCH requests through native `route.continue()` passthrough without body
+replay. Investigation also confirmed that `createSession()` sets
 `serviceWorkers: 'block'` on the browser context whenever a request policy is attached
 (effectively every session created through the API service), because Playwright's
 `context.route()` - the mechanism the egress choke point depends on - cannot intercept
@@ -28,11 +26,11 @@ Playwright's own documentation recommends blocking service workers whenever requ
 interception is in use, for exactly the reason the code comment already gave: "a choke
 point with a bypass hole is not a choke point."
 
-That default is correct and necessary for the SSRF boundary. Its side effect is what
-broke Ashby: bot-detection/anti-fraud vendors commonly treat a missing or failed
-service-worker registration as a signal that the browser is not genuine, and Ashby's
-submission endpoint appears to be one of them - explaining why even a real human click,
-inside a session with service workers blocked, was flagged.
+That default is necessary for the routing-based SSRF boundary, but prevents sites
+from using service workers. Whether this restriction contributed to Ashby's rejection
+is an open hypothesis. Live verification of this opt-in and the accompanying headed
+`navigator.languages` change against Ashby remains incomplete; neither change has
+been demonstrated to resolve the rejection.
 
 This is not a bug to patch silently. It is a real, disclosed trade-off between two
 things a session cannot always have simultaneously: full egress-choke-point coverage,
@@ -68,14 +66,12 @@ may depend on.
   (`playwright-engine.test.ts`, "service-worker choke-point opt-in (ADR-019)" -
   including a real-Chromium behavioral check that a service worker never reaches the
   `active` state by default, and does when explicitly allowed).
-- A caller can now complete a submission against a destination like Ashby by creating
-  that one session with `allowServiceWorkers: true`, after having made an informed
-  choice to trade SSRF-relevant coverage of service-worker traffic for compatibility.
-- This does not fix Ashby's false positive in general - it only removes the specific
-  cause this project was itself responsible for (blocking a browser feature the
-  destination's own defenses were watching). A session created this way is not
-  guaranteed to pass every anti-fraud check on every site; it removes the one leaver
-  proven to be self-inflicted.
+- A caller can enable service-worker-dependent functionality for one session with
+  `allowServiceWorkers: true`, accepting the loss of routing-based egress coverage
+  for service-worker traffic.
+- The tests establish service-worker registration behavior and option propagation.
+  They do not establish the cause of Ashby's rejection or prove that enabling service
+  workers or changing the headed language chain resolves it.
 - Does not reopen the choke point for anything except the caller's own explicit request:
   the option is per-session, must be set at session-creation time, and is visible on
   the session request the same way `allowedHosts`/`blockedHosts`/`allowDownloads` are.
