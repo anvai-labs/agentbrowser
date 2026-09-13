@@ -5,6 +5,26 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [1.8.11] — 2026-09-13
+
+### Added
+
+- Explicit, off-by-default `allowServiceWorkers` session option across the
+  protocol, API, core, CLI, MCP server, and Playwright engine (#140). Callers
+  can enable service-worker-dependent functionality for one session while
+  accepting that service-worker-originated requests bypass routing-based
+  egress checks. Sessions with an active request policy still block service
+  workers by default; see
+  [ADR-019](docs/adr/019-explicit-service-worker-opt-in.md).
+
+### Fixed
+
+- Headed Playwright sessions now expose a locale-derived `navigator.languages`
+  chain including the base language fallback without duplicates (#140), such
+  as `["en-US", "en"]` or `["fr-CA", "fr"]`. Headless behavior is unchanged.
+  Live effectiveness of this change and the service-worker opt-in against
+  the observed Ashby ATS rejection remains unproven.
+
 ## [1.8.10] — 2026-09-12
 
 ### Fixed
