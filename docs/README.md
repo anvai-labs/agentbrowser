@@ -46,6 +46,7 @@ ADRs capture significant architectural decisions, their context, and consequence
 | [ADR-014](adr/014-npm-distribution.md) | npm Distribution for the MCP Server (Trusted Publishing, @anvailabs scope) | Accepted | npm = @anvailabs/agentbrowser-mcp via OIDC trusted publishing; server stays tarballs+Docker; verify enforced not token-keyed |
 | [ADR-015](adr/015-cross-package-contract-single-source-of-truth.md) | Single Source of Truth for Cross-Package Contract Primitives | Accepted | Contract primitives live once in protocol (REF_PATTERN/parseRef, extract formats, UsageError, compiled validators, type-level contracts); SDK mirrors protocol types; renumbered twice (011→012→015) after collisions |
 | [ADR-018](adr/018-upload-action.md) | The `upload` Action — Native File Attachment Without the OS Picker | Accepted | Delivered `upload` under the reserved protocol name: `paths` replace a file input's list, target ref optional (hidden inputs have no ref), no-target mode requires exactly one `input[type=file]`; stat-validated paths; evidence over assertion |
+| [ADR-019](adr/019-explicit-service-worker-opt-in.md) | Explicit Per-Session Service-Worker Opt-In | Accepted | Request policies block service workers by default (Playwright can't route their requests — a choke-point bypass hole); `allowServiceWorkers` is an explicit, off-by-default per-session opt-in for destinations whose anti-fraud tooling keys off service-worker presence |
 
 ## Technical Design
 

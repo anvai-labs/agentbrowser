@@ -320,6 +320,26 @@ describe('AgentBrowser MCP server', () => {
       );
     });
 
+    it('forwards allowServiceWorkers as a nested policy field (ADR-019)', async () => {
+      const response = JSON.parse(
+        await call('6c', 'browser_create', { tenantId: 'tenant_1', allowServiceWorkers: true })
+      );
+      expect(response.result.isError).toBeFalsy();
+      expect(sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'tenant_1',
+          policy: expect.objectContaining({ allowServiceWorkers: true }),
+        })
+      );
+    });
+
+    it('omits policy entirely when allowServiceWorkers is not passed (no default flip)', async () => {
+      const response = JSON.parse(await call('6d', 'browser_create', { tenantId: 'tenant_1' }));
+      expect(response.result.isError).toBeFalsy();
+      const createArgs = sessions.create.mock.calls.at(-1)?.[0];
+      expect(createArgs.policy).toBeUndefined();
+    });
+
     it('should navigate', async () => {
       const response = JSON.parse(
         await call('7', 'browser_navigate', {

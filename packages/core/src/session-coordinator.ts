@@ -90,6 +90,7 @@ export class SessionCoordinator {
     request: SessionRequest & {
       requestPolicy?: import('@agentbrowser/engine').RequestPolicy;
       downloadPolicy?: import('@agentbrowser/engine').EngineSessionOptions['downloadPolicy'];
+      allowServiceWorkers?: import('@agentbrowser/engine').EngineSessionOptions['allowServiceWorkers'];
     },
     engine: BrowserEngine
   ): Promise<SessionResponse> {
@@ -127,6 +128,12 @@ export class SessionCoordinator {
     // Per-session egress policy rides through to the engine untouched.
     if (request.requestPolicy !== undefined) {
       sessionOptions.requestPolicy = request.requestPolicy;
+    }
+
+    // ADR-019: off by default; explicit per-session opt-out of the
+    // service-worker block that a request policy otherwise imposes.
+    if (request.allowServiceWorkers !== undefined) {
+      sessionOptions.allowServiceWorkers = request.allowServiceWorkers;
     }
 
     // Seed cookies ride through to the engine (reuse an authenticated session).
