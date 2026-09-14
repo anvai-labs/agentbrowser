@@ -167,6 +167,15 @@ function buildTools(client: McpClient): ToolDefinition[] {
               'vendors that key off service-worker presence) reject submissions from sessions ' +
               'with service workers blocked.',
           },
+          snapshotTimeoutMs: {
+            type: 'number',
+            description:
+              'Whole-page ariaSnapshot budget (1-30000ms, default 5000) before browser_observe/' +
+              'browser_snapshot degrade to a DOM-tag-only fallback that loses element names, ' +
+              'values, and any custom widget (e.g. a div-based combobox) entirely - the ' +
+              'response marks this with degraded: true when it happens. Raise this for a ' +
+              'session known to navigate large/complex forms (many fields, custom comboboxes).',
+          },
         },
         required: ['tenantId'],
       },
@@ -186,6 +195,9 @@ function buildTools(client: McpClient): ToolDefinition[] {
             ...(request.policy ?? {}),
             allowServiceWorkers: args.allowServiceWorkers,
           };
+        }
+        if (typeof args.snapshotTimeoutMs === 'number') {
+          request.snapshotTimeoutMs = args.snapshotTimeoutMs;
         }
 
         const session = await client.sessions.create(request);
@@ -224,7 +236,11 @@ function buildTools(client: McpClient): ToolDefinition[] {
         'ref churn was detected and browser_plan will require a stricter role+label match ' +
         'before self-healing a stale ref), and fields ({ref, role, label}) to address in a ' +
         'browser_plan call. Prefer browser_snapshot + browser_plan over repeated ' +
-        'browser_observe/browser_act round-trips when filling multi-field forms.',
+        'browser_observe/browser_act round-trips when filling multi-field forms. ' +
+        'A response with degraded: true means the whole-page accessibility snapshot timed ' +
+        'out and `fields` came from a DOM-tag-only fallback - custom widgets with no native ' +
+        'form control (e.g. a div-based combobox) are missing from it entirely, even though ' +
+        'the shape looks the same. Re-create the session with a larger snapshotTimeoutMs.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -335,7 +351,12 @@ function buildTools(client: McpClient): ToolDefinition[] {
         'points of observed elements (aggregated occluders). ' +
         'Pass include:["fileInputs"] to mint refs for every input[type=file], hidden ones ' +
         'included, with id/accept/multiple attributes - needed to target upload at a ' +
-        'specific file input when a page has several.',
+        'specific file input when a page has several. ' +
+        'A response with degraded: true means the whole-page accessibility snapshot timed ' +
+        'out (large/complex page) and elements came from a DOM-tag-only fallback: no ' +
+        'name/value, and custom widgets with no native form control (e.g. a div-based ' +
+        'combobox) are missing entirely - do not role/name-match on it. Re-create the ' +
+        'session with a larger snapshotTimeoutMs and retry instead.',
       inputSchema: {
         type: 'object',
         properties: {

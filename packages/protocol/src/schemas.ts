@@ -121,6 +121,7 @@ export const SessionRequestSchema = Type.Object({
   headless: Type.Optional(Type.Boolean()),
   cookies: Type.Optional(Type.Array(SessionCookieSchema)),
   policy: Type.Optional(SessionPolicySchema),
+  snapshotTimeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 30000 })),
 });
 
 // ============================================================================
@@ -270,6 +271,8 @@ export const PageStateSchema = Type.Object({
   truncated: Type.Boolean(),
   untrustedContent: Type.Boolean(),
   continuation: Type.Optional(ContinuationCursorSchema),
+  degraded: Type.Optional(Type.Boolean()),
+  degradedReason: Type.Optional(Type.Literal('aria-snapshot-timeout')),
 });
 
 // ============================================================================

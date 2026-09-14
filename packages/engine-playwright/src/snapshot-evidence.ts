@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 import { type Locator, errors } from 'playwright';
 
-const DEFAULT_TIMEOUT_MS = 1000;
+// Was 1000ms; too small for real multi-section forms (200+ elements, custom
+// React-Select-style comboboxes) where a whole-body ariaSnapshot legitimately
+// takes longer, silently degrading observe() to the DOM-tag-only fallback
+// (see getContentElements() in index.ts) with no signal to the caller.
+const DEFAULT_TIMEOUT_MS = 5000;
 const MAX_TIMEOUT_MS = 30_000;
 
 function validTimeout(value: number): boolean {

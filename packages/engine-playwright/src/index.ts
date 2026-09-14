@@ -391,7 +391,12 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       this,
       options.headless === false ? browser : undefined,
       requestSink,
-      options.downloadPolicy
+      options.downloadPolicy,
+      // Validate/normalize eagerly (throws RangeError at session-creation
+      // time for a bad explicit value, not silently on the first observe()).
+      options.snapshotTimeoutMs !== undefined
+        ? snapshotTimeout(options.snapshotTimeoutMs)
+        : undefined
     );
   }
 
@@ -760,7 +765,9 @@ class PlaywrightSession implements EngineSession {
     private readonly downloadPolicy: EngineSessionOptions['downloadPolicy'] = {
       allow: true,
       maxBytes: 10 * 1024 * 1024,
-    }
+    },
+    /** Already validated/normalized by createSession(); undefined = engine default. */
+    private readonly snapshotTimeoutMs?: number
   ) {
     this.id = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     this.context = context;
@@ -846,7 +853,7 @@ class PlaywrightSession implements EngineSession {
     }
 
     const pageId = `page-${this.pageCounter++}`;
-    const page = new PlaywrightPage(pageId, playwrightPage, this.engine);
+    const page = new PlaywrightPage(pageId, playwrightPage, this.engine, this.snapshotTimeoutMs);
     this.pageMap.set(pageId, page);
     page.registerRemoval(() => {
       this.pageMap.delete(pageId);
@@ -975,6 +982,12 @@ class PlaywrightPage implements EnginePage {
   readonly id: string;
   private page: Page;
   private engine: PlaywrightChromiumEngine;
+  /**
+   * Per-session override of the engine-wide default (EngineSessionOptions
+   * .snapshotTimeoutMs), already validated/normalized by snapshotTimeout()
+   * at session-creation time in createSession().
+   */
+  private readonly snapshotTimeoutMs: number;
   private eventQueue: EngineEvent[] = [];
   /**
    * Ref store: the page's revision counter plus the elements captured at the
@@ -1021,10 +1034,16 @@ class PlaywrightPage implements EnginePage {
     this.enqueueEvent(event);
   }
 
-  constructor(id: string, page: Page, engine: PlaywrightChromiumEngine) {
+  constructor(
+    id: string,
+    page: Page,
+    engine: PlaywrightChromiumEngine,
+    snapshotTimeoutMs?: number
+  ) {
     this.id = id;
     this.page = page;
     this.engine = engine;
+    this.snapshotTimeoutMs = snapshotTimeoutMs ?? engine.snapshotTimeoutMs;
 
     // Setup event listeners
     this.setupEventListeners();
@@ -1186,11 +1205,17 @@ class PlaywrightPage implements EnginePage {
 
   async observe(request: ObservationRequest): Promise<RawPageState> {
     const mode = request.mode || 'interactive';
-    const snapshotBudget = new SnapshotBudget(this.engine.snapshotTimeoutMs);
+    const snapshotBudget = new SnapshotBudget(this.snapshotTimeoutMs);
     let documentSnapshot: string | undefined;
 
     // Get accessibility tree if requested
     let elements: StoredElement[] = [];
+    // Set only when the whole-body ariaSnapshot budget was actually spent
+    // and exceeded (never merely because mode skipped this branch) - a
+    // caller-visible signal that `elements` came from getContentElements()'s
+    // DOM-tag-only fallback (no name/value, no ARIA-only custom widgets)
+    // rather than the real accessibility tree.
+    let ariaSnapshotDegraded = false;
 
     if (mode === 'interactive' || mode === 'accessibility' || mode === 'content') {
       // Only timeouts can recover. Transport/context errors are not evidence.
@@ -1199,6 +1224,7 @@ class PlaywrightPage implements EnginePage {
       if (yaml !== undefined) {
         elements = this.parseAriaSnapshot(yaml, this.revision);
       } else {
+        ariaSnapshotDegraded = true;
         elements = await this.getContentElements();
       }
     }
@@ -1234,9 +1260,14 @@ class PlaywrightPage implements EnginePage {
     this.refStore.clear();
     let changed = previousCount > 0 && previousCount !== elements.length;
     const ordinals = new Map<string, number>();
-    // href capture is one round-trip per link; bound it so link-heavy pages
-    // cannot stretch an observation unboundedly.
-    let hrefCaptures = 0;
+    // Elements bound to a real node this pass, deferred here instead of
+    // enriched inline: isVisible()/isEnabled() are independent per-element
+    // reads (each was previously one sequential await), and on a
+    // large/complex page (200+ elements) that serialized cost was the likely
+    // cause of outright request timeouts, distinct from the ariaSnapshot
+    // budget above. Binding, snapshot capture, and staleness detection stay
+    // sequential and unchanged - only this trailing enrichment parallelizes.
+    const boundElements: Array<{ element: StoredElement; handle: ElementHandle }> = [];
     try {
       for (const [index, element] of elements.entries()) {
         const ref = element.ref ?? `e${this.revision}_${index}`;
@@ -1281,20 +1312,44 @@ class PlaywrightPage implements EnginePage {
                 !sameSnapshotEvidence(prior, binding))
             )
               changed = true;
-            element.visible = await handle.isVisible();
-            element.enabled = await handle.isEnabled();
-            if (element.role === 'link' && hrefCaptures < 50) {
-              const href = await locator.getAttribute('href').catch(() => undefined);
-              if (typeof href === 'string' && href !== '') {
-                hrefCaptures += 1;
-                element.href = href.slice(0, 2048);
-                if (href.length > 2048) {
-                  element.hrefTruncated = true;
-                }
-              }
-            }
+            boundElements.push({ element, handle });
           }
         }
+      }
+
+      // Parallel pass: independent per-element reads only. href capture
+      // stays its own sequential sub-pass below (unchanged semantics: first
+      // 50 links in document order that actually carry a non-empty href,
+      // not the first 50 link-role elements - a fetch can come back empty).
+      await Promise.all(
+        boundElements.map(async ({ element, handle }) => {
+          element.visible = await handle.isVisible();
+          element.enabled = await handle.isEnabled();
+        })
+      );
+
+      // href capture is one round-trip per link; bound it so link-heavy
+      // pages cannot stretch an observation unboundedly. Kept sequential:
+      // the cap is on successful captures (empty hrefs don't count against
+      // it), which a concurrent pass cannot honor in document order.
+      let hrefCaptures = 0;
+      for (const [index, element] of elements.entries()) {
+        if (element.role !== 'link' || hrefCaptures >= 50) continue;
+        const ref = element.ref ?? `e${this.revision}_${index}`;
+        const binding = this.bindings.get(ref);
+        if (!binding) continue;
+        const href = await binding.locator.getAttribute('href').catch(() => undefined);
+        if (typeof href === 'string' && href !== '') {
+          hrefCaptures += 1;
+          element.href = href.slice(0, 2048);
+          if (href.length > 2048) {
+            element.hrefTruncated = true;
+          }
+        }
+      }
+
+      for (const [index, element] of elements.entries()) {
+        const ref = element.ref ?? `e${this.revision}_${index}`;
         this.refStore.set(ref, {
           role: element.role,
           ...(element.name !== undefined ? { name: element.name } : {}),
@@ -1340,6 +1395,9 @@ class PlaywrightPage implements EnginePage {
       content: await this.page.content(),
       elements: elements,
       ...(overlays !== undefined ? { overlays } : {}),
+      ...(ariaSnapshotDegraded
+        ? { degraded: true, degradedReason: 'aria-snapshot-timeout' as const }
+        : {}),
     };
   }
 
@@ -1581,7 +1639,7 @@ class PlaywrightPage implements EnginePage {
         binding.snapshot !== undefined ? binding.locator : this.page.locator('body');
       const liveSnapshot = snapshotDigest(
         await semanticLocator.ariaSnapshot({
-          timeout: this.engine.snapshotTimeoutMs,
+          timeout: this.snapshotTimeoutMs,
         })
       );
       if (liveSnapshot !== expectedSnapshot) {
