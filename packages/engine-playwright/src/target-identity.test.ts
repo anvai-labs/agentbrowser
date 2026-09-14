@@ -318,15 +318,15 @@ describe('snapshot-degraded binding', () => {
 });
 
 describe('snapshot timeout configuration', () => {
-  it('reads AGENTBROWSER_SNAPSHOT_TIMEOUT_MS and falls back to 1000ms', () => {
+  it('reads AGENTBROWSER_SNAPSHOT_TIMEOUT_MS and falls back to 5000ms', () => {
     const name = 'AGENTBROWSER_SNAPSHOT_TIMEOUT_MS';
     const original = process.env[name];
     try {
       delete process.env[name];
-      expect(new PlaywrightChromiumEngine().snapshotTimeoutMs).toBe(1000);
+      expect(new PlaywrightChromiumEngine().snapshotTimeoutMs).toBe(5000);
       for (const garbage of ['', 'abc', '-5', '0', '1000junk', '1.5', '1e3', 'Infinity', '30001']) {
         process.env[name] = garbage;
-        expect(new PlaywrightChromiumEngine().snapshotTimeoutMs).toBe(1000);
+        expect(new PlaywrightChromiumEngine().snapshotTimeoutMs).toBe(5000);
       }
       process.env[name] = '3000';
       expect(new PlaywrightChromiumEngine().snapshotTimeoutMs).toBe(3000);
@@ -351,6 +351,56 @@ describe('snapshot timeout configuration', () => {
       );
     } finally {
       vi.unstubAllEnvs();
+    }
+  });
+});
+
+describe('whole-body snapshot fallback (observe())', () => {
+  function degradeBody(page: EnginePage) {
+    return interceptSnapshots(page, (kind) => {
+      if (kind === 'body') throw new errors.TimeoutError('Injected body-level snapshot timeout');
+    });
+  }
+
+  it('surfaces degraded:true with a DOM-tag-only role and no name, unlike the real ARIA path', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const page = await (await engine.createSession({ headless: true })).newPage();
+      await page.navigate({
+        url: 'data:text/html,<button onclick="document.title=1">Go</button>',
+      });
+      degradeBody(page);
+      const state = await page.observe({});
+      expect(state.degraded).toBe(true);
+      expect(state.degradedReason).toBe('aria-snapshot-timeout');
+      const button = state.elements.find((element) => element.role === 'button');
+      if (!button?.ref) throw new Error('Missing degraded-mode button ref');
+      // The DOM-tag-only fallback never learns a name - the real ARIA path
+      // would have found "Go". A caller must not role/name-match on this
+      // response: the getByRole(role, {name: ''}) rebind this ref implies
+      // will not find a button whose real accessible name is non-empty, so
+      // this ref is not safely actionable either - exactly why `degraded`
+      // exists as an explicit signal instead of a same-shaped response.
+      expect(button.name).toBeUndefined();
+      await expect(page.act({ type: 'click', target: { ref: button.ref } })).rejects.toThrow();
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('a per-session snapshotTimeoutMs override degrades independently of the engine default', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const strict = await (
+        await engine.createSession({ headless: true, snapshotTimeoutMs: 1 })
+      ).newPage();
+      const lenient = await (await engine.createSession({ headless: true })).newPage();
+      await strict.navigate({ url: 'data:text/html,<button>Go</button>' });
+      await lenient.navigate({ url: 'data:text/html,<button>Go</button>' });
+      expect((await strict.observe({})).degraded).toBe(true);
+      expect((await lenient.observe({})).degraded).toBeUndefined();
+    } finally {
+      await engine.close();
     }
   });
 });

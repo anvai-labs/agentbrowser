@@ -94,3 +94,58 @@ it('does not set allowServiceWorkers on the engine call when the session omits i
     await server.close();
   }
 });
+
+// snapshotTimeoutMs travels top-level on the wire (a reliability/performance
+// knob, not a SessionPolicy egress trade-off like allowServiceWorkers) and
+// must reach the engine's createSession call unchanged.
+it('forwards snapshotTimeoutMs through to the engine', async () => {
+  const engine = new FakeEngine();
+  const createSession = vi.spyOn(engine, 'createSession');
+  const server = await buildServer({ engine });
+  try {
+    await server.inject({
+      method: 'POST',
+      url: '/v1/sessions',
+      payload: { tenantId: 'test', snapshotTimeoutMs: 8000 },
+    });
+    expect(createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ snapshotTimeoutMs: 8000 })
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+it('does not set snapshotTimeoutMs on the engine call when the session omits it', async () => {
+  const engine = new FakeEngine();
+  const createSession = vi.spyOn(engine, 'createSession');
+  const server = await buildServer({ engine });
+  try {
+    await server.inject({
+      method: 'POST',
+      url: '/v1/sessions',
+      payload: { tenantId: 'test' },
+    });
+    const options = createSession.mock.calls.at(-1)?.[0];
+    expect(options?.snapshotTimeoutMs).toBeUndefined();
+  } finally {
+    await server.close();
+  }
+});
+
+it('rejects an out-of-range snapshotTimeoutMs before it reaches the engine', async () => {
+  const engine = new FakeEngine();
+  const createSession = vi.spyOn(engine, 'createSession');
+  const server = await buildServer({ engine });
+  try {
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/sessions',
+      payload: { tenantId: 'test', snapshotTimeoutMs: 30001 },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(createSession).not.toHaveBeenCalled();
+  } finally {
+    await server.close();
+  }
+});

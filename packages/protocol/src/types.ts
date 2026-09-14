@@ -50,6 +50,15 @@ export interface SessionRequest {
    */
   cookies?: SessionCookie[];
   policy?: SessionPolicy;
+  /**
+   * Per-session override (1-30000ms, default 5000) for the whole-page
+   * ariaSnapshot budget observe() uses before degrading to a DOM-tag-only
+   * fallback (no name/value, no custom-widget roles). Raise it for a
+   * session known to navigate large/complex forms. Not a SessionPolicy
+   * field: it is a reliability/performance knob, not an egress/security
+   * trade-off.
+   */
+  snapshotTimeoutMs?: number;
 }
 
 /**
@@ -211,6 +220,17 @@ export interface PageState {
    * document order. Present only when truncated.
    */
   continuation?: ContinuationCursor;
+  /**
+   * True when the whole-page ariaSnapshot budget was exceeded and `elements`
+   * came from a DOM-tag-only fallback: roles are bare HTML tags with no
+   * name/value, and any custom widget with no native form control (e.g. a
+   * div-based combobox) is entirely absent. Do not trust role/name matching
+   * on this observation - retry with a larger snapshotTimeoutMs on the
+   * session, or narrow the observation instead.
+   */
+  degraded?: boolean;
+  /** Why `degraded` is set, when it is. Currently only one cause exists. */
+  degradedReason?: 'aria-snapshot-timeout';
 }
 
 /**
