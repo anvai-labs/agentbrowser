@@ -5,6 +5,28 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [1.8.12] — 2026-09-13
+
+### Added
+
+- Per-session `snapshotTimeoutMs` override (1-30000ms) across the protocol,
+  API, core, CLI (`--snapshot-timeout`), MCP server (`browser_create`), and
+  Playwright engine (#143), for sessions known to navigate large or complex
+  pages where the default whole-page ariaSnapshot budget would be exceeded.
+
+### Fixed
+
+- `observe()` no longer silently degrades on large/complex forms (#143). The
+  whole-page ariaSnapshot budget default is raised 1000ms → 5000ms; when the
+  budget is still exceeded, observations now carry an explicit
+  `degraded: true` / `degradedReason: "aria-snapshot-timeout"` marker on
+  `browser_observe` and `browser_snapshot` responses instead of returning a
+  DOM-tag-only element list with no names, values, or custom widgets and no
+  signal. Independent per-element `isVisible()`/`isEnabled()` reads are
+  parallelized instead of one sequential round trip per element, removing the
+  main source of outright observation timeouts on pages with hundreds of
+  elements.
+
 ## [1.8.11] — 2026-09-13
 
 ### Added
