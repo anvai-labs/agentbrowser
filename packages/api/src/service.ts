@@ -108,6 +108,12 @@ export interface ServiceSessionRequest {
    * tooling keys off service-worker presence.
    */
   allowServiceWorkers?: boolean;
+  /**
+   * Per-session override (1-30000ms, default 5000) for the whole-page
+   * ariaSnapshot budget observe() uses before degrading to a DOM-tag-only
+   * fallback. Raise it for a session known to navigate large/complex forms.
+   */
+  snapshotTimeoutMs?: number;
 }
 
 export interface ServiceSessionView {
@@ -907,6 +913,8 @@ export class AgentBrowserService {
       if (request.cookies !== undefined) engineRequest.cookies = request.cookies;
       if (request.allowServiceWorkers !== undefined)
         engineRequest.allowServiceWorkers = request.allowServiceWorkers;
+      if (request.snapshotTimeoutMs !== undefined)
+        engineRequest.snapshotTimeoutMs = request.snapshotTimeoutMs;
 
       // Per-session chain: session rules restrict; the SSRF base always runs.
       const sessionPolicy =
@@ -1486,6 +1494,8 @@ export class AgentBrowserService {
     mode: 'stable' | 'verified';
     fields: Array<{ ref: string; role: string; label: string }>;
     truncated?: boolean;
+    degraded?: boolean;
+    degradedReason?: 'aria-snapshot-timeout';
   }> {
     // Payload economics (TD-BROWSER-8 pressure matrix, row 4): the fields
     // list previously had no way to bound its size from the caller's side;
@@ -1501,6 +1511,8 @@ export class AgentBrowserService {
       revision?: number;
       elements?: Array<{ ref: string; role?: string; name?: string }>;
       truncated?: boolean;
+      degraded?: boolean;
+      degradedReason?: 'aria-snapshot-timeout';
     };
     return {
       url: view.url ?? '',
@@ -1513,6 +1525,11 @@ export class AgentBrowserService {
         label: e.name ?? '',
       })),
       ...(view.truncated === true ? { truncated: true } : {}),
+      // Whole-body ariaSnapshot fallback signal (see observe()): a
+      // one-shot-plan caller must see this just as clearly as browser_observe
+      // does, since `fields` alone looks structurally identical either way.
+      ...(view.degraded === true ? { degraded: true } : {}),
+      ...(view.degradedReason !== undefined ? { degradedReason: view.degradedReason } : {}),
     };
   }
 

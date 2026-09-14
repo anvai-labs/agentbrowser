@@ -66,6 +66,15 @@ export interface EngineSessionOptions {
    * default; never flips silently.
    */
   allowServiceWorkers?: boolean;
+  /**
+   * Per-session override for the whole-page ariaSnapshot budget observe()
+   * uses before it degrades to a DOM-tag-only fallback (no name/value, no
+   * custom-widget roles). Defaults to 5000ms; raise it for a session known
+   * to navigate large/complex forms (e.g. many-field ATS applications with
+   * custom combobox widgets) where the default budget would otherwise be
+   * exceeded. Integer 1-30000ms.
+   */
+  snapshotTimeoutMs?: number;
 }
 
 /**
@@ -144,6 +153,18 @@ export interface RawPageState {
   /** Aggregated occluders, present only when the request included "overlays". */
   overlays?: OverlayBlocker[];
   metadata?: Record<string, unknown>;
+  /**
+   * True when the whole-page ariaSnapshot budget (snapshotTimeoutMs) was
+   * exceeded and `elements` came from the DOM-tag-only fallback instead of
+   * the accessibility tree: roles are bare HTML tags with no name/value,
+   * and any custom widget with no native form control (e.g. a div-based
+   * combobox) is entirely absent. A caller should not trust role/name
+   * matching on this response - retry with a larger snapshotTimeoutMs, or
+   * narrow the observation (ref_id) instead.
+   */
+  degraded?: boolean;
+  /** Why `degraded` is set, when it is. Currently only one cause exists. */
+  degradedReason?: 'aria-snapshot-timeout';
 }
 
 /**

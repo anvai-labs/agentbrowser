@@ -136,6 +136,14 @@ export class SessionCoordinator {
       sessionOptions.allowServiceWorkers = request.allowServiceWorkers;
     }
 
+    // Per-session override of the whole-page ariaSnapshot budget observe()
+    // uses before degrading to a DOM-tag-only fallback; already part of
+    // SessionRequest (unlike allowServiceWorkers), so no extra intersection
+    // typing is needed above.
+    if (request.snapshotTimeoutMs !== undefined) {
+      sessionOptions.snapshotTimeoutMs = request.snapshotTimeoutMs;
+    }
+
     // Seed cookies ride through to the engine (reuse an authenticated session).
     if (request.cookies !== undefined) {
       sessionOptions.cookies = request.cookies as NonNullable<

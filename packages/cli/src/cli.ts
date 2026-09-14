@@ -197,6 +197,12 @@ export function buildCli(deps: CliDependencies): Cli {
           'ADR-019: allow service workers for this session (off by default whenever egress ' +
             'policy applies; they bypass the choke point - opt in only for a trusted destination)'
         )
+        .option(
+          '--snapshot-timeout <ms>',
+          'whole-page ariaSnapshot budget before observe() degrades to a DOM-tag-only ' +
+            'fallback (1-30000, server default 5000) - raise it for a session known to ' +
+            'navigate large/complex forms'
+        )
         .action(
           action(async (ctx, options: Record<string, string | boolean | undefined>) => {
             const request: SessionRequest = { tenantId: String(options.tenant) };
@@ -223,6 +229,9 @@ export function buildCli(deps: CliDependencies): Cli {
             }
             if (options.timezoneId) {
               request.timezoneId = String(options.timezoneId);
+            }
+            if (options.snapshotTimeout) {
+              request.snapshotTimeoutMs = Number.parseInt(String(options.snapshotTimeout), 10);
             }
             if (options.cookies) {
               try {

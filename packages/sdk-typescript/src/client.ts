@@ -108,6 +108,17 @@ export interface ObservationResponse {
   }>;
   /** Present only when the observation is truncated. */
   continuation?: { nextOrdinal: number; remaining: number };
+  /**
+   * True when the whole-page ariaSnapshot budget was exceeded and `elements`
+   * came from a DOM-tag-only fallback: roles are bare HTML tags with no
+   * name/value, and any custom widget with no native form control (e.g. a
+   * div-based combobox) is entirely absent. Do not trust role/name matching
+   * on this observation - retry with a larger snapshotTimeoutMs on the
+   * session, or narrow the observation instead.
+   */
+  degraded?: boolean;
+  /** Why `degraded` is set, when it is. Currently only one cause exists. */
+  degradedReason?: 'aria-snapshot-timeout';
 }
 
 /** The delivered action set, derived from the protocol source of truth. */
@@ -227,6 +238,16 @@ export interface PageSnapshot {
   mode: 'stable' | 'verified';
   fields: Array<{ ref: string; role: string; label: string }>;
   truncated?: boolean;
+  /**
+   * True when the whole-page ariaSnapshot budget was exceeded and `fields`
+   * came from a DOM-tag-only fallback: roles are bare HTML tags and any
+   * custom widget with no native form control (e.g. a div-based combobox)
+   * is entirely absent, even though `fields` looks structurally identical
+   * either way. Retry with a larger snapshotTimeoutMs on the session.
+   */
+  degraded?: boolean;
+  /** Why `degraded` is set, when it is. Currently only one cause exists. */
+  degradedReason?: 'aria-snapshot-timeout';
 }
 
 /**

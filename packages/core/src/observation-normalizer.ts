@@ -99,6 +99,16 @@ export class ObservationNormalizer {
       observation.overlays = rawState.overlays;
     }
 
+    // Whole-body ariaSnapshot fallback signal: pass through untouched so a
+    // caller can detect a DOM-tag-only, name/value-less element list instead
+    // of silently trusting it.
+    if (rawState.degraded !== undefined) {
+      observation.degraded = rawState.degraded;
+    }
+    if (rawState.degradedReason !== undefined) {
+      observation.degradedReason = rawState.degradedReason;
+    }
+
     // Add focusedRef only if there is a focused element
     const focusedRef = this.getFocusedRef(prioritizedElements);
     if (focusedRef !== undefined) {
