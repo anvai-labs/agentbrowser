@@ -34,6 +34,7 @@ export const ErrorCodeEnum = Type.Union([
   Type.Literal('TARGET_DISABLED'),
   Type.Literal('NAVIGATION_TIMEOUT'),
   Type.Literal('ACTION_TIMEOUT'),
+  Type.Literal('VALUE_MISMATCH'),
   Type.Literal('PLAN_WAIT_TIMEOUT'),
   Type.Literal('ENGINE_UNSUPPORTED'),
   Type.Literal('ENGINE_CRASHED'),
@@ -320,6 +321,7 @@ export const FillActionSchema = Type.Object({
   target: ElementTargetSchema,
   value: Type.String(),
   sensitive: Type.Optional(Type.Boolean()),
+  expectValue: Type.Optional(Type.String()),
 });
 
 export const SelectActionSchema = Type.Object({
@@ -420,6 +422,8 @@ export const PlanStepSchema = Type.Object({
   promptText: Type.Optional(Type.String()),
   wait: Type.Optional(DeliveredWaitConditionSchema),
   condition: Type.Optional(DeliveredWaitConditionSchema),
+  /** Verify a fill: the field must hold this exact value after the fill (one retry). */
+  expectValue: Type.Optional(Type.String()),
   /** TD-BROWSER-8 Phase 2: pre-step label wait. */
   waitForLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
   /** Bounded hard (100-60000): garbage here wedged the poll loop pre-v1.8.2. */

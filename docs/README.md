@@ -11,6 +11,7 @@ start with the [root README](../README.md).
 | --- | --- |
 | Install the service / MCP binary, wire up a client | [README](../README.md#install-homebrew) |
 | Run, configure, monitor, or troubleshoot the service | [Operations guide](operations.md) |
+| Drive a long interactive form (custom comboboxes, repeated sections) | [Recipe: interactive forms](recipes/interactive-forms.md) |
 | Choose or implement an engine | [Engine matrix](engines.md) |
 | Call the REST API | `GET /openapi.json` on a running service |
 | Understand why a design decision was made | ADRs, below |
@@ -47,6 +48,7 @@ ADRs capture significant architectural decisions, their context, and consequence
 | [ADR-015](adr/015-cross-package-contract-single-source-of-truth.md) | Single Source of Truth for Cross-Package Contract Primitives | Accepted | Contract primitives live once in protocol (REF_PATTERN/parseRef, extract formats, UsageError, compiled validators, type-level contracts); SDK mirrors protocol types; renumbered twice (011→012→015) after collisions |
 | [ADR-018](adr/018-upload-action.md) | The `upload` Action — Native File Attachment Without the OS Picker | Accepted | Delivered `upload` under the reserved protocol name: `paths` replace a file input's list, target ref optional (hidden inputs have no ref), no-target mode requires exactly one `input[type=file]`; stat-validated paths; evidence over assertion |
 | [ADR-019](adr/019-explicit-service-worker-opt-in.md) | Explicit Per-Session Service-Worker Opt-In | Accepted | Request policies block service workers by default (Playwright can't route their requests — a choke-point bypass hole); `allowServiceWorkers` is an explicit, off-by-default per-session opt-in for destinations whose anti-fraud tooling keys off service-worker presence |
+| [ADR-020](adr/020-inline-html-verification.md) | Inline HTML Verification via MCP | Accepted | `browser_html` returns page HTML inline (maxBytes-bounded, untrusted-framed, not secret-redacted — a disclosed trade-off) because a11y output cannot show custom-widget state and MCP clients cannot resolve REST artifact URLs; CLI `page html` prints inline and `page observe --continue-from` resumes truncation |
 
 ## Technical Design
 
