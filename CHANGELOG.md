@@ -5,6 +5,16 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [Unreleased]
+
+### Changed
+
+- Default session TTL raised from 15 minutes to 3.5 hours (`SessionCoordinator`
+  default; operator override `AGENTBROWSER_DEFAULT_TTL_MS` unchanged, per-session
+  `ttlMs` still wins). Long flows keep their session across a working block, but
+  a session that outlives usefulness now occupies its browser slot 14x longer.
+  To retain the previous window: `AGENTBROWSER_DEFAULT_TTL_MS=900000`.
+
 ## [1.8.12] — 2026-09-13
 
 ### Added

@@ -130,7 +130,6 @@ describe('SessionCoordinator', () => {
   beforeEach(() => {
     coordinator = new SessionCoordinator({
       maxSessions: 10,
-      defaultTtlMs: 900000,
       defaultIdleTimeoutMs: 120000,
       cleanupCheckIntervalMs: 1000,
     });
@@ -233,8 +232,8 @@ describe('SessionCoordinator', () => {
       const response = await coordinator.create(request, mockEngine);
       const session = coordinator.get(response.sessionId);
 
-      expect(session?.metadata.ttlMs).toBe(900000); // Default
-      expect(response.ttlMs).toBe(900000);
+      expect(session?.metadata.ttlMs).toBe(12600000); // Default: 3.5 hours
+      expect(response.ttlMs).toBe(12600000);
     });
 
     it('should use default idle timeout when not specified', async () => {
