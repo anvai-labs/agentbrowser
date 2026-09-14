@@ -649,6 +649,23 @@ describe('FakeEngine Integration', () => {
       await engine.close();
     }
   });
+
+  it('surfaces seeded checked state on observations', async () => {
+    const { FakeEngine } = await import('./fake-engine.js');
+    const engine = new FakeEngine();
+    const session = await engine.createSession({ headless: true });
+    const page = await session.newPage();
+    const fakePage = engine.getFakePage(session.id, page.id)!;
+    fakePage.seedElements([
+      { ref: 'e1_80', role: 'checkbox', name: 'Notify', checked: true },
+      { ref: 'e1_81', role: 'checkbox', name: 'Quiet' },
+    ]);
+
+    const observation = await page.observe({});
+    const boxes = observation.elements.filter((element) => element.role === 'checkbox');
+    expect(boxes.map((element) => element.checked)).toEqual([true, undefined]);
+    await engine.close();
+  });
 });
 
 /** Capture an act() rejection message. */

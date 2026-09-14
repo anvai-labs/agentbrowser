@@ -386,4 +386,57 @@ describe('real action wire semantics', () => {
       await engine.close();
     }
   });
+
+  it('reports checked state for checkbox elements across clicks', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({
+        url:
+          'data:text/html,<body>' +
+          '<input type="checkbox" aria-label="Notify me">' +
+          '<input type="checkbox" aria-label="Already on" checked>' +
+          '</body>',
+      });
+
+      const observation = await page.observe({});
+      const boxes = observation.elements.filter((element) => element.role === 'checkbox');
+      expect(boxes).toHaveLength(2);
+      expect(boxes.map((element) => element.checked)).toEqual([false, true]);
+
+      const target = boxes[0];
+      const click = await page.act({ type: 'click', target: { ref: target.ref ?? '' } });
+      expect(click.newRevision).toBeGreaterThan(observation.revision);
+
+      const after = await page.observe({});
+      const clicked = after.elements.find((element) => element.name === 'Notify me');
+      expect(clicked?.checked).toBe(true);
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('reads an aria-checked div widget through the isChecked fallback', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({
+        url:
+          'data:text/html,<body>' +
+          // A non-input ARIA widget: the aria snapshot emits no [checked]
+          // marker for aria-checked="false", so this exercises the
+          // isChecked fallback rather than the parser path.
+          '<div role="checkbox" aria-checked="false" aria-label="Widget">Off</div>' +
+          '</body>',
+      });
+
+      const observation = await page.observe({});
+      const widget = observation.elements.find((element) => element.role === 'checkbox');
+      expect(widget?.checked).toBe(false);
+    } finally {
+      await engine.close();
+    }
+  });
 });

@@ -62,6 +62,12 @@ interface StoredElement {
   enabled: boolean;
   href?: string;
   hrefTruncated?: boolean;
+  /**
+   * Checked state for the aria checked roles (checkbox, radio, switch,
+   * menuitemcheckbox, menuitemradio, option, treeitem); absent when
+   * unknowable (tri-state mixed, or the authoritative read failed).
+   */
+  checked?: boolean | undefined;
   /** Set on role:"fileinput" elements: binds by ordinal over input[type=file]. */
   fileInputIndex?: number;
   attributes?: Record<string, string>;
@@ -1267,7 +1273,11 @@ class PlaywrightPage implements EnginePage {
     // cause of outright request timeouts, distinct from the ariaSnapshot
     // budget above. Binding, snapshot capture, and staleness detection stay
     // sequential and unchanged - only this trailing enrichment parallelizes.
-    const boundElements: Array<{ element: StoredElement; handle: ElementHandle }> = [];
+    const boundElements: Array<{
+      element: StoredElement;
+      handle: ElementHandle;
+      locator: Locator;
+    }> = [];
     try {
       for (const [index, element] of elements.entries()) {
         const ref = element.ref ?? `e${this.revision}_${index}`;
@@ -1312,7 +1322,7 @@ class PlaywrightPage implements EnginePage {
                 !sameSnapshotEvidence(prior, binding))
             )
               changed = true;
-            boundElements.push({ element, handle });
+            boundElements.push({ element, handle, locator });
           }
         }
       }
@@ -1322,12 +1332,32 @@ class PlaywrightPage implements EnginePage {
       // 50 links in document order that actually carry a non-empty href,
       // not the first 50 link-role elements - a fetch can come back empty).
       await Promise.all(
-        boundElements.map(async ({ element, handle }) => {
+        boundElements.map(async ({ element, handle, locator }) => {
           element.visible = await handle.isVisible();
           element.enabled = await handle.isEnabled();
+          // Checked roles: the snapshot marker settles true and records mixed
+          // as present-but-undefined; elements the marker left unset get one
+          // authoritative read here (isChecked reads aria-checked for these
+          // roles and returns false when absent, so a non-input ARIA widget
+          // degrades to false rather than an error). The key stays absent on
+          // read failure - unknowable, not false.
+          if (
+            (element.role === 'checkbox' ||
+              element.role === 'radio' ||
+              element.role === 'switch' ||
+              element.role === 'menuitemcheckbox' ||
+              element.role === 'menuitemradio' ||
+              element.role === 'option' ||
+              element.role === 'treeitem') &&
+            !('checked' in element)
+          ) {
+            const checked = await locator.isChecked().catch(() => undefined);
+            if (typeof checked === 'boolean') {
+              element.checked = checked;
+            }
+          }
         })
       );
-
       // href capture is one round-trip per link; bound it so link-heavy
       // pages cannot stretch an observation unboundedly. Kept sequential:
       // the cap is on successful captures (empty hrefs don't count against
@@ -1432,9 +1462,10 @@ class PlaywrightPage implements EnginePage {
       }
 
       // Element line: `role`, `role "name"`, `role "name": inline-value`,
-      // or with a trailing bare colon when the node has children.
+      // possibly with trailing bracketed state markers (`[checked]`), or
+      // with a trailing bare colon when the node has children.
       const elementMatch =
-        /^([a-zA-Z][\w-]*)(?:\s+"((?:[^"\\]|\\.)*)")?(?:\s+\[[^\]]*\])*(?::\s*(.*))?$/.exec(text);
+        /^([a-zA-Z][\w-]*)(?:\s+"((?:[^"\\]|\\.)*)")?((?:\s+\[[^\]]*\])*)(?::\s*(.*))?$/.exec(text);
       if (!elementMatch?.[1]) {
         continue;
       }
@@ -1453,9 +1484,29 @@ class PlaywrightPage implements EnginePage {
       if (elementMatch[2] !== undefined) {
         element.name = elementMatch[2];
       }
-      const inlineValue = elementMatch[3]?.trim();
+      const inlineValue = elementMatch[4]?.trim();
       if (inlineValue) {
         element.value = unquote(inlineValue);
+      }
+      if (
+        role === 'checkbox' ||
+        role === 'radio' ||
+        role === 'switch' ||
+        role === 'menuitemcheckbox' ||
+        role === 'menuitemradio' ||
+        role === 'option' ||
+        role === 'treeitem'
+      ) {
+        // Playwright's snapshot marks true as `[checked]` and tri-state mixed
+        // as `[checked=mixed]`. Only a definite true settles here; mixed is
+        // recorded as present-but-undefined (unknowable, not false) and the
+        // plain absence of the key defers to the authoritative isChecked pass.
+        const markers = elementMatch[3] ?? '';
+        if (/\[checked\]/.test(markers)) {
+          element.checked = true;
+        } else if (/\[checked=/.test(markers)) {
+          element.checked = undefined;
+        }
       }
       elements.push(element);
     }

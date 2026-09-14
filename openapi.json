@@ -3659,6 +3659,9 @@
                       "type": "string"
                     }
                   }
+                },
+                "checked": {
+                  "type": "boolean"
                 }
               }
             }
@@ -3849,6 +3852,9 @@
                 "type": "string"
               }
             }
+          },
+          "checked": {
+            "type": "boolean"
           }
         }
       },
@@ -4465,6 +4471,9 @@
                           "type": "string"
                         }
                       }
+                    },
+                    "checked": {
+                      "type": "boolean"
                     }
                   }
                 }

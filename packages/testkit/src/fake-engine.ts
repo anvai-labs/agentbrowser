@@ -294,6 +294,7 @@ class FakePage implements EnginePage {
       enabled: el.enabled ?? true,
       focused: el.focused ?? false,
       ...(el.risk !== undefined ? { risk: el.risk } : {}),
+      ...(el.checked !== undefined ? { checked: el.checked } : {}),
       attributes: el.attributes ?? {},
     }));
     this.elements = [...this.elements, ...added];
@@ -464,6 +465,10 @@ class FakePage implements EnginePage {
 
         if (el.attributes !== undefined) {
           element.attributes = el.attributes;
+        }
+
+        if (el.checked !== undefined) {
+          element.checked = el.checked;
         }
 
         if (el.risk !== undefined) {

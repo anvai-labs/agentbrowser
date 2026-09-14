@@ -5,6 +5,7 @@
  * of schema validation for all protocol types.
  */
 
+import { Value } from '@sinclair/typebox/value';
 import { describe, expect, it } from 'vitest';
 import { ErrorCode } from './errors';
 import {
@@ -16,6 +17,7 @@ import {
   EngineCapabilitiesSchema,
   ErrorCodeEnum,
   ObservationRequestSchema,
+  PageElementSchema,
   PageStateSchema,
   SessionPolicySchema,
   SessionRequestSchema,
@@ -730,6 +732,18 @@ describe('ADR-015 action-union drift coverage', () => {
 });
 
 describe('validatePlanStep (compiled, Phase 3)', () => {
+  it('accepts checked as an optional page-element boolean', () => {
+    const element = {
+      ref: 'e1_0',
+      role: 'checkbox',
+      visible: true,
+      enabled: true,
+      checked: true,
+    };
+    expect(Value.Check(PageElementSchema, element)).toBe(true);
+    expect(Value.Check(PageElementSchema, { ...element, checked: 'yes' })).toBe(false);
+  });
+
   it('accepts every delivered action type as a flat step', () => {
     for (const action of [...DELIVERED_ACTION_TYPES]) {
       const result = validatePlanStep({ action });

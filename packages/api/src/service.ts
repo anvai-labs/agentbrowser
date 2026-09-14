@@ -1904,7 +1904,7 @@ export class AgentBrowserService {
       }
 
       const properties: Record<string, { old: unknown; new: unknown }> = {};
-      for (const field of ['role', 'name', 'value', 'visible', 'enabled'] as const) {
+      for (const field of ['role', 'name', 'value', 'visible', 'enabled', 'checked'] as const) {
         const old = before[field];
         const now = element[field];
         if (old !== now) {
