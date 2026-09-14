@@ -385,10 +385,8 @@ export class SessionsClient {
   }
 
   /**
-   * Fetch a stored artifact. The service inlines `contentBase64` for
-   * artifacts at or under its inline budget and omits the field otherwise,
-   * in which case metadata still comes back and callers can surface the
-   * descriptor instead of the bytes.
+   * Fetch a stored artifact. The GET route returns `contentBase64` with the
+   * metadata; callers that prefer the descriptor alone can ignore it.
    */
   async artifact(
     sessionId: string,

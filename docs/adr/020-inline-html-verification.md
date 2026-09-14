@@ -21,10 +21,11 @@ Raw page HTML is the ground truth for all of these. The REST surface has had it
 since A3 (`POST .../html` + `GET .../artifacts/{id}`), but:
 
 1. The MCP tool catalog had no HTML tool at all, and
-2. Artifact responses carry **relative** REST URLs (`/sessions/{sid}/artifacts/{id}`)
-   that an MCP-only client cannot resolve — it has no base URL and no HTTP client,
-   by design. Screenshot/PDF return the same kind of descriptor, which is fine for
-   a human with a browser, and useless for an agent that wants to read bytes.
+2. The artifact descriptor an MCP client receives carries no usable download
+   location (the SDK's `ArtifactRef.url` is not populated by the service), and an
+   MCP-only client has no base URL or HTTP client to resolve one with, by design.
+   Screenshot/PDF return the same kind of descriptor, which is fine for a human
+   with a browser, and useless for an agent that wants to read bytes.
 
 Two constraints shaped the decision:
 

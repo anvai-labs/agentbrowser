@@ -96,7 +96,6 @@ describe('AgentBrowser MCP server', () => {
         type: 'html',
         contentType: 'text/html; charset=utf-8',
         sizeBytes: 37,
-        url: '/sessions/ses_1/artifacts/html_1',
         inline: {
           contentBase64: Buffer.from('<html><body>form values</body></html>').toString('base64'),
           byteSize: 37,
@@ -108,7 +107,6 @@ describe('AgentBrowser MCP server', () => {
           type: 'html',
           contentType: 'text/html; charset=utf-8',
           sizeBytes: 2048,
-          url: '/sessions/ses_1/artifacts/html_1',
         },
         contentBase64: Buffer.from('<html>stored bytes</html>').toString('base64'),
       }),
@@ -615,6 +613,7 @@ describe('AgentBrowser MCP server', () => {
 
         expect(result.html).toHaveLength(5);
         expect(result.truncated).toBe(true);
+        expect(result.warning).toContain('NOT secret-redacted');
       });
 
       it('falls back to the artifact surface when the export is not inlined', async () => {
@@ -623,7 +622,6 @@ describe('AgentBrowser MCP server', () => {
           type: 'html',
           contentType: 'text/html; charset=utf-8',
           sizeBytes: 999999,
-          url: '/sessions/ses_1/artifacts/html_2',
         });
 
         const response = JSON.parse(

@@ -329,7 +329,7 @@ entry-point path. Success emits JSON evidence; failures exit nonzero.
 Each child has a 20-second deadline and a combined 1 MiB stdout/stderr limit;
 failure cleanup escalates from termination to forced termination with bounded
 waits. CLI checks exact version and help. MCP checks the negotiated protocol,
-exact version, all eleven tools, valid output and clean shutdown, clearing the
+exact version, the full twelve-tool catalog, valid output and clean shutdown, clearing the
 runtime version override to prevent false version evidence. These checks do
 not launch a browser or certify API connectivity, downloads, containment or a
 Homebrew upgrade. Those are separate [release acceptance gates](release-milestones.md).

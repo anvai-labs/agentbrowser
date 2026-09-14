@@ -430,6 +430,8 @@ function buildTools(client: McpClient): ToolDefinition[] {
         }
         if (typeof args.continueFrom === 'number') {
           request.continueFrom = args.continueFrom;
+        } else if (typeof args.continueFrom === 'string' && /^\d+$/.test(args.continueFrom)) {
+          request.continueFrom = Number.parseInt(args.continueFrom, 10);
         }
         if (Array.isArray(args.include)) {
           request.include = args.include.filter(
@@ -619,7 +621,6 @@ function buildTools(client: McpClient): ToolDefinition[] {
           sessionId,
           pageId,
           artifactId: exported.artifactId,
-          url: exported.url,
           html: bounded.toString('utf8'),
           truncated,
           sizeBytes: full.length,

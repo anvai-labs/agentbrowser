@@ -57,7 +57,6 @@ describe('AgentBrowser CLI', () => {
         type: 'html',
         contentType: 'text/html; charset=utf-8',
         sizeBytes: 37,
-        url: '/v1/sessions/ses_1/artifacts/html_1',
         inline: {
           contentBase64: Buffer.from('<html><body>form values</body></html>').toString('base64'),
           byteSize: 37,
@@ -69,7 +68,6 @@ describe('AgentBrowser CLI', () => {
           type: 'html',
           contentType: 'text/html; charset=utf-8',
           sizeBytes: 4096,
-          url: '/v1/sessions/ses_1/artifacts/html_1',
         },
         contentBase64: Buffer.from('<html>stored bytes</html>').toString('base64'),
       }),
@@ -234,7 +232,6 @@ describe('AgentBrowser CLI', () => {
         type: 'html',
         contentType: 'text/html; charset=utf-8',
         sizeBytes: 999999,
-        url: '/v1/sessions/ses_1/artifacts/html_2',
       });
       await run('page', 'html', 'ses_1', 'pg_1');
       expect(sessions.artifact).toHaveBeenCalledWith('ses_1', 'html_2');
