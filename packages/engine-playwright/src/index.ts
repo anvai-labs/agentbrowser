@@ -62,6 +62,8 @@ interface StoredElement {
   enabled: boolean;
   href?: string;
   hrefTruncated?: boolean;
+  /** Checked state for checkbox/radio/switch roles; absent when unknowable. */
+  checked?: boolean | undefined;
   /** Set on role:"fileinput" elements: binds by ordinal over input[type=file]. */
   fileInputIndex?: number;
   attributes?: Record<string, string>;
@@ -1328,6 +1330,28 @@ class PlaywrightPage implements EnginePage {
         })
       );
 
+      // Checked state: the snapshot marker settles true and records mixed as
+      // present-but-undefined. Every other bound checked-role element gets
+      // one authoritative read; isChecked rejects non-input ARIA widgets,
+      // which leaves the key absent (unknowable) rather than false.
+      for (const { element } of boundElements) {
+        if (
+          element.role !== 'checkbox' &&
+          element.role !== 'radio' &&
+          element.role !== 'switch' &&
+          element.role !== 'menuitemcheckbox'
+        ) {
+          continue;
+        }
+        if ('checked' in element) continue;
+        const binding = this.bindings.get(element.ref ?? '');
+        if (!binding) continue;
+        const checked = await binding.locator.isChecked().catch(() => undefined);
+        if (typeof checked === 'boolean') {
+          element.checked = checked;
+        }
+      }
+
       // href capture is one round-trip per link; bound it so link-heavy
       // pages cannot stretch an observation unboundedly. Kept sequential:
       // the cap is on successful captures (empty hrefs don't count against
@@ -1432,9 +1456,10 @@ class PlaywrightPage implements EnginePage {
       }
 
       // Element line: `role`, `role "name"`, `role "name": inline-value`,
-      // or with a trailing bare colon when the node has children.
+      // possibly with trailing bracketed state markers (`[checked]`), or
+      // with a trailing bare colon when the node has children.
       const elementMatch =
-        /^([a-zA-Z][\w-]*)(?:\s+"((?:[^"\\]|\\.)*)")?(?:\s+\[[^\]]*\])*(?::\s*(.*))?$/.exec(text);
+        /^([a-zA-Z][\w-]*)(?:\s+"((?:[^"\\]|\\.)*)")?((?:\s+\[[^\]]*\])*)(?::\s*(.*))?$/.exec(text);
       if (!elementMatch?.[1]) {
         continue;
       }
@@ -1453,9 +1478,26 @@ class PlaywrightPage implements EnginePage {
       if (elementMatch[2] !== undefined) {
         element.name = elementMatch[2];
       }
-      const inlineValue = elementMatch[3]?.trim();
+      const inlineValue = elementMatch[4]?.trim();
       if (inlineValue) {
         element.value = unquote(inlineValue);
+      }
+      if (
+        role === 'checkbox' ||
+        role === 'radio' ||
+        role === 'switch' ||
+        role === 'menuitemcheckbox'
+      ) {
+        // Playwright's snapshot marks true as `[checked]` and tri-state mixed
+        // as `[checked=mixed]`. Only a definite true settles here; mixed is
+        // recorded as present-but-undefined (unknowable, not false) and the
+        // plain absence of the key defers to the authoritative isChecked pass.
+        const markers = elementMatch[3] ?? '';
+        if (/\[checked\]/.test(markers)) {
+          element.checked = true;
+        } else if (/\[checked=/.test(markers)) {
+          element.checked = undefined;
+        }
       }
       elements.push(element);
     }

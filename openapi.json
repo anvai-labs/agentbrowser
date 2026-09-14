@@ -2962,8 +2962,16 @@
                     ]
                   }
                 }
+              },
+              "allowServiceWorkers": {
+                "type": "boolean"
               }
             }
+          },
+          "snapshotTimeoutMs": {
+            "minimum": 1,
+            "maximum": 30000,
+            "type": "integer"
           }
         }
       },
@@ -3651,6 +3659,9 @@
                       "type": "string"
                     }
                   }
+                },
+                "checked": {
+                  "type": "boolean"
                 }
               }
             }
@@ -3756,6 +3767,13 @@
                 "type": "integer"
               }
             }
+          },
+          "degraded": {
+            "type": "boolean"
+          },
+          "degradedReason": {
+            "const": "aria-snapshot-timeout",
+            "type": "string"
           }
         }
       },
@@ -3834,6 +3852,9 @@
                 "type": "string"
               }
             }
+          },
+          "checked": {
+            "type": "boolean"
           }
         }
       },
@@ -4883,6 +4904,9 @@
                           "type": "string"
                         }
                       }
+                    },
+                    "checked": {
+                      "type": "boolean"
                     }
                   }
                 }
@@ -4988,6 +5012,13 @@
                     "type": "integer"
                   }
                 }
+              },
+              "degraded": {
+                "type": "boolean"
+              },
+              "degradedReason": {
+                "const": "aria-snapshot-timeout",
+                "type": "string"
               }
             }
           },

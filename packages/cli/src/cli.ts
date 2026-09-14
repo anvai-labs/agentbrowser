@@ -987,6 +987,9 @@ function renderObservation(observation: ObservationResponse): string[] {
     if (!element.enabled) {
       parts.push('[disabled]');
     }
+    if (element.checked === true) {
+      parts.push('[checked]');
+    }
     if (!element.visible) {
       parts.push('[hidden]');
     }

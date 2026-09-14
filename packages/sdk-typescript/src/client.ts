@@ -96,6 +96,12 @@ export interface ObservationResponse {
      * so callers can tell ambiguous file inputs apart).
      */
     attributes?: Record<string, string>;
+    /**
+     * Checked state for checkbox/radio/switch roles: true/false from the
+     * engine's authoritative read; absent when unknowable (tri-state mixed,
+     * or degraded observations without bound handles).
+     */
+    checked?: boolean | undefined;
   }>;
   truncated: boolean;
   untrustedContent: boolean;

@@ -341,6 +341,34 @@ describe('AgentBrowser CLI', () => {
     });
   });
 
+  describe('observe command', () => {
+    it('renders a [checked] marker for checked checkboxes', async () => {
+      sessions.observe.mockResolvedValueOnce({
+        sessionId: 'ses_1',
+        pageId: 'pg_1',
+        revision: 1,
+        url: 'https://example.com',
+        title: 'Example',
+        status: 'interactive',
+        elements: [
+          {
+            ref: 'e1_0',
+            role: 'checkbox',
+            name: 'Notify me',
+            visible: true,
+            enabled: true,
+            checked: true,
+          },
+        ],
+        truncated: false,
+        untrustedContent: true,
+      });
+      await run('observe', 'ses_1', 'pg_1');
+
+      expect(out.join('\n')).toContain('[checked]');
+    });
+  });
+
   describe('action commands', () => {
     it('should execute a click', async () => {
       const code = await run('act', 'click', 'ses_1', 'pg_1', 'e1_0');

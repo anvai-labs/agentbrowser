@@ -194,6 +194,8 @@ export interface RawElement {
   href?: string;
   /** True when the captured href exceeded the 2048-char capture limit. */
   hrefTruncated?: boolean;
+  /** Checked state for checkbox/radio/switch roles; absent when unknowable (e.g. tri-state mixed). */
+  checked?: boolean | undefined;
 }
 
 /**
