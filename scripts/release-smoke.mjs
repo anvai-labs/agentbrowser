@@ -7,7 +7,7 @@ import { resolve } from 'node:path';
 export const EXPECTED_TOOLS = Object.freeze([
   'browser_create', 'browser_close', 'browser_cookies', 'browser_snapshot',
   'browser_plan', 'browser_navigate', 'browser_observe', 'browser_act',
-  'browser_extract', 'browser_pdf', 'browser_screenshot',
+  'browser_extract', 'browser_html', 'browser_pdf', 'browser_screenshot',
 ]);
 
 /** Preserve binary/Node commands and allow testing older installed releases. */

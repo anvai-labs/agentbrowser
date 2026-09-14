@@ -375,11 +375,37 @@ export class SessionsClient {
     return this.http.requestJson(`/v1/sessions/${sessionId}/trace`, { method: 'POST' });
   }
 
-  /** A3 evidence: capture the page's current HTML as an artifact (NOT redacted). */
-  async html(sessionId: string, pageId: string): Promise<ArtifactRef> {
+  /**
+   * A3 evidence: capture the page's current HTML as an artifact (NOT
+   * redacted). Under the service's inline budget the response carries the
+   * bytes as `inline.contentBase64`; above it, only the descriptor comes
+   * back and the bytes must be fetched via `artifact()`.
+   */
+  async html(
+    sessionId: string,
+    pageId: string
+  ): Promise<ArtifactRef & { inline?: { contentBase64: string; byteSize?: number } }> {
     return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/html`, {
       method: 'POST',
     });
+  }
+
+  /**
+   * Fetch a stored artifact. The GET route returns `contentBase64` with the
+   * metadata; callers that prefer the descriptor alone can ignore it.
+   */
+  async artifact(
+    sessionId: string,
+    artifactId: string
+  ): Promise<{ metadata: ArtifactRef; contentBase64?: string }> {
+    const body = await this.http.requestJson<{
+      metadata: ArtifactRef;
+      contentBase64?: string;
+    }>(`/v1/sessions/${sessionId}/artifacts/${artifactId}`);
+    return {
+      metadata: body.metadata,
+      ...(body.contentBase64 !== undefined ? { contentBase64: body.contentBase64 } : {}),
+    };
   }
 
   /** A3/network summary: replay retained session events, oldest first per ledger. */

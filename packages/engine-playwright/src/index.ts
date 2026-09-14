@@ -1986,9 +1986,44 @@ class PlaywrightPage implements EnginePage {
       }
       case 'fill': {
         const locator = this.locatorFor((action.target as EngineTarget).ref);
+        const expected = (action as { expectValue?: string | undefined }).expectValue;
         await locator.fill(String(action.value ?? ''));
+        // Widget-heavy pages reformat fields on input (masked date triplets);
+        // a silent divergence is the exact failure mode expectValue exists
+        // for, so read the live value back before the revision bump releases
+        // the handles. One refill, then VALUE_MISMATCH with both values.
+        let verified: string | undefined;
+        if (expected !== undefined) {
+          for (let round = 0; round < 2; round += 1) {
+            const actual = await locator.inputValue().catch(() => undefined as unknown as string);
+            if (actual === expected) {
+              verified = actual;
+              break;
+            }
+            await locator.fill(String(action.value ?? ''));
+          }
+          if (verified === undefined) {
+            this.bumpRevision();
+            throw new EngineError(
+              'VALUE_MISMATCH',
+              `Filled value did not stick: expected ${JSON.stringify(expected)}, field holds something else. The field may reformat input; re-fill and re-verify.`,
+              false,
+              { ref: (action.target as EngineTarget).ref, expected }
+            );
+          }
+        }
         this.bumpRevision();
-        break;
+        return {
+          actionId,
+          startTimestamp,
+          endTimestamp: new Date().toISOString(),
+          oldRevision,
+          newRevision: this.revision,
+          result: {
+            success: true,
+            ...(verified !== undefined ? { verified } : {}),
+          },
+        };
       }
       case 'select': {
         const locator = this.locatorFor((action.target as EngineTarget).ref);

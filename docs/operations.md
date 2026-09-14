@@ -333,7 +333,7 @@ entry-point path. Success emits JSON evidence; failures exit nonzero.
 Each child has a 20-second deadline and a combined 1 MiB stdout/stderr limit;
 failure cleanup escalates from termination to forced termination with bounded
 waits. CLI checks exact version and help. MCP checks the negotiated protocol,
-exact version, all eleven tools, valid output and clean shutdown, clearing the
+exact version, the full twelve-tool catalog, valid output and clean shutdown, clearing the
 runtime version override to prevent false version evidence. These checks do
 not launch a browser or certify API connectivity, downloads, containment or a
 Homebrew upgrade. Those are separate [release acceptance gates](release-milestones.md).
@@ -411,5 +411,7 @@ support. Record these limitations rather than substituting workspace code.
 | `upload` fails with `TARGET_AMBIGUOUS` naming several file inputs | The page has more than one `input[type=file]` (hidden Dropzone inputs are common). Observe with `include:["fileInputs"]` to mint refs for every input — hidden ones included — then pass `target: {ref}`. |
 | Observation shows a checkbox but no on/off state | Checkbox/radio/switch elements carry `checked` (true/false) on observations; tri-state mixed is reported as absent rather than guessed. React-controlled widgets can still hide state in the DOM attribute — trust the observation field, not the raw HTML attribute. |
 | Plan aborts with `AMBIGUOUS_REMAP` | The page churned enough to enter `verified` mode and no remap candidate matched the original element's role+label. Re-observe and rebuild the plan — the executor refused to guess rather than act on the wrong element. |
+| Custom dropdown shows no options after a click, or a later click lands in the wrong open menu | Design-system menus render options 0.5–2s after opening, and a failed menu interaction leaves the old listbox open. Wait for the options (`wait` action with `selectorVisible`/`minElements`, or re-observe), close stray menus by clicking a neutral element, and select by clicking the rendered option ref. See the [interactive forms recipe](recipes/interactive-forms.md). |
+| Observation shows a combobox as selected but you cannot tell what, or a checkbox state you cannot see | Custom-widget selections live in the DOM, not the accessibility output: read `browser_html` (inline, maxBytes-bounded, not secret-redacted). Checkbox/radio elements carry `checked` on observations; React-controlled widgets can still hide state in the DOM attribute, so trust the observation field over the raw HTML attribute. |
 | Browser download slow/failing | First service start bootstraps Chromium; on Homebrew installs it lands in `$(brew --prefix)/var/agentbrowser/browsers`. |
 | Engine crash loops | Check `sessions_crashed_total` and the JSON error log for the crash reason; the session is terminated cleanly — retry with a new session, and file an issue with the log line if it reproduces. |

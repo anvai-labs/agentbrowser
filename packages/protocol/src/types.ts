@@ -411,6 +411,13 @@ export interface FillAction extends Action {
   target: ElementTarget;
   value: string;
   sensitive?: boolean;
+  /**
+   * Verify the field holds this exact value after filling; on mismatch one
+   * refill is attempted, then the action fails with VALUE_MISMATCH carrying
+   * the expected and actual values. Use on fields whose page-side scripts
+   * reformat or revert input (masked date triplets, spinbutton triplets).
+   */
+  expectValue?: string;
 }
 
 /**
