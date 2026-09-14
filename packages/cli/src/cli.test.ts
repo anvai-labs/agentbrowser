@@ -56,8 +56,22 @@ describe('AgentBrowser CLI', () => {
         artifactId: 'html_1',
         type: 'html',
         contentType: 'text/html; charset=utf-8',
-        sizeBytes: 4096,
+        sizeBytes: 37,
         url: '/v1/sessions/ses_1/artifacts/html_1',
+        inline: {
+          contentBase64: Buffer.from('<html><body>form values</body></html>').toString('base64'),
+          byteSize: 37,
+        },
+      }),
+      artifact: vi.fn().mockResolvedValue({
+        metadata: {
+          artifactId: 'html_1',
+          type: 'html',
+          contentType: 'text/html; charset=utf-8',
+          sizeBytes: 4096,
+          url: '/v1/sessions/ses_1/artifacts/html_1',
+        },
+        contentBase64: Buffer.from('<html>stored bytes</html>').toString('base64'),
       }),
       events: vi
         .fn()
@@ -203,11 +217,35 @@ describe('AgentBrowser CLI', () => {
       await run('session', 'trace', 'ses_1');
       expect(sessions.trace).toHaveBeenCalledWith('ses_1');
 
-      await run('page', 'html', 'ses_1', 'pg_1');
+      await run('page', 'html', '--no-print', 'ses_1', 'pg_1');
       expect(sessions.html).toHaveBeenCalledWith('ses_1', 'pg_1');
 
       await run('session', 'events', 'ses_1', '--type', 'request.finished');
       expect(sessions.events).toHaveBeenCalledWith('ses_1', 'request.finished');
+    });
+
+    it('prints HTML inline by default and pulls stored bytes when not inlined', async () => {
+      await run('page', 'html', 'ses_1', 'pg_1');
+      expect(sessions.artifact).not.toHaveBeenCalled();
+      expect(out.join('\n')).toContain('form values');
+
+      sessions.html.mockResolvedValueOnce({
+        artifactId: 'html_2',
+        type: 'html',
+        contentType: 'text/html; charset=utf-8',
+        sizeBytes: 999999,
+        url: '/v1/sessions/ses_1/artifacts/html_2',
+      });
+      await run('page', 'html', 'ses_1', 'pg_1');
+      expect(sessions.artifact).toHaveBeenCalledWith('ses_1', 'html_2');
+      expect(out.join('\n')).toContain('stored bytes');
+    });
+
+    it('forwards --continue-from to resume a truncated observation', async () => {
+      await run('observe', 'ses_1', 'pg_1', '--continue-from', '40');
+      expect(sessions.observe).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        continueFrom: 40,
+      });
     });
 
     it('should send headless:false for --no-headless (the flag that was missing live)', async () => {

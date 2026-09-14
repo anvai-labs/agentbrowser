@@ -91,6 +91,27 @@ describe('AgentBrowser MCP server', () => {
         sizeBytes: 2048,
         url: '/sessions/ses_1/artifacts/art_1',
       }),
+      html: vi.fn().mockResolvedValue({
+        artifactId: 'html_1',
+        type: 'html',
+        contentType: 'text/html; charset=utf-8',
+        sizeBytes: 37,
+        url: '/sessions/ses_1/artifacts/html_1',
+        inline: {
+          contentBase64: Buffer.from('<html><body>form values</body></html>').toString('base64'),
+          byteSize: 37,
+        },
+      }),
+      artifact: vi.fn().mockResolvedValue({
+        metadata: {
+          artifactId: 'html_1',
+          type: 'html',
+          contentType: 'text/html; charset=utf-8',
+          sizeBytes: 2048,
+          url: '/sessions/ses_1/artifacts/html_1',
+        },
+        contentBase64: Buffer.from('<html>stored bytes</html>').toString('base64'),
+      }),
     };
 
     deps = {
@@ -377,6 +398,18 @@ describe('AgentBrowser MCP server', () => {
       });
     });
 
+    it('should forward continueFrom to resume a truncated observation', async () => {
+      await call('8b', 'browser_observe', {
+        sessionId: 'ses_1',
+        pageId: 'pg_1',
+        continueFrom: 40,
+      });
+
+      expect(sessions.observe).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        continueFrom: 40,
+      });
+    });
+
     it('should act through a ref', async () => {
       const response = JSON.parse(
         await call('9', 'browser_act', {
@@ -555,6 +588,53 @@ describe('AgentBrowser MCP server', () => {
       );
 
       expect(textOf(response).artifactId).toBe('art_1');
+    });
+
+    describe('browser_html', () => {
+      it('returns inline decoded HTML with the untrusted-content warning', async () => {
+        const response = JSON.parse(
+          await call('html-1', 'browser_html', { sessionId: 'ses_1', pageId: 'pg_1' })
+        );
+        const result = textOf(response);
+
+        expect(sessions.html).toHaveBeenCalledWith('ses_1', 'pg_1');
+        expect(sessions.artifact).not.toHaveBeenCalled();
+        expect(result.html).toContain('form values');
+        expect(result.truncated).toBe(false);
+        expect(result.sizeBytes).toBe(37);
+        expect(result.artifactId).toBe('html_1');
+        expect(result.untrustedContent).toBe(true);
+        expect(result.warning).toContain('NOT secret-redacted');
+      });
+
+      it('truncates to maxBytes with an explicit note', async () => {
+        const response = JSON.parse(
+          await call('html-2', 'browser_html', { sessionId: 'ses_1', pageId: 'pg_1', maxBytes: 5 })
+        );
+        const result = textOf(response);
+
+        expect(result.html).toHaveLength(5);
+        expect(result.truncated).toBe(true);
+      });
+
+      it('falls back to the artifact surface when the export is not inlined', async () => {
+        sessions.html.mockResolvedValueOnce({
+          artifactId: 'html_2',
+          type: 'html',
+          contentType: 'text/html; charset=utf-8',
+          sizeBytes: 999999,
+          url: '/sessions/ses_1/artifacts/html_2',
+        });
+
+        const response = JSON.parse(
+          await call('html-3', 'browser_html', { sessionId: 'ses_1', pageId: 'pg_1' })
+        );
+        const result = textOf(response);
+
+        expect(sessions.artifact).toHaveBeenCalledWith('ses_1', 'html_2');
+        expect(result.html).toContain('stored bytes');
+        expect(result.truncated).toBe(false);
+      });
     });
 
     it('should close a session', async () => {

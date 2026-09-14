@@ -83,16 +83,16 @@ packages/
 ├── extraction/         # Page extraction
 ├── testkit/            # FakeEngine + the reusable contract suite
 ├── sdk-typescript/     # TypeScript client SDK
-├── mcp-server/         # The MCP stdio server (11 high-level tools)
+├── mcp-server/         # The MCP stdio server (12 high-level tools)
 ├── api/                # REST + WebSocket service
 ├── cli/                # Operator CLI
 └── benchmarks/         # Performance benchmarks
 ```
 
-Eleven MCP tools today: `browser_create`, `browser_navigate`,
-`browser_observe`, `browser_act`, `browser_extract`, `browser_screenshot`,
-`browser_pdf`, `browser_cookies`, `browser_close`, and the batched pair
-`browser_snapshot` + `browser_plan`. No raw selectors, no evaluate - element
+Twelve MCP tools today: `browser_create`, `browser_navigate`,
+`browser_observe`, `browser_act`, `browser_extract`, `browser_html`,
+`browser_screenshot`, `browser_pdf`, `browser_cookies`, `browser_close`, and the
+batched pair `browser_snapshot` + `browser_plan`. No raw selectors, no evaluate - element
 refs come from observations and die with their revision (ADR-009).
 
 ### The fast path for forms: snapshot then plan
@@ -127,6 +127,7 @@ surface; the rest depends on who you are.
 
 - [Consuming as an MCP server](#consuming-as-an-mcp-server) - Claude Code, Claude Desktop, Codex, Victor wiring
 - [Snapshot then plan](#the-fast-path-for-forms-snapshot-then-plan) - the two-call form-filling flow
+- [Interactive forms recipe](docs/recipes/interactive-forms.md) - custom comboboxes, async menus, sectioned plans, verifying what got selected
 - [TypeScript SDK](packages/sdk-typescript) - programmatic clients (`SessionsClient.plan` / `.snapshot`)
 - REST: every route is documented by the service itself at `GET /openapi.json`
 
