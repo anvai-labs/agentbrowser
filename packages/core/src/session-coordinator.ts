@@ -73,7 +73,11 @@ export class SessionCoordinator {
   constructor(config: CoordinatorConfig = {}) {
     this.config = {
       maxSessions: config.maxSessions ?? 1000,
-      defaultTtlMs: config.defaultTtlMs ?? 900000, // 15 minutes
+      // 3.5 hours: spans a real working block (morning→lunch, lunch→evening).
+      // Long forms (Greenhouse/Workday) hold minutes-to-hours of unreachable
+      // human state; a 15-minute default reaps them mid-fill and Greenhouse
+      // keeps no drafts, so expiry means full re-entry.
+      defaultTtlMs: config.defaultTtlMs ?? 12600000,
       defaultIdleTimeoutMs: config.defaultIdleTimeoutMs ?? 600000, // 10 minutes
       cleanupCheckIntervalMs: config.cleanupCheckIntervalMs ?? 30000, // 30 seconds
     };
