@@ -34,7 +34,9 @@ agent") surfaced three defects, all verified against a v1.5.0 deployment:
 
 - **User experience**: a login workflow must be creatable in one call, must do
   what the call says, and must survive long enough for a human to type
-  credentials (defaults: `ttlMs` 15 min, `idleTimeoutMs` 2 min — the idle
+  credentials (defaults: `ttlMs` 3.5 h, `idleTimeoutMs` 10 min (originally 15 min / 2 min).
+Human pauses in a headed window do NOT reset the idle timer — only service
+calls do — so raise `idleTimeoutMs` (per-session max 1 h) for long human waits — the idle
   default kills a session mid-login; callers doing logins must pass explicit
   timeouts, and the docs must say so).
 - **Customer performance**: the shared headless browser is the product's

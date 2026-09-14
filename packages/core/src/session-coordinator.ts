@@ -73,10 +73,11 @@ export class SessionCoordinator {
   constructor(config: CoordinatorConfig = {}) {
     this.config = {
       maxSessions: config.maxSessions ?? 1000,
-      // 3.5 hours: spans a real working block (morning→lunch, lunch→evening).
-      // Long forms (Greenhouse/Workday) hold minutes-to-hours of unreachable
-      // human state; a 15-minute default reaps them mid-fill and Greenhouse
-      // keeps no drafts, so expiry means full re-entry.
+      // 3.5 hours: spans a real working block (morning→lunch, lunch→evening)
+      // across long multi-step forms that keep no server-side drafts, where
+      // expiry means full re-entry. This bounds total lifetime; unattended
+      // pauses are still reaped by idleTimeoutMs, which clients must raise
+      // for human-in-the-loop waits (default 10 min, per-session max 1 h).
       defaultTtlMs: config.defaultTtlMs ?? 12600000,
       defaultIdleTimeoutMs: config.defaultIdleTimeoutMs ?? 600000, // 10 minutes
       cleanupCheckIntervalMs: config.cleanupCheckIntervalMs ?? 30000, // 30 seconds

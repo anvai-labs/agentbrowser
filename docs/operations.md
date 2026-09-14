@@ -188,7 +188,11 @@ Sessions are **ephemeral by default** ([ADR-005](adr/005-ephemeral-sessions-expl
 
 - default TTL **3.5 hours**, default idle timeout **10 minutes** — both
   overridable per session (`ttlMs`, `idleTimeoutMs` on create), and the
-  defaults themselves are operator-tunable
+  defaults themselves are operator-tunable. The only concurrency cap is
+  `maxSessions` (1000), and headed sessions each own a dedicated browser, so
+  a longer default also lengthens how long an idle-but-active client can
+  pin browser slots; the idle timeout remains the effective reap for
+  sessions no client touches.
   (`AGENTBROWSER_DEFAULT_TTL_MS` / `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS`);
 - expiry is **lazy on access plus a 1-hour background sweep** (the
   coordinator's 30-second default is unused by the API service): a lapsed

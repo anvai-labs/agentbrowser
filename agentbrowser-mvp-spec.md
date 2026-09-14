@@ -310,7 +310,7 @@ Rules:
 
 - Session creation is idempotent when an `Idempotency-Key` is supplied.
 - A page has one ordered mutation queue. Read-only observations may be coalesced but must report the revision observed.
-- Default TTL: 15 minutes. Default idle timeout: 2 minutes. Both configurable within server ceilings.
+- Default TTL: 3.5 hours (originally 15 minutes). Default idle timeout: 2 minutes (originally; 10 minutes since 1.8.5). Both configurable within server ceilings.
 - Closing is idempotent and must delete temporary profiles, downloads, caches, and in-memory secrets.
 - Session IDs are opaque UUIDv7/ULID values and carry no tenant information.
 
