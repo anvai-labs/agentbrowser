@@ -270,6 +270,12 @@ export interface PageElement {
    * multiple so callers can tell ambiguous file inputs apart).
    */
   attributes?: Record<string, string>;
+  /**
+   * Checked state for checkbox/radio/switch roles: true or false from the
+   * engine's authoritative read; absent when it cannot be determined
+   * (tri-state mixed, or degraded observations without bound handles).
+   */
+  checked?: boolean | undefined;
 }
 
 /**

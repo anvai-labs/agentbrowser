@@ -275,20 +275,34 @@ jobs:
           fi
       - name: Verify the registry actually has this version
         # Enforced, never token-keyed (the sibling repo's lesson): check the
-        # artifact, not the job's exit code.
+        # artifact, not the job's exit code. npm's own post-publish notice says
+        # the version "may take a few minutes to become available" — the
+        # original 6x20s (~2 min) window was shorter than real indexing lag in
+        # three releases (v1.8.8, v1.8.9, v1.8.12), failing the job after a
+        # SUCCESSFUL publish and skipping the GitHub Release downstream. 20x30s
+        # (~10 min) rides out the lag; on a genuine miss, re-running this job
+        # is safe because the publish step above skips existing versions.
+        # jq (preinstalled on the runner) checks the exact version KEY in the
+        # registry document instead of a substring grep.
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          for attempt in 1 2 3 4 5 6; do
+          START="$(date +%s)"
+          for attempt in $(seq 1 20); do
+            DOC="$(mktemp)"
             if curl -sf -A "agentbrowser-release" \
-              "https://registry.npmjs.org/@anvailabs%2fagentbrowser-mcp" \
-              | grep -q "\"${VERSION}\""; then
-              echo "npm: @anvailabs/agentbrowser-mcp ${VERSION} live"
+              "https://registry.npmjs.org/@anvailabs%2fagentbrowser-mcp" -o "$DOC" \
+              && jq -e --arg v "$VERSION" '.versions[$v] != null' "$DOC" >/dev/null; then
+              LATEST="$(jq -r '.["dist-tags"].latest // "unknown"' "$DOC")"
+              rm -f "$DOC"
+              echo "npm: @anvailabs/agentbrowser-mcp ${VERSION} live (latest=${LATEST}, waited $(( $(date +%s) - START ))s)"
               exit 0
             fi
-            echo "not visible yet (attempt ${attempt}/6); registry indexing lag"
-            sleep 20
+            rm -f "$DOC"
+            echo "not visible yet (attempt ${attempt}/20, $(( $(date +%s) - START ))s elapsed); registry indexing lag"
+            sleep 30
           done
-          echo "::error::npm publish reported success but ${VERSION} is not on the registry"
+          echo "::error::npm publish reported success but ${VERSION} is not on the registry after 10 minutes"
+          echo "::error::If the version is actually live (check registry.npmjs.org), re-run this failed job — the publish step skips versions already on the registry."
           exit 1
 
   release:

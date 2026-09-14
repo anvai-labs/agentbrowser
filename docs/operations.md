@@ -126,7 +126,7 @@ and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 | `AGENTBROWSER_CHROME_PATH` | service (Playwright engine) | Explicit Chrome binary for headed sessions; wrapper scripts included ([ADR-013](adr/013-headed-sessions-and-walled-logins.md)). When set, branded-Chrome auto-detection is skipped — an existing path launches that exact binary, a missing path falls back to bundled Chromium ([ADR-016](adr/016-branded-chrome-first-headed-launches.md)). |
 | `AGENTBROWSER_PREFER_BUNDLED` | service (Playwright engine) | `1`/`true` skips branded-Chrome auto-detection for headed sessions — always launches bundled Chromium, for deterministic CI and test farms ([ADR-016](adr/016-branded-chrome-first-headed-launches.md)). An explicit `AGENTBROWSER_CHROME_PATH` still wins. |
 | `AGENTBROWSER_ARTIFACT_KEY` | service | Bearer key guarding artifact download URLs, when set. |
-| `AGENTBROWSER_DEFAULT_TTL_MS` | service | Operator-level default session TTL (ms); per-session `ttlMs` still wins. Unset/garbage → the 15-min default. |
+| `AGENTBROWSER_DEFAULT_TTL_MS` | service | Operator-level default session TTL (ms); per-session `ttlMs` still wins. Unset/garbage → the 3.5-hour default. |
 | `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS` | service | Operator-level default idle timeout (ms); per-session `idleTimeoutMs` still wins. Unset/garbage → the 10-min default. Useful for deployments that are mostly headed human-in-the-loop flows. |
 | `AGENTBROWSER_SNAPSHOT_TIMEOUT_MS` | service (Playwright engine) | Shared snapshot-wait budget per observation and timeout per action-time semantic check, in integer ms (1–30000; default 1000). Invalid environment values use the default; invalid explicit engine options throw. Timed-out element captures use a successful whole-document accessibility snapshot as fallback evidence, which must still match before acting. Unrelated document changes can therefore stale a fallback ref; observe again. Missing semantic evidence refuses actions, and non-timeout errors propagate. This bounds snapshot waiting, not all observation DOM work. |
 
@@ -186,9 +186,13 @@ returns `QUOTA_EXCEEDED` until used or expired tokens can be reclaimed.
 
 Sessions are **ephemeral by default** ([ADR-005](adr/005-ephemeral-sessions-explicit-persistence.md)):
 
-- default TTL **15 minutes**, default idle timeout **10 minutes** — both
+- default TTL **3.5 hours**, default idle timeout **10 minutes** — both
   overridable per session (`ttlMs`, `idleTimeoutMs` on create), and the
-  defaults themselves are operator-tunable
+  defaults themselves are operator-tunable. The only concurrency cap is
+  `maxSessions` (1000), and headed sessions each own a dedicated browser, so
+  a longer default also lengthens how long an idle-but-active client can
+  pin browser slots; the idle timeout remains the effective reap for
+  sessions no client touches.
   (`AGENTBROWSER_DEFAULT_TTL_MS` / `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS`);
 - expiry is **lazy on access plus a 1-hour background sweep** (the
   coordinator's 30-second default is unused by the API service): a lapsed
@@ -329,7 +333,7 @@ entry-point path. Success emits JSON evidence; failures exit nonzero.
 Each child has a 20-second deadline and a combined 1 MiB stdout/stderr limit;
 failure cleanup escalates from termination to forced termination with bounded
 waits. CLI checks exact version and help. MCP checks the negotiated protocol,
-exact version, all eleven tools, valid output and clean shutdown, clearing the
+exact version, the full twelve-tool catalog, valid output and clean shutdown, clearing the
 runtime version override to prevent false version evidence. These checks do
 not launch a browser or certify API connectivity, downloads, containment or a
 Homebrew upgrade. Those are separate [release acceptance gates](release-milestones.md).
@@ -402,9 +406,12 @@ support. Record these limitations rather than substituting workspace code.
 | Symptom | Likely cause / fix |
 | --- | --- |
 | Startup warns `/v1 is UNAUTHENTICATED` | `AGENTBROWSER_API_KEYS` unset — set `key:tenant` pairs before exposing the service. |
-| `404 SESSION_NOT_FOUND` for a session that existed | The session TTL/idle expired (15 min / 10 min defaults). Create a fresh session; seed cookies if continuity matters. |
+| `404 SESSION_NOT_FOUND` for a session that existed | The session TTL/idle expired (3.5 h / 10 min defaults). Create a fresh session; seed cookies if continuity matters. |
 | `STALE_TARGET` on every action on a dynamic page | Refs die with their revision — re-observe, or prefer `browser_snapshot` + `browser_plan`, which self-heals stale refs once per step. |
 | `upload` fails with `TARGET_AMBIGUOUS` naming several file inputs | The page has more than one `input[type=file]` (hidden Dropzone inputs are common). Observe with `include:["fileInputs"]` to mint refs for every input — hidden ones included — then pass `target: {ref}`. |
+| Observation shows a checkbox but no on/off state | Checkbox/radio/switch elements carry `checked` (true/false) on observations; tri-state mixed is reported as absent rather than guessed. React-controlled widgets can still hide state in the DOM attribute — trust the observation field, not the raw HTML attribute. |
 | Plan aborts with `AMBIGUOUS_REMAP` | The page churned enough to enter `verified` mode and no remap candidate matched the original element's role+label. Re-observe and rebuild the plan — the executor refused to guess rather than act on the wrong element. |
+| Custom dropdown shows no options after a click, or a later click lands in the wrong open menu | Design-system menus render options 0.5–2s after opening, and a failed menu interaction leaves the old listbox open. Wait for the options (`wait` action with `selectorVisible`/`minElements`, or re-observe), close stray menus by clicking a neutral element, and select by clicking the rendered option ref. See the [interactive forms recipe](recipes/interactive-forms.md). |
+| Observation shows a combobox as selected but you cannot tell what, or a checkbox state you cannot see | Custom-widget selections live in the DOM, not the accessibility output: read `browser_html` (inline, maxBytes-bounded, not secret-redacted). Checkbox/radio elements carry `checked` on observations; React-controlled widgets can still hide state in the DOM attribute, so trust the observation field over the raw HTML attribute. |
 | Browser download slow/failing | First service start bootstraps Chromium; on Homebrew installs it lands in `$(brew --prefix)/var/agentbrowser/browsers`. |
 | Engine crash loops | Check `sessions_crashed_total` and the JSON error log for the crash reason; the session is terminated cleanly — retry with a new session, and file an issue with the log line if it reproduces. |

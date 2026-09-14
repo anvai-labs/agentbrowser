@@ -884,9 +884,9 @@
                 "properties": {
                   "actions": {
                     "type": "array",
-                    "description": "Ordered plan steps: each is an ActionRequest, optionally with `waitForLabel` + `waitMs` instead of `target`.",
+                    "description": "Ordered plan steps in the flat wire shape: {action, target?: {ref}, value?, key?, waitForLabel?, waitMs?}. The nested ActionRequest shape is the service-internal representation and is not accepted here.",
                     "items": {
-                      "$ref": "#/components/schemas/ActionRequest"
+                      "$ref": "#/components/schemas/PlanStep"
                     }
                   }
                 }
@@ -2962,8 +2962,16 @@
                     ]
                   }
                 }
+              },
+              "allowServiceWorkers": {
+                "type": "boolean"
               }
             }
+          },
+          "snapshotTimeoutMs": {
+            "minimum": 1,
+            "maximum": 30000,
+            "type": "integer"
           }
         }
       },
@@ -3651,6 +3659,9 @@
                       "type": "string"
                     }
                   }
+                },
+                "checked": {
+                  "type": "boolean"
                 }
               }
             }
@@ -3756,6 +3767,13 @@
                 "type": "integer"
               }
             }
+          },
+          "degraded": {
+            "type": "boolean"
+          },
+          "degradedReason": {
+            "const": "aria-snapshot-timeout",
+            "type": "string"
           }
         }
       },
@@ -3834,6 +3852,9 @@
                 "type": "string"
               }
             }
+          },
+          "checked": {
+            "type": "boolean"
           }
         }
       },
@@ -3920,583 +3941,167 @@
           }
         }
       },
-      "ActionRequest": {
+      "PlanStep": {
         "type": "object",
         "required": [
-          "pageId",
-          "expectedRevision",
           "action"
         ],
         "properties": {
-          "pageId": {
-            "type": "string"
-          },
-          "expectedRevision": {
-            "minimum": 1,
-            "type": "integer"
-          },
           "action": {
             "anyOf": [
               {
-                "type": "object",
-                "required": [
-                  "type",
-                  "url"
-                ],
-                "properties": {
-                  "type": {
-                    "const": "navigate",
-                    "type": "string"
-                  },
-                  "url": {
-                    "pattern": "^https?://[\\w\\-]+(\\.[\\w\\-]+)+\\S*$",
-                    "type": "string"
-                  },
-                  "waitUntil": {
-                    "anyOf": [
-                      {
-                        "const": "load",
-                        "type": "string"
-                      },
-                      {
-                        "const": "domcontentloaded",
-                        "type": "string"
-                      },
-                      {
-                        "const": "networkidle",
-                        "type": "string"
-                      }
-                    ]
-                  }
-                }
+                "const": "click",
+                "type": "string"
               },
               {
-                "type": "object",
-                "required": [
-                  "type",
-                  "target"
-                ],
-                "properties": {
-                  "type": {
-                    "const": "click",
-                    "type": "string"
-                  },
-                  "target": {
-                    "type": "object",
-                    "required": [
-                      "ref"
-                    ],
-                    "properties": {
-                      "ref": {
-                        "pattern": "^e\\d+_\\d+$",
-                        "type": "string"
-                      }
-                    }
-                  },
-                  "button": {
-                    "anyOf": [
-                      {
-                        "const": "left",
-                        "type": "string"
-                      },
-                      {
-                        "const": "right",
-                        "type": "string"
-                      },
-                      {
-                        "const": "middle",
-                        "type": "string"
-                      }
-                    ]
-                  },
-                  "clickCount": {
-                    "minimum": 1,
-                    "maximum": 3,
-                    "type": "integer"
-                  },
-                  "modifiers": {
-                    "type": "array",
-                    "items": {
-                      "anyOf": [
-                        {
-                          "const": "Alt",
-                          "type": "string"
-                        },
-                        {
-                          "const": "Control",
-                          "type": "string"
-                        },
-                        {
-                          "const": "Meta",
-                          "type": "string"
-                        },
-                        {
-                          "const": "Shift",
-                          "type": "string"
-                        }
-                      ]
-                    }
-                  }
-                }
+                "const": "dblclick",
+                "type": "string"
               },
               {
-                "type": "object",
-                "required": [
-                  "type",
-                  "target"
-                ],
-                "properties": {
-                  "type": {
-                    "const": "dblclick",
-                    "type": "string"
-                  },
-                  "target": {
-                    "type": "object",
-                    "required": [
-                      "ref"
-                    ],
-                    "properties": {
-                      "ref": {
-                        "pattern": "^e\\d+_\\d+$",
-                        "type": "string"
-                      }
-                    }
-                  }
-                }
+                "const": "hover",
+                "type": "string"
               },
               {
-                "type": "object",
-                "required": [
-                  "type",
-                  "target"
-                ],
-                "properties": {
-                  "type": {
-                    "const": "hover",
-                    "type": "string"
-                  },
-                  "target": {
-                    "type": "object",
-                    "required": [
-                      "ref"
-                    ],
-                    "properties": {
-                      "ref": {
-                        "pattern": "^e\\d+_\\d+$",
-                        "type": "string"
-                      }
-                    }
-                  }
-                }
+                "const": "fill",
+                "type": "string"
               },
               {
-                "type": "object",
-                "required": [
-                  "type",
-                  "target",
-                  "value"
-                ],
-                "properties": {
-                  "type": {
-                    "const": "fill",
-                    "type": "string"
-                  },
-                  "target": {
-                    "type": "object",
-                    "required": [
-                      "ref"
-                    ],
-                    "properties": {
-                      "ref": {
-                        "pattern": "^e\\d+_\\d+$",
-                        "type": "string"
-                      }
-                    }
-                  },
-                  "value": {
-                    "type": "string"
-                  },
-                  "sensitive": {
-                    "type": "boolean"
-                  }
-                }
+                "const": "clear",
+                "type": "string"
               },
               {
-                "type": "object",
-                "required": [
-                  "type",
-                  "target"
-                ],
-                "properties": {
-                  "type": {
-                    "const": "clear",
-                    "type": "string"
-                  },
-                  "target": {
-                    "type": "object",
-                    "required": [
-                      "ref"
-                    ],
-                    "properties": {
-                      "ref": {
-                        "pattern": "^e\\d+_\\d+$",
-                        "type": "string"
-                      }
-                    }
-                  }
-                }
+                "const": "check",
+                "type": "string"
               },
               {
-                "type": "object",
-                "required": [
-                  "type",
-                  "target"
-                ],
-                "properties": {
-                  "type": {
-                    "const": "check",
-                    "type": "string"
-                  },
-                  "target": {
-                    "type": "object",
-                    "required": [
-                      "ref"
-                    ],
-                    "properties": {
-                      "ref": {
-                        "pattern": "^e\\d+_\\d+$",
-                        "type": "string"
-                      }
-                    }
-                  }
-                }
+                "const": "uncheck",
+                "type": "string"
               },
               {
-                "type": "object",
-                "required": [
-                  "type",
-                  "target"
-                ],
-                "properties": {
-                  "type": {
-                    "const": "uncheck",
-                    "type": "string"
-                  },
-                  "target": {
-                    "type": "object",
-                    "required": [
-                      "ref"
-                    ],
-                    "properties": {
-                      "ref": {
-                        "pattern": "^e\\d+_\\d+$",
-                        "type": "string"
-                      }
-                    }
-                  }
-                }
+                "const": "select",
+                "type": "string"
               },
               {
-                "type": "object",
-                "required": [
-                  "type",
-                  "target",
-                  "values"
-                ],
-                "properties": {
-                  "type": {
-                    "const": "select",
-                    "type": "string"
-                  },
-                  "target": {
-                    "type": "object",
-                    "required": [
-                      "ref"
-                    ],
-                    "properties": {
-                      "ref": {
-                        "pattern": "^e\\d+_\\d+$",
-                        "type": "string"
-                      }
-                    }
-                  },
-                  "values": {
-                    "minItems": 1,
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
-                  }
-                }
+                "const": "upload",
+                "type": "string"
               },
               {
-                "type": "object",
-                "required": [
-                  "type",
-                  "paths"
-                ],
-                "properties": {
-                  "type": {
-                    "const": "upload",
-                    "type": "string"
-                  },
-                  "target": {
-                    "type": "object",
-                    "required": [
-                      "ref"
-                    ],
-                    "properties": {
-                      "ref": {
-                        "pattern": "^e\\d+_\\d+$",
-                        "type": "string"
-                      }
-                    }
-                  },
-                  "paths": {
-                    "minItems": 1,
-                    "type": "array",
-                    "items": {
-                      "minLength": 1,
-                      "type": "string"
-                    }
-                  }
-                }
+                "const": "scroll",
+                "type": "string"
               },
               {
-                "type": "object",
-                "required": [
-                  "type"
-                ],
-                "properties": {
-                  "type": {
-                    "const": "scroll",
-                    "type": "string"
-                  },
-                  "target": {
-                    "type": "object",
-                    "required": [
-                      "ref"
-                    ],
-                    "properties": {
-                      "ref": {
-                        "pattern": "^e\\d+_\\d+$",
-                        "type": "string"
-                      }
-                    }
-                  },
-                  "deltaX": {
-                    "type": "integer"
-                  },
-                  "deltaY": {
-                    "type": "integer"
-                  },
-                  "direction": {
-                    "anyOf": [
-                      {
-                        "const": "up",
-                        "type": "string"
-                      },
-                      {
-                        "const": "down",
-                        "type": "string"
-                      },
-                      {
-                        "const": "left",
-                        "type": "string"
-                      },
-                      {
-                        "const": "right",
-                        "type": "string"
-                      }
-                    ]
-                  },
-                  "amount": {
-                    "minimum": 1,
-                    "type": "integer"
-                  }
-                }
+                "const": "press",
+                "type": "string"
               },
               {
-                "type": "object",
-                "required": [
-                  "type",
-                  "key"
-                ],
-                "properties": {
-                  "type": {
-                    "const": "press",
-                    "type": "string"
-                  },
-                  "target": {
-                    "type": "object",
-                    "required": [
-                      "ref"
-                    ],
-                    "properties": {
-                      "ref": {
-                        "pattern": "^e\\d+_\\d+$",
-                        "type": "string"
-                      }
-                    }
-                  },
-                  "key": {
-                    "type": "string"
-                  }
-                }
+                "const": "wait",
+                "type": "string"
               },
               {
-                "type": "object",
-                "required": [
-                  "type",
-                  "condition"
-                ],
-                "properties": {
-                  "type": {
-                    "const": "wait",
-                    "type": "string"
-                  },
-                  "condition": {
-                    "type": "object",
-                    "required": [
-                      "until"
-                    ],
-                    "properties": {
-                      "until": {
-                        "anyOf": [
-                          {
-                            "const": "domcontentloaded",
-                            "type": "string"
-                          },
-                          {
-                            "const": "load",
-                            "type": "string"
-                          },
-                          {
-                            "const": "networkidle",
-                            "type": "string"
-                          },
-                          {
-                            "const": "selector",
-                            "type": "string"
-                          },
-                          {
-                            "const": "url",
-                            "type": "string"
-                          },
-                          {
-                            "const": "text",
-                            "type": "string"
-                          },
-                          {
-                            "const": "function",
-                            "type": "string"
-                          },
-                          {
-                            "const": "settled",
-                            "type": "string"
-                          },
-                          {
-                            "const": "urlPattern",
-                            "type": "string"
-                          },
-                          {
-                            "const": "selectorVisible",
-                            "type": "string"
-                          },
-                          {
-                            "const": "minElements",
-                            "type": "string"
-                          }
-                        ]
-                      },
-                      "timeoutMs": {
-                        "minimum": 0,
-                        "maximum": 300000,
-                        "type": "integer"
-                      },
-                      "pattern": {
-                        "minLength": 1,
-                        "maxLength": 2048,
-                        "type": "string"
-                      },
-                      "selector": {
-                        "minLength": 1,
-                        "maxLength": 500,
-                        "type": "string"
-                      },
-                      "count": {
-                        "minimum": 1,
-                        "maximum": 10000,
-                        "type": "integer"
-                      }
-                    }
-                  }
-                }
+                "const": "goBack",
+                "type": "string"
               },
               {
-                "type": "object",
-                "required": [
-                  "type"
-                ],
-                "properties": {
-                  "type": {
-                    "const": "goBack",
-                    "type": "string"
-                  }
-                }
+                "const": "goForward",
+                "type": "string"
               },
               {
-                "type": "object",
-                "required": [
-                  "type"
-                ],
-                "properties": {
-                  "type": {
-                    "const": "goForward",
-                    "type": "string"
-                  }
-                }
+                "const": "reload",
+                "type": "string"
               },
               {
-                "type": "object",
-                "required": [
-                  "type"
-                ],
-                "properties": {
-                  "type": {
-                    "const": "reload",
-                    "type": "string"
-                  }
-                }
+                "const": "acceptDialog",
+                "type": "string"
               },
               {
-                "type": "object",
-                "required": [
-                  "type"
-                ],
-                "properties": {
-                  "type": {
-                    "const": "acceptDialog",
-                    "type": "string"
-                  },
-                  "promptText": {
-                    "type": "string"
-                  }
-                }
-              },
-              {
-                "type": "object",
-                "required": [
-                  "type"
-                ],
-                "properties": {
-                  "type": {
-                    "const": "dismissDialog",
-                    "type": "string"
-                  }
-                }
+                "const": "dismissDialog",
+                "type": "string"
               }
             ]
+          },
+          "target": {
+            "type": "object",
+            "required": [
+              "ref"
+            ],
+            "properties": {
+              "ref": {
+                "pattern": "^e\\d+_\\d+$",
+                "type": "string"
+              }
+            }
+          },
+          "value": {
+            "type": "string"
+          },
+          "values": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "paths": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "deltaX": {
+            "type": "number"
+          },
+          "deltaY": {
+            "type": "number"
+          },
+          "key": {
+            "type": "string"
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "const": "up",
+                "type": "string"
+              },
+              {
+                "const": "down",
+                "type": "string"
+              },
+              {
+                "const": "left",
+                "type": "string"
+              },
+              {
+                "const": "right",
+                "type": "string"
+              }
+            ]
+          },
+          "amount": {
+            "type": "number"
+          },
+          "observe": {
+            "anyOf": [
+              {
+                "const": "after",
+                "type": "string"
+              },
+              {
+                "const": "none",
+                "type": "string"
+              }
+            ]
+          },
+          "expectedRevision": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "approvalToken": {
+            "type": "string"
+          },
+          "promptText": {
+            "type": "string"
           },
           "wait": {
             "type": "object",
@@ -4507,6 +4112,10 @@
               "until": {
                 "anyOf": [
                   {
+                    "const": "settled",
+                    "type": "string"
+                  },
+                  {
                     "const": "domcontentloaded",
                     "type": "string"
                   },
@@ -4516,26 +4125,6 @@
                   },
                   {
                     "const": "networkidle",
-                    "type": "string"
-                  },
-                  {
-                    "const": "selector",
-                    "type": "string"
-                  },
-                  {
-                    "const": "url",
-                    "type": "string"
-                  },
-                  {
-                    "const": "text",
-                    "type": "string"
-                  },
-                  {
-                    "const": "function",
-                    "type": "string"
-                  },
-                  {
-                    "const": "settled",
                     "type": "string"
                   },
                   {
@@ -4574,79 +4163,78 @@
               }
             }
           },
-          "observeAfter": {
+          "condition": {
             "type": "object",
+            "required": [
+              "until"
+            ],
             "properties": {
-              "mode": {
+              "until": {
                 "anyOf": [
                   {
-                    "const": "interactive",
+                    "const": "settled",
                     "type": "string"
                   },
                   {
-                    "const": "content",
+                    "const": "domcontentloaded",
                     "type": "string"
                   },
                   {
-                    "const": "accessibility",
+                    "const": "load",
                     "type": "string"
                   },
                   {
-                    "const": "compact_dom",
+                    "const": "networkidle",
                     "type": "string"
                   },
                   {
-                    "const": "visual",
+                    "const": "urlPattern",
+                    "type": "string"
+                  },
+                  {
+                    "const": "selectorVisible",
+                    "type": "string"
+                  },
+                  {
+                    "const": "minElements",
                     "type": "string"
                   }
                 ]
               },
-              "maxBytes": {
+              "timeoutMs": {
                 "minimum": 0,
+                "maximum": 300000,
                 "type": "integer"
               },
-              "maxElements": {
-                "minimum": 0,
-                "type": "integer"
+              "pattern": {
+                "minLength": 1,
+                "maxLength": 2048,
+                "type": "string"
               },
-              "sinceRevision": {
+              "selector": {
+                "minLength": 1,
+                "maxLength": 500,
+                "type": "string"
+              },
+              "count": {
                 "minimum": 1,
+                "maximum": 10000,
                 "type": "integer"
-              },
-              "continueFrom": {
-                "minimum": 0,
-                "type": "integer"
-              },
-              "scope": {
-                "anyOf": [
-                  {
-                    "const": "viewport",
-                    "type": "string"
-                  },
-                  {
-                    "const": "full",
-                    "type": "string"
-                  },
-                  {
-                    "const": "frame",
-                    "type": "string"
-                  },
-                  {
-                    "const": "element",
-                    "type": "string"
-                  }
-                ]
-              },
-              "include": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
               }
             }
           },
-          "approvalToken": {
+          "waitForLabel": {
+            "minLength": 1,
+            "maxLength": 200,
             "type": "string"
+          },
+          "waitMs": {
+            "minimum": 100,
+            "maximum": 60000,
+            "type": "integer"
+          },
+          "remap": {
+            "type": "boolean"
           }
         }
       },
@@ -4883,6 +4471,9 @@
                           "type": "string"
                         }
                       }
+                    },
+                    "checked": {
+                      "type": "boolean"
                     }
                   }
                 }
@@ -4988,6 +4579,13 @@
                     "type": "integer"
                   }
                 }
+              },
+              "degraded": {
+                "type": "boolean"
+              },
+              "degradedReason": {
+                "const": "aria-snapshot-timeout",
+                "type": "string"
               }
             }
           },

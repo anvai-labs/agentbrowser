@@ -168,6 +168,10 @@ export class ObservationNormalizer {
         element.attributes = rawEl.attributes;
       }
 
+      if (rawEl.checked !== undefined) {
+        element.checked = rawEl.checked;
+      }
+
       return element;
     });
   }

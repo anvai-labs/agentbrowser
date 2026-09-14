@@ -157,6 +157,25 @@ describe('ObservationNormalizer', () => {
     });
   });
 
+  describe('checked state', () => {
+    it('should carry engine-captured checked through normalization', () => {
+      const rawState: RawPageState = {
+        url: 'https://example.com',
+        title: 'Test Page',
+        status: 'interactive',
+        content: '<html><body></body></html>',
+        elements: [
+          { role: 'checkbox', name: 'Notify', visible: true, enabled: true, checked: true },
+          { role: 'checkbox', name: 'Quiet', visible: true, enabled: true, checked: false },
+          { role: 'checkbox', name: 'Mixed', visible: true, enabled: true },
+        ],
+      };
+
+      const result = normalizer.normalize(rawState, { mode: 'interactive', revision: 1 });
+      expect(result.elements.map((element) => element.checked)).toEqual([true, false, undefined]);
+    });
+  });
+
   describe('file input elements', () => {
     it('should carry engine-captured attributes through normalization', () => {
       const rawState: RawPageState = {
