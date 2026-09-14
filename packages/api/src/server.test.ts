@@ -502,6 +502,20 @@ describe('AgentBrowser REST API', () => {
       expect([...validActions].sort()).toEqual(validActions);
     });
 
+    it('names the flat shape when a nested action envelope is posted', async () => {
+      const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/act`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: { type: 'click', target: { ref: 'e1_0' } } }),
+      });
+
+      expect(response.status).toBe(400);
+      const data = await response.json();
+      expect(data.error.code).toBe('INVALID_REQUEST');
+      expect(JSON.stringify(data.error.details.issues)).toContain('flat shape');
+      expect(JSON.stringify(data.error.details.issues)).not.toContain('Expected union value');
+    });
+
     it('accepts a deprecated type alias and warns', async () => {
       const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/act`, {
         method: 'POST',
@@ -999,6 +1013,22 @@ describe('AgentBrowser REST API safety integration', () => {
         body: JSON.stringify({}),
       });
       expect(response.status).toBe(400);
+    });
+
+    it('should name the flat shape for a nested plan step (never "Expected union value")', async () => {
+      const { sessionId, pageId } = await setupPage();
+      const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/pages/${pageId}/plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          actions: [{ action: { type: 'click', target: { ref: 'e1_0' } } }],
+        }),
+      });
+      expect(response.status).toBe(400);
+      const data = await response.json();
+      expect(data.error.code).toBe('INVALID_REQUEST');
+      expect(data.error.message).toContain('flat shape');
+      expect(data.error.message).not.toContain('Expected union value');
     });
 
     it('should 400 (not 500) on an empty-body plan request (empty-json tolerance)', async () => {

@@ -179,7 +179,7 @@ describe('OpenAPI document', () => {
       'ApiErrorDetail',
       'PageState',
       'PageElement',
-      'ActionRequest',
+      'PlanStep',
       'ActionResult',
       'ObservationRequest',
       'ArtifactRef',
@@ -188,6 +188,19 @@ describe('OpenAPI document', () => {
 
     it.each(expectedSchemas)('should expose the %s schema', (name) => {
       expect(doc.components.schemas[name]).toBeDefined();
+    });
+
+    it('documents /plan steps in the flat wire shape, not the nested ActionRequest', () => {
+      const planStep = doc.components.schemas.PlanStep as Json;
+      const actionConsts = JSON.stringify(planStep.properties.action);
+      expect(actionConsts).toContain('"const":"click"');
+      expect(JSON.stringify(planStep)).toContain('waitForLabel');
+      expect(doc.components.schemas.ActionRequest).toBeUndefined();
+      const planBody = JSON.stringify(
+        doc.paths['/v1/sessions/{sessionId}/pages/{pageId}/plan'].post.requestBody
+      );
+      expect(planBody).toContain('#/components/schemas/PlanStep');
+      expect(planBody).not.toContain('#/components/schemas/ActionRequest');
     });
 
     it('should carry the protocol error taxonomy', () => {

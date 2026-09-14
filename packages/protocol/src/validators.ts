@@ -76,6 +76,26 @@ const planStep = TypeCompiler.Compile(PlanStepSchema);
  * Like the other validators: constrains, does not strip.
  */
 export function validatePlanStep(body: unknown): Validated<Record<string, unknown>> {
+  // The nested { action: { type: ... } } envelope is the service-internal
+  // representation; left to the compiled union it surfaces as an opaque
+  // "Expected union value", so name the flat shape before that check runs.
+  if (
+    typeof body === 'object' &&
+    body !== null &&
+    'action' in body &&
+    typeof (body as Record<string, unknown>).action !== 'string'
+  ) {
+    return {
+      ok: false,
+      issues: [
+        {
+          path: '/action',
+          message:
+            "Wire actions and plan steps use the flat shape: { action: 'fill', target: { ref: 'e1_0' }, value: 'text' }. Got a non-string action (nested object?) - flatten it: the action name is the string and every field sits beside it. The nested { action: { type: ... } } shape is the service-internal representation and is not accepted on the wire.",
+        },
+      ],
+    };
+  }
   if (planStep.Check(body)) {
     return { ok: true, value: body as Record<string, unknown> };
   }
