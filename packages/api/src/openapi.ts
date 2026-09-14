@@ -9,7 +9,6 @@
 
 import { DELIVERED_ACTION_TYPES, DELIVERED_EXTRACT_FORMATS } from '@agentbrowser/protocol';
 import {
-  ActionRequestSchema,
   ActionResultSchema,
   ApiErrorDetailSchema,
   ApiErrorSchema,
@@ -21,6 +20,7 @@ import {
   ObservationRequestSchema,
   PageElementSchema,
   PageStateSchema,
+  PlanStepSchema,
   SessionRequestSchema,
   SessionResponseSchema,
   ViewportSchema,
@@ -492,9 +492,11 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                 actions: {
                   type: 'array',
                   description:
-                    'Ordered plan steps: each is an ActionRequest, optionally with ' +
-                    '`waitForLabel` + `waitMs` instead of `target`.',
-                  items: ref('ActionRequest'),
+                    'Ordered plan steps in the flat wire shape: {action, ' +
+                    'target?: {ref}, value?, key?, waitForLabel?, waitMs?}. The nested ' +
+                    'ActionRequest shape is the service-internal representation and is ' +
+                    'not accepted here.',
+                  items: ref('PlanStep'),
                 },
               },
             }),
@@ -1016,7 +1018,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         PageElement: PageElementSchema,
         ElementTarget: ElementTargetSchema,
         ObservationRequest: ObservationRequestSchema,
-        ActionRequest: ActionRequestSchema,
+        PlanStep: PlanStepSchema,
         ActionResult: ActionResultSchema,
         NavigationStatus: NavigationStatusSchema,
         ArtifactRef: ArtifactRefSchema,

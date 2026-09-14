@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { validatePlanStep } from './validators.js';
 import { decodeWireAction, validateWireAction } from './wire-action.js';
 
 describe('wire action contract', () => {
@@ -59,5 +60,25 @@ describe('wire action contract', () => {
         observe: 'after',
       })
     ).toEqual({ ok: true, value: { type: 'select', target: { ref: 'e1_0' }, values: ['one'] } });
+  });
+  it('names the flat shape when action is a nested object instead of a string', () => {
+    const nested = { action: { type: 'click', target: { ref: 'e1_0' } } };
+    for (const result of [decodeWireAction(nested), validatePlanStep(nested)]) {
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.issues).toEqual([
+          { path: '/action', message: expect.stringMatching(/flat shape/) },
+        ]);
+        expect(result.issues[0].message).not.toContain('Expected union value');
+      }
+    }
+  });
+  it('still reports the required-field error when action is absent', () => {
+    const result = validatePlanStep({ target: { ref: 'e1_0' } });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues.some((issue) => issue.path === '/action')).toBe(true);
+      expect(result.issues.every((issue) => !/flat shape/.test(issue.message))).toBe(true);
+    }
   });
 });
