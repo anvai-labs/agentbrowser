@@ -62,7 +62,11 @@ interface StoredElement {
   enabled: boolean;
   href?: string;
   hrefTruncated?: boolean;
-  /** Checked state for checkbox/radio/switch roles; absent when unknowable. */
+  /**
+   * Checked state for the aria checked roles (checkbox, radio, switch,
+   * menuitemcheckbox, menuitemradio, option, treeitem); absent when
+   * unknowable (tri-state mixed, or the authoritative read failed).
+   */
   checked?: boolean | undefined;
   /** Set on role:"fileinput" elements: binds by ordinal over input[type=file]. */
   fileInputIndex?: number;
@@ -1269,7 +1273,11 @@ class PlaywrightPage implements EnginePage {
     // cause of outright request timeouts, distinct from the ariaSnapshot
     // budget above. Binding, snapshot capture, and staleness detection stay
     // sequential and unchanged - only this trailing enrichment parallelizes.
-    const boundElements: Array<{ element: StoredElement; handle: ElementHandle }> = [];
+    const boundElements: Array<{
+      element: StoredElement;
+      handle: ElementHandle;
+      locator: Locator;
+    }> = [];
     try {
       for (const [index, element] of elements.entries()) {
         const ref = element.ref ?? `e${this.revision}_${index}`;
@@ -1314,7 +1322,7 @@ class PlaywrightPage implements EnginePage {
                 !sameSnapshotEvidence(prior, binding))
             )
               changed = true;
-            boundElements.push({ element, handle });
+            boundElements.push({ element, handle, locator });
           }
         }
       }
@@ -1324,34 +1332,32 @@ class PlaywrightPage implements EnginePage {
       // 50 links in document order that actually carry a non-empty href,
       // not the first 50 link-role elements - a fetch can come back empty).
       await Promise.all(
-        boundElements.map(async ({ element, handle }) => {
+        boundElements.map(async ({ element, handle, locator }) => {
           element.visible = await handle.isVisible();
           element.enabled = await handle.isEnabled();
+          // Checked roles: the snapshot marker settles true and records mixed
+          // as present-but-undefined; elements the marker left unset get one
+          // authoritative read here (isChecked reads aria-checked for these
+          // roles and returns false when absent, so a non-input ARIA widget
+          // degrades to false rather than an error). The key stays absent on
+          // read failure - unknowable, not false.
+          if (
+            (element.role === 'checkbox' ||
+              element.role === 'radio' ||
+              element.role === 'switch' ||
+              element.role === 'menuitemcheckbox' ||
+              element.role === 'menuitemradio' ||
+              element.role === 'option' ||
+              element.role === 'treeitem') &&
+            !('checked' in element)
+          ) {
+            const checked = await locator.isChecked().catch(() => undefined);
+            if (typeof checked === 'boolean') {
+              element.checked = checked;
+            }
+          }
         })
       );
-
-      // Checked state: the snapshot marker settles true and records mixed as
-      // present-but-undefined. Every other bound checked-role element gets
-      // one authoritative read; isChecked rejects non-input ARIA widgets,
-      // which leaves the key absent (unknowable) rather than false.
-      for (const { element } of boundElements) {
-        if (
-          element.role !== 'checkbox' &&
-          element.role !== 'radio' &&
-          element.role !== 'switch' &&
-          element.role !== 'menuitemcheckbox'
-        ) {
-          continue;
-        }
-        if ('checked' in element) continue;
-        const binding = this.bindings.get(element.ref ?? '');
-        if (!binding) continue;
-        const checked = await binding.locator.isChecked().catch(() => undefined);
-        if (typeof checked === 'boolean') {
-          element.checked = checked;
-        }
-      }
-
       // href capture is one round-trip per link; bound it so link-heavy
       // pages cannot stretch an observation unboundedly. Kept sequential:
       // the cap is on successful captures (empty hrefs don't count against
@@ -1486,7 +1492,10 @@ class PlaywrightPage implements EnginePage {
         role === 'checkbox' ||
         role === 'radio' ||
         role === 'switch' ||
-        role === 'menuitemcheckbox'
+        role === 'menuitemcheckbox' ||
+        role === 'menuitemradio' ||
+        role === 'option' ||
+        role === 'treeitem'
       ) {
         // Playwright's snapshot marks true as `[checked]` and tri-state mixed
         // as `[checked=mixed]`. Only a definite true settles here; mixed is

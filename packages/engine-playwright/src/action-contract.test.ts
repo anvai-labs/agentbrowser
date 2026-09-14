@@ -425,13 +425,16 @@ describe('real action wire semantics', () => {
       await page.navigate({
         url:
           'data:text/html,<body>' +
-          '<div role="checkbox" aria-checked="true" aria-label="Widget">On</div>' +
+          // A non-input ARIA widget: the aria snapshot emits no [checked]
+          // marker for aria-checked="false", so this exercises the
+          // isChecked fallback rather than the parser path.
+          '<div role="checkbox" aria-checked="false" aria-label="Widget">Off</div>' +
           '</body>',
       });
 
       const observation = await page.observe({});
       const widget = observation.elements.find((element) => element.role === 'checkbox');
-      expect(widget?.checked).toBe(true);
+      expect(widget?.checked).toBe(false);
     } finally {
       await engine.close();
     }
