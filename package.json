@@ -24,7 +24,9 @@
     "test:coexistence": "node scripts/check-coexistence.mjs",
     "firefox:install": "node packages/engine-firefox/scripts/install.mjs",
     "test:firefox": "node scripts/check-firefox.mjs",
-    "test:firefox-independence": "node scripts/check-firefox-independence.mjs"
+    "test:firefox-independence": "node scripts/check-firefox-independence.mjs",
+    "probe:firefox-egress": "node packages/engine-firefox/scripts/probe-egress.mjs",
+    "test:egress-evidence": "node --test scripts/browser-egress-gate.test.mjs"
   },
   "keywords": [
     "browser",

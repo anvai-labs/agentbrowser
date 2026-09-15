@@ -36,9 +36,11 @@ Primary references: [Puppeteer BiDi support](https://pptr.dev/webdriver-bidi),
 [supported browser versions](https://pptr.dev/supported-browsers),
 [Selenium BiDi](https://www.selenium.dev/documentation/webdriver/bidi/), and
 [Firefox command-line parameters](https://firefox-source-docs.mozilla.org/browser/CommandLineParameters.html).
-Puppeteer's published Firefox gaps include native accessibility snapshots and
-response-body access. These make policy and semantic qualification necessary;
-request interception alone is insufficient evidence of containment.
+Native accessibility snapshots remain unqualified. The pinned Puppeteer 25.11.0
+and Firefox 155.0.1 combination can read response content after delivery; that
+does not establish a pre-delivery byte limit. The [egress gate](firefox-egress-gate.md)
+also measured shared-worker and service-worker bypasses of public page request
+interception. Guarded-service promotion remains blocked.
 
 ## Delivered browser scope
 
