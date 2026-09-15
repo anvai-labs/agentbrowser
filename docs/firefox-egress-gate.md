@@ -79,10 +79,19 @@ Linux CI also observed a denied popup request before interception was enabled
 ([run 34980561505](https://github.com/anvai-labs/agentbrowser/actions/runs/34980561505)).
 The report retains `Denied request was not paused: /target/popup` as an error,
 and the verifier rejects it with `probe-errors`. The native regression permits
-only this specific known race in its error list; other errors still fail the
+this specific known race in its error list; unexpected errors still fail the
 test. Deterministic tests require rejection whether the destination counter is
 zero or one, and an actual hit adds `popup:destination-reached`. The earlier
 macOS report remains a historical observation, not a guarantee of popup denial.
+
+A later [integration run](https://github.com/anvai-labs/agentbrowser/actions/runs/34986768453)
+observed a popup closing during `network.addIntercept`. The diagnostic installer
+records `popup-install` / `target-closed` when the page is already closed, or
+when a recognized closed-context error coincides with `page.isClosed()`. This
+entry remains in `report.errors` and fails the gate; it earns no denial callback.
+Live-target errors and unrelated transport failures still propagate. A native
+regression forces closure during setup and checks the actual driver error path;
+deterministic controls also prove that the retained error rejects qualification.
 
 ## Regression and reproduction
 

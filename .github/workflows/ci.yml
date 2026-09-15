@@ -168,7 +168,9 @@ jobs:
 
   docker:
     name: Docker
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    # Docker needs an available daemon, not just a generic Linux/WSL label.
+    # A repo override can reuse qualified self-hosted capacity.
+    runs-on: ${{ vars.CI_DOCKER_RUNNER || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@v4
 
