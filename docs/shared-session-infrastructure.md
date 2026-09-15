@@ -158,6 +158,9 @@ subscribers total, 256 MiB retained events, 128 concurrent requests). Saturation
 rejects before allocation. Advertise effective limits; never silently truncate.
 Use existing session TTL and operation deadlines, with a bounded establishment
 budget. These values are design defaults, not claims about current enforcement.
+Before exposing application commands over HTTP/MCP, enforce the serialized-byte
+budget while canonicalizing input, including escaping overhead; checking only
+after constructing the whole string permits larger intermediate allocations.
 
 ## MCP compatibility is an adapter concern
 

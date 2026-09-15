@@ -35,3 +35,18 @@ test('rejects a dependency link escaping to the source checkout', async (t) => {
   await symlink(root, join(deployment, 'escape'));
   await assert.rejects(auditApplicationDeployment(deployment, deployment), /Escaping dependency/);
 });
+
+for (const name of ['@agentbrowser/core', 'playwright-core']) {
+  test(`inspects internally linked package manifests for ${name}`, async (t) => {
+    const { deployment } = await fixture(t);
+    const dependency = join(deployment, 'dependency');
+    await mkdir(dependency);
+    await writeFile(join(deployment, 'metadata.json'), JSON.stringify({ name }));
+    await symlink('../metadata.json', join(dependency, 'package.json'));
+    if (name === 'playwright-core') {
+      await assert.rejects(auditApplicationDeployment(deployment, deployment), /Browser dependency installed/);
+    } else {
+      await auditApplicationDeployment(deployment, deployment);
+    }
+  });
+}

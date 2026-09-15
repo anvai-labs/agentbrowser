@@ -13,7 +13,7 @@ export async function auditApplicationDeployment(directory, destination) {
       const target = await realpath(path);
       assert.ok(target === destination || target.startsWith(destination + sep), `Escaping dependency: ${path}`);
     } else if (entry.isDirectory()) await auditApplicationDeployment(path, destination);
-    else if (entry.name === 'package.json') {
+    if (entry.name === 'package.json') {
       const manifest = JSON.parse(await readFile(path, 'utf8'));
       assert.ok(!forbidden.has(manifest.name), `Browser dependency installed: ${manifest.name}`);
     }
