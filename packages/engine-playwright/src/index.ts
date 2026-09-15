@@ -2259,12 +2259,29 @@ class PlaywrightPage implements EnginePage {
         };
       }
       case 'press': {
-        if (action.target) {
-          await this.locatorFor((action.target as EngineTarget).ref).press(String(action.key));
-        } else {
-          await this.page.keyboard.press(String(action.key));
+        // Repeat keypresses run inside one action: every revision bump
+        // invalidates refs, so spinbutton-style N-press interactions need
+        // the whole run to share a single revision. Count is schema-bounded
+        // (1-20); clamp defensively for engines reached without validation.
+        const count = Math.max(1, Math.min(20, Math.trunc(Number(action.count ?? 1)) || 1));
+        const locator = action.target
+          ? this.locatorFor((action.target as EngineTarget).ref)
+          : undefined;
+        let delivered = 0;
+        try {
+          for (let i = 0; i < count; i += 1) {
+            if (locator) {
+              await locator.press(String(action.key));
+            } else {
+              await this.page.keyboard.press(String(action.key));
+            }
+            delivered += 1;
+          }
+        } finally {
+          // Landed presses mutated the page even if a later press failed:
+          // bump so stale refs cannot be trusted after a partial run.
+          if (delivered > 0) this.bumpRevision();
         }
-        this.bumpRevision();
         break;
       }
       case 'scroll': {

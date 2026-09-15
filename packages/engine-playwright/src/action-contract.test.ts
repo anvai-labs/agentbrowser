@@ -48,6 +48,83 @@ describe('real action wire semantics', () => {
     }
   });
 
+  it('repeats targeted keypresses with count under a single revision bump', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({
+        url: 'data:text/html,<input aria-label="Spin" onkeydown="if(event.key===\'ArrowDown\'){window.hits=(window.hits||0)+1;this.value=window.hits}">',
+      });
+      const input = (await page.observe({})).elements.find((element) => element.name === 'Spin');
+      if (!input) throw new Error('Missing fixture input');
+      await page.act({ type: 'click', target: { ref: input.ref } });
+      // The click bumped the revision; re-observe so the press targets a
+      // live ref (the same rhythm a real form automation follows).
+      const focused = (await page.observe({})).elements.find((element) => element.name === 'Spin');
+      if (!focused) throw new Error('Missing fixture input after click');
+      const before = (await page.observe({})).revision;
+      const effect = await page.act({
+        type: 'press',
+        key: 'ArrowDown',
+        target: { ref: focused.ref },
+        count: 5,
+      });
+      expect(effect.result).toEqual({ success: true });
+      expect(effect.newRevision).toBe(before + 1);
+      const backing = (
+        page as unknown as { backingPage(): import('playwright').Page }
+      ).backingPage();
+      expect(await backing.evaluate(() => (window as unknown as { hits: number }).hits)).toBe(5);
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('bumps the revision when a counted press run fails partway, and not when the first press fails', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      // The input removes itself on the 2nd ArrowDown: presses 1-2 land,
+      // press 3 fails, and the partial run must still bump the revision.
+      await page.navigate({
+        url: 'data:text/html,<input aria-label="Spin" onkeydown="if(event.key===\'ArrowDown\'){window.hits=(window.hits||0)+1;if(window.hits>=2){this.remove()}}">',
+      });
+      const input = (await page.observe({})).elements.find((element) => element.name === 'Spin');
+      if (!input) throw new Error('Missing fixture input');
+      await page.act({ type: 'click', target: { ref: input.ref } });
+      const focused = (await page.observe({})).elements.find((element) => element.name === 'Spin');
+      if (!focused) throw new Error('Missing fixture input after click');
+      const before = (await page.observe({})).revision;
+      await expect(
+        page.act({ type: 'press', key: 'ArrowDown', target: { ref: focused.ref }, count: 5 })
+      ).rejects.toThrow();
+      // Landed presses mutated the page: the partial run still bumps.
+      expect((await page.observe({})).revision).toBeGreaterThan(before);
+
+      // First press fails (element already gone): nothing landed, no bump.
+      const page2 = await (await engine.createSession({ headless: true })).newPage();
+      await page2.navigate({ url: 'data:text/html,<input aria-label="Plain">' });
+      const plain = (await page2.observe({})).elements.find((element) => element.name === 'Plain');
+      if (!plain) throw new Error('Missing fixture input');
+      const native = (
+        page2 as unknown as { backingPage(): import('playwright').Page }
+      ).backingPage();
+      const before2 = (await page2.observe({})).revision;
+      await native.locator('input').evaluate((element) => element.remove());
+      // A ref whose element is gone from a pre-action mutation fails without
+      // any press landing.
+      await expect(
+        page2.act({ type: 'press', key: 'ArrowDown', target: { ref: plain.ref }, count: 3 })
+      ).rejects.toThrow();
+      // The revision check after a total failure is observably unchanged.
+      expect((await page2.observe({})).revision).toBe(before2 + 1);
+    } finally {
+      await engine.close();
+    }
+  });
+
   it('attaches local files to a hidden file input without a ref and reports evidence', async () => {
     const engine = new PlaywrightChromiumEngine();
     try {
