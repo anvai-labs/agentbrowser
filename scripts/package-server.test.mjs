@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, mkdir, readFile, readlink, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, readlink, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { packageServer } from './package-server.mjs';
@@ -8,6 +8,30 @@ import { packageServer } from './package-server.mjs';
 const gitReply = (args, dirty = false) => args[0] === 'git'
   ? { stdout: args[3] === 'rev-parse' ? 'a'.repeat(40) : dirty ? ' M changed-source.ts\n' : '', stderr: '' }
   : undefined;
+
+test('Docker installs every workspace manifest before copying sources and building', async () => {
+  const dockerfile = await readFile(new URL('../Dockerfile', import.meta.url), 'utf8');
+  const install = dockerfile.indexOf('RUN pnpm install --frozen-lockfile');
+  assert.ok(install > 0, 'Docker must install the frozen workspace');
+  const manifestLayer = dockerfile.slice(0, install).split('\n');
+  const packages = new URL('../packages/', import.meta.url);
+  for (const directory of await readdir(packages, { withFileTypes: true })) {
+    if (!directory.isDirectory()) continue;
+    try { await stat(new URL(`${directory.name}/package.json`, packages)); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    const manifest = `packages/${directory.name}/package.json`;
+    assert.ok(manifestLayer.includes(`COPY ${manifest} packages/${directory.name}/`), `Docker dependency layer omits ${manifest}`);
+  }
+  assert.ok(dockerfile.indexOf('COPY packages packages') > install);
+});
+
+test('Docker smoke probes its owned container without a shared host port or name', async () => {
+  const workflow = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+  const smoke = workflow.slice(workflow.indexOf('- name: Run read-only smoke test'), workflow.indexOf('\n  benchmarks:'));
+  assert.doesNotMatch(smoke, /--name agentbrowser-smoke|-p 5709:5709|curl .*127\.0\.0\.1/);
+  assert.match(smoke, /docker exec "\$CONTAINER_ID" node/);
+  assert.match(smoke, /trap .*docker rm -f "\$CONTAINER_ID".* EXIT/);
+});
 
 test('PR and release CI share the packager and real packaged acceptance before publication', async () => {
   for (const name of ['ci', 'release']) {

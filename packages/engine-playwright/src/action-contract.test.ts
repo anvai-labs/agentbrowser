@@ -1,8 +1,20 @@
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { EnginePage } from '@agentbrowser/engine';
 import { describe, expect, it } from 'vitest';
 import { PlaywrightChromiumEngine } from './index.js';
+
+async function replaceFileInput(page: EnginePage) {
+  const nativePage = (
+    page as unknown as { backingPage(): import('playwright').Page }
+  ).backingPage();
+  await nativePage.evaluate(() => {
+    const input = document.querySelector('input[type=file]');
+    if (!input) throw new Error('Missing fixture input');
+    input.replaceWith(input.cloneNode(true));
+  });
+}
 
 describe('real action wire semantics', () => {
   it('delivers directional scroll and untargeted keyboard input', async () => {
@@ -142,17 +154,12 @@ describe('real action wire semantics', () => {
     try {
       const session = await engine.createSession({ headless: true });
       const page = await session.newPage();
-      // Visible input so observe mints a ref. The page detaches it shortly
-      // after load WITHOUT any agent action (no revision bump): the binding
+      // Visible input so observe mints a ref. Detach after observation
+      // without an agent action (no revision bump): the binding
       // outlives the node, and the targeted upload must refuse exactly like
       // any other targeted action - STALE_TARGET, remap-eligible.
       await page.navigate({
-        url:
-          'data:text/html,<body><input type="file" aria-label="Doc">' +
-          '<script>setTimeout(function(){' +
-          'var el=document.querySelector("input");' +
-          'el.replaceWith(el.cloneNode(true));' +
-          '},400);</script></body>',
+        url: 'data:text/html,<body><input type="file" aria-label="Doc"></body>',
       });
       const input = (await page.observe({ mode: 'interactive' })).elements.find(
         (element) => element.name === 'Doc'
@@ -160,7 +167,7 @@ describe('real action wire semantics', () => {
       if (!input) throw new Error('Missing fixture file input');
       const ref = input.ref;
 
-      await new Promise((resolve) => setTimeout(resolve, 700));
+      await replaceFileInput(page);
       const dir = await mkdtemp(join(tmpdir(), 'ab-upload-'));
       const filePath = join(dir, 'sample.txt');
       await writeFile(filePath, 'x');
@@ -271,12 +278,7 @@ describe('real action wire semantics', () => {
       const session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({
-        url:
-          'data:text/html,<body><input type="file" id="dropzone" style="display:none">' +
-          '<script>setTimeout(function(){' +
-          'var el=document.getElementById("dropzone");' +
-          'el.replaceWith(el.cloneNode(true));' +
-          '},400);</script></body>',
+        url: 'data:text/html,<body><input type="file" id="dropzone" style="display:none"></body>',
       });
       const hidden = (await page.observe({ include: ['fileInputs'] })).elements.find(
         (element) => element.role === 'fileinput'
@@ -284,7 +286,8 @@ describe('real action wire semantics', () => {
       if (!hidden) throw new Error('Missing hidden file-input ref');
       const ref = hidden.ref;
 
-      await new Promise((resolve) => setTimeout(resolve, 700));
+      // Replace only after observation completes, regardless of runner load.
+      await replaceFileInput(page);
       const dir = await mkdtemp(join(tmpdir(), 'ab-upload-'));
       const filePath = join(dir, 'sample.txt');
       await writeFile(filePath, 'x');
@@ -387,6 +390,50 @@ describe('real action wire semantics', () => {
     }
   });
 
+  it('verifies expectValue after fill and fails with VALUE_MISMATCH on masked fields', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      // A field whose page script strips non-digits: the plain-text fill is
+      // reformatted, so a naive fill "succeeds" while the value diverges.
+      await page.navigate({
+        url:
+          'data:text/html,<body>' +
+          '<input id="day" aria-label="day" oninput="this.value=this.value.replace(/[^0-9]/g,\'\')">' +
+          '</body>',
+      });
+
+      const observation = await page.observe({});
+      const ref = observation.elements.find((element) => element.name === 'day')?.ref;
+      expect(ref).toBeDefined();
+
+      const effect = await page.act({
+        type: 'fill',
+        target: { ref: ref as string },
+        value: '14',
+        expectValue: '14',
+      });
+      // Verification reports the comparison, without echoing field values.
+      expect(effect.result).toMatchObject({ success: true, verified: true });
+
+      // A masked field that keeps reverting: re-observe (the revision moved)
+      // then fill with an expectValue the field can never satisfy.
+      const obs2 = await page.observe({});
+      const ref2 = obs2.elements.find((element) => element.name === 'day')?.ref;
+      await expect(
+        page.act({
+          type: 'fill',
+          target: { ref: ref2 as string },
+          value: 'abc',
+          expectValue: 'abc',
+        })
+      ).rejects.toMatchObject({ code: 'VALUE_MISMATCH' });
+    } finally {
+      await engine.close();
+    }
+  });
+
   it('reports checked state for checkbox elements across clicks', async () => {
     const engine = new PlaywrightChromiumEngine();
     try {
@@ -435,6 +482,108 @@ describe('real action wire semantics', () => {
       const observation = await page.observe({});
       const widget = observation.elements.find((element) => element.role === 'checkbox');
       expect(widget?.checked).toBe(false);
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('mints control refs for role-less div widgets under include:["formControls"]', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({
+        url:
+          'data:text/html,<body>' +
+          // A div-based widget trigger with no role attribute: invisible to
+          // locator.ariaSnapshot(), which only emits role-carrying elements.
+          '<div data-automation-id="workday-eeo" aria-haspopup="listbox" style="width:200px;height:40px">Select One</div>' +
+          // The widget's own listbox: role-carrying, so once rendered it is
+          // observable and clickable through normal refs.
+          '<ul role="listbox"><li role="option">Option A</li><li role="option">Option B</li></ul>' +
+          '</body>',
+      });
+
+      const withToken = await page.observe({ include: ['formControls'] });
+      const controls = withToken.elements.filter((element) => element.role === 'control');
+      expect(controls).toHaveLength(1);
+      expect(controls[0].name).toBe('Select One');
+      expect(controls[0].attributes?.['data-automation-id']).toBe('workday-eeo');
+
+      // Act-through: clicking the control ref mutates page state.
+      const click = await page.act({ type: 'click', target: { ref: controls[0].ref } });
+      expect(click.newRevision).toBeGreaterThan(click.oldRevision);
+
+      const after = await page.observe({});
+      const options = after.elements.filter((element) => element.role === 'option');
+      expect(options.map((element) => element.name)).toEqual(['Option A', 'Option B']);
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('refuses to act on an invisible control ref', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({
+        url:
+          'data:text/html,<body>' +
+          '<div data-automation-id="hidden-trigger" aria-haspopup="listbox" style="display:none">Hidden</div>' +
+          '</body>',
+      });
+
+      const observation = await page.observe({ include: ['formControls'] });
+      const controls = observation.elements.filter((element) => element.role === 'control');
+      expect(controls).toHaveLength(1);
+
+      await expect(
+        page.act({ type: 'click', target: { ref: controls[0].ref } })
+      ).rejects.toMatchObject({ code: 'TARGET_NOT_VISIBLE' });
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('caps minted control refs at the configured maximum', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      const divs = Array.from(
+        { length: 250 },
+        (_, i) => `<div data-automation-id="t${i}">x</div>`
+      ).join('');
+      await page.navigate({ url: `data:text/html,<body>${divs}</body>` });
+
+      const observation = await page.observe({ include: ['formControls'] });
+      const controls = observation.elements.filter((element) => element.role === 'control');
+      expect(controls.length).toBeLessThanOrEqual(200);
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('does not mint duplicate control refs for role-carrying elements', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({
+        url:
+          'data:text/html,<body>' +
+          '<div data-automation-id="styled-button" role="button" tabindex="0">Go</div>' +
+          '</body>',
+      });
+
+      const observation = await page.observe({ include: ['formControls'] });
+      const controls = observation.elements.filter((element) => element.role === 'control');
+      // The element carries an explicit role, so the ARIA snapshot already
+      // covers it as role=button; the control scan must not mint a twin.
+      const buttons = observation.elements.filter((element) => element.role === 'button');
+      expect(buttons.length).toBe(1);
+      expect(controls.length).toBe(0);
     } finally {
       await engine.close();
     }

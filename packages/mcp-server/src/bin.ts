@@ -20,6 +20,7 @@ const server = buildMcpServer({
         : {}),
     }),
   baseUrl: process.env.AGENTBROWSER_BASE_URL,
+  sessionId: process.env.AGENTBROWSER_SESSION_ID,
   serverInfo: { name: 'agentbrowser', version: resolveVersion() },
 });
 

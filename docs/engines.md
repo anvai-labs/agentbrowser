@@ -17,6 +17,7 @@ capability claims must match observed behavior.
 | FakeEngine | `testkit` | Deterministic reference | Pass (reference) | N/A (no network) |
 | Obscura v0.2.1 | `engine-obscura` | **Experimental, benchmark-only** (spec §17.2 backend #3) | Pass (data: URLs) | **NOT enforceable** - see below |
 | Safari (real, via safaridriver) | `engine-safari` | **Direct-engine local use only** - macOS, always headed, driver enablement required; guarded REST creation is unsupported | Always-on mock transport/lifecycle tests + enablement-gated real Safari suite | **NOT enforceable** - policy-bearing sessions return `ENGINE_UNSUPPORTED`, reason `EGRESS_UNSUPPORTED` |
+| Native Firefox / BiDi | `engine-firefox` | **Experimental, trusted local qualification only**; separate Puppeteer driver | Focused native input/ref/lifecycle and shared UI/API outcome fixtures; full contract not claimed | **Not qualified** - policy-bearing sessions refused before launch |
 
 Passing the engine contract suite does not establish complete network containment.
 Independent Chromium probes reproduce later-hop redirect bypasses. Direct-download
@@ -24,6 +25,9 @@ transport fixes do not close that browser gap, and page WebSocket denial does no
 prove worker coverage. Do not use browser routing as the sole SSRF boundary.
 See the [accepted transport direction](egress-transport-design.md) and
 [failed worker-coverage feasibility gate](egress-transport-feasibility.md).
+
+See [Firefox and application seams](firefox-and-application-seams.md) for the
+independent production-tree gate, semantic limitations and promotion criteria.
 
 ## Engine registry (TD-BROWSER-7 Phase 1)
 

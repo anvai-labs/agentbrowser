@@ -47,6 +47,394 @@
     }
   ],
   "paths": {
+    "/v1/sessions/{sessionId}/control": {
+      "get": {
+        "operationId": "getSessionControl",
+        "summary": "Read current controller and in-flight operation",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current session authority. Commands already dispatched may still finish after takeover.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ControlView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Credential is absent, expired, or revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Operator or session authority is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session busy or review revoked. Do not blindly repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{sessionId}/control/takeover": {
+      "post": {
+        "operationId": "takeOverSession",
+        "summary": "Operator: revoke the agent and wait for active work to drain",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current session authority. Commands already dispatched may still finish after takeover.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ControlView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Credential is absent, expired, or revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Operator or session authority is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session busy or review revoked. Do not blindly repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{sessionId}/control/prepare-resume": {
+      "post": {
+        "operationId": "prepareSessionResume",
+        "summary": "Operator: invalidate old refs and capture fresh page summaries for review",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current session authority. Commands already dispatched may still finish after takeover.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ControlReview"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Credential is absent, expired, or revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Operator or session authority is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session busy or review revoked. Do not blindly repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{sessionId}/control/delegate": {
+      "post": {
+        "operationId": "delegateSession",
+        "summary": "Operator: issue a new session-scoped bearer token after review",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "epoch"
+                ],
+                "properties": {
+                  "epoch": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current session authority. Commands already dispatched may still finish after takeover.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ControlGrant"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Credential is absent, expired, or revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Operator or session authority is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session busy or review revoked. Do not blindly repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{sessionId}/operations/{operationId}": {
+      "get": {
+        "operationId": "getSessionOperation",
+        "summary": "Reconcile command status; completed is not proof of application success",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current session authority. Commands already dispatched may still finish after takeover.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationRecord"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Credential is absent, expired, or revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Operator or session authority is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session busy or review revoked. Do not blindly repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/openapi.json": {
       "get": {
         "operationId": "getOpenApiDocument",
@@ -698,6 +1086,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "X-AgentBrowser-Operation-Id",
+            "in": "header",
+            "required": false,
+            "description": "Required for delegated-session mutations. Same ID and request returns a replay status without redispatch; a different request conflicts. Not required for observations or captures.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+            }
           }
         ],
         "responses": {
@@ -713,6 +1111,16 @@
           },
           "404": {
             "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session busy, control revoked, or operation ID conflicts. Reconcile before continuing.",
             "content": {
               "application/json": {
                 "schema": {
@@ -870,6 +1278,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "X-AgentBrowser-Operation-Id",
+            "in": "header",
+            "required": false,
+            "description": "Required for delegated-session mutations. Same ID and request returns a replay status without redispatch; a different request conflicts. Not required for observations or captures.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+            }
           }
         ],
         "requestBody": {
@@ -981,6 +1399,16 @@
           },
           "404": {
             "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session busy, control revoked, or operation ID conflicts. Reconcile before continuing.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1162,6 +1590,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "X-AgentBrowser-Operation-Id",
+            "in": "header",
+            "required": false,
+            "description": "Required for delegated-session mutations. Same ID and request returns a replay status without redispatch; a different request conflicts. Not required for observations or captures.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+            }
           }
         ],
         "requestBody": {
@@ -1203,6 +1641,16 @@
           },
           "404": {
             "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session busy, control revoked, or operation ID conflicts. Reconcile before continuing.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1308,6 +1756,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "X-AgentBrowser-Operation-Id",
+            "in": "header",
+            "required": false,
+            "description": "Required for delegated-session mutations. Same ID and request returns a replay status without redispatch; a different request conflicts. Not required for observations or captures.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+            }
           }
         ],
         "responses": {
@@ -1338,6 +1796,16 @@
           },
           "404": {
             "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session busy, control revoked, or operation ID conflicts. Reconcile before continuing.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1384,6 +1852,16 @@
             "description": "Page identifier returned by createPage.",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "X-AgentBrowser-Operation-Id",
+            "in": "header",
+            "required": false,
+            "description": "Required for delegated-session mutations. Same ID and request returns a replay status without redispatch; a different request conflicts. Not required for observations or captures.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
             }
           }
         ],
@@ -1455,6 +1933,16 @@
               }
             }
           },
+          "409": {
+            "description": "Session busy, control revoked, or operation ID conflicts. Reconcile before continuing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
           "500": {
             "description": "An unexpected server error occurred.",
             "content": {
@@ -1494,6 +1982,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "X-AgentBrowser-Operation-Id",
+            "in": "header",
+            "required": false,
+            "description": "Required for delegated-session mutations. Same ID and request returns a replay status without redispatch; a different request conflicts. Not required for observations or captures.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+            }
           }
         ],
         "requestBody": {
@@ -1529,6 +2027,16 @@
           },
           "404": {
             "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session busy, control revoked, or operation ID conflicts. Reconcile before continuing.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1575,6 +2083,16 @@
             "description": "Page identifier returned by createPage.",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "X-AgentBrowser-Operation-Id",
+            "in": "header",
+            "required": false,
+            "description": "Required for delegated-session mutations. Same ID and request returns a replay status without redispatch; a different request conflicts. Not required for observations or captures.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
             }
           }
         ],
@@ -1864,6 +2382,9 @@
                       }
                     }
                   },
+                  "expectValue": {
+                    "type": "string"
+                  },
                   "remap": {
                     "type": "boolean"
                   }
@@ -1913,6 +2434,16 @@
               }
             }
           },
+          "409": {
+            "description": "Session busy, control revoked, or operation ID conflicts. Reconcile before continuing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
           "500": {
             "description": "An unexpected server error occurred.",
             "content": {
@@ -1952,6 +2483,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "X-AgentBrowser-Operation-Id",
+            "in": "header",
+            "required": false,
+            "description": "Required for delegated-session mutations. Same ID and request returns a replay status without redispatch; a different request conflicts. Not required for observations or captures.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+            }
           }
         ],
         "requestBody": {
@@ -1988,6 +2529,16 @@
           },
           "404": {
             "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session busy, control revoked, or operation ID conflicts. Reconcile before continuing.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2044,6 +2595,16 @@
             "description": "Page identifier returned by createPage.",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "X-AgentBrowser-Operation-Id",
+            "in": "header",
+            "required": false,
+            "description": "Required for delegated-session mutations. Same ID and request returns a replay status without redispatch; a different request conflicts. Not required for observations or captures.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
             }
           }
         ],
@@ -2102,6 +2663,16 @@
           },
           "404": {
             "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session busy, control revoked, or operation ID conflicts. Reconcile before continuing.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2223,6 +2794,16 @@
             "description": "Page identifier returned by createPage.",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "X-AgentBrowser-Operation-Id",
+            "in": "header",
+            "required": false,
+            "description": "Required for delegated-session mutations. Same ID and request returns a replay status without redispatch; a different request conflicts. Not required for observations or captures.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
             }
           }
         ],
@@ -2374,6 +2955,16 @@
               }
             }
           },
+          "409": {
+            "description": "Session busy, control revoked, or operation ID conflicts. Reconcile before continuing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
           "500": {
             "description": "An unexpected server error occurred.",
             "content": {
@@ -2412,6 +3003,16 @@
             "description": "Page identifier returned by createPage.",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "X-AgentBrowser-Operation-Id",
+            "in": "header",
+            "required": false,
+            "description": "Required for delegated-session mutations. Same ID and request returns a replay status without redispatch; a different request conflicts. Not required for observations or captures.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
             }
           }
         ],
@@ -2477,6 +3078,16 @@
               }
             }
           },
+          "409": {
+            "description": "Session busy, control revoked, or operation ID conflicts. Reconcile before continuing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
           "500": {
             "description": "An unexpected server error occurred.",
             "content": {
@@ -2500,6 +3111,345 @@
       }
     },
     "schemas": {
+      "ControlView": {
+        "type": "object",
+        "required": [
+          "state",
+          "epoch",
+          "busy"
+        ],
+        "properties": {
+          "state": {
+            "anyOf": [
+              {
+                "const": "HUMAN_ACTIVE",
+                "type": "string"
+              },
+              {
+                "const": "RESUME_REVIEW",
+                "type": "string"
+              },
+              {
+                "const": "AGENT_ACTIVE",
+                "type": "string"
+              },
+              {
+                "const": "PAUSE_REQUESTED",
+                "type": "string"
+              },
+              {
+                "const": "STOPPED",
+                "type": "string"
+              }
+            ]
+          },
+          "epoch": {
+            "type": "integer"
+          },
+          "busy": {
+            "type": "boolean"
+          },
+          "operation": {
+            "type": "object",
+            "required": [
+              "operationId",
+              "epoch",
+              "status",
+              "dispatched"
+            ],
+            "properties": {
+              "operationId": {
+                "type": "string"
+              },
+              "epoch": {
+                "type": "integer"
+              },
+              "status": {
+                "anyOf": [
+                  {
+                    "const": "in_flight",
+                    "type": "string"
+                  },
+                  {
+                    "const": "completed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "failed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "outcome_unknown",
+                    "type": "string"
+                  }
+                ]
+              },
+              "dispatched": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      },
+      "ControlReview": {
+        "type": "object",
+        "allOf": [
+          {
+            "type": "object",
+            "required": [
+              "state",
+              "epoch",
+              "busy"
+            ],
+            "properties": {
+              "state": {
+                "anyOf": [
+                  {
+                    "const": "HUMAN_ACTIVE",
+                    "type": "string"
+                  },
+                  {
+                    "const": "RESUME_REVIEW",
+                    "type": "string"
+                  },
+                  {
+                    "const": "AGENT_ACTIVE",
+                    "type": "string"
+                  },
+                  {
+                    "const": "PAUSE_REQUESTED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "STOPPED",
+                    "type": "string"
+                  }
+                ]
+              },
+              "epoch": {
+                "type": "integer"
+              },
+              "busy": {
+                "type": "boolean"
+              },
+              "operation": {
+                "type": "object",
+                "required": [
+                  "operationId",
+                  "epoch",
+                  "status",
+                  "dispatched"
+                ],
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "epoch": {
+                    "type": "integer"
+                  },
+                  "status": {
+                    "anyOf": [
+                      {
+                        "const": "in_flight",
+                        "type": "string"
+                      },
+                      {
+                        "const": "completed",
+                        "type": "string"
+                      },
+                      {
+                        "const": "failed",
+                        "type": "string"
+                      },
+                      {
+                        "const": "outcome_unknown",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "dispatched": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "pages"
+            ],
+            "properties": {
+              "pages": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "pageId",
+                    "url",
+                    "title",
+                    "revision",
+                    "summary"
+                  ],
+                  "properties": {
+                    "pageId": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "revision": {
+                      "type": "integer"
+                    },
+                    "summary": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "ControlGrant": {
+        "type": "object",
+        "allOf": [
+          {
+            "type": "object",
+            "required": [
+              "state",
+              "epoch",
+              "busy"
+            ],
+            "properties": {
+              "state": {
+                "anyOf": [
+                  {
+                    "const": "HUMAN_ACTIVE",
+                    "type": "string"
+                  },
+                  {
+                    "const": "RESUME_REVIEW",
+                    "type": "string"
+                  },
+                  {
+                    "const": "AGENT_ACTIVE",
+                    "type": "string"
+                  },
+                  {
+                    "const": "PAUSE_REQUESTED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "STOPPED",
+                    "type": "string"
+                  }
+                ]
+              },
+              "epoch": {
+                "type": "integer"
+              },
+              "busy": {
+                "type": "boolean"
+              },
+              "operation": {
+                "type": "object",
+                "required": [
+                  "operationId",
+                  "epoch",
+                  "status",
+                  "dispatched"
+                ],
+                "properties": {
+                  "operationId": {
+                    "type": "string"
+                  },
+                  "epoch": {
+                    "type": "integer"
+                  },
+                  "status": {
+                    "anyOf": [
+                      {
+                        "const": "in_flight",
+                        "type": "string"
+                      },
+                      {
+                        "const": "completed",
+                        "type": "string"
+                      },
+                      {
+                        "const": "failed",
+                        "type": "string"
+                      },
+                      {
+                        "const": "outcome_unknown",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "dispatched": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "token"
+            ],
+            "properties": {
+              "token": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "OperationRecord": {
+        "type": "object",
+        "required": [
+          "operationId",
+          "epoch",
+          "status",
+          "dispatched"
+        ],
+        "properties": {
+          "operationId": {
+            "type": "string"
+          },
+          "epoch": {
+            "type": "integer"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "in_flight",
+                "type": "string"
+              },
+              {
+                "const": "completed",
+                "type": "string"
+              },
+              {
+                "const": "failed",
+                "type": "string"
+              },
+              {
+                "const": "outcome_unknown",
+                "type": "string"
+              }
+            ]
+          },
+          "dispatched": {
+            "type": "boolean"
+          }
+        }
+      },
       "ApiError": {
         "type": "object",
         "required": [
@@ -2516,6 +3466,22 @@
             "properties": {
               "code": {
                 "anyOf": [
+                  {
+                    "const": "SESSION_BUSY",
+                    "type": "string"
+                  },
+                  {
+                    "const": "CONTROL_REVOKED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "CONTROL_REQUIRED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "OPERATION_CONFLICT",
+                    "type": "string"
+                  },
                   {
                     "const": "INVALID_REQUEST",
                     "type": "string"
@@ -2585,6 +3551,10 @@
                     "type": "string"
                   },
                   {
+                    "const": "VALUE_MISMATCH",
+                    "type": "string"
+                  },
+                  {
                     "const": "PLAN_WAIT_TIMEOUT",
                     "type": "string"
                   },
@@ -2646,6 +3616,22 @@
         "properties": {
           "code": {
             "anyOf": [
+              {
+                "const": "SESSION_BUSY",
+                "type": "string"
+              },
+              {
+                "const": "CONTROL_REVOKED",
+                "type": "string"
+              },
+              {
+                "const": "CONTROL_REQUIRED",
+                "type": "string"
+              },
+              {
+                "const": "OPERATION_CONFLICT",
+                "type": "string"
+              },
               {
                 "const": "INVALID_REQUEST",
                 "type": "string"
@@ -2712,6 +3698,10 @@
               },
               {
                 "const": "ACTION_TIMEOUT",
+                "type": "string"
+              },
+              {
+                "const": "VALUE_MISMATCH",
                 "type": "string"
               },
               {
@@ -2786,6 +3776,10 @@
       "SessionRequest": {
         "type": "object",
         "properties": {
+          "controlMode": {
+            "const": "delegated",
+            "type": "string"
+          },
           "tenantId": {
             "minLength": 1,
             "type": "string"
@@ -3772,8 +4766,16 @@
             "type": "boolean"
           },
           "degradedReason": {
-            "const": "aria-snapshot-timeout",
-            "type": "string"
+            "anyOf": [
+              {
+                "const": "aria-snapshot-timeout",
+                "type": "string"
+              },
+              {
+                "const": "dom-semantic-subset",
+                "type": "string"
+              }
+            ]
           }
         }
       },
@@ -4223,6 +5225,9 @@
               }
             }
           },
+          "expectValue": {
+            "type": "string"
+          },
           "waitForLabel": {
             "minLength": 1,
             "maxLength": 200,
@@ -4584,8 +5589,16 @@
                 "type": "boolean"
               },
               "degradedReason": {
-                "const": "aria-snapshot-timeout",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "const": "aria-snapshot-timeout",
+                    "type": "string"
+                  },
+                  {
+                    "const": "dom-semantic-subset",
+                    "type": "string"
+                  }
+                ]
               }
             }
           },
@@ -4656,6 +5669,22 @@
               "code": {
                 "anyOf": [
                   {
+                    "const": "SESSION_BUSY",
+                    "type": "string"
+                  },
+                  {
+                    "const": "CONTROL_REVOKED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "CONTROL_REQUIRED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "OPERATION_CONFLICT",
+                    "type": "string"
+                  },
+                  {
                     "const": "INVALID_REQUEST",
                     "type": "string"
                   },
@@ -4721,6 +5750,10 @@
                   },
                   {
                     "const": "ACTION_TIMEOUT",
+                    "type": "string"
+                  },
+                  {
+                    "const": "VALUE_MISMATCH",
                     "type": "string"
                   },
                   {

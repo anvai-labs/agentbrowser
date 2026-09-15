@@ -11,7 +11,7 @@ function backingPage(page: EnginePage): Page {
 
 function interceptSnapshots(
   page: EnginePage,
-  capture: (kind: 'body' | 'element', options: { timeout?: number }) => void
+  capture: (kind: 'body' | 'element', options: { timeout?: number }) => string | undefined
 ) {
   const body = backingPage(page).locator('body');
   const prototype = Object.getPrototypeOf(body) as Locator;
@@ -20,7 +20,8 @@ function interceptSnapshots(
     this: Locator,
     options = {}
   ) {
-    capture(this.toString() === body.toString() ? 'body' : 'element', options);
+    const captured = capture(this.toString() === body.toString() ? 'body' : 'element', options);
+    if (typeof captured === 'string') return captured;
     return original.call(this, options);
   });
 }
@@ -295,6 +296,9 @@ describe('snapshot-degraded binding', () => {
     try {
       const page = await (await engine.createSession({ headless: true })).newPage();
       await page.navigate({ url: `data:text/html,${'<button>Go</button>'.repeat(10)}` });
+      // Collect real semantic evidence before measuring the synthetic budget.
+      // A busy browser must not spend the test's 100ms wall-clock timeout first.
+      const bodySnapshot = await backingPage(page).locator('body').ariaSnapshot({ timeout: 5000 });
       let now = 0;
       vi.spyOn(performance, 'now').mockImplementation(() => now);
       const waits: number[] = [];
@@ -302,7 +306,7 @@ describe('snapshot-degraded binding', () => {
         if (kind === 'body') {
           expect(options.timeout).toBe(100);
           now += bodyWait;
-          return;
+          return bodySnapshot;
         }
         waits.push(options.timeout ?? 0);
         now += options.timeout ?? 0;

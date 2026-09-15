@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { checkCli, checkMcp, runExecutable } from './release-smoke.mjs';
+import { checkPackagedCoexistence } from './packaged-coexistence.mjs';
 import { validateArtifact, validatePdf } from './artifact-validation.mjs';
 export { validateArtifact } from './artifact-validation.mjs';
 
@@ -132,7 +133,7 @@ export async function apiRequest(baseUrl, path, options = {}) {
   try { return await within((async () => {
   const response = await (options.fetch ?? fetch)(`${baseUrl}${path}`, {
     method: options.method ?? 'GET', signal,
-    headers: { ...(options.body !== undefined ? { 'content-type': 'application/json' } : {}), ...(options.key ? { authorization: `Bearer ${options.key}` } : {}) },
+    headers: { ...(options.body !== undefined ? { 'content-type': 'application/json' } : {}), ...(options.key ? { authorization: `Bearer ${options.key}` } : {}), ...(options.operationId ? { 'x-agentbrowser-operation-id': options.operationId } : {}) },
     ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
   });
   let length = 0;
@@ -292,9 +293,23 @@ async function fixtures(directory) {
   const sockets = new Set();
   const stalled = new Set();
   const payload = Buffer.from('AgentBrowser packaged HTTP and TLS acceptance\n');
+  const effects = [];
   let contacts = 0;
   const handler = (request, response) => {
-    if (request.url === '/page') {
+    if (request.url === '/coexistence-effect' && request.method === 'POST') {
+      let body = '';
+      request.on('data', (chunk) => {
+        body += chunk;
+        if (body.length > 4096) request.destroy();
+      });
+      request.on('end', () => {
+        try { effects.push(JSON.parse(body)); response.end('ok'); }
+        catch { response.writeHead(400); response.end('Invalid fixture event'); }
+      });
+    } else if (request.url === '/coexistence') {
+      response.setHeader('content-type', 'text/html');
+      response.end('<!doctype html><title>Packaged coexistence</title><label>Note <input id="note"></label><button id="add">Add item</button><script>add.onclick = e => fetch("/coexistence-effect",{method:"POST",body:JSON.stringify({trusted:e.isTrusted,value:note.value})});</script>');
+    } else if (request.url === '/page') {
       response.setHeader('content-type', 'text/html');
       response.end('<!doctype html><title>Package acceptance</title><button onclick="document.title=\'Action complete\'">Continue</button><input id="choice" type="checkbox" aria-label="Choice" onclick="document.title=\'Unsafe action\'">');
     } else if (request.url === '/large') response.end(Buffer.alloc(4096, 120));
@@ -318,7 +333,7 @@ async function fixtures(directory) {
     });
     const http = `http://127.0.0.1:${await listen(servers[0])}`;
     const https = `https://127.0.0.1:${await listen(servers[1])}`;
-    return { http, https, certPath, payload, stalled, get contacts() { return contacts; }, close };
+    return { http, https, certPath, payload, stalled, effects, get contacts() { return contacts; }, close };
   } catch (error) { await close(); throw error; }
 }
 
@@ -486,6 +501,10 @@ async function workflow(baseUrl, key, fixture, process, options, report) {
     } });
     report.push({ check: 'CLI-action-and-MCP-live-workflow', status: 'pass' });
     await close(page.sessionId);
+    if (options.profile === 'candidate') {
+      await checkPackagedCoexistence({ request, surface, process, fixture, options, env: cliEnv, sessions, close, key });
+      report.push({ check: 'packaged-delegated-operator-MCP-coexistence', status: 'pass' });
+    }
   } finally {
     // Close every acquired session even if an assertion, child or tool failed.
     await Promise.all([...sessions].map((id) => apiRequest(baseUrl, `/v1/sessions/${id}`, { key, method: 'DELETE', timeoutMs: 2000, statuses: [200, 404] })));

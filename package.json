@@ -1,6 +1,6 @@
 {
   "name": "agentbrowser-monorepo",
-  "version": "1.8.13",
+  "version": "1.8.14",
   "private": true,
   "description": "AgentBrowser: Agent-First Headless Browser",
   "scripts": {
@@ -20,7 +20,15 @@
     "clean": "pnpm -r clean && rm -rf node_modules",
     "ci": "pnpm build && pnpm type-check && pnpm test",
     "bench": "pnpm --filter @agentbrowser/benchmarks all",
-    "bench:real": "pnpm --filter @agentbrowser/benchmarks bench:real"
+    "bench:real": "pnpm --filter @agentbrowser/benchmarks bench:real",
+    "test:coexistence": "node scripts/check-coexistence.mjs",
+    "test:coexistence-victor": "node scripts/check-victor-coexistence.mjs",
+    "firefox:install": "node packages/engine-firefox/scripts/install.mjs",
+    "test:firefox": "node scripts/check-firefox.mjs",
+    "test:firefox-independence": "node scripts/check-firefox-independence.mjs",
+    "probe:firefox-egress": "node packages/engine-firefox/scripts/probe-egress.mjs",
+    "test:egress-evidence": "node --test scripts/browser-egress-gate.test.mjs scripts/bidi-probe-connection.test.mjs scripts/service-worker-probe.test.mjs",
+    "probe:firefox-session-egress": "node packages/engine-firefox/scripts/probe-session-egress.mjs"
   },
   "keywords": [
     "browser",

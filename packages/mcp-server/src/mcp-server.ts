@@ -24,6 +24,7 @@ import type {
   ExportedCookie,
   ExtractRequest,
   ExtractResult,
+  MutationOptions,
   NavigationRequest,
   NavigationResponse,
   ObservationRequest,
@@ -42,6 +43,12 @@ export type { ClientOptions, ExportedCookie };
 /** The slice of the SDK the MCP server depends on. */
 export interface McpClient {
   sessions: {
+    control?(sessionId: string): Promise<import('@agentbrowser/protocol').ControlView>;
+    listPages?(sessionId: string): Promise<PageResponse[]>;
+    operation?(
+      sessionId: string,
+      operationId: string
+    ): Promise<import('@agentbrowser/protocol').OperationRecord>;
     create(request: SessionRequest): Promise<SessionResponse>;
     close(sessionId: string): Promise<void>;
     /** TD-BROWSER-6: scoped cookie export for the credential handoff loop. */
@@ -49,7 +56,8 @@ export interface McpClient {
     plan(
       sessionId: string,
       pageId: string,
-      actions: Array<Record<string, unknown>>
+      actions: Array<Record<string, unknown>>,
+      options?: MutationOptions
     ): Promise<{
       ok: boolean;
       completed: number;
@@ -62,14 +70,20 @@ export interface McpClient {
     navigate(
       sessionId: string,
       pageId: string,
-      request: NavigationRequest
+      request: NavigationRequest,
+      options?: MutationOptions
     ): Promise<NavigationResponse>;
     observe(
       sessionId: string,
       pageId: string,
       request: ObservationRequest
     ): Promise<ObservationResponse>;
-    executeAction(sessionId: string, pageId: string, request: ActionRequest): Promise<ActionResult>;
+    executeAction(
+      sessionId: string,
+      pageId: string,
+      request: ActionRequest,
+      options?: MutationOptions
+    ): Promise<ActionResult>;
     screenshot(sessionId: string, pageId: string, request: ScreenshotRequest): Promise<ArtifactRef>;
     extract(sessionId: string, pageId: string, request: ExtractRequest): Promise<ExtractResult>;
     pdf(sessionId: string, pageId: string, request: PdfRequest): Promise<ArtifactRef>;
@@ -87,6 +101,8 @@ export interface McpClient {
 }
 
 export interface McpDependencies {
+  /** Operator-configured binding. Never supplied by model tool arguments. */
+  sessionId?: string | undefined;
   createClient(options: ClientOptions): McpClient;
   serverInfo?: { name: string; version: string };
   /** Server the tools proxy to. */
@@ -125,6 +141,13 @@ function sessionAndPage(args: Record<string, unknown>): [string, string] {
  * not a control-flow edit. Every tool object below is byte-identical to
  * before; only its container moved.
  */
+function operationOptions(args: Record<string, unknown>): [] | [MutationOptions] {
+  if (args.operationId === undefined) return [];
+  if (typeof args.operationId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(args.operationId))
+    throw new UsageError('A valid operationId is required');
+  return [{ operationId: args.operationId }];
+}
+
 function buildTools(client: McpClient): ToolDefinition[] {
   return [
     {
@@ -310,7 +333,12 @@ function buildTools(client: McpClient): ToolDefinition[] {
         if (!Array.isArray(args.actions)) {
           throw new UsageError('actions is required and must be an array of plan steps.');
         }
-        return await client.sessions.plan(sessionId, pageId, args.actions);
+        return await client.sessions.plan(
+          sessionId,
+          pageId,
+          args.actions,
+          ...operationOptions(args)
+        );
       },
     },
 
@@ -357,7 +385,12 @@ function buildTools(client: McpClient): ToolDefinition[] {
           request.waitUntil = args.waitUntil as NonNullable<NavigationRequest['waitUntil']>;
         }
 
-        return await client.sessions.navigate(sessionId, pageId, request);
+        return await client.sessions.navigate(
+          sessionId,
+          pageId,
+          request,
+          ...operationOptions(args)
+        );
       },
     },
 
@@ -405,7 +438,7 @@ function buildTools(client: McpClient): ToolDefinition[] {
           },
           include: {
             type: 'array',
-            items: { type: 'string', enum: ['overlays', 'fileInputs'] },
+            items: { type: 'string', enum: ['overlays', 'fileInputs', 'formControls'] },
             description:
               'Optional enrichments. "overlays" adds an aggregated list of elements that ' +
               'cover observed targets (useful when clicks would be intercepted). ' +
@@ -492,14 +525,19 @@ function buildTools(client: McpClient): ToolDefinition[] {
           );
         }
 
-        const { sessionId: _session, pageId: _page, ...request } = args;
+        const { sessionId: _session, pageId: _page, operationId: _operation, ...request } = args;
 
         const validated = validateWireAction(request);
         if (!validated.ok)
           throw new UsageError(
             `Invalid action: ${validated.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; ')}. Element-targeted actions require a ref from browser_observe.`
           );
-        return await client.sessions.executeAction(sessionId, pageId, validated.value);
+        return await client.sessions.executeAction(
+          sessionId,
+          pageId,
+          validated.value,
+          ...operationOptions(args)
+        );
       },
     },
 
@@ -699,7 +737,60 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
   const client = deps.createClient({ baseUrl: deps.baseUrl ?? 'http://localhost:5709' });
   const serverInfo = deps.serverInfo ?? { name: 'agentbrowser', version: '1.0.0' };
 
-  const tools = buildTools(client);
+  const tools = buildTools(client).filter(
+    (tool) =>
+      !deps.sessionId || !['browser_create', 'browser_close', 'browser_cookies'].includes(tool.name)
+  );
+  for (const tool of tools) {
+    if (deps.sessionId && Array.isArray(tool.inputSchema.required))
+      tool.inputSchema.required = tool.inputSchema.required.filter((name) => name !== 'sessionId');
+    if (['browser_act', 'browser_plan', 'browser_navigate'].includes(tool.name)) {
+      (tool.inputSchema.properties as Record<string, unknown>).operationId = {
+        type: 'string',
+        pattern: '^[a-zA-Z0-9_-]{1,128}$',
+        description:
+          'Choose a unique ID before the call. If its response is lost, query browser_operation with this ID before another write.',
+      };
+      if (deps.sessionId)
+        tool.inputSchema.required = [
+          ...((tool.inputSchema.required as string[]) ?? []),
+          'operationId',
+        ];
+    }
+  }
+  if (deps.sessionId) {
+    const sessionId = deps.sessionId;
+    tools.push({
+      name: 'browser_session',
+      description:
+        'Inspect the delegated session control status and available pages. Human takeover revokes this connection; ask the operator for a new grant.',
+      inputSchema: { type: 'object', properties: {} },
+      handler: async () => {
+        if (!client.sessions.control || !client.sessions.listPages)
+          throw new UsageError('Client does not support delegated sessions');
+        return {
+          sessionId,
+          control: await client.sessions.control(sessionId),
+          pages: await client.sessions.listPages(sessionId),
+        };
+      },
+    });
+    tools.push({
+      name: 'browser_operation',
+      description:
+        'Reconcile a lost response using its operationId. outcome_unknown requires independent inspection; never blindly repeat the action.',
+      inputSchema: {
+        type: 'object',
+        properties: { operationId: { type: 'string' } },
+        required: ['operationId'],
+      },
+      handler: async (args) => {
+        if (!client.sessions.operation || typeof args.operationId !== 'string')
+          throw new UsageError('operationId is required');
+        return client.sessions.operation(sessionId, args.operationId);
+      },
+    });
+  }
 
   const toolByName = new Map(tools.map((tool) => [tool.name, tool]));
 
@@ -752,7 +843,23 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
 
             const args = (message.params?.arguments ?? {}) as Record<string, unknown>;
             try {
-              const result = await tool.handler(args);
+              if (
+                deps.sessionId &&
+                args.sessionId !== undefined &&
+                args.sessionId !== deps.sessionId
+              )
+                throw new UsageError('This MCP connection is bound to another session');
+              if (
+                deps.sessionId &&
+                ['browser_act', 'browser_plan', 'browser_navigate'].includes(name) &&
+                args.operationId === undefined
+              )
+                throw new UsageError(
+                  'operationId is required for a delegated mutation; choose it before dispatch so a lost response can be reconciled'
+                );
+              const result = await tool.handler(
+                deps.sessionId ? { ...args, sessionId: deps.sessionId } : args
+              );
               return ok(message.id, textResult(result));
             } catch (err) {
               return ok(message.id, errorResult(formatToolError(err)));
@@ -793,9 +900,17 @@ function errorResult(message: string) {
 }
 
 function formatToolError(error: unknown): string {
-  return formatErrorForUser(
-    error,
-    'The element ref is stale. Call browser_observe to get fresh refs at the current revision, then act on the new ref. Do not retry the old one.'
+  const operationId = (error as { details?: { operationId?: unknown } } | null)?.details
+    ?.operationId;
+  const suffix =
+    typeof operationId === 'string'
+      ? `\nReconcile with browser_operation: ${JSON.stringify({ operationId })}`
+      : '';
+  return (
+    formatErrorForUser(
+      error,
+      'The element ref is stale. Call browser_observe to get fresh refs at the current revision, then act on the new ref. Do not retry the old one.'
+    ) + suffix
   );
 }
 

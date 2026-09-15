@@ -51,6 +51,29 @@ const server = await buildServer({
   networkPolicy: new NetworkPolicy({ blockLoopback: false, blockPrivateIPs: true, blockMetadata: true }),
 });
 const baseUrl = await server.listen({ port: 0, host: '127.0.0.1' });
+
+async function operator(params) {
+  assert.ok(['grant', 'takeover'].includes(params.action), 'Unknown operator action');
+  const session = await engine.createSession({});
+  try {
+    const ui = (await session.newPage()).backingPage();
+    await ui.goto(`${baseUrl}/operator`);
+    await ui.getByLabel('Operator key', { exact: true }).fill(params.key);
+    await ui.getByRole('button', { name: 'Connect', exact: true }).click();
+    await ui.getByLabel('Session ID', { exact: true }).fill(params.sessionId);
+    await ui.getByRole('button', { name: 'Attach', exact: true }).click();
+    await ui.waitForFunction(() => /HUMAN_ACTIVE|AGENT_ACTIVE/.test(document.querySelector('#status')?.textContent ?? ''));
+    if (params.action === 'takeover') {
+      await ui.getByRole('button', { name: 'Take over', exact: true }).click();
+      await ui.waitForFunction(() => document.querySelector('#status')?.textContent.includes('HUMAN_ACTIVE'));
+      return true;
+    }
+    await ui.getByRole('button', { name: 'Prepare fresh review', exact: true }).click();
+    await ui.getByRole('button', { name: 'Delegate reviewed state', exact: true }).click();
+    await ui.waitForFunction(() => Boolean(document.querySelector('#grant')?.value));
+    return await ui.locator('#grant').inputValue();
+  } finally { await session.close(); }
+}
 let shuttingDown;
 const shutdown = () => {
   shuttingDown ??= (async () => {
@@ -93,6 +116,9 @@ process.on('message', ({ id, method, params }) => {
           const button = document.querySelector('button');
           button.textContent = ''; button.style.width = '40px'; button.style.height = '20px';
         }); result = true;
+      } else if (method === 'operator') result = await operator(params);
+      else if (method === 'humanEdit') {
+        await backing.getByLabel('Note', { exact: true }).fill('human edit'); result = true;
       } else if (method === 'title') result = await backing.title();
       else throw new Error('Unknown instrumented child method');
       reply({ id, result });

@@ -1,0 +1,149 @@
+{
+  "candidate": "session-bidi-v1",
+  "driver": "direct-bidi-probe-v1",
+  "drivers": [
+    "direct-bidi-probe-v1",
+    "direct-bidi-probe-v1"
+  ],
+  "browser": "firefox/155.0.1",
+  "versions": [
+    "firefox/155.0.1",
+    "firefox/155.0.1"
+  ],
+  "sessionDetails": [
+    {
+      "scope": "session",
+      "subscribeAcknowledged": true,
+      "interceptAcknowledged": true,
+      "fixtureContexts": 10,
+      "blockedEvents": 26,
+      "contextlessBlockedEvents": 0
+    },
+    {
+      "scope": "session",
+      "subscribeAcknowledged": true,
+      "interceptAcknowledged": true,
+      "fixtureContexts": 9,
+      "blockedEvents": 24,
+      "contextlessBlockedEvents": 0
+    }
+  ],
+  "channels": [
+    {
+      "channel": "navigation",
+      "allowedHits": 1,
+      "deniedHits": 0,
+      "denialCallbacks": 1,
+      "allowedCompleted": true,
+      "deniedCompleted": true,
+      "allowedOutcome": "reached",
+      "deniedOutcome": "blocked"
+    },
+    {
+      "channel": "redirect",
+      "allowedHits": 1,
+      "deniedHits": 0,
+      "denialCallbacks": 1,
+      "allowedCompleted": true,
+      "deniedCompleted": true,
+      "allowedOutcome": "reached",
+      "deniedOutcome": "blocked"
+    },
+    {
+      "channel": "frame",
+      "allowedHits": 1,
+      "deniedHits": 0,
+      "denialCallbacks": 1,
+      "allowedCompleted": true,
+      "deniedCompleted": false,
+      "allowedOutcome": "finished",
+      "deniedOutcome": "timeout"
+    },
+    {
+      "channel": "fetch",
+      "allowedHits": 1,
+      "deniedHits": 0,
+      "denialCallbacks": 1,
+      "allowedCompleted": true,
+      "deniedCompleted": true,
+      "allowedOutcome": "reached",
+      "deniedOutcome": "blocked"
+    },
+    {
+      "channel": "dedicated-worker",
+      "allowedHits": 1,
+      "deniedHits": 0,
+      "denialCallbacks": 1,
+      "allowedCompleted": true,
+      "deniedCompleted": true,
+      "allowedOutcome": "reached",
+      "deniedOutcome": "blocked"
+    },
+    {
+      "channel": "shared-worker",
+      "allowedHits": 1,
+      "deniedHits": 1,
+      "denialCallbacks": 0,
+      "allowedCompleted": true,
+      "deniedCompleted": true,
+      "allowedOutcome": "reached",
+      "deniedOutcome": "reached"
+    },
+    {
+      "channel": "service-worker",
+      "allowedHits": 1,
+      "deniedHits": 1,
+      "denialCallbacks": 0,
+      "allowedCompleted": true,
+      "deniedCompleted": true,
+      "allowedOutcome": "reached",
+      "deniedOutcome": "reached"
+    },
+    {
+      "channel": "popup",
+      "allowedHits": 1,
+      "deniedHits": 0,
+      "denialCallbacks": 1,
+      "allowedCompleted": true,
+      "deniedCompleted": false,
+      "allowedOutcome": "reached",
+      "deniedOutcome": "timeout"
+    },
+    {
+      "channel": "websocket",
+      "allowedHits": 1,
+      "deniedHits": 0,
+      "denialCallbacks": 1,
+      "allowedCompleted": true,
+      "deniedCompleted": true,
+      "allowedOutcome": "reached",
+      "deniedOutcome": "blocked"
+    }
+  ],
+  "responseInspection": {
+    "contentAvailable": null,
+    "deliveredBodyCharacters": 65536
+  },
+  "errors": [],
+  "boundaries": {
+    "responseBytesBeforeDelivery": "unverified",
+    "dnsConnectionBinding": "unverified",
+    "startupBeforeExecution": "unverified",
+    "forcedEgress": "unverified"
+  },
+  "gate": {
+    "ready": false,
+    "reasons": [
+      "frame:denial-unproven",
+      "shared-worker:denial-unproven",
+      "shared-worker:destination-reached",
+      "service-worker:denial-unproven",
+      "service-worker:destination-reached",
+      "popup:denial-unproven",
+      "responseBytesBeforeDelivery:unverified",
+      "dnsConnectionBinding:unverified",
+      "startupBeforeExecution:unverified",
+      "forcedEgress:unverified"
+    ]
+  }
+}

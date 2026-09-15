@@ -39,6 +39,24 @@ function fixture() {
 }
 
 describe('Safari deployment and lifecycle contract (mock transport)', () => {
+  it('refuses unqualified fill verification before a driver request', async () => {
+    const f = fixture();
+    try {
+      const page = await (await f.engine.createSession({})).newPage();
+      const count = f.calls.length;
+      await expect(
+        page.act({
+          type: 'fill',
+          target: { ref: 'unqualified' },
+          value: 'private',
+          expectValue: 'private',
+        })
+      ).rejects.toMatchObject({ code: 'ENGINE_UNSUPPORTED' });
+      expect(f.calls).toHaveLength(count);
+    } finally {
+      await f.engine.close();
+    }
+  });
   it('refuses policy-bearing sessions with a protocol code before starting a driver', async () => {
     const f = fixture();
     await expect(

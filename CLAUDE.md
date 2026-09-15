@@ -10,7 +10,7 @@ AgentBrowser is an agent-native browser service designed for AI agents to safely
 - **Stable element references** with automatic staleness detection
 - **Safety-first** architecture (network policy, SSRF defense, approval gates)
 - **Token-efficient** observations bounded by size/element count
-- **Headless-first** operation (headed mode exists only for local debugging)
+- **Headless-first** operation with opt-in headed human control ([delegated sessions](docs/delegated-sessions.md))
 
 ## Architecture
 
