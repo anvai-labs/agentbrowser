@@ -2267,14 +2267,21 @@ class PlaywrightPage implements EnginePage {
         const locator = action.target
           ? this.locatorFor((action.target as EngineTarget).ref)
           : undefined;
-        for (let i = 0; i < count; i += 1) {
-          if (locator) {
-            await locator.press(String(action.key));
-          } else {
-            await this.page.keyboard.press(String(action.key));
+        let delivered = 0;
+        try {
+          for (let i = 0; i < count; i += 1) {
+            if (locator) {
+              await locator.press(String(action.key));
+            } else {
+              await this.page.keyboard.press(String(action.key));
+            }
+            delivered += 1;
           }
+        } finally {
+          // Landed presses mutated the page even if a later press failed:
+          // bump so stale refs cannot be trusted after a partial run.
+          if (delivered > 0) this.bumpRevision();
         }
-        this.bumpRevision();
         break;
       }
       case 'scroll': {

@@ -670,6 +670,11 @@ class SafariPage implements EnginePage {
         break;
       }
       case 'press': {
+        if (action.count !== undefined)
+          throw new EngineError(
+            'ENGINE_UNSUPPORTED',
+            'press count is not supported by this engine'
+          );
         const key = String(action.key ?? 'Enter');
         await this.execute(
           `return (() => {

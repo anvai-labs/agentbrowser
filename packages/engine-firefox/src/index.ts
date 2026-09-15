@@ -436,6 +436,8 @@ class FirefoxPage implements EnginePage {
         case 'press': {
           if (typeof action.key !== 'string')
             throw new EngineError('INVALID_REQUEST', 'Press requires key');
+          if (action.count !== undefined)
+            throw unsupported('press count is not supported by this engine');
           await handle.press(action.key as Parameters<typeof handle.press>[0]);
           break;
         }
