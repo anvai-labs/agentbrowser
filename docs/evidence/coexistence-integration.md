@@ -46,6 +46,15 @@ application save or allow automatic retries. The independent application-outcome
 fixture remains the business-state oracle. Firefox guarded-service promotion
 remains refused; the two failed egress hypotheses are unchanged.
 
+**Addendum (2026-09-15, from live validation on production form widgets):** the
+single-read contract produced false `VALUE_MISMATCH` failures where a field's
+async normalization landed after the readback. The mismatch path now settles
+briefly and re-reads once — still one write, never replayed. `VALUE_MISMATCH`
+details now carry `expected`/`actual` for fills not marked `sensitive`, giving
+callers the widget's normalization without a second round trip; `sensitive`
+fills keep the value-free error contract above, and success payloads still
+return only the verification boolean.
+
 ## Validation
 
 The native regression first observed three writes instead of one, and a password
