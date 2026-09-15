@@ -89,7 +89,9 @@ jobs:
 
   test:
     name: Test
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    # Native browsers and mapped IPv6 loopback need a qualified Linux host.
+    # The org's ubuntu-latest overflow pool also includes restricted containers.
+    runs-on: ${{ vars.CI_TEST_RUNNER || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@v4
 
