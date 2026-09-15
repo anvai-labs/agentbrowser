@@ -146,6 +146,12 @@ responses as tool results, and retires the process after timeout/cancellation.
 This deliberately chooses less concurrency over a new multiplexing subsystem.
 An official MCP SDK adapter remains the preferred larger conformance evaluation.
 
+The [combined Victor/Chromium acceptance](evidence/victor-chromium-coexistence.md)
+now runs the real stdio client against the same operator-panel and native-browser
+scenario as the local MCP path. Use `pnpm test:coexistence-victor` with explicit
+Victor checkout/Python paths; ordinary CI retains the native Node stdio path
+without requiring a second repository.
+
 ## Dependency and product decisions
 
 The review's product hypothesis is continuity of authority and verified outcomes

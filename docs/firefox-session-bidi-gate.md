@@ -92,10 +92,12 @@ syntax is documented, but live-account acceptance and persistent registration
 were not performed. Victor's prior acceptance uses a fake engine for the stdio
 boundary, with browser behavior checked separately by native Chromium fixtures.
 
-The next useful local product acceptance combines Victor's real stdio transport
-with the real delegated Chromium/UI outcome fixture, then prepares an integration
-candidate against the advanced main checkout. Keep this separate from Firefox
-promotion; do not spend runner cycles repeatedly testing the rejected hypothesis.
+The [combined Victor/Chromium acceptance](evidence/victor-chromium-coexistence.md)
+now closes the real-stdio/native-browser gap. Integration preparation follows
+against an explicitly recorded committed snapshot of the other workstream;
+ancestry must be checked rather than inferred from checkout activity. Keep this
+separate from Firefox promotion; do not spend runner cycles repeatedly testing
+the rejected hypothesis.
 
 Primary references: [Firefox direct BiDi connection](https://developer.mozilla.org/en-US/docs/Web/WebDriver/How_to/Create_BiDi_connection),
 [W3C network.addIntercept](https://www.w3.org/TR/webdriver-bidi/#command-network-addIntercept),
