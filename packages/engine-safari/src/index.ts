@@ -621,6 +621,8 @@ class SafariPage implements EnginePage {
 
   private async actUnlocked(action: EngineAction): Promise<ActionEffect> {
     this.assertOpen();
+    if (action.expectValue !== undefined)
+      throw new EngineError('ENGINE_UNSUPPORTED', 'Fill verification is not qualified for Safari');
     await this.switchTo();
     const actionId = `action-${Date.now()}`;
     const oldRevision = this.revision;

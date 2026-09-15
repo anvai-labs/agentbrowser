@@ -88,3 +88,62 @@ A long form flow should set both explicitly (`ttlMs: 86400000`, `idleTimeoutMs:
 everything at expiry — re-entry means re-filling every section — so set the budget
 before starting, not after the first loss. See
 [operations](../operations.md#configuration) for the operator-side defaults.
+## Date triplets and masked fields
+
+Month/Day/Year triplets on such portals are often backed by scripts that
+reformat on every input event. A plan that fills `Month` = `2`, `Day` = `30`
+back-to-back can bleed: the day script fires while the month is still being
+composed, and the auto-advance moves focus mid-keystroke. Fill one field per
+plan step and verify:
+
+```json
+{ "action": "fill", "target": { "ref": "e4_12" }, "value": "2", "expectValue": "2" }
+```
+
+On Chromium, `expectValue` reads a native input/textarea after one fill.
+A mismatch fails with `VALUE_MISMATCH`; it never refills automatically or echoes
+expected/actual values. Success reports `result.verified: true`. Re-observe and
+inspect application state before deciding on another write. This readback is
+not proof of a durable save. Unqualified engines refuse the option before writing.
+Fields that add their own separators ("02 / 30 / 2024") need the separator-tolerant
+final value as `expectValue`, or verify via the form's own review screen instead.
+
+## Honeypot fields
+
+Anti-bot forms carry bait inputs labeled "leave this empty" or hidden text
+fields ("for robots only"). Never fill a field merely because a form looks
+incomplete — fill only refs whose observed label you can justify. A filled
+honeypot is the strongest bot signal a portal has.
+
+## Audit every autofill-parsed entry
+
+Resume-upload autofill parses stylized documents badly: titles land in company
+fields, section headings become employer names, entries duplicate or vanish.
+After the parse, re-observe and audit **every** parsed row against the source
+document; fix swapped fields by ref; delete garbage rows via their remove
+buttons. A plain-text-styled resume variant parses far more reliably than a
+formatted one.
+
+## Back-navigation can discard sibling entries
+
+In multi-entry subforms (work history blocks), navigating **back** past a step
+can silently drop entries you already added, even ones that rendered in a
+review screen moments earlier. Rule: after any back-navigation, re-observe and
+count the entries you believe exist; re-add missing ones before continuing.
+Prefer forward-only flows: complete a section, save forward, and never return.
+
+## networkidle on long-polling portals
+
+`until: "networkidle"` can time out on portals with persistent connections
+(telemetry, websockets) that never go quiet. Prefer `until: "settled"` after
+navigation, `selectorVisible` for a known element, or `minElements` for a list
+you expect to render.
+
+## Create-account ambiguity
+
+Sign-up flows can fail silently (password policy, existing account) and
+redirect to a login screen with only a generic "wrong email or password" —
+which is also what an existing account produces. Disambiguate with the
+password-reset email flow: if the reset confirmation arrives, the account
+exists — complete the reset and sign in; if nothing arrives, retry creation
+with a policy-compliant password.

@@ -162,6 +162,8 @@ export interface ServiceActRequest {
   action: string;
   target?: { ref: string } | undefined;
   value?: string | undefined;
+  /** Native-field comparison after one fill; no write replay. */
+  expectValue?: string | undefined;
   values?: string[] | undefined;
   deltaX?: number | undefined;
   deltaY?: number | undefined;
@@ -2136,6 +2138,17 @@ export class AgentBrowserService {
 
       page.revision = result.newRevision;
 
+      if (
+        request.action === 'fill' &&
+        request.expectValue !== undefined &&
+        (result.result as { verified?: unknown } | undefined)?.verified !== true
+      )
+        throw new ServiceError(
+          'ENGINE_UNSUPPORTED',
+          'The adapter returned no fill verification evidence. The fill may have completed; inspect current state before another write.',
+          false
+        );
+
       // Post-action wait (spec 11.1): an explicit wait runs to its deadline
       // (returns WHY it completed; a missed deadline is ACTION_TIMEOUT,
       // never a hang). Without one, a zero-cost settle yield keeps latency
@@ -2162,8 +2175,13 @@ export class AgentBrowserService {
         observation,
         waitReason,
         ...(result.remap !== undefined ? { remap: result.remap } : {}),
-        // Evidence passthrough: only upload produces a per-action payload
-        // (attached files); other engines' {success:true} stays unreported.
+        // Only publish the comparison boolean, never a field value.
+        ...(request.action === 'fill' &&
+        request.expectValue !== undefined &&
+        (result.result as { verified?: unknown } | undefined)?.verified === true
+          ? { result: { verified: true } }
+          : {}),
+        // Upload reports its separate attached-file evidence.
         ...(request.action === 'upload' && result.result != null ? { result: result.result } : {}),
       };
     });

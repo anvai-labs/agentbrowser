@@ -26,12 +26,15 @@ const passthrough = process.argv.slice(2);
 // An explicit --outfile is honored in the CALLER's frame (relative to where
 // the script was invoked); only the default is package-root-relative. Bun
 // runs with cwd=pkgRoot below, so rewrite the caller's path to absolute.
-const outfileIndex = passthrough.findIndex((arg) => arg === '--outfile' || arg.startsWith('--outfile='));
+const outfileIndex = passthrough.findIndex(
+  (arg) => arg === '--outfile' || arg.startsWith('--outfile=')
+);
 const spaceForm = outfileIndex >= 0 && passthrough[outfileIndex] === '--outfile';
 if (spaceForm && passthrough[outfileIndex + 1]) {
   passthrough[outfileIndex + 1] = resolve(passthrough[outfileIndex + 1]);
 } else if (!spaceForm && outfileIndex >= 0) {
-  passthrough[outfileIndex] = `--outfile=${resolve(passthrough[outfileIndex].slice('--outfile='.length))}`;
+  passthrough[outfileIndex] =
+    `--outfile=${resolve(passthrough[outfileIndex].slice('--outfile='.length))}`;
 }
 
 const args = [
@@ -40,7 +43,9 @@ const args = [
   '--define',
   `process.env.AGENTBROWSER_MCP_VERSION="${version}"`,
   'src/bin.ts',
-  ...(outfileIndex >= 0 ? passthrough : ['--outfile', join(pkgRoot, 'dist-bin', 'agentbrowser-mcp'), ...passthrough]),
+  ...(outfileIndex >= 0
+    ? passthrough
+    : ['--outfile', join(pkgRoot, 'dist-bin', 'agentbrowser-mcp'), ...passthrough]),
 ];
 
 const result = spawnSync('bun', args, { stdio: 'inherit', cwd: pkgRoot });

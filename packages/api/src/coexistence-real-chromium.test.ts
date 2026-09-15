@@ -96,8 +96,37 @@ for (const transport of ['in-process', 'stdio', 'victor'] as const) {
             harness.request('tools/call', { name, arguments: args });
         };
         const call = await bind(token);
-        const first = await call('browser_observe', { pageId: page.pageId });
-        const observation = JSON.parse(first.content[0].text);
+        const initial = JSON.parse(
+          (await call('browser_observe', { pageId: page.pageId })).content[0].text
+        );
+        let note = initial.elements.find((element: { name?: string }) => element.name === 'Note');
+        const mismatch = await call('browser_act', {
+          pageId: page.pageId,
+          action: 'fill',
+          target: { ref: note.ref },
+          value: '',
+          expectValue: 'different',
+          operationId: 'mismatched-fill',
+        });
+        expect(mismatch.isError).toBe(true);
+        expect(mismatch.content[0].text).toContain('VALUE_MISMATCH');
+        const afterMismatch = JSON.parse(
+          (await call('browser_observe', { pageId: page.pageId })).content[0].text
+        );
+        note = afterMismatch.elements.find((element: { name?: string }) => element.name === 'Note');
+        const verified = await call('browser_act', {
+          pageId: page.pageId,
+          action: 'fill',
+          target: { ref: note.ref },
+          value: '',
+          expectValue: '',
+          operationId: 'verified-fill',
+        });
+        expect(verified.isError).not.toBe(true);
+        expect(JSON.parse(verified.content[0].text).result).toEqual({ verified: true });
+        const observation = JSON.parse(
+          (await call('browser_observe', { pageId: page.pageId })).content[0].text
+        );
         const button = observation.elements.find((e: { name?: string }) => e.name === 'Add item');
         expect(button).toBeDefined();
         const action = { action: 'click' as const, target: { ref: button.ref } };

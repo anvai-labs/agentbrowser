@@ -97,8 +97,18 @@ describe.skipIf(!process.env.AGENTBROWSER_FIREFOX_EXECUTABLE)('native Firefox', 
       await page.navigate({ url });
       const initial = await page.observe({ mode: 'interactive' });
       expect(initial).toMatchObject({ degraded: true, degradedReason: 'dom-semantic-subset' });
-      const note = initial.elements.find((e) => e.name === 'Note')!;
+      let note = initial.elements.find((e) => e.name === 'Note')!;
       expect(note.role).toBe('textbox');
+      await expect(
+        page.act({
+          type: 'fill',
+          target: { ref: note.ref! },
+          value: 'must not write',
+          expectValue: 'must not write',
+        })
+      ).rejects.toMatchObject({ code: 'ENGINE_UNSUPPORTED' });
+      note = (await page.observe({})).elements.find((e) => e.name === 'Note')!;
+      expect(note.value ?? '').toBe('');
       await page.getUrl!();
       await page.act({ type: 'fill', target: { ref: note.ref! }, value: 'from Firefox' });
       const after = await page.observe({ mode: 'interactive' });

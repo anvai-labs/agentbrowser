@@ -415,6 +415,13 @@ export interface FillAction extends Action {
   target: ElementTarget;
   value: string;
   sensitive?: boolean;
+  /**
+   * Compare a native input/textarea value after one fill. A mismatch fails
+   * with VALUE_MISMATCH without refilling or echoing either value. Success
+   * returns verified:true; it proves the comparison at readback time, not
+   * a durable application commit. Unqualified engines refuse this option.
+   */
+  expectValue?: string;
 }
 
 /**

@@ -73,3 +73,6 @@ claim a live person or model-driven task evaluation. It validates Victor's MCP
 client integration, not its planning loop. Live Codex/Claude acceptance, durable
 operation recovery, published artifact acceptance and Firefox guarded-service
 promotion remain separate gates. No GitHub workflow was dispatched.
+
+The [integration follow-up](coexistence-integration.md) also runs typed fill
+mismatch and value-free success evidence through all three transports.

@@ -396,6 +396,7 @@ class FirefoxPage implements EnginePage {
     return this.run(async () => {
       if (!ACTIONS.some((type) => type === action.type))
         throw unsupported(`Action ${action.type} is not qualified`);
+      if (action.expectValue !== undefined) throw unsupported('Fill verification is not qualified');
       if (action.remap) throw unsupported('Target remapping is not qualified');
       if (!action.target)
         throw new EngineError('INVALID_REQUEST', 'A fresh target ref is required');

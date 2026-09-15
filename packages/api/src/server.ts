@@ -149,6 +149,8 @@ const STATUS_FOR = {
   // In-band today (plan envelope, HTTP 200); mapped in case it's ever
   // thrown as a ServiceError.
   [ErrorCode.PLAN_WAIT_TIMEOUT]: 504,
+  // A page-side script reverted the filled value after two attempts.
+  [ErrorCode.VALUE_MISMATCH]: 422,
   // Server-side failures.
   [ErrorCode.ENGINE_CRASHED]: 500,
   [ErrorCode.INTERNAL]: 500,

@@ -11,7 +11,7 @@ function run(args) {
 run(['-r', 'build']);
 for (const [pkg, files] of [
   ['core', ['src/session-control.test.ts']],
-  ['engine-playwright', ['src/capability-families.test.ts', 'src/input-trust.test.ts', 'src/application-parity.test.ts', 'src/quoted-names.test.ts']],
+  ['engine-playwright', ['src/capability-families.test.ts', 'src/input-trust.test.ts', 'src/application-parity.test.ts', 'src/quoted-names.test.ts', 'src/fill-verification.test.ts']],
   ['sdk-typescript', ['src/coexistence.test.ts', 'src/deadline.test.ts']],
   ['cli', ['src/coexistence.test.ts']],
   ['mcp-server', ['src/coexistence.test.ts']],
@@ -23,6 +23,7 @@ for (const [pkg, files] of [
       'src/operator-panel.test.ts',
       'src/coexistence-real-chromium.test.ts',
       'src/firefox-deployment.test.ts',
+      'src/fill-verification.test.ts',
     ],
   ],
 ])

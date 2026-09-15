@@ -99,6 +99,9 @@ ancestry must be checked rather than inferred from checkout activity. Keep this
 separate from Firefox promotion; do not spend runner cycles repeatedly testing
 the rejected hypothesis.
 
+The [integration candidate](evidence/coexistence-integration.md) records the
+subsequent committed snapshot, ancestry check and verified-fill reconciliation.
+
 Primary references: [Firefox direct BiDi connection](https://developer.mozilla.org/en-US/docs/Web/WebDriver/How_to/Create_BiDi_connection),
 [W3C network.addIntercept](https://www.w3.org/TR/webdriver-bidi/#command-network-addIntercept),
 and [W3C network.failRequest](https://www.w3.org/TR/webdriver-bidi/#command-network-failRequest).
