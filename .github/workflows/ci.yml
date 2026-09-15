@@ -130,7 +130,7 @@ jobs:
       - name: Qualify Firefox production dependency independence
         run: |
           node --test scripts/firefox-deployment-audit.test.mjs
-          node --test scripts/browser-egress-gate.test.mjs
+          pnpm test:egress-evidence
           pnpm test:firefox-independence
 
       - name: Upload coverage

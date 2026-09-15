@@ -11,7 +11,7 @@ function run(args) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 run(['--filter', '@agentbrowser/engine-firefox...', 'build']);
-run(['exec', 'node', '--test', 'scripts/browser-egress-gate.test.mjs']);
+run(['test:egress-evidence']);
 run(['--filter', '@agentbrowser/testkit', 'exec', 'vitest', 'run', 'src/versioned-app.test.ts']);
 run(['--filter', '@agentbrowser/engine-firefox', 'test']);
 run(['--filter', '@agentbrowser/engine-playwright', 'exec', 'vitest', 'run', 'src/application-parity.test.ts']);

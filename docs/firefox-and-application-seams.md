@@ -40,7 +40,8 @@ Native accessibility snapshots remain unqualified. The pinned Puppeteer 25.11.0
 and Firefox 155.0.1 combination can read response content after delivery; that
 does not establish a pre-delivery byte limit. The [egress gate](firefox-egress-gate.md)
 also measured shared-worker and service-worker bypasses of public page request
-interception. Guarded-service promotion remains blocked.
+interception. The [direct session-wide follow-up](firefox-session-bidi-gate.md)
+reproduced those bypasses. Guarded-service promotion remains blocked.
 
 ## Delivered browser scope
 

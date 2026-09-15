@@ -1,8 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { launch } from 'puppeteer-core';
+import { launchPublicEgressBrowser } from './public-egress-browser.mjs';
 import { firefoxExecutable } from './browser-config.mjs';
 import { evaluateBrowserEgress, REQUIRED_CHANNELS } from '../../../scripts/browser-egress-gate.mjs';
 
@@ -24,7 +23,7 @@ async function close(server) {
 }
 
 /** Feasibility probe only. Deliberately never installed into the production adapter. */
-export async function probeFirefoxEgress(executablePath = firefoxExecutable()) {
+export async function probeFirefoxEgress(executablePath = firefoxExecutable(), { expected = EXPECTED_CANDIDATE, createBrowser = launchPublicEgressBrowser } = {}) {
   const hits = new Map();
   const sockets = new Set();
   const recordHit = url => {
@@ -76,53 +75,23 @@ export async function probeFirefoxEgress(executablePath = firefoxExecutable()) {
   const rows = new Map(REQUIRED_CHANNELS.map(channel => [channel, { channel, allowedHits: 0, deniedHits: 0, denialCallbacks: 0, allowedCompleted: false, deniedCompleted: false }]));
   const errors = [];
   const versions = [];
+  const drivers = [];
+  const sessionDetails = [];
   let responseInspection;
   try {
     target = await listen(destination);
     const origin = await listen(fixture);
     for (const deny of [false, true]) {
-      const browser = await launch({ browser: 'firefox', protocol: 'webDriverBiDi', executablePath, headless: true, args: ['--no-remote'] });
-      versions.push((await browser.version()).toLowerCase());
-      const installed = new WeakMap();
-      const installs = new Set();
       const intercepted = new Map();
-      const install = page => {
-        if (installed.has(page)) return installed.get(page);
-        page.on('request', request => {
-          const url = new URL(request.url());
-          const block = deny && url.origin === target && url.pathname.startsWith('/target/');
-          if (block) {
-            const key = url.searchParams.get('run');
-            intercepted.set(key, (intercepted.get(key) ?? 0) + 1);
-          }
-          const completion = block ? request.abort('blockedbyclient') : request.continue();
-          completion.catch(error => errors.push({ phase: 'interception', message: error.message }));
-        });
-        const pending = page.setRequestInterception(true);
-        installed.set(page, pending);
-        installs.add(pending);
-        pending.then(() => installs.delete(pending), () => installs.delete(pending));
-        return pending;
-      };
-      const onTarget = target => {
-        if (target.type() !== 'page') return;
-        // Firefox exposes frame targets as type=page too. Enumerate canonical
-        // top-level pages rather than constructing a new page facade for a frame.
-        const pending = browser.pages().then(pages => Promise.all(pages.map(install)));
-        installs.add(pending);
-        pending.then(() => installs.delete(pending), error => {
-          installs.delete(pending); errors.push({ phase: 'popup-install', message: error.message });
-        });
-      };
-      browser.on('targetcreated', onTarget);
+      const browser = await createBrowser({ executablePath, target, deny, errors, intercepted });
       const runs = [];
       try {
+        versions.push((await browser.version()).toLowerCase()); drivers.push(browser.driver);
+        if (browser.details) sessionDetails.push(browser.details);
         for (const channel of REQUIRED_CHANNELS) {
           const run = randomUUID();
           const row = rows.get(channel);
           const page = await browser.newPage();
-          await install(page);
-          page.setDefaultTimeout(5000);
           let outcome;
           try {
             if (channel === 'navigation' || channel === 'redirect') {
@@ -181,17 +150,16 @@ export async function probeFirefoxEgress(executablePath = firefoxExecutable()) {
           runs.push({ run, row, outcome });
         }
         if (!deny) {
-          const page = await browser.newPage(); await install(page);
+          const page = await browser.newPage();
           const response = await page.goto(`${origin}/large`, { timeout: 5000 });
           let contentError;
-          try { await response.content(); } catch (error) { contentError = error.message; }
-          responseInspection = { contentAvailable: !contentError, ...(contentError ? { contentError } : {}), deliveredBodyCharacters: await page.evaluate(() => document.body.textContent.length) };
+          const measured = typeof response?.content === 'function';
+          if (measured) try { await response.content(); } catch (error) { contentError = error.message; }
+          responseInspection = { contentAvailable: measured ? !contentError : null, ...(contentError ? { contentError } : {}), deliveredBodyCharacters: await page.evaluate(() => document.body.textContent.length) };
           await page.close();
         }
       } finally {
-        browser.off('targetcreated', onTarget);
         await browser.close();
-        await Promise.allSettled([...installs]);
       }
       // Browser is closed before counters are frozen: no surviving target can add late hits.
       for (const { run, row, outcome } of runs) {
@@ -206,16 +174,16 @@ export async function probeFirefoxEgress(executablePath = firefoxExecutable()) {
     await Promise.all([close(fixture), close(destination)]);
   }
   const report = {
-    candidate: EXPECTED_CANDIDATE.candidate,
-    driver: createRequire(import.meta.url)('puppeteer-core/package.json').version,
-    browser: versions[0], versions,
+    candidate: expected.candidate,
+    driver: drivers[0], drivers,
+    browser: versions[0], versions, ...(sessionDetails.length ? { sessionDetails } : {}),
     channels: [...rows.values()], responseInspection, errors,
     boundaries: {
-      responseBytesBeforeDelivery: responseInspection?.contentAvailable ? 'unverified' : 'unsupported',
+      responseBytesBeforeDelivery: 'unverified',
       dnsConnectionBinding: 'unverified', startupBeforeExecution: 'unverified', forcedEgress: 'unverified',
     },
   };
-  return { ...report, gate: evaluateBrowserEgress(report, EXPECTED_CANDIDATE) };
+  return { ...report, gate: evaluateBrowserEgress(report, expected) };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

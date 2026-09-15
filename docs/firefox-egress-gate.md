@@ -96,13 +96,12 @@ bounded fixtures, not comprehensive containment proof or Linux qualification.
 
 ## Next mechanism
 
-The next decision-changing candidate is session-wide BiDi interception owned
-by a single transport adapter, covering worker requests before execution. Test
-that scope against these same independent destinations before implementing a
-second browser adapter or adopting a driver fork. If public protocol/driver
-facilities cannot provide that ownership, retain trusted local Firefox and
-assess a Selenium or direct-BiDi implementation against the same stop condition.
-Do not attach a competing network owner to the current adapter.
+The [session-wide BiDi follow-up](firefox-session-bidi-gate.md) has now tested
+one direct protocol owner against the same independent destinations. It also
+measured shared-worker and service-worker bypasses. Retain trusted local Firefox
+and stop driver expansion under the page-scope hypothesis. A supported upstream
+fix or materially different mechanism must justify reopening promotion; do not
+attach a competing network owner to the current adapter.
 
 The accepted authenticated gateway and DNS-pinned connection authority remain
 complementary work: they can constrain destination connections but an opaque
