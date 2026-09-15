@@ -62,6 +62,36 @@ options. Three properties matter:
 Afterwards the chosen option renders as the control's visible value (a
 "single-value" chip in most design systems).
 
+### Keyboard-only widgets
+
+Some portals' dropdowns and multi-selects ignore clicks on rendered option rows —
+the click toggles the menu open/closed but never commits, and `press` of `Enter`
+on a highlighted row is the only thing that writes state. The working pattern:
+
+1. Click the control to open the menu.
+2. Walk with `ArrowDown` (or `ArrowUp`) until the target row is highlighted.
+3. Press `Enter` to commit.
+
+Two traps: the **highlight starts at the currently committed value**, not at the
+first row — an empty control starts at "Select One", but a prefilled control
+starts wherever its value sits, so a fixed number of downs from the top of the
+list overshoots. And virtualized menus render only a window of rows; `ArrowDown`
+loads more as it goes. Re-observe after opening and after long walks.
+
+One `press` per action bumps the revision and invalidates the ref; use
+`count` (Chromium engine; other engines refuse the option) to deliver the
+whole walk segment — or the whole walk, if you know the offset — in a
+single action:
+
+```json
+{"action": "click", "target": {"ref": "e30_41"}},
+{"action": "press", "key": "ArrowDown", "target": {"ref": "e30_41"}, "count": 5},
+{"action": "press", "key": "Enter"}
+```
+
+Multi-select chips ("N items selected") commit the same way. Removing a chip
+that is already selected is the same keyboard contract — focus the chip, `Delete`.
+
 ## Stray open menus
 
 Menu failures are sticky. If an option click fails or targets the wrong element,
@@ -88,6 +118,14 @@ attribute — the DOM attribute's absence is not evidence of an unchecked box, s
 prefer the observation's `checked` field (or `browser_html`) over scraping
 attributes.
 
+A cheap commit probe for dropdowns: once committed, the trigger control's
+accessible **name usually includes the chosen value** ("State Illinois Required"
+vs "State Select One Required"). An uncommitted widget keeps its placeholder name
+even when its menu render made it look selected — "Select One" in the name means
+not committed, regardless of what the open menu displayed. This catches the
+common failure where a click on an option row looked successful but wrote
+nothing.
+
 ## Session hygiene on long flows
 
 Sessions are ephemeral by default: TTL **3.5 hours**, idle timeout **10 minutes**,
@@ -109,13 +147,39 @@ plan step and verify:
 { "action": "fill", "target": { "ref": "e4_12" }, "value": "2", "expectValue": "2" }
 ```
 
+These spinbutton fields usually take **digits, not display text** — a month
+field backed by `1`–`12` rejects `July` outright and normalizes `9` into its
+display form. Phone-number fields similarly want raw digits and add their own
+punctuation. Feed the numeric form and let the widget format it.
+
 On Chromium, `expectValue` reads a native input/textarea after one fill.
-A mismatch fails with `VALUE_MISMATCH`; it never refills automatically or echoes
-expected/actual values. Success reports `result.verified: true`. Re-observe and
-inspect application state before deciding on another write. This readback is
-not proof of a durable save. Unqualified engines refuse the option before writing.
+A first read that disagrees is re-read once after a short settle, because late
+async normalization (masking, formatting) can race the readback. A still-
+mismatched value fails with `VALUE_MISMATCH`; the write is never replayed.
+For non-sensitive fills the error details carry `expected` and `actual` — the
+normalization the widget applied is visible without a separate HTML round trip.
+Credential fills — passwords, security answers, anything you would not paste
+into a log — should set `sensitive: true`; the flag keeps the value out of
+mismatch details, and password inputs get that treatment even without it.
+Success reports `result.verified: true`. This readback is not proof of a
+durable save: a later full-block re-render (see the next section) can still
+discard committed values. Unqualified engines refuse the option before writing.
 Fields that add their own separators ("02 / 30 / 2024") need the separator-tolerant
 final value as `expectValue`, or verify via the form's own review screen instead.
+
+When a value lands wrong anyway (a bleed mid-correction), fix it with `fill`
+and re-verify rather than arrow keys: targeted `press` sequences on spinbuttons
+are fragile because focus placement on re-rendered widget clusters is unreliable,
+and each individual press's revision bump invalidates the ref for the next one.
+
+## Locale selectors reset dependent blocks
+
+Country, region, or locale selectors frequently **re-render every dependent
+block** on change: an address form re-rendered after the country changes comes
+back empty, wiping street/city/postal fills that verified moments earlier.
+Choose the country **first**, then fill the dependent fields, and re-verify the
+whole block before saving. If a late selector change is unavoidable, treat every
+dependent field as wiped and refill it — do not trust the pre-change verifications.
 
 ## Honeypot fields
 

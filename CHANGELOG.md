@@ -5,6 +5,67 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [1.8.15] - 2026-09-15
+
+### Added
+
+- `count` on `press` (1-20, default 1): the keypress repeats inside a single
+  action and one revision bump covers the run (#165). Spinbutton-style
+  controls need repeated keypresses, and the revision bump from each
+  individual press invalidated the ref before the next one, costing an
+  observe round trip per press. Surfaced through the protocol, engine
+  (Chromium), CLI `act press --count <n>`, and the MCP `browser_act` schema;
+  Firefox and Safari refuse the option instead of silently pressing once.
+
+### Changed
+
+- Fill verification (`expectValue`) re-reads once after a short settle before
+  failing (#164). The single post-fill readback raced late async
+  normalization on production form widgets and reported `VALUE_MISMATCH` for
+  values that had landed. The write is still never replayed.
+- Non-sensitive `VALUE_MISMATCH` errors now carry `expected` and `actual` in
+  details, making the widget's normalization visible without a separate HTML
+  round trip (#164). `sensitive: true` fills and password inputs keep the
+  value-free error contract.
+
+### Fixed
+
+- A partial counted-press run (a press fails after earlier ones landed)
+  bumps the revision; previously the bump was skipped, leaving pre-run refs
+  trustworthy after a page mutation (#165).
+
+### Docs
+
+- Interactive-forms recipe: keyboard-commit pattern for select/multi-select
+  widgets (arrow walk + Enter; highlight starts at the current value),
+  locale selectors resetting dependent blocks, digits-not-display-text for
+  spinbutton fields, commit probing via the trigger control's accessible
+  name, and `sensitive` fill guidance (#166).
+
+## [1.8.14] - 2026-09-15
+
+### Added
+
+- Page `GET /v1/sessions/{sid}/pages/{pid}` now returns `url` and `title`
+  (both secret-redacted) instead of a fixed shell (#152).
+- `include: ["formControls"]` on observations mints refs for interactive
+  controls the ARIA snapshot misses (div-based widget triggers carrying
+  `data-automation-id`, `aria-haspopup`, or inline handlers), bound like any
+  ref with document-level evidence (#153). ADR-021.
+- `browser_html` MCP tool returning the page HTML inline as ground truth for
+  widget state (#153). ADR-020.
+- `continueFrom` on `browser_observe` to resume a truncated observation from
+  its continuation cursor (#153).
+- `checked` on observed checkbox/radio/switch elements, end to end (#154).
+
+### Changed
+
+- `fill` accepts `expectValue`: post-fill readback with `VALUE_MISMATCH`
+  (HTTP 422) on disagreement (#154). Single-write contract per the
+  coexistence integration evidence.
+- Workday-class long-form patterns documented in
+  `docs/recipes/interactive-forms.md` (#155).
+
 ## [1.8.13] - 2026-09-14
 
 ### Changed

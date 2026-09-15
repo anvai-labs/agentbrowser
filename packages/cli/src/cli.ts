@@ -881,17 +881,27 @@ export function buildCli(deps: CliDependencies): Cli {
 
       act
         .command('press')
-        .description('press a key')
+        .description('press a key (optionally repeated in one action)')
         .argument('<sessionId>')
         .argument('<pageId>')
         .argument('<key>')
+        .option('--count <n>', 'repeat the keypress n times (1-20), one revision bump total')
         .action(
-          action(async (ctx, sessionId: string, pageId: string, key: string) => {
-            await runAction(ctx, sessionId, pageId, {
-              action: 'press',
-              key,
-            });
-          })
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              pageId: string,
+              key: string,
+              options: { count?: string }
+            ) => {
+              await runAction(ctx, sessionId, pageId, {
+                action: 'press',
+                key,
+                ...(options.count !== undefined ? { count: Number(options.count) } : {}),
+              });
+            }
+          )
         );
 
       act

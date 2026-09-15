@@ -365,6 +365,7 @@ export const PressActionSchema = Type.Object({
   type: Type.Literal('press'),
   target: Type.Optional(ElementTargetSchema),
   key: Type.String(),
+  count: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
 });
 
 export const WaitTypeSchema = Type.Union([
@@ -414,6 +415,7 @@ export const PlanStepSchema = Type.Object({
   deltaX: Type.Optional(Type.Number()),
   deltaY: Type.Optional(Type.Number()),
   key: Type.Optional(Type.String()),
+  count: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
   direction: Type.Optional(
     Type.Union([
       Type.Literal('up'),
