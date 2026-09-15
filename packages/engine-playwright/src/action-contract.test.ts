@@ -387,6 +387,50 @@ describe('real action wire semantics', () => {
     }
   });
 
+  it('verifies expectValue after fill and fails with VALUE_MISMATCH on masked fields', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      // A field whose page script strips non-digits: the plain-text fill is
+      // reformatted, so a naive fill "succeeds" while the value diverges.
+      await page.navigate({
+        url:
+          'data:text/html,<body>' +
+          '<input id="day" aria-label="day" oninput="this.value=this.value.replace(/[^0-9]/g,\'\')">' +
+          '</body>',
+      });
+
+      const observation = await page.observe({});
+      const ref = observation.elements.find((element) => element.name === 'day')?.ref;
+      expect(ref).toBeDefined();
+
+      const effect = await page.act({
+        type: 'fill',
+        target: { ref: ref as string },
+        value: '14',
+        expectValue: '14',
+      });
+      // The verified readback is authoritative evidence the fill stuck.
+      expect(effect.result).toMatchObject({ success: true, verified: '14' });
+
+      // A masked field that keeps reverting: re-observe (the revision moved)
+      // then fill with an expectValue the field can never satisfy.
+      const obs2 = await page.observe({});
+      const ref2 = obs2.elements.find((element) => element.name === 'day')?.ref;
+      await expect(
+        page.act({
+          type: 'fill',
+          target: { ref: ref2 as string },
+          value: 'abc',
+          expectValue: 'abc',
+        })
+      ).rejects.toMatchObject({ code: 'VALUE_MISMATCH' });
+    } finally {
+      await engine.close();
+    }
+  });
+
   it('reports checked state for checkbox elements across clicks', async () => {
     const engine = new PlaywrightChromiumEngine();
     try {

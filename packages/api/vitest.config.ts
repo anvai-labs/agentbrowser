@@ -8,8 +8,8 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
-      exclude: ['node_modules/', 'dist/', '**/*.test.ts', '**/*.config.ts']
-    }
+      exclude: ['node_modules/', 'dist/', '**/*.test.ts', '**/*.config.ts'],
+    },
   },
   resolve: {
     alias: {
@@ -19,7 +19,7 @@ export default defineConfig({
       // silently dead for any test actually importing this package).
       '@agentbrowser/engine-playwright': fileURLToPath(
         new URL('../engine-playwright/src/index.ts', import.meta.url)
-      )
-    }
-  }
+      ),
+    },
+  },
 });

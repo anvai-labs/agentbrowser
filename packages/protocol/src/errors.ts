@@ -34,6 +34,7 @@ export enum ErrorCode {
   // Navigation and action errors
   NAVIGATION_TIMEOUT = 'NAVIGATION_TIMEOUT',
   ACTION_TIMEOUT = 'ACTION_TIMEOUT',
+  VALUE_MISMATCH = 'VALUE_MISMATCH',
   PLAN_WAIT_TIMEOUT = 'PLAN_WAIT_TIMEOUT',
 
   // Engine errors

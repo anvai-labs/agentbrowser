@@ -95,7 +95,9 @@ export class SessionCoordinator {
     request: SessionRequest & {
       requestPolicy?: import('@agentbrowser/engine').RequestPolicy;
       downloadPolicy?: import('@agentbrowser/engine').EngineSessionOptions['downloadPolicy'];
-      allowServiceWorkers?: import('@agentbrowser/engine').EngineSessionOptions['allowServiceWorkers'];
+      allowServiceWorkers?: import(
+        '@agentbrowser/engine'
+      ).EngineSessionOptions['allowServiceWorkers'];
     },
     engine: BrowserEngine
   ): Promise<SessionResponse> {
