@@ -669,6 +669,8 @@ class SafariPage implements EnginePage {
         );
         break;
       }
+      case 'typeText':
+        throw new EngineError('ENGINE_UNSUPPORTED', 'typeText is not supported by this engine');
       case 'press': {
         if (action.count !== undefined)
           throw new EngineError(

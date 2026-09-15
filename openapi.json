@@ -2125,6 +2125,10 @@
                         "type": "string"
                       },
                       {
+                        "const": "typeText",
+                        "type": "string"
+                      },
+                      {
                         "const": "clear",
                         "type": "string"
                       },
@@ -2220,6 +2224,11 @@
                   "count": {
                     "minimum": 1,
                     "maximum": 20,
+                    "type": "integer"
+                  },
+                  "delay": {
+                    "minimum": 0,
+                    "maximum": 1000,
                     "type": "integer"
                   },
                   "direction": {
@@ -4973,6 +4982,10 @@
                 "type": "string"
               },
               {
+                "const": "typeText",
+                "type": "string"
+              },
+              {
                 "const": "clear",
                 "type": "string"
               },
@@ -5068,6 +5081,11 @@
           "count": {
             "minimum": 1,
             "maximum": 20,
+            "type": "integer"
+          },
+          "delay": {
+            "minimum": 0,
+            "maximum": 1000,
             "type": "integer"
           },
           "direction": {

@@ -880,6 +880,33 @@ export function buildCli(deps: CliDependencies): Cli {
         );
 
       act
+        .command('type-text')
+        .description(
+          'type text as real per-character keystrokes (search-as-you-type boxes, keystroke-driven masks)'
+        )
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('<text>')
+        .option('--delay <ms>', 'delay in ms between characters (0-1000)')
+        .action(
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              pageId: string,
+              text: string,
+              options: { delay?: string }
+            ) => {
+              await runAction(ctx, sessionId, pageId, {
+                action: 'typeText',
+                value: text,
+                ...(options.delay !== undefined ? { delay: Number(options.delay) } : {}),
+              });
+            }
+          )
+        );
+
+      act
         .command('press')
         .description('press a key (optionally repeated in one action)')
         .argument('<sessionId>')
