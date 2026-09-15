@@ -4,6 +4,7 @@ name: CI
 # Pull requests always run the full suite — prose cannot silently break a
 # build, but it can stale-link a doc, and PR CI carries the link check.
 on:
+  workflow_dispatch:
   push:
     paths-ignore:
       - '**/*.md'
