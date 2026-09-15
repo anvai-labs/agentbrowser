@@ -28,7 +28,8 @@
     "test:firefox-independence": "node scripts/check-firefox-independence.mjs",
     "probe:firefox-egress": "node packages/engine-firefox/scripts/probe-egress.mjs",
     "test:egress-evidence": "node --test scripts/browser-egress-gate.test.mjs scripts/bidi-probe-connection.test.mjs scripts/service-worker-probe.test.mjs",
-    "probe:firefox-session-egress": "node packages/engine-firefox/scripts/probe-session-egress.mjs"
+    "probe:firefox-session-egress": "node packages/engine-firefox/scripts/probe-session-egress.mjs",
+    "test:application-independence": "node scripts/check-application-independence.mjs"
   },
   "keywords": [
     "browser",
