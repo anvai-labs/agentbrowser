@@ -5,6 +5,23 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [1.8.16] - 2026-09-15
+
+### Added
+
+- `typeText` action: real per-character keystrokes (focus + per-char
+  keydown/textInput/keyup, optional inter-character `delay` 0-1000ms) for
+  widgets that ignore programmatic value setting — search-as-you-type boxes,
+  typeahead filters, keystroke-driven masks. Chromium implements it; Firefox
+  and Safari refuse the action like other unqualified engine features.
+  Value bounded at 5000 characters (#170).
+
+### Changed
+
+- Recipe: deterministic keyboard-menu commit procedure (type-to-filter →
+  short walk → Enter), the focus-purity rule for keyboard menus, and
+  targeted-press-`Delete` chip removal (#170).
+
 ## [1.8.13] - 2026-09-14
 
 ### Changed
