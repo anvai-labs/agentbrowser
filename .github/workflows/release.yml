@@ -218,7 +218,9 @@ jobs:
     name: npm (@anvailabs/agentbrowser-mcp)
     # Publication must not race ahead of failed executable or packaged-server smoke.
     needs: [tag-guard, binaries, server-packages]
-    runs-on: ubuntu-latest
+    # Hosted-only label: org self-hosted runners advertise ubuntu-latest, and
+    # npm rejects provenance bundles minted off GitHub-hosted runners (E422).
+    runs-on: ubuntu-24.04
     # OIDC Trusted Publishing (ADR-014): the npm binding pins (repository
     # anvai-labs/agentbrowser, workflow release.yml, environment npm) — no
     # publish token exists anywhere to leak or rotate. id-token: write mints
@@ -307,7 +309,9 @@ jobs:
 
   release:
     name: Checksums and GitHub Release
-    runs-on: ubuntu-latest
+    # Hosted-only: publication is the trust boundary of the release; keep it
+    # off self-hosted hardware the same way npm-publish is.
+    runs-on: ubuntu-24.04
     # The server tarballs are part of the release: wait for them too.
     needs: [binaries, server-packages, npm-publish]
     steps:
