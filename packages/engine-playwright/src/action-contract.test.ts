@@ -387,6 +387,108 @@ describe('real action wire semantics', () => {
     }
   });
 
+  it('mints control refs for role-less div widgets under include:["formControls"]', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({
+        url:
+          'data:text/html,<body>' +
+          // A div-based widget trigger with no role attribute: invisible to
+          // locator.ariaSnapshot(), which only emits role-carrying elements.
+          '<div data-automation-id="workday-eeo" aria-haspopup="listbox" style="width:200px;height:40px">Select One</div>' +
+          // The widget's own listbox: role-carrying, so once rendered it is
+          // observable and clickable through normal refs.
+          '<ul role="listbox"><li role="option">Option A</li><li role="option">Option B</li></ul>' +
+          '</body>',
+      });
+
+      const withToken = await page.observe({ include: ['formControls'] });
+      const controls = withToken.elements.filter((element) => element.role === 'control');
+      expect(controls).toHaveLength(1);
+      expect(controls[0].name).toBe('Select One');
+      expect(controls[0].attributes?.['data-automation-id']).toBe('workday-eeo');
+
+      // Act-through: clicking the control ref mutates page state.
+      const click = await page.act({ type: 'click', target: { ref: controls[0].ref } });
+      expect(click.newRevision).toBeGreaterThan(click.oldRevision);
+
+      const after = await page.observe({});
+      const options = after.elements.filter((element) => element.role === 'option');
+      expect(options.map((element) => element.name)).toEqual(['Option A', 'Option B']);
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('refuses to act on an invisible control ref', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({
+        url:
+          'data:text/html,<body>' +
+          '<div data-automation-id="hidden-trigger" aria-haspopup="listbox" style="display:none">Hidden</div>' +
+          '</body>',
+      });
+
+      const observation = await page.observe({ include: ['formControls'] });
+      const controls = observation.elements.filter((element) => element.role === 'control');
+      expect(controls).toHaveLength(1);
+
+      await expect(
+        page.act({ type: 'click', target: { ref: controls[0].ref } })
+      ).rejects.toMatchObject({ code: 'TARGET_NOT_VISIBLE' });
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('caps minted control refs at the configured maximum', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      const divs = Array.from(
+        { length: 250 },
+        (_, i) => `<div data-automation-id="t${i}">x</div>`
+      ).join('');
+      await page.navigate({ url: `data:text/html,<body>${divs}</body>` });
+
+      const observation = await page.observe({ include: ['formControls'] });
+      const controls = observation.elements.filter((element) => element.role === 'control');
+      expect(controls.length).toBeLessThanOrEqual(200);
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('does not mint duplicate control refs for role-carrying elements', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({
+        url:
+          'data:text/html,<body>' +
+          '<div data-automation-id="styled-button" role="button" tabindex="0">Go</div>' +
+          '</body>',
+      });
+
+      const observation = await page.observe({ include: ['formControls'] });
+      const controls = observation.elements.filter((element) => element.role === 'control');
+      // The element carries an explicit role, so the ARIA snapshot already
+      // covers it as role=button; the control scan must not mint a twin.
+      const buttons = observation.elements.filter((element) => element.role === 'button');
+      expect(buttons.length).toBe(1);
+      expect(controls.length).toBe(0);
+    } finally {
+      await engine.close();
+    }
+  });
+
   it('reports checked state for checkbox elements across clicks', async () => {
     const engine = new PlaywrightChromiumEngine();
     try {
