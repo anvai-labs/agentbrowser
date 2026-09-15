@@ -26,6 +26,15 @@ Use `waitForLabel` for a field that an earlier step in the same plan reveals (a
 sub-form opened by a toggle, an option menu opened by a click) instead of guessing
 its ref ahead of time.
 
+## Interactive controls with no ARIA role
+
+Some widget triggers are built as `div` or `span` containers with click
+handlers and no ARIA role attribute. They are visible on screen and clickable,
+but `browser_observe` never reports them. Pass
+`include:["formControls"]` to mint refs for these controls; then click the
+resulting ref and the options render as `role=option` elements you can select
+from refs.
+
 ## Custom combobox widgets
 
 A design-system combobox is usually a text input plus a rendered listbox of
