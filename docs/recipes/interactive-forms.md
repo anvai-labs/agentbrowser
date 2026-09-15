@@ -70,8 +70,9 @@ list overshoots. And virtualized menus render only a window of rows; `ArrowDown`
 loads more as it goes. Re-observe after opening and after long walks.
 
 One `press` per action bumps the revision and invalidates the ref; use
-`count` to deliver the whole walk segment — or the whole walk, if you know
-the offset — in a single action:
+`count` (Chromium engine; other engines refuse the option) to deliver the
+whole walk segment — or the whole walk, if you know the offset — in a
+single action:
 
 ```json
 {"action": "click", "target": {"ref": "e30_41"}},
@@ -148,10 +149,12 @@ async normalization (masking, formatting) can race the readback. A still-
 mismatched value fails with `VALUE_MISMATCH`; the write is never replayed.
 For non-sensitive fills the error details carry `expected` and `actual` — the
 normalization the widget applied is visible without a separate HTML round trip.
-`sensitive: true` keeps the error value-free. Success reports
-`result.verified: true`. This readback is not proof of a durable save:
-a later full-block re-render (see the next section) can still discard committed
-values. Unqualified engines refuse the option before writing.
+Credential fills — passwords, security answers, anything you would not paste
+into a log — should set `sensitive: true`; the flag keeps the value out of
+mismatch details, and password inputs get that treatment even without it.
+Success reports `result.verified: true`. This readback is not proof of a
+durable save: a later full-block re-render (see the next section) can still
+discard committed values. Unqualified engines refuse the option before writing.
 Fields that add their own separators ("02 / 30 / 2024") need the separator-tolerant
 final value as `expectValue`, or verify via the form's own review screen instead.
 
