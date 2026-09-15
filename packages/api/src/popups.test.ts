@@ -150,7 +150,7 @@ describe('popup lifecycle (F10)', () => {
     await expect(service.closeSession(session.sessionId)).resolves.toBeUndefined();
     // Give abandoned pumps a tick to observe the closed iterators.
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(service.getPage(session.sessionId, pageId)).toBeUndefined();
+    expect(await service.getPage(session.sessionId, pageId)).toBeUndefined();
   });
 
   it('adopts back-to-back popups without cross-wiring openers', async () => {

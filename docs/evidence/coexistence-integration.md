@@ -68,3 +68,20 @@ live-account acceptance or contained-browser release.
 The [packaged follow-up](packaged-coexistence.md) extends the existing artifact
 acceptance job to check delegated operator/MCP handoff against extracted modules
 and compiled clients, with independent application effects.
+
+## Develop promotion review
+
+Before the promotion PR, the candidate incorporated `develop` at `e25a0b2`,
+including page URL/title discovery and `include: ["formControls"]`. The one
+textual conflict joined both sets of action-contract regressions; no test set
+was dropped. Review of the metadata change reproduced a registered secret in
+the page title even though the URL was redacted. Both fields now use secret
+redaction, with a regression that first failed on the leaked title.
+
+An admitted title read that settles after takeover returns `CONTROL_REVOKED`
+without its title and drains before human control resumes. The shared native
+scenario now runs against both ordinary buttons and enriched role-less controls
+through in-process, Node stdio and Victor MCP. All six variants preserve the
+same independent two-effect oracle, revoked grants and stale-reference refusal.
+Together with metadata/service and authority tests, the focused merge validation
+passed 158 tests locally before CI submission.

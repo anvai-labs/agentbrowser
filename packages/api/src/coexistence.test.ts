@@ -196,6 +196,49 @@ describe('delegated coexistence', () => {
       ).statusCode
     ).toBe(409);
   });
+
+  it('withholds a pending page title after takeover and drains the admitted read', async () => {
+    const { server, engine, url } = await setup();
+    const created = await server.inject({
+      method: 'POST',
+      url: `${url}/pages`,
+      headers: { ...operator, 'x-agentbrowser-operation-id': 'metadata-page' },
+    });
+    const pageId = created.json().pageId;
+    const raw = engine.getFakePage(engine.getSessionIds()[0]!, pageId)!;
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    vi.spyOn(raw, 'getTitle').mockImplementation(async () => {
+      entered.resolve();
+      await release.promise;
+      return 'private-after-takeover';
+    });
+    const agent = await delegate(server, url);
+    const pending = server.inject({ url: `${url}/pages/${pageId}`, headers: agent }).then((r) => r);
+    try {
+      await entered.promise;
+      expect(
+        (
+          await server.inject({
+            method: 'POST',
+            url: `${url}/control/takeover`,
+            headers: operator,
+          })
+        ).json().state
+      ).toBe('PAUSE_REQUESTED');
+    } finally {
+      release.resolve();
+    }
+    const result = await pending;
+    expect(result.statusCode).toBe(409);
+    expect(result.body).not.toContain('private-after-takeover');
+    expect(
+      (await server.inject({ url: `${url}/control`, headers: operator })).json()
+    ).toMatchObject({
+      state: 'HUMAN_ACTIVE',
+      busy: false,
+    });
+  });
   it('stops the remaining plan steps on takeover and records dispatched uncertainty', async () => {
     const { server, engine, url } = await setup();
     const created = await server.inject({

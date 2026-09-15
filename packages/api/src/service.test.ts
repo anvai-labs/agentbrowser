@@ -607,23 +607,51 @@ describe('AgentBrowserService', () => {
 
     it('should get a page', async () => {
       const created = await service.createPage(sessionId);
-      const page = service.getPage(sessionId, created.pageId);
+      const page = await service.getPage(sessionId, created.pageId);
 
       expect(page?.pageId).toBe(created.pageId);
+    });
+
+    it('should surface url and title on the single-page GET after navigation', async () => {
+      const created = await service.createPage(sessionId);
+      await service.navigate(sessionId, created.pageId, {
+        url: 'https://example.com/testing?keep=1',
+      });
+
+      const page = await service.getPage(sessionId, created.pageId);
+      expect(page?.url).toBe('https://example.com/testing?keep=1');
+      expect(page?.title).toContain('https://example.com/testing?keep=1');
+    });
+
+    it('redacts registered secrets appearing in page GET url and title', async () => {
+      const secreted = new AgentBrowserService({
+        engine,
+        secretManager: new SecretManager({ 'vault://q': 's3cret-query-value' }),
+      });
+      const session = await secreted.createSession({ tenantId: 't1' });
+      const pageId = (await secreted.createPage(session.sessionId)).pageId;
+      await secreted.navigate(session.sessionId, pageId, {
+        url: 'https://example.com/?q=s3cret-query-value',
+      });
+
+      const page = await secreted.getPage(session.sessionId, pageId);
+      expect(page?.url).not.toContain('s3cret-query-value');
+      expect(page?.title).toBeDefined();
+      expect(page?.title).not.toContain('s3cret-query-value');
     });
 
     it('should reject a page under the wrong session', async () => {
       const other = await service.createSession({ tenantId: 't2' });
       const page = await service.createPage(sessionId);
 
-      expect(service.getPage(other.sessionId, page.pageId)).toBeUndefined();
+      expect(await service.getPage(other.sessionId, page.pageId)).toBeUndefined();
     });
 
     it('should close a page', async () => {
       const created = await service.createPage(sessionId);
       await service.closePage(sessionId, created.pageId);
 
-      expect(service.getPage(sessionId, created.pageId)).toBeUndefined();
+      expect(await service.getPage(sessionId, created.pageId)).toBeUndefined();
     });
   });
 
@@ -1998,7 +2026,7 @@ describe('AgentBrowserService', () => {
       expect(service2.getSession(sessionId)).toBeUndefined();
       expect(service2.listSessions()).toHaveLength(0);
       // No leaked page registry, listeners, or download policy.
-      expect(service2.getPage(sessionId, pageId)).toBeUndefined();
+      expect(await service2.getPage(sessionId, pageId)).toBeUndefined();
       expect(service2.subscribe(sessionId, () => {})).toBeUndefined();
       await expect(
         service2.navigate(sessionId, pageId, { url: 'https://x.example.com' })

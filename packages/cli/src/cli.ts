@@ -548,7 +548,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .option('--max-bytes <n>', 'maximum observation size in bytes')
         .option(
           '--include <token>',
-          'enrichment token, repeatable: overlays | fileInputs',
+          'enrichment token, repeatable: overlays | fileInputs | formControls',
           (token: string, acc: string[]) => [...acc, token],
           []
         )

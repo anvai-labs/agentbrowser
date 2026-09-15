@@ -17,7 +17,7 @@ describe('observe include tokens', () => {
       .catch((e: unknown) => e as { code: string; details?: { validIncludes?: string[] } });
 
     expect(error.code).toBe('INVALID_REQUEST');
-    expect(error.details?.validIncludes).toEqual(['fileInputs', 'overlays']);
+    expect(error.details?.validIncludes).toEqual(['fileInputs', 'formControls', 'overlays']);
   });
 
   it('forwards known include tokens to the engine', async () => {

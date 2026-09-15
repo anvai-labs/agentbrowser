@@ -419,6 +419,12 @@ export interface EnginePage {
    * when unavailable or closed. Never use this cache for security decisions.
    */
   getCachedUrl?(): string | undefined;
+  /**
+   * Best-effort current page title. Optional: engines that cannot read a
+   * title cheaply (or at all) omit the method, and callers must treat a
+   * missing value as "unknown", never as evidence of page state.
+   */
+  getTitle?(): Promise<string | undefined>;
 
   /**
    * Navigate to URL
