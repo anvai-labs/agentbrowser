@@ -173,25 +173,19 @@ jobs:
 
       - name: Run read-only smoke test
         run: |
-          docker run -d --rm \
-            --name agentbrowser-smoke \
+          CONTAINER_ID=$(docker run -d \
             --read-only \
             --tmpfs /tmp \
-            -p 5709:5709 \
-            agentbrowser:${{ github.sha }}
+            agentbrowser:${{ github.sha }})
+          trap 'docker rm -f "$CONTAINER_ID" >/dev/null' EXIT
           for i in $(seq 1 30); do
-            if curl -sf http://127.0.0.1:5709/health/live > /dev/null; then
-              echo "liveness OK"
-              curl -sf http://127.0.0.1:5709/health/ready | head -c 200
-              echo
-              docker stop agentbrowser-smoke
+            if docker exec "$CONTAINER_ID" node -e "Promise.all(['live','ready'].map(async p=>{const r=await fetch('http://127.0.0.1:5709/health/'+p,{signal:AbortSignal.timeout(1000)});if(!r.ok)throw Error(p);return r.json()})).then(r=>console.log(JSON.stringify(r))).catch(()=>process.exit(1))"; then
               exit 0
             fi
             sleep 2
           done
           echo "container never became live"
-          docker logs agentbrowser-smoke
-          docker stop agentbrowser-smoke || true
+          docker logs "$CONTAINER_ID"
           exit 1
 
   benchmarks:
@@ -238,7 +232,9 @@ jobs:
   # appear in local bench:real runs when the binary is present.
   obscura:
     name: Obscura (experimental)
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    # The shared ubuntu-latest label also selects WSL/container overflow workers,
+    # where this native binary has not qualified. Override only with a vetted host.
+    runs-on: ${{ vars.CI_OBSCURA_RUNNER || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@v4
 

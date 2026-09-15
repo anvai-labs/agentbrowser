@@ -1,6 +1,8 @@
 import { createRequire } from 'node:module';
 import { launch } from 'puppeteer-core';
 
+import { handlePublicEgressRequest } from './public-egress-request.mjs';
+
 /** Original page-scoped probe candidate, kept separate from the session-wide candidate. */
 export async function launchPublicEgressBrowser({ executablePath, target, deny, errors, intercepted }) {
   const browser = await launch({ browser: 'firefox', protocol: 'webDriverBiDi', executablePath, headless: true, args: ['--no-remote'] });
@@ -8,16 +10,7 @@ export async function launchPublicEgressBrowser({ executablePath, target, deny, 
   const installs = new Set();
   const install = page => {
     if (installed.has(page)) return installed.get(page);
-    page.on('request', request => {
-      const url = new URL(request.url());
-      const block = deny && url.origin === target && url.pathname.startsWith('/target/');
-      if (block) {
-        const key = url.searchParams.get('run');
-        intercepted.set(key, (intercepted.get(key) ?? 0) + 1);
-      }
-      const completion = block ? request.abort('blockedbyclient') : request.continue();
-      completion.catch(error => errors.push({ phase: 'interception', message: error.message }));
-    });
+    page.on('request', request => { void handlePublicEgressRequest(request, { target, deny, errors, intercepted }); });
     const pending = page.setRequestInterception(true);
     installed.set(page, pending); installs.add(pending);
     pending.then(() => installs.delete(pending), () => installs.delete(pending));

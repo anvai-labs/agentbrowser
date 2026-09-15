@@ -25,6 +25,14 @@ test('Docker installs every workspace manifest before copying sources and buildi
   assert.ok(dockerfile.indexOf('COPY packages packages') > install);
 });
 
+test('Docker smoke probes its owned container without a shared host port or name', async () => {
+  const workflow = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+  const smoke = workflow.slice(workflow.indexOf('- name: Run read-only smoke test'), workflow.indexOf('\n  benchmarks:'));
+  assert.doesNotMatch(smoke, /--name agentbrowser-smoke|-p 5709:5709|curl .*127\.0\.0\.1/);
+  assert.match(smoke, /docker exec "\$CONTAINER_ID" node/);
+  assert.match(smoke, /trap .*docker rm -f "\$CONTAINER_ID".* EXIT/);
+});
+
 test('PR and release CI share the packager and real packaged acceptance before publication', async () => {
   for (const name of ['ci', 'release']) {
     const workflow = await readFile(new URL(`../.github/workflows/${name}.yml`, import.meta.url), 'utf8');
