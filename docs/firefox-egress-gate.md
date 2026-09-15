@@ -75,6 +75,15 @@ target produced invalid interception setup and was corrected before recording
 this report. Zero denied frame/popup traffic is retained as inconclusive rather
 than credited as proof of startup enforcement.
 
+Linux CI also observed a denied popup request before interception was enabled
+([run 34980561505](https://github.com/anvai-labs/agentbrowser/actions/runs/34980561505)).
+The report retains `Denied request was not paused: /target/popup` as an error,
+and the verifier rejects it with `probe-errors`. The native regression permits
+only this specific known race in its error list; other errors still fail the
+test. Deterministic tests require rejection whether the destination counter is
+zero or one, and an actual hit adds `popup:destination-reached`. The earlier
+macOS report remains a historical observation, not a guarantee of popup denial.
+
 ## Regression and reproduction
 
 - `pnpm test:egress-evidence` checks missing coverage, malformed counts, failed

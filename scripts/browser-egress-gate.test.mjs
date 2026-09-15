@@ -81,3 +81,25 @@ test('public probe records only completed aborts and retains resolution failures
   assert.equal(intercepted.get('blocked'), 1);
   assert.deepEqual(errors, [{ phase: 'interception', message: 'transport failed' }]);
 });
+
+test('an unpaused popup disqualifies the candidate with or without a destination hit', async () => {
+  const errors = [], intercepted = new Map();
+  await handlePublicEgressRequest({
+    url: () => 'http://fixture.invalid/target/popup?run=popup-race',
+    interceptResolutionState: () => ({ action: 'disabled' }),
+    abort: () => assert.fail('Unpaused popup cannot be aborted'),
+    continue: () => assert.fail('Unpaused popup cannot be continued'),
+  }, { target: 'http://fixture.invalid', deny: true, errors, intercepted });
+  assert.deepEqual(errors, [{ phase: 'interception', message: 'Denied request was not paused: /target/popup' }]);
+  assert.equal(intercepted.size, 0);
+  for (const deniedHits of [0, 1]) {
+    const report = passing();
+    report.errors = errors;
+    Object.assign(report.channels.find(row => row.channel === 'popup'), { deniedHits, denialCallbacks: 0 });
+    const gate = evaluateBrowserEgress(report, expected);
+    assert.equal(gate.ready, false);
+    assert.ok(gate.reasons.includes('probe-errors'));
+    assert.ok(gate.reasons.includes('popup:denial-unproven'));
+    assert.equal(gate.reasons.includes('popup:destination-reached'), deniedHits > 0);
+  }
+});
