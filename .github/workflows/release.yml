@@ -219,7 +219,7 @@ jobs:
     # Publication must not race ahead of failed executable or packaged-server smoke.
     needs: [tag-guard, binaries, server-packages]
     # Hosted-only label: org self-hosted runners advertise ubuntu-latest, and
-    # npm rejects provenance bundles minted off GitHub-hosted runners (E422).
+    # npm rejects provenance bundles minted on self-hosted runners (E422).
     runs-on: ubuntu-24.04
     # OIDC Trusted Publishing (ADR-014): the npm binding pins (repository
     # anvai-labs/agentbrowser, workflow release.yml, environment npm) — no
