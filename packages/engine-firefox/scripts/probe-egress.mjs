@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { launchPublicEgressBrowser } from './public-egress-browser.mjs';
+import { probeServiceWorker } from './service-worker-probe.mjs';
 import { firefoxExecutable } from './browser-config.mjs';
 import { evaluateBrowserEgress, REQUIRED_CHANNELS } from '../../../scripts/browser-egress-gate.mjs';
 
@@ -99,7 +100,9 @@ export async function probeFirefoxEgress(executablePath = firefoxExecutable(), {
               outcome = 'reached';
             } else {
               await page.goto(origin, { timeout: 5000 });
-              outcome = await page.evaluate(async ({ origin, target, channel, run }) => {
+              if (channel === 'service-worker') {
+                outcome = await page.evaluate(probeServiceWorker, { script: `${origin}/worker.js?channel=${channel}&run=${run}` });
+              } else outcome = await page.evaluate(async ({ origin, target, channel, run }) => {
                 const url = `${target}/target/${channel}?run=${run}`;
                 if (channel === 'fetch') return fetch(url).then(() => 'reached', () => 'blocked');
                 return new Promise(resolve => {
@@ -129,15 +132,6 @@ export async function probeFirefoxEgress(executablePath = firefoxExecutable(), {
                       const worker = new SharedWorker(script);
                       worker.port.onmessage = event => finish(event.data); worker.onerror = () => finish('worker-error');
                       worker.port.start(); cleanups.push(() => worker.port.close());
-                    } else {
-                      const listener = event => finish(event.data);
-                      navigator.serviceWorker.addEventListener('message', listener);
-                      cleanups.push(() => navigator.serviceWorker.removeEventListener('message', listener));
-                      navigator.serviceWorker.register(script).then(async registration => {
-                        cleanups.push(() => { void registration.unregister(); });
-                        await navigator.serviceWorker.ready;
-                        registration.active.postMessage('probe');
-                      }).catch(() => finish('worker-error'));
                     }
                   }
                 });
