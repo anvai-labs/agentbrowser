@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { evaluateBrowserEgress, REQUIRED_CHANNELS } from './browser-egress-gate.mjs';
-import { handlePublicEgressRequest } from '../packages/engine-firefox/scripts/public-egress-request.mjs';
+import { handlePublicEgressRequest, installPublicEgressPage } from '../packages/engine-firefox/scripts/public-egress-request.mjs';
 
 const expected = { candidate: 'public-interception-v1', driver: '25.11.0', browser: 'Firefox/155.0.1' };
 const passing = () => ({
@@ -101,5 +101,51 @@ test('an unpaused popup disqualifies the candidate with or without a destination
     assert.ok(gate.reasons.includes('probe-errors'));
     assert.ok(gate.reasons.includes('popup:denial-unproven'));
     assert.equal(gate.reasons.includes('popup:destination-reached'), deniedHits > 0);
+  }
+});
+
+test('closed popup setup remains disqualifying evidence before and during installation', async () => {
+  for (const alreadyClosed of [false, true]) {
+    const errors = [], intercepted = new Map();
+    let closed = alreadyClosed, rejectSetup;
+    const page = {
+      isClosed: () => closed,
+      on: () => assert.equal(alreadyClosed, false),
+      setRequestInterception: () => {
+        assert.equal(alreadyClosed, false);
+        return new Promise((_, reject) => { rejectSetup = reject; });
+      },
+    };
+    const installing = installPublicEgressPage(page, { target: 'http://fixture.invalid', deny: true, errors, intercepted });
+    if (!alreadyClosed) {
+      closed = true;
+      rejectSetup(new Error('Protocol error (network.addIntercept): no such frame Browsing Context with id owned-fixture not found'));
+    }
+    await installing;
+    assert.deepEqual(errors, [{ phase: 'popup-install', reason: 'target-closed', message: 'Target closed before interception setup completed' }]);
+    assert.equal(intercepted.size, 0);
+    const report = passing(); report.errors = errors;
+    const gate = evaluateBrowserEgress(report, expected);
+    assert.equal(gate.ready, false);
+    assert.ok(gate.reasons.includes('probe-errors'));
+  }
+});
+
+test('popup installation does not hide live-target or unrelated transport failures', async () => {
+  for (const [closed, message] of [
+    [false, 'Protocol error (network.addIntercept): no such frame live target'],
+    [true, 'unexpected transport failure'],
+  ]) {
+    const errors = [], intercepted = new Map();
+    const failure = new Error(message);
+    let started = false;
+    const page = {
+      isClosed: () => started && closed,
+      on: () => {},
+      setRequestInterception: async () => { started = true; throw failure; },
+    };
+    await assert.rejects(installPublicEgressPage(page, { target: 'http://fixture.invalid', deny: true, errors, intercepted }), error => error === failure);
+    assert.deepEqual(errors, []); // The owner records the original failure.
+    assert.equal(intercepted.size, 0);
   }
 });
