@@ -13,11 +13,15 @@ import {
   ApiErrorDetailSchema,
   ApiErrorSchema,
   ArtifactRefSchema,
+  ControlGrantSchema,
+  ControlReviewSchema,
+  ControlViewSchema,
   ElementTargetSchema,
   EngineCapabilitiesSchema,
   EngineInfoSchema,
   NavigationStatusSchema,
   ObservationRequestSchema,
+  OperationRecordSchema,
   PageElementSchema,
   PageStateSchema,
   PlanStepSchema,
@@ -60,11 +64,86 @@ const pageIdParam = {
   schema: { type: 'string' },
 };
 
+const controlResponses = (schema: string) => ({
+  '200': {
+    description:
+      'Current session authority. Commands already dispatched may still finish after takeover.',
+    content: json(ref(schema)),
+  },
+  '401': errorResponse('Credential is absent, expired, or revoked.'),
+  '403': errorResponse('Operator or session authority is required.'),
+  '404': NOT_FOUND,
+  '409': errorResponse('Session busy or review revoked. Do not blindly repeat a write.'),
+});
+const controlPaths = {
+  '/v1/sessions/{sessionId}/control': {
+    get: {
+      operationId: 'getSessionControl',
+      summary: 'Read current controller and in-flight operation',
+      tags: ['sessions'],
+      parameters: [sessionIdParam],
+      responses: controlResponses('ControlView'),
+    },
+  },
+  '/v1/sessions/{sessionId}/control/takeover': {
+    post: {
+      operationId: 'takeOverSession',
+      summary: 'Operator: revoke the agent and wait for active work to drain',
+      tags: ['sessions'],
+      parameters: [sessionIdParam],
+      responses: controlResponses('ControlView'),
+    },
+  },
+  '/v1/sessions/{sessionId}/control/prepare-resume': {
+    post: {
+      operationId: 'prepareSessionResume',
+      summary: 'Operator: invalidate old refs and capture fresh page summaries for review',
+      tags: ['sessions'],
+      parameters: [sessionIdParam],
+      responses: controlResponses('ControlReview'),
+    },
+  },
+  '/v1/sessions/{sessionId}/control/delegate': {
+    post: {
+      operationId: 'delegateSession',
+      summary: 'Operator: issue a new session-scoped bearer token after review',
+      tags: ['sessions'],
+      parameters: [sessionIdParam],
+      requestBody: {
+        required: true,
+        content: json({
+          type: 'object',
+          required: ['epoch'],
+          properties: { epoch: { type: 'integer', minimum: 0 } },
+        }),
+      },
+      responses: controlResponses('ControlGrant'),
+    },
+  },
+  '/v1/sessions/{sessionId}/operations/{operationId}': {
+    get: {
+      operationId: 'getSessionOperation',
+      summary: 'Reconcile command status; completed is not proof of application success',
+      tags: ['sessions'],
+      parameters: [
+        sessionIdParam,
+        {
+          name: 'operationId',
+          in: 'path',
+          required: true,
+          schema: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,128}$' },
+        },
+      ],
+      responses: controlResponses('OperationRecord'),
+    },
+  },
+};
+
 /**
  * Build the OpenAPI 3.1 document describing the AgentBrowser HTTP API.
  */
 export function buildOpenApiDocument(options: { serverUrl?: string } = {}): object {
-  return {
+  const document = {
     openapi: '3.1.0',
     info: {
       title: 'AgentBrowser API',
@@ -88,6 +167,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
       { name: 'artifacts', description: 'Screenshots and other evidence' },
     ],
     paths: {
+      ...controlPaths,
       '/openapi.json': {
         get: {
           operationId: 'getOpenApiDocument',
@@ -1007,6 +1087,10 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
       },
       schemas: {
         // Straight from the protocol - these are already JSON Schema 2020-12.
+        ControlView: ControlViewSchema,
+        ControlReview: ControlReviewSchema,
+        ControlGrant: ControlGrantSchema,
+        OperationRecord: OperationRecordSchema,
         ApiError: ApiErrorSchema,
         ApiErrorDetail: ApiErrorDetailSchema,
         Viewport: ViewportSchema,
@@ -1072,4 +1156,30 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
       },
     },
   };
+  for (const [path, item] of Object.entries(document.paths)) {
+    if (!path.includes('/pages')) continue;
+    const route = item as {
+      post?: { parameters?: object[]; responses?: Record<string, object> };
+      delete?: { parameters?: object[]; responses?: Record<string, object> };
+    };
+    for (const operation of [route.post, route.delete]) {
+      if (!operation) continue;
+      operation.parameters = [
+        ...(operation.parameters ?? []),
+        {
+          name: 'X-AgentBrowser-Operation-Id',
+          in: 'header',
+          required: false,
+          description:
+            'Required for delegated-session mutations. Same ID and request returns a replay status without redispatch; a different request conflicts. Not required for observations or captures.',
+          schema: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,128}$' },
+        },
+      ];
+      if (operation.responses)
+        operation.responses['409'] = errorResponse(
+          'Session busy, control revoked, or operation ID conflicts. Reconcile before continuing.'
+        );
+    }
+  }
+  return document;
 }

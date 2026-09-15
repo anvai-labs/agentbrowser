@@ -17,6 +17,10 @@ export * from './types.js';
 // ============================================================================
 
 export const ErrorCodeEnum = Type.Union([
+  Type.Literal('SESSION_BUSY'),
+  Type.Literal('CONTROL_REVOKED'),
+  Type.Literal('CONTROL_REQUIRED'),
+  Type.Literal('OPERATION_CONFLICT'),
   Type.Literal('INVALID_REQUEST'),
   Type.Literal('INVALID_TENANT_ID'),
   Type.Literal('UNAUTHORIZED'),
@@ -109,6 +113,7 @@ export const SessionCookieSchema = Type.Object({
 });
 
 export const SessionRequestSchema = Type.Object({
+  controlMode: Type.Optional(Type.Literal('delegated')),
   tenantId: Type.Optional(Type.String({ minLength: 1 })),
   // Known engine names plus any registered engine name (TD-BROWSER-7
   // registry routes arbitrary names; unknown names fail at the service).

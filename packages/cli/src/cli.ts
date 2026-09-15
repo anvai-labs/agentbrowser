@@ -38,6 +38,11 @@ import { PRODUCT_VERSION } from './product-version.js';
  */
 export interface CliClient {
   sessions: {
+    control?(sessionId: string): Promise<unknown>;
+    takeover?(sessionId: string): Promise<unknown>;
+    prepareResume?(sessionId: string): Promise<unknown>;
+    delegate?(sessionId: string, epoch: number): Promise<unknown>;
+    operation?(sessionId: string, operationId: string): Promise<unknown>;
     create(request: SessionRequest): Promise<SessionResponse>;
     list(): Promise<SessionResponse[]>;
     close(sessionId: string): Promise<void>;
@@ -123,6 +128,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .option('--base-url <url>', 'AgentBrowser server base URL', DEFAULT_BASE_URL)
         .option('--timeout <ms>', 'request timeout in milliseconds', '30000')
         .option('--json', 'emit raw JSON instead of formatted output', false)
+        .option('--operation-id <id>', 'reconciliation ID for a controlled mutation')
         .option('--api-key <key>', 'bearer API key (or AGENTBROWSER_API_KEY env)')
         .exitOverride();
 
@@ -142,6 +148,9 @@ export function buildCli(deps: CliDependencies): Cli {
               baseUrl: globals.baseUrl,
               timeout: Number.parseInt(globals.timeout, 10),
               ...(apiKey ? { apiKey } : {}),
+              ...(globals.operationId
+                ? { headers: { 'x-agentbrowser-operation-id': globals.operationId } }
+                : {}),
             }),
             json: Boolean(globals.json),
             out: deps.out,
@@ -166,11 +175,48 @@ export function buildCli(deps: CliDependencies): Cli {
 
       // ---- session ---------------------------------------------------------
       const session = program.command('session').description('manage browser sessions');
+      for (const [command, method] of [
+        ['control', 'control'],
+        ['takeover', 'takeover'],
+        ['prepare-resume', 'prepareResume'],
+      ] as const) {
+        session.command(`${command} <sessionId>`).action(
+          action(async (ctx, sessionId: string) => {
+            const fn = ctx.client.sessions[method];
+            if (!fn) throw new UsageError('Client does not support delegated sessions');
+            const result = await fn.call(ctx.client.sessions, sessionId);
+            ctx.emit(result, () => [JSON.stringify(result, null, 2)]);
+          })
+        );
+      }
+      session
+        .command('delegate <sessionId>')
+        .requiredOption('--epoch <n>', 'epoch from the reviewed prepare-resume response')
+        .action(
+          action(async (ctx, sessionId: string, options: { epoch: string }) => {
+            const epoch = Number(options.epoch);
+            if (!Number.isSafeInteger(epoch) || epoch < 0)
+              throw new UsageError('epoch must be a non-negative integer');
+            if (!ctx.client.sessions.delegate)
+              throw new UsageError('Client does not support delegated sessions');
+            const result = await ctx.client.sessions.delegate(sessionId, epoch);
+            ctx.emit(result, () => [JSON.stringify(result, null, 2)]);
+          })
+        );
+      session.command('operation <sessionId> <operationId>').action(
+        action(async (ctx, sessionId: string, operationId: string) => {
+          if (!ctx.client.sessions.operation)
+            throw new UsageError('Client does not support operation reconciliation');
+          const result = await ctx.client.sessions.operation(sessionId, operationId);
+          ctx.emit(result, () => [JSON.stringify(result, null, 2)]);
+        })
+      );
 
       session
         .command('create')
         .description('create a new session')
         .requiredOption('--tenant <id>', 'tenant identifier')
+        .option('--delegated', 'require explicit human review and revocable agent authority')
         .option('--engine <name>', 'engine to use')
         .option('--headless', 'run headless (the server default; explicit)')
         .option(
@@ -213,6 +259,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .action(
           action(async (ctx, options: Record<string, string | boolean | undefined>) => {
             const request: SessionRequest = { tenantId: String(options.tenant) };
+            if (options.delegated) request.controlMode = 'delegated';
 
             if (options.engine) {
               request.engine = String(options.engine);

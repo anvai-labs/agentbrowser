@@ -5,7 +5,17 @@
  * the AgentBrowser REST API.
  */
 
-import type { DELIVERED_ACTION_TYPES, SessionRequest } from '@agentbrowser/protocol';
+import type {
+  ControlView,
+  DELIVERED_ACTION_TYPES,
+  OperationRecord,
+  SessionRequest,
+} from '@agentbrowser/protocol';
+
+export type { ControlView, OperationRecord } from '@agentbrowser/protocol';
+export interface MutationOptions {
+  operationId?: string;
+}
 
 export interface ClientOptions {
   baseUrl?: string;
@@ -269,7 +279,17 @@ class HttpClient {
     private readonly headers: Record<string, string>
   ) {}
 
-  async requestJson<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
+  async requestJson<T>(
+    path: string,
+    init: { method?: string; body?: unknown; operationId?: string } = {}
+  ): Promise<T> {
+    const operationId =
+      path.startsWith('/v1/sessions/') &&
+      !path.includes('/control') &&
+      init.method &&
+      init.method !== 'GET'
+        ? (init.operationId ?? this.headers['x-agentbrowser-operation-id'] ?? crypto.randomUUID())
+        : undefined;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
@@ -277,6 +297,7 @@ class HttpClient {
         method: init.method ?? 'GET',
         headers: {
           ...this.headers,
+          ...(operationId ? { 'x-agentbrowser-operation-id': operationId } : {}),
           ...(init.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
         },
         ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
@@ -303,18 +324,38 @@ class HttpClient {
           error.code,
           error.message,
           error.retryable,
-          error.details,
+          { ...error.details, ...(operationId ? { operationId } : {}) },
           error.action,
           error.traceId
         );
       }
 
-      return (await response.json()) as T;
+      const result = (await response.json()) as T & { replay?: boolean; operation?: unknown };
+      if (result?.replay === true)
+        throw new AgentBrowserError(
+          'OPERATION_RECORDED',
+          'Operation already recorded; reconcile its status before taking further action',
+          false,
+          { operationId, operation: result.operation }
+        );
+      return result as T;
     } catch (error) {
       if (controller.signal.aborted) {
         // A timed-out mutation may have run: never advertise blind retry safety.
-        throw new AgentBrowserError('TIMEOUT', 'Request timeout', false);
+        throw new AgentBrowserError(
+          'TIMEOUT',
+          'Request timeout; outcome may be unknown',
+          false,
+          operationId ? { operationId } : undefined
+        );
       }
+      if (!(error instanceof AgentBrowserError) && operationId)
+        throw new AgentBrowserError(
+          'TRANSPORT_ERROR',
+          'Response unavailable; reconcile the operation before retrying',
+          false,
+          { operationId }
+        );
       throw error;
     } finally {
       clearTimeout(timeoutId);
@@ -327,6 +368,45 @@ class HttpClient {
  */
 export class SessionsClient {
   constructor(private readonly http: HttpClient) {}
+
+  async control(sessionId: string): Promise<ControlView> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/control`);
+  }
+  async takeover(sessionId: string): Promise<ControlView> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/control/takeover`, { method: 'POST' });
+  }
+  async prepareResume(sessionId: string): Promise<
+    ControlView & {
+      pages: Array<{
+        pageId: string;
+        url: string;
+        title: string;
+        revision: number;
+        summary: string;
+      }>;
+    }
+  > {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/control/prepare-resume`, {
+      method: 'POST',
+    });
+  }
+  async delegate(sessionId: string, epoch: number): Promise<ControlView & { token: string }> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/control/delegate`, {
+      method: 'POST',
+      body: { epoch },
+    });
+  }
+  async operation(sessionId: string, operationId: string): Promise<OperationRecord> {
+    return this.http.requestJson(
+      `/v1/sessions/${sessionId}/operations/${encodeURIComponent(operationId)}`
+    );
+  }
+  async listPages(sessionId: string): Promise<PageResponse[]> {
+    const result = await this.http.requestJson<{ pages: PageResponse[] }>(
+      `/v1/sessions/${sessionId}/pages`
+    );
+    return result.pages;
+  }
 
   async create(request: SessionRequest): Promise<SessionResponse> {
     return this.http.requestJson('/v1/sessions', { method: 'POST', body: request });
@@ -345,9 +425,14 @@ export class SessionsClient {
     await this.http.requestJson(`/v1/sessions/${sessionId}`, { method: 'DELETE' });
   }
 
-  async createPage(sessionId: string, request?: { url?: string }): Promise<PageResponse> {
+  async createPage(
+    sessionId: string,
+    request?: { url?: string },
+    options: MutationOptions = {}
+  ): Promise<PageResponse> {
     return this.http.requestJson(`/v1/sessions/${sessionId}/pages`, {
       method: 'POST',
+      ...options,
       ...(request !== undefined ? { body: request } : {}),
     });
   }
@@ -421,7 +506,8 @@ export class SessionsClient {
   async plan(
     sessionId: string,
     pageId: string,
-    actions: Array<Record<string, unknown>>
+    actions: Array<Record<string, unknown>>,
+    options: MutationOptions = {}
   ): Promise<{
     ok: boolean;
     completed: number;
@@ -432,6 +518,7 @@ export class SessionsClient {
     return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/plan`, {
       method: 'POST',
       body: { actions },
+      ...options,
     });
   }
 
@@ -453,9 +540,11 @@ export class SessionsClient {
   async navigate(
     sessionId: string,
     pageId: string,
-    request: NavigationRequest
+    request: NavigationRequest,
+    options: MutationOptions = {}
   ): Promise<NavigationResponse> {
     return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/navigate`, {
+      ...options,
       method: 'POST',
       body: request,
     });
@@ -475,9 +564,11 @@ export class SessionsClient {
   async executeAction(
     sessionId: string,
     pageId: string,
-    request: ActionRequest
+    request: ActionRequest,
+    options: MutationOptions = {}
   ): Promise<ActionResult> {
     return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/act`, {
+      ...options,
       method: 'POST',
       body: request,
     });

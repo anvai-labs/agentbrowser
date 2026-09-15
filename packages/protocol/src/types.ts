@@ -33,6 +33,7 @@ export interface Viewport {
  * Session creation request
  */
 export interface SessionRequest {
+  controlMode?: 'delegated';
   /** Engine selection; omitted = server default. */
   engine?: EngineSelection;
   /** Owning tenant; stamped onto the session for scoping and quotas. */

@@ -855,5 +855,5 @@ Every issue must contain acceptance tests and must be small enough for one revie
 
 ## 24. Final answer to the headless question
 
-Yes. AgentBrowser should be **headless by default and in production**. Headless means there is no visible browser window; the engine still builds and executes the page, and it can still produce screenshots or PDFs. Add a headed/debug mode only for developers reproducing failures locally. The absence of a visible window does not itself provide isolation or make automation undetectable; those are separate security and compatibility concerns.
+Yes. AgentBrowser should be **headless by default and in production**. Headless means there is no visible browser window; the engine still builds and executes the page, and it can still produce screenshots or PDFs. The original developer-only headed restriction is superseded by the opt-in [delegated-session workflow](docs/delegated-sessions.md): headed local sessions also support explicit human takeover, review, and revocable agent authority. The absence of a visible window does not itself provide isolation or make automation undetectable; those are separate security and compatibility concerns.
 

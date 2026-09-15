@@ -10,6 +10,7 @@
 /** Artifact metadata safe to hand to clients. */
 export interface ArtifactMetadata {
   artifactId: string;
+  controlEpoch?: number;
   type: 'download' | 'screenshot' | 'pdf' | 'trace' | 'html' | 'dom';
   contentType: string;
   sizeBytes: number;
@@ -73,7 +74,7 @@ export class ArtifactStore {
     type: ArtifactMetadata['type'],
     contentType: string,
     bytes: Uint8Array,
-    labels: { filename?: string; sessionId?: string; tenantId?: string } = {}
+    labels: { filename?: string; sessionId?: string; tenantId?: string; controlEpoch?: number } = {}
   ): ArtifactMetadata {
     if (bytes.length > this.maxBytes) {
       throw new ArtifactError(
@@ -92,6 +93,7 @@ export class ArtifactStore {
 
     const now = this.clock();
     const metadata: ArtifactMetadata = {
+      ...(labels.controlEpoch !== undefined ? { controlEpoch: labels.controlEpoch } : {}),
       artifactId: `art_${now}_${++this.counter}`,
       type,
       contentType,

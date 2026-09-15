@@ -1,3 +1,4 @@
+import { SessionAuthority } from './session-authority.js';
 /**
  * AgentBrowserService - the composition root
  *
@@ -82,6 +83,7 @@ export class ServiceError extends Error {
 }
 
 export interface ServiceSessionRequest {
+  controlMode?: 'delegated';
   tenantId?: string;
   engine?: string;
   ttlMs?: number;
@@ -314,6 +316,7 @@ export type PartialObservation = {
 const DELIVERED_INCLUDES = new Set<string>(['overlays', 'fileInputs']);
 
 export class AgentBrowserService {
+  readonly authority = new SessionAuthority();
   private readonly engine: BrowserEngine;
   private readonly engines: Map<string, BrowserEngine> = new Map();
   private readonly coordinator: SessionCoordinator;
@@ -450,6 +453,7 @@ export class AgentBrowserService {
    * reintroduce the leak class TD-BROWSER-9 (A8) closed.
    */
   private deleteSessionState(sessionId: string): void {
+    this.authority.remove(sessionId);
     this.downloads.get(sessionId)?.revoke(new ServiceError('SESSION_NOT_FOUND', 'Session closed'));
     this.downloads.delete(sessionId);
     for (const [pageId, page] of this.pages) {
@@ -648,6 +652,16 @@ export class AgentBrowserService {
               ? { data: this.secretManager.redactUntrusted(event.data) }
               : {}),
           });
+          if (stamped.type === 'page.created') {
+            this.adoptPopupSerialized(sessionId, stamped.data).catch(() => {
+              // Adoption is best-effort; the popup stays engine-side only.
+            });
+          } else if (stamped.type === 'page.destroyed') {
+            sawDestroyed = true;
+            this.reapPage(sessionId, pageId);
+          }
+          const control = this.authority.get(sessionId);
+          if (control && control.view().state !== 'AGENT_ACTIVE') continue;
           if (!this.recordEvent(sessionId, stamped)) continue;
           const listeners = this.eventListeners.get(sessionId);
           if (listeners) {
@@ -658,14 +672,6 @@ export class AgentBrowserService {
                 // A misbehaving listener never breaks the stream.
               }
             }
-          }
-          if (stamped.type === 'page.created') {
-            this.adoptPopupSerialized(sessionId, stamped.data).catch(() => {
-              // Adoption is best-effort; the popup stays engine-side only.
-            });
-          } else if (stamped.type === 'page.destroyed') {
-            sawDestroyed = true;
-            this.reapPage(sessionId, pageId);
           }
         }
       } catch {
@@ -775,7 +781,7 @@ export class AgentBrowserService {
     const popupPageId = `pg_${++this.pageCounter}_${popup.id}`;
     this.pages.set(popupPageId, {
       sessionId,
-      enginePage: popup,
+      enginePage: this.authority.guardPage(sessionId, popup),
       revision: 1,
       history: new Map(),
       openerPageId: opener[0],
@@ -975,6 +981,8 @@ export class AgentBrowserService {
           )
         );
 
+      if (request.controlMode === 'delegated')
+        this.authority.register(session.sessionId, request.tenantId ?? '', context.signal);
       this.metrics?.incrementCounter('sessions_created_total');
       this.metrics?.setGauge('sessions_active', this.coordinator.getSessionCount());
 
@@ -999,6 +1007,17 @@ export class AgentBrowserService {
   }
 
   /** Live pages are keyed by pageId and carry their owning sessionId. */
+  invalidateControlObservations(sessionId: string): void {
+    for (const page of this.pages.values()) {
+      if (page.sessionId !== sessionId) continue;
+      page.revision++;
+      page.lastObservation = undefined;
+      page.history.clear();
+    }
+    this.eventHistory.delete(sessionId);
+    this.requestHistory.delete(sessionId);
+  }
+
   private countPages(sessionId: string): number {
     let count = 0;
     for (const page of this.pages.values()) {
@@ -1042,6 +1061,7 @@ export class AgentBrowserService {
   }
 
   async closeSession(sessionId: string): Promise<void> {
+    this.authority.remove(sessionId);
     try {
       await this.coordinator.close(sessionId);
     } catch (error) {
@@ -1566,7 +1586,13 @@ export class AgentBrowserService {
       }
     }
 
-    const enginePage = await session.engineSession.newPage();
+    this.authority.assert(sessionId, true);
+    const rawPage = await session.engineSession.newPage();
+    if (session.signal.aborted) {
+      await rawPage.close().catch(() => {});
+      throw new ServiceError('SESSION_NOT_FOUND', 'Session ended during page creation');
+    }
+    const enginePage = this.authority.guardPage(sessionId, rawPage);
     const pageId = `pg_${++this.pageCounter}_${enginePage.id}`;
     this.pages.set(pageId, { sessionId, enginePage, revision: 1, history: new Map() });
 
@@ -1580,6 +1606,7 @@ export class AgentBrowserService {
       try {
         await this.navigate(sessionId, pageId, { url: request.url });
       } catch (error) {
+        if (this.authority.get(sessionId)?.view().state === 'PAUSE_REQUESTED') throw error;
         // Runtime navigate failures (DNS, refused, egress policy) happen
         // after registration; leaving the page in would surface a live
         // about:blank page the caller believes was never created. Mirror
@@ -2651,6 +2678,15 @@ export class AgentBrowserService {
     if (!entry || entry.metadata.sessionId !== sessionId) {
       return undefined;
     }
+    if (entry.metadata.controlEpoch !== undefined) {
+      this.requireSession(sessionId);
+      this.authority.assert(sessionId);
+      if (
+        this.authority.isAgent() &&
+        entry.metadata.controlEpoch !== this.authority.currentEpoch(sessionId)
+      )
+        throw new ServiceError('FORBIDDEN', 'Artifact belongs to another control generation');
+    }
     if (tenantId !== undefined && entry.metadata.tenantId !== tenantId) {
       throw new ServiceError('FORBIDDEN', 'Artifact belongs to another tenant.');
     }
@@ -2664,9 +2700,12 @@ export class AgentBrowserService {
     bytes: Uint8Array,
     labels: { filename?: string; sessionId?: string } = {}
   ): ArtifactMetadata {
+    this.authority.assert(sessionId);
+    const controlEpoch = this.authority.currentEpoch(sessionId);
     const owner = this.requireSession(sessionId).metadata.tenantId;
     return this.artifacts.put(type, contentType, bytes, {
       ...labels,
+      ...(controlEpoch !== undefined ? { controlEpoch } : {}),
       sessionId,
       ...(owner !== undefined ? { tenantId: owner } : {}),
     });
@@ -3015,6 +3054,7 @@ export class AgentBrowserService {
   }
 
   private requirePage(sessionId: string, pageId: string): PageContext {
+    this.authority.assert(sessionId);
     // Session-level failures outrank page-level ones: an expired session is
     // SESSION_NOT_FOUND even if the caller also holds a stale page id.
     if (!this.coordinator.get(sessionId)) {

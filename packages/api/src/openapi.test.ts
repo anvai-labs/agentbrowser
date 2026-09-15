@@ -40,6 +40,11 @@ describe('OpenAPI document', () => {
 
   describe('paths', () => {
     const expectedPaths = [
+      ['/v1/sessions/{sessionId}/control', 'get'],
+      ['/v1/sessions/{sessionId}/control/takeover', 'post'],
+      ['/v1/sessions/{sessionId}/control/prepare-resume', 'post'],
+      ['/v1/sessions/{sessionId}/control/delegate', 'post'],
+      ['/v1/sessions/{sessionId}/operations/{operationId}', 'get'],
       ['/health/live', 'get'],
       ['/health/ready', 'get'],
       ['/metrics', 'get'],

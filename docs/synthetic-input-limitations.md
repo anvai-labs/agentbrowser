@@ -1,85 +1,45 @@
-# Synthetic Input Limitations: What `isTrusted: false` Costs and What Works
+# Browser input trust and outcome verification
 
-**Status:** Shipped pattern (1.8.x); trusted-input path deliberately deferred
-**Related:** [ADR-013](adr/013-headed-sessions-and-walled-logins.md) (walled logins),
-[Human handoff](human-handoff.md) (the in-loop alternative)
+**Corrected 2026-09-14.** The former claim that all Playwright input and WebDriver
+Actions produce `isTrusted: false` was incorrect. It must not drive an engine or
+transport replacement.
 
-## The limitation
+## What the browser actually reports
 
-Every input event AgentBrowser delivers — clicks, keys, fills — is a *synthetic* event
-dispatched through Playwright. The browser marks such events `isTrusted: false`, and
-`isTrusted` is read-only: page JavaScript cannot be blamed for this, and no launch
-flag, user agent, or fingerprint scrub changes it. Any page that checks the flag can
-silently ignore the input while *appearing* to accept it — a no-op submit is
-indistinguishable from a successful one until you observe the result.
+Normal Playwright pointer and keyboard operations use browser input mechanisms.
+The local Chromium adapter fixture produced trusted click, ordinary text-input,
+and keydown events. Explicit JavaScript `dispatchEvent()` produced an untrusted
+control event. Playwright documents these as different interaction paths in its
+[input guide](https://playwright.dev/docs/input). The
+[WebDriver Actions specification](https://w3c.github.io/webdriver/#actions) also
+specifies trusted events for browser-generated actions.
 
-This is not an edge case. It is load-bearing web security: payment confirmations,
-enterprise SSO, bot walls, and a long tail of form handlers test `isTrusted` (or a
-vendor SDK that does) precisely to tell a person from a script.
+The Safari adapter's individual JavaScript-based operations must be assessed
+separately. Firefox and WebKit capability declarations do not establish an input
+trust result for every operation. Programmatic value setters and special input
+types also need their own fixtures.
 
-Observed live during the 1.8.5 smoke: multi-step application flows where every
-synthetic interaction worked until the final submit control, which no-opped on
-synthetic click but accepted a real Enter keypress, and flow steps whose handlers
-rejected synthetic clicks outright.
+`isTrusted` is neither proof of a human operator nor application authorization.
+A trusted event may still do nothing because the target is wrong, hydration is
+incomplete, validation failed, the control is occluded, or the application rejected
+the request. Successful browser command completion is not verified task success.
+The earlier live form failures did not establish `isTrusted` as their cause.
 
-## What works today, in order of preference
+## Diagnose the interaction and its outcome
 
-1. **Navigate to the link's `href` instead of clicking the link.** Observations carry
-   link `href`s; for plain navigation, `navigate` to the captured URL is deterministic
-   and immune to click handlers entirely. This is the first thing to try whenever the
-   target is an `<a>`.
-2. **Click the real submit control rather than pressing Enter.** Form handlers that
-   check `isTrusted` on *keyboard* events are rarer than ones checking clicks — and a
-   submit control's handler is the one the page's authors most often wired to accept
-   genuine interaction of either kind. Prefer `act click` on the button; use the
-   `press` action with `key: "Enter"` on the field's ref as the fallback, not the
-   default.
-3. **Observe the outcome; never assume.** A synthetic action that was silently
-   swallowed still returns `success` — the event *was* dispatched. The only truth is
-   the next observation: new URL, new elements, revision bump. Where an action is
-   critical, use `observe: 'after'` and check for the expected effect before
-   proceeding.
-4. **Attach files through `upload`, never by clicking the picker.** File
-   attachment needs no synthetic click on a file input at all:
-   [ADR-018](adr/018-upload-action.md) sets the file list through the browser's own
-   machinery (the target ref is optional — hidden file inputs usually have no ref).
-   The result reports the attached files as evidence; verify the page accepted them
-   by observation, same rule as everything else.
-5. **Hand the step to a human.** When the control refuses synthetic input
-   categorically (payment confirmations, MFA, turnstile-class walls), that step is not
-   an automation problem — it is a
-   [human handoff](human-handoff.md).
+1. Observe the current page and use a fresh semantic reference. Check enabled
+   state, focus, overlays, document/frame identity, and application validation.
+2. Use the intended UI control when testing that UI. Direct navigation to a link's
+   captured `href` can be useful automation, but does not test its click handler.
+3. Verify a consequential effect independently: a destination receipt, persisted
+   record, downloaded bytes, or a specific visible postcondition. A revision bump
+   alone does not prove a transaction succeeded.
+4. Use `upload` for file attachment and verify application acceptance. Do not infer
+   success solely from setting the file list.
+5. Use [human handoff](human-handoff.md) for steps that require the person. In
+   [delegated sessions](delegated-sessions.md), request takeover and wait for
+   `HUMAN_ACTIVE` before interacting; an already dispatched action may still finish.
 
-## Why the trusted-input path is deferred
-
-A CDP `Input.dispatchMouseEvent` / `Input.insertText` path *does* produce trusted
-events — they enter through the browser's input pipeline, the same as a physical
-device. It is technically available in Chromium and could be built. It is deferred on
-purpose:
-
-- **It breaks the engine-neutral contract.** CDP input is Chromium-only. Safari
-  ([ADR-011](adr/011-safari-via-safaridriver-webdriver.md)) and any future engine
-  would need an equivalent, and WebDriver's `Perform Actions` produces untrusted
-  events there. The workaround surface (below) is engine-neutral; a trusted-input
-  engine path is not.
-- **It is a stealth feature wearing a utility costume.** Trusted synthetic input is
-  exactly what bot farms pay for. Shipping it — even gated — puts AgentBrowser on the
-  wrong side of the walls [ADR-013](adr/013-headed-sessions-and-walled-logins.md)
-  declines to fight, and invites an arms race the project has explicitly opted out of.
-- **It interacts badly with the egress/routing stack.** A raw CDP session attached
-  alongside Playwright's sits outside the route/permission plumbing and would need its
-  own threat-model pass (input injection *is* code execution on the page).
-- **The demand is mostly served already.** The failure modes the 1.8.5 smoke actually
-   hit were resolved by href navigation, submit-control clicking, and one human step —
-   not by a need for universally trusted events.
-
-Revisit when: a real workload is blocked by an `isTrusted` check that no workaround
-satisfies *and* the workload cannot tolerate a human step. The design would start from
-a per-session opt-in (`trustedInput: true`), a Chromium-only capability flag, and an
-explicit policy surface — not a silent fallback.
-
-## The one-line summary
-
-Synthetic input is honest input: it says so in every event, the page can check, and
-some will refuse. Route around it with real URLs and real controls, verify outcomes by
-observation, and hand the irreducible human steps to a human.
+No additional raw CDP input path is required to correct this premise. Keep the
+engine-neutral interface and qualify alternate adapters with the same behavioral
+fixtures. Never retry a consequential action merely because its response was lost.

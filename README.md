@@ -5,6 +5,8 @@
 
 AgentBrowser lets AI agents safely and reliably operate **authorized** websites through a compact, deterministic interface: semantic observations instead of screenshots, stable element references with staleness detection, egress policy enforcement, and approval gates for side effects.
 
+The opt-in [delegated-session workflow](docs/delegated-sessions.md) adds a human control panel, revocable session tokens, and operation reconciliation for cooperating agent harnesses. Use a build containing this feature; the existing release installation below remains the legacy entry point.
+
 ## Install (Homebrew)
 
 ```bash
@@ -144,7 +146,8 @@ surface; the rest depends on who you are.
 - [Technical designs](docs/td/) - TD-BROWSER-5…9 feature records
 - [Threat model](docs/threat-model.md) - the security posture and its named limits
 - [Human handoff](docs/human-handoff.md) - working a session with a person in the loop: approval gates, headed credential entry, re-observe discipline
-- [Synthetic input limitations](docs/synthetic-input-limitations.md) - what `isTrusted: false` costs, what works around it, and why trusted input is deferred
+- [Delegated sessions](docs/delegated-sessions.md) - human takeover, revocable agent credentials, and regression checks
+- [Synthetic input limitations](docs/synthetic-input-limitations.md) - browser input trust, application acceptance, and independent outcome checks
 
 ## License
 

@@ -286,7 +286,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   async capabilities(): Promise<EngineCapabilities> {
     return {
       supportsScreenshots: true,
-      supportsPdf: true,
+      supportsPdf: this.browserFamily === 'chromium',
       supportsDownloads: true,
       supportsUploads: true,
       supportsJavascript: true,
@@ -294,7 +294,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       supportsVideo: false,
       supportsPersistentStorage: true,
       supportsAccessibilityTree: true,
-      supportsCdp: true,
+      supportsCdp: this.browserFamily === 'chromium',
       supportedObservationModes: [...DELIVERED_OBSERVATION_MODES],
       // Derived from the protocol single source of truth: drift is
       // impossible by construction.
