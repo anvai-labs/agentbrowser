@@ -158,8 +158,8 @@ application state, not an agent's claims. Sources below were inspected during th
 | --- | --- | --- |
 | [Playwright MCP](https://github.com/microsoft/playwright-mcp) | Established semantic browser and testing tools | Keep as a baseline; it retains Playwright and browser dependence |
 | [Vercel agent-browser](https://github.com/vercel-labs/agent-browser) | Compact agent CLI and direct-CDP execution | Strong distribution/action baseline; CDP remains Chromium-specific |
-| [Selenium BiDi](https://www.selenium.dev/documentation/webdriver/bidi/) + Firefox | Different driver and renderer family | Preferred next independence spike, installed without Playwright/Chromium |
-| [Puppeteer BiDi](https://pptr.dev/webdriver-bidi) + Firefox | Familiar TypeScript browser API | Alternative spike; qualify observation/accessibility gaps |
+| [Selenium BiDi](https://www.selenium.dev/documentation/webdriver/bidi/) + Firefox | Different driver and renderer family | Retained alternative if broader protocol requirements justify driver lifecycle work |
+| [Puppeteer BiDi](https://pptr.dev/webdriver-bidi) + Firefox | Familiar TypeScript browser API | Follow-up local qualification implemented; guarded service promotion still requires egress and semantic evidence |
 | [Chrome DevTools MCP](https://developer.chrome.com/docs/devtools/agents/use-cases/auto-connect) | Existing-browser debugging | Specialist operator tool, coordinated to avoid a second writer |
 | [Stagehand](https://docs.stagehand.dev/v3/references/stagehand) / [Browser Use](https://github.com/browser-use/browser-use) | Higher-level browser automation | Benchmark outside core; Victor already owns planning |
 | Application-owned APIs/MCP and [WebMCP](https://developer.chrome.com/docs/ai/webmcp/) | Explicit intended operations and business versions | Next parallel execution seam; retain UI parity tests and isolate evolving WebMCP bindings |
@@ -171,6 +171,10 @@ Firefox/WebKit through Playwright diversify renderers but share the driver. A
 remote Chromium provider diversifies hosting, not rendering. PDF/CDP capabilities
 now report Chromium-only support. No independent browser fallback is delivered
 by this change; no automatic switch occurs after an uncertain action.
+
+The [follow-up qualification](firefox-and-application-seams.md) adds a standalone
+native Firefox adapter and a shared UI/API fixture. It still does not deliver a
+guarded REST/MCP fallback; the refusal of unqualified policies remains intentional.
 
 For owned applications, the next milestone should pair UI operations with typed
 application operations and server-enforced versions/idempotency. Verify both

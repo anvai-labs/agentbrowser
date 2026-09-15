@@ -1449,7 +1449,13 @@ class PlaywrightPage implements EnginePage {
       }
 
       const indent = line.length - line.trimStart().length;
-      const text = line.trim().replace(/^-\s*/, '');
+      // Playwright single-quotes the entire YAML key when a name contains
+      // e.g. colon-space. Decode that outer layer before reading role/name;
+      // doubled apostrophes belong to YAML, inner escapes belong to the name.
+      const text = line
+        .trim()
+        .replace(/^-\s*/, '')
+        .replace(/^'((?:[^']|'')*)'(?=:|$)/, (_match, key: string) => key.replace(/''/g, "'"));
 
       // Attribute line: attach to the last element deeper than this indent.
       const attrMatch = /^\/(\w+):\s*(.*)$/.exec(text);
@@ -1482,7 +1488,11 @@ class PlaywrightPage implements EnginePage {
         enabled: true,
       };
       if (elementMatch[2] !== undefined) {
-        element.name = elementMatch[2];
+        try {
+          element.name = JSON.parse(`"${elementMatch[2]}"`) as string;
+        } catch {
+          element.name = elementMatch[2];
+        }
       }
       const inlineValue = elementMatch[4]?.trim();
       if (inlineValue) {

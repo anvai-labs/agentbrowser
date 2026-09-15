@@ -278,7 +278,9 @@ export const PageStateSchema = Type.Object({
   untrustedContent: Type.Boolean(),
   continuation: Type.Optional(ContinuationCursorSchema),
   degraded: Type.Optional(Type.Boolean()),
-  degradedReason: Type.Optional(Type.Literal('aria-snapshot-timeout')),
+  degradedReason: Type.Optional(
+    Type.Union([Type.Literal('aria-snapshot-timeout'), Type.Literal('dom-semantic-subset')])
+  ),
 });
 
 // ============================================================================

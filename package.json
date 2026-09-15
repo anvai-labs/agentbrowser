@@ -21,7 +21,10 @@
     "ci": "pnpm build && pnpm type-check && pnpm test",
     "bench": "pnpm --filter @agentbrowser/benchmarks all",
     "bench:real": "pnpm --filter @agentbrowser/benchmarks bench:real",
-    "test:coexistence": "node scripts/check-coexistence.mjs"
+    "test:coexistence": "node scripts/check-coexistence.mjs",
+    "firefox:install": "node packages/engine-firefox/scripts/install.mjs",
+    "test:firefox": "node scripts/check-firefox.mjs",
+    "test:firefox-independence": "node scripts/check-firefox-independence.mjs"
   },
   "keywords": [
     "browser",

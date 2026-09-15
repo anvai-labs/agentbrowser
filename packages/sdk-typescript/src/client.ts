@@ -134,7 +134,7 @@ export interface ObservationResponse {
    */
   degraded?: boolean;
   /** Why `degraded` is set, when it is. Currently only one cause exists. */
-  degradedReason?: 'aria-snapshot-timeout';
+  degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset';
 }
 
 /** The delivered action set, derived from the protocol source of truth. */
@@ -263,7 +263,7 @@ export interface PageSnapshot {
    */
   degraded?: boolean;
   /** Why `degraded` is set, when it is. Currently only one cause exists. */
-  degradedReason?: 'aria-snapshot-timeout';
+  degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset';
 }
 
 /**

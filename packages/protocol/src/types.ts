@@ -222,6 +222,9 @@ export interface PageState {
    */
   continuation?: ContinuationCursor;
   /**
+   * dom-semantic-subset means an adapter supplies a limited DOM interpretation,
+   * not native AX. Increasing snapshotTimeoutMs cannot restore missing support.
+   *
    * True when the whole-page ariaSnapshot budget was exceeded and `elements`
    * came from a DOM-tag-only fallback: roles are bare HTML tags with no
    * name/value, and any custom widget with no native form control (e.g. a
@@ -230,8 +233,8 @@ export interface PageState {
    * session, or narrow the observation instead.
    */
   degraded?: boolean;
-  /** Why `degraded` is set, when it is. Currently only one cause exists. */
-  degradedReason?: 'aria-snapshot-timeout';
+  /** Why the observation has reduced semantic coverage. */
+  degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset';
 }
 
 /**

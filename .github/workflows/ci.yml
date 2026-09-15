@@ -108,12 +108,29 @@ jobs:
       - name: Build workspace dependencies
         run: pnpm -r build
 
-      # engine-playwright drives a real Chromium.
-      - name: Install Playwright browsers
-        run: pnpm --filter @agentbrowser/engine-playwright exec playwright install --with-deps chromium
+      # Share one host-library provisioning step; Firefox itself comes from Mozilla below.
+      - name: Install browser system libraries and Chromium
+        run: |
+          pnpm --filter @agentbrowser/engine-playwright exec playwright install-deps chromium firefox
+          pnpm --filter @agentbrowser/engine-playwright exec playwright install chromium
+
+      # One cached Firefox qualification in this existing job, no browser matrix.
+      - name: Cache native Firefox
+        uses: actions/cache@v4
+        with:
+          path: .cache/firefox
+          key: firefox-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/engine-firefox/scripts/browser-config.mjs') }}
+
+      - name: Install pinned native Firefox
+        run: node packages/engine-firefox/scripts/install.mjs --github-env
 
       - name: Run tests
         run: pnpm -r test
+
+      - name: Qualify Firefox production dependency independence
+        run: |
+          node --test scripts/firefox-deployment-audit.test.mjs
+          pnpm test:firefox-independence
 
       - name: Upload coverage
         if: hashFiles('coverage/coverage-final.json') != ''

@@ -1515,7 +1515,7 @@ export class AgentBrowserService {
     fields: Array<{ ref: string; role: string; label: string }>;
     truncated?: boolean;
     degraded?: boolean;
-    degradedReason?: 'aria-snapshot-timeout';
+    degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset';
   }> {
     // Payload economics (TD-BROWSER-8 pressure matrix, row 4): the fields
     // list previously had no way to bound its size from the caller's side;
@@ -1532,7 +1532,7 @@ export class AgentBrowserService {
       elements?: Array<{ ref: string; role?: string; name?: string }>;
       truncated?: boolean;
       degraded?: boolean;
-      degradedReason?: 'aria-snapshot-timeout';
+      degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset';
     };
     return {
       url: view.url ?? '',
