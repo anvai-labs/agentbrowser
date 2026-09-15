@@ -125,7 +125,9 @@ jobs:
         run: node packages/engine-firefox/scripts/install.mjs --github-env
 
       - name: Run tests
-        run: pnpm -r test
+        # Bound both scheduler layers: parallel packages each spawning a full
+        # Vitest pool can starve native browser startup on shared runners.
+        run: pnpm -r --workspace-concurrency=1 run test --maxWorkers=2 --minWorkers=1
 
       - name: Qualify Firefox production dependency independence
         run: |
