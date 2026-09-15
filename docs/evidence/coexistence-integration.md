@@ -64,3 +64,7 @@ required jobs are preserved, and no GitHub runner is used to debug this candidat
 Before promotion, review this combined snapshot and run one consolidated CI
 candidate. This local integration commit is not a pushed PR, published package,
 live-account acceptance or contained-browser release.
+
+The [packaged follow-up](packaged-coexistence.md) extends the existing artifact
+acceptance job to check delegated operator/MCP handoff against extracted modules
+and compiled clients, with independent application effects.

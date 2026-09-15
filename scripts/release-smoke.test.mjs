@@ -38,6 +38,27 @@ test('wrong MCP release version fails', async () => {
   await assert.rejects(checkMcp(mcp({ version: '9.9.9' }), options), /version/);
 });
 
+const delegatedTools = [
+  'browser_snapshot', 'browser_plan', 'browser_navigate', 'browser_observe',
+  'browser_act', 'browser_extract', 'browser_html', 'browser_pdf',
+  'browser_screenshot', 'browser_session', 'browser_operation',
+];
+
+test('delegated MCP acceptance requires the exact bound catalog', async () => {
+  const report = await checkMcp(mcp({ tools: delegatedTools }), { ...options, catalog: 'delegated' });
+  assert.deepEqual(report.tools, [...delegatedTools].sort());
+  for (const tool of ['browser_create', 'browser_close', 'browser_cookies']) {
+    await assert.rejects(checkMcp(mcp({ tools: [...delegatedTools, tool] }), {
+      ...options, catalog: 'delegated',
+    }), /catalog/);
+  }
+});
+
+test('MCP catalog selection is explicit and does not weaken default acceptance', async () => {
+  await assert.rejects(checkMcp(mcp({ tools: delegatedTools }), options), /catalog/);
+  await assert.rejects(checkMcp(mcp(), { ...options, catalog: 'typo' }), /catalog/);
+});
+
 test('incompatible negotiated MCP protocol fails', async () => {
   await assert.rejects(checkMcp(mcp({ protocol: 'garbage' }), options), /protocol/i);
 });
