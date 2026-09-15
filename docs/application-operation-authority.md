@@ -2,6 +2,8 @@
 
 Status: typed in-process port and application-only lifecycle implemented; REST/MCP,
 operator binding UI and durable application receipt qualification remain pending.
+Transport, reconnection and durable recovery are specified in the
+[shared infrastructure design](shared-session-infrastructure.md).
 Baseline: `develop` at `ed8ac67`, after PRs [156](https://github.com/anvai-labs/agentbrowser/pull/156),
 [157](https://github.com/anvai-labs/agentbrowser/pull/157), and
 [159](https://github.com/anvai-labs/agentbrowser/pull/159). See the
