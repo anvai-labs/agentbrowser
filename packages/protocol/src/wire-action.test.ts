@@ -6,6 +6,8 @@ describe('wire action contract', () => {
   it.each([
     { action: 'reload' },
     { action: 'press', key: 'Enter' },
+    { action: 'press', key: 'ArrowDown', target: { ref: 'e1_0' }, count: 5 },
+    { action: 'press', key: 'ArrowDown', count: 1 },
     { action: 'scroll', direction: 'down', amount: 250 },
     { action: 'wait', condition: { until: 'load' } },
     { action: 'upload', paths: ['/tmp/x.pdf'] },
@@ -19,6 +21,9 @@ describe('wire action contract', () => {
     { action: 'select', type: 'click', target: { ref: 'e1_0' }, value: 'one' },
     { action: 'reload', type: 'navigate', url: 'https://example.com' },
     { action: 'press' },
+    { action: 'press', key: 'Enter', count: 0 },
+    { action: 'press', key: 'Enter', count: 21 },
+    { action: 'press', key: 'Enter', count: 1.5 },
     { action: 'wait' },
     { action: 'reload', target: {} },
     { action: 'click', target: { ref: 'e1_0' }, expectedRevision: -1 },

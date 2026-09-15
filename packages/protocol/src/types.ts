@@ -465,6 +465,13 @@ export interface PressAction extends Action {
   type: 'press';
   target?: ElementTarget;
   key: string;
+  /**
+   * Press the key this many times in one action (1-20, default 1). One
+   * revision bump covers the whole run - spinbutton-style controls need
+   * repeated keypresses and a re-observe between every single press makes
+   * them impractical.
+   */
+  count?: number;
 }
 
 /**

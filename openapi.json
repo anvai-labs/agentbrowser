@@ -2217,6 +2217,11 @@
                   "key": {
                     "type": "string"
                   },
+                  "count": {
+                    "minimum": 1,
+                    "maximum": 20,
+                    "type": "integer"
+                  },
                   "direction": {
                     "anyOf": [
                       {
@@ -5059,6 +5064,11 @@
           },
           "key": {
             "type": "string"
+          },
+          "count": {
+            "minimum": 1,
+            "maximum": 20,
+            "type": "integer"
           },
           "direction": {
             "anyOf": [
