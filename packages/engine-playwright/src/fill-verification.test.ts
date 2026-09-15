@@ -28,6 +28,29 @@ it('verifies one fill without replaying a reverting input or disclosing field va
   }
 });
 
+it('keeps a password field value out of mismatch details even without the sensitive flag', async () => {
+  const engine = new PlaywrightChromiumEngine();
+  try {
+    const page = await (await engine.createSession({ headless: true })).newPage();
+    await page.navigate({
+      url: 'data:text/html,<label>Pass<input type="password"></label>',
+    });
+    const ref = (await page.observe({})).elements.find((element) => element.name === 'Pass')?.ref;
+    const error = await page
+      .act({ type: 'fill', target: { ref: ref! }, value: 'hunter2-secret', expectValue: 'zzz' })
+      .catch((error) => error);
+    expect(error).toMatchObject({
+      code: 'VALUE_MISMATCH',
+      retryable: false,
+      details: { ref: ref, reads: 2 },
+    });
+    expect(JSON.stringify(error)).not.toContain('hunter2-secret');
+    expect(JSON.stringify(error)).not.toContain('zzz');
+  } finally {
+    await engine.close();
+  }
+});
+
 it('re-reads once after settle when async normalization lands late and reports expected and actual for non-sensitive mismatches', async () => {
   const engine = new PlaywrightChromiumEngine();
   try {
