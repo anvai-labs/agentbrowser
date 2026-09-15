@@ -1153,6 +1153,11 @@ class PlaywrightPage implements EnginePage {
     return this.page.isClosed() ? undefined : this.page.url();
   }
 
+  async getTitle(): Promise<string | undefined> {
+    if (this.page.isClosed()) return undefined;
+    return this.page.title().catch(() => undefined);
+  }
+
   async navigate(request: NavigationRequest): Promise<NavigationResult> {
     try {
       return await this.performNavigation(request);

@@ -760,7 +760,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
-          const page = service.getPage(sessionId, pageId);
+          const page = await service.getPage(sessionId, pageId);
 
           if (!page) {
             return reply.status(404).send({

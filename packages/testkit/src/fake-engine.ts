@@ -384,6 +384,10 @@ class FakePage implements EnginePage {
     return this.currentUrl;
   }
 
+  async getTitle(): Promise<string | undefined> {
+    return this.currentTitle;
+  }
+
   getCachedUrl(): string | undefined {
     return this.closed || this.crashed ? undefined : this.currentUrl;
   }

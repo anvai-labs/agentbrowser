@@ -1598,15 +1598,20 @@ export class AgentBrowserService {
     return { pageId, sessionId, status: 'ready' };
   }
 
-  getPage(sessionId: string, pageId: string): ServicePageView | undefined {
+  async getPage(sessionId: string, pageId: string): Promise<ServicePageView | undefined> {
     const page = this.pages.get(pageId);
     if (!page || page.sessionId !== sessionId) {
       return undefined;
     }
+    const cachedUrl = page.enginePage.getCachedUrl?.();
+    const url = typeof cachedUrl === 'string' ? this.secretManager.redact(cachedUrl) : undefined;
+    const title = await page.enginePage.getTitle?.().catch(() => undefined);
     return {
       pageId,
       sessionId,
       status: 'active',
+      ...(url !== undefined ? { url } : {}),
+      ...(title !== undefined ? { title } : {}),
       ...(page.openerPageId !== undefined ? { openerPageId: page.openerPageId } : {}),
     };
   }
@@ -3194,6 +3199,10 @@ class RefTranslatingPage implements EnginePage {
       throw new Error(`Element not found: ${target.ref}`);
     }
     return this.inner.resolve({ ref: engineRef });
+  }
+
+  async getTitle(): Promise<string | undefined> {
+    return this.inner.getTitle?.();
   }
 
   async act(action: { type: string; target?: { ref: string }; [key: string]: unknown }) {
