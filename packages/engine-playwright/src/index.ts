@@ -2349,6 +2349,28 @@ class PlaywrightPage implements EnginePage {
         await locator.hover();
         break;
       }
+      case 'typeText': {
+        // Real per-character keystrokes (focus + keydown/textInput/keyup per
+        // char), for widgets that ignore programmatic value setting: search-
+        // as-you-type boxes, typeahead filters, keystroke-driven masks.
+        const text = String(action.value ?? '');
+        if (!text) throw new EngineError('INVALID_REQUEST', 'typeText requires a value');
+        const delay = Math.max(0, Math.min(1000, Math.trunc(Number(action.delay ?? 0)) || 0));
+        const locator = action.target
+          ? this.locatorFor((action.target as EngineTarget).ref)
+          : undefined;
+        try {
+          // focus + keyboard.type is the same event stream Playwright's
+          // pressSequentially produces (per-char keydown/textInput/keyup).
+          if (locator) {
+            await locator.focus();
+          }
+          await this.page.keyboard.type(text, { delay });
+        } finally {
+          this.bumpRevision();
+        }
+        break;
+      }
       case 'clear': {
         const locator = this.locatorFor((action.target as EngineTarget).ref);
         await locator.fill('');

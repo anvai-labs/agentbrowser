@@ -880,6 +880,40 @@ export function buildCli(deps: CliDependencies): Cli {
         );
 
       act
+        .command('type-text')
+        .description(
+          'type text as real per-character keystrokes (search-as-you-type boxes, keystroke-driven masks)'
+        )
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('<text>')
+        .option('--delay <ms>', 'delay in ms between characters (0-1000)')
+        .action(
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              pageId: string,
+              text: string,
+              options: { delay?: string }
+            ) => {
+              let delay: number | undefined;
+              if (options.delay !== undefined) {
+                delay = Number(options.delay);
+                if (!Number.isInteger(delay) || delay < 0 || delay > 1000) {
+                  throw new UsageError('--delay must be an integer between 0 and 1000');
+                }
+              }
+              await runAction(ctx, sessionId, pageId, {
+                action: 'typeText',
+                value: text,
+                ...(delay !== undefined ? { delay } : {}),
+              });
+            }
+          )
+        );
+
+      act
         .command('press')
         .description('press a key (optionally repeated in one action)')
         .argument('<sessionId>')

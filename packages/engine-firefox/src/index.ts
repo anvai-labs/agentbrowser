@@ -433,6 +433,8 @@ class FirefoxPage implements EnginePage {
           await handle.type(action.value);
           break;
         }
+        case 'typeText':
+          throw unsupported('typeText is not supported by this engine');
         case 'press': {
           if (typeof action.key !== 'string')
             throw new EngineError('INVALID_REQUEST', 'Press requires key');

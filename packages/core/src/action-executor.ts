@@ -200,6 +200,11 @@ export class ActionExecutor {
           return invalidRequest('Fill action requires a value parameter');
         }
         break;
+      case 'typeText':
+        if (action.value === undefined) {
+          return invalidRequest('typeText action requires a value parameter');
+        }
+        break;
       case 'select':
         if (!action.values || action.values.length === 0) {
           return invalidRequest('Select action requires a non-empty values parameter');

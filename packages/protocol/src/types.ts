@@ -182,6 +182,7 @@ export type ActionType =
   | 'hover'
   | 'fill'
   | 'type'
+  | 'typeText'
   | 'clear'
   | 'press'
   | 'select'
@@ -425,6 +426,24 @@ export interface FillAction extends Action {
 }
 
 /**
+ * TypeText action: real per-character keystrokes (focus, then one keydown /
+ * textInput / keyup sequence per character), unlike fill which sets the value
+ * and fires a single input event. For widgets that only react to genuine key
+ * events: search-as-you-type boxes, keystroke-driven masks, typeahead filters.
+ * Unqualified engines refuse this action instead of degrading to a fill.
+ */
+export interface TypeTextAction extends Action {
+  type: 'typeText';
+  target?: ElementTarget;
+  value: string;
+  /**
+   * Delay in ms between characters (0-1000, default 0). A small delay helps
+   * debounced typeahead filters that drop characters arriving too fast.
+   */
+  delay?: number;
+}
+
+/**
  * Select action
  */
 export interface SelectAction extends Action {
@@ -494,6 +513,7 @@ export type SupportedAction =
   | DblClickAction
   | HoverAction
   | FillAction
+  | TypeTextAction
   | ClearAction
   | CheckAction
   | UncheckAction
@@ -597,6 +617,7 @@ export const DELIVERED_ACTION_TYPES = [
   'dblclick',
   'hover',
   'fill',
+  'typeText',
   'clear',
   'check',
   'uncheck',
