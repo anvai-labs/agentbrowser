@@ -28,6 +28,65 @@ it('verifies one fill without replaying a reverting input or disclosing field va
   }
 });
 
+it('keeps a password field value out of mismatch details even without the sensitive flag', async () => {
+  const engine = new PlaywrightChromiumEngine();
+  try {
+    const page = await (await engine.createSession({ headless: true })).newPage();
+    await page.navigate({
+      url: 'data:text/html,<label>Pass<input type="password"></label>',
+    });
+    const ref = (await page.observe({})).elements.find((element) => element.name === 'Pass')?.ref;
+    const error = await page
+      .act({ type: 'fill', target: { ref: ref! }, value: 'hunter2-secret', expectValue: 'zzz' })
+      .catch((error) => error);
+    expect(error).toMatchObject({
+      code: 'VALUE_MISMATCH',
+      retryable: false,
+      details: { ref: ref, reads: 2 },
+    });
+    expect(JSON.stringify(error)).not.toContain('hunter2-secret');
+    expect(JSON.stringify(error)).not.toContain('zzz');
+  } finally {
+    await engine.close();
+  }
+});
+
+it('re-reads once after settle when async normalization lands late and reports expected and actual for non-sensitive mismatches', async () => {
+  const engine = new PlaywrightChromiumEngine();
+  try {
+    const page = await (await engine.createSession({ headless: true })).newPage();
+    // The handler normalizes to uppercase 150ms after the input event, so the
+    // first readback races the normalization and the settle re-read wins.
+    await page.navigate({
+      url: 'data:text/html,<label>Code<input oninput="clearTimeout(window.t);window.t=setTimeout(()=>{this.value=this.value.toUpperCase()},150)"></label>',
+    });
+    const ref = (await page.observe({})).elements.find((element) => element.name === 'Code')?.ref;
+    const late = await page.act({
+      type: 'fill',
+      target: { ref: ref! },
+      value: 'abc',
+      expectValue: 'ABC',
+    });
+    expect(late.result).toEqual({ success: true, verified: true });
+
+    const page2 = await (await engine.createSession({ headless: true })).newPage();
+    await page2.navigate({
+      url: 'data:text/html,<label>Code<input oninput="this.value=this.value.toUpperCase()"></label>',
+    });
+    const ref2 = (await page2.observe({})).elements.find((element) => element.name === 'Code')?.ref;
+    const error = await page2
+      .act({ type: 'fill', target: { ref: ref2! }, value: 'xyz', expectValue: 'zzz' })
+      .catch((error) => error);
+    expect(error).toMatchObject({
+      code: 'VALUE_MISMATCH',
+      retryable: false,
+      details: { ref: ref2, expected: 'zzz', actual: 'XYZ', reads: 2 },
+    });
+  } finally {
+    await engine.close();
+  }
+});
+
 it('returns value-free verification evidence and refuses unsupported readback before writing', async () => {
   const engine = new PlaywrightChromiumEngine();
   try {

@@ -118,6 +118,9 @@ const FORM_CONTROL_SELECTOR = [
 
 /** Boundlessness guard: at most this many controls are minted per observation. */
 const MAX_FORM_CONTROLS = 200;
+// Late async normalization (masking, formatting) can race the post-fill readback;
+// a mismatching value is re-read once after this much settle time.
+const FILL_VERIFY_SETTLE_MS = 250;
 
 /** Strip surrounding quotes and unescape from an aria snapshot value. */
 function unquote(value: string): string {
@@ -2117,28 +2120,56 @@ class PlaywrightPage implements EnginePage {
       case 'fill': {
         const locator = this.locatorFor((action.target as EngineTarget).ref);
         const expected = action.expectValue;
+        let passwordInput = false;
         if (expected !== undefined) {
           if (typeof expected !== 'string')
             throw new EngineError('INVALID_REQUEST', 'expectValue must be a string');
-          if (
-            !(await locator.evaluate((element) => ['INPUT', 'TEXTAREA'].includes(element.tagName)))
-          )
+          const probe = await locator.evaluate((element) => ({
+            fillable: ['INPUT', 'TEXTAREA'].includes(element.tagName),
+            password:
+              element.tagName === 'INPUT' &&
+              (element.getAttribute('type') ?? '').trim().toLowerCase() === 'password',
+          }));
+          if (!probe.fillable)
             throw new EngineError(
               'ENGINE_UNSUPPORTED',
               'Fill verification requires a native input or textarea'
             );
+          // Password inputs keep their value out of mismatch details even
+          // without the sensitive flag: a site-side normalization of a
+          // literal credential must not surface in error payloads.
+          passwordInput = probe.password;
         }
         await locator.fill(String(action.value ?? ''));
         // A field's input handler may have committed an effect even if it reverted
-        // the value. Read once; never replay a write to manufacture success.
+        // the value. Never replay the write to manufacture success. The first read
+        // can also race a late async normalization (masking, formatting), so a
+        // mismatch gets one settle + re-read before failing. Value-bearing details
+        // are withheld for sensitive fills and password inputs.
+        let actual: string | undefined;
         try {
-          if (expected !== undefined && (await locator.inputValue()) !== expected)
-            throw new EngineError(
-              'VALUE_MISMATCH',
-              'Field value differs after filling. Inspect current state before another write.',
-              false,
-              { ref: (action.target as EngineTarget).ref }
-            );
+          if (expected !== undefined) {
+            actual = await locator.inputValue();
+            if (actual !== expected) {
+              await this.page.waitForTimeout(FILL_VERIFY_SETTLE_MS);
+              actual = await locator.inputValue();
+            }
+            if (actual !== expected) {
+              throw new EngineError(
+                'VALUE_MISMATCH',
+                'Field value differs after filling. Inspect current state before another write.',
+                false,
+                action.sensitive === true || passwordInput
+                  ? { ref: (action.target as EngineTarget).ref, reads: 2 }
+                  : {
+                      ref: (action.target as EngineTarget).ref,
+                      expected,
+                      actual,
+                      reads: 2,
+                    }
+              );
+            }
+          }
         } finally {
           this.bumpRevision();
         }
