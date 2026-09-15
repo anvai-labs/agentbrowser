@@ -15,3 +15,21 @@ export async function handlePublicEgressRequest(request, { target, deny, errors,
   } catch (error) { errors.push({ phase: 'interception', message: error.message }); }
 }
 
+/** A disappearing popup is failed startup evidence, never successful installation. */
+export async function installPublicEgressPage(page, context) {
+  const closed = () => context.errors.push({
+    phase: 'popup-install', reason: 'target-closed',
+    message: 'Target closed before interception setup completed',
+  });
+  if (page.isClosed()) { closed(); return; }
+  page.on('request', request => { void handlePublicEgressRequest(request, context); });
+  try { await page.setRequestInterception(true); }
+  catch (error) {
+    if (page.isClosed() && (error.name === 'TargetCloseError' ||
+      error.message === 'Browsing context already closed.' ||
+      error.message.startsWith('Protocol error (network.addIntercept): no such frame'))) {
+      closed(); return;
+    }
+    throw error;
+  }
+}
