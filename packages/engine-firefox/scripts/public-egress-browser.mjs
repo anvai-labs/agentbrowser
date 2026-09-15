@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import { launch } from 'puppeteer-core';
 
-import { handlePublicEgressRequest } from './public-egress-request.mjs';
+import { installPublicEgressPage } from './public-egress-request.mjs';
 
 /** Original page-scoped probe candidate, kept separate from the session-wide candidate. */
 export async function launchPublicEgressBrowser({ executablePath, target, deny, errors, intercepted }) {
@@ -10,8 +10,7 @@ export async function launchPublicEgressBrowser({ executablePath, target, deny, 
   const installs = new Set();
   const install = page => {
     if (installed.has(page)) return installed.get(page);
-    page.on('request', request => { void handlePublicEgressRequest(request, { target, deny, errors, intercepted }); });
-    const pending = page.setRequestInterception(true);
+    const pending = installPublicEgressPage(page, { target, deny, errors, intercepted });
     installed.set(page, pending); installs.add(pending);
     pending.then(() => installs.delete(pending), () => installs.delete(pending));
     return pending;
