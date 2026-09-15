@@ -25,6 +25,7 @@ describe('wire action contract', () => {
     { action: 'press' },
     { action: 'typeText', value: '' },
     { action: 'typeText', value: 'x', delay: 5000 },
+    { action: 'typeText', value: 'x'.repeat(5001) },
     { action: 'press', key: 'Enter', count: 0 },
     { action: 'press', key: 'Enter', count: 21 },
     { action: 'press', key: 'Enter', count: 1.5 },

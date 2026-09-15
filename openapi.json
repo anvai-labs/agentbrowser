@@ -4116,6 +4116,10 @@
                           "type": "string"
                         },
                         {
+                          "const": "typeText",
+                          "type": "string"
+                        },
+                        {
                           "const": "clear",
                           "type": "string"
                         },
@@ -4310,6 +4314,10 @@
                       "type": "string"
                     },
                     {
+                      "const": "typeText",
+                      "type": "string"
+                    },
+                    {
                       "const": "clear",
                       "type": "string"
                     },
@@ -4474,6 +4482,10 @@
                 },
                 {
                   "const": "type",
+                  "type": "string"
+                },
+                {
+                  "const": "typeText",
                   "type": "string"
                 },
                 {

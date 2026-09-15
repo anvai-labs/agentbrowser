@@ -897,10 +897,17 @@ export function buildCli(deps: CliDependencies): Cli {
               text: string,
               options: { delay?: string }
             ) => {
+              let delay: number | undefined;
+              if (options.delay !== undefined) {
+                delay = Number(options.delay);
+                if (!Number.isInteger(delay) || delay < 0 || delay > 1000) {
+                  throw new UsageError('--delay must be an integer between 0 and 1000');
+                }
+              }
               await runAction(ctx, sessionId, pageId, {
                 action: 'typeText',
                 value: text,
-                ...(options.delay !== undefined ? { delay: Number(options.delay) } : {}),
+                ...(delay !== undefined ? { delay } : {}),
               });
             }
           )

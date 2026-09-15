@@ -335,7 +335,9 @@ export const FillActionSchema = Type.Object({
 export const TypeTextActionSchema = Type.Object({
   type: Type.Literal('typeText'),
   target: Type.Optional(ElementTargetSchema),
-  value: Type.String({ minLength: 1 }),
+  // Bounded: typing duration scales per character, so an unbounded value
+  // would let one action hold the page's action path for minutes.
+  value: Type.String({ minLength: 1, maxLength: 5000 }),
   delay: Type.Optional(Type.Integer({ minimum: 0, maximum: 1000 })),
 });
 
