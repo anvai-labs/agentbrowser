@@ -311,7 +311,7 @@ export type PartialObservation = {
 };
 
 /** Optional observation enrichments the stack actually delivers. */
-const DELIVERED_INCLUDES = new Set<string>(['overlays', 'fileInputs']);
+const DELIVERED_INCLUDES = new Set<string>(['overlays', 'fileInputs', 'formControls']);
 
 export class AgentBrowserService {
   private readonly engine: BrowserEngine;

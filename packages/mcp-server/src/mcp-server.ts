@@ -405,7 +405,7 @@ function buildTools(client: McpClient): ToolDefinition[] {
           },
           include: {
             type: 'array',
-            items: { type: 'string', enum: ['overlays', 'fileInputs'] },
+            items: { type: 'string', enum: ['overlays', 'fileInputs', 'formControls'] },
             description:
               'Optional enrichments. "overlays" adds an aggregated list of elements that ' +
               'cover observed targets (useful when clicks would be intercepted). ' +

@@ -30,6 +30,7 @@ const INTERACTIVE_ROLES = new Set<string>([
   'tab',
   'tablist',
   'fileinput',
+  'control',
 ]);
 
 export interface NormalizationOptions {

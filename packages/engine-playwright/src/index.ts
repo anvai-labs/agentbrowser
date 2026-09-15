@@ -70,6 +70,11 @@ interface StoredElement {
   checked?: boolean | undefined;
   /** Set on role:"fileinput" elements: binds by ordinal over input[type=file]. */
   fileInputIndex?: number;
+  /**
+   * Set on role:"control" elements (form controls the ARIA snapshot missed):
+   * binds by ordinal over the formControls candidate selector.
+   */
+  formControlIndex?: number;
   attributes?: Record<string, string>;
 }
 
@@ -83,10 +88,36 @@ interface FileInputInfo {
   visible: boolean;
 }
 
+/** Per-control metadata shared by the formControls observe scan and binding. */
+interface FormControlInfo {
+  /** Position within the full CONTROL_SELECTOR match list (document order). */
+  index: number;
+  name?: string;
+  tag: string;
+  id?: string;
+  automationId?: string;
+  visible: boolean;
+}
+
 interface NodeBinding extends SnapshotEvidence {
   handle: ElementHandle;
   locator: Locator;
 }
+
+/**
+ * Candidates for include:["formControls"]: interactive elements the ARIA
+ * snapshot can miss because they carry no role attribute. Role-attributed
+ * elements are excluded here - they are presumed covered by the snapshot.
+ */
+const FORM_CONTROL_SELECTOR = [
+  '[aria-haspopup]:not([role])',
+  '[data-automation-id]:not(button):not(a):not(input):not(select):not(textarea):not([role])',
+  'div[onclick]:not([role])',
+  'span[onclick]:not([role])',
+].join(', ');
+
+/** Boundlessness guard: at most this many controls are minted per observation. */
+const MAX_FORM_CONTROLS = 200;
 
 /** Strip surrounding quotes and unescape from an aria snapshot value. */
 function unquote(value: string): string {
@@ -1001,6 +1032,8 @@ class PlaywrightPage implements EnginePage {
    * revision; any mutation bumps the revision and invalidates them.
    */
   private revision = 1;
+  /** Include tokens the most recent observe ran with (tryRemap re-observes with them). */
+  private lastObservationInclude: string[] | undefined = undefined;
   private refStore = new Map<string, StoredElement>();
   private bindings = new Map<string, NodeBinding>();
   private eventWaiters: Array<() => void> = [];
@@ -1244,6 +1277,7 @@ class PlaywrightPage implements EnginePage {
     // upload can attach to them through a bound ref - so include:["fileInputs"]
     // scans the DOM for every file input, hidden ones included, and appends
     // bindable elements after the accessibility-derived set.
+    this.lastObservationInclude = request.include;
     if (request.include?.includes('fileInputs') === true) {
       for (const info of await this.describeFileInputs()) {
         elements.push({
@@ -1257,6 +1291,30 @@ class PlaywrightPage implements EnginePage {
             ...(info.id !== undefined ? { id: info.id } : {}),
             ...(info.accept !== undefined ? { accept: info.accept } : {}),
             ...(info.multiple ? { multiple: 'true' } : {}),
+          },
+        });
+      }
+    }
+
+    // The ARIA snapshot only emits role-carrying elements, so interactive
+    // controls built as role-less div/span widgets (automation-attributed
+    // dropdown triggers, click-handler tiles) are invisible to observations.
+    // include:["formControls"] scans the DOM for those and mints bindable
+    // refs; the :not([role]) candidate filter keeps elements the snapshot
+    // covered from being minted twice.
+    if (request.include?.includes('formControls') === true) {
+      for (const info of await this.describeFormControls()) {
+        elements.push({
+          ref: `e${this.revision}_${elements.length}`,
+          role: 'control',
+          ...(info.name !== undefined ? { name: info.name } : {}),
+          visible: info.visible,
+          enabled: true,
+          formControlIndex: info.index,
+          attributes: {
+            tag: info.tag,
+            ...(info.id !== undefined ? { id: info.id } : {}),
+            ...(info.automationId !== undefined ? { 'data-automation-id': info.automationId } : {}),
           },
         });
       }
@@ -1289,14 +1347,17 @@ class PlaywrightPage implements EnginePage {
         const key = JSON.stringify([element.role, element.name ?? '']);
         const ordinal = ordinals.get(key) ?? 0;
         ordinals.set(key, ordinal + 1);
-        // Role resolution excludes hidden nodes, so a file-input element can
-        // never be found via getByRole - bind it by ordinal instead.
+        // Role resolution excludes hidden nodes and role-less widgets, so
+        // file inputs and form controls bind by ordinal over their candidate
+        // selectors instead of via getByRole.
         const locator =
           element.fileInputIndex !== undefined
             ? this.page.locator('input[type=file]').nth(element.fileInputIndex)
-            : this.page
-                .getByRole(element.role as never, { name: element.name ?? '', exact: true })
-                .nth(ordinal);
+            : element.formControlIndex !== undefined
+              ? this.page.locator(FORM_CONTROL_SELECTOR).nth(element.formControlIndex)
+              : this.page
+                  .getByRole(element.role as never, { name: element.name ?? '', exact: true })
+                  .nth(ordinal);
         // Bind once to an actual node. An ordinal is never resolved anew at act time.
         if (await locator.count()) {
           const handle = await locator.elementHandle();
@@ -1312,8 +1373,10 @@ class PlaywrightPage implements EnginePage {
             // A display:none input has no stable aria snapshot and may make
             // the capture throw outright; hidden targets never consult the
             // snapshot gate in resolve(), so degrade to document evidence.
+            // Form-control bindings degrade the same way: their div widgets
+            // re-render too often for per-element snapshots to be stable.
             const captured =
-              element.fileInputIndex !== undefined
+              element.fileInputIndex !== undefined || element.formControlIndex !== undefined
                 ? await snapshotBudget.capture(locator).catch(() => undefined)
                 : await snapshotBudget.capture(locator);
             binding.snapshot = snapshotDigest(captured);
@@ -1601,6 +1664,57 @@ class PlaywrightPage implements EnginePage {
     );
   }
 
+  /**
+   * One batched round-trip describing interactive controls that carry no ARIA
+   * role (div/span widget triggers, automation-attributed containers) - the
+   * elements locator.ariaSnapshot() cannot emit, so observe would otherwise
+   * never mint refs for them. Dedup is selector-level: candidates carry no
+   * role attribute, so anything the snapshot covers through an explicit role
+   * is excluded, and same-node handle dedup is unnecessary for the rest.
+   * `visible` here is a layout-box heuristic; observe overwrites it with the
+   * authoritative Playwright isVisible for bound elements.
+   */
+  private async describeFormControls(): Promise<FormControlInfo[]> {
+    const described = await this.page.locator(FORM_CONTROL_SELECTOR).evaluateAll(
+      (
+        nodes: Array<{
+          tagName: string;
+          textContent: string | null;
+          id: string;
+          offsetWidth: number;
+          offsetHeight: number;
+          getAttribute(name: string): string | null;
+        }>
+      ): Array<{
+        index: number;
+        tag: string;
+        name?: string;
+        id?: string;
+        automationId?: string;
+        visible: boolean;
+      }> =>
+        nodes.map((node, index) => {
+          const text = node.textContent?.trim().slice(0, 200) || undefined;
+          const automationId = node.getAttribute('data-automation-id')?.trim() || undefined;
+          const name =
+            node.getAttribute('aria-label')?.trim() ||
+            text ||
+            automationId ||
+            node.id.trim() ||
+            undefined;
+          return {
+            index,
+            tag: node.tagName.toLowerCase(),
+            ...(name !== undefined ? { name } : {}),
+            ...(node.id !== '' ? { id: node.id } : {}),
+            ...(automationId !== undefined ? { automationId } : {}),
+            visible: node.offsetWidth > 0 || node.offsetHeight > 0,
+          };
+        })
+    );
+    return described.slice(0, MAX_FORM_CONTROLS);
+  }
+
   /** Client-facing context for a refusal: which ref, in which revision, what it was. */
   private refusalDetails(ref: string, stored?: { role: string; name?: string }) {
     return {
@@ -1750,7 +1864,7 @@ class PlaywrightPage implements EnginePage {
       ) {
         let remap: Awaited<ReturnType<PlaywrightPage['tryRemap']>>;
         try {
-          remap = await this.tryRemap(action);
+          remap = await this.tryRemap(action, this.lastObservationInclude ?? undefined);
         } catch {
           throw new EngineError(failure.code, failure.message, failure.retryable, details);
         }
@@ -1795,7 +1909,8 @@ class PlaywrightPage implements EnginePage {
    * than guess. Returns the rebuilt action targeting the fresh ref.
    */
   private async tryRemap(
-    action: EngineAction
+    action: EngineAction,
+    includeTokens?: string[] | undefined
   ): Promise<{ action: EngineAction; to: string } | { candidates: number }> {
     const target = action.target;
     if (target === undefined) {
@@ -1805,7 +1920,7 @@ class PlaywrightPage implements EnginePage {
     if (stored === undefined) {
       return { candidates: 0 };
     }
-    const fresh = await this.observe({});
+    const fresh = await this.observe(includeTokens === undefined ? {} : { include: includeTokens });
     const candidates = fresh.elements.filter(
       (e) => e.role === stored.role && (stored.name === undefined || e.name === stored.name)
     );

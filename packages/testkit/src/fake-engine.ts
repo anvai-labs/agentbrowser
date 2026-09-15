@@ -433,9 +433,14 @@ class FakePage implements EnginePage {
     // derived observation never sees hidden <input type=file> elements - they
     // appear only when the caller asks via include:["fileInputs"].
     const includeFileInputs = request.include?.includes('fileInputs') === true;
-    const observed = includeFileInputs
-      ? this.elements
-      : this.elements.filter((el) => !(el.role === 'fileinput' && el.visible === false));
+    // role:"control" elements (formControls scan results) exist only under
+    // their token, mirroring the real engine: without it they are not minted.
+    const includeFormControls = request.include?.includes('formControls') === true;
+    const observed = this.elements.filter(
+      (el) =>
+        (includeFileInputs || el.role !== 'fileinput' || el.visible !== false) &&
+        (includeFormControls || el.role !== 'control')
+    );
     const observation: RawPageState = {
       url: this.currentUrl,
       title: this.currentTitle,
