@@ -1,8 +1,20 @@
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { EnginePage } from '@agentbrowser/engine';
 import { describe, expect, it } from 'vitest';
 import { PlaywrightChromiumEngine } from './index.js';
+
+async function replaceFileInput(page: EnginePage) {
+  const nativePage = (
+    page as unknown as { backingPage(): import('playwright').Page }
+  ).backingPage();
+  await nativePage.evaluate(() => {
+    const input = document.querySelector('input[type=file]');
+    if (!input) throw new Error('Missing fixture input');
+    input.replaceWith(input.cloneNode(true));
+  });
+}
 
 describe('real action wire semantics', () => {
   it('delivers directional scroll and untargeted keyboard input', async () => {
@@ -142,17 +154,12 @@ describe('real action wire semantics', () => {
     try {
       const session = await engine.createSession({ headless: true });
       const page = await session.newPage();
-      // Visible input so observe mints a ref. The page detaches it shortly
-      // after load WITHOUT any agent action (no revision bump): the binding
+      // Visible input so observe mints a ref. Detach after observation
+      // without an agent action (no revision bump): the binding
       // outlives the node, and the targeted upload must refuse exactly like
       // any other targeted action - STALE_TARGET, remap-eligible.
       await page.navigate({
-        url:
-          'data:text/html,<body><input type="file" aria-label="Doc">' +
-          '<script>setTimeout(function(){' +
-          'var el=document.querySelector("input");' +
-          'el.replaceWith(el.cloneNode(true));' +
-          '},400);</script></body>',
+        url: 'data:text/html,<body><input type="file" aria-label="Doc"></body>',
       });
       const input = (await page.observe({ mode: 'interactive' })).elements.find(
         (element) => element.name === 'Doc'
@@ -160,7 +167,7 @@ describe('real action wire semantics', () => {
       if (!input) throw new Error('Missing fixture file input');
       const ref = input.ref;
 
-      await new Promise((resolve) => setTimeout(resolve, 700));
+      await replaceFileInput(page);
       const dir = await mkdtemp(join(tmpdir(), 'ab-upload-'));
       const filePath = join(dir, 'sample.txt');
       await writeFile(filePath, 'x');
@@ -271,12 +278,7 @@ describe('real action wire semantics', () => {
       const session = await engine.createSession({ headless: true });
       const page = await session.newPage();
       await page.navigate({
-        url:
-          'data:text/html,<body><input type="file" id="dropzone" style="display:none">' +
-          '<script>setTimeout(function(){' +
-          'var el=document.getElementById("dropzone");' +
-          'el.replaceWith(el.cloneNode(true));' +
-          '},400);</script></body>',
+        url: 'data:text/html,<body><input type="file" id="dropzone" style="display:none"></body>',
       });
       const hidden = (await page.observe({ include: ['fileInputs'] })).elements.find(
         (element) => element.role === 'fileinput'
@@ -284,7 +286,8 @@ describe('real action wire semantics', () => {
       if (!hidden) throw new Error('Missing hidden file-input ref');
       const ref = hidden.ref;
 
-      await new Promise((resolve) => setTimeout(resolve, 700));
+      // Replace only after observation completes, regardless of runner load.
+      await replaceFileInput(page);
       const dir = await mkdtemp(join(tmpdir(), 'ab-upload-'));
       const filePath = join(dir, 'sample.txt');
       await writeFile(filePath, 'x');
