@@ -16,6 +16,7 @@ COPY packages/engine/package.json packages/engine/
 COPY packages/core/package.json packages/core/
 COPY packages/testkit/package.json packages/testkit/
 COPY packages/engine-playwright/package.json packages/engine-playwright/
+COPY packages/engine-firefox/package.json packages/engine-firefox/
 COPY packages/engine-obscura/package.json packages/engine-obscura/
 COPY packages/engine-safari/package.json packages/engine-safari/
 COPY packages/policy/package.json packages/policy/

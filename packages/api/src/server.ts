@@ -1,3 +1,6 @@
+import { ControlError } from '@agentbrowser/core';
+import { operatorCsp, operatorHtml } from './operator-panel.js';
+import type { SessionPrincipal } from './session-authority.js';
 /**
  * AgentBrowser REST API Server
  *
@@ -112,6 +115,10 @@ function apiKeysFromEnv(): Map<string, string> | undefined {
  * error schema).
  */
 const STATUS_FOR = {
+  [ErrorCode.SESSION_BUSY]: 409,
+  [ErrorCode.CONTROL_REVOKED]: 409,
+  [ErrorCode.CONTROL_REQUIRED]: 403,
+  [ErrorCode.OPERATION_CONFLICT]: 409,
   // 400 family: the request was bad (bad shape, bad target, bad tenant).
   [ErrorCode.INVALID_REQUEST]: 400,
   [ErrorCode.INVALID_TENANT_ID]: 400,
@@ -142,6 +149,8 @@ const STATUS_FOR = {
   // In-band today (plan envelope, HTTP 200); mapped in case it's ever
   // thrown as a ServiceError.
   [ErrorCode.PLAN_WAIT_TIMEOUT]: 504,
+  // A page-side script reverted the filled value after two attempts.
+  [ErrorCode.VALUE_MISMATCH]: 422,
   // Server-side failures.
   [ErrorCode.ENGINE_CRASHED]: 500,
   [ErrorCode.INTERNAL]: 500,
@@ -181,6 +190,15 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     }
   );
 
+  fastify.get('/operator', async (_request, reply) =>
+    reply
+      .header('Content-Security-Policy', operatorCsp)
+      .header('Cache-Control', 'no-store')
+      .header('Referrer-Policy', 'no-referrer')
+      .type('text/html; charset=utf-8')
+      .send(operatorHtml)
+  );
+
   // Register CORS plugin
   await fastify.register(cors, {
     origin: options.corsOrigin || '*',
@@ -194,6 +212,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   // Security headers
   fastify.addHook('onSend', async (request, reply) => {
     reply.header('X-Content-Type-Options', 'nosniff');
+    if (request.url.startsWith('/v1/')) reply.header('Cache-Control', 'no-store');
     reply.header('X-Frame-Options', 'DENY');
     reply.header('X-XSS-Protection', '1; mode=block');
   });
@@ -246,13 +265,13 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
   /** Translate a service failure into the protocol error envelope. */
   const fail = (reply: FastifyReply, error: unknown) => {
-    if (error instanceof ServiceError) {
+    if (error instanceof ControlError || error instanceof ServiceError) {
       return reply.status(statusFor(error.code)).send({
         error: {
           code: error.code,
           message: options.secretManager?.redact(error.message) ?? error.message,
-          retryable: error.retryable,
-          ...(error.details !== undefined
+          retryable: error instanceof ServiceError ? error.retryable : false,
+          ...(error instanceof ServiceError && error.details !== undefined
             ? { details: options.secretManager?.redact(error.details) ?? error.details }
             : {}),
         },
@@ -290,12 +309,81 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
    * to 22 identical copies (from 16 at the last audit) as new routes kept
    * repeating the pattern instead of using an abstraction.
    */
+  const principals = new WeakMap<FastifyRequest, SessionPrincipal>();
+  const outputGuards = new WeakMap<FastifyRequest, () => void>();
+  fastify.addHook('onSend', async (request, reply, payload) => {
+    const guard = outputGuards.get(request);
+    if (!guard) return payload;
+    try {
+      guard();
+      return payload;
+    } catch {
+      reply.code(409).header('content-type', 'application/json; charset=utf-8');
+      reply.removeHeader('content-length');
+      return JSON.stringify({
+        error: {
+          code: 'CONTROL_REVOKED',
+          message: 'Control changed; inspect operation status before continuing.',
+          retryable: false,
+        },
+      });
+    }
+  });
+
   const route =
     (handler: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>) =>
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
-        return await handler(request, reply);
+        const { sessionId } = request.params as { sessionId?: string };
+        const control = sessionId ? service.authority.get(sessionId) : undefined;
+        if (!sessionId || !control) return await handler(request, reply);
+        const principal = principals.get(request);
+        const session = service.getSession(sessionId);
+        if (
+          !principal ||
+          !session ||
+          session.tenantId !== principal.tenant ||
+          (principal.actor === 'agent' && principal.sessionId !== sessionId)
+        )
+          throw new ServiceError('FORBIDDEN', 'Session authority does not match');
+        const template = request.routeOptions.url ?? '';
+        if (
+          template.includes('/control') ||
+          template.includes('/operations/') ||
+          (request.method === 'DELETE' && template === '/v1/sessions/:sessionId')
+        )
+          return await handler(request, reply);
+        const mutation =
+          request.method === 'DELETE' ||
+          (request.method === 'POST' && !/\/(observe|extract|screenshot|pdf|html)$/.test(template));
+        const id = request.headers['x-agentbrowser-operation-id'];
+        if (mutation && (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(id)))
+          throw new ServiceError(
+            'INVALID_REQUEST',
+            'Controlled writes require X-AgentBrowser-Operation-Id (1-128 letters, digits, _ or -)'
+          );
+        const result = await service.authority.run(
+          sessionId,
+          principal,
+          mutation
+            ? {
+                id: id as string,
+                fingerprint: sha256Hex(
+                  JSON.stringify([request.method, request.url, request.body ?? null])
+                ),
+              }
+            : {},
+          async () => {
+            outputGuards.set(request, service.authority.outputGuard(sessionId));
+            return await handler(request, reply);
+          },
+          () => reply.statusCode >= 400
+        );
+        if (!reply.sent) return reply.send(result);
+        return result;
       } catch (error) {
+        if (reply.sent) return reply;
+        outputGuards.delete(request);
         return fail(reply, error);
       }
     };
@@ -398,23 +486,58 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
   await fastify.register(
     async (v1) => {
-      if (apiKeys !== undefined && apiKeys.size > 0) {
-        v1.addHook('onRequest', async (request, reply) => {
-          const header = request.headers.authorization ?? '';
-          const token = header.startsWith('Bearer ') ? header.slice(7) : '';
-          const tenant = token.length > 0 ? apiKeys.get(sha256Hex(token)) : undefined;
-          if (tenant === undefined) {
-            return reply.status(401).send({
+      v1.addHook('onRequest', async (request, reply) => {
+        const header = request.headers.authorization ?? '';
+        const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+        const tenant = token ? apiKeys?.get(sha256Hex(token)) : undefined;
+        if (tenant !== undefined) {
+          principals.set(request, { actor: 'operator', tenant });
+          (request as FastifyRequest & { tenant?: string }).tenant = tenant;
+          return;
+        }
+        const agent = token ? service.authority.authenticate(token) : undefined;
+        if (agent) {
+          // Expiry is checked against the coordinator before trusting the grant.
+          if (!service.getSession(agent.sessionId))
+            return reply.code(401).send({
+              error: { code: 'UNAUTHORIZED', message: 'Session expired', retryable: false },
+            });
+          const template = request.routeOptions.url ?? '';
+          const suffix = template.replace('/v1/sessions/:sessionId', '');
+          const sameSession =
+            (request.params as { sessionId?: string }).sessionId === agent.sessionId;
+          const allowed =
+            sameSession &&
+            ((request.method === 'GET' &&
+              /^(|\/control|\/pages|\/pages\/:pageId|\/pages\/:pageId\/snapshot|\/operations\/:operationId|\/artifacts\/:artifactId)$/.test(
+                suffix
+              )) ||
+              (request.method === 'POST' &&
+                /^(\/pages|\/pages\/:pageId\/(navigate|observe|act|plan|extract|screenshot|pdf|html))$/.test(
+                  suffix
+                )) ||
+              (request.method === 'DELETE' && suffix === '/pages/:pageId'));
+          if (!allowed)
+            return reply.code(403).send({
               error: {
-                code: 'UNAUTHORIZED',
-                message: 'A valid Authorization: Bearer <apiKey> header is required.',
+                code: 'FORBIDDEN',
+                message: 'Delegated credential does not permit this operation',
                 retryable: false,
               },
             });
-          }
-          (request as FastifyRequest & { tenant?: string }).tenant = tenant;
-        });
-      }
+          principals.set(request, agent);
+          (request as FastifyRequest & { tenant?: string }).tenant = agent.tenant;
+          return;
+        }
+        if ((apiKeys?.size ?? 0) > 0 || token)
+          return reply.code(401).send({
+            error: {
+              code: 'UNAUTHORIZED',
+              message: 'A valid bearer credential is required',
+              retryable: false,
+            },
+          });
+      });
 
       const tenantOf = (request: FastifyRequest): string | undefined =>
         (request as FastifyRequest & { tenant?: string }).tenant;
@@ -455,6 +578,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             return reply;
           }
 
+          if (body.controlMode === 'delegated' && principals.get(request)?.actor !== 'operator')
+            throw new ServiceError(
+              'FORBIDDEN',
+              'Controlled sessions require authenticated operator credentials'
+            );
           const authenticatedTenant = tenantOf(request);
           if (authenticatedTenant !== undefined) {
             // With keys configured, the key's tenant wins; a mismatching body
@@ -521,6 +649,76 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           }
           const session = await service.createSession(createRequest as never);
           return reply.status(201).send(session);
+        })
+      );
+
+      v1.get(
+        '/sessions/:sessionId/control',
+        route(async (request, reply) => {
+          const { sessionId } = params(request, 'sessionId');
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
+          const control = service.authority.get(sessionId);
+          if (!control) throw new ServiceError('NOT_FOUND', 'Session is not controlled');
+          return reply.send(control.view());
+        })
+      );
+      for (const action of ['takeover', 'prepare-resume', 'delegate'] as const) {
+        v1.post(
+          `/sessions/:sessionId/control/${action}`,
+          route(async (request, reply) => {
+            const { sessionId } = params(request, 'sessionId');
+            const principal = principals.get(request);
+            if (
+              principal?.actor !== 'operator' ||
+              !requireOwnership(reply, sessionId, tenantOf(request))
+            )
+              throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+            const control = service.authority.get(sessionId);
+            if (!control) throw new ServiceError('NOT_FOUND', 'Session is not controlled');
+            if (action === 'takeover') return reply.send(service.authority.takeover(sessionId));
+            if (action === 'delegate') {
+              const epoch = (request.body as { epoch?: unknown } | undefined)?.epoch;
+              if (!Number.isSafeInteger(epoch) || (epoch as number) < 0)
+                throw new ServiceError('INVALID_REQUEST', 'A valid review epoch is required');
+              return reply.send(service.authority.delegate(sessionId, epoch as number));
+            }
+            const review = control.prepareResume();
+            service.invalidateControlObservations(sessionId);
+            const result = await service.authority
+              .run(sessionId, principal, {}, async () => {
+                const pages = await service.listPages(sessionId);
+                const observations = [];
+                for (const page of pages) {
+                  const observed = await service.observe(sessionId, page.pageId, {});
+                  observations.push({
+                    pageId: page.pageId,
+                    url: observed.url,
+                    title: observed.title,
+                    revision: observed.revision,
+                    summary: observed.summary,
+                  });
+                }
+                return { ...review, pages: observations };
+              })
+              .catch((error) => {
+                service.authority.takeover(sessionId);
+                throw error;
+              });
+            return reply.send(result);
+          })
+        );
+      }
+      v1.get(
+        '/sessions/:sessionId/operations/:operationId',
+        route(async (request, reply) => {
+          const { sessionId, operationId } = params(request, 'sessionId', 'operationId');
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
+          const operation = service.authority.get(sessionId)?.operation(operationId);
+          if (!operation) throw new ServiceError('NOT_FOUND', 'Operation is not recorded');
+          const principal = principals.get(request);
+          if (principal?.actor === 'agent' && operation.epoch !== principal.epoch)
+            throw new ServiceError('FORBIDDEN', 'Operation belongs to another control generation');
+          return reply.send(operation);
         })
       );
 

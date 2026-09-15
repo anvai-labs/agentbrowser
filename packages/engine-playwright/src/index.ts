@@ -317,7 +317,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   async capabilities(): Promise<EngineCapabilities> {
     return {
       supportsScreenshots: true,
-      supportsPdf: true,
+      supportsPdf: this.browserFamily === 'chromium',
       supportsDownloads: true,
       supportsUploads: true,
       supportsJavascript: true,
@@ -325,7 +325,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       supportsVideo: false,
       supportsPersistentStorage: true,
       supportsAccessibilityTree: true,
-      supportsCdp: true,
+      supportsCdp: this.browserFamily === 'chromium',
       supportedObservationModes: [...DELIVERED_OBSERVATION_MODES],
       // Derived from the protocol single source of truth: drift is
       // impossible by construction.
@@ -1517,7 +1517,13 @@ class PlaywrightPage implements EnginePage {
       }
 
       const indent = line.length - line.trimStart().length;
-      const text = line.trim().replace(/^-\s*/, '');
+      // Playwright single-quotes the entire YAML key when a name contains
+      // e.g. colon-space. Decode that outer layer before reading role/name;
+      // doubled apostrophes belong to YAML, inner escapes belong to the name.
+      const text = line
+        .trim()
+        .replace(/^-\s*/, '')
+        .replace(/^'((?:[^']|'')*)'(?=:|$)/, (_match, key: string) => key.replace(/''/g, "'"));
 
       // Attribute line: attach to the last element deeper than this indent.
       const attrMatch = /^\/(\w+):\s*(.*)$/.exec(text);
@@ -1550,7 +1556,11 @@ class PlaywrightPage implements EnginePage {
         enabled: true,
       };
       if (elementMatch[2] !== undefined) {
-        element.name = elementMatch[2];
+        try {
+          element.name = JSON.parse(`"${elementMatch[2]}"`) as string;
+        } catch {
+          element.name = elementMatch[2];
+        }
       }
       const inlineValue = elementMatch[4]?.trim();
       if (inlineValue) {
@@ -2106,9 +2116,43 @@ class PlaywrightPage implements EnginePage {
       }
       case 'fill': {
         const locator = this.locatorFor((action.target as EngineTarget).ref);
+        const expected = action.expectValue;
+        if (expected !== undefined) {
+          if (typeof expected !== 'string')
+            throw new EngineError('INVALID_REQUEST', 'expectValue must be a string');
+          if (
+            !(await locator.evaluate((element) => ['INPUT', 'TEXTAREA'].includes(element.tagName)))
+          )
+            throw new EngineError(
+              'ENGINE_UNSUPPORTED',
+              'Fill verification requires a native input or textarea'
+            );
+        }
         await locator.fill(String(action.value ?? ''));
-        this.bumpRevision();
-        break;
+        // A field's input handler may have committed an effect even if it reverted
+        // the value. Read once; never replay a write to manufacture success.
+        try {
+          if (expected !== undefined && (await locator.inputValue()) !== expected)
+            throw new EngineError(
+              'VALUE_MISMATCH',
+              'Field value differs after filling. Inspect current state before another write.',
+              false,
+              { ref: (action.target as EngineTarget).ref }
+            );
+        } finally {
+          this.bumpRevision();
+        }
+        return {
+          actionId,
+          startTimestamp,
+          endTimestamp: new Date().toISOString(),
+          oldRevision,
+          newRevision: this.revision,
+          result: {
+            success: true,
+            ...(expected !== undefined ? { verified: true } : {}),
+          },
+        };
       }
       case 'select': {
         const locator = this.locatorFor((action.target as EngineTarget).ref);

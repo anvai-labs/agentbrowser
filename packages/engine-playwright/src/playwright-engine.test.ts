@@ -1072,27 +1072,55 @@ describe('service-worker choke-point opt-in (ADR-019)', () => {
 
 describe('navigation error classification (hygiene E3)', () => {
   it('propagates a genuine navigation abort as a real error, not a false "blocked" status', async () => {
-    const fixtures = await egressFixtures();
-    // No egress policy configured at all: this failure has nothing to do
-    // with the choke point. Navigating to an unreachable port, then
-    // immediately superseding it with a second navigation, reproduces a
-    // genuine Chromium `net::ERR_ABORTED` (verified empirically) - the
-    // exact message a prior String(error)-regex fallback in navigate()
-    // matched and silently reported as {status: 'blocked'}, masking a real
-    // navigation failure as a policy denial.
+    const http = await import('node:http');
+    let pendingStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      pendingStarted = resolve;
+    });
+    const server = http.createServer((request, response) => {
+      if (request.url === '/pending') {
+        pendingStarted();
+        return; // Hold the first navigation until the second supersedes it.
+      }
+      response.writeHead(200, { 'content-type': 'text/html' });
+      response.end('<!doctype html><title>Replacement</title>ok');
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    // No policy: ERR_ABORTED must propagate, not become a false policy denial.
+    // Wait for actual HTTP admission, avoiding unsafe ports and timing races.
     const engine = new PlaywrightChromiumEngine();
     try {
       const session = await engine.createSession({ headless: true });
       const page = await session.newPage();
-
-      const first = page.navigate({ url: 'http://127.0.0.1:1/' });
-      const second = page.navigate({ url: `http://127.0.0.1:${fixtures.port}/` });
-
-      await expect(first).rejects.toThrow(/ERR_ABORTED/);
-      await expect(second).resolves.toMatchObject({ status: 'success' });
+      // Observe both settlements immediately so assertion failures cannot leak
+      // an unhandled rejection from the replacement navigation during cleanup.
+      const first = page.navigate({ url: `${origin}/pending` }).then(
+        (result) => ({ result, error: undefined }),
+        (error: unknown) => ({ result: undefined, error })
+      );
+      await Promise.race([
+        started,
+        first.then(() => {
+          throw new Error('First navigation settled before reaching the held request');
+        }),
+      ]);
+      const [aborted, replacement] = await Promise.all([first, page.navigate({ url: origin })]);
+      expect(aborted.result).toBeUndefined();
+      expect(aborted.error).toMatchObject({ message: expect.stringMatching(/ERR_ABORTED/) });
+      expect(replacement).toMatchObject({ status: 'success' });
     } finally {
-      await engine.close();
-      await fixtures.stop();
+      try {
+        await engine.close();
+      } finally {
+        await new Promise<void>((resolve) => {
+          server.close(() => resolve());
+          server.closeAllConnections();
+        });
+      }
     }
   }, 15000);
 });

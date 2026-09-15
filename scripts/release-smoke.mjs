@@ -10,6 +10,11 @@ export const EXPECTED_TOOLS = Object.freeze([
   'browser_extract', 'browser_html', 'browser_pdf', 'browser_screenshot',
 ]);
 
+export const EXPECTED_DELEGATED_TOOLS = Object.freeze([
+  ...EXPECTED_TOOLS.filter((name) => !['browser_create', 'browser_close', 'browser_cookies'].includes(name)),
+  'browser_session', 'browser_operation',
+]);
+
 /** Preserve binary/Node commands and allow testing older installed releases. */
 export async function runSmokeCommand(kind, argv, manifest) {
   const args = [...argv];
@@ -132,6 +137,9 @@ export async function checkCli(command, options) {
 
 export async function checkMcp(command, options) {
   assert.ok(options.expectedVersion, 'Expected release version is required');
+  const catalogMode = options.catalog ?? 'unbound';
+  assert.ok(['unbound', 'delegated'].includes(catalogMode), 'Unknown MCP catalog');
+  const expectedTools = catalogMode === 'delegated' ? EXPECTED_DELEGATED_TOOLS : EXPECTED_TOOLS;
   return withProcess(command, options, async (process) => {
     const pending = new Map();
     let sequence = 0;
@@ -186,7 +194,7 @@ export async function checkMcp(command, options) {
     process.child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
     const catalog = await request('tools/list');
     const names = catalog?.tools?.map((tool) => tool.name).sort();
-    assert.deepEqual(names, [...EXPECTED_TOOLS].sort(), 'MCP tool catalog mismatch');
+    assert.deepEqual(names, [...expectedTools].sort(), 'MCP tool catalog mismatch');
     await options.exercise?.({ request, callTool });
     assert.equal(pending.size, 0, 'Acceptance returned with pending MCP requests');
     // EOF is the normal stdio shutdown. Drain every byte and validate the exit

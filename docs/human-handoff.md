@@ -1,6 +1,9 @@
 # Human Handoff: Working a Session With a Person in the Loop
 
-**Status:** Shipped pattern (1.8.x)
+**Status:** Legacy cooperative pattern. For enforced delegation, use
+[delegated sessions](delegated-sessions.md). That mode revokes agent credentials
+and drains active work before human interaction; the legacy instructions below
+do not provide that enforcement.
 **Related:** [ADR-007](adr/007-approval-tokens-side-effects.md) (approval tokens),
 [ADR-013](adr/013-headed-sessions-and-walled-logins.md) (headed sessions / walled logins),
 [TD-BROWSER-6](td/TD-BROWSER-6-headed-sessions-and-credential-handoff.md) (credential handoff),
@@ -16,7 +19,7 @@ session.
 ## The loop
 
 1. **Automate up to the wall.** Observe, fill, act. The agent does everything that does
-   not require a human or a trusted input event.
+   not require the person's participation.
 2. **Stop at the approval gate or the credential step.**
    - High-risk actions refuse with `APPROVAL_REQUIRED` and a `tokenId`
      ([ADR-007](adr/007-approval-tokens-side-effects.md)). The token is single-use,
@@ -65,8 +68,8 @@ are the only way it inherits a login, so export them
 (`GET /v1/sessions/{id}/cookies`) *before* the human closes anything worth
 keeping — the export's form re-seeds directly (see the "Cookie seeding"
 section of [operations.md](operations.md); `{url, ...}`-shaped cookies are
-rejected). A periodic `GET /v1/sessions/{id}` from the driving client doubles as
-an idle keepalive during long human-only stretches.
+rejected). Read-only status polling does not refresh the idle deadline. Set a sufficient
+idle timeout before starting a human-only stretch; session TTL remains a hard bound.
 
 **Password-manager autofill is possible without exposing secrets.** The human
 unlocking their vault and autofilling inside the headed window is
@@ -88,10 +91,9 @@ list and the agent cannot observe or operate them. If a handoff flow opens one, 
 human completes it in that window; have them return to an observable page before the
 agent resumes, and re-observe.
 
-**Anticipate `isTrusted`.** After the human's part is done, the agent's remaining
-clicks may still hit controls that reject synthetic events —
-[synthetic input limitations](synthetic-input-limitations.md) covers which controls and
-what works around them.
+**Verify the outcome.** Normal Playwright input can produce trusted browser
+events. Trust is not evidence that the application accepted the action; see
+[browser input trust](synthetic-input-limitations.md) for the corrected diagnosis.
 
 ## What this is not
 

@@ -1,6 +1,6 @@
+import { ACTION_TYPE_LITERALS, DELIVERED_WAIT_TYPES } from './schemas.js';
 /** Canonical flat /act vocabulary. Surfaces validate here, not by assertion. */
 import type { DeliveredWaitCondition, SelectAction, SupportedAction } from './types.js';
-import { ACTION_TYPE_LITERALS, DELIVERED_WAIT_TYPES } from './schemas.js';
 import { type Validated, validateAction, validatePlanStep } from './validators.js';
 
 type Flat<A> = A extends { type: infer T } ? Omit<A, 'type'> & { action: T } : never;

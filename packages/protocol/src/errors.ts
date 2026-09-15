@@ -6,6 +6,10 @@
  * Standard error codes for AgentBrowser API
  */
 export enum ErrorCode {
+  SESSION_BUSY = 'SESSION_BUSY',
+  CONTROL_REVOKED = 'CONTROL_REVOKED',
+  CONTROL_REQUIRED = 'CONTROL_REQUIRED',
+  OPERATION_CONFLICT = 'OPERATION_CONFLICT',
   // Request/Response errors
   INVALID_REQUEST = 'INVALID_REQUEST',
   INVALID_TENANT_ID = 'INVALID_TENANT_ID',
@@ -34,6 +38,7 @@ export enum ErrorCode {
   // Navigation and action errors
   NAVIGATION_TIMEOUT = 'NAVIGATION_TIMEOUT',
   ACTION_TIMEOUT = 'ACTION_TIMEOUT',
+  VALUE_MISMATCH = 'VALUE_MISMATCH',
   PLAN_WAIT_TIMEOUT = 'PLAN_WAIT_TIMEOUT',
 
   // Engine errors

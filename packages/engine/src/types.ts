@@ -154,6 +154,10 @@ export interface RawPageState {
   overlays?: OverlayBlocker[];
   metadata?: Record<string, unknown>;
   /**
+   * dom-semantic-subset also sets this flag: a deliberate main-document DOM
+   * interpretation without native AX, frames or shadow DOM. Increasing the
+   * snapshot budget cannot upgrade that adapter's semantics.
+   *
    * True when the whole-page ariaSnapshot budget (snapshotTimeoutMs) was
    * exceeded and `elements` came from the DOM-tag-only fallback instead of
    * the accessibility tree: roles are bare HTML tags with no name/value,
@@ -163,8 +167,8 @@ export interface RawPageState {
    * narrow the observation (ref_id) instead.
    */
   degraded?: boolean;
-  /** Why `degraded` is set, when it is. Currently only one cause exists. */
-  degradedReason?: 'aria-snapshot-timeout';
+  /** Why the observation has reduced semantic coverage. */
+  degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset';
 }
 
 /**

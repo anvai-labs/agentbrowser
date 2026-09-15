@@ -17,6 +17,10 @@ export * from './types.js';
 // ============================================================================
 
 export const ErrorCodeEnum = Type.Union([
+  Type.Literal('SESSION_BUSY'),
+  Type.Literal('CONTROL_REVOKED'),
+  Type.Literal('CONTROL_REQUIRED'),
+  Type.Literal('OPERATION_CONFLICT'),
   Type.Literal('INVALID_REQUEST'),
   Type.Literal('INVALID_TENANT_ID'),
   Type.Literal('UNAUTHORIZED'),
@@ -34,6 +38,7 @@ export const ErrorCodeEnum = Type.Union([
   Type.Literal('TARGET_DISABLED'),
   Type.Literal('NAVIGATION_TIMEOUT'),
   Type.Literal('ACTION_TIMEOUT'),
+  Type.Literal('VALUE_MISMATCH'),
   Type.Literal('PLAN_WAIT_TIMEOUT'),
   Type.Literal('ENGINE_UNSUPPORTED'),
   Type.Literal('ENGINE_CRASHED'),
@@ -109,6 +114,7 @@ export const SessionCookieSchema = Type.Object({
 });
 
 export const SessionRequestSchema = Type.Object({
+  controlMode: Type.Optional(Type.Literal('delegated')),
   tenantId: Type.Optional(Type.String({ minLength: 1 })),
   // Known engine names plus any registered engine name (TD-BROWSER-7
   // registry routes arbitrary names; unknown names fail at the service).
@@ -273,7 +279,9 @@ export const PageStateSchema = Type.Object({
   untrustedContent: Type.Boolean(),
   continuation: Type.Optional(ContinuationCursorSchema),
   degraded: Type.Optional(Type.Boolean()),
-  degradedReason: Type.Optional(Type.Literal('aria-snapshot-timeout')),
+  degradedReason: Type.Optional(
+    Type.Union([Type.Literal('aria-snapshot-timeout'), Type.Literal('dom-semantic-subset')])
+  ),
 });
 
 // ============================================================================
@@ -320,6 +328,7 @@ export const FillActionSchema = Type.Object({
   target: ElementTargetSchema,
   value: Type.String(),
   sensitive: Type.Optional(Type.Boolean()),
+  expectValue: Type.Optional(Type.String()),
 });
 
 export const SelectActionSchema = Type.Object({
@@ -420,6 +429,8 @@ export const PlanStepSchema = Type.Object({
   promptText: Type.Optional(Type.String()),
   wait: Type.Optional(DeliveredWaitConditionSchema),
   condition: Type.Optional(DeliveredWaitConditionSchema),
+  /** Verify a native field after one fill; never retry or echo the value. */
+  expectValue: Type.Optional(Type.String()),
   /** TD-BROWSER-8 Phase 2: pre-step label wait. */
   waitForLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
   /** Bounded hard (100-60000): garbage here wedged the poll loop pre-v1.8.2. */

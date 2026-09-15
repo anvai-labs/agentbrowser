@@ -16,3 +16,5 @@ export * from './logger.js';
 export * from './metrics.js';
 export * from './bounded-cache.js';
 export * from './ring-buffer.js';
+
+export * from './session-control.js';

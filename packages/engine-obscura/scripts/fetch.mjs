@@ -10,18 +10,16 @@
  * Prints the binary path on stdout for consumption by CI / launcher.
  */
 
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { chmodSync, createWriteStream, existsSync, mkdirSync } from 'node:fs';
 import fs from 'node:fs/promises';
-import { existsSync, mkdirSync, createWriteStream, chmodSync } from 'node:fs';
+import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
-import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const CHECKSUMS = JSON.parse(
-  await fs.readFile(path.join(scriptDir, 'checksums.json'), 'utf8')
-);
+const CHECKSUMS = JSON.parse(await fs.readFile(path.join(scriptDir, 'checksums.json'), 'utf8'));
 
 const VERSION = process.env.OBSCURA_VERSION ?? 'v0.2.1';
 
@@ -92,9 +90,7 @@ async function main() {
 
   const actual = await sha256(archivePath);
   if (actual !== entry.sha256) {
-    throw new Error(
-      `SHA-256 mismatch for ${entry.file}: expected ${entry.sha256}, got ${actual}`
-    );
+    throw new Error(`SHA-256 mismatch for ${entry.file}: expected ${entry.sha256}, got ${actual}`);
   }
   console.error(`sha256 verified: ${actual}`);
 

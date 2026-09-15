@@ -81,6 +81,19 @@ test('HTTP helper rejects oversized bodies', async () => {
   }), /limit/);
 });
 
+test('HTTP helper forwards an explicit operation ID without replaying a refused write', async () => {
+  let calls = 0;
+  await assert.rejects(apiRequest('https://fixture.invalid', '/pages', {
+    method: 'POST', body: {}, operationId: 'create-packaged-page',
+    fetch: async (_url, init) => {
+      calls++;
+      assert.equal(init.headers['x-agentbrowser-operation-id'], 'create-packaged-page');
+      return new Response(JSON.stringify({ error: { code: 'OPERATION_RECORDED' } }), { status: 409 });
+    },
+  }), /OPERATION_RECORDED/);
+  assert.equal(calls, 1);
+});
+
 test('HTTP deadline cancels stalled body consumption', async () => {
   let cancelled = false;
   const stream = new ReadableStream({ cancel() { cancelled = true; } });

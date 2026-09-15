@@ -33,6 +33,7 @@ export interface Viewport {
  * Session creation request
  */
 export interface SessionRequest {
+  controlMode?: 'delegated';
   /** Engine selection; omitted = server default. */
   engine?: EngineSelection;
   /** Owning tenant; stamped onto the session for scoping and quotas. */
@@ -221,6 +222,9 @@ export interface PageState {
    */
   continuation?: ContinuationCursor;
   /**
+   * dom-semantic-subset means an adapter supplies a limited DOM interpretation,
+   * not native AX. Increasing snapshotTimeoutMs cannot restore missing support.
+   *
    * True when the whole-page ariaSnapshot budget was exceeded and `elements`
    * came from a DOM-tag-only fallback: roles are bare HTML tags with no
    * name/value, and any custom widget with no native form control (e.g. a
@@ -229,8 +233,8 @@ export interface PageState {
    * session, or narrow the observation instead.
    */
   degraded?: boolean;
-  /** Why `degraded` is set, when it is. Currently only one cause exists. */
-  degradedReason?: 'aria-snapshot-timeout';
+  /** Why the observation has reduced semantic coverage. */
+  degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset';
 }
 
 /**
@@ -411,6 +415,13 @@ export interface FillAction extends Action {
   target: ElementTarget;
   value: string;
   sensitive?: boolean;
+  /**
+   * Compare a native input/textarea value after one fill. A mismatch fails
+   * with VALUE_MISMATCH without refilling or echoing either value. Success
+   * returns verified:true; it proves the comparison at readback time, not
+   * a durable application commit. Unqualified engines refuse this option.
+   */
+  expectValue?: string;
 }
 
 /**

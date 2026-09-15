@@ -623,7 +623,7 @@ describe('AgentBrowserService', () => {
       expect(page?.title).toContain('https://example.com/testing?keep=1');
     });
 
-    it('redacts registered secrets appearing in the page GET url', async () => {
+    it('redacts registered secrets appearing in page GET url and title', async () => {
       const secreted = new AgentBrowserService({
         engine,
         secretManager: new SecretManager({ 'vault://q': 's3cret-query-value' }),
@@ -636,6 +636,8 @@ describe('AgentBrowserService', () => {
 
       const page = await secreted.getPage(session.sessionId, pageId);
       expect(page?.url).not.toContain('s3cret-query-value');
+      expect(page?.title).toBeDefined();
+      expect(page?.title).not.toContain('s3cret-query-value');
     });
 
     it('should reject a page under the wrong session', async () => {

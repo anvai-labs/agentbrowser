@@ -12,3 +12,5 @@ export * from './validators.js';
 export * from './contracts.js';
 export * from './errors.js';
 export * from './wire-action.js';
+
+export * from './control.js';
