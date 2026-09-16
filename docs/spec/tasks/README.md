@@ -1,17 +1,18 @@
 # Agent implementation task packets
 
 Status: implementation activated by the user's subsequent foundation-first instruction.
-T0 is active; other tasks remain not started. The first increment is shared interaction
-guidance and offline CLI command discovery. Reading this task list alone does not
+T0 is delivered and T1's local context-loader slice is active; later tasks remain not
+started. Reading this task list alone does not
 authorize implementation or publication; follow the current user-authorized scope.
 
 ## Start a task with minimal context
 
 Read shared core, the selected mode, this execution protocol once, and one task packet
 with its declared inputs from the manifest. Do not read every mode or historic ADR.
-The proposed future command is `node scripts/spec-context.mjs --mode qa --task t2`;
-it selects the explicit task view with a 64 KiB complete-context ceiling. The loader
-does not yet exist. Until T1 implements it, follow the manifest paths manually.
+Use `node scripts/spec-context.mjs --mode qa --task t2`; it selects the explicit task
+view with a 64 KiB complete-context ceiling. A task whose hard dependency is not marked
+complete is rejected. `--list` and `--check` expose selection metadata and validate all
+declared files and budgets without contacting a service.
 
 | Task | Outcome | Hard task dependencies |
 | --- | --- | --- |

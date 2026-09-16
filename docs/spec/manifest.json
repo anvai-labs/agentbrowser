@@ -64,8 +64,8 @@
     "task": {"modules": [], "requiresTask": true, "maxBytes": 65536}
   },
   "tasks": {
-    "t0": {"module": "task-t0", "status": "active", "dependsOn": [], "modes": ["qa", "operations", "audit", "appsec", "bounty", "forms", "application"]},
-    "t1": {"module": "task-t1", "status": "not_started", "dependsOn": ["t0"], "modes": ["qa", "operations", "audit", "appsec", "bounty", "forms", "application"]},
+    "t0": {"module": "task-t0", "status": "complete", "dependsOn": [], "modes": ["qa", "operations", "audit", "appsec", "bounty", "forms", "application"]},
+    "t1": {"module": "task-t1", "status": "active", "dependsOn": ["t0"], "modes": ["qa", "operations", "audit", "appsec", "bounty", "forms", "application"]},
     "t2": {"module": "task-t2", "status": "not_started", "dependsOn": ["t0"], "modes": ["qa", "operations", "audit", "appsec", "bounty", "forms", "application"]},
     "t3": {"module": "task-t3", "status": "not_started", "dependsOn": ["t2"], "modes": ["qa"]},
     "t4": {"module": "task-t4", "status": "not_started", "dependsOn": ["t2"], "modes": ["application"]},

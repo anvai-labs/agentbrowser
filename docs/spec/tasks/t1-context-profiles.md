@@ -1,6 +1,6 @@
 # T1: selective context and capability profiles
 
-Status: not started. Repository: agentbrowser; harness integration coordinated with T8.
+Status: active. Repository: agentbrowser; harness integration coordinated with T8.
 Depends on: T0. Inputs: core, architecture, state-memory, interfaces.
 
 ## Reuse and scope
@@ -36,3 +36,16 @@ Close R06/R07 and context parts of R11/R16 with evidence. No new browser/scanner
 dependency in the bridge or application-only composition. Do not claim runtime savings
 from Markdown size alone. Stop dynamic catalog switching if the installed client cannot
 refresh safely; qualify a fixed-profile connection instead.
+
+## Current implementation state
+
+The first local slice is implemented on the stacked `feat/context-profiles` branch:
+`scripts/spec-context.mjs` resolves the manifest with deterministic dependency order,
+reads only selected declared Markdown files, rejects unsafe paths/symlinks/cycles and
+fails before output on file or complete-bundle budget violations. Markdown and JSON
+outputs include exact serialized UTF-8 bytes and per-module SHA-256 hashes. The explicit
+engineering check covers all 82 allowed mode/view/task selections and is wired into the
+existing release-artifact gate; no runtime or development dependency was added.
+
+Runtime tool profiles, service-side profile admission, run cursors, UI and model-token/
+RSS measurements remain separate slices. The loader does not confer permissions.

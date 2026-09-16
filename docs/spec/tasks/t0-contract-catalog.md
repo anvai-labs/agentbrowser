@@ -1,6 +1,6 @@
 # T0: canonical contracts and accurate discovery
 
-Status: active. Repository: agentbrowser. Depends on: none.
+Status: complete. Repository: agentbrowser. Depends on: none.
 Inputs: core, contracts, interfaces, delivery. Follow the common task protocol.
 
 ## Reuse and scope
@@ -39,10 +39,10 @@ migration path; finish independently compatible documentation work. Unlock T1/T2
 
 ## Current implementation state
 
-Local candidate on `feat/foundation-discovery`, rebased onto develop `2144455` (#177).
-#178 released the upstream CLI parity batch as 1.8.18; develop still stamps 1.8.16.
-Foundation delivery is in progress; see the latest evidence record for identifiers. The original local work is
-preserved in stash `bb41ee8c07c0cbcc67e7b8dcec4f6e4cb1ab9399`.
+Delivered through PR #179 and merged to develop as `e1835682`, after rebasing the
+candidate onto `2144455` (#177). #178 released the upstream CLI parity batch as 1.8.18;
+develop still stamps 1.8.16. The original local work remains preserved in stash
+`bb41ee8c07c0cbcc67e7b8dcec4f6e4cb1ab9399`.
 
 Implemented locally:
 
@@ -58,8 +58,8 @@ Implemented locally:
 Latest contract slice: protocol 140, MCP 71, CLI 97, and 295 API regression tests passed,
 including OpenAPI consistency and real Chromium plan success/timeout. Workspace build,
 type-check and lint passed (existing lint warnings remain); actual Node/Bun stdio checks
-cover both bulk tools in both protocol/binding modes. Full delivery gates are in progress.
-No GitHub CI run has yet been triggered for this candidate.
+cover both bulk tools in both protocol/binding modes. PR and post-merge develop CI each
+passed all eight jobs without a rerun.
 
 The [wire-contract audit](../evidence/t0-contract-audit.md) records each remaining surface
 and why internal schemas must not be advertised as incompatible public wire contracts.
@@ -72,13 +72,11 @@ both catalogs. T1 must measure selection savings rather than claim shrinking all
 1. Preserve the completed contract audit when reviewing this candidate. Autofill and
    plan are qualified here; migrate remaining wire envelopes under T2 with fixtures
    rather than extending T0 with unqualified output schemas.
-2. Deliver the scoped foundation changes via the common task protocol, reconciling
-   develop again before push. Preserve the backup. The adversarial review's one finding
-   (validate autofill reports before CLI success/output) has a red-then-green regression;
-   its final recheck was unavailable because the reviewer exhausted its usage allowance.
-3. Only then close T0 acceptance and unlock dependent increments. Installed Victor,
-   Codex and Claude structured-result qualification remains T8; no runtime mode loader
-   exists yet (T1). Registry metadata is conditional on selecting publication.
+2. Preserve the adversarial review resolution: autofill reports are validated before
+   CLI success/output and the malformed-report case has a red-then-green regression.
+3. Continue dependency-ready increments. Installed Victor, Codex and Claude structured-
+   result qualification remains T8; runtime mode profiles remain T1. Registry metadata
+   is conditional on selecting publication.
 
 Detailed evidence, compatibility decisions, measurements and earlier validation are in
 [the optional evidence record](../evidence/t0-foundation.md). Do not load that record

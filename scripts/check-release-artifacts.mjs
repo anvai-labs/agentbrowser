@@ -6,8 +6,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { buildServer } from '../packages/api/dist/server.js';
 import { FakeEngine } from '../packages/testkit/dist/index.js';
-import { checkMcpContracts } from './release-smoke.mjs';
 import { checkCatalogDocument } from './mcp-catalog-docs.mjs';
+import { checkMcpContracts } from './release-smoke.mjs';
+import { checkSpecContext } from './spec-context.mjs';
 
 const root = new URL('../', import.meta.url);
 const { version } = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'));
@@ -34,6 +35,8 @@ execFileSync(process.execPath, [fileURLToPath(new URL('packages/mcp-server/scrip
 });
 await checkCatalogDocument();
 execFileSync(process.execPath, ['--test', fileURLToPath(new URL('scripts/mcp-catalog-docs.test.mjs', root))], { stdio: 'inherit', timeout: 10_000 });
+execFileSync(process.execPath, ['--test', fileURLToPath(new URL('scripts/spec-context.test.mjs', root))], { stdio: 'inherit', timeout: 10_000 });
+console.log(JSON.stringify({ specContext: 'PASS', ...(await checkSpecContext()) }));
 const contracts = await checkMcpContracts([process.execPath, fileURLToPath(new URL('packages/mcp-server/dist/bin.js', root))], { expectedVersion: version });
 console.log(JSON.stringify({ mcpContracts: 'PASS', ...contracts }));
 console.log(`Built API, CLI and MCP report product version ${version}.`);
