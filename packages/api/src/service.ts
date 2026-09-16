@@ -63,6 +63,7 @@ import {
   decodeWireAction,
   parseRef,
 } from '@agentbrowser/protocol';
+import { runAutofill } from './autofill.js';
 import {
   DownloadBudget,
   DownloadTransport,
@@ -1197,6 +1198,59 @@ export class AgentBrowserService {
       );
     }
     return engine;
+  }
+
+  /** Structured, scoped native form filling under the caller’s existing admission. */
+  async autofill(sessionId: string, pageId: string, input: unknown) {
+    this.requirePage(sessionId, pageId);
+    try {
+      const report = await runAutofill(input, {
+        resolveValue: async (value) => {
+          try {
+            return this.secretManager.isReference(value)
+              ? await this.secretManager.resolve(value)
+              : value;
+          } catch {
+            throw new ServiceError(
+              'INVALID_REQUEST',
+              'Unable to resolve an autofill value reference'
+            );
+          }
+        },
+        redact: (value) => this.secretManager.redact(value),
+        assert: () => {
+          this.requirePage(sessionId, pageId);
+        },
+        observe: async () => {
+          const view = await this.observe(sessionId, pageId, {
+            mode: 'interactive',
+            include: ['formControls'],
+            maxElements: 2000,
+            maxBytes: 1024 * 1024,
+          });
+          // Compare private normalized values, never non-injective redacted display text.
+          const full = this.requirePage(sessionId, pageId).lastObservation;
+          return { ...view, elements: full ? [...full.byRef.values()] : [] };
+        },
+        act: (request) => this.act(sessionId, pageId, request),
+        snapshot: async () => {
+          const artifact = await this.exportHtml(sessionId, pageId);
+          return {
+            artifactId: artifact.artifactId,
+            contentType: artifact.contentType,
+            sizeBytes: artifact.sizeBytes,
+            warnings: [
+              'Raw HTML is not secret-redacted; receipts carry live field-state evidence.',
+            ],
+          };
+        },
+      });
+      return this.secretManager.redact(report);
+    } catch (error) {
+      if (error instanceof Error && !('code' in error))
+        throw new ServiceError('INVALID_REQUEST', error.message);
+      throw error;
+    }
   }
 
   /**

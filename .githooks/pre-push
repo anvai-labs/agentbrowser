@@ -39,6 +39,11 @@ else
     exit 1
 fi
 
+# Catch built MCP catalog drift locally before spending GitHub runner time.
+echo "Checking built product and tool catalog contracts..."
+node --test scripts/release-smoke.test.mjs
+pnpm release:artifacts
+
 # 3. Lint check
 echo ""
 echo "3️⃣  Code formatting and linting..."

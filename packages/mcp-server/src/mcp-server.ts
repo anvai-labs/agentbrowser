@@ -10,10 +10,12 @@
  */
 
 import {
+  AutofillRequestSchema,
   DELIVERED_ACTION_TYPES,
   UsageError,
   WireActionEnvelopeSchema,
   formatErrorForUser,
+  parseAutofillRequest,
   validateWireAction,
 } from '@agentbrowser/protocol';
 import type {
@@ -43,6 +45,12 @@ export type { ClientOptions, ExportedCookie };
 /** The slice of the SDK the MCP server depends on. */
 export interface McpClient {
   sessions: {
+    autofill?(
+      sessionId: string,
+      pageId: string,
+      request: import('@agentbrowser/protocol').AutofillRequest,
+      options?: MutationOptions
+    ): Promise<import('@agentbrowser/protocol').AutofillReport>;
     control?(sessionId: string): Promise<import('@agentbrowser/protocol').ControlView>;
     listPages?(sessionId: string): Promise<PageResponse[]>;
     operation?(
@@ -292,6 +300,41 @@ function buildTools(client: McpClient): ToolDefinition[] {
       handler: async (args) => {
         const [sessionId, pageId] = sessionAndPage(args);
         return await client.sessions.snapshot(sessionId, pageId);
+      },
+    },
+
+    {
+      name: 'browser_autofill',
+      description:
+        'Fill and verify structured fields in one serial server operation. Match labels within a unique fieldset block (id or legend label). Supports native text inputs and single selects; custom widgets are refused. Verification retries only read; uncertain writes stop the batch. Returns per-field receipts and an authorized raw HTML artifact. Performs no explicit submit action; page input/change handlers may commit effects. After a lost response, inspect browser_operation before any further write.',
+      inputSchema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          sessionId: { type: 'string' },
+          pageId: { type: 'string' },
+          ...AutofillRequestSchema.properties,
+        },
+        required: ['sessionId', 'pageId', 'fields'],
+      },
+      handler: async (args) => {
+        const [sessionId, pageId] = sessionAndPage(args);
+        if (!client.sessions.autofill) throw new UsageError('Client does not support autofill');
+        let payload: import('@agentbrowser/protocol').AutofillRequest;
+        try {
+          payload = parseAutofillRequest({
+            fields: args.fields,
+            ...(args.policy !== undefined ? { policy: args.policy } : {}),
+          });
+        } catch (error) {
+          throw new UsageError(error instanceof Error ? error.message : 'Invalid autofill request');
+        }
+        return await client.sessions.autofill(
+          sessionId,
+          pageId,
+          payload,
+          ...operationOptions(args)
+        );
       },
     },
 
@@ -751,7 +794,9 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
   for (const tool of tools) {
     if (deps.sessionId && Array.isArray(tool.inputSchema.required))
       tool.inputSchema.required = tool.inputSchema.required.filter((name) => name !== 'sessionId');
-    if (['browser_act', 'browser_plan', 'browser_navigate'].includes(tool.name)) {
+    if (
+      ['browser_act', 'browser_plan', 'browser_autofill', 'browser_navigate'].includes(tool.name)
+    ) {
       (tool.inputSchema.properties as Record<string, unknown>).operationId = {
         type: 'string',
         pattern: '^[a-zA-Z0-9_-]{1,128}$',
@@ -858,7 +903,9 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
                 throw new UsageError('This MCP connection is bound to another session');
               if (
                 deps.sessionId &&
-                ['browser_act', 'browser_plan', 'browser_navigate'].includes(name) &&
+                ['browser_act', 'browser_plan', 'browser_autofill', 'browser_navigate'].includes(
+                  name
+                ) &&
                 args.operationId === undefined
               )
                 throw new UsageError(

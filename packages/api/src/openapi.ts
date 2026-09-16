@@ -13,6 +13,8 @@ import {
   ApiErrorDetailSchema,
   ApiErrorSchema,
   ArtifactRefSchema,
+  AutofillReportSchema,
+  AutofillRequestSchema,
   ControlGrantSchema,
   ControlReviewSchema,
   ControlViewSchema,
@@ -544,6 +546,26 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                 },
               }),
             },
+            '404': NOT_FOUND,
+          },
+        },
+      },
+
+      '/v1/sessions/{sessionId}/pages/{pageId}/autofill': {
+        post: {
+          operationId: 'autofillPage',
+          summary: 'Fill structured fields serially and return verification receipts',
+          description:
+            'One controlled mutation. Native inputs and single selects only. Unique fieldset scope, bounded read-only retries, stop on uncertain writes. Includes a raw HTML artifact; no explicit submit action.',
+          tags: ['pages'],
+          parameters: [sessionIdParam, pageIdParam],
+          requestBody: { required: true, content: json(AutofillRequestSchema) },
+          responses: {
+            '200': {
+              description: 'Per-field report; inspect ok and receipts even on HTTP 200.',
+              content: json(AutofillReportSchema),
+            },
+            '400': INVALID_REQUEST,
             '404': NOT_FOUND,
           },
         },

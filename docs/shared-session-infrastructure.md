@@ -244,3 +244,5 @@ Existing behavior and limitations are documented in
 [application authority](application-operation-authority.md),
 [ephemeral session policy](adr/005-ephemeral-sessions-explicit-persistence.md), and
 [the transport integration boundary](transport-integration-contract.md).
+
+Bulk form operations reuse this service admission and transport model; see [bulk autofill](bulk-autofill.md) for the delivered native strategies, cooperative deadline and remaining widget/recovery contracts.

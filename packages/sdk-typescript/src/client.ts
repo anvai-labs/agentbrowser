@@ -6,6 +6,8 @@
  */
 
 import type {
+  AutofillReport,
+  AutofillRequest,
   ControlView,
   DELIVERED_ACTION_TYPES,
   OperationRecord,
@@ -13,6 +15,7 @@ import type {
 } from '@agentbrowser/protocol';
 
 export type { ControlView, OperationRecord } from '@agentbrowser/protocol';
+export type { AutofillRequest, AutofillReport } from '@agentbrowser/protocol';
 export interface MutationOptions {
   operationId?: string;
 }
@@ -281,7 +284,7 @@ class HttpClient {
 
   async requestJson<T>(
     path: string,
-    init: { method?: string; body?: unknown; operationId?: string } = {}
+    init: { method?: string; body?: unknown; operationId?: string; timeoutMs?: number } = {}
   ): Promise<T> {
     const operationId =
       path.startsWith('/v1/sessions/') &&
@@ -291,7 +294,7 @@ class HttpClient {
         ? (init.operationId ?? this.headers['x-agentbrowser-operation-id'] ?? crypto.randomUUID())
         : undefined;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timeoutId = setTimeout(() => controller.abort(), init.timeoutMs ?? this.timeoutMs);
     try {
       const response = await fetch(`${this.baseUrl}${path}`, {
         method: init.method ?? 'GET',
@@ -502,7 +505,21 @@ export class SessionsClient {
     return body.events;
   }
 
-  /** TD-BROWSER-8: execute a batched action plan; returns per-step results. */
+  /** Structured native form filling; choose an operation ID before dispatch. */
+  async autofill(
+    sessionId: string,
+    pageId: string,
+    request: AutofillRequest,
+    options: MutationOptions = {}
+  ): Promise<AutofillReport> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/autofill`, {
+      method: 'POST',
+      body: request,
+      ...options,
+      timeoutMs: Math.min(240000, request.policy?.timeoutMs ?? 240000) + 30000,
+    });
+  }
+
   async plan(
     sessionId: string,
     pageId: string,

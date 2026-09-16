@@ -287,3 +287,49 @@ describe('delegated coexistence', () => {
     ).toMatchObject({ state: 'HUMAN_ACTIVE', busy: false });
   });
 });
+
+it('records a partially applied autofill as uncertain and refuses replay of the batch', async () => {
+  const { server, engine, url } = await setup();
+  const created = await server.inject({
+    method: 'POST',
+    url: `${url}/pages`,
+    headers: { ...operator, 'x-agentbrowser-operation-id': 'page' },
+  });
+  const pageId = created.json().pageId;
+  const raw = engine.getFakePage(engine.getSessionIds()[0]!, pageId)!;
+  raw.seedElements([
+    {
+      ref: 'company',
+      role: 'textbox',
+      name: 'Company',
+      attributes: { tag: 'input', type: 'text', 'autofill-node': 'company', 'autofill-block': '' },
+    },
+  ]);
+  const writes = vi.spyOn(raw, 'act');
+  const agent = await delegate(server, url);
+  const request = {
+    method: 'POST' as const,
+    url: `${url}/pages/${pageId}/autofill`,
+    headers: { ...agent, 'x-agentbrowser-operation-id': 'bulk-partial' },
+    payload: {
+      fields: [
+        { match: { label: 'Company' }, value: 'Example' },
+        { match: { label: 'Missing' }, value: 'Untouched' },
+      ],
+      policy: { settleMs: 0, maxReobserve: 0 },
+    },
+  };
+  const report = await server.inject(request);
+  expect(report.statusCode).toBe(200);
+  expect(report.json()).toMatchObject({
+    ok: false,
+    receipts: [{ status: 'verified' }, { status: 'failed' }],
+  });
+  const operation = await server.inject({ url: `${url}/operations/bulk-partial`, headers: agent });
+  expect(operation.json()).toMatchObject({ status: 'outcome_unknown' });
+  expect((await server.inject(request)).json()).toMatchObject({
+    replay: true,
+    operation: { status: 'outcome_unknown' },
+  });
+  expect(writes).toHaveBeenCalledOnce();
+});
