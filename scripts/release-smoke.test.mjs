@@ -141,7 +141,7 @@ test('child output is bounded and nonzero exit/spawn errors fail', async () => {
 });
 
 test('public smoke commands accept explicit versions and propagate failure exit codes', async () => {
-  const cli = command("console.log(process.argv.includes('--version')?'1.2.3':'agentbrowser session act plan');");
+  const cli = command("console.log(process.argv.includes('--version')?'1.2.3':'agentbrowser session act plan autofill pdf download health');");
   for (const [kind, executable] of [['cli', cli], ['mcp-server', mcp()]]) {
     const wrapper = fileURLToPath(new URL(`../packages/${kind}/scripts/smoke.mjs`, import.meta.url));
     const base = [process.execPath, wrapper];
@@ -150,12 +150,22 @@ test('public smoke commands accept explicit versions and propagate failure exit 
     await assert.rejects(runExecutable([...base, '--expected-version', '9.9.9', ...executable]), /exited unsuccessfully \(1\)/);
     await assert.rejects(runExecutable([...base, '--expected-version']), /exited unsuccessfully \(2\)/);
   }
+  // The CLI help-token check now also requires the newer command names.
+  const richerCli = command(
+    "console.log(process.argv.includes('--version')?'1.2.3':'agentbrowser session act plan autofill pdf download health');"
+  );
+  assert.equal(
+    (await checkCli(richerCli('1.2.3', 'agentbrowser session act plan autofill pdf download health'), options)).version,
+    '1.2.3'
+  );
+  await assert.rejects(checkCli(cli('1.2.3', 'agentbrowser session act plan'), options), /help is missing/);
 });
 
 test('CLI requires both exact version and command help', async () => {
   const cli = (version, help) => command(`console.log(process.argv.includes('--version') ? ${JSON.stringify(version)} : ${JSON.stringify(help)});`);
-  assert.equal((await checkCli(cli('1.2.3', 'agentbrowser session act plan'), options)).version, '1.2.3');
-  await assert.rejects(checkCli(cli('1.2.4', 'agentbrowser session act plan'), options), /version/);
+  const fullHelp = 'agentbrowser session act plan autofill pdf download health';
+  assert.equal((await checkCli(cli('1.2.3', fullHelp), options)).version, '1.2.3');
+  await assert.rejects(checkCli(cli('1.2.4', fullHelp), options), /version/);
   await assert.rejects(checkCli(cli('1.2.3', 'wrong program'), options), /help/);
 });
 
