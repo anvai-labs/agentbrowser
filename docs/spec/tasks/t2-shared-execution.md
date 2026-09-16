@@ -1,6 +1,6 @@
 # T2: shared execution, verification and result helpers
 
-Status: not started. Repository: agentbrowser. Depends on: T0.
+Status: active. Repository: agentbrowser. Depends on: T0.
 Inputs: core, architecture, contracts, execution, grounding.
 
 ## Reuse and scope
@@ -34,3 +34,18 @@ Run existing control/authority/autofill suites plus one actual service/stdio fix
 
 Close R02 execution aspects, R04 foundation and R12 shared helper ownership. Record
 unsupported evidence levels rather than inventing commits. Unlock T3/T4/T5/T6.
+
+## Current implementation state
+
+The first slice reuses the existing `ActionExecutor.beforeAction` admission seam to
+report when autofill has crossed from validation and approval into engine dispatch.
+Autofill now reports a refusal before that seam as `failed` and an exception after it
+as `uncertain`; bounded verification reads still cannot replay the write. The public
+service method and HTTP, OpenAPI, SDK, CLI and MCP contracts are unchanged, and no
+dependency or second execution state machine was added.
+
+The focused unit/service tests and the complete API suite cover approval refusal,
+post-dispatch engine rejection and exactly one dispatch across verification retries.
+See the [dispatch-boundary evidence](../evidence/t2-dispatch-boundary.md). Compatible
+shared result/verifier projections, trusted verifier registration and the remaining
+T2 acceptance matrix are still pending, so T2 is not complete.
