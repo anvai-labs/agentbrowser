@@ -138,6 +138,11 @@ jobs:
           pnpm test:egress-evidence
           pnpm test:firefox-independence
 
+      - name: Qualify application production dependency independence
+        run: |
+          node --test scripts/application-deployment-audit.test.mjs
+          pnpm test:application-independence
+
       - name: Upload coverage
         if: hashFiles('coverage/coverage-final.json') != ''
         uses: codecov/codecov-action@v4

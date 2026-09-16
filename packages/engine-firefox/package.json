@@ -1,6 +1,6 @@
 {
   "name": "@agentbrowser/engine-firefox",
-  "version": "1.8.15",
+  "version": "1.8.16",
   "private": true,
   "type": "module",
   "description": "Experimental native Firefox WebDriver BiDi adapter for trusted local use",

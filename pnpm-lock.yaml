@@ -20,6 +20,9 @@ importers:
 
   packages/api:
     dependencies:
+      '@agentbrowser/control':
+        specifier: workspace:*
+        version: link:../control
       '@agentbrowser/core':
         specifier: workspace:*
         version: link:../core
@@ -128,6 +131,25 @@ importers:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.20.1)
+
+  packages/control:
+    dependencies:
+      '@agentbrowser/core':
+        specifier: workspace:*
+        version: link:../core
+      '@agentbrowser/engine':
+        specifier: workspace:*
+        version: link:../engine
+      '@agentbrowser/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+    devDependencies:
+      '@agentbrowser/testkit':
+        specifier: workspace:*
+        version: link:../testkit
       vitest:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@22.20.1)

@@ -14,6 +14,7 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY packages/protocol/package.json packages/protocol/
 COPY packages/engine/package.json packages/engine/
 COPY packages/core/package.json packages/core/
+COPY packages/control/package.json packages/control/
 COPY packages/testkit/package.json packages/testkit/
 COPY packages/engine-playwright/package.json packages/engine-playwright/
 COPY packages/engine-firefox/package.json packages/engine-firefox/

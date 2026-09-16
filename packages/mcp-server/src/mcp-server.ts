@@ -496,6 +496,10 @@ function buildTools(client: McpClient): ToolDefinition[] {
         'When a targeted action times out (ACTION_TIMEOUT), the failure details name the ref, ' +
         'what element covers it (blockedBy) and a screenshot artifact id captured at the ' +
         'deadline, so one retry after observing is usually enough. ' +
+        'typeText types text as real per-character keystrokes (unlike fill, which sets the ' +
+        'value and fires one input event): use it for search-as-you-type boxes and ' +
+        'typeahead filters that ignore programmatic value setting; delay (0-1000ms) spaces ' +
+        'out the characters for debounced filters. ' +
         'press accepts count (1-20): the keypress repeats inside one action with a single ' +
         'revision bump - use it for spinbutton-style controls, where the revision bump from ' +
         'each individual press would invalidate the ref before the next press. ' +

@@ -125,6 +125,48 @@ describe('real action wire semantics', () => {
     }
   });
 
+  it('typeText delivers real per-character keystrokes that fill does not', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      // The fixture counts KEYDOWN events - the signal that separates real
+      // typing from a programmatic value set. A masked-input widget keys off
+      // exactly these events.
+      await page.navigate({
+        url: 'data:text/html,<input aria-label="Code" onkeydown="window.k=(window.k||0)+1;this.value=window.k">',
+      });
+      const input = (await page.observe({})).elements.find((element) => element.name === 'Code');
+      if (!input) throw new Error('Missing fixture input');
+      const effect = await page.act({
+        type: 'typeText',
+        target: { ref: input.ref },
+        value: 'abc',
+      });
+      expect(effect.result).toEqual({ success: true });
+      const backing = (
+        page as unknown as { backingPage(): import('playwright').Page }
+      ).backingPage();
+      expect(await backing.evaluate(() => (window as unknown as { k: number }).k)).toBe(3);
+
+      // Without a target the keystrokes go to the currently focused element.
+      const page2 = await (await engine.createSession({ headless: true })).newPage();
+      await page2.navigate({
+        url: 'data:text/html,<input aria-label="Spin" onkeydown="window.k=(window.k||0)+1;this.value=window.k">',
+      });
+      const input2 = (await page2.observe({})).elements.find((element) => element.name === 'Spin');
+      if (!input2) throw new Error('Missing fixture input');
+      await page2.act({ type: 'click', target: { ref: input2.ref } });
+      await page2.act({ type: 'typeText', value: 'xy' });
+      const backing2 = (
+        page2 as unknown as { backingPage(): import('playwright').Page }
+      ).backingPage();
+      expect(await backing2.evaluate(() => (window as unknown as { k: number }).k)).toBe(2);
+    } finally {
+      await engine.close();
+    }
+  });
+
   it('attaches local files to a hidden file input without a ref and reports evidence', async () => {
     const engine = new PlaywrightChromiumEngine();
     try {

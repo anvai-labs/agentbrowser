@@ -17,6 +17,8 @@ start with the [root README](../README.md).
 | Understand why a design decision was made | ADRs, below |
 | Understand the security posture and its limits | [Threat model](threat-model.md) |
 | Hand a step of a workflow to a human (credentials, approvals) | [Human handoff](human-handoff.md) |
+| Resume application operations under shared human/agent control | [Next design](application-operation-authority.md) and [promotion/recovery audit](evidence/coexistence-promotion.md) |
+| Choose transports and recover across clients, sessions and pages | [Shared session infrastructure](shared-session-infrastructure.md) |
 | Understand why a synthetic click can be ignored by a page | [Synthetic input limitations](synthetic-input-limitations.md) |
 | See what changed in a release | [Changelog](../CHANGELOG.md) |
 | Resume active work: local functional validation, priorities and release sequence | [Release milestones and local-functional pivot](release-milestones.md#local-functional-pivot-priority-and-sequence) |

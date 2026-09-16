@@ -90,7 +90,31 @@ single action:
 ```
 
 Multi-select chips ("N items selected") commit the same way. Removing a chip
-that is already selected is the same keyboard contract — focus the chip, `Delete`.
+that is already selected is the same keyboard contract — a targeted
+`{"action": "press", "key": "Delete", "target": {"ref": "<chip ref>"}}` removes
+it (the chip's own a11y name says "press delete to clear value").
+
+### Search-to-filter widgets (moniker search)
+
+Typeahead boxes whose dropdown ignores programmatic value setting need real
+per-character keystrokes. The `typeText` action delivers them:
+
+```json
+{"action": "typeText", "target": {"ref": "e30_41"}, "value": "Job Board", "delay": 40}
+```
+
+With the list filtered to a handful of rows, the walk shrinks to one or two
+`ArrowDown`s and the highlight target is visible in the observation — no
+blind 20-row walks. Verify the commit through the widget's own state text
+("N items selected, <value>") scoped to the widget's container in
+`browser_html`, not by the presence of an option row (rows render whether
+or not anything is selected).
+
+**Focus purity**: keyboard menus track highlight in widget-internal state, not
+DOM focus. Never interleave targeted actions (clicks, targeted presses on other
+elements) inside a walk — each one can move focus and silently break the
+commit. Open the menu, finish the keyboard sequence, verify, and only then
+touch anything else.
 
 ## Stray open menus
 

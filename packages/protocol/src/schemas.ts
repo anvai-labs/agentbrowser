@@ -150,6 +150,7 @@ export const ACTION_TYPE_LITERALS = [
   'hover',
   'fill',
   'type',
+  'typeText',
   'clear',
   'press',
   'select',
@@ -331,6 +332,15 @@ export const FillActionSchema = Type.Object({
   expectValue: Type.Optional(Type.String()),
 });
 
+export const TypeTextActionSchema = Type.Object({
+  type: Type.Literal('typeText'),
+  target: Type.Optional(ElementTargetSchema),
+  // Bounded: typing duration scales per character, so an unbounded value
+  // would let one action hold the page's action path for minutes.
+  value: Type.String({ minLength: 1, maxLength: 5000 }),
+  delay: Type.Optional(Type.Integer({ minimum: 0, maximum: 1000 })),
+});
+
 export const SelectActionSchema = Type.Object({
   type: Type.Literal('select'),
   target: ElementTargetSchema,
@@ -416,6 +426,7 @@ export const PlanStepSchema = Type.Object({
   deltaY: Type.Optional(Type.Number()),
   key: Type.Optional(Type.String()),
   count: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
+  delay: Type.Optional(Type.Integer({ minimum: 0, maximum: 1000 })),
   direction: Type.Optional(
     Type.Union([
       Type.Literal('up'),
@@ -504,6 +515,7 @@ export const ActionSchema = Type.Union([
   DblClickActionSchema,
   HoverActionSchema,
   FillActionSchema,
+  TypeTextActionSchema,
   ClearActionSchema,
   CheckActionSchema,
   UncheckActionSchema,
