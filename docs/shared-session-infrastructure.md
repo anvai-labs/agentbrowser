@@ -162,6 +162,43 @@ Before exposing application commands over HTTP/MCP, enforce the serialized-byte
 budget while canonicalizing input, including escaping overhead; checking only
 after constructing the whole string permits larger intermediate allocations.
 
+### Resource bounds and lifecycle refinement
+
+The resource-bound implementation hardens the existing in-process boundary before adding
+another externally reachable adapter. Canonical application JSON charges UTF-8
+bytes, escaping, keys, delimiters, depth and nodes during traversal. It rejects
+accessors and sparse arrays instead of executing getters or inventing missing
+values. Writes reuse that serialization for their fingerprint; metadata has a
+separate bounded serialization so it cannot consume a valid input's depth/node
+budget. Reads do not compute unused write fingerprints. This is a resource-bound
+and allocation improvement, not a claimed throughput benchmark.
+
+Session registration must not overwrite an active owner. Cleanup detaches its
+abort listener and checks the captured owner identity, so an old callback cannot
+delete a replacement or revive a grant. Captured page handles also retain their
+owner identity. Optional monotonic deadlines are checked at authentication,
+admission, dispatch and output; application sessions enable them. Timers trigger
+cleanup, but delayed callbacks cannot extend authorization. When capacity is full,
+expired sessions are reclaimed before refusing admission. Existing browser
+registrations remain signal-driven unless a deadline is supplied.
+
+Missing authority always rejects a guarded call. The browser service explicitly
+tracks whether each live session context is delegated using weak identity storage;
+absence from the authority map cannot silently select legacy behavior. Event pumps
+retain that context identity and recheck it before recording or delivering events,
+including between subscribers and for synthetic stream-end events. A takeover
+inside one subscriber stops delivery to subsequent subscribers. This closes a
+lifecycle gap without a growing session-ID tombstone set; it does not implement
+the deferred cursor journal or principal-specific event subscriptions.
+
+The continuity qualification uses two real stdio bridge processes, one independently
+managed service and a deterministic engine fixture. It closes one bridge during a
+write, verifies duplicate suppression and operation lookup through the other,
+reconnects a replacement to both pages, then qualifies takeover and independent
+page closure. The receipt here proves a recorded engine command, not a durable
+business transaction. Service restart, native page-state restoration, resumable
+event cursors and external application tools remain unqualified next slices.
+
 ## MCP compatibility is an adapter concern
 
 Current AgentBrowser source advertises `2024-11-05` and uses stdio. Preserve that

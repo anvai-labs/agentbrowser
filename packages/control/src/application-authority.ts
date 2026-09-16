@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { ControlError, type SessionControl } from '@agentbrowser/core';
 import { CONTROL_OPERATION_ID } from '@agentbrowser/protocol';
+import { canonicalJson } from './canonical-json.js';
 import { SessionAuthority, type SessionPrincipal } from './session-authority.js';
 
 export interface ApplicationScope {
@@ -51,30 +52,6 @@ export interface ApplicationRequest {
   expectedVersion?: number;
 }
 type Binding = ApplicationBinding & { generation: string; tenant: string };
-
-/** Canonical, bounded JSON; no functions or live object references. */
-function canonical(value: unknown, depth = 0, budget = { nodes: 4096 }): string {
-  if (--budget.nodes < 0 || (typeof value === 'string' && value.length > 65536))
-    throw new ControlError('INVALID_REQUEST', 'Application input is too large');
-  if (depth > 16) throw new ControlError('INVALID_REQUEST', 'Application input is too deep');
-  if (value === null || typeof value === 'boolean' || typeof value === 'string')
-    return JSON.stringify(value);
-  if (typeof value === 'number' && Number.isFinite(value)) return JSON.stringify(value);
-  if (Array.isArray(value)) {
-    if (value.length > budget.nodes)
-      throw new ControlError('INVALID_REQUEST', 'Application input is too large');
-    return `[${value.map((v) => canonical(v, depth + 1, budget)).join(',')}]`;
-  }
-  if (typeof value === 'object' && value && Object.getPrototypeOf(value) === Object.prototype)
-    return `{${Object.keys(value)
-      .sort()
-      .map(
-        (key) =>
-          `${canonical(key, depth + 1, budget)}:${canonical((value as Record<string, unknown>)[key], depth + 1, budget)}`
-      )
-      .join(',')}}`;
-  throw new ControlError('INVALID_REQUEST', 'Application input must be JSON');
-}
 
 /** Opt-in trusted adapters. This port owns no browser, planner, network client or database. */
 export class ApplicationAuthority {
@@ -166,25 +143,27 @@ export class ApplicationAuthority {
       );
     if (!write && (request.operationId !== undefined || request.expectedVersion !== undefined))
       throw new ControlError('INVALID_REQUEST', 'Read operations do not accept write identities');
-    const serialized = canonical(request.input);
-    if (Buffer.byteLength(serialized) > 65536)
-      throw new ControlError('INVALID_REQUEST', 'Application input is too large');
+    const serialized = canonicalJson(request.input);
     const input: unknown = JSON.parse(serialized);
-    const fingerprint = createHash('sha256')
-      .update(
-        canonical({
-          ...binding,
-          operation: request.operation,
-          input,
-          expectedVersion: request.expectedVersion ?? null,
-        })
-      )
-      .digest('hex');
+    const fingerprint = write
+      ? createHash('sha256')
+          .update('application-operation:v1\0')
+          .update(
+            canonicalJson({
+              ...binding,
+              operation: request.operation,
+              expectedVersion: request.expectedVersion,
+            })
+          )
+          .update('\0')
+          .update(serialized)
+          .digest('hex')
+      : undefined;
     let rejected = false;
     return this.authority.run(
       sessionId,
       principal,
-      write && request.operationId ? { id: request.operationId, fingerprint } : {},
+      write && request.operationId && fingerprint ? { id: request.operationId, fingerprint } : {},
       async () => {
         const scope = this.scope(sessionId, binding, request);
         if (!adapter.authorize(scope))
@@ -247,13 +226,14 @@ export class ApplicationAuthority {
 
 /** Independent in-process session composition; authentication belongs to its host. */
 export class ApplicationSessions {
-  readonly authority = new SessionAuthority();
+  readonly authority: SessionAuthority;
   private readonly sessions = new Map<
     string,
     { tenant: string; abort: AbortController; timer: ReturnType<typeof setTimeout> }
   >();
   private readonly maxSessions: number;
-  constructor(options: { maxSessions?: number } = {}) {
+  constructor(options: { maxSessions?: number; now?: () => number } = {}) {
+    this.authority = new SessionAuthority(options);
     this.maxSessions = options.maxSessions ?? 100;
     if (!Number.isSafeInteger(this.maxSessions) || this.maxSessions < 1 || this.maxSessions > 10000)
       throw new ControlError('INVALID_REQUEST', 'Invalid application session capacity');
@@ -264,6 +244,10 @@ export class ApplicationSessions {
     const ttlMs = options.ttlMs ?? 30 * 60 * 1000;
     if (!Number.isSafeInteger(ttlMs) || ttlMs < 1 || ttlMs > 12600000)
       throw new ControlError('INVALID_REQUEST', 'Invalid application session TTL');
+    // Timers may be delayed by a busy event loop. Check deadlines before
+    // declaring capacity exhausted, without scanning on every admission.
+    if (this.sessions.size >= this.maxSessions)
+      for (const id of this.sessions.keys()) if (!this.authority.get(id)) this.remove(id);
     if (this.sessions.size >= this.maxSessions)
       throw new ControlError('QUOTA_EXCEEDED', 'Application session capacity reached');
     const sessionId = randomUUID();
@@ -271,7 +255,10 @@ export class ApplicationSessions {
     const timer = setTimeout(() => this.remove(sessionId), ttlMs);
     timer.unref();
     this.sessions.set(sessionId, { tenant: principal.tenant, abort, timer });
-    this.authority.register(sessionId, principal.tenant, abort.signal);
+    this.authority.register(sessionId, principal.tenant, abort.signal, {
+      ttlMs,
+      onExpire: () => this.remove(sessionId),
+    });
     return { sessionId, ttlMs };
   }
   close(sessionId: string, principal: SessionPrincipal): void {

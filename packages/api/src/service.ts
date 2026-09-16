@@ -24,7 +24,7 @@ import {
   SessionState,
   budgetObservation,
 } from '@agentbrowser/core';
-import type { ArtifactMetadata } from '@agentbrowser/core';
+import type { ArtifactMetadata, SessionContext } from '@agentbrowser/core';
 import type { InMemoryTracer, Span } from '@agentbrowser/core';
 import type { MetricsRegistry } from '@agentbrowser/core';
 import type { StructuredLogger } from '@agentbrowser/core';
@@ -319,6 +319,7 @@ const DELIVERED_INCLUDES = new Set<string>(['overlays', 'fileInputs', 'formContr
 
 export class AgentBrowserService {
   readonly authority = new SessionAuthority();
+  private readonly controlledContexts = new WeakSet<SessionContext>();
   private readonly engine: BrowserEngine;
   private readonly engines: Map<string, BrowserEngine> = new Map();
   private readonly coordinator: SessionCoordinator;
@@ -641,11 +642,21 @@ export class AgentBrowserService {
     return [...others, ...requests];
   }
 
+  private canPublishEvents(sessionId: string, owner: SessionContext): boolean {
+    if (this.coordinator.get(sessionId) !== owner || owner.signal.aborted) return false;
+    return (
+      !this.controlledContexts.has(owner) ||
+      this.authority.get(sessionId)?.view().state === 'AGENT_ACTIVE'
+    );
+  }
+
   private pumpEvents(sessionId: string, pageId: string, enginePage: EnginePage): void {
+    const owner = this.requireSession(sessionId);
     void (async () => {
       let sawDestroyed = false;
       try {
         for await (const event of enginePage.events()) {
+          if (this.coordinator.get(sessionId) !== owner || owner.signal.aborted) break;
           const stamped: EngineEvent = this.secretManager.redact({
             ...event,
             sessionId,
@@ -662,12 +673,12 @@ export class AgentBrowserService {
             sawDestroyed = true;
             this.reapPage(sessionId, pageId);
           }
-          const control = this.authority.get(sessionId);
-          if (control && control.view().state !== 'AGENT_ACTIVE') continue;
+          if (!this.canPublishEvents(sessionId, owner)) continue;
           if (!this.recordEvent(sessionId, stamped)) continue;
           const listeners = this.eventListeners.get(sessionId);
           if (listeners) {
             for (const listener of [...listeners]) {
+              if (!this.canPublishEvents(sessionId, owner)) break;
               try {
                 listener(structuredClone(stamped));
               } catch {
@@ -685,7 +696,11 @@ export class AgentBrowserService {
       // recordEvent creates on demand, so a pump outliving its session
       // (teardown or crash-recovery race) would otherwise resurrect a
       // deleted ledger with a lone synthetic event.
-      if (!sawDestroyed && this.eventHistory.has(sessionId)) {
+      if (
+        !sawDestroyed &&
+        this.eventHistory.has(sessionId) &&
+        this.canPublishEvents(sessionId, owner)
+      ) {
         const synthesized: EngineEvent = this.secretManager.redact({
           type: 'page.destroyed',
           timestamp: new Date().toISOString(),
@@ -697,6 +712,7 @@ export class AgentBrowserService {
           const listeners = this.eventListeners.get(sessionId);
           if (listeners) {
             for (const listener of [...listeners]) {
+              if (!this.canPublishEvents(sessionId, owner)) break;
               try {
                 listener(structuredClone(synthesized));
               } catch {
@@ -783,7 +799,7 @@ export class AgentBrowserService {
     const popupPageId = `pg_${++this.pageCounter}_${popup.id}`;
     this.pages.set(popupPageId, {
       sessionId,
-      enginePage: this.authority.guardPage(sessionId, popup),
+      enginePage: this.guardPage(sessionId, popup),
       revision: 1,
       history: new Map(),
       openerPageId: opener[0],
@@ -983,8 +999,10 @@ export class AgentBrowserService {
           )
         );
 
-      if (request.controlMode === 'delegated')
+      if (request.controlMode === 'delegated') {
         this.authority.register(session.sessionId, request.tenantId ?? '', context.signal);
+        this.controlledContexts.add(context);
+      }
       this.metrics?.incrementCounter('sessions_created_total');
       this.metrics?.setGauge('sessions_active', this.coordinator.getSessionCount());
 
@@ -1588,13 +1606,13 @@ export class AgentBrowserService {
       }
     }
 
-    this.authority.assert(sessionId, true);
+    this.assertAuthority(sessionId, true);
     const rawPage = await session.engineSession.newPage();
     if (session.signal.aborted) {
       await rawPage.close().catch(() => {});
       throw new ServiceError('SESSION_NOT_FOUND', 'Session ended during page creation');
     }
-    const enginePage = this.authority.guardPage(sessionId, rawPage);
+    const enginePage = this.guardPage(sessionId, rawPage);
     const pageId = `pg_${++this.pageCounter}_${enginePage.id}`;
     this.pages.set(pageId, { sessionId, enginePage, revision: 1, history: new Map() });
 
@@ -2703,7 +2721,7 @@ export class AgentBrowserService {
     }
     if (entry.metadata.controlEpoch !== undefined) {
       this.requireSession(sessionId);
-      this.authority.assert(sessionId);
+      this.assertAuthority(sessionId);
       if (
         this.authority.isAgent() &&
         entry.metadata.controlEpoch !== this.authority.currentEpoch(sessionId)
@@ -2723,7 +2741,7 @@ export class AgentBrowserService {
     bytes: Uint8Array,
     labels: { filename?: string; sessionId?: string } = {}
   ): ArtifactMetadata {
-    this.authority.assert(sessionId);
+    this.assertAuthority(sessionId);
     const controlEpoch = this.authority.currentEpoch(sessionId);
     const owner = this.requireSession(sessionId).metadata.tenantId;
     return this.artifacts.put(type, contentType, bytes, {
@@ -3068,6 +3086,16 @@ export class AgentBrowserService {
 
   // ---- internals ----------------------------------------------------------
 
+  private assertAuthority(sessionId: string, dispatch = false): void {
+    const context = this.requireSession(sessionId);
+    if (this.controlledContexts.has(context)) this.authority.assert(sessionId, dispatch);
+  }
+
+  private guardPage(sessionId: string, page: EnginePage): EnginePage {
+    const context = this.requireSession(sessionId);
+    return this.controlledContexts.has(context) ? this.authority.guardPage(sessionId, page) : page;
+  }
+
   private requireSession(sessionId: string) {
     const session = this.coordinator.get(sessionId);
     if (!session) {
@@ -3077,7 +3105,7 @@ export class AgentBrowserService {
   }
 
   private requirePage(sessionId: string, pageId: string): PageContext {
-    this.authority.assert(sessionId);
+    this.assertAuthority(sessionId);
     // Session-level failures outrank page-level ones: an expired session is
     // SESSION_NOT_FOUND even if the caller also holds a stale page id.
     if (!this.coordinator.get(sessionId)) {
