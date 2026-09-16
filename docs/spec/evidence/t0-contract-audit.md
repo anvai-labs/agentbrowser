@@ -86,5 +86,5 @@ found no missing release-changed file: 23 are byte-identical, 20 differ only by 
 metadata, and the 15 intentional overlaps preserve the released autofill, CLI parity,
 session-lifetime and smoke-test behavior while adding this foundation slice.
 
-Delivery gates and PR creation are in progress.
-No push, PR, CI run, merge or release has occurred for this candidate at this checkpoint.
+PR #179 passed all eight CI jobs and merged to develop as `e1835682`; the post-merge
+develop run also passed all eight jobs without reruns. Main and release were not promoted.

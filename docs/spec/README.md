@@ -15,8 +15,8 @@ The [manifest](manifest.json) is the local, versioned context routing contract.
 Every selection includes [core](core.md) and exactly one mode's dependency closure.
 Links are references, not instructions to recursively read other documents.
 
-Proposed CLI acceptance examples for the later context-loader task; this script is
-not implemented by this specification:
+The dependency-free local context loader reads this manifest and only its declared
+Markdown modules:
 
 ```sh
 node scripts/spec-context.mjs --list
@@ -28,11 +28,12 @@ node scripts/spec-context.mjs --mode qa --task t2
 node scripts/spec-context.mjs --check
 ```
 
-`agent` will be the default view: essential invariants and a mode-specific operating
+`agent` is the default view: essential invariants and a mode-specific operating
 contract. `contracts`, `algorithms`, `stack`, and `review` are explicit engineering
-expansions. Each has a proposed byte ceiling. The future loader must resolve declared
-dependencies, deduplicate modules, reject unknown selections/cycles/escaped paths, and fail
-over budget without emitting a partial context. It does not read personal data,
+expansions. Each has a byte ceiling. The loader resolves declared dependencies,
+deduplicates modules, rejects unknown selections/cycles/escaped paths, and fails over
+budget without emitting a partial context. It reports exact serialized UTF-8 bytes and
+per-module SHA-256 hashes. It does not read personal data,
 external links, the rest of the repository, or install a runtime plugin.
 
 `--task` selects the task view and loads one packet plus its declared shared inputs;
@@ -48,7 +49,8 @@ lower model token use, process RSS, or a smaller browser dependency closure.
 Implementation was subsequently activated for the first foundational T0 increment:
 shared CLI/MCP guidance, bounded CLI input/discovery and negotiated MCP autofill
 results with generated catalogs. See [T0 progress](tasks/t0-contract-catalog.md#current-implementation-state).
-The spec-context loader and runtime mode profiles described here remain proposed.
+The spec-context loader is implemented by T1's first slice. Runtime mode profiles,
+run cursors and memory selection remain proposed.
 
 ## Modes
 
