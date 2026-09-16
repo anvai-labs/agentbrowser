@@ -207,6 +207,64 @@ describe('AgentBrowser SDK', () => {
     });
   });
 
+  describe('health and download additions', () => {
+    it('health hits /health with auth but no operation-id header', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce(
+        new Response(JSON.stringify({ status: 'healthy', version: '1.8.17' }), {
+          headers: { 'content-type': 'application/json' },
+        })
+      );
+      const result = await client.health();
+      expect(result.status).toBe('healthy');
+      const call = vi.mocked(fetch).mock.calls.at(-1)!;
+      expect(call[0]).toBe('http://localhost:5709/health');
+      const headers = new Headers(call[1]?.headers as HeadersInit);
+      // The shared test client is built without an apiKey; /health accepts both.
+      expect(headers.get('authorization')).toBeNull();
+      expect(headers.get('x-agentbrowser-operation-id')).toBeNull();
+    });
+
+    it('download posts the url payload to the download route', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            artifactId: 'art_1',
+            type: 'download',
+            contentType: 'a/b',
+            sizeBytes: 1,
+            url: 'u',
+          }),
+          { headers: { 'content-type': 'application/json' } }
+        )
+      );
+      await client.sessions.download('ses_1', 'pg_1', { url: 'https://f.zip' });
+      const call = vi.mocked(fetch).mock.calls.at(-1)!;
+      expect(String(call[0])).toBe('http://localhost:5709/v1/sessions/ses_1/pages/pg_1/download');
+      expect(JSON.parse(String(call[1]?.body))).toEqual({ url: 'https://f.zip' });
+    });
+
+    it('collectDownload posts to the encoded filename route without a body', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            artifactId: 'art_2',
+            type: 'download',
+            contentType: 'a/b',
+            sizeBytes: 1,
+            url: 'u',
+          }),
+          { headers: { 'content-type': 'application/json' } }
+        )
+      );
+      await client.sessions.collectDownload('ses_1', 'pg_1', 'report q.zip');
+      const call = vi.mocked(fetch).mock.calls.at(-1)!;
+      expect(String(call[0])).toBe(
+        'http://localhost:5709/v1/sessions/ses_1/pages/pg_1/downloads/report%20q.zip'
+      );
+      expect(call[1]?.body).toBeUndefined();
+    });
+  });
+
   describe('page management', () => {
     it('should create page', async () => {
       const mockPage = {
