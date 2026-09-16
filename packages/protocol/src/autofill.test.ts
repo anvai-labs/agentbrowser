@@ -1,5 +1,10 @@
 import { expect, it } from 'vitest';
-import { labelPattern, parseAutofillRequest } from './autofill.js';
+import {
+  AutofillReportSchema,
+  labelPattern,
+  parseAutofillReport,
+  parseAutofillRequest,
+} from './autofill.js';
 const field = { match: { label: 'Company' }, value: 'Example' };
 it.each([
   { fields: [] },
@@ -26,6 +31,37 @@ it.each([
 it('copies a reusable mapping so callers cannot mutate pending fields', () => {
   const input = { fields: [{ ...field, match: { label: 'Company' } }] };
   const request = parseAutofillRequest(input);
-  input.fields[0]!.match.label = 'Changed';
+  const first = input.fields[0];
+  if (!first) throw new Error('Missing fixture field');
+  first.match.label = 'Changed';
   expect(request.fields[0]?.match.label).toBe('Company');
+});
+
+it('validates the versioned report without changing partial or unverified outcomes', () => {
+  expect(AutofillReportSchema.$id).toBe('urn:agentbrowser:autofill-report:v1');
+  for (const [ok, status] of [
+    [false, 'uncertain'],
+    [true, 'unverified'],
+  ] as const) {
+    const report = {
+      ok,
+      receipts: [{ field: 0, match: field.match, status, verified: false }],
+      elapsedMs: 1,
+    };
+    expect(parseAutofillReport(report)).toEqual(report);
+  }
+});
+
+it.each([
+  { ok: true, receipts: [], elapsedMs: '1' },
+  { ok: true, receipts: [{ field: 0, status: 'verified' }], elapsedMs: 1 },
+  { ok: true, receipts: [], elapsedMs: 1, secret: 'PRIVATE-REPORT' },
+])('rejects malformed reports without exposing returned values', (report) => {
+  expect(() => parseAutofillReport(report)).toThrow(/^Invalid autofill report/);
+  try {
+    parseAutofillReport(report);
+  } catch (error) {
+    expect(String(error)).not.toContain('PRIVATE-REPORT');
+    expect(String(error)).toContain('may have executed');
+  }
 });

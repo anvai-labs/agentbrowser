@@ -6,12 +6,14 @@
  * live server.
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import type {
   ActionRequest,
   ActionResult,
   ArtifactRef,
+  AutofillReport,
+  AutofillRequest,
   ClientOptions,
   NavigationRequest,
   NavigationResponse,
@@ -20,19 +22,29 @@ import type {
   PageResponse,
   PageSnapshot,
   PdfRequest,
+  PlanReport,
   ScreenshotRequest,
   SessionRequest,
   SessionResponse,
 } from '@agentbrowser/sdk-typescript';
 import {
+  AutofillReportSchema,
+  AutofillRequestSchema,
   DELIVERED_EXTRACT_FORMATS,
+  INTERACTION_GUIDANCE,
+  PlanActionsSchema,
+  PlanReportSchema,
   REF_PATTERN,
   UsageError,
   formatErrorForUser,
+  parseAutofillReport,
   parseAutofillRequest,
+  parsePlanReport,
+  parsePlanSteps,
   validateWireAction,
 } from '@agentbrowser/sdk-typescript';
-import { Command } from 'commander';
+import { Command, type Option } from 'commander';
+import { type JsonInputStream, createJsonArgumentReader } from './json-input.js';
 import { PRODUCT_VERSION } from './product-version.js';
 
 /**
@@ -89,14 +101,7 @@ export interface CliClient {
       sessionId: string,
       pageId: string,
       actions: Array<Record<string, unknown>>
-    ): Promise<{
-      ok: boolean;
-      completed: number;
-      results: Array<{ step: number; ok: boolean; actionId?: string; error?: string }>;
-      mode?: string;
-      newRevision?: number;
-      error?: { code: string; message: string };
-    }>;
+    ): Promise<PlanReport>;
     snapshot(
       sessionId: string,
       pageId: string,
@@ -106,25 +111,7 @@ export interface CliClient {
     listPages(sessionId: string): Promise<PageResponse[]>;
     getPage(sessionId: string, pageId: string): Promise<PageResponse>;
     closePage(sessionId: string, pageId: string): Promise<void>;
-    autofill(
-      sessionId: string,
-      pageId: string,
-      request: Record<string, unknown>
-    ): Promise<{
-      ok: boolean;
-      receipts: Array<{
-        field: number;
-        status: string;
-        verified?: boolean;
-        resolvedRef?: string;
-        error?: { code?: string; message?: string };
-        [key: string]: unknown;
-      }>;
-      elapsedMs?: number;
-      snapshot?: { artifactId?: string; sizeBytes?: number };
-      snapshotError?: string;
-      [key: string]: unknown;
-    }>;
+    autofill(sessionId: string, pageId: string, request: AutofillRequest): Promise<AutofillReport>;
     pdf(sessionId: string, pageId: string, request: PdfRequest): Promise<ArtifactRef>;
     download(
       sessionId: string,
@@ -144,6 +131,7 @@ export interface CliClient {
 }
 
 export interface CliDependencies {
+  stdin?: JsonInputStream;
   createClient(options: ClientOptions): CliClient;
   out(line: string): void;
   err(line: string): void;
@@ -161,6 +149,7 @@ export function buildCli(deps: CliDependencies): Cli {
     async run(argv: string[]): Promise<number> {
       let exitCode = 0;
 
+      const readJsonArgument = createJsonArgumentReader(deps.stdin ? { stdin: deps.stdin } : {});
       const program = new Command();
       program
         .name('agentbrowser')
@@ -231,22 +220,26 @@ export function buildCli(deps: CliDependencies): Cli {
             ]);
           })
         );
-      for (const [command, method] of [
-        ['control', 'control'],
-        ['takeover', 'takeover'],
-        ['prepare-resume', 'prepareResume'],
+      for (const [command, method, description] of [
+        ['control', 'control', 'read the current session control state'],
+        ['takeover', 'takeover', 'request human takeover and revoke delegated agent control'],
+        ['prepare-resume', 'prepareResume', 'prepare a fresh review before delegating control'],
       ] as const) {
-        session.command(`${command} <sessionId>`).action(
-          action(async (ctx, sessionId: string) => {
-            const fn = ctx.client.sessions[method];
-            if (!fn) throw new UsageError('Client does not support delegated sessions');
-            const result = await fn.call(ctx.client.sessions, sessionId);
-            ctx.emit(result, () => [JSON.stringify(result, null, 2)]);
-          })
-        );
+        session
+          .command(`${command} <sessionId>`)
+          .description(description)
+          .action(
+            action(async (ctx, sessionId: string) => {
+              const fn = ctx.client.sessions[method];
+              if (!fn) throw new UsageError('Client does not support delegated sessions');
+              const result = await fn.call(ctx.client.sessions, sessionId);
+              ctx.emit(result, () => [JSON.stringify(result, null, 2)]);
+            })
+          );
       }
       session
         .command('delegate <sessionId>')
+        .description('issue a new delegated agent grant for the reviewed control epoch')
         .requiredOption('--epoch <n>', 'epoch from the reviewed prepare-resume response')
         .action(
           action(async (ctx, sessionId: string, options: { epoch: string }) => {
@@ -259,14 +252,17 @@ export function buildCli(deps: CliDependencies): Cli {
             ctx.emit(result, () => [JSON.stringify(result, null, 2)]);
           })
         );
-      session.command('operation <sessionId> <operationId>').action(
-        action(async (ctx, sessionId: string, operationId: string) => {
-          if (!ctx.client.sessions.operation)
-            throw new UsageError('Client does not support operation reconciliation');
-          const result = await ctx.client.sessions.operation(sessionId, operationId);
-          ctx.emit(result, () => [JSON.stringify(result, null, 2)]);
-        })
-      );
+      session
+        .command('operation <sessionId> <operationId>')
+        .description('read recorded operation status to reconcile a controlled mutation')
+        .action(
+          action(async (ctx, sessionId: string, operationId: string) => {
+            if (!ctx.client.sessions.operation)
+              throw new UsageError('Client does not support operation reconciliation');
+            const result = await ctx.client.sessions.operation(sessionId, operationId);
+            ctx.emit(result, () => [JSON.stringify(result, null, 2)]);
+          })
+        );
 
       session
         .command('create')
@@ -709,7 +705,7 @@ export function buildCli(deps: CliDependencies): Cli {
       // ---- snapshot (TD-BROWSER-8) -------------------------------------------
       program
         .command('snapshot')
-        .description('self-contained observation usable as plan targets in one round trip')
+        .description(INTERACTION_GUIDANCE.snapshot)
         .argument('<sessionId>')
         .argument('<pageId>')
         .option('--max-elements <n>', 'maximum fields to return')
@@ -741,28 +737,21 @@ export function buildCli(deps: CliDependencies): Cli {
         );
 
       // ---- plan (TD-BROWSER-8) ------------------------------------------------
-      program
+      const plan = program
         .command('plan')
         .description(
-          'execute a batched action plan from inline JSON steps in one call ' +
-            '(each step: an act argument object, optionally waitForLabel + waitMs)'
+          `${INTERACTION_GUIDANCE.plan} Supply JSON steps inline, via @file or stdin (-); at most 1 MiB, stdin EOF within 30 seconds (act arguments, optionally waitForLabel + waitMs).`
         )
         .argument('<sessionId>')
         .argument('<pageId>')
-        .argument('<stepsJson>', 'JSON array of plan steps')
+        .argument('<stepsJson>', 'JSON array of plan steps: inline, @file, or - for stdin')
         .action(
           action(async (ctx, sessionId: string, pageId: string, stepsJson: string) => {
-            let steps: Array<Record<string, unknown>>;
-            try {
-              steps = JSON.parse(stepsJson) as Array<Record<string, unknown>>;
-            } catch {
-              throw new UsageError('<stepsJson> must be a valid JSON array of plan steps.');
-            }
-            if (!Array.isArray(steps)) {
-              throw new UsageError('<stepsJson> must be a JSON array of plan steps.');
-            }
-
-            const result = await ctx.client.sessions.plan(sessionId, pageId, steps);
+            const steps = parsePlanSteps(await readJsonArgument(stepsJson, 'plan steps'));
+            const result = parsePlanReport(
+              await ctx.client.sessions.plan(sessionId, pageId, steps)
+            );
+            if (!result.ok) exitCode = 1;
 
             ctx.emit(result, () => [
               `${result.ok ? 'ok' : 'failed'}: ${result.completed}/${steps.length} steps completed (mode: ${result.mode ?? 'stable'})`,
@@ -775,7 +764,7 @@ export function buildCli(deps: CliDependencies): Cli {
         );
 
       // ---- act -------------------------------------------------------------
-      const act = program.command('act').description('execute an action through an element ref');
+      const act = program.command('act').description(INTERACTION_GUIDANCE.action);
 
       act
         .command('click')
@@ -883,7 +872,7 @@ export function buildCli(deps: CliDependencies): Cli {
 
       act
         .command('hover')
-        .description('hover an element (non-mutating)')
+        .description('hover an element; page handlers may cause effects')
         .argument('<sessionId>')
         .argument('<pageId>')
         .argument('<ref>')
@@ -1320,10 +1309,10 @@ export function buildCli(deps: CliDependencies): Cli {
           })
         );
 
-      program
+      const autofill = program
         .command('autofill')
         .description(
-          'bulk-fill form fields from one structured payload (inline JSON, @file, or - for stdin). The server resolves, fills, and verifies each field serially and returns per-field receipts.'
+          'bulk-fill form fields from one structured payload (inline JSON, @file, or - for stdin). At most 1 MiB per input; stdin EOF within 30 seconds. The server resolves, fills, and verifies each field serially and returns per-field receipts. A failed report exits 1; inspect receipts for verification.'
         )
         .argument('<sessionId>')
         .argument('<pageId>')
@@ -1338,20 +1327,28 @@ export function buildCli(deps: CliDependencies): Cli {
               requestJson: string,
               options: { policy?: string }
             ) => {
-              const request = readJsonArgument(requestJson, 'autofill request') as Record<
-                string,
-                unknown
-              >;
-              if (options.policy !== undefined) {
-                request.policy = readJsonArgument(options.policy, '--policy');
+              if (requestJson === '-' && options.policy === '-') {
+                throw new UsageError('Stdin can be used only once per command.');
               }
-              let parsed: Record<string, unknown>;
+              const request = await readJsonArgument(requestJson, 'autofill request');
+              if (typeof request !== 'object' || request === null || Array.isArray(request)) {
+                throw new UsageError('Autofill request must be an object.');
+              }
+              if (options.policy !== undefined) {
+                Object.assign(request, {
+                  policy: await readJsonArgument(options.policy, '--policy'),
+                });
+              }
+              let parsed: AutofillRequest;
               try {
-                parsed = parseAutofillRequest(request) as Record<string, unknown>;
+                parsed = parseAutofillRequest(request);
               } catch (error) {
                 throw new UsageError((error as Error).message);
               }
-              const report = await ctx.client.sessions.autofill(sessionId, pageId, parsed);
+              const report = parseAutofillReport(
+                await ctx.client.sessions.autofill(sessionId, pageId, parsed)
+              );
+              if (!report.ok) exitCode = 1;
               ctx.emit(report, () => {
                 const verified = report.receipts.filter((r) => r.status === 'verified').length;
                 const lines = [
@@ -1444,6 +1441,79 @@ export function buildCli(deps: CliDependencies): Cli {
           )
         );
 
+      // Project the existing command tree, never a second manually maintained catalog.
+      // This handler deliberately avoids the service-client action wrapper.
+      program
+        .command('describe [path...]')
+        .description('describe one command or group as JSON, offline (e.g. describe act press)')
+        .option('--schema', 'include canonical bulk input/output schemas; null if unavailable')
+        .action((path: string[], options: { schema?: boolean }) => {
+          let selected = program;
+          for (const segment of path) {
+            const child = selected
+              .createHelp()
+              .visibleCommands(selected)
+              .find((command) => command.name() === segment);
+            if (!child) {
+              exitCode = 1;
+              deps.err('Unknown command path. Use agentbrowser describe to discover commands.');
+              return;
+            }
+            selected = child;
+          }
+          deps.out(
+            JSON.stringify(
+              {
+                schemaVersion: 1,
+                productVersion: PRODUCT_VERSION,
+                scope: 'cli-command-definitions',
+                guidance: [
+                  'Discovery describes this CLI, not live server capabilities or granted permissions.',
+                  'Use --json for command results; diagnostics go to stderr. Quote shell arguments and use jq to inspect JSON.',
+                  'An exit code of 0 does not prove verification: inspect status, ok and per-step outcomes.',
+                  INTERACTION_GUIDANCE.uncertainWrite,
+                ],
+                command: {
+                  path,
+                  ...(options.schema
+                    ? {
+                        schemas:
+                          selected === autofill
+                            ? {
+                                input: AutofillRequestSchema,
+                                output: AutofillReportSchema,
+                              }
+                            : selected === plan
+                              ? { input: PlanActionsSchema, output: PlanReportSchema }
+                              : null,
+                      }
+                    : {}),
+                  usage: selected.createHelp().commandUsage(selected),
+                  description: selected.description(),
+                  arguments: selected.registeredArguments.map((argument) => ({
+                    name: argument.name(),
+                    description: argument.description,
+                    required: argument.required,
+                    variadic: argument.variadic,
+                    ...(argument.argChoices ? { choices: argument.argChoices } : {}),
+                  })),
+                  options: describeOptions(selected.createHelp().visibleOptions(selected)),
+                  commands: selected
+                    .createHelp()
+                    .visibleCommands(selected)
+                    .map((command) => ({
+                      name: command.name(),
+                      description: command.description(),
+                    })),
+                },
+                globalOptions: selected === program ? [] : describeOptions(program.options),
+              },
+              null,
+              2
+            )
+          );
+        });
+
       try {
         await program.parseAsync(argv, { from: 'user' });
       } catch (error) {
@@ -1462,6 +1532,23 @@ interface CommandContext {
   json: boolean;
   out(line: string): void;
   emit(value: unknown, render: () => string[]): void;
+}
+
+/** Definition metadata only: never project parsed values or environment credentials. */
+function describeOptions(options: readonly Option[]) {
+  return options
+    .filter((option) => !option.hidden)
+    .map((option) => ({
+      flags: option.flags,
+      description: option.description,
+      required: option.mandatory,
+      valueRequired: option.required,
+      valueOptional: option.optional,
+      variadic: option.variadic,
+      negated: option.negate,
+      ...(option.defaultValue !== undefined ? { default: option.defaultValue } : {}),
+      ...(option.argChoices ? { choices: option.argChoices } : {}),
+    }));
 }
 
 async function runAction(
@@ -1495,27 +1582,6 @@ function refTarget(ref: string): { ref: string } {
     );
   }
   return { ref };
-}
-
-/**
- * Read a JSON argument supplied as inline JSON, `@path/to/file.json`, or `-`
- * (the request body piped on stdin). All parse failures surface as usage
- * errors so scripts get a clean exit instead of a server 400.
- */
-function readJsonArgument(raw: string, label: string): unknown {
-  let text: string;
-  if (raw === '-') {
-    text = readFileSync(0, 'utf8');
-  } else if (raw.startsWith('@')) {
-    text = readFileSync(raw.slice(1), 'utf8');
-  } else {
-    text = raw;
-  }
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    throw new UsageError(`${label} is not valid JSON: ${(error as Error).message}`);
-  }
 }
 
 /**

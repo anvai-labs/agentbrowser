@@ -15,22 +15,47 @@ input — are deliberately not exposed.
 
 ## Tool surface
 
-| Tool | Purpose |
-|---|---|
-| `browser_create` | Create an isolated session (also creates the first page; accepts seed cookies for authenticated re-entry) |
-| `browser_close` | Close a session, invalidating its refs |
-| `browser_navigate` | Navigate a page to an http(s) URL |
-| `browser_observe` | Semantic observation with stable element refs (`e<revision>_<ordinal>`) |
-| `browser_snapshot` | Self-contained page payload (url, title, revision, mode, `fields`) — one call to plan a whole form |
-| `browser_plan` | Execute an ordered batch of fill/click/press/scroll steps in one call; stale refs self-heal, with a role+label guard under churn |
-| `browser_act` | click / fill / select / scroll / press / dialogs — by ref, never by selector |
-| `browser_extract` | Structured page extraction |
-| `browser_screenshot` | Capture optional visual evidence |
-| `browser_pdf` | Page-to-PDF capture |
-| `browser_cookies` | Export session cookies — persist and seed `browser_create` to re-enter an authenticated session |
+See the [generated tool catalog](../../docs/mcp-tool-catalog.md) for unbound and delegated
+surfaces, required arguments and output contracts. It comes from actual `tools/list`
+responses, with a digest over complete descriptions and schemas. The existing release
+artifact check rejects drift. Regenerate after building with
+`node scripts/mcp-catalog-docs.mjs --write`.
 
-The fast path for multi-field forms is `browser_snapshot` → `browser_plan`:
-one call to read the page, one call to act on it — see the
+Delegated mode replaces create/close/cookies with `browser_session` (current control
+and pages) and `browser_operation` (operation status). Obtain the effective catalog
+from your own connection with `tools/list`; metadata never enlarges a session grant.
+
+### Protocol and result compatibility
+
+The foundation candidate supports MCP `2024-11-05` and `2025-06-18`. Explicit legacy
+clients keep text JSON and catalogs without output schemas/annotations. Newer or
+unknown requested versions are offered `2025-06-18`; clients must support that returned
+version or disconnect. Missing initialization retains historical text behavior; clients
+should always perform the handshake. A connection cannot renegotiate while calls run.
+
+Under `2025-06-18`, `browser_autofill` and `browser_plan` advertise canonical
+`urn:agentbrowser:autofill-report:v1` and `urn:agentbrowser:plan-report:v1` schemas and return validated
+`structuredContent` **plus identical serialized JSON text**. Plan retains optional mode/revision metadata to preserve the existing SDK contract;
+the current server always supplies it. Other tools still return
+text JSON; no unqualified output schemas are invented. Both tools' annotations explicitly
+state that it mutates and is not safe to repeat. Hints are not authorization or proof
+of browser/backend support. The [MCP tools specification](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)
+defines the structured/text compatibility behavior.
+
+Failed autofill and plan reports (`ok: false`) now set `isError: true` in both protocols
+while retaining complete receipt/result JSON. This changes error signaling from 1.8.18;
+clients should inspect the retained report and must not treat it as a retry instruction.
+Successful `verify: none` reports do not establish verification or application commit.
+Invalid upstream bulk reports return a sanitized text error with uncertainty
+instructions, never a fabricated structured success or an automatic second write.
+Errors before a valid report exists remain text diagnostics without structured content.
+
+This transport qualification does not yet certify structured-result consumption by
+installed Victor, Codex or Claude clients. That remains T8 harness acceptance.
+
+For qualified native forms, prefer `browser_autofill`; inspect each field's verification
+receipt and preserve uncertain writes. For explicit heterogeneous steps use
+`browser_snapshot` → `browser_plan` — see the
 [main README](../../README.md#the-fast-path-for-forms-snapshot-then-plan).
 
 ## Running it
@@ -69,6 +94,7 @@ node packages/mcp-server/dist/bin.js
 |---|---|
 | `AGENTBROWSER_BASE_URL` | AgentBrowser server to proxy to (default `http://localhost:5709`) |
 | `AGENTBROWSER_API_KEY` | Bearer key for the service, when it has `AGENTBROWSER_API_KEYS` configured |
+| `AGENTBROWSER_SESSION_ID` | Operator-configured delegated session binding; use its current delegated credential as the API key |
 | `AGENTBROWSER_MCP_VERSION` | Override the reported `serverInfo.version` (debugging; the binary is otherwise stamped at build time from `package.json`) |
 
 ## Building and gating the binary
