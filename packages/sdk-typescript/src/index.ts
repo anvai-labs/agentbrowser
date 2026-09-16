@@ -12,6 +12,9 @@ export {
   AutofillReportSchema,
   PlanActionsSchema,
   PlanReportSchema,
+  AGENT_MODE_IDS,
+  DEFAULT_AGENT_MODE,
+  isAgentMode,
   parsePlanSteps,
   parsePlanReport,
   parseAutofillReport,
@@ -19,4 +22,4 @@ export {
 
 export type { ExportedCookie } from './client';
 
-export type { PlanReport } from '@agentbrowser/protocol';
+export type { AgentMode, PlanReport } from '@agentbrowser/protocol';

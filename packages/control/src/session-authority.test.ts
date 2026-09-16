@@ -12,6 +12,22 @@ function grant(authority: SessionAuthority, id: string) {
   return { token, principal: authority.authenticate(token)! };
 }
 
+it('binds a trusted mode to the bearer grant and defaults old callers to qa', () => {
+  const authority = new SessionAuthority();
+  authority.register('session', 'owner', new AbortController().signal);
+  const firstReview = authority.get('session')!.prepareResume();
+  const legacy = authority.delegate('session', firstReview.epoch);
+  expect(legacy.mode).toBe('qa');
+  expect(authority.authenticate(legacy.token)).toMatchObject({ mode: 'qa' });
+
+  authority.takeover('session');
+  const nextReview = authority.get('session')!.prepareResume();
+  const forms = authority.delegate('session', nextReview.epoch, 'forms');
+  expect(forms.mode).toBe('forms');
+  expect(authority.authenticate(forms.token)).toMatchObject({ mode: 'forms' });
+  expect(authority.authenticate(legacy.token)).toBeUndefined();
+});
+
 it('rejects duplicate registration without changing an active grant or operation', async () => {
   const authority = new SessionAuthority();
   const owner = new AbortController();

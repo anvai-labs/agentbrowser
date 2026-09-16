@@ -7,9 +7,16 @@
  */
 
 import { createInterface } from 'node:readline';
+import { isAgentMode } from '@agentbrowser/protocol';
 import { AgentBrowserClient } from '@agentbrowser/sdk-typescript';
 import { buildMcpServer } from './mcp-server.js';
 import { resolveVersion } from './version.js';
+
+const configuredMode = process.env.AGENTBROWSER_MODE;
+if (configuredMode !== undefined && !isAgentMode(configuredMode)) {
+  process.stderr.write(`mcp: invalid AGENTBROWSER_MODE: ${configuredMode}\n`);
+  process.exit(2);
+}
 
 const server = buildMcpServer({
   createClient: (options) =>
@@ -21,6 +28,7 @@ const server = buildMcpServer({
     }),
   baseUrl: process.env.AGENTBROWSER_BASE_URL,
   sessionId: process.env.AGENTBROWSER_SESSION_ID,
+  mode: configuredMode,
   serverInfo: { name: 'agentbrowser', version: resolveVersion() },
 });
 

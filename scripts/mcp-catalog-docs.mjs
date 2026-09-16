@@ -14,7 +14,7 @@ export function renderCatalog(catalogs) {
   const digest = createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
   const lines = [
     '# Generated MCP tool catalog', '',
-    'Generated from the built adapter\'s `tools/list` in unbound and delegated modes.',
+    'Generated from the built adapter\'s `tools/list` for every fixed profile and binding.',
     'Do not edit by hand. Build the MCP package, then run `node scripts/mcp-catalog-docs.mjs --write`.',
     '`node scripts/mcp-catalog-docs.mjs` checks drift; the existing release-artifact gate runs it.', '',
     'This catalog describes protocol 2025-06-18. Protocol 2024-11-05 retains text results',
@@ -25,7 +25,9 @@ export function renderCatalog(catalogs) {
     `Catalog SHA-256 (complete descriptions and schemas): \`${digest}\``, '',
   ];
   for (const { mode, tools } of canonical) {
-    lines.push(`## ${mode} (${tools.length} tools)`, '',
+    const serializedBytes = Buffer.byteLength(JSON.stringify({ tools }));
+    lines.push(
+      `## ${mode} (${tools.length} ${tools.length === 1 ? 'tool' : 'tools'}; ${serializedBytes} result bytes)`, '',
       '| Tool | Required arguments | Output contract | Purpose |',
       '| --- | --- | --- | --- |');
     for (const tool of tools) {
@@ -43,22 +45,26 @@ export function renderCatalog(catalogs) {
 
 export async function collectCatalogs() {
   const { buildMcpServer } = await import('../packages/mcp-server/dist/index.js');
+  const { AGENT_MODE_IDS } = await import('../packages/protocol/dist/index.js');
   const catalogs = [];
-  for (const mode of ['unbound', 'delegated']) {
-    const server = buildMcpServer({
-      // Discovery is local. Any accidental attempt to execute a tool must fail.
-      createClient: () => new Proxy({}, { get() { throw new Error('Catalog generation attempted service access'); } }),
-      ...(mode === 'delegated' ? { sessionId: 'catalog-binding' } : {}),
-    });
-    const exchange = async (method, params = {}) => {
-      const response = JSON.parse(await server.handle(JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })));
-      if (response.error) throw new Error('Catalog discovery failed');
-      return response.result;
-    };
-    const init = await exchange('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'catalog-docs', version: '1' } });
-    if (init.protocolVersion !== '2025-06-18') throw new Error('Build the MCP adapter before generating its catalog');
-    const { tools } = await exchange('tools/list');
-    catalogs.push({ mode, tools });
+  for (const profile of AGENT_MODE_IDS) {
+    for (const binding of ['unbound', 'delegated']) {
+      const server = buildMcpServer({
+        // Discovery is local. Any accidental attempt to execute a tool must fail.
+        createClient: () => new Proxy({}, { get() { throw new Error('Catalog generation attempted service access'); } }),
+        mode: profile,
+        ...(binding === 'delegated' ? { sessionId: 'catalog-binding' } : {}),
+      });
+      const exchange = async (method, params = {}) => {
+        const response = JSON.parse(await server.handle(JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })));
+        if (response.error) throw new Error('Catalog discovery failed');
+        return response.result;
+      };
+      const init = await exchange('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'catalog-docs', version: '1' } });
+      if (init.protocolVersion !== '2025-06-18') throw new Error('Build the MCP adapter before generating its catalog');
+      const { tools } = await exchange('tools/list');
+      catalogs.push({ mode: `${binding}/${profile}`, tools });
+    }
   }
   return catalogs;
 }

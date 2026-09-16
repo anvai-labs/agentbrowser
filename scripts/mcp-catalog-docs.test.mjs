@@ -14,15 +14,17 @@ test('catalog digest detects nested schema drift even with unchanged tool summar
   assert.equal(before.split('\n').find((line) => line.startsWith('| `fixture_tool`')), after.split('\n').find((line) => line.startsWith('| `fixture_tool`')));
 });
 
-test('generated catalog checks detect stale files against both actual binding modes', async () => {
+test('generated catalog checks detect stale files across fixed profiles and bindings', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'mcp-catalog-'));
   const file = join(dir, 'catalog.md');
   try {
     await checkCatalogDocument({ write: true, file });
     await checkCatalogDocument({ file });
     const original = await readFile(file, 'utf8');
-    assert.match(original, /## unbound \(13 tools\)/);
-    assert.match(original, /## delegated \(12 tools\)/);
+    assert.match(original, /## unbound\/qa \(13 tools; \d+ result bytes\)/);
+    assert.match(original, /## delegated\/qa \(12 tools; \d+ result bytes\)/);
+    assert.match(original, /## delegated\/audit \(11 tools; \d+ result bytes\)/);
+    assert.match(original, /## delegated\/application \(1 tool; \d+ result bytes\)/);
     assert.match(original, /urn:agentbrowser:autofill-report:v1/);
     await writeFile(file, original.replace('browser_autofill', 'missing-tool'));
     await assert.rejects(checkCatalogDocument({ file }), /stale/);

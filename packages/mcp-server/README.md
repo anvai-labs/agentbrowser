@@ -22,8 +22,18 @@ artifact check rejects drift. Regenerate after building with
 `node scripts/mcp-catalog-docs.mjs --write`.
 
 Delegated mode replaces create/close/cookies with `browser_session` (current control
-and pages) and `browser_operation` (operation status). Obtain the effective catalog
-from your own connection with `tools/list`; metadata never enlarges a session grant.
+and pages) and `browser_operation` (operation status). `AGENTBROWSER_MODE` fixes one
+profile for the lifetime of the bridge connection. Reconnect to change profiles;
+clients may cache catalogs. Obtain the effective catalog from your own connection
+with `tools/list`; metadata never enlarges a session grant, and the service rejects a
+tool call that the bearer grant's profile does not allow even if a mismatched bridge
+advertises it.
+
+`qa`, `operations`, `appsec`, `bounty`, and `forms` currently project the complete
+browser catalog. `audit` omits bulk autofill. `application` exposes only delegated
+operation reconciliation until T4 publishes typed application tools. These deliberate
+duplicates avoid fictional context savings; the generated catalog records exact result
+bytes for every profile and binding.
 
 ### Protocol and result compatibility
 
@@ -95,6 +105,7 @@ node packages/mcp-server/dist/bin.js
 | `AGENTBROWSER_BASE_URL` | AgentBrowser server to proxy to (default `http://localhost:5709`) |
 | `AGENTBROWSER_API_KEY` | Bearer key for the service, when it has `AGENTBROWSER_API_KEYS` configured |
 | `AGENTBROWSER_SESSION_ID` | Operator-configured delegated session binding; use its current delegated credential as the API key |
+| `AGENTBROWSER_MODE` | Fixed mode profile for this connection: `qa` (default), `operations`, `audit`, `appsec`, `bounty`, `forms`, or `application` |
 | `AGENTBROWSER_MCP_VERSION` | Override the reported `serverInfo.version` (debugging; the binary is otherwise stamped at build time from `package.json`) |
 
 ## Building and gating the binary

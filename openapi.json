@@ -294,6 +294,39 @@
                   "epoch": {
                     "type": "integer",
                     "minimum": 0
+                  },
+                  "mode": {
+                    "anyOf": [
+                      {
+                        "const": "qa",
+                        "type": "string"
+                      },
+                      {
+                        "const": "operations",
+                        "type": "string"
+                      },
+                      {
+                        "const": "audit",
+                        "type": "string"
+                      },
+                      {
+                        "const": "appsec",
+                        "type": "string"
+                      },
+                      {
+                        "const": "bounty",
+                        "type": "string"
+                      },
+                      {
+                        "const": "forms",
+                        "type": "string"
+                      },
+                      {
+                        "const": "application",
+                        "type": "string"
+                      }
+                    ],
+                    "default": "qa"
                   }
                 }
               }
@@ -3767,11 +3800,44 @@
           {
             "type": "object",
             "required": [
-              "token"
+              "token",
+              "mode"
             ],
             "properties": {
               "token": {
                 "type": "string"
+              },
+              "mode": {
+                "anyOf": [
+                  {
+                    "const": "qa",
+                    "type": "string"
+                  },
+                  {
+                    "const": "operations",
+                    "type": "string"
+                  },
+                  {
+                    "const": "audit",
+                    "type": "string"
+                  },
+                  {
+                    "const": "appsec",
+                    "type": "string"
+                  },
+                  {
+                    "const": "bounty",
+                    "type": "string"
+                  },
+                  {
+                    "const": "forms",
+                    "type": "string"
+                  },
+                  {
+                    "const": "application",
+                    "type": "string"
+                  }
+                ]
               }
             }
           }

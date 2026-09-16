@@ -26,7 +26,11 @@ async function setup() {
   return { server, engine, id, url };
 }
 
-async function delegate(server: Awaited<ReturnType<typeof buildServer>>, url: string) {
+async function delegate(
+  server: Awaited<ReturnType<typeof buildServer>>,
+  url: string,
+  mode?: string
+) {
   const review = await server.inject({
     method: 'POST',
     url: `${url}/control/prepare-resume`,
@@ -37,13 +41,65 @@ async function delegate(server: Awaited<ReturnType<typeof buildServer>>, url: st
     method: 'POST',
     url: `${url}/control/delegate`,
     headers: operator,
-    payload: { epoch: review.json().epoch },
+    payload: { epoch: review.json().epoch, ...(mode ? { mode } : {}) },
   });
   expect(granted.statusCode).toBe(200);
+  expect(granted.json().mode).toBe(mode ?? 'qa');
   return { authorization: `Bearer ${granted.json().token}` };
 }
 
 describe('delegated coexistence', () => {
+  it('binds a mode to the grant and rejects disallowed direct API calls before dispatch', async () => {
+    const { server, url } = await setup();
+    const created = await server.inject({
+      method: 'POST',
+      url: `${url}/pages`,
+      headers: { ...operator, 'x-agentbrowser-operation-id': 'operator-page' },
+    });
+    expect(created.statusCode).toBe(201);
+    const pageId = created.json().pageId;
+    const agent = await delegate(server, url, 'audit');
+
+    expect((await server.inject({ url: `${url}/pages`, headers: agent })).statusCode).toBe(200);
+    const denied = await server.inject({
+      method: 'POST',
+      url: `${url}/pages/${pageId}/autofill`,
+      headers: { ...agent, 'x-agentbrowser-operation-id': 'hidden-direct-call' },
+      payload: { fields: [{ match: { label: 'Name' }, value: 'private' }] },
+    });
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json().error.message).toContain('profile');
+
+    await server.inject({ method: 'POST', url: `${url}/control/takeover`, headers: operator });
+    const operatorCall = await server.inject({
+      method: 'POST',
+      url: `${url}/pages/${pageId}/autofill`,
+      headers: { ...operator, 'x-agentbrowser-operation-id': 'operator-autofill' },
+      payload: { fields: [{ match: { label: 'Name' }, value: 'private' }] },
+    });
+    expect(operatorCall.statusCode).not.toBe(403);
+  });
+
+  it('rejects unknown modes without minting a bearer grant', async () => {
+    const { server, url } = await setup();
+    const review = await server.inject({
+      method: 'POST',
+      url: `${url}/control/prepare-resume`,
+      headers: operator,
+    });
+    const denied = await server.inject({
+      method: 'POST',
+      url: `${url}/control/delegate`,
+      headers: operator,
+      payload: { epoch: review.json().epoch, mode: 'admin' },
+    });
+    expect(denied.statusCode).toBe(400);
+    expect(denied.body).not.toContain('token');
+    expect((await server.inject({ url: `${url}/control`, headers: operator })).json().state).toBe(
+      'RESUME_REVIEW'
+    );
+  });
+
   it('requires operator authentication for controlled mode even in local no-key deployments', async () => {
     const server = await buildServer({ engine: new FakeEngine() });
     servers.push(server);

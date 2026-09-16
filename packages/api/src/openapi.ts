@@ -10,6 +10,7 @@
 import { DELIVERED_ACTION_TYPES, DELIVERED_EXTRACT_FORMATS } from '@agentbrowser/protocol';
 import {
   ActionResultSchema,
+  AgentModeSchema,
   ApiErrorDetailSchema,
   ApiErrorSchema,
   ArtifactRefSchema,
@@ -118,7 +119,10 @@ const controlPaths = {
         content: json({
           type: 'object',
           required: ['epoch'],
-          properties: { epoch: { type: 'integer', minimum: 0 } },
+          properties: {
+            epoch: { type: 'integer', minimum: 0 },
+            mode: { ...AgentModeSchema, default: 'qa' },
+          },
         }),
       },
       responses: controlResponses('ControlGrant'),

@@ -12,6 +12,7 @@
 import {
   AutofillReportSchema,
   AutofillRequestSchema,
+  DEFAULT_AGENT_MODE,
   DELIVERED_ACTION_TYPES,
   INTERACTION_GUIDANCE,
   PlanActionsSchema,
@@ -19,6 +20,7 @@ import {
   PlanReportSchema,
   UsageError,
   WireActionEnvelopeSchema,
+  agentModeAllows,
   formatErrorForUser,
   parseAutofillReport,
   parseAutofillRequest,
@@ -26,6 +28,7 @@ import {
   parsePlanSteps,
   validateWireAction,
 } from '@agentbrowser/protocol';
+import type { AgentCapability, AgentMode } from '@agentbrowser/protocol';
 import type {
   ActionRequest,
   ActionResult,
@@ -114,6 +117,8 @@ export interface McpClient {
 export interface McpDependencies {
   /** Operator-configured binding. Never supplied by model tool arguments. */
   sessionId?: string | undefined;
+  /** Fixed for this bridge connection; changing it requires a new connection. */
+  mode?: AgentMode | undefined;
   createClient(options: ClientOptions): McpClient;
   serverInfo?: { name: string; version: string };
   /** Server the tools proxy to. */
@@ -130,6 +135,7 @@ const STRUCTURED_PROTOCOL_VERSION = '2025-06-18';
 
 interface ToolDefinition {
   name: string;
+  requiredCapability: AgentCapability;
   description: string;
   inputSchema: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
@@ -166,6 +172,7 @@ function buildTools(client: McpClient): ToolDefinition[] {
   return [
     {
       name: 'browser_create',
+      requiredCapability: 'session.manage',
       description:
         'Create a new isolated browser session. Sessions are ephemeral; element refs are ' +
         'scoped to a single session and page. Returns the sessionId.',
@@ -265,6 +272,7 @@ function buildTools(client: McpClient): ToolDefinition[] {
 
     {
       name: 'browser_cookies',
+      requiredCapability: 'session.manage',
       description:
         'Export the session context cookies (TD-BROWSER-6). Persist them and pass them back ' +
         'via browser_create `cookies` to re-enter an authenticated session without re-login.',
@@ -284,6 +292,7 @@ function buildTools(client: McpClient): ToolDefinition[] {
 
     {
       name: 'browser_snapshot',
+      requiredCapability: 'page.observe',
       description: `${INTERACTION_GUIDANCE.snapshot} Returns url, title, revision, fields ({ref, role, label}) and adaptive mode. Use browser_autofill for supported native forms. In verified mode, browser_plan requires a stricter role+label match when remapping stale refs. Degraded snapshots can omit custom widgets; do not treat missing fields as absent from the page.`,
       inputSchema: {
         type: 'object',
@@ -301,6 +310,7 @@ function buildTools(client: McpClient): ToolDefinition[] {
 
     {
       name: 'browser_autofill',
+      requiredCapability: 'page.form',
       outputSchema: AutofillReportSchema,
       annotations: { readOnlyHint: false, idempotentHint: false },
       description:
@@ -335,6 +345,7 @@ function buildTools(client: McpClient): ToolDefinition[] {
 
     {
       name: 'browser_plan',
+      requiredCapability: 'page.interact',
       outputSchema: PlanReportSchema,
       annotations: { readOnlyHint: false, idempotentHint: false },
       description: `${INTERACTION_GUIDANCE.plan} Execute a batched action plan in one call (TD-BROWSER-8). Each step uses the flat action shape documented in the nested input schema. Steps run sequentially; the first hard failure aborts with per-step results. Best paired with browser_snapshot: address refs from its \`fields\` in one round trip. A step for a field that only appears after a prior step (Phase 2) may declare \`waitForLabel\` (substring match on the element name) instead of \`target\` - the executor waits for it to appear (bounded by \`waitMs\`, default 5000) and resolves the ref itself; a miss aborts the plan with a typed PLAN_WAIT_TIMEOUT. On forms with repeated field labels (multi-section layouts, generically-labeled toggles), keep a plan to one section or logical group and re-observe between sections: self-heal matches stale refs by role and label, so identical labels make long plans abort mid-way even when every ref was valid at plan start.`,
@@ -362,6 +373,7 @@ function buildTools(client: McpClient): ToolDefinition[] {
 
     {
       name: 'browser_close',
+      requiredCapability: 'session.manage',
       description:
         'Close a browser session. Releases the browser context and invalidates all of its refs.',
       inputSchema: {
@@ -380,6 +392,7 @@ function buildTools(client: McpClient): ToolDefinition[] {
 
     {
       name: 'browser_navigate',
+      requiredCapability: 'page.navigate',
       description: 'Navigate a page to an http(s) URL and wait for it to load.',
       inputSchema: {
         type: 'object',
@@ -414,6 +427,7 @@ function buildTools(client: McpClient): ToolDefinition[] {
 
     {
       name: 'browser_observe',
+      requiredCapability: 'page.observe',
       description:
         'Get a semantic snapshot of the page: accessibility roles, names, form state and ' +
         'stable element refs. Prefer this over screenshots for deciding what to do next. ' +
@@ -496,6 +510,7 @@ function buildTools(client: McpClient): ToolDefinition[] {
 
     {
       name: 'browser_act',
+      requiredCapability: 'page.interact',
       description: `${INTERACTION_GUIDANCE.action} Perform an action on an element by ref: click, dblclick, hover, fill, clear, check, uncheck, select, upload, scroll, press, wait, goBack, goForward, reload, or handle a dialog. upload attaches local file(s) (paths array, absolute paths only) to a file input; its target ref is optional, but when a page has several input[type=file] elements (hidden Dropzone inputs are common), call browser_observe with include:["fileInputs"] first and pass target.ref; with no ref the page must have exactly one input[type=file]. Elements are addressed by the ref from browser_observe, never by CSS selector or XPath. If the page changed since the observation, the action fails with STALE_TARGET: call browser_observe again and use the new refs; do not retry the old one. Pass remap: true to opt into healing a replaced control: the stack re-observes, matches the original element by role and name, and retries when exactly one candidate survives; the response reports the ref span as remap {from, to}. When a targeted action times out (ACTION_TIMEOUT), the failure details name the ref, what element covers it (blockedBy) and a screenshot artifact id captured at the deadline. ${INTERACTION_GUIDANCE.uncertainWrite} typeText types text as real per-character keystrokes (unlike fill, which sets the value and fires one input event): use it for search-as-you-type boxes and typeahead filters that ignore programmatic value setting; delay (0-1000ms) spaces out the characters for debounced filters. press accepts count (1-20): the keypress repeats inside one action with a single revision bump - use it for spinbutton-style controls, where the revision bump from each individual press would invalidate the ref before the next press. After opening a custom dropdown or combobox, its options often render 0.5-2s later: follow with a wait action ({action: "wait", condition: {until: "selectorVisible", selector: ...}} or "minElements") or re-observe before reading the options; filling a custom combobox input alone may not open the menu and the typed text can be dropped on blur - select from the rendered option refs instead.`,
       inputSchema: {
         type: 'object',
@@ -539,6 +554,7 @@ function buildTools(client: McpClient): ToolDefinition[] {
 
     {
       name: 'browser_extract',
+      requiredCapability: 'page.extract',
       description:
         'Extract deterministic structured data from the page: visible text, article ' +
         'markdown, links (text/URL/rel), tables (headers + rows), observed form ' +
@@ -603,6 +619,7 @@ function buildTools(client: McpClient): ToolDefinition[] {
 
     {
       name: 'browser_html',
+      requiredCapability: 'page.capture',
       description:
         "Fetch the page's current HTML as inline text. Ground truth when the accessibility " +
         'output cannot show a state - custom combobox selections rendered as chips, ' +
@@ -668,6 +685,7 @@ function buildTools(client: McpClient): ToolDefinition[] {
 
     {
       name: 'browser_pdf',
+      requiredCapability: 'page.capture',
       description:
         'Print the page to PDF and store it as a session artifact. Evidence, not ' +
         'the primary observation mode; requires an engine that supports PDF capture.',
@@ -698,6 +716,7 @@ function buildTools(client: McpClient): ToolDefinition[] {
 
     {
       name: 'browser_screenshot',
+      requiredCapability: 'page.capture',
       description:
         'Capture a screenshot as optional evidence. Screenshots are not the primary ' +
         'observation mode; use browser_observe to decide what to do next.',
@@ -733,9 +752,12 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
   const client = deps.createClient({ baseUrl: deps.baseUrl ?? 'http://localhost:5709' });
   const serverInfo = deps.serverInfo ?? { name: 'agentbrowser', version: '1.0.0' };
 
+  const mode = deps.mode ?? DEFAULT_AGENT_MODE;
   const tools = buildTools(client).filter(
     (tool) =>
-      !deps.sessionId || !['browser_create', 'browser_close', 'browser_cookies'].includes(tool.name)
+      agentModeAllows(mode, tool.requiredCapability) &&
+      (!deps.sessionId ||
+        !['browser_create', 'browser_close', 'browser_cookies'].includes(tool.name))
   );
   for (const tool of tools) {
     if (deps.sessionId && Array.isArray(tool.inputSchema.required))
@@ -758,36 +780,41 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
   }
   if (deps.sessionId) {
     const sessionId = deps.sessionId;
-    tools.push({
-      name: 'browser_session',
-      description:
-        'Inspect the delegated session control status and available pages. Human takeover revokes this connection; ask the operator for a new grant.',
-      inputSchema: { type: 'object', properties: {} },
-      handler: async () => {
-        if (!client.sessions.control || !client.sessions.listPages)
-          throw new UsageError('Client does not support delegated sessions');
-        return {
-          sessionId,
-          control: await client.sessions.control(sessionId),
-          pages: await client.sessions.listPages(sessionId),
-        };
+    const delegatedTools: ToolDefinition[] = [
+      {
+        name: 'browser_session',
+        requiredCapability: 'page.observe',
+        description:
+          'Inspect the delegated session control status and available pages. Human takeover revokes this connection; ask the operator for a new grant.',
+        inputSchema: { type: 'object', properties: {} },
+        handler: async () => {
+          if (!client.sessions.control || !client.sessions.listPages)
+            throw new UsageError('Client does not support delegated sessions');
+          return {
+            sessionId,
+            control: await client.sessions.control(sessionId),
+            pages: await client.sessions.listPages(sessionId),
+          };
+        },
       },
-    });
-    tools.push({
-      name: 'browser_operation',
-      description:
-        'Reconcile a lost response using its operationId. outcome_unknown requires independent inspection; never blindly repeat the action.',
-      inputSchema: {
-        type: 'object',
-        properties: { operationId: { type: 'string' } },
-        required: ['operationId'],
+      {
+        name: 'browser_operation',
+        requiredCapability: 'session.control',
+        description:
+          'Reconcile a lost response using its operationId. outcome_unknown requires independent inspection; never blindly repeat the action.',
+        inputSchema: {
+          type: 'object',
+          properties: { operationId: { type: 'string' } },
+          required: ['operationId'],
+        },
+        handler: async (args) => {
+          if (!client.sessions.operation || typeof args.operationId !== 'string')
+            throw new UsageError('operationId is required');
+          return client.sessions.operation(sessionId, args.operationId);
+        },
       },
-      handler: async (args) => {
-        if (!client.sessions.operation || typeof args.operationId !== 'string')
-          throw new UsageError('operationId is required');
-        return client.sessions.operation(sessionId, args.operationId);
-      },
-    });
+    ];
+    tools.push(...delegatedTools.filter((tool) => agentModeAllows(mode, tool.requiredCapability)));
   }
 
   const toolByName = new Map(tools.map((tool) => [tool.name, tool]));

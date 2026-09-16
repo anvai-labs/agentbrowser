@@ -1,6 +1,6 @@
 # Generated MCP tool catalog
 
-Generated from the built adapter's `tools/list` in unbound and delegated modes.
+Generated from the built adapter's `tools/list` for every fixed profile and binding.
 Do not edit by hand. Build the MCP package, then run `node scripts/mcp-catalog-docs.mjs --write`.
 `node scripts/mcp-catalog-docs.mjs` checks drift; the existing release-artifact gate runs it.
 
@@ -10,9 +10,9 @@ structured output contracts. An absent annotation is not a promise of read-only 
 Descriptions and annotations are hints, never authorization. Catalog presence does
 not prove a live backend, engine capability or current session grant.
 
-Catalog SHA-256 (complete descriptions and schemas): `159c37b0288532c934afc357d258ab844d30c9afe5a214093921c9e2c9899c33`
+Catalog SHA-256 (complete descriptions and schemas): `f5581af7abc9f22f8ee8371eb707d623a5f49e177bfc5fa28442a1456603bf26`
 
-## unbound (13 tools)
+## unbound/qa (13 tools; 24964 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -30,7 +30,7 @@ Catalog SHA-256 (complete descriptions and schemas): `159c37b0288532c934afc357d2
 | `browser_screenshot` | sessionId, pageId | text JSON | Capture a screenshot as optional evidence. |
 | `browser_snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## delegated (12 tools)
+## delegated/qa (12 tools; 22355 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -46,6 +46,190 @@ Catalog SHA-256 (complete descriptions and schemas): `159c37b0288532c934afc357d2
 | `browser_screenshot` | pageId | text JSON | Capture a screenshot as optional evidence. |
 | `browser_session` | none | text JSON | Inspect the delegated session control status and available pages. |
 | `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
+
+## unbound/operations (13 tools; 24964 result bytes)
+
+| Tool | Required arguments | Output contract | Purpose |
+| --- | --- | --- | --- |
+| `browser_act` | sessionId, pageId, action | text JSON | Act through current element refs. |
+| `browser_autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
+| `browser_close` | sessionId | text JSON | Close a browser session. |
+| `browser_cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
+| `browser_create` | tenantId | text JSON | Create a new isolated browser session. |
+| `browser_extract` | sessionId, pageId, format | text JSON | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
+| `browser_html` | sessionId, pageId | text JSON | Fetch the page's current HTML as inline text. |
+| `browser_navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
+| `browser_observe` | sessionId, pageId | text JSON | Get a semantic snapshot of the page: accessibility roles, names, form state and stable element refs. |
+| `browser_pdf` | sessionId, pageId | text JSON | Print the page to PDF and store it as a session artifact. |
+| `browser_plan` | sessionId, pageId, actions | urn:agentbrowser:plan-report:v1 | Execute explicit ordered steps in one server call. |
+| `browser_screenshot` | sessionId, pageId | text JSON | Capture a screenshot as optional evidence. |
+| `browser_snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
+
+## delegated/operations (12 tools; 22355 result bytes)
+
+| Tool | Required arguments | Output contract | Purpose |
+| --- | --- | --- | --- |
+| `browser_act` | pageId, action, operationId | text JSON | Act through current element refs. |
+| `browser_autofill` | pageId, fields, operationId | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
+| `browser_extract` | pageId, format | text JSON | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
+| `browser_html` | pageId | text JSON | Fetch the page's current HTML as inline text. |
+| `browser_navigate` | pageId, url, operationId | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
+| `browser_observe` | pageId | text JSON | Get a semantic snapshot of the page: accessibility roles, names, form state and stable element refs. |
+| `browser_operation` | operationId | text JSON | Reconcile a lost response using its operationId. |
+| `browser_pdf` | pageId | text JSON | Print the page to PDF and store it as a session artifact. |
+| `browser_plan` | pageId, actions, operationId | urn:agentbrowser:plan-report:v1 | Execute explicit ordered steps in one server call. |
+| `browser_screenshot` | pageId | text JSON | Capture a screenshot as optional evidence. |
+| `browser_session` | none | text JSON | Inspect the delegated session control status and available pages. |
+| `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
+
+## unbound/audit (12 tools; 20444 result bytes)
+
+| Tool | Required arguments | Output contract | Purpose |
+| --- | --- | --- | --- |
+| `browser_act` | sessionId, pageId, action | text JSON | Act through current element refs. |
+| `browser_close` | sessionId | text JSON | Close a browser session. |
+| `browser_cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
+| `browser_create` | tenantId | text JSON | Create a new isolated browser session. |
+| `browser_extract` | sessionId, pageId, format | text JSON | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
+| `browser_html` | sessionId, pageId | text JSON | Fetch the page's current HTML as inline text. |
+| `browser_navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
+| `browser_observe` | sessionId, pageId | text JSON | Get a semantic snapshot of the page: accessibility roles, names, form state and stable element refs. |
+| `browser_pdf` | sessionId, pageId | text JSON | Print the page to PDF and store it as a session artifact. |
+| `browser_plan` | sessionId, pageId, actions | urn:agentbrowser:plan-report:v1 | Execute explicit ordered steps in one server call. |
+| `browser_screenshot` | sessionId, pageId | text JSON | Capture a screenshot as optional evidence. |
+| `browser_snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
+
+## delegated/audit (11 tools; 17833 result bytes)
+
+| Tool | Required arguments | Output contract | Purpose |
+| --- | --- | --- | --- |
+| `browser_act` | pageId, action, operationId | text JSON | Act through current element refs. |
+| `browser_extract` | pageId, format | text JSON | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
+| `browser_html` | pageId | text JSON | Fetch the page's current HTML as inline text. |
+| `browser_navigate` | pageId, url, operationId | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
+| `browser_observe` | pageId | text JSON | Get a semantic snapshot of the page: accessibility roles, names, form state and stable element refs. |
+| `browser_operation` | operationId | text JSON | Reconcile a lost response using its operationId. |
+| `browser_pdf` | pageId | text JSON | Print the page to PDF and store it as a session artifact. |
+| `browser_plan` | pageId, actions, operationId | urn:agentbrowser:plan-report:v1 | Execute explicit ordered steps in one server call. |
+| `browser_screenshot` | pageId | text JSON | Capture a screenshot as optional evidence. |
+| `browser_session` | none | text JSON | Inspect the delegated session control status and available pages. |
+| `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
+
+## unbound/appsec (13 tools; 24964 result bytes)
+
+| Tool | Required arguments | Output contract | Purpose |
+| --- | --- | --- | --- |
+| `browser_act` | sessionId, pageId, action | text JSON | Act through current element refs. |
+| `browser_autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
+| `browser_close` | sessionId | text JSON | Close a browser session. |
+| `browser_cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
+| `browser_create` | tenantId | text JSON | Create a new isolated browser session. |
+| `browser_extract` | sessionId, pageId, format | text JSON | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
+| `browser_html` | sessionId, pageId | text JSON | Fetch the page's current HTML as inline text. |
+| `browser_navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
+| `browser_observe` | sessionId, pageId | text JSON | Get a semantic snapshot of the page: accessibility roles, names, form state and stable element refs. |
+| `browser_pdf` | sessionId, pageId | text JSON | Print the page to PDF and store it as a session artifact. |
+| `browser_plan` | sessionId, pageId, actions | urn:agentbrowser:plan-report:v1 | Execute explicit ordered steps in one server call. |
+| `browser_screenshot` | sessionId, pageId | text JSON | Capture a screenshot as optional evidence. |
+| `browser_snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
+
+## delegated/appsec (12 tools; 22355 result bytes)
+
+| Tool | Required arguments | Output contract | Purpose |
+| --- | --- | --- | --- |
+| `browser_act` | pageId, action, operationId | text JSON | Act through current element refs. |
+| `browser_autofill` | pageId, fields, operationId | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
+| `browser_extract` | pageId, format | text JSON | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
+| `browser_html` | pageId | text JSON | Fetch the page's current HTML as inline text. |
+| `browser_navigate` | pageId, url, operationId | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
+| `browser_observe` | pageId | text JSON | Get a semantic snapshot of the page: accessibility roles, names, form state and stable element refs. |
+| `browser_operation` | operationId | text JSON | Reconcile a lost response using its operationId. |
+| `browser_pdf` | pageId | text JSON | Print the page to PDF and store it as a session artifact. |
+| `browser_plan` | pageId, actions, operationId | urn:agentbrowser:plan-report:v1 | Execute explicit ordered steps in one server call. |
+| `browser_screenshot` | pageId | text JSON | Capture a screenshot as optional evidence. |
+| `browser_session` | none | text JSON | Inspect the delegated session control status and available pages. |
+| `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
+
+## unbound/bounty (13 tools; 24964 result bytes)
+
+| Tool | Required arguments | Output contract | Purpose |
+| --- | --- | --- | --- |
+| `browser_act` | sessionId, pageId, action | text JSON | Act through current element refs. |
+| `browser_autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
+| `browser_close` | sessionId | text JSON | Close a browser session. |
+| `browser_cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
+| `browser_create` | tenantId | text JSON | Create a new isolated browser session. |
+| `browser_extract` | sessionId, pageId, format | text JSON | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
+| `browser_html` | sessionId, pageId | text JSON | Fetch the page's current HTML as inline text. |
+| `browser_navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
+| `browser_observe` | sessionId, pageId | text JSON | Get a semantic snapshot of the page: accessibility roles, names, form state and stable element refs. |
+| `browser_pdf` | sessionId, pageId | text JSON | Print the page to PDF and store it as a session artifact. |
+| `browser_plan` | sessionId, pageId, actions | urn:agentbrowser:plan-report:v1 | Execute explicit ordered steps in one server call. |
+| `browser_screenshot` | sessionId, pageId | text JSON | Capture a screenshot as optional evidence. |
+| `browser_snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
+
+## delegated/bounty (12 tools; 22355 result bytes)
+
+| Tool | Required arguments | Output contract | Purpose |
+| --- | --- | --- | --- |
+| `browser_act` | pageId, action, operationId | text JSON | Act through current element refs. |
+| `browser_autofill` | pageId, fields, operationId | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
+| `browser_extract` | pageId, format | text JSON | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
+| `browser_html` | pageId | text JSON | Fetch the page's current HTML as inline text. |
+| `browser_navigate` | pageId, url, operationId | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
+| `browser_observe` | pageId | text JSON | Get a semantic snapshot of the page: accessibility roles, names, form state and stable element refs. |
+| `browser_operation` | operationId | text JSON | Reconcile a lost response using its operationId. |
+| `browser_pdf` | pageId | text JSON | Print the page to PDF and store it as a session artifact. |
+| `browser_plan` | pageId, actions, operationId | urn:agentbrowser:plan-report:v1 | Execute explicit ordered steps in one server call. |
+| `browser_screenshot` | pageId | text JSON | Capture a screenshot as optional evidence. |
+| `browser_session` | none | text JSON | Inspect the delegated session control status and available pages. |
+| `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
+
+## unbound/forms (13 tools; 24964 result bytes)
+
+| Tool | Required arguments | Output contract | Purpose |
+| --- | --- | --- | --- |
+| `browser_act` | sessionId, pageId, action | text JSON | Act through current element refs. |
+| `browser_autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
+| `browser_close` | sessionId | text JSON | Close a browser session. |
+| `browser_cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
+| `browser_create` | tenantId | text JSON | Create a new isolated browser session. |
+| `browser_extract` | sessionId, pageId, format | text JSON | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
+| `browser_html` | sessionId, pageId | text JSON | Fetch the page's current HTML as inline text. |
+| `browser_navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
+| `browser_observe` | sessionId, pageId | text JSON | Get a semantic snapshot of the page: accessibility roles, names, form state and stable element refs. |
+| `browser_pdf` | sessionId, pageId | text JSON | Print the page to PDF and store it as a session artifact. |
+| `browser_plan` | sessionId, pageId, actions | urn:agentbrowser:plan-report:v1 | Execute explicit ordered steps in one server call. |
+| `browser_screenshot` | sessionId, pageId | text JSON | Capture a screenshot as optional evidence. |
+| `browser_snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
+
+## delegated/forms (12 tools; 22355 result bytes)
+
+| Tool | Required arguments | Output contract | Purpose |
+| --- | --- | --- | --- |
+| `browser_act` | pageId, action, operationId | text JSON | Act through current element refs. |
+| `browser_autofill` | pageId, fields, operationId | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
+| `browser_extract` | pageId, format | text JSON | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
+| `browser_html` | pageId | text JSON | Fetch the page's current HTML as inline text. |
+| `browser_navigate` | pageId, url, operationId | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
+| `browser_observe` | pageId | text JSON | Get a semantic snapshot of the page: accessibility roles, names, form state and stable element refs. |
+| `browser_operation` | operationId | text JSON | Reconcile a lost response using its operationId. |
+| `browser_pdf` | pageId | text JSON | Print the page to PDF and store it as a session artifact. |
+| `browser_plan` | pageId, actions, operationId | urn:agentbrowser:plan-report:v1 | Execute explicit ordered steps in one server call. |
+| `browser_screenshot` | pageId | text JSON | Capture a screenshot as optional evidence. |
+| `browser_session` | none | text JSON | Inspect the delegated session control status and available pages. |
+| `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
+
+## unbound/application (0 tools; 12 result bytes)
+
+| Tool | Required arguments | Output contract | Purpose |
+| --- | --- | --- | --- |
+
+## delegated/application (1 tool; 293 result bytes)
+
+| Tool | Required arguments | Output contract | Purpose |
+| --- | --- | --- | --- |
+| `browser_operation` | operationId | text JSON | Reconcile a lost response using its operationId. |
 
 Full nested schemas and complete descriptions are available through `tools/list`.
 The digest detects changes even when a summary row stays the same. Tool errors retain

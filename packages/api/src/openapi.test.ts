@@ -101,6 +101,22 @@ describe('OpenAPI document', () => {
       }
     });
 
+    it('documents the closed delegated mode vocabulary and qa default', () => {
+      const delegate = doc.paths['/v1/sessions/{sessionId}/control/delegate'].post;
+      const mode = delegate.requestBody.content['application/json'].schema.properties.mode;
+      expect(mode.default).toBe('qa');
+      expect(mode.anyOf.map((entry: { const: string }) => entry.const)).toEqual([
+        'qa',
+        'operations',
+        'audit',
+        'appsec',
+        'bounty',
+        'forms',
+        'application',
+      ]);
+      expect(JSON.stringify(doc.components.schemas.ControlGrant)).toContain('"mode"');
+    });
+
     it('should declare every path template parameter', () => {
       for (const [path, item] of Object.entries(doc.paths) as [string, Json][]) {
         const templated = [...path.matchAll(/\{(\w+)\}/g)].map((m) => m[1]);

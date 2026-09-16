@@ -62,7 +62,7 @@ flowchart LR
 | `GET /v1/sessions/{id}/control` | Operator or current session grant; status without browser access |
 | `POST .../control/takeover` | Operator; revoke grant immediately and expose drain state |
 | `POST .../control/prepare-resume` | Operator; fresh page summaries and review epoch; failure returns to human control |
-| `POST .../control/delegate`, `{epoch}` | Operator; new random bearer token, hash retained by server |
+| `POST .../control/delegate`, `{epoch, mode?}` | Operator; new random bearer token with a fixed profile (`qa` by default), hash retained by server |
 | `GET .../operations/{operationId}` | Operator or grant from the operation's generation |
 | Existing page operations | One admitted top-level operation per session, including reads; concurrent work gets `SESSION_BUSY` |
 
@@ -109,7 +109,7 @@ CLI example, with operator credentials supplied through the environment:
 agentbrowser --json session create --tenant owner --delegated --no-headless
 agentbrowser --json session takeover SESSION_ID
 agentbrowser --json session prepare-resume SESSION_ID
-agentbrowser --json session delegate SESSION_ID --epoch REVIEW_EPOCH
+agentbrowser --json session delegate SESSION_ID --epoch REVIEW_EPOCH --mode forms
 agentbrowser --json session operation SESSION_ID OPERATION_ID
 ```
 
@@ -119,6 +119,7 @@ For a **delegated** MCP process set:
 AGENTBROWSER_BASE_URL=http://127.0.0.1:5709
 AGENTBROWSER_SESSION_ID=<controlled-session-id>
 AGENTBROWSER_API_KEY=<delegated-token-from-the-panel>
+AGENTBROWSER_MODE=forms
 ```
 
 Use the built `packages/mcp-server/dist/bin.js` or a binary built from this change.
@@ -128,6 +129,14 @@ reconciles a known operation ID. Session creation/closure and cookie tools are
 removed from the catalog. Mutation tools require a caller-chosen `operationId`;
 this survives a lost stdio response. A supplied different session ID is refused.
 Owner takeover/delegation are never exposed as agent tools.
+
+The mode is chosen by the authenticated operator and retained in the opaque grant;
+caller-supplied headers or tool arguments cannot change it. The API intersects the
+existing delegated route allowlist with that profile before dispatch. The MCP profile
+only reduces connection context: configure it to match the grant, but do not treat a
+hidden tool as an authorization boundary. A stale or broader catalog still receives a
+403 from the service. Changing mode requires takeover, fresh review, a new grant and a
+new MCP connection; it never replays an in-flight or recorded operation.
 
 The same stdio command works with all three harnesses. Registration examples
 below use an absolute build path; configure the three environment values above

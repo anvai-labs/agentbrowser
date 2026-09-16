@@ -2,10 +2,11 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomBytes } from 'node:crypto';
 import { ControlError, type ControlTicket, SessionControl } from '@agentbrowser/core';
 import type { EnginePage } from '@agentbrowser/engine';
+import { type AgentMode, DEFAULT_AGENT_MODE } from '@agentbrowser/protocol';
 
 export type SessionPrincipal =
   | { actor: 'operator'; tenant?: string }
-  | { actor: 'agent'; tenant: string; sessionId: string; epoch: number };
+  | { actor: 'agent'; tenant: string; sessionId: string; epoch: number; mode: AgentMode };
 type Entry = {
   control: SessionControl;
   tenant: string;
@@ -77,7 +78,7 @@ export class SessionAuthority {
     return entry.control.takeover();
   }
 
-  delegate(sessionId: string, epoch: number) {
+  delegate(sessionId: string, epoch: number, mode: AgentMode = DEFAULT_AGENT_MODE) {
     const entry = this.require(sessionId);
     const view = entry.control.delegate(epoch);
     this.revoke(entry);
@@ -88,8 +89,9 @@ export class SessionAuthority {
       tenant: entry.tenant,
       sessionId,
       epoch: view.epoch,
+      mode,
     });
-    return { ...view, token };
+    return { ...view, token, mode };
   }
 
   remove(sessionId: string): void {

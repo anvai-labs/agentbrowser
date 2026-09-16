@@ -18,12 +18,14 @@ import {
   DELIVERED_ACTION_TYPES,
   DELIVERED_EXTRACT_FORMATS,
   ErrorCode,
+  agentModeAllows,
+  isAgentMode,
   parsePlanSteps,
   validateSessionRequest,
   validateWireAction,
   validateWireActionBatch,
 } from '@agentbrowser/protocol';
-import type { SessionPolicy } from '@agentbrowser/protocol';
+import type { AgentCapability, SessionPolicy } from '@agentbrowser/protocol';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import Fastify from 'fastify';
@@ -77,6 +79,41 @@ export interface ServerOptions {
 /** SHA-256 hex digest. */
 function sha256Hex(value: string): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+const delegatedRoutes: readonly {
+  method: string;
+  path: RegExp;
+  capability: AgentCapability;
+}[] = [
+  {
+    method: 'GET',
+    path: /^(|\/control|\/operations\/:operationId)$/,
+    capability: 'session.control',
+  },
+  {
+    method: 'GET',
+    path: /^\/pages(?:|\/:pageId|\/:pageId\/snapshot)$/,
+    capability: 'page.observe',
+  },
+  { method: 'GET', path: /^\/artifacts\/:artifactId$/, capability: 'page.capture' },
+  { method: 'POST', path: /^\/pages$/, capability: 'session.manage' },
+  { method: 'POST', path: /^\/pages\/:pageId\/navigate$/, capability: 'page.navigate' },
+  { method: 'POST', path: /^\/pages\/:pageId\/observe$/, capability: 'page.observe' },
+  { method: 'POST', path: /^\/pages\/:pageId\/(act|plan)$/, capability: 'page.interact' },
+  { method: 'POST', path: /^\/pages\/:pageId\/autofill$/, capability: 'page.form' },
+  { method: 'POST', path: /^\/pages\/:pageId\/extract$/, capability: 'page.extract' },
+  {
+    method: 'POST',
+    path: /^\/pages\/:pageId\/(screenshot|pdf|html)$/,
+    capability: 'page.capture',
+  },
+  { method: 'DELETE', path: /^\/pages\/:pageId$/, capability: 'session.manage' },
+];
+
+function delegatedRouteCapability(method: string, suffix: string): AgentCapability | undefined {
+  return delegatedRoutes.find((route) => route.method === method && route.path.test(suffix))
+    ?.capability;
 }
 
 /**
@@ -507,22 +544,12 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           const suffix = template.replace('/v1/sessions/:sessionId', '');
           const sameSession =
             (request.params as { sessionId?: string }).sessionId === agent.sessionId;
-          const allowed =
-            sameSession &&
-            ((request.method === 'GET' &&
-              /^(|\/control|\/pages|\/pages\/:pageId|\/pages\/:pageId\/snapshot|\/operations\/:operationId|\/artifacts\/:artifactId)$/.test(
-                suffix
-              )) ||
-              (request.method === 'POST' &&
-                /^(\/pages|\/pages\/:pageId\/(navigate|observe|act|plan|autofill|extract|screenshot|pdf|html))$/.test(
-                  suffix
-                )) ||
-              (request.method === 'DELETE' && suffix === '/pages/:pageId'));
-          if (!allowed)
+          const capability = delegatedRouteCapability(request.method, suffix);
+          if (!sameSession || !capability || !agentModeAllows(agent.mode, capability))
             return reply.code(403).send({
               error: {
                 code: 'FORBIDDEN',
-                message: 'Delegated credential does not permit this operation',
+                message: 'Delegated credential profile does not permit this operation',
                 retryable: false,
               },
             });
@@ -678,10 +705,13 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             if (!control) throw new ServiceError('NOT_FOUND', 'Session is not controlled');
             if (action === 'takeover') return reply.send(service.authority.takeover(sessionId));
             if (action === 'delegate') {
-              const epoch = (request.body as { epoch?: unknown } | undefined)?.epoch;
+              const body = request.body as { epoch?: unknown; mode?: unknown } | undefined;
+              const epoch = body?.epoch;
               if (!Number.isSafeInteger(epoch) || (epoch as number) < 0)
                 throw new ServiceError('INVALID_REQUEST', 'A valid review epoch is required');
-              return reply.send(service.authority.delegate(sessionId, epoch as number));
+              if (body?.mode !== undefined && !isAgentMode(body.mode))
+                throw new ServiceError('INVALID_REQUEST', 'A valid agent mode is required');
+              return reply.send(service.authority.delegate(sessionId, epoch as number, body?.mode));
             }
             const review = control.prepareResume();
             service.invalidateControlObservations(sessionId);
