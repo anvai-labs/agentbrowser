@@ -37,6 +37,7 @@ import {
   type Browser,
   type BrowserContext,
   type ElementHandle,
+  type JSHandle,
   type Locator,
   type Page,
   chromium,
@@ -102,6 +103,61 @@ interface FormControlInfo {
 interface NodeBinding extends SnapshotEvidence {
   handle: ElementHandle;
   locator: Locator;
+  formEvidence?: Record<string, string>;
+}
+
+/** Read-only DOM evidence. WeakMap identities survive reordering, never replacement/navigation. */
+interface FormEvidenceNode {
+  tagName: string;
+  id: string;
+  type?: string;
+  multiple?: boolean;
+  value?: string;
+  getAttribute(name: string): string | null;
+  closest(selector: string): FormEvidenceNode | null;
+  querySelector(selector: string): { textContent: string | null } | null;
+}
+interface FormIdentityState {
+  nodes: WeakMap<object, string>;
+  next: number;
+  document: string;
+}
+function captureFormEvidence(
+  node: FormEvidenceNode,
+  state: FormIdentityState
+): { attributes: Record<string, string>; value?: string } {
+  const token = (element: FormEvidenceNode) => {
+    let id = state.nodes.get(element);
+    if (!id) {
+      id = `${state.document}:${++state.next}`;
+      state.nodes.set(element, id);
+    }
+    return id;
+  };
+  const block = node.closest('fieldset');
+  const attributes: Record<string, string> = {
+    tag: node.tagName.toLowerCase(),
+    'autofill-node': token(node),
+    'autofill-block': block ? token(block) : '',
+  };
+  for (const name of ['id', 'data-automation-id', 'aria-autocomplete']) {
+    const value = node.getAttribute(name);
+    if (value !== null) attributes[name] = value.slice(0, 512);
+  }
+  if (block) {
+    attributes['fieldset-id'] = block.id.slice(0, 512);
+    attributes['fieldset-label'] = (block.querySelector(':scope > legend')?.textContent ?? '')
+      .trim()
+      .slice(0, 512);
+  }
+  if (node.tagName === 'INPUT') attributes.type = node.type ?? 'text';
+  if (node.tagName === 'SELECT' && node.multiple) attributes.multiple = 'true';
+  // Credentials never become additional observation evidence.
+  const readable =
+    node.tagName === 'TEXTAREA' ||
+    node.tagName === 'SELECT' ||
+    (node.tagName === 'INPUT' && node.type !== 'password' && node.type !== 'hidden');
+  return { attributes, ...(readable && node.value !== undefined ? { value: node.value } : {}) };
 }
 
 /**
@@ -1019,6 +1075,13 @@ class PlaywrightSession implements EngineSession {
  * PlaywrightPage implements EnginePage
  */
 class PlaywrightPage implements EnginePage {
+  private formIdentityState: JSHandle<FormIdentityState> | undefined;
+  private readonly onFrameNavigated = (frame: import('playwright').Frame) => {
+    if (frame === this.page.mainFrame()) {
+      void this.formIdentityState?.dispose().catch(() => {});
+      this.formIdentityState = undefined;
+    }
+  };
   readonly id: string;
   private page: Page;
   private engine: PlaywrightChromiumEngine;
@@ -1086,6 +1149,7 @@ class PlaywrightPage implements EnginePage {
     this.page = page;
     this.engine = engine;
     this.snapshotTimeoutMs = snapshotTimeoutMs ?? engine.snapshotTimeoutMs;
+    this.page.on('framenavigated', this.onFrameNavigated);
 
     // Setup event listeners
     this.setupEventListeners();
@@ -1402,10 +1466,24 @@ class PlaywrightPage implements EnginePage {
       // stays its own sequential sub-pass below (unchanged semantics: first
       // 50 links in document order that actually carry a non-empty href,
       // not the first 50 link-role elements - a fetch can come back empty).
+      if (request.include?.includes('formControls') && !this.formIdentityState) {
+        this.formIdentityState = await this.page.evaluateHandle(
+          (document) => ({ nodes: new WeakMap(), next: 0, document }),
+          randomUUID()
+        );
+      }
+      const formState = this.formIdentityState;
       await Promise.all(
         boundElements.map(async ({ element, handle, locator }) => {
           element.visible = await handle.isVisible();
           element.enabled = await handle.isEnabled();
+          if (request.include?.includes('formControls') && formState) {
+            const evidence = await handle.evaluate(captureFormEvidence, formState);
+            element.attributes = { ...element.attributes, ...evidence.attributes };
+            if (evidence.value !== undefined) element.value = evidence.value;
+            const binding = this.bindings.get(element.ref ?? '');
+            if (binding) binding.formEvidence = evidence.attributes;
+          }
           // Checked roles: the snapshot marker settles true and records mixed
           // as present-but-undefined; elements the marker left unset get one
           // authoritative read here (isChecked reads aria-checked for these
@@ -2064,6 +2142,20 @@ class PlaywrightPage implements EnginePage {
       if (!live.visible) throw new EngineError('TARGET_NOT_VISIBLE', 'Target is not visible');
       if (!live.enabled) throw new EngineError('TARGET_DISABLED', 'Target is disabled');
     }
+    if (action.target !== undefined) {
+      const binding = this.bindings.get(action.target.ref);
+      if (binding?.formEvidence) {
+        if (!this.formIdentityState)
+          throw new EngineError('STALE_TARGET', 'Form document changed', false);
+        const live = await binding.handle.evaluate(captureFormEvidence, this.formIdentityState);
+        if (JSON.stringify(live.attributes) !== JSON.stringify(binding.formEvidence))
+          throw new EngineError(
+            'STALE_TARGET',
+            'Observed form control or fieldset identity changed',
+            false
+          );
+      }
+    }
     const actionId = `action-${Date.now()}`;
     const startTimestamp = new Date().toISOString();
     const oldRevision = this.revision;
@@ -2582,6 +2674,9 @@ class PlaywrightPage implements EnginePage {
     this.page.off('load', this.onPageLoad);
     this.page.off('console', this.onPageConsole);
     this.page.off('crash', this.onPageCrashed);
+    this.page.off('framenavigated', this.onFrameNavigated);
+    await this.formIdentityState?.dispose().catch(() => {});
+    this.formIdentityState = undefined;
     await this.page.close();
   }
 }

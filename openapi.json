@@ -1252,6 +1252,423 @@
         }
       }
     },
+    "/v1/sessions/{sessionId}/pages/{pageId}/autofill": {
+      "post": {
+        "operationId": "autofillPage",
+        "summary": "Fill structured fields serially and return verification receipts",
+        "description": "One controlled mutation. Native inputs and single selects only. Unique fieldset scope, bounded read-only retries, stop on uncertain writes. Includes a raw HTML artifact; no explicit submit action.",
+        "tags": [
+          "pages"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pageId",
+            "in": "path",
+            "required": true,
+            "description": "Page identifier returned by createPage.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-AgentBrowser-Operation-Id",
+            "in": "header",
+            "required": false,
+            "description": "Required for delegated-session mutations. Same ID and request returns a replay status without redispatch; a different request conflicts. Not required for observations or captures.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "fields"
+                ],
+                "properties": {
+                  "fields": {
+                    "minItems": 1,
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "match"
+                      ],
+                      "properties": {
+                        "match": {
+                          "additionalProperties": false,
+                          "minProperties": 1,
+                          "type": "object",
+                          "properties": {
+                            "role": {
+                              "minLength": 1,
+                              "maxLength": 512,
+                              "type": "string"
+                            },
+                            "label": {
+                              "minLength": 1,
+                              "maxLength": 512,
+                              "type": "string"
+                            },
+                            "labelRegex": {
+                              "minLength": 1,
+                              "maxLength": 512,
+                              "type": "string"
+                            },
+                            "dataAutomationId": {
+                              "minLength": 1,
+                              "maxLength": 512,
+                              "type": "string"
+                            },
+                            "block": {
+                              "additionalProperties": false,
+                              "minProperties": 1,
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "minLength": 1,
+                                  "maxLength": 512,
+                                  "type": "string"
+                                },
+                                "label": {
+                                  "minLength": 1,
+                                  "maxLength": 512,
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "value": {
+                          "maxLength": 8192,
+                          "type": "string"
+                        },
+                        "option": {
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": [
+                            "value"
+                          ],
+                          "properties": {
+                            "value": {
+                              "maxLength": 8192,
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "verify": {
+                          "anyOf": [
+                            {
+                              "const": "exact",
+                              "type": "string"
+                            },
+                            {
+                              "const": "none",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "strategy": {
+                          "anyOf": [
+                            {
+                              "const": "native-input",
+                              "type": "string"
+                            },
+                            {
+                              "const": "native-select",
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "policy": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "properties": {
+                      "onAmbiguous": {
+                        "anyOf": [
+                          {
+                            "const": "fail",
+                            "type": "string"
+                          },
+                          {
+                            "const": "skip",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "onVerifyFail": {
+                        "anyOf": [
+                          {
+                            "const": "fail",
+                            "type": "string"
+                          },
+                          {
+                            "const": "skip",
+                            "type": "string"
+                          },
+                          {
+                            "const": "retry",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "maxReobserve": {
+                        "minimum": 0,
+                        "maximum": 5,
+                        "type": "integer"
+                      },
+                      "settleMs": {
+                        "minimum": 0,
+                        "maximum": 2000,
+                        "type": "integer"
+                      },
+                      "timeoutMs": {
+                        "minimum": 1,
+                        "maximum": 240000,
+                        "type": "integer"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Per-field report; inspect ok and receipts even on HTTP 200.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "receipts",
+                    "elapsedMs"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "receipts": {
+                      "maxItems": 50,
+                      "type": "array",
+                      "items": {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "field",
+                          "match",
+                          "status",
+                          "verified"
+                        ],
+                        "properties": {
+                          "field": {
+                            "minimum": 0,
+                            "maximum": 49,
+                            "type": "integer"
+                          },
+                          "match": {
+                            "additionalProperties": false,
+                            "minProperties": 1,
+                            "type": "object",
+                            "properties": {
+                              "role": {
+                                "minLength": 1,
+                                "maxLength": 512,
+                                "type": "string"
+                              },
+                              "label": {
+                                "minLength": 1,
+                                "maxLength": 512,
+                                "type": "string"
+                              },
+                              "labelRegex": {
+                                "minLength": 1,
+                                "maxLength": 512,
+                                "type": "string"
+                              },
+                              "dataAutomationId": {
+                                "minLength": 1,
+                                "maxLength": 512,
+                                "type": "string"
+                              },
+                              "block": {
+                                "additionalProperties": false,
+                                "minProperties": 1,
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "minLength": 1,
+                                    "maxLength": 512,
+                                    "type": "string"
+                                  },
+                                  "label": {
+                                    "minLength": 1,
+                                    "maxLength": 512,
+                                    "type": "string"
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "resolvedRef": {
+                            "type": "string"
+                          },
+                          "blockIdentity": {
+                            "type": "string"
+                          },
+                          "actionId": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "anyOf": [
+                              {
+                                "const": "verified",
+                                "type": "string"
+                              },
+                              {
+                                "const": "unverified",
+                                "type": "string"
+                              },
+                              {
+                                "const": "skipped",
+                                "type": "string"
+                              },
+                              {
+                                "const": "failed",
+                                "type": "string"
+                              },
+                              {
+                                "const": "uncertain",
+                                "type": "string"
+                              },
+                              {
+                                "const": "not_attempted",
+                                "type": "string"
+                              }
+                            ]
+                          },
+                          "verified": {
+                            "type": "boolean"
+                          },
+                          "actual": {
+                            "maxLength": 512,
+                            "type": "string"
+                          },
+                          "actualTruncated": {
+                            "type": "boolean"
+                          },
+                          "error": {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": [
+                              "code",
+                              "message"
+                            ],
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "message": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "elapsedMs": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "snapshot": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "artifactId"
+                      ],
+                      "properties": {
+                        "artifactId": {
+                          "type": "string"
+                        },
+                        "contentType": {
+                          "type": "string"
+                        },
+                        "sizeBytes": {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "warnings": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "snapshotError": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was malformed or failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session busy, control revoked, or operation ID conflicts. Reconcile before continuing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/sessions/{sessionId}/pages/{pageId}/plan": {
       "post": {
         "operationId": "executePagePlan",
