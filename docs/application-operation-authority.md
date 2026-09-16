@@ -139,7 +139,7 @@ operation ID and expected business version; duplicate IDs return the operation
 record, changed identities conflict, known application rejection records failure,
 and lost results remain uncertain. No write fallback or automatic replay exists.
 
-The package's fifteen deterministic tests cover these boundaries. The production
+The package's deterministic tests cover these boundaries. The production
 qualification deploys only control dependencies and rejects installed API/browser
 packages and links escaping the extracted tree, then executes delegation, an
 application effect, duplicate suppression, takeover and receipt lookup. Separate
@@ -148,3 +148,13 @@ This evidence uses an in-memory application oracle and does not establish durabl
 receipts, external application authorization, or HTTP/MCP delivery. The host must
 authenticate principals before using the programmatic API. Existing HTTP, CLI,
 MCP and operator-panel behavior is unchanged until those surfaces are qualified.
+
+The resource-bound refinement enforces the 64 KiB canonical JSON limit during
+serialization, including UTF-8 escaping and structure. It reuses serialized input
+for write fingerprints and preserves a separate budget for binding metadata.
+Inputs must contain own JSON data; accessors and sparse arrays are rejected.
+Application-only sessions enforce monotonic TTL at admission, dispatch and output,
+even when the event loop delays cleanup timers. Duplicate registration and stale
+abort/page callbacks cannot replace or act under another owner. See the
+[shared infrastructure refinement](shared-session-infrastructure.md#resource-bounds-and-lifecycle-refinement)
+for the reasoning, continuity qualification and remaining transport boundaries.
