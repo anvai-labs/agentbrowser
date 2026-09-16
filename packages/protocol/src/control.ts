@@ -1,4 +1,5 @@
 import { type Static, Type } from '@sinclair/typebox';
+import { AgentModeSchema } from './mode-profile.js';
 
 export const ControlStateSchema = Type.Union([
   Type.Literal('HUMAN_ACTIVE'),
@@ -45,5 +46,5 @@ export const ControlReviewSchema = Type.Intersect([
 ]);
 export const ControlGrantSchema = Type.Intersect([
   ControlViewSchema,
-  Type.Object({ token: Type.String() }),
+  Type.Object({ token: Type.String(), mode: AgentModeSchema }),
 ]);

@@ -1,0 +1,65 @@
+import { Type } from '@sinclair/typebox';
+
+/** Trusted runtime profiles. Mode names never grant capabilities by themselves. */
+export const AGENT_MODE_IDS = Object.freeze([
+  'qa',
+  'operations',
+  'audit',
+  'appsec',
+  'bounty',
+  'forms',
+  'application',
+] as const);
+
+export type AgentMode = (typeof AGENT_MODE_IDS)[number];
+export const DEFAULT_AGENT_MODE: AgentMode = 'qa';
+export const AgentModeSchema = Type.Union(AGENT_MODE_IDS.map((mode) => Type.Literal(mode)));
+
+export const AGENT_CAPABILITIES = Object.freeze([
+  'session.control',
+  'session.manage',
+  'page.navigate',
+  'page.observe',
+  'page.interact',
+  'page.form',
+  'page.extract',
+  'page.capture',
+] as const);
+
+export type AgentCapability = (typeof AGENT_CAPABILITIES)[number];
+
+export interface AgentModeProfile {
+  readonly id: AgentMode;
+  readonly revision: 1;
+  readonly capabilities: readonly AgentCapability[];
+}
+
+const FULL_BROWSER_PROFILE = AGENT_CAPABILITIES;
+const AUDIT_PROFILE = AGENT_CAPABILITIES.filter((capability) => capability !== 'page.form');
+const APPLICATION_PROFILE = ['session.control'] as const satisfies readonly AgentCapability[];
+
+const profiles = Object.freeze({
+  qa: profile('qa', FULL_BROWSER_PROFILE),
+  operations: profile('operations', FULL_BROWSER_PROFILE),
+  audit: profile('audit', AUDIT_PROFILE),
+  appsec: profile('appsec', FULL_BROWSER_PROFILE),
+  bounty: profile('bounty', FULL_BROWSER_PROFILE),
+  forms: profile('forms', FULL_BROWSER_PROFILE),
+  application: profile('application', APPLICATION_PROFILE),
+} satisfies Record<AgentMode, AgentModeProfile>);
+
+function profile(id: AgentMode, capabilities: readonly AgentCapability[]): AgentModeProfile {
+  return Object.freeze({ id, revision: 1, capabilities: Object.freeze([...capabilities]) });
+}
+
+export function isAgentMode(value: unknown): value is AgentMode {
+  return typeof value === 'string' && (AGENT_MODE_IDS as readonly string[]).includes(value);
+}
+
+export function agentModeProfile(mode: AgentMode): AgentModeProfile {
+  return profiles[mode];
+}
+
+export function agentModeAllows(mode: AgentMode, capability: AgentCapability): boolean {
+  return agentModeProfile(mode).capabilities.includes(capability);
+}

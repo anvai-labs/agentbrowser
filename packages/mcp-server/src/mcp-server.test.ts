@@ -493,6 +493,42 @@ describe('AgentBrowser MCP server', () => {
   });
 
   describe('tools/list', () => {
+    it('projects a fixed connection profile and rejects direct calls to omitted tools', async () => {
+      sessions.autofill = vi.fn();
+      server = buildMcpServer({ ...deps, sessionId: 'ses_1', mode: 'audit' });
+      const listed = JSON.parse(await request('profile-list', 'tools/list')).result.tools;
+      const names = listed.map((tool: { name: string }) => tool.name);
+      expect(names).toContain('browser_screenshot');
+      expect(names).toContain('browser_observe');
+      expect(names).not.toContain('browser_autofill');
+
+      const direct = JSON.parse(
+        await call('profile-direct', 'browser_autofill', {
+          pageId: 'pg_1',
+          operationId: 'must-not-dispatch',
+          fields: [{ match: { label: 'Name' }, value: 'private' }],
+        })
+      );
+      expect(direct.error).toMatchObject({
+        code: -32602,
+        message: 'Unknown tool: browser_autofill',
+      });
+      expect(sessions.autofill).not.toHaveBeenCalled();
+    });
+
+    it('keeps legacy connections on the full qa profile and application connections minimal', async () => {
+      const legacyNames = JSON.parse(
+        await request('legacy-profile', 'tools/list')
+      ).result.tools.map((tool: { name: string }) => tool.name);
+      expect(legacyNames).toContain('browser_autofill');
+
+      server = buildMcpServer({ ...deps, sessionId: 'ses_1', mode: 'application' });
+      const applicationNames = JSON.parse(
+        await request('application-profile', 'tools/list')
+      ).result.tools.map((tool: { name: string }) => tool.name);
+      expect(applicationNames).toEqual(['browser_operation']);
+    });
+
     it('should expose the ADR-009 high-level tool surface', async () => {
       const response = JSON.parse(await request('2', 'tools/list'));
       const names = response.result.tools.map((t: { name: string }) => t.name);

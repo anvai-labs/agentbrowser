@@ -18,6 +18,11 @@ it('exposes controlled creation and operator review/delegation', async () => {
   );
   expect(await cli.run(['--json', 'session', 'takeover', 's'])).toBe(0);
   expect(await cli.run(['--json', 'session', 'prepare-resume', 's'])).toBe(0);
-  expect(await cli.run(['--json', 'session', 'delegate', 's', '--epoch', '1'])).toBe(0);
-  expect(sessions.delegate).toHaveBeenCalledWith('s', 1);
+  expect(
+    await cli.run(['--json', 'session', 'delegate', 's', '--epoch', '1', '--mode', 'forms'])
+  ).toBe(0);
+  expect(sessions.delegate).toHaveBeenCalledWith('s', 1, 'forms');
+  sessions.delegate.mockClear();
+  expect(await cli.run(['session', 'delegate', 's', '--epoch', '1', '--mode', 'admin'])).toBe(1);
+  expect(sessions.delegate).not.toHaveBeenCalled();
 });

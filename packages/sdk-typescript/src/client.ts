@@ -7,6 +7,7 @@ import type { PlanReport } from '@agentbrowser/protocol';
  */
 
 import type {
+  AgentMode,
   AutofillReport,
   AutofillRequest,
   ControlView,
@@ -399,10 +400,14 @@ export class SessionsClient {
       method: 'POST',
     });
   }
-  async delegate(sessionId: string, epoch: number): Promise<ControlView & { token: string }> {
+  async delegate(
+    sessionId: string,
+    epoch: number,
+    mode?: AgentMode
+  ): Promise<ControlView & { token: string; mode: AgentMode }> {
     return this.http.requestJson(`/v1/sessions/${sessionId}/control/delegate`, {
       method: 'POST',
-      body: { epoch },
+      body: { epoch, ...(mode ? { mode } : {}) },
     });
   }
   async operation(sessionId: string, operationId: string): Promise<OperationRecord> {

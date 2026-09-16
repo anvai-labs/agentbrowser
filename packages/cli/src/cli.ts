@@ -11,6 +11,7 @@ import { isAbsolute } from 'node:path';
 import type {
   ActionRequest,
   ActionResult,
+  AgentMode,
   ArtifactRef,
   AutofillReport,
   AutofillRequest,
@@ -28,6 +29,7 @@ import type {
   SessionResponse,
 } from '@agentbrowser/sdk-typescript';
 import {
+  AGENT_MODE_IDS,
   AutofillReportSchema,
   AutofillRequestSchema,
   DELIVERED_EXTRACT_FORMATS,
@@ -37,6 +39,7 @@ import {
   REF_PATTERN,
   UsageError,
   formatErrorForUser,
+  isAgentMode,
   parseAutofillReport,
   parseAutofillRequest,
   parsePlanReport,
@@ -56,7 +59,7 @@ export interface CliClient {
     control?(sessionId: string): Promise<unknown>;
     takeover?(sessionId: string): Promise<unknown>;
     prepareResume?(sessionId: string): Promise<unknown>;
-    delegate?(sessionId: string, epoch: number): Promise<unknown>;
+    delegate?(sessionId: string, epoch: number, mode?: AgentMode): Promise<unknown>;
     operation?(sessionId: string, operationId: string): Promise<unknown>;
     create(request: SessionRequest): Promise<SessionResponse>;
     list(): Promise<SessionResponse[]>;
@@ -241,14 +244,17 @@ export function buildCli(deps: CliDependencies): Cli {
         .command('delegate <sessionId>')
         .description('issue a new delegated agent grant for the reviewed control epoch')
         .requiredOption('--epoch <n>', 'epoch from the reviewed prepare-resume response')
+        .option('--mode <mode>', 'fixed capability profile for this grant', 'qa')
         .action(
-          action(async (ctx, sessionId: string, options: { epoch: string }) => {
+          action(async (ctx, sessionId: string, options: { epoch: string; mode: string }) => {
             const epoch = Number(options.epoch);
             if (!Number.isSafeInteger(epoch) || epoch < 0)
               throw new UsageError('epoch must be a non-negative integer');
+            if (!isAgentMode(options.mode))
+              throw new UsageError(`mode must be one of: ${AGENT_MODE_IDS.join(', ')}`);
             if (!ctx.client.sessions.delegate)
               throw new UsageError('Client does not support delegated sessions');
-            const result = await ctx.client.sessions.delegate(sessionId, epoch);
+            const result = await ctx.client.sessions.delegate(sessionId, epoch, options.mode);
             ctx.emit(result, () => [JSON.stringify(result, null, 2)]);
           })
         );
