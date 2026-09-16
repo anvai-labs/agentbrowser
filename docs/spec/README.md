@@ -54,6 +54,10 @@ non-secret run cursor and inline operator mode selection. See the
 [T1 packet](tasks/t1-context-profiles.md) and
 [qualification evidence](evidence/t1-context-profiles.md). Installed harness cursor
 consumption remains T8 work.
+T2 is active with a first shared dispatch-boundary slice: pre-dispatch refusals and
+post-dispatch uncertainty now use the existing executor admission seam. See the
+[T2 packet](tasks/t2-shared-execution.md) and
+[dispatch-boundary evidence](evidence/t2-dispatch-boundary.md).
 
 ## Modes
 

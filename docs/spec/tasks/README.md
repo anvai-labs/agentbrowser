@@ -1,7 +1,7 @@
 # Agent implementation task packets
 
 Status: implementation activated by the user's subsequent foundation-first instruction.
-T0 is delivered and T1's local context-loader slice is active; later tasks remain not
+T0 is delivered; T1 and T2 have active incremental slices; later tasks remain not
 started. Reading this task list alone does not
 authorize implementation or publication; follow the current user-authorized scope.
 
