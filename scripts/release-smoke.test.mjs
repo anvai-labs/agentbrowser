@@ -165,3 +165,22 @@ test('version evidence clears the runtime MCP version override', async () => {
   child[3] = child[3].replace('"1.2.3"', 'process.env.AGENTBROWSER_MCP_VERSION ?? "1.2.3"');
   assert.equal((await checkMcp(child, { ...options, env: { ...process.env, AGENTBROWSER_MCP_VERSION: '9.9.9' } })).version, '1.2.3');
 });
+
+
+test('MCP smoke qualifies explicitly requested protocol versions without weakening legacy default', async () => {
+  const modern = mcp({ protocol: '2025-06-18' });
+  await checkMcp(modern, { ...options, protocolVersion: '2025-06-18' });
+  await assert.rejects(checkMcp(modern, options), /protocol/);
+});
+
+test('MCP smoke rejects mismatched structured/text data and unflagged failed reports', async () => {
+  for (const result of [
+    { content: [{ type: 'text', text: '{"ok":true}' }], structuredContent: { ok: false } },
+    { content: [{ type: 'text', text: '{"ok":false}' }] },
+  ]) {
+    const reply = `if(request.method==='tools/call'){console.log(JSON.stringify({jsonrpc:'2.0',id:request.id,result:${JSON.stringify(result)}}));return;}`;
+    await assert.rejects(checkMcp(mcp({ reply }), {
+      ...options, exercise: async ({ callTool }) => callTool('browser_autofill', {}),
+    }), /structured|failed/);
+  }
+});

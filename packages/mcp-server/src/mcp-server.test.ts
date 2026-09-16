@@ -120,7 +120,187 @@ describe('AgentBrowser MCP server', () => {
     server = buildMcpServer(deps);
   });
 
+  describe('negotiated structured autofill results', () => {
+    const args = {
+      sessionId: 'ses_1',
+      pageId: 'pg_1',
+      fields: [{ match: { label: 'Name' }, value: 'value' }],
+    };
+    const report = {
+      ok: true,
+      receipts: [{ field: 0, match: { label: 'Name' }, status: 'verified', verified: true }],
+      elapsedMs: 1,
+    };
+    const initialize = (version: string) =>
+      request('init', 'initialize', { protocolVersion: version });
+
+    it('negotiates the supported structured protocol and preserves nested schemas and mutation hints', async () => {
+      expect(JSON.parse(await initialize('2025-06-18')).result.protocolVersion).toBe('2025-06-18');
+      const tools = JSON.parse(await request('list', 'tools/list')).result.tools;
+      const autofill = tools.find((tool: { name: string }) => tool.name === 'browser_autofill');
+      expect(autofill.outputSchema.$id).toBe('urn:agentbrowser:autofill-report:v1');
+      expect(
+        autofill.outputSchema.properties.receipts.items.properties.status.anyOf
+      ).toContainEqual({ type: 'string', const: 'uncertain' });
+      expect(
+        autofill.inputSchema.properties.fields.items.properties.match.properties.block.properties
+          .label.maxLength
+      ).toBe(512);
+      expect(autofill.annotations).toMatchObject({ readOnlyHint: false, idempotentHint: false });
+    });
+
+    it('preserves legacy text-only catalogs and successful calls', async () => {
+      await initialize('2024-11-05');
+      const tools = JSON.parse(await request('list', 'tools/list')).result.tools;
+      expect(
+        tools.every((tool: object) => !('outputSchema' in tool) && !('annotations' in tool))
+      ).toBe(true);
+      sessions.autofill = vi.fn().mockResolvedValue(report);
+      const result = JSON.parse(await call('call', 'browser_autofill', args)).result;
+      expect(result.structuredContent).toBeUndefined();
+      expect(JSON.parse(result.content[0].text)).toEqual(report);
+    });
+
+    it.each([true, false])(
+      'retains complete receipts and text for a report with ok=%s',
+      async (ok) => {
+        await initialize('2025-06-18');
+        const receiptReport = {
+          ...report,
+          ok,
+          receipts: [
+            { ...report.receipts[0], status: ok ? 'unverified' : 'uncertain', verified: false },
+          ],
+        };
+        sessions.autofill = vi.fn().mockResolvedValue(receiptReport);
+        const result = JSON.parse(await call('call', 'browser_autofill', args)).result;
+        expect(result.structuredContent).toEqual(receiptReport);
+        expect(JSON.parse(result.content[0].text)).toEqual(receiptReport);
+        expect(result.isError).toBe(ok ? undefined : true);
+        expect(sessions.autofill).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it('marks a failed plan report as a tool error without dropping partial results', async () => {
+      const partial = {
+        ok: false,
+        completed: 1,
+        results: [
+          { step: 0, ok: true },
+          { step: 1, ok: false, error: 'denied' },
+        ],
+      };
+      sessions.plan.mockResolvedValue(partial);
+      const result = JSON.parse(
+        await call('plan', 'browser_plan', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          actions: [{ action: 'press', key: 'Tab' }],
+        })
+      ).result;
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(result.content[0].text)).toEqual(partial);
+    });
+
+    it('rejects an invalid upstream report without leaking it or retrying the write', async () => {
+      await initialize('2025-06-18');
+      sessions.autofill = vi.fn().mockResolvedValue({ ...report, secret: 'PRIVATE-REPORT' });
+      const result = JSON.parse(await call('call', 'browser_autofill', args)).result;
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toBeUndefined();
+      expect(result.content[0].text).toContain('may have executed');
+      expect(JSON.stringify(result)).not.toContain('PRIVATE-REPORT');
+      expect(sessions.autofill).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([false, true])(
+      'uses reachable reconciliation guidance for delegated=%s',
+      async (delegated) => {
+        server = buildMcpServer({ ...deps, ...(delegated ? { sessionId: 'ses_1' } : {}) });
+        sessions.autofill = vi.fn().mockRejectedValue(
+          Object.assign(new Error('Write outcome unknown'), {
+            details: { operationId: 'known-id' },
+          })
+        );
+        const result = JSON.parse(
+          await call('lost', 'browser_autofill', { ...args, operationId: 'known-id' })
+        ).result;
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain(
+          delegated ? 'browser_operation' : 'SDK/REST operation status'
+        );
+        expect(result.content[0].text).toContain('known-id');
+        expect(sessions.autofill).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it('offers a supported version for an unknown client and rejects renegotiation', async () => {
+      expect(JSON.parse(await initialize('2099-01-01')).result.protocolVersion).toBe('2025-06-18');
+      expect(JSON.parse(await initialize('2024-11-05')).error.code).toBe(-32600);
+    });
+
+    it('keeps negotiated state and delegated bindings isolated between connections', async () => {
+      await initialize('2025-06-18');
+      const delegated = buildMcpServer({ ...deps, sessionId: 'bound' });
+      const exchange = async (method: string, params = {}) =>
+        JSON.parse(
+          (await delegated.handle(JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }))) ??
+            'null'
+        );
+      expect(
+        (await exchange('tools/list')).result.tools.every(
+          (tool: object) => !('outputSchema' in tool)
+        )
+      ).toBe(true);
+      await exchange('initialize', { protocolVersion: '2025-06-18' });
+      const tools = (await exchange('tools/list')).result.tools;
+      const autofill = tools.find((tool: { name: string }) => tool.name === 'browser_autofill');
+      expect(autofill.outputSchema.$id).toBe('urn:agentbrowser:autofill-report:v1');
+      expect(autofill.inputSchema.required).toContain('operationId');
+      expect(autofill.inputSchema.required).not.toContain('sessionId');
+      sessions.autofill = vi.fn().mockResolvedValue(report);
+      expect(
+        (
+          await exchange('tools/call', {
+            name: 'browser_autofill',
+            arguments: { ...args, sessionId: 'foreign', operationId: 'once' },
+          })
+        ).result.isError
+      ).toBe(true);
+      expect(sessions.autofill).not.toHaveBeenCalled();
+      const { sessionId: _session, ...boundArgs } = args;
+      expect(
+        (
+          await exchange('tools/call', {
+            name: 'browser_autofill',
+            arguments: { ...boundArgs, operationId: 'once' },
+          })
+        ).result.structuredContent
+      ).toEqual(report);
+      expect(sessions.autofill).toHaveBeenCalledWith(
+        'bound',
+        'pg_1',
+        { fields: args.fields },
+        { operationId: 'once' }
+      );
+    });
+  });
+
   describe('initialize', () => {
+    it('guides native bulk forms and uncertain writes without recommending blind retries', async () => {
+      const response = JSON.parse(await request('interaction-guidance', 'tools/list'));
+      const descriptions = new Map<string, string>(
+        response.result.tools.map((tool: { name: string; description: string }) => [
+          tool.name,
+          tool.description,
+        ])
+      );
+      expect(descriptions.get('browser_snapshot')).toContain('scoped bulk autofill');
+      expect(descriptions.get('browser_plan')).toContain('application commit');
+      expect(descriptions.get('browser_act')).toContain('reconcile');
+      expect(descriptions.get('browser_act')).not.toContain('one retry after observing');
+    });
+
     it('advertises the ten-minute idle default without imposing a client-side default', async () => {
       const response = JSON.parse(await request('idle-help', 'tools/list'));
       const create = response.result.tools.find(
@@ -180,6 +360,59 @@ describe('AgentBrowser MCP server', () => {
       expect(plan.inputSchema.required).toEqual(
         expect.arrayContaining(['sessionId', 'pageId', 'actions'])
       );
+    });
+
+    it('projects canonical nested plan inputs and negotiated outputs', async () => {
+      await request('init-plan', 'initialize', { protocolVersion: '2025-06-18' });
+      const tool = JSON.parse(await request('list-plan', 'tools/list')).result.tools.find(
+        (t: { name: string }) => t.name === 'browser_plan'
+      );
+      expect(tool.inputSchema.properties.actions.items.properties.waitMs.maximum).toBe(60000);
+      expect(tool.inputSchema.properties.actions.items.properties.count.maximum).toBe(20);
+      expect(tool.outputSchema.$id).toBe('urn:agentbrowser:plan-report:v1');
+      const report = {
+        ok: false,
+        completed: 0,
+        results: [{ step: 0, ok: false, error: 'denied' }],
+      };
+      sessions.plan.mockResolvedValue(report);
+      const result = JSON.parse(
+        await call('partial-plan', 'browser_plan', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          actions: [{ action: 'press', key: 'Tab' }],
+        })
+      ).result;
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toEqual(report);
+      expect(JSON.parse(result.content[0].text)).toEqual(report);
+    });
+
+    it('rejects invalid plan steps locally and never proxies them', async () => {
+      const result = JSON.parse(
+        await call('invalid-plan', 'browser_plan', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          actions: [{ action: 'press', count: 21 }],
+        })
+      ).result;
+      expect(result.isError).toBe(true);
+      expect(sessions.plan).not.toHaveBeenCalled();
+    });
+
+    it('rejects malformed plan reports after a single dispatch without exposing their contents', async () => {
+      sessions.plan.mockResolvedValue({ ok: true, completed: 'PRIVATE-REPORT', results: [] });
+      const result = JSON.parse(
+        await call('invalid-report', 'browser_plan', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          actions: [],
+        })
+      ).result;
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('may have executed');
+      expect(result.content[0].text).not.toContain('PRIVATE-REPORT');
+      expect(sessions.plan).toHaveBeenCalledTimes(1);
     });
 
     it('executes a plan through the service client', async () => {

@@ -1,0 +1,36 @@
+# T2: shared execution, verification and result helpers
+
+Status: not started. Repository: agentbrowser. Depends on: T0.
+Inputs: core, architecture, contracts, execution, grounding.
+
+## Reuse and scope
+
+Start in SessionControl, SessionAuthority, ApplicationAuthority, existing action
+executor, autofill orchestrator, budget and artifact helpers. Preserve their existing
+ownership and wire outcomes. Add one shared result/verifier contract and extract only
+demonstrably duplicated sequencing. Do not merge plan/autofill identity semantics.
+
+## Slices
+
+1. Separate execution, verification and cleanup outcomes through compatible projections.
+2. Reuse bounded evidence, canonical serialization and operation admission across run
+   consumers. Specify any missing shared helper's owner and exact responsibility.
+3. Add trusted verifier registration and independent outcome references. Ensure reads,
+   final rechecks and uncertainty all obey the same authority/deadline boundaries.
+
+## TDD and acceptance
+
+Test takeover at every boundary, same-ID/different-input conflict, late completion,
+changed document/binding, truncated candidates, redaction collision, cross-field resets,
+after-commit disconnect and terminal evidence failure. Unknown writes stop the suffix;
+read retries never dispatch another write. Pending calls drain before ownership release.
+
+An application rejection and a UI command acknowledgment produce distinct results.
+Existing API/SDK/CLI/MCP actions and native autofill remain compatible. No duplicate
+state machine, ad hoc retry loop, private-value cache or artifact store is introduced.
+Run existing control/authority/autofill suites plus one actual service/stdio fixture.
+
+## Completion / stop
+
+Close R02 execution aspects, R04 foundation and R12 shared helper ownership. Record
+unsupported evidence levels rather than inventing commits. Unlock T3/T4/T5/T6.

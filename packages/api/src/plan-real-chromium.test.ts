@@ -15,6 +15,7 @@ import { type Server, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
 import { NetworkPolicy } from '@agentbrowser/policy';
+import { parsePlanReport } from '@agentbrowser/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AgentBrowserService } from './service';
 
@@ -65,6 +66,7 @@ describe('waitForLabel against real Chromium (pressure matrix row 2)', () => {
         { action: 'fill', waitForLabel: 'Password', value: 'hunter2' } as never,
       ]);
 
+      expect(parsePlanReport(result)).toEqual(result);
       expect(result.ok).toBe(true);
       expect(result.results).toHaveLength(2);
 
@@ -93,6 +95,7 @@ describe('waitForLabel against real Chromium (pressure matrix row 2)', () => {
         { action: 'click', waitForLabel: 'Never Appears', waitMs: 300 } as never,
       ]);
 
+      expect(parsePlanReport(result)).toEqual(result);
       expect(result.ok).toBe(false);
       expect(result.error?.code).toBe('PLAN_WAIT_TIMEOUT');
     } finally {

@@ -1,3 +1,4 @@
+import type { PlanReport } from '@agentbrowser/protocol';
 /**
  * AgentBrowser TypeScript SDK Client
  *
@@ -530,13 +531,7 @@ export class SessionsClient {
     pageId: string,
     actions: Array<Record<string, unknown>>,
     options: MutationOptions = {}
-  ): Promise<{
-    ok: boolean;
-    completed: number;
-    results: Array<{ step: number; ok: boolean; error?: string }>;
-    mode?: string;
-    error?: { code: string; message: string };
-  }> {
+  ): Promise<PlanReport> {
     return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/plan`, {
       method: 'POST',
       body: { actions },

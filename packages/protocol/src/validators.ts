@@ -8,7 +8,10 @@
  * load (TypeCompiler), so the per-request cost is a cheap Check().
  */
 
+import type { Static, TSchema } from '@sinclair/typebox';
 import { TypeCompiler } from '@sinclair/typebox/compiler';
+import { Value } from '@sinclair/typebox/value';
+import { INTERACTION_GUIDANCE } from './interaction-guidance.js';
 import { ActionSchema, PlanStepSchema, SessionRequestSchema } from './schemas.js';
 import type { SessionRequest, SupportedAction } from './types.js';
 
@@ -104,4 +107,16 @@ export function validatePlanStep(body: unknown): Validated<Record<string, unknow
     issues.push({ path: error.path, message: error.message });
   }
   return { ok: false, issues };
+}
+
+/** One output-boundary policy: invalid reports never prove that a write did not execute. */
+export function parseExecutionReport<S extends TSchema>(
+  schema: S,
+  input: unknown,
+  operation: string
+): Static<S> {
+  if (!Value.Check(schema, input)) {
+    throw new Error(`Invalid ${operation} report. ${INTERACTION_GUIDANCE.uncertainWrite}`);
+  }
+  return input;
 }

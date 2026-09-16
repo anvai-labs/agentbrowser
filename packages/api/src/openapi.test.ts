@@ -208,6 +208,17 @@ describe('OpenAPI document', () => {
       expect(planBody).not.toContain('#/components/schemas/ActionRequest');
     });
 
+    it('projects the canonical plan report including remap and per-step evidence', () => {
+      const operation = doc.paths['/v1/sessions/{sessionId}/pages/{pageId}/plan'].post;
+      expect(operation.responses['200'].content['application/json'].schema.$ref).toBe(
+        '#/components/schemas/PlanReport'
+      );
+      const report = doc.components.schemas.PlanReport;
+      expect(report.$id).toBe('urn:agentbrowser:plan-report:v1');
+      expect(report.properties.results.items.properties.remap.properties.to.type).toBe('string');
+      expect(report.properties.results.items.properties.result).toBeDefined();
+    });
+
     it('should carry the protocol error taxonomy', () => {
       const codes = JSON.stringify(doc.components.schemas.ApiErrorDetail);
       for (const code of ['STALE_TARGET', 'TARGET_NOT_VISIBLE', 'TARGET_DISABLED', 'INTERNAL']) {

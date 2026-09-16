@@ -18,7 +18,7 @@ import {
   DELIVERED_ACTION_TYPES,
   DELIVERED_EXTRACT_FORMATS,
   ErrorCode,
-  validatePlanStep,
+  parsePlanSteps,
   validateSessionRequest,
   validateWireAction,
   validateWireActionBatch,
@@ -864,44 +864,20 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           // Empty-body tolerance resolves a zero-length JSON body to
           // undefined; every route must dereference defensively.
           const body = (request.body ?? {}) as { actions?: Array<Record<string, unknown>> };
-          if (!Array.isArray(body.actions)) {
+          let actions: Array<Record<string, unknown>>;
+          try {
+            actions = parsePlanSteps(body.actions);
+          } catch (error) {
             return reply.status(400).send({
               error: {
                 code: 'INVALID_REQUEST',
-                message: 'body.actions must be an array of plan steps',
+                message: error instanceof Error ? error.message : 'Invalid plan steps',
                 retryable: false,
               },
             });
           }
-          // Plan steps were the last unvalidated request surface (a bare
-          // array cast): garbage waitForLabel/waitMs rode straight into
-          // waitForLabel's deadline arithmetic (NaN deadline = a poll loop
-          // that never exits). Each step is schema-checked on entry now;
-          // the service-side clamp remains as defense in depth.
-          for (const [index, step] of body.actions.entries()) {
-            const validated = validatePlanStep(step);
-            if (!validated.ok) {
-              const details = validated.issues
-                .map(
-                  (issue: { path: string; message: string }) =>
-                    `actions[${index}]${issue.path}: ${issue.message}`
-                )
-                .join('; ');
-              return reply.status(400).send({
-                error: {
-                  code: 'INVALID_REQUEST',
-                  message: `Invalid plan step: ${details}`,
-                  retryable: false,
-                },
-              });
-            }
-          }
           return reply.send(
-            await service.executePlan(
-              sessionId,
-              pageId,
-              body.actions as unknown as ServiceActRequest[]
-            )
+            await service.executePlan(sessionId, pageId, actions as unknown as ServiceActRequest[])
           );
         })
       );

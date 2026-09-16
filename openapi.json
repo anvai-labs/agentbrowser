@@ -1461,6 +1461,7 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": false,
+                  "$id": "urn:agentbrowser:autofill-report:v1",
                   "type": "object",
                   "required": [
                     "ok",
@@ -1719,7 +1720,6 @@
                 "properties": {
                   "actions": {
                     "type": "array",
-                    "description": "Ordered plan steps in the flat wire shape: {action, target?: {ref}, value?, key?, waitForLabel?, waitMs?}. The nested ActionRequest shape is the service-internal representation and is not accepted here.",
                     "items": {
                       "$ref": "#/components/schemas/PlanStep"
                     }
@@ -1735,71 +1735,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "required": [
-                    "ok",
-                    "completed",
-                    "results",
-                    "mode",
-                    "newRevision"
-                  ],
-                  "properties": {
-                    "ok": {
-                      "type": "boolean"
-                    },
-                    "completed": {
-                      "type": "integer"
-                    },
-                    "results": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "required": [
-                          "step",
-                          "ok"
-                        ],
-                        "properties": {
-                          "step": {
-                            "type": "integer"
-                          },
-                          "ok": {
-                            "type": "boolean"
-                          },
-                          "actionId": {
-                            "type": "string"
-                          },
-                          "result": {
-                            "description": "Per-step evidence payload, present only for steps that produce one (upload reports the attached files), matching the single-act result."
-                          },
-                          "error": {
-                            "type": "string"
-                          }
-                        }
-                      }
-                    },
-                    "mode": {
-                      "type": "string",
-                      "enum": [
-                        "stable",
-                        "verified"
-                      ]
-                    },
-                    "newRevision": {
-                      "type": "integer",
-                      "description": "Payload economics: the plan's cheap final-state signal."
-                    },
-                    "error": {
-                      "type": "object",
-                      "properties": {
-                        "code": {
-                          "type": "string"
-                        },
-                        "message": {
-                          "type": "string"
-                        }
-                      }
-                    }
-                  }
+                  "$ref": "#/components/schemas/PlanReport"
                 }
               }
             }
@@ -5697,6 +5633,96 @@
           },
           "remap": {
             "type": "boolean"
+          }
+        }
+      },
+      "PlanReport": {
+        "$id": "urn:agentbrowser:plan-report:v1",
+        "type": "object",
+        "required": [
+          "ok",
+          "completed",
+          "results"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "completed": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "step",
+                "ok"
+              ],
+              "properties": {
+                "step": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "actionId": {
+                  "type": "string"
+                },
+                "remap": {
+                  "type": "object",
+                  "required": [
+                    "from",
+                    "to"
+                  ],
+                  "properties": {
+                    "from": {
+                      "type": "string"
+                    },
+                    "to": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "result": {},
+                "error": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "const": "stable",
+                "type": "string"
+              },
+              {
+                "const": "verified",
+                "type": "string"
+              }
+            ]
+          },
+          "newRevision": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
           }
         }
       },

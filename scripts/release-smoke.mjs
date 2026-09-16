@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 
 export const EXPECTED_TOOLS = Object.freeze([
@@ -138,6 +139,7 @@ export async function checkCli(command, options) {
 export async function checkMcp(command, options) {
   assert.ok(options.expectedVersion, 'Expected release version is required');
   const catalogMode = options.catalog ?? 'unbound';
+  const protocolVersion = options.protocolVersion ?? '2024-11-05';
   assert.ok(['unbound', 'delegated'].includes(catalogMode), 'Unknown MCP catalog');
   const expectedTools = catalogMode === 'delegated' ? EXPECTED_DELEGATED_TOOLS : EXPECTED_TOOLS;
   return withProcess(command, options, async (process) => {
@@ -183,13 +185,17 @@ export async function checkMcp(command, options) {
       assert.ok(result && !result.isError, 'MCP tool returned an error');
       const text = result.content?.find((item) => item.type === 'text')?.text;
       assert.equal(typeof text, 'string', 'MCP tool omitted JSON text content');
-      return JSON.parse(text);
+      const value = JSON.parse(text);
+      if (result.structuredContent !== undefined)
+        assert.deepEqual(result.structuredContent, value, 'MCP structured/text results disagree');
+      assert.notEqual(value?.ok, false, 'MCP report failed');
+      return value;
     };
     const init = await request('initialize', {
-      protocolVersion: '2024-11-05', capabilities: {},
+      protocolVersion, capabilities: {},
       clientInfo: { name: 'agentbrowser-release-smoke', version: '1.0.0' },
     });
-    assert.equal(init?.protocolVersion, '2024-11-05', 'MCP protocol version mismatch');
+    assert.equal(init?.protocolVersion, protocolVersion, 'MCP protocol version mismatch');
     assert.equal(init?.serverInfo?.version, options.expectedVersion, 'MCP version mismatch');
     process.child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
     const catalog = await request('tools/list');
@@ -205,4 +211,89 @@ export async function checkMcp(command, options) {
     assert.equal(buffer.trim(), '', 'Incomplete JSON on MCP stdout');
     return { version: init.serverInfo.version, tools: names };
   });
+}
+
+
+/** Qualify serialization/dispatch, not browser behavior, using an owned loopback fixture. */
+export async function checkMcpContracts(command, options) {
+  const payload = { fields: [{ match: { label: 'Name', block: { label: 'Current' } }, value: 'fixture-value' }] };
+  const report = { ok: true, receipts: [{ field: 0, match: payload.fields[0].match, status: 'unverified', verified: false }], elapsedMs: 1 };
+  const failed = { ...report, ok: false, receipts: [{ ...report.receipts[0], status: 'uncertain' }] };
+  const planReport = { ok: true, completed: 1, results: [{ step: 0, ok: true, actionId: 'fixture-action', result: { evidence: 'kept' } }], mode: 'stable', newRevision: 2 };
+  const cases = [
+    { route: 'autofill', payload, report, failed },
+    { route: 'plan', payload: { actions: [{ action: 'press', key: 'Tab', count: 2 }] }, report: planReport,
+      failed: { ...planReport, ok: false, completed: 0, results: [{ step: 0, ok: false, error: 'denied' }], error: { code: 'PLAN_STEP_FAILED', message: 'denied' } } },
+  ];
+  const requests = [];
+  const fixture = createServer(async (request, response) => {
+    let body = '';
+    for await (const chunk of request) body += chunk;
+    requests.push({ path: request.url, method: request.method, headers: request.headers, body });
+    const id = request.headers['x-agentbrowser-operation-id'];
+    const scenario = cases.find((entry) => request.url.endsWith(`/${entry.route}`));
+    const result = id === 'invalid' ? { ...scenario.report, ok: 'PRIVATE-REPORT' }
+      : id === 'failed' ? scenario.failed : scenario.report;
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify(result));
+  });
+  try {
+    await new Promise((resolve, reject) => {
+      fixture.once('error', reject);
+      fixture.listen(0, '127.0.0.1', resolve);
+    });
+    const bytes = [];
+    for (const protocolVersion of ['2024-11-05', '2025-06-18']) {
+      for (const catalog of ['unbound', 'delegated']) {
+        const env = { ...(options.env ?? process.env), AGENTBROWSER_BASE_URL: `http://127.0.0.1:${fixture.address().port}`, AGENTBROWSER_API_KEY: 'fixture-key' };
+        delete env.AGENTBROWSER_SESSION_ID;
+        if (catalog === 'delegated') env.AGENTBROWSER_SESSION_ID = 'fixture-session';
+        await checkMcp(command, { ...options, env, protocolVersion, catalog, exercise: async ({ request }) => {
+          const listed = await request('tools/list');
+          bytes.push({ protocolVersion, catalog, bytes: Buffer.byteLength(JSON.stringify(listed)) });
+          const autofill = listed.tools.find((tool) => tool.name === 'browser_autofill');
+          const modern = protocolVersion === '2025-06-18';
+          if (modern) {
+            assert.equal(autofill.outputSchema?.$id, 'urn:agentbrowser:autofill-report:v1', 'Missing canonical output schema');
+            assert.equal(autofill.annotations?.readOnlyHint, false, 'Autofill must not claim read-only behavior');
+            assert.equal(autofill.annotations?.idempotentHint, false, 'Autofill must not imply safe replay');
+            assert.ok(autofill.outputSchema.properties.receipts.items.properties.status.anyOf.some((entry) => entry.const === 'uncertain'), 'Lost nested output schema');
+          } else assert.ok(listed.tools.every((tool) => !tool.outputSchema && !tool.annotations), 'Legacy catalog gained modern fields');
+          assert.equal(autofill.inputSchema.properties.fields.items.properties.match.properties.block.properties.label.maxLength, 512, 'Lost nested match schema');
+          assert.equal(autofill.inputSchema.required.includes('operationId'), catalog === 'delegated');
+          const plan = listed.tools.find((tool) => tool.name === 'browser_plan');
+          assert.equal(plan.inputSchema.properties.actions.items.properties.waitMs.maximum, 60000, 'Lost canonical plan input');
+          if (modern) assert.equal(plan.outputSchema?.$id, 'urn:agentbrowser:plan-report:v1', 'Missing canonical plan output');
+          for (const scenario of cases) {
+          const args = { ...scenario.payload, pageId: 'fixture-page', ...(catalog === 'unbound' ? { sessionId: 'fixture-session' } : {}) };
+          for (const [operationId, expected] of [['success', scenario.report], ['failed', scenario.failed], ['invalid', null]]) {
+            const before = requests.length;
+            const result = await request('tools/call', { name: `browser_${scenario.route}`, arguments: { ...args, operationId } });
+            assert.equal(requests.length, before + 1, 'Write dispatch must happen exactly once');
+            const received = requests.at(-1);
+            assert.equal(received.path, `/v1/sessions/fixture-session/pages/fixture-page/${scenario.route}`);
+            assert.equal(received.method, 'POST');
+            assert.equal(received.headers['x-agentbrowser-operation-id'], operationId);
+            assert.equal(received.headers.authorization, 'Bearer fixture-key');
+            assert.deepEqual(JSON.parse(received.body), scenario.payload);
+            if (expected) {
+              assert.deepEqual(JSON.parse(result.content[0].text), expected);
+              assert.equal(result.isError, expected.ok ? undefined : true);
+              assert.deepEqual(result.structuredContent, modern ? expected : undefined);
+            } else {
+              assert.equal(result.isError, true);
+              assert.equal(result.structuredContent, undefined);
+              assert.ok(!JSON.stringify(result).includes('PRIVATE-REPORT'));
+              assert.match(result.content[0].text, /may have executed/);
+            }
+          }
+          }
+        } });
+      }
+    }
+    return { catalogs: bytes };
+  } finally {
+    fixture.closeAllConnections();
+    await new Promise((resolve) => fixture.close(resolve));
+  }
 }

@@ -52,6 +52,7 @@ import type {
   PageElement,
   PageState,
   PdfRequest,
+  PlanReport,
   ScreenshotRequest,
 } from '@agentbrowser/protocol';
 import {
@@ -1268,30 +1269,8 @@ export class AgentBrowserService {
     sessionId: string,
     pageId: string,
     steps: ServiceActRequest[]
-  ): Promise<{
-    ok: boolean;
-    completed: number;
-    results: Array<{
-      step: number;
-      ok: boolean;
-      actionId?: string;
-      remap?: { from: string; to: string };
-      result?: unknown;
-      error?: string;
-    }>;
-    mode: 'stable' | 'verified';
-    /** Payload economics (pressure matrix row 4): the plan's cheap "final state" signal. */
-    newRevision: number;
-    error?: { code: string; message: string };
-  }> {
-    const results: Array<{
-      step: number;
-      ok: boolean;
-      actionId?: string;
-      remap?: { from: string; to: string };
-      result?: unknown;
-      error?: string;
-    }> = [];
+  ): Promise<PlanReport & { mode: 'stable' | 'verified'; newRevision: number }> {
+    const results: PlanReport['results'] = [];
     const churnKey = this.churnKey(sessionId, pageId);
     const finalRevision = (): number => this.pages.get(pageId)?.revision ?? 0;
     for (const [index, step] of steps.entries()) {
