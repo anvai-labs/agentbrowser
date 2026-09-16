@@ -687,7 +687,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
           const control = service.authority.get(sessionId);
           if (!control) throw new ServiceError('NOT_FOUND', 'Session is not controlled');
-          return reply.send(control.view());
+          return reply.send(service.authority.status(sessionId));
         })
       );
       for (const action of ['takeover', 'prepare-resume', 'delegate'] as const) {

@@ -13,10 +13,11 @@ import type {
   ControlView,
   DELIVERED_ACTION_TYPES,
   OperationRecord,
+  RunCursor,
   SessionRequest,
 } from '@agentbrowser/protocol';
 
-export type { ControlView, OperationRecord } from '@agentbrowser/protocol';
+export type { ControlView, OperationRecord, RunCursor } from '@agentbrowser/protocol';
 export type { AutofillRequest, AutofillReport } from '@agentbrowser/protocol';
 export interface MutationOptions {
   operationId?: string;
@@ -404,7 +405,7 @@ export class SessionsClient {
     sessionId: string,
     epoch: number,
     mode?: AgentMode
-  ): Promise<ControlView & { token: string; mode: AgentMode }> {
+  ): Promise<ControlView & { token: string; mode: AgentMode; cursor: RunCursor }> {
     return this.http.requestJson(`/v1/sessions/${sessionId}/control/delegate`, {
       method: 'POST',
       body: { epoch, ...(mode ? { mode } : {}) },

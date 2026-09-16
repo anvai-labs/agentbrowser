@@ -49,8 +49,11 @@ lower model token use, process RSS, or a smaller browser dependency closure.
 Implementation was subsequently activated for the first foundational T0 increment:
 shared CLI/MCP guidance, bounded CLI input/discovery and negotiated MCP autofill
 results with generated catalogs. See [T0 progress](tasks/t0-contract-catalog.md#current-implementation-state).
-The spec-context loader is implemented by T1's first slice. Runtime mode profiles,
-run cursors and memory selection remain proposed.
+T1 now has a local spec-context loader, trusted fixed runtime profiles, a scoped
+non-secret run cursor and inline operator mode selection. See the
+[T1 packet](tasks/t1-context-profiles.md) and
+[qualification evidence](evidence/t1-context-profiles.md). Installed harness cursor
+consumption remains T8 work.
 
 ## Modes
 

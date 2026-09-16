@@ -2,15 +2,29 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomBytes } from 'node:crypto';
 import { ControlError, type ControlTicket, SessionControl } from '@agentbrowser/core';
 import type { EnginePage } from '@agentbrowser/engine';
-import { type AgentMode, DEFAULT_AGENT_MODE } from '@agentbrowser/protocol';
+import {
+  type AgentMode,
+  type ControlView,
+  DEFAULT_AGENT_MODE,
+  type RunCursor,
+  agentModeProfile,
+} from '@agentbrowser/protocol';
 
 export type SessionPrincipal =
   | { actor: 'operator'; tenant?: string }
-  | { actor: 'agent'; tenant: string; sessionId: string; epoch: number; mode: AgentMode };
+  | {
+      actor: 'agent';
+      tenant: string;
+      sessionId: string;
+      epoch: number;
+      mode: AgentMode;
+      bindingGeneration: string;
+    };
 type Entry = {
   control: SessionControl;
   tenant: string;
   grant?: string | undefined;
+  agent?: Extract<SessionPrincipal, { actor: 'agent' }> | undefined;
   signal: AbortSignal;
   abortListener: () => void;
   expiresAt?: number;
@@ -25,6 +39,7 @@ export class SessionAuthority {
   private readonly grants = new Map<string, Extract<SessionPrincipal, { actor: 'agent' }>>();
   private readonly scope = new AsyncLocalStorage<Scope>();
   private readonly now: () => number;
+  private readonly serviceGeneration = randomBytes(16).toString('base64url');
 
   constructor(options: { now?: () => number } = {}) {
     this.now = options.now ?? (() => performance.now());
@@ -83,15 +98,28 @@ export class SessionAuthority {
     const view = entry.control.delegate(epoch);
     this.revoke(entry);
     const token = randomBytes(32).toString('base64url');
-    entry.grant = digest(token);
-    this.grants.set(entry.grant, {
-      actor: 'agent',
+    const principal = {
+      actor: 'agent' as const,
       tenant: entry.tenant,
       sessionId,
       epoch: view.epoch,
       mode,
-    });
-    return { ...view, token, mode };
+      bindingGeneration: randomBytes(16).toString('base64url'),
+    };
+    entry.grant = digest(token);
+    entry.agent = principal;
+    this.grants.set(entry.grant, principal);
+    return { ...view, token, mode, cursor: this.cursor(principal) };
+  }
+
+  /** Safe scope key for harness memory. It conveys no authority or tenant identity. */
+  status(sessionId: string): ControlView {
+    const entry = this.require(sessionId);
+    const view = entry.control.view();
+    return {
+      ...view,
+      ...(entry.agent ? { cursor: this.cursor(entry.agent) } : {}),
+    };
   }
 
   remove(sessionId: string): void {
@@ -106,6 +134,19 @@ export class SessionAuthority {
   private revoke(entry: Entry): void {
     if (entry.grant) this.grants.delete(entry.grant);
     entry.grant = undefined;
+    entry.agent = undefined;
+  }
+
+  private cursor(principal: Extract<SessionPrincipal, { actor: 'agent' }>): RunCursor {
+    return {
+      version: 1,
+      serviceGeneration: this.serviceGeneration,
+      bindingGeneration: principal.bindingGeneration,
+      sessionId: principal.sessionId,
+      controlEpoch: principal.epoch,
+      mode: principal.mode,
+      profileRevision: agentModeProfile(principal.mode).revision,
+    };
   }
   private active(sessionId: string): Entry | undefined {
     const entry = this.entries.get(sessionId);

@@ -24,7 +24,7 @@ reduce RSS while weakening isolation; require an explicit tenant/profile model.
 | Private form values | Scoped vault references; transient resolved values | Operation completion/revocation; no logging or general cache |
 | Durable operation metadata | Optional journal port; bounded record/tombstone | Retention horizon enforced together with accepted operation IDs |
 | Artifacts | Shared byte store with opaque scoped references | TTL, quota, tenant deletion, explicit retention |
-| Harness continuation | Small typed cursor and pending operation IDs | Capability/binding/service generation mismatch |
+| Harness continuation | Stable typed scope cursor plus separately tracked pending operation IDs | Capability/binding/service generation mismatch |
 | User preferences/profile | Explicit opt-in external scoped store | User deletion/expiry; never repository or global prompt memory |
 
 Avoid storing the same full result in a journal, event stream, transcript and artifact
@@ -63,15 +63,21 @@ manifest is an explicit engineering check, not normal per-task prompt loading.
 
 Proposed agent context consists of: core invariants, one mode recipe, effective
 capability summary, a small run cursor, the current bounded observation, and requested
-evidence excerpts. Harness history is not the operation journal. A run cursor includes
-session/binding generations, run/schema hash, pending IDs, last known status and
-evidence locators; it contains no raw secrets or reusable bearer token.
+evidence excerpts. Harness history is not the operation journal. A stable run cursor
+includes session/binding generations and schema/capability revision; pending IDs,
+last-known status and evidence locators remain adjacent mutable state rather than part
+of the cache namespace. Neither contains raw secrets or a reusable bearer token.
 
 Cache keys include tenant/principal scope, mode, binding, service generation and
 schema/capability revisions. Observation keys additionally include attachment,
 page/document and revision. Invalidate on account switch, grant revocation and mode
 change. Cross-session memory retrieval cannot use similarity alone to establish scope.
 No vector database is required for deterministic mappings or operation lookup.
+
+The cursor detects an account change only when trusted operator takeover and fresh
+delegation create a new binding. If an application account changes inside a live grant,
+page/document revision and fresh outcome evidence must invalidate application-specific
+memory; the stable binding cursor alone cannot detect it.
 
 Mode switches are explicit, with scope revalidation and removal of stale mode memory.
 Do not attempt to erase already-seen data from an existing LLM transcript by merely
