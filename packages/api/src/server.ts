@@ -311,6 +311,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
    */
   const principals = new WeakMap<FastifyRequest, SessionPrincipal>();
   const outputGuards = new WeakMap<FastifyRequest, () => void>();
+  const autofillFailures = new WeakSet<FastifyRequest>();
   fastify.addHook('onSend', async (request, reply, payload) => {
     const guard = outputGuards.get(request);
     if (!guard) return payload;
@@ -377,7 +378,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             outputGuards.set(request, service.authority.outputGuard(sessionId));
             return await handler(request, reply);
           },
-          () => reply.statusCode >= 400
+          () => reply.statusCode >= 400 || autofillFailures.has(request)
         );
         if (!reply.sent) return reply.send(result);
         return result;
@@ -513,7 +514,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
                 suffix
               )) ||
               (request.method === 'POST' &&
-                /^(\/pages|\/pages\/:pageId\/(navigate|observe|act|plan|extract|screenshot|pdf|html))$/.test(
+                /^(\/pages|\/pages\/:pageId\/(navigate|observe|act|plan|autofill|extract|screenshot|pdf|html))$/.test(
                   suffix
                 )) ||
               (request.method === 'DELETE' && suffix === '/pages/:pageId'));
@@ -1035,6 +1036,17 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             (request.body ?? {}) as never
           );
           return reply.send(observation);
+        })
+      );
+
+      v1.post(
+        '/sessions/:sessionId/pages/:pageId/autofill',
+        route(async (request, reply) => {
+          const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
+          const report = await service.autofill(sessionId, pageId, request.body);
+          if (!report.ok) autofillFailures.add(request);
+          return reply.send(report);
         })
       );
 

@@ -39,7 +39,7 @@ test('wrong MCP release version fails', async () => {
 });
 
 const delegatedTools = [
-  'browser_snapshot', 'browser_plan', 'browser_navigate', 'browser_observe',
+  'browser_snapshot', 'browser_plan', 'browser_autofill', 'browser_navigate', 'browser_observe',
   'browser_act', 'browser_extract', 'browser_html', 'browser_pdf',
   'browser_screenshot', 'browser_session', 'browser_operation',
 ];
@@ -80,7 +80,7 @@ test('MCP must exit after stdin EOF within its deadline', async () => {
 });
 
 test('incomplete or duplicated tool catalog fails', async () => {
-  for (const tools of [EXPECTED_TOOLS.slice(1), [...EXPECTED_TOOLS, EXPECTED_TOOLS[0]]]) {
+  for (const tools of [EXPECTED_TOOLS.slice(1), EXPECTED_TOOLS.filter(name => name !== 'browser_autofill'), [...EXPECTED_TOOLS, EXPECTED_TOOLS[0]]]) {
     await assert.rejects(checkMcp(mcp({ tools }), options), /catalog/);
   }
 });
