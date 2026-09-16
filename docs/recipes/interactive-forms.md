@@ -26,6 +26,15 @@ Use `waitForLabel` for a field that an earlier step in the same plan reveals (a
 sub-form opened by a toggle, an option menu opened by a click) instead of guessing
 its ref ahead of time.
 
+## Interactive controls with no ARIA role
+
+Some widget triggers are built as `div` or `span` containers with click
+handlers and no ARIA role attribute. They are visible on screen and clickable,
+but `browser_observe` never reports them. Pass
+`include:["formControls"]` to mint refs for these controls; then click the
+resulting ref and the options render as `role=option` elements you can select
+from refs.
+
 ## Custom combobox widgets
 
 A design-system combobox is usually a text input plus a rendered listbox of
@@ -100,6 +109,21 @@ blind 20-row walks. Verify the commit through the widget's own state text
 ("N items selected, <value>") scoped to the widget's container in
 `browser_html`, not by the presence of an option row (rows render whether
 or not anything is selected).
+
+The full validated sequence on one production multiselect:
+
+1. `click` the field — the menu opens with a short curated option list.
+2. `typeText` the query (`delay` 80-120) — the text lands in the search input
+   and the menu may close; that is expected.
+3. targeted `press` `Enter` on the input — this triggers the search; the menu
+   reopens showing only matching rows ("Search Results(N)").
+4. `observe` with `include:["formControls"]` and click the matching option ref
+   **immediately** — the commit lands. Stale-ref clicks here report success
+   but commit nothing, which is why earlier attempts looked broken.
+
+Batched (`count`) keypress bursts can outrun the widget's handler — individual
+key presses with natural pacing, or a type-to-filter that shrinks the walk to
+a step or two, are the reliable shapes.
 
 **Focus purity**: keyboard menus track highlight in widget-internal state, not
 DOM focus. Never interleave targeted actions (clicks, targeted presses on other
