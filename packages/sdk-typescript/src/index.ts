@@ -22,4 +22,4 @@ export {
 
 export type { ExportedCookie } from './client';
 
-export type { AgentMode, PlanReport } from '@agentbrowser/protocol';
+export type { AgentMode, PlanReport, RunCursor } from '@agentbrowser/protocol';

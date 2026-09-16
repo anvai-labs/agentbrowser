@@ -3588,6 +3588,76 @@
                 "type": "boolean"
               }
             }
+          },
+          "cursor": {
+            "type": "object",
+            "required": [
+              "version",
+              "serviceGeneration",
+              "bindingGeneration",
+              "sessionId",
+              "controlEpoch",
+              "mode",
+              "profileRevision"
+            ],
+            "properties": {
+              "version": {
+                "const": 1,
+                "type": "number"
+              },
+              "serviceGeneration": {
+                "pattern": "^[A-Za-z0-9_-]{22}$",
+                "type": "string"
+              },
+              "bindingGeneration": {
+                "pattern": "^[A-Za-z0-9_-]{22}$",
+                "type": "string"
+              },
+              "sessionId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "controlEpoch": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "mode": {
+                "anyOf": [
+                  {
+                    "const": "qa",
+                    "type": "string"
+                  },
+                  {
+                    "const": "operations",
+                    "type": "string"
+                  },
+                  {
+                    "const": "audit",
+                    "type": "string"
+                  },
+                  {
+                    "const": "appsec",
+                    "type": "string"
+                  },
+                  {
+                    "const": "bounty",
+                    "type": "string"
+                  },
+                  {
+                    "const": "forms",
+                    "type": "string"
+                  },
+                  {
+                    "const": "application",
+                    "type": "string"
+                  }
+                ]
+              },
+              "profileRevision": {
+                "minimum": 1,
+                "type": "integer"
+              }
+            }
           }
         }
       },
@@ -3669,6 +3739,76 @@
                   },
                   "dispatched": {
                     "type": "boolean"
+                  }
+                }
+              },
+              "cursor": {
+                "type": "object",
+                "required": [
+                  "version",
+                  "serviceGeneration",
+                  "bindingGeneration",
+                  "sessionId",
+                  "controlEpoch",
+                  "mode",
+                  "profileRevision"
+                ],
+                "properties": {
+                  "version": {
+                    "const": 1,
+                    "type": "number"
+                  },
+                  "serviceGeneration": {
+                    "pattern": "^[A-Za-z0-9_-]{22}$",
+                    "type": "string"
+                  },
+                  "bindingGeneration": {
+                    "pattern": "^[A-Za-z0-9_-]{22}$",
+                    "type": "string"
+                  },
+                  "sessionId": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "controlEpoch": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "mode": {
+                    "anyOf": [
+                      {
+                        "const": "qa",
+                        "type": "string"
+                      },
+                      {
+                        "const": "operations",
+                        "type": "string"
+                      },
+                      {
+                        "const": "audit",
+                        "type": "string"
+                      },
+                      {
+                        "const": "appsec",
+                        "type": "string"
+                      },
+                      {
+                        "const": "bounty",
+                        "type": "string"
+                      },
+                      {
+                        "const": "forms",
+                        "type": "string"
+                      },
+                      {
+                        "const": "application",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "profileRevision": {
+                    "minimum": 1,
+                    "type": "integer"
                   }
                 }
               }
@@ -3794,6 +3934,76 @@
                     "type": "boolean"
                   }
                 }
+              },
+              "cursor": {
+                "type": "object",
+                "required": [
+                  "version",
+                  "serviceGeneration",
+                  "bindingGeneration",
+                  "sessionId",
+                  "controlEpoch",
+                  "mode",
+                  "profileRevision"
+                ],
+                "properties": {
+                  "version": {
+                    "const": 1,
+                    "type": "number"
+                  },
+                  "serviceGeneration": {
+                    "pattern": "^[A-Za-z0-9_-]{22}$",
+                    "type": "string"
+                  },
+                  "bindingGeneration": {
+                    "pattern": "^[A-Za-z0-9_-]{22}$",
+                    "type": "string"
+                  },
+                  "sessionId": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "controlEpoch": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "mode": {
+                    "anyOf": [
+                      {
+                        "const": "qa",
+                        "type": "string"
+                      },
+                      {
+                        "const": "operations",
+                        "type": "string"
+                      },
+                      {
+                        "const": "audit",
+                        "type": "string"
+                      },
+                      {
+                        "const": "appsec",
+                        "type": "string"
+                      },
+                      {
+                        "const": "bounty",
+                        "type": "string"
+                      },
+                      {
+                        "const": "forms",
+                        "type": "string"
+                      },
+                      {
+                        "const": "application",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "profileRevision": {
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                }
               }
             }
           },
@@ -3801,7 +4011,8 @@
             "type": "object",
             "required": [
               "token",
-              "mode"
+              "mode",
+              "cursor"
             ],
             "properties": {
               "token": {
@@ -3838,6 +4049,76 @@
                     "type": "string"
                   }
                 ]
+              },
+              "cursor": {
+                "type": "object",
+                "required": [
+                  "version",
+                  "serviceGeneration",
+                  "bindingGeneration",
+                  "sessionId",
+                  "controlEpoch",
+                  "mode",
+                  "profileRevision"
+                ],
+                "properties": {
+                  "version": {
+                    "const": 1,
+                    "type": "number"
+                  },
+                  "serviceGeneration": {
+                    "pattern": "^[A-Za-z0-9_-]{22}$",
+                    "type": "string"
+                  },
+                  "bindingGeneration": {
+                    "pattern": "^[A-Za-z0-9_-]{22}$",
+                    "type": "string"
+                  },
+                  "sessionId": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "controlEpoch": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "mode": {
+                    "anyOf": [
+                      {
+                        "const": "qa",
+                        "type": "string"
+                      },
+                      {
+                        "const": "operations",
+                        "type": "string"
+                      },
+                      {
+                        "const": "audit",
+                        "type": "string"
+                      },
+                      {
+                        "const": "appsec",
+                        "type": "string"
+                      },
+                      {
+                        "const": "bounty",
+                        "type": "string"
+                      },
+                      {
+                        "const": "forms",
+                        "type": "string"
+                      },
+                      {
+                        "const": "application",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "profileRevision": {
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                }
               }
             }
           }

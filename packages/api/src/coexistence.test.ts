@@ -45,6 +45,14 @@ async function delegate(
   });
   expect(granted.statusCode).toBe(200);
   expect(granted.json().mode).toBe(mode ?? 'qa');
+  expect(granted.json().cursor).toMatchObject({
+    version: 1,
+    sessionId: url.split('/').at(-1),
+    controlEpoch: granted.json().epoch,
+    mode: mode ?? 'qa',
+    profileRevision: 1,
+  });
+  expect(JSON.stringify(granted.json().cursor)).not.toContain(granted.json().token);
   return { authorization: `Bearer ${granted.json().token}` };
 }
 

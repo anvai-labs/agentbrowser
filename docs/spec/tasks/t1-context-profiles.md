@@ -17,13 +17,15 @@ Markdown into runtime permissions. Reuse one catalog projector and existing cred
    clients require stable catalogs. Enforce profile policy at the service as well. **Implemented.**
 3. Add scoped run-cursor/memory selection and accessible inline mode/decision UI using
    existing components. Measure cold/warm footprint before expanding functionality.
+   **Implemented locally; delivery pending.**
 
 ## TDD and acceptance
 
 Reject unknown/missing modes, cycles, missing dependencies, escaped/symlinked paths
 and oversized complete output with no partial emission. Every agent selection includes
 core; only bounty inherits appsec. Engineering/task expansion is explicit. Test same
-tenant/different principal and account/mode switches for stale-memory leakage.
+tenant/different principal and operator-mediated account/mode switches for stale-memory
+leakage. An account change inside a live grant remains page/document-revision state.
 
 A hidden tool called directly must still reject when the profile/grant disallows it.
 Pending operations survive a bridge profile refresh without being replayed. Document
@@ -58,5 +60,16 @@ boundaries. No dependency was added. Generated modern `tools/list` result sizes 
 17,833 for audit, and 12 / 293 for application. These are serialized result bytes, not
 model tokens or process memory; equivalent current profiles make no savings claim.
 
-Run cursors, accessible inline mode/decision UI and model-token/RSS measurements remain
-the third slice. The loader and catalog projection do not confer permissions.
+The third slice adds a non-secret cursor from the existing session authority. Service,
+binding, session, epoch, mode and profile revision form the harness memory scope; the
+cursor carries no credential, tenant, page content or private value. Mutable operation
+status remains beside the stable cursor in the existing control/operation records.
+Re-delegation, operator-mediated account/mode changes, session changes and restart
+invalidate that scope. The existing operator page renders the canonical mode registry
+as an inline native select and capability summary with normal keyboard controls.
+
+The manual [qualification record](../evidence/t1-context-profiles.md) separates exact
+catalog bytes, exact cl100k/o200k token counts and fresh-process cold/warm RSS medians.
+The common MCP import dominates RSS, so no general memory-saving claim is made. No
+dependency was added. Installed Codex/Claude/Victor cursor consumption remains T8 work;
+the loader, cursor and catalog projection do not confer permissions.

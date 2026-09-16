@@ -60,6 +60,15 @@ describe('trusted agent mode profiles', () => {
         busy: false,
         token: 'secret',
         mode: 'forms',
+        cursor: {
+          version: 1,
+          serviceGeneration: 'aaaaaaaaaaaaaaaaaaaaaa',
+          bindingGeneration: 'bbbbbbbbbbbbbbbbbbbbbb',
+          sessionId: 'session',
+          controlEpoch: 1,
+          mode: 'forms',
+          profileRevision: 1,
+        },
       })
     ).toBe(true);
   });

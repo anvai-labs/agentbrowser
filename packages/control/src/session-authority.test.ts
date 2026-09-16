@@ -28,6 +28,70 @@ it('binds a trusted mode to the bearer grant and defaults old callers to qa', ()
   expect(authority.authenticate(legacy.token)).toBeUndefined();
 });
 
+it('issues non-secret run cursors that isolate service, binding and mode memory', () => {
+  const authority = new SessionAuthority();
+  authority.register('session', 'owner', new AbortController().signal);
+  const firstReview = authority.get('session')!.prepareResume();
+  const first = authority.delegate('session', firstReview.epoch, 'qa');
+  expect(first.cursor).toMatchObject({
+    version: 1,
+    sessionId: 'session',
+    controlEpoch: first.epoch,
+    mode: 'qa',
+    profileRevision: 1,
+  });
+  expect(JSON.stringify(first.cursor)).not.toContain(first.token);
+  expect(JSON.stringify(first.cursor)).not.toContain('owner');
+
+  authority.takeover('session');
+  const nextReview = authority.get('session')!.prepareResume();
+  const next = authority.delegate('session', nextReview.epoch, 'audit');
+  expect(next.cursor.serviceGeneration).toBe(first.cursor.serviceGeneration);
+  expect(next.cursor.bindingGeneration).not.toBe(first.cursor.bindingGeneration);
+  expect(next.cursor.mode).toBe('audit');
+  expect(next.cursor.controlEpoch).not.toBe(first.cursor.controlEpoch);
+
+  authority.register('other-session', 'other-account', new AbortController().signal);
+  const otherReview = authority.get('other-session')!.prepareResume();
+  const other = authority.delegate('other-session', otherReview.epoch, 'audit');
+  expect(other.cursor).toMatchObject({ sessionId: 'other-session', mode: 'audit' });
+  expect(other.cursor.bindingGeneration).not.toBe(next.cursor.bindingGeneration);
+  expect(JSON.stringify(other.cursor)).not.toContain('other-account');
+
+  const replacement = new SessionAuthority();
+  replacement.register('session', 'owner', new AbortController().signal);
+  const replacementReview = replacement.get('session')!.prepareResume();
+  const replaced = replacement.delegate('session', replacementReview.epoch);
+  expect(replaced.cursor.serviceGeneration).not.toBe(first.cursor.serviceGeneration);
+});
+
+it('keeps the binding cursor stable while existing operation status changes', async () => {
+  const authority = new SessionAuthority();
+  authority.register('session', 'owner', new AbortController().signal);
+  const agent = grant(authority, 'session');
+  const cursor = authority.status('session').cursor;
+  let release!: () => void;
+  const pending = authority.run(
+    'session',
+    agent.principal,
+    { id: 'write-1', fingerprint: 'digest' },
+    () =>
+      new Promise<void>((resolve) => {
+        authority.assert('session', true);
+        release = resolve;
+      })
+  );
+  await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+  expect(authority.status('session')).toMatchObject({
+    cursor,
+    operation: { operationId: 'write-1', status: 'in_flight', dispatched: true },
+  });
+  release();
+  await pending;
+  expect(authority.status('session').cursor).toEqual(cursor);
+  expect(authority.status('session')).not.toHaveProperty('operation');
+});
+
 it('rejects duplicate registration without changing an active grant or operation', async () => {
   const authority = new SessionAuthority();
   const owner = new AbortController();

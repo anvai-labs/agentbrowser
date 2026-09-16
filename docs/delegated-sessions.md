@@ -27,7 +27,10 @@ bounded session expiry rather than a separate handoff timer or durable task stor
 2. Select **Prepare fresh review**. This invalidates prior reference revisions and
    captures current page summaries. Inspect the browser itself for account, form,
    and business context: the summary is not an atomic business-state check.
-3. Select **Delegate reviewed state**. Copy the returned session token into the
+3. Choose the agent mode in the inline **Delegation decision**, then select
+   **Delegate reviewed state**. The panel lists that mode's profile-permitted
+   capabilities using the canonical service registry and warns that engine, session
+   and service policy may narrow them. Copy the returned session token into the
    harness environment outside model-visible tool arguments. Keep the operator
    key private. Any subsequent operator write invalidates the pending review.
 4. During `AGENT_ACTIVE`, select **Take over** before interacting. An action
@@ -59,10 +62,10 @@ flowchart LR
 | Interface | Authority and behavior |
 | --- | --- |
 | Session create, `controlMode: 'delegated'` | Operator key required, even when legacy no-key mode is enabled |
-| `GET /v1/sessions/{id}/control` | Operator or current session grant; status without browser access |
+| `GET /v1/sessions/{id}/control` | Operator or current session grant; status without browser access, plus the current non-secret run cursor while delegated |
 | `POST .../control/takeover` | Operator; revoke grant immediately and expose drain state |
 | `POST .../control/prepare-resume` | Operator; fresh page summaries and review epoch; failure returns to human control |
-| `POST .../control/delegate`, `{epoch, mode?}` | Operator; new random bearer token with a fixed profile (`qa` by default), hash retained by server |
+| `POST .../control/delegate`, `{epoch, mode?}` | Operator; new random bearer token with a fixed profile (`qa` by default), hash retained by server; response includes a non-secret scoped run cursor |
 | `GET .../operations/{operationId}` | Operator or grant from the operation's generation |
 | Existing page operations | One admitted top-level operation per session, including reads; concurrent work gets `SESSION_BUSY` |
 
@@ -137,6 +140,16 @@ only reduces connection context: configure it to match the grant, but do not tre
 hidden tool as an authorization boundary. A stale or broader catalog still receives a
 403 from the service. Changing mode requires takeover, fresh review, a new grant and a
 new MCP connection; it never replays an in-flight or recorded operation.
+
+The grant's `cursor` is a versioned memory namespace, not a credential. It binds the
+service generation, session, control epoch, fresh grant binding, mode and profile
+revision. It never carries the tenant, bearer token, private field values or page
+content. Current and terminal operation status stays in the existing control/operation
+records rather than changing the cursor. Use the complete cursor
+as the harness cache/memory key. A changed component invalidates prior scoped memory.
+The service retains only the current binding; a restart creates a new service generation.
+Mode changes require a fresh harness context when previously seen information must be
+isolated because removing tools cannot erase an existing model transcript.
 
 The same stdio command works with all three harnesses. Registration examples
 below use an absolute build path; configure the three environment values above
