@@ -126,6 +126,46 @@ describe('application authority without a browser', () => {
     expect(s.effect).not.toHaveBeenCalled();
   });
 
+  it('stops traversing an oversized command before reading later values', async () => {
+    const s = setup();
+    s.port.bind('session', operator, binding);
+    const later = vi.fn(() => 'must not be read');
+    const input = Object.defineProperty({ a: '\u0000'.repeat(12000) }, 'z', {
+      enumerable: true,
+      get: later,
+    });
+    await expect(s.port.execute('session', operator, { ...command, input })).rejects.toThrow();
+    expect(later).not.toHaveBeenCalled();
+    expect(s.parse).not.toHaveBeenCalled();
+    expect(s.effect).not.toHaveBeenCalled();
+    expect(s.authority.get('session')!.operation(command.operationId)).toBeUndefined();
+  });
+
+  it('accepts maximum-depth input without charging fingerprint metadata to its budget', async () => {
+    const s = setup();
+    let input: unknown = 1;
+    for (let i = 0; i < 16; i++) input = [input];
+    const execute = vi.fn(async (value: unknown) => ({ status: 'committed' as const, value }));
+    const port = new ApplicationAuthority(s.authority, [
+      {
+        id: 'echo',
+        authorize: () => true,
+        operations: {
+          echo: defineApplicationOperation({ mode: 'write', parse: (v) => v, execute }),
+        },
+        receipt: async () => null,
+      },
+    ]);
+    port.bind('session', operator, { adapter: 'echo', resource: 'account-a' });
+    const request = { ...command, operation: 'echo', input };
+    expect(await port.execute('session', operator, request)).toEqual({
+      status: 'committed',
+      value: input,
+    });
+    expect(await port.execute('session', operator, request)).toMatchObject({ replay: true });
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
   it('does not reuse a write identity after rebinding the same resource', async () => {
     const s = setup();
     s.port.bind('session', operator, binding);
@@ -133,6 +173,40 @@ describe('application authority without a browser', () => {
     s.port.bind('session', operator, binding);
     await expect(s.port.execute('session', operator, command)).rejects.toThrow();
     expect(s.effect).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps write identities stable across key order and isolates adapter input mutations', async () => {
+    const s = setup();
+    const execute = vi.fn(async (value: Record<string, unknown>) => {
+      value.a = 'adapter-owned mutation';
+      return { status: 'committed' as const, value: 1 };
+    });
+    const port = new ApplicationAuthority(s.authority, [
+      {
+        id: 'echo',
+        authorize: () => true,
+        operations: {
+          echo: defineApplicationOperation({
+            mode: 'write',
+            parse: (input) => input as Record<string, unknown>,
+            execute,
+          }),
+        },
+        receipt: async () => null,
+      },
+    ]);
+    port.bind('session', operator, { adapter: 'echo', resource: 'account-a' });
+    const input = Object.freeze({ a: 'é', z: [1, 2] });
+    const request = { ...command, operation: 'echo', input };
+    await port.execute('session', operator, request);
+    expect(input.a).toBe('é');
+    expect(
+      await port.execute('session', operator, { ...request, input: { z: [1, 2], a: 'é' } })
+    ).toMatchObject({ replay: true });
+    await expect(
+      port.execute('session', operator, { ...request, input: { z: [2, 1], a: 'é' } })
+    ).rejects.toThrow();
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 
   it('revokes admitted output and signals cancellation when the owning session expires', async () => {

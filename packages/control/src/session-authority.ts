@@ -11,6 +11,9 @@ type Entry = {
   tenant: string;
   grant?: string | undefined;
   signal: AbortSignal;
+  abortListener: () => void;
+  expiresAt?: number;
+  onExpire?: () => void;
 };
 type Scope = { sessionId: string; entry: Entry; ticket: ControlTicket };
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -20,23 +23,46 @@ export class SessionAuthority {
   private readonly entries = new Map<string, Entry>();
   private readonly grants = new Map<string, Extract<SessionPrincipal, { actor: 'agent' }>>();
   private readonly scope = new AsyncLocalStorage<Scope>();
+  private readonly now: () => number;
 
-  register(sessionId: string, tenant: string, signal: AbortSignal): void {
-    const entry: Entry = { control: new SessionControl(), tenant, signal };
+  constructor(options: { now?: () => number } = {}) {
+    this.now = options.now ?? (() => performance.now());
+  }
+
+  register(
+    sessionId: string,
+    tenant: string,
+    signal: AbortSignal,
+    options: { ttlMs?: number; onExpire?: () => void } = {}
+  ): void {
+    if (this.entries.has(sessionId))
+      throw new ControlError('INVALID_REQUEST', 'Session is already registered');
+    if (options.ttlMs !== undefined && (!Number.isSafeInteger(options.ttlMs) || options.ttlMs < 1))
+      throw new ControlError('INVALID_REQUEST', 'Invalid authority TTL');
+    const entry: Entry = {
+      control: new SessionControl(),
+      tenant,
+      signal,
+      abortListener: () => {
+        if (this.entries.get(sessionId) === entry) this.remove(sessionId);
+      },
+      ...(options.ttlMs !== undefined ? { expiresAt: this.now() + options.ttlMs } : {}),
+      ...(options.onExpire ? { onExpire: options.onExpire } : {}),
+    };
     this.entries.set(sessionId, entry);
-    signal.addEventListener('abort', () => this.remove(sessionId), { once: true });
+    signal.addEventListener('abort', entry.abortListener, { once: true });
     if (signal.aborted) this.remove(sessionId);
   }
 
   get(sessionId: string): SessionControl | undefined {
-    return this.entries.get(sessionId)?.control;
+    return this.active(sessionId)?.control;
   }
 
   authenticate(token: string): Extract<SessionPrincipal, { actor: 'agent' }> | undefined {
     const principal = this.grants.get(digest(token));
     if (!principal) return undefined;
-    const entry = this.entries.get(principal.sessionId);
-    if (!entry || entry.signal.aborted) return undefined;
+    const entry = this.active(principal.sessionId);
+    if (!entry) return undefined;
     try {
       entry.control.authorizeAgent(principal.epoch);
       return { ...principal };
@@ -69,6 +95,7 @@ export class SessionAuthority {
   remove(sessionId: string): void {
     const entry = this.entries.get(sessionId);
     if (!entry) return;
+    entry.signal.removeEventListener('abort', entry.abortListener);
     this.revoke(entry);
     entry.control.stop();
     this.entries.delete(sessionId);
@@ -78,10 +105,21 @@ export class SessionAuthority {
     if (entry.grant) this.grants.delete(entry.grant);
     entry.grant = undefined;
   }
-  private require(sessionId: string): Entry {
+  private active(sessionId: string): Entry | undefined {
     const entry = this.entries.get(sessionId);
-    if (!entry || entry.signal.aborted)
-      throw new ControlError('CONTROL_REVOKED', 'Controlled session is unavailable');
+    if (
+      entry &&
+      (entry.signal.aborted || (entry.expiresAt !== undefined && this.now() >= entry.expiresAt))
+    ) {
+      this.remove(sessionId);
+      entry.onExpire?.();
+      return undefined;
+    }
+    return entry;
+  }
+  private require(sessionId: string): Entry {
+    const entry = this.active(sessionId);
+    if (!entry) throw new ControlError('CONTROL_REVOKED', 'Controlled session is unavailable');
     return entry;
   }
 
@@ -105,6 +143,8 @@ export class SessionAuthority {
     return this.scope.run({ sessionId, entry, ticket }, async () => {
       try {
         const result = await fn();
+        if (this.require(sessionId) !== entry)
+          throw new ControlError('CONTROL_REVOKED', 'Session owner changed');
         entry.control.check(ticket);
         const failure = failed();
         entry.control.finish(
@@ -138,8 +178,8 @@ export class SessionAuthority {
   assert(sessionId: string, dispatch = false): void {
     const scope = this.scope.getStore();
     const entry =
-      this.entries.get(sessionId) ?? (scope?.sessionId === sessionId ? scope.entry : undefined);
-    if (!entry) return;
+      this.active(sessionId) ?? (scope?.sessionId === sessionId ? scope.entry : undefined);
+    if (!entry) throw new ControlError('CONTROL_REVOKED', 'Controlled session is unavailable');
     if (!scope || scope.sessionId !== sessionId || scope.entry !== entry)
       throw new ControlError(
         'CONTROL_REQUIRED',
@@ -153,11 +193,15 @@ export class SessionAuthority {
     this.assert(sessionId);
     const scope = this.scope.getStore();
     if (!scope) throw new ControlError('CONTROL_REQUIRED', 'Missing output authority');
-    return () => scope.entry.control.check(scope.ticket);
+    return () => {
+      if (this.active(sessionId) !== scope.entry)
+        throw new ControlError('CONTROL_REVOKED', 'Session owner expired or changed');
+      scope.entry.control.check(scope.ticket);
+    };
   }
 
   currentEpoch(sessionId: string): number | undefined {
-    return this.entries.get(sessionId)?.control.view().epoch;
+    return this.active(sessionId)?.control.view().epoch;
   }
 
   /** Trusted composition changes require idle human control and invalidate review. */
@@ -182,7 +226,7 @@ export class SessionAuthority {
   }
 
   guardPage(sessionId: string, page: EnginePage): EnginePage {
-    if (!this.entries.has(sessionId)) return page;
+    const owner = this.require(sessionId);
     const authority = this;
     return new Proxy(page, {
       get(target, key) {
@@ -191,6 +235,8 @@ export class SessionAuthority {
         // Lifecycle event plumbing is service-owned, not caller-driven browser I/O.
         if (key === 'events' || key === 'getCachedUrl') return value.bind(target);
         return (...args: unknown[]) => {
+          if (authority.active(sessionId) !== owner)
+            throw new ControlError('CONTROL_REVOKED', 'Page belongs to a removed session owner');
           authority.assert(sessionId, key === 'act' || key === 'navigate' || key === 'close');
           return value.apply(target, args);
         };
