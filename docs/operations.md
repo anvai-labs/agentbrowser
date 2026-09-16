@@ -305,7 +305,13 @@ export AGENTBROWSER_API_KEY=key1
 agentbrowser --base-url http://localhost:5709 session create --tenant tenant1 --json
 agentbrowser navigate <sessionId> <pageId> https://example.com
 agentbrowser act click <sessionId> <pageId> <ref>
+agentbrowser autofill <sessionId> <pageId> '@fields.json'   # bulk fill, per-field receipts
+agentbrowser pdf <sessionId> <pageId> --out page.pdf
+agentbrowser artifact get <sessionId> <artifactId> --out evidence.bin
+agentbrowser health            # exit 1 when unhealthy; --ready / --live select the probe
+agentbrowser download <sessionId> <pageId> <url> --out f.zip
 agentbrowser session list
+agentbrowser session get <sessionId>
 agentbrowser session close <sessionId>
 ```
 
@@ -333,7 +339,7 @@ entry-point path. Success emits JSON evidence; failures exit nonzero.
 Each child has a 20-second deadline and a combined 1 MiB stdout/stderr limit;
 failure cleanup escalates from termination to forced termination with bounded
 waits. CLI checks exact version and help. MCP checks the negotiated protocol,
-exact version, the full twelve-tool catalog, valid output and clean shutdown, clearing the
+exact version, the full thirteen-tool catalog, valid output and clean shutdown, clearing the
 runtime version override to prevent false version evidence. These checks do
 not launch a browser or certify API connectivity, downloads, containment or a
 Homebrew upgrade. Those are separate [release acceptance gates](release-milestones.md).

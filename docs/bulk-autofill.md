@@ -18,6 +18,8 @@ The agent sends one structured payload. The service owns the serial resolve → 
 
 For delegated sessions, supply `X-AgentBrowser-Operation-Id` (MCP `operationId`) before dispatch. One admission covers the complete batch. Lost responses require querying the existing operation-status surface; repeating an operation ID cannot resume or repeat its writes. Per-field reports are returned synchronously, not persisted for later recovery. The operation record retains completion/uncertainty status, not a durable copy of the report.
 
+The CLI drives the same contract: `agentbrowser autofill <sessionId> <pageId> '@payload.json' [--policy '<json>']` prints the per-field receipts (values and redacted excerpts omitted; `--json` includes them).
+
 Each receipt has `field` (zero-based payload index), `match`, `resolvedRef` when resolved, `blockIdentity` when captured, `status`, and `verified`. Successful actions also carry `actionId`. `actual` is a redacted excerpt of at most 512 characters, with `actualTruncated`; verification compares the full private native value before redaction or truncation. Statuses are `verified`, `unverified` (explicit `verify: "none"`), `failed`, `uncertain`, `skipped`, and `not_attempted`. HTTP 200 means a report is available: callers must inspect `ok` and each receipt. A partial controlled batch is recorded conservatively as failed or outcome-unknown, never wholly completed.
 
 Fill values may use existing `vault://` references: all are resolved privately before browser I/O, and the resolved values are used for comparison. Select option values remain literal. Missing or oversized resolved values reject the complete request before writes.
