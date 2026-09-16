@@ -6,6 +6,7 @@
  * live server.
  */
 
+import { readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import type {
   ActionRequest,
@@ -18,6 +19,7 @@ import type {
   ObservationResponse,
   PageResponse,
   PageSnapshot,
+  PdfRequest,
   ScreenshotRequest,
   SessionRequest,
   SessionResponse,
@@ -27,6 +29,7 @@ import {
   REF_PATTERN,
   UsageError,
   formatErrorForUser,
+  parseAutofillRequest,
   validateWireAction,
 } from '@agentbrowser/sdk-typescript';
 import { Command } from 'commander';
@@ -59,7 +62,7 @@ export interface CliClient {
       artifactId: string
     ): Promise<{ metadata: ArtifactRef; contentBase64?: string }>;
     events(sessionId: string, type?: string): Promise<Array<Record<string, unknown>>>;
-    createPage(sessionId: string): Promise<PageResponse>;
+    createPage(sessionId: string, request?: { url: string }): Promise<PageResponse>;
     navigate(
       sessionId: string,
       pageId: string,
@@ -99,7 +102,45 @@ export interface CliClient {
       pageId: string,
       bounds?: { maxElements?: number; maxBytes?: number }
     ): Promise<PageSnapshot>;
+    get(sessionId: string): Promise<SessionResponse>;
+    listPages(sessionId: string): Promise<PageResponse[]>;
+    getPage(sessionId: string, pageId: string): Promise<PageResponse>;
+    closePage(sessionId: string, pageId: string): Promise<void>;
+    autofill(
+      sessionId: string,
+      pageId: string,
+      request: Record<string, unknown>
+    ): Promise<{
+      ok: boolean;
+      receipts: Array<{
+        field: number;
+        status: string;
+        verified?: boolean;
+        resolvedRef?: string;
+        error?: { code?: string; message?: string };
+        [key: string]: unknown;
+      }>;
+      elapsedMs?: number;
+      snapshot?: { artifactId?: string; sizeBytes?: number };
+      snapshotError?: string;
+      [key: string]: unknown;
+    }>;
+    pdf(sessionId: string, pageId: string, request: PdfRequest): Promise<ArtifactRef>;
+    download(
+      sessionId: string,
+      pageId: string,
+      request: { url: string; filename?: string }
+    ): Promise<ArtifactRef>;
+    collectDownload(sessionId: string, pageId: string, filename: string): Promise<ArtifactRef>;
   };
+  health?(): Promise<{ status: string; version?: string; uptime?: number; timestamp?: string }>;
+  healthLive?(): Promise<{ status: string; timestamp?: string }>;
+  healthReady?(): Promise<{
+    status: string;
+    engine?: string;
+    version?: string;
+    capabilities?: unknown;
+  }>;
 }
 
 export interface CliDependencies {
@@ -175,6 +216,21 @@ export function buildCli(deps: CliDependencies): Cli {
 
       // ---- session ---------------------------------------------------------
       const session = program.command('session').description('manage browser sessions');
+      session
+        .command('get')
+        .description('get one session')
+        .argument('<sessionId>')
+        .action(
+          action(async (ctx, sessionId: string) => {
+            const got = await ctx.client.sessions.get(sessionId);
+            ctx.emit(got, () => [
+              `Session ${got.sessionId}`,
+              `  created: ${got.createdAt ?? 'unknown'}`,
+              `  ttl:     ${got.ttlMs ?? '?'} ms`,
+              `  idle:    ${got.idleTimeoutMs ?? '?'} ms`,
+            ]);
+          })
+        );
       for (const [command, method] of [
         ['control', 'control'],
         ['takeover', 'takeover'],
@@ -421,16 +477,64 @@ export function buildCli(deps: CliDependencies): Cli {
 
       page
         .command('create')
-        .description('create a page in a session')
+        .description('create a page in a session (optionally navigate it on creation)')
         .argument('<sessionId>')
+        .option('--url <url>', 'navigate the new page to this URL')
         .action(
-          action(async (ctx, sessionId: string) => {
-            const created = await ctx.client.sessions.createPage(sessionId);
+          action(async (ctx, sessionId: string, options: { url?: string }) => {
+            const created = await ctx.client.sessions.createPage(
+              sessionId,
+              options.url ? { url: options.url } : undefined
+            );
             ctx.emit(created, () => [
               `Page ${created.pageId}`,
               `  session: ${created.sessionId ?? sessionId}`,
               `  status:  ${created.status ?? 'unknown'}`,
             ]);
+          })
+        );
+
+      page
+        .command('list')
+        .description('list pages in a session')
+        .argument('<sessionId>')
+        .action(
+          action(async (ctx, sessionId: string) => {
+            const pages = await ctx.client.sessions.listPages(sessionId);
+            ctx.emit(pages, () =>
+              pages.length === 0
+                ? ['No pages']
+                : pages.map((p) => `${p.pageId}\t${p.status ?? 'unknown'}\t${p.url ?? ''}`)
+            );
+          })
+        );
+
+      page
+        .command('get')
+        .description('get one page')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string) => {
+            const page = await ctx.client.sessions.getPage(sessionId, pageId);
+            ctx.emit(page, () => [
+              `Page ${page.pageId}`,
+              `  status: ${page.status ?? 'unknown'}`,
+              `  url:    ${page.url ?? ''}`,
+              `  title:  ${page.title ?? ''}`,
+            ]);
+          })
+        );
+
+      page
+        .command('close')
+        .description('close one page (the session and sibling pages stay open)')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string) => {
+            await ctx.client.sessions.closePage(sessionId, pageId);
+            ctx.emit({ sessionId, pageId, closed: true }, () => [`Closed ${pageId}`]);
           })
         );
 
@@ -556,6 +660,10 @@ export function buildCli(deps: CliDependencies): Cli {
           '--continue-from <n>',
           'resume a truncated observation from its continuation.nextOrdinal'
         )
+        .option(
+          '--since-revision <n>',
+          'only observe if the page revision is newer than this (else the previous observation stands)'
+        )
         .action(
           action(
             async (
@@ -568,6 +676,7 @@ export function buildCli(deps: CliDependencies): Cli {
                 maxBytes?: string;
                 include?: string[];
                 continueFrom?: string;
+                sinceRevision?: string;
               }
             ) => {
               const request: ObservationRequest = {};
@@ -585,6 +694,9 @@ export function buildCli(deps: CliDependencies): Cli {
               }
               if (options.continueFrom) {
                 request.continueFrom = Number.parseInt(options.continueFrom, 10);
+              }
+              if (options.sinceRevision) {
+                request.sinceRevision = Number.parseInt(options.sinceRevision, 10);
               }
 
               const observation = await ctx.client.sessions.observe(sessionId, pageId, request);
@@ -994,13 +1106,17 @@ export function buildCli(deps: CliDependencies): Cli {
           '--schema <json>',
           'inline JSON Schema for format=schema (flat top-level properties)'
         )
+        .option(
+          '--records <json>',
+          'inline records request for format=records: {"container": "css", "fields": {"name": "css"}, "limit"?: n}'
+        )
         .action(
           action(
             async (
               ctx,
               sessionId: string,
               pageId: string,
-              options: { format?: string; schema?: string }
+              options: { format?: string; schema?: string; records?: string }
             ) => {
               let schemaValue: Record<string, unknown> | undefined;
               if (options.schema !== undefined) {
@@ -1010,9 +1126,18 @@ export function buildCli(deps: CliDependencies): Cli {
                   throw new UsageError('--schema must be valid inline JSON.');
                 }
               }
+              let recordsValue: Record<string, unknown> | undefined;
+              if (options.records !== undefined) {
+                try {
+                  recordsValue = JSON.parse(options.records) as Record<string, unknown>;
+                } catch {
+                  throw new UsageError('--records must be valid inline JSON.');
+                }
+              }
               const result = (await ctx.client.sessions.extract(sessionId, pageId, {
                 format: (options.format ?? 'text') as never,
                 ...(schemaValue !== undefined ? { schema: schemaValue } : {}),
+                ...(recordsValue !== undefined ? { records: recordsValue } : {}),
               })) as unknown;
               ctx.emit(result, () => [
                 JSON.stringify((result as { data?: unknown }).data, null, 2).slice(0, 4000),
@@ -1029,13 +1154,22 @@ export function buildCli(deps: CliDependencies): Cli {
         .argument('<pageId>')
         .option('--full-page', 'capture the full scrollable page')
         .option('--format <format>', 'png | jpeg | webp')
+        .option('--quality <n>', 'jpeg/webp quality (0-100)')
+        .option('--mask-sensitive', 'mask sensitive fields in the capture')
+        .option('--out <file>', 'save the screenshot bytes to a file')
         .action(
           action(
             async (
               ctx,
               sessionId: string,
               pageId: string,
-              options: { fullPage?: boolean; format?: string }
+              options: {
+                fullPage?: boolean;
+                format?: string;
+                quality?: string;
+                maskSensitive?: boolean;
+                out?: string;
+              }
             ) => {
               const request: ScreenshotRequest = {};
               if (options.fullPage) {
@@ -1043,6 +1177,12 @@ export function buildCli(deps: CliDependencies): Cli {
               }
               if (options.format) {
                 request.format = options.format as NonNullable<ScreenshotRequest['format']>;
+              }
+              if (options.quality !== undefined) {
+                request.quality = Number(options.quality);
+              }
+              if (options.maskSensitive) {
+                request.maskSensitive = true;
               }
 
               const artifact = await ctx.client.sessions.screenshot(sessionId, pageId, request);
@@ -1053,6 +1193,253 @@ export function buildCli(deps: CliDependencies): Cli {
                 `  bytes: ${artifact.sizeBytes}`,
                 `  url:   ${artifact.url}`,
               ]);
+              if (options.out) {
+                const saved = await saveArtifactBytes(ctx, sessionId, artifact, options.out);
+                ctx.emit({ saved: saved.path, sizeBytes: saved.sizeBytes }, () => [
+                  `Saved ${artifact.artifactId} to ${saved.path} (${saved.sizeBytes} bytes)`,
+                ]);
+              }
+            }
+          )
+        );
+
+      program
+        .command('pdf')
+        .description('print the page to a PDF artifact')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .option('--landscape')
+        .option('--display-header-footer')
+        .option('--print-background')
+        .option('--out <file>', 'save the PDF bytes to a file')
+        .action(
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              pageId: string,
+              options: {
+                landscape?: boolean;
+                displayHeaderFooter?: boolean;
+                printBackground?: boolean;
+                out?: string;
+              }
+            ) => {
+              const request: PdfRequest = {};
+              if (options.landscape) {
+                request.landscape = true;
+              }
+              if (options.displayHeaderFooter) {
+                request.displayHeaderFooter = true;
+              }
+              if (options.printBackground) {
+                request.printBackground = true;
+              }
+              const artifact = await ctx.client.sessions.pdf(sessionId, pageId, request);
+              ctx.emit(artifact, () => [
+                `PDF ${artifact.artifactId}`,
+                `  type:  ${artifact.contentType}`,
+                `  bytes: ${artifact.sizeBytes}`,
+                `  url:   ${artifact.url}`,
+              ]);
+              if (options.out) {
+                const saved = await saveArtifactBytes(ctx, sessionId, artifact, options.out);
+                ctx.emit({ saved: saved.path, sizeBytes: saved.sizeBytes }, () => [
+                  `Saved ${artifact.artifactId} to ${saved.path} (${saved.sizeBytes} bytes)`,
+                ]);
+              }
+            }
+          )
+        );
+
+      program
+        .command('health')
+        .description(
+          'service health check (exit 1 when unhealthy; --ready/--live select the probe)'
+        )
+        .option('--ready', 'check readiness instead of the health summary')
+        .option('--live', 'check liveness instead of the health summary')
+        .action(
+          action(async (ctx, options: { ready?: boolean; live?: boolean }) => {
+            if (!ctx.client.health || !ctx.client.healthLive || !ctx.client.healthReady) {
+              throw new UsageError('Client does not support health checks');
+            }
+            if (options.ready && options.live) {
+              throw new UsageError('--ready and --live are mutually exclusive');
+            }
+            const result: { status: string; version?: string; uptime?: number; engine?: string } =
+              options.ready
+                ? await ctx.client.healthReady()
+                : options.live
+                  ? await ctx.client.healthLive()
+                  : await ctx.client.health();
+            const expected = options.ready ? 'ready' : options.live ? 'live' : 'healthy';
+            ctx.emit(result, () => {
+              const lines = [`${result.status}`];
+              if (result.version) lines[0] += ` - agentbrowser v${result.version}`;
+              if (result.uptime !== undefined) {
+                lines[0] += ` (uptime ${Math.round(result.uptime)} s)`;
+              }
+              if (result.engine) lines.push(`engine: ${result.engine}`);
+              return lines;
+            });
+            if (result.status !== expected) {
+              throw new UsageError(`${expected} check failed: status is '${result.status}'`);
+            }
+          })
+        );
+
+      const artifact = program.command('artifact').description('manage artifacts');
+      artifact
+        .command('get')
+        .description('fetch an artifact (metadata + inline bytes)')
+        .argument('<sessionId>')
+        .argument('<artifactId>')
+        .option('--out <file>', 'save the artifact bytes to a file')
+        .action(
+          action(async (ctx, sessionId: string, artifactId: string, options: { out?: string }) => {
+            const stored = await ctx.client.sessions.artifact(sessionId, artifactId);
+            if (options.out) {
+              if (!stored.contentBase64) {
+                throw new UsageError(
+                  'Artifact has no inline content to save (it may have expired).'
+                );
+              }
+              const bytes = Buffer.from(stored.contentBase64, 'base64');
+              writeFileSync(options.out, bytes);
+              ctx.emit(
+                { saved: options.out, sizeBytes: bytes.length, metadata: stored.metadata },
+                () => [`Saved ${artifactId} to ${options.out} (${bytes.length} bytes)`]
+              );
+            } else {
+              ctx.emit(stored, () => [
+                `Artifact ${artifactId}`,
+                `  bytes: ${stored.contentBase64 ? stored.contentBase64.length : 0}`,
+              ]);
+            }
+          })
+        );
+
+      program
+        .command('autofill')
+        .description(
+          'bulk-fill form fields from one structured payload (inline JSON, @file, or - for stdin). The server resolves, fills, and verifies each field serially and returns per-field receipts.'
+        )
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('<requestJson>')
+        .option('--policy <json>', 'replace the request policy object wholesale')
+        .action(
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              pageId: string,
+              requestJson: string,
+              options: { policy?: string }
+            ) => {
+              const request = readJsonArgument(requestJson, 'autofill request') as Record<
+                string,
+                unknown
+              >;
+              if (options.policy !== undefined) {
+                request.policy = readJsonArgument(options.policy, '--policy');
+              }
+              let parsed: Record<string, unknown>;
+              try {
+                parsed = parseAutofillRequest(request) as Record<string, unknown>;
+              } catch (error) {
+                throw new UsageError((error as Error).message);
+              }
+              const report = await ctx.client.sessions.autofill(sessionId, pageId, parsed);
+              ctx.emit(report, () => {
+                const verified = report.receipts.filter((r) => r.status === 'verified').length;
+                const lines = [
+                  `ok: ${report.ok} — ${verified}/${report.receipts.length} fields verified (${report.elapsedMs ?? '?'} ms)`,
+                ];
+                for (const r of report.receipts) {
+                  const label = `field ${r.field}: ${r.status}`;
+                  lines.push(`  ${label}${r.resolvedRef ? ` (${r.resolvedRef})` : ''}`);
+                }
+                if (report.snapshot?.artifactId) {
+                  lines.push(`  snapshot: ${report.snapshot.artifactId}`);
+                }
+                if (report.snapshotError) {
+                  lines.push(`  snapshot error: ${report.snapshotError}`);
+                }
+                return lines;
+              });
+            }
+          )
+        );
+
+      const download = program
+        .command('download')
+        .description('drive a download and collect it as an artifact');
+      download
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('<url>')
+        .option('--filename <name>', 'suggested filename for the download')
+        .option('--out <file>', 'save the collected artifact bytes to a file')
+        .action(
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              pageId: string,
+              url: string,
+              options: { filename?: string; out?: string }
+            ) => {
+              const artifact = await ctx.client.sessions.download(sessionId, pageId, {
+                url,
+                ...(options.filename !== undefined ? { filename: options.filename } : {}),
+              });
+              ctx.emit(artifact, () => [
+                `Download ${artifact.artifactId}`,
+                `  bytes: ${artifact.sizeBytes}`,
+                `  url:   ${artifact.url}`,
+              ]);
+              if (options.out) {
+                const saved = await saveArtifactBytes(ctx, sessionId, artifact, options.out);
+                ctx.emit({ saved: saved.path, sizeBytes: saved.sizeBytes }, () => [
+                  `Saved ${artifact.artifactId} to ${saved.path} (${saved.sizeBytes} bytes)`,
+                ]);
+              }
+            }
+          )
+        );
+      download
+        .command('collect')
+        .description('collect an intercepted download by filename')
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('<filename>')
+        .option('--out <file>', 'save the collected artifact bytes to a file')
+        .action(
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              pageId: string,
+              filename: string,
+              options: { out?: string }
+            ) => {
+              const artifact = await ctx.client.sessions.collectDownload(
+                sessionId,
+                pageId,
+                filename
+              );
+              ctx.emit(artifact, () => [
+                `Download ${artifact.artifactId}`,
+                `  bytes: ${artifact.sizeBytes}`,
+              ]);
+              if (options.out) {
+                const saved = await saveArtifactBytes(ctx, sessionId, artifact, options.out);
+                ctx.emit({ saved: saved.path, sizeBytes: saved.sizeBytes }, () => [
+                  `Saved ${artifact.artifactId} to ${saved.path} (${saved.sizeBytes} bytes)`,
+                ]);
+              }
             }
           )
         );
@@ -1108,6 +1495,49 @@ function refTarget(ref: string): { ref: string } {
     );
   }
   return { ref };
+}
+
+/**
+ * Read a JSON argument supplied as inline JSON, `@path/to/file.json`, or `-`
+ * (the request body piped on stdin). All parse failures surface as usage
+ * errors so scripts get a clean exit instead of a server 400.
+ */
+function readJsonArgument(raw: string, label: string): unknown {
+  let text: string;
+  if (raw === '-') {
+    text = readFileSync(0, 'utf8');
+  } else if (raw.startsWith('@')) {
+    text = readFileSync(raw.slice(1), 'utf8');
+  } else {
+    text = raw;
+  }
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new UsageError(`${label} is not valid JSON: ${(error as Error).message}`);
+  }
+}
+
+/**
+ * Fetch an artifact's bytes through the session-scoped authenticated route
+ * and write them to a file. Artifact `url` fields carry short-lived signed
+ * tokens and a relative path; never dereference them here.
+ */
+async function saveArtifactBytes(
+  ctx: CommandContext,
+  sessionId: string,
+  artifact: ArtifactRef,
+  out: string
+): Promise<{ path: string; sizeBytes: number }> {
+  const stored = await ctx.client.sessions.artifact(sessionId, artifact.artifactId);
+  if (!stored.contentBase64) {
+    throw new UsageError(
+      `Artifact ${artifact.artifactId} has no inline content to save (it may have expired).`
+    );
+  }
+  const bytes = Buffer.from(stored.contentBase64, 'base64');
+  writeFileSync(out, bytes);
+  return { path: out, sizeBytes: bytes.length };
 }
 
 function parseViewport(value: string): { width: number; height: number } {

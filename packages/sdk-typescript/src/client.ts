@@ -163,7 +163,12 @@ export interface ExtractRequest {
 
 // ADR-015 single-source-of-truth re-exports: surfaces (CLI, MCP) import
 // these from the SDK rather than redeclaring them.
-export { DELIVERED_EXTRACT_FORMATS, REF_PATTERN, parseRef } from '@agentbrowser/protocol';
+export {
+  DELIVERED_EXTRACT_FORMATS,
+  REF_PATTERN,
+  parseRef,
+  parseAutofillRequest,
+} from '@agentbrowser/protocol';
 export type { DeliveredExtractFormat } from '@agentbrowser/protocol';
 export { UsageError, formatErrorForUser } from '@agentbrowser/protocol';
 
@@ -619,6 +624,33 @@ export class SessionsClient {
       body: request,
     });
   }
+
+  /**
+   * Ask the service to navigate to a URL and capture a download as an
+   * artifact. The session must have been created with downloads allowed
+   * (DOWNLOAD_BLOCKED otherwise).
+   */
+  async download(
+    sessionId: string,
+    pageId: string,
+    request: { url: string; filename?: string }
+  ): Promise<ArtifactRef> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/download`, {
+      method: 'POST',
+      body: request,
+    });
+  }
+
+  /**
+   * Collect an intercepted download by filename (as reported by the page's
+   * download events) and return its artifact reference.
+   */
+  async collectDownload(sessionId: string, pageId: string, filename: string): Promise<ArtifactRef> {
+    return this.http.requestJson(
+      `/v1/sessions/${sessionId}/pages/${pageId}/downloads/${encodeURIComponent(filename)}`,
+      { method: 'POST' }
+    );
+  }
 }
 
 /**
@@ -629,6 +661,7 @@ export class AgentBrowserClient {
   readonly timeout: number;
   readonly sessions: SessionsClient;
   private customHeaders: Record<string, string>;
+  private readonly http: HttpClient;
 
   constructor(options: ClientOptions = {}) {
     this.baseUrl = options.baseUrl || 'http://localhost:5709';
@@ -638,9 +671,41 @@ export class AgentBrowserClient {
       ...options.headers,
     };
 
-    this.sessions = new SessionsClient(
-      new HttpClient(this.baseUrl, this.timeout, this.customHeaders)
-    );
+    this.http = new HttpClient(this.baseUrl, this.timeout, this.customHeaders);
+    this.sessions = new SessionsClient(this.http);
+  }
+
+  /**
+   * Service health summary (GET /health). Never requires authentication.
+   */
+  async health(): Promise<{
+    status: string;
+    version?: string;
+    uptime?: number;
+    timestamp?: string;
+  }> {
+    return this.http.requestJson('/health');
+  }
+
+  /**
+   * Liveness probe (GET /health/live).
+   */
+  async healthLive(): Promise<{ status: string; timestamp?: string }> {
+    return this.http.requestJson('/health/live');
+  }
+
+  /**
+   * Readiness probe (GET /health/ready). With a bearer key the response
+   * includes engine and capability detail; without one it is a
+   * disclosure-free readiness statement.
+   */
+  async healthReady(): Promise<{
+    status: string;
+    engine?: string;
+    version?: string;
+    capabilities?: unknown;
+  }> {
+    return this.http.requestJson('/health/ready');
   }
 
   /**

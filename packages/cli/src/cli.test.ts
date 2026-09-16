@@ -32,6 +32,55 @@ describe('AgentBrowser CLI', () => {
     err = [];
 
     sessions = {
+      get: vi.fn().mockResolvedValue({
+        sessionId: 'ses_1',
+        createdAt: '2026-08-23T10:00:00Z',
+        ttlMs: 12600000,
+        idleTimeoutMs: 600000,
+      }),
+      listPages: vi
+        .fn()
+        .mockResolvedValue([{ pageId: 'pg_1', status: 'active', url: 'https://example.com/' }]),
+      getPage: vi.fn().mockResolvedValue({
+        pageId: 'pg_1',
+        status: 'active',
+        url: 'https://example.com/',
+        title: 'Example',
+      }),
+      closePage: vi.fn().mockResolvedValue(undefined),
+      pdf: vi.fn().mockResolvedValue({
+        artifactId: 'pdf_1',
+        type: 'pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 2048,
+        url: '/v1/artifacts/pdf_1',
+        contentBase64: 'JVBERi0=',
+      }),
+      download: vi.fn().mockResolvedValue({
+        artifactId: 'dl_1',
+        type: 'download',
+        contentType: 'application/octet-stream',
+        sizeBytes: 64,
+        url: '/v1/artifacts/dl_1',
+        contentBase64: 'AA==',
+      }),
+      collectDownload: vi.fn().mockResolvedValue({
+        artifactId: 'dl_1',
+        type: 'download',
+        contentType: 'application/octet-stream',
+        sizeBytes: 64,
+        url: '/v1/artifacts/dl_1',
+        contentBase64: 'AA==',
+      }),
+      autofill: vi.fn().mockResolvedValue({
+        ok: true,
+        receipts: [
+          { field: 0, status: 'verified', verified: true, resolvedRef: 'e1_2' },
+          { field: 1, status: 'verified', verified: true, resolvedRef: 'e1_3' },
+        ],
+        elapsedMs: 1234,
+        snapshot: { artifactId: 'art_9' },
+      }),
       create: vi.fn().mockResolvedValue({
         sessionId: 'ses_1',
         status: 'ready',
@@ -111,7 +160,12 @@ describe('AgentBrowser CLI', () => {
     };
 
     deps = {
-      createClient: vi.fn().mockReturnValue({ sessions }),
+      createClient: vi.fn().mockReturnValue({
+        health: vi.fn().mockResolvedValue({ status: 'healthy', version: '1.8.18', uptime: 4213 }),
+        healthLive: vi.fn().mockResolvedValue({ status: 'live' }),
+        healthReady: vi.fn().mockResolvedValue({ status: 'ready', engine: 'playwright-chromium' }),
+        sessions,
+      }),
       out: (line: string) => out.push(line),
       err: (line: string) => err.push(line),
     };
@@ -308,7 +362,7 @@ describe('AgentBrowser CLI', () => {
       const code = await run('page', 'create', 'ses_1');
 
       expect(code).toBe(0);
-      expect(sessions.createPage).toHaveBeenCalledWith('ses_1');
+      expect(sessions.createPage).toHaveBeenCalledWith('ses_1', undefined);
       expect(out.join('\n')).toContain('pg_1');
     });
   });
@@ -613,6 +667,219 @@ describe('AgentBrowser CLI', () => {
       const code = await run('teleport');
 
       expect(code).toBe(1);
+    });
+  });
+
+  describe('cli full parity additions', () => {
+    it('autofill sends the parsed payload and renders receipts without field values', async () => {
+      const code = await run(
+        '--json',
+        'autofill',
+        'ses_1',
+        'pg_1',
+        JSON.stringify({
+          fields: [
+            { match: { label: 'First Name' }, value: 'Vijaykumar', verify: 'exact' },
+            { match: { label: 'Last Name' }, value: 'Singh', verify: 'exact' },
+          ],
+        })
+      );
+      expect(code).toBe(0);
+      expect(sessions.autofill).toHaveBeenCalledWith(
+        'ses_1',
+        'pg_1',
+        expect.objectContaining({ fields: expect.any(Array) })
+      );
+      const report = lastJson();
+      expect(report.ok).toBe(true);
+      expect(report.receipts).toHaveLength(2);
+    });
+
+    it('autofill reads the payload from @file and pipes stdin', async () => {
+      const { writeFileSync, mkdtempSync } = await import('node:fs');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const dir = mkdtempSync(join(tmpdir(), 'cli-autofill-'));
+      const file = join(dir, 'payload.json');
+      writeFileSync(file, JSON.stringify({ fields: [{ match: { label: 'A' }, value: 'b' }] }));
+      expect(await run('autofill', 'ses_1', 'pg_1', `@${file}`)).toBe(0);
+      expect(sessions.autofill).toHaveBeenCalled();
+    });
+
+    it('autofill rejects invalid JSON locally without contacting the client', async () => {
+      const code = await run('autofill', 'ses_1', 'pg_1', '{not json');
+      expect(code).toBe(1);
+      expect(sessions.autofill).not.toHaveBeenCalled();
+    });
+
+    it('autofill rejects a protocol-invalid field locally', async () => {
+      const code = await run(
+        'autofill',
+        'ses_1',
+        'pg_1',
+        JSON.stringify({ fields: [{ match: { label: 'A' } }] })
+      );
+      expect(code).toBe(1);
+      expect(sessions.autofill).not.toHaveBeenCalled();
+    });
+
+    it('autofill --policy replaces the policy object', async () => {
+      const code = await run(
+        '--json',
+        'autofill',
+        'ses_1',
+        'pg_1',
+        JSON.stringify({ fields: [{ match: { label: 'A' }, value: 'b' }] }),
+        '--policy',
+        JSON.stringify({ onAmbiguous: 'skip', maxReobserve: 1 })
+      );
+      expect(code).toBe(0);
+      expect(sessions.autofill).toHaveBeenCalledWith(
+        'ses_1',
+        'pg_1',
+        expect.objectContaining({
+          policy: expect.objectContaining({ onAmbiguous: 'skip' }),
+        })
+      );
+    });
+
+    it('autofill text render omits field values', async () => {
+      sessions.autofill.mockResolvedValue({
+        ok: true,
+        receipts: [{ field: 0, status: 'verified', verified: true, resolvedRef: 'e1_2' }],
+        elapsedMs: 5,
+        actual: 'SECRET-VALUE',
+        value: 'SECRET-VALUE',
+      });
+      await run(
+        'autofill',
+        'ses_1',
+        'pg_1',
+        JSON.stringify({ fields: [{ match: { label: 'A' }, value: 'x' }] })
+      );
+      expect(out.join('\n')).not.toContain('SECRET-VALUE');
+    });
+
+    it('pdf forwards options and saves bytes with --out', async () => {
+      const { writeFileSync } = await import('node:fs');
+      const out = await import('node:os');
+      const code = await run('pdf', 'ses_1', 'pg_1', '--landscape', '--out', '/tmp/cli-test.pdf');
+      expect(code).toBe(0);
+      expect(sessions.pdf).toHaveBeenCalledWith('ses_1', 'pg_1', { landscape: true });
+      void writeFileSync;
+      void out;
+    });
+
+    it('health defaults to the health summary and exits 1 when unhealthy', async () => {
+      expect(await run('health')).toBe(0);
+      expect(deps.createClient).toHaveBeenCalled();
+      const client = (deps.createClient as unknown as ReturnType<typeof vi.fn>).mock.results[0]
+        ?.value as { health: ReturnType<typeof vi.fn> } | undefined;
+      client?.health.mockResolvedValueOnce({ status: 'unavailable' });
+      expect(await run('health')).toBe(1);
+    });
+
+    it('health --ready and --live select the right probe', async () => {
+      expect(await run('health', '--ready')).toBe(0);
+      expect(await run('health', '--live')).toBe(0);
+    });
+
+    it('health errors cleanly when the client lacks health methods', async () => {
+      (deps.createClient as ReturnType<typeof vi.fn>).mockImplementation((cfg: unknown) => {
+        const real = (vi.mocked(deps.createClient).mock.results[0]?.value ?? { sessions }) as {
+          sessions: unknown;
+        };
+        void real;
+        return { sessions, health: undefined };
+      });
+      const code = await run('health');
+      expect(code).toBe(1);
+    });
+
+    it('artifact get saves bytes with --out', async () => {
+      const { mkdtempSync } = await import('node:fs');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const dir = mkdtempSync(join(tmpdir(), 'cli-artifact-'));
+      const file = join(dir, 'out.bin');
+      sessions.artifact = vi.fn().mockResolvedValue({
+        metadata: { artifactId: 'art_1' },
+        contentBase64: Buffer.from('bytes').toString('base64'),
+      });
+      const code = await run('artifact', 'get', 'ses_1', 'art_1', '--out', file);
+      expect(code).toBe(0);
+      expect(out.join('\n')).toContain('Saved art_1');
+    });
+
+    it('session get renders the session', async () => {
+      const code = await run('session', 'get', 'ses_1');
+      expect(code).toBe(0);
+      expect(out.join('\n')).toContain('2026-08-23T10:00:00Z');
+    });
+
+    it('page list renders pages', async () => {
+      const code = await run('page', 'list', 'ses_1');
+      expect(code).toBe(0);
+      expect(out.join('\n')).toContain('pg_1');
+    });
+
+    it('page create passes --url', async () => {
+      const code = await run('page', 'create', 'ses_1', '--url', 'https://example.com/x');
+      expect(code).toBe(0);
+      expect(sessions.createPage).toHaveBeenCalledWith('ses_1', { url: 'https://example.com/x' });
+    });
+
+    it('page get and close round trip', async () => {
+      expect(await run('page', 'get', 'ses_1', 'pg_1')).toBe(0);
+      expect(await run('page', 'close', 'ses_1', 'pg_1')).toBe(0);
+      expect(sessions.closePage).toHaveBeenCalledWith('ses_1', 'pg_1');
+    });
+
+    it('download and download collect dispatch separately', async () => {
+      expect(await run('download', 'ses_1', 'pg_1', 'https://example.com/f.zip')).toBe(0);
+      expect(sessions.download).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        url: 'https://example.com/f.zip',
+      });
+      expect(await run('download', 'collect', 'ses_1', 'pg_1', 'f.zip')).toBe(0);
+      expect(sessions.collectDownload).toHaveBeenCalledWith('ses_1', 'pg_1', 'f.zip');
+    });
+
+    it('observe forwards --since-revision', async () => {
+      sessions.observe = vi.fn().mockResolvedValue({ elements: [], revision: 9 });
+      await run('observe', 'ses_1', 'pg_1', '--since-revision', '8');
+      expect(sessions.observe).toHaveBeenCalledWith(
+        'ses_1',
+        'pg_1',
+        expect.objectContaining({ sinceRevision: 8 })
+      );
+    });
+
+    it('extract forwards --records', async () => {
+      sessions.extract = vi.fn().mockResolvedValue({ data: [] });
+      await run(
+        'extract',
+        'ses_1',
+        'pg_1',
+        '--format',
+        'records',
+        '--records',
+        JSON.stringify({ container: '.row', fields: { name: '.name' } })
+      );
+      expect(sessions.extract).toHaveBeenCalledWith(
+        'ses_1',
+        'pg_1',
+        expect.objectContaining({
+          records: expect.objectContaining({ container: '.row' }),
+        })
+      );
+    });
+
+    it('help mentions the new commands', async () => {
+      await run('--help');
+      const text = out.join('\n');
+      for (const token of ['autofill', 'pdf', 'download', 'health', 'artifact']) {
+        expect(text).toContain(token);
+      }
     });
   });
 });

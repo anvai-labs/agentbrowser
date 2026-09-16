@@ -129,7 +129,7 @@ export async function checkCli(command, options) {
   const version = (await runExecutable([...command, '--version'], options)).stdout.trim();
   assert.equal(version, options.expectedVersion, 'CLI version mismatch');
   const help = (await runExecutable([...command, '--help'], options)).stdout;
-  for (const token of ['agentbrowser', 'session', 'act', 'plan']) {
+  for (const token of ['agentbrowser', 'session', 'act', 'plan', 'autofill', 'pdf', 'download', 'health']) {
     assert.ok(help.includes(token), `CLI help is missing ${token}`);
   }
   return { version };

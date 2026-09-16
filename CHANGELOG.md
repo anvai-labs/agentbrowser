@@ -5,6 +5,13 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+# Changelog
+
+All notable changes to **AgentBrowser** are documented here. The format is based on
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); releases are tagged `vX.Y.Z` and
+built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
+`@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
+
 ## [1.8.17] - 2026-09-16
 
 ### Added

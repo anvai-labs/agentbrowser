@@ -1,6 +1,6 @@
 {
   "name": "@agentbrowser/api",
-  "version": "1.8.17",
+  "version": "1.8.18",
   "private": true,
   "type": "module",
   "description": "Fastify REST API server for AgentBrowser",
