@@ -5,6 +5,30 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+# Changelog
+
+All notable changes to **AgentBrowser** are documented here. The format is based on
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); releases are tagged `vX.Y.Z` and
+built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
+`@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
+
+## [1.8.17] - 2026-09-16
+
+### Added
+
+- Native scoped bulk autofill: `POST /v1/sessions/{sid}/pages/{pid}/autofill`
+  (SDK `sessions.autofill`, MCP `browser_autofill`) accepts a field payload
+  upfront (1-50 fields; match by role/label/labelRegex/dataAutomationId with
+  optional fieldset block scoping) and the service owns the serial
+  resolve → act → reobserve → verify loop, returning per-field verification
+  receipts plus a whole-page HTML artifact reference (#174). Native
+  text/email/tel/url/search/number inputs, textareas, and native single
+  selects are delivered; React-Select/active-descendant comboboxes, chip
+  multi-selects, password/file/multi-select inputs are refused with receipts
+  rather than guessed at. Values support `vault://` references; operation IDs
+  cover the whole batch for delegated sessions; the final pass rechecks all
+  previously verified fields. See `docs/bulk-autofill.md`.
+
 ## [1.8.16] - 2026-09-15
 
 ### Added
