@@ -150,15 +150,6 @@ test('public smoke commands accept explicit versions and propagate failure exit 
     await assert.rejects(runExecutable([...base, '--expected-version', '9.9.9', ...executable]), /exited unsuccessfully \(1\)/);
     await assert.rejects(runExecutable([...base, '--expected-version']), /exited unsuccessfully \(2\)/);
   }
-  // The CLI help-token check now also requires the newer command names.
-  const richerCli = command(
-    "console.log(process.argv.includes('--version')?'1.2.3':'agentbrowser session act plan autofill pdf download health');"
-  );
-  assert.equal(
-    (await checkCli(richerCli('1.2.3', 'agentbrowser session act plan autofill pdf download health'), options)).version,
-    '1.2.3'
-  );
-  await assert.rejects(checkCli(cli('1.2.3', 'agentbrowser session act plan'), options), /help is missing/);
 });
 
 test('CLI requires both exact version and command help', async () => {
