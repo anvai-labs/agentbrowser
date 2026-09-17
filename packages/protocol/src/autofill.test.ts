@@ -62,6 +62,25 @@ it('validates the versioned report without changing partial or unverified outcom
   ).toThrow('may have executed');
 });
 
+it('copies repeated report references while rejecting genuine cycles', () => {
+  const sharedMatch = { label: 'Company' };
+  const report = {
+    ok: true,
+    receipts: [
+      { field: 0, match: sharedMatch, status: 'verified' as const, verified: true },
+      { field: 1, match: sharedMatch, status: 'verified' as const, verified: true },
+    ],
+    elapsedMs: 1,
+  };
+  expect(parseAutofillReport(report, 2)).toEqual(report);
+
+  const cycle: Record<string, unknown> = {};
+  cycle.self = cycle;
+  expect(() => parseAutofillReport({ ...report, extension: cycle }, 2)).toThrow(
+    'may have executed'
+  );
+});
+
 it.each([
   { ok: true, receipts: [], elapsedMs: 1 },
   {

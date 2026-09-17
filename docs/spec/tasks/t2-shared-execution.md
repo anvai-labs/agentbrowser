@@ -76,5 +76,14 @@ guidance, no private report echo and no retry. Pessimistic `ok: false` reports a
 `verify: none` remain compatible. See the
 [semantic result evidence](../evidence/t2-semantic-result-validation.md).
 
+The fifth slice binds an explicitly verified native fill in a plan to its existing G5
+readback evidence. A request-relative parser snapshots only which steps require
+verification, retains no field values, and accepts only the exact value-free projection
+`{ verified: true }` for those successful steps. SDK, CLI and MCP reuse that parser;
+the stale-target remap path now preserves the same sanitized result as ordinary plan
+execution. This establishes native browser readback, not an application commit or G6
+oracle. See the
+[plan verification evidence](../evidence/t2-plan-verification-evidence.md).
+
 Compatible verifier projections, trusted verifier registration and the remaining T2
 acceptance matrix are still pending, so T2 is not complete.

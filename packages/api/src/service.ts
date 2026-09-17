@@ -1419,6 +1419,7 @@ export class AgentBrowserService {
                 ok: true,
                 actionId: retry.actionId,
                 ...(retry.remap !== undefined ? { remap: retry.remap } : {}),
+                ...(retry.result !== undefined ? { result: retry.result } : {}),
               });
               continue;
             } catch (retryError) {

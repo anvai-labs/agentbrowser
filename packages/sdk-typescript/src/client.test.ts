@@ -359,6 +359,50 @@ describe('AgentBrowser SDK', () => {
       expect((outcome as Error).message).not.toContain('PRIVATE-REPORT');
       expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
     });
+
+    it('rejects private sibling data in explicitly requested fill verification', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            completed: 1,
+            results: [
+              {
+                step: 0,
+                ok: true,
+                result: { verified: true, actual: 'PRIVATE-READBACK' },
+              },
+            ],
+          }),
+          { headers: { 'content-type': 'application/json' } }
+        )
+      );
+      const outcome = await client.sessions
+        .plan(
+          'ses_1',
+          'pg_1',
+          [
+            {
+              action: 'fill',
+              target: { ref: 'e1_0' },
+              value: 'PRIVATE-WRITTEN',
+              expectValue: 'PRIVATE-EXPECTED',
+            },
+          ],
+          { operationId: 'verify-operation' }
+        )
+        .catch((error: unknown) => error);
+      expect(outcome).toMatchObject({
+        code: 'INVALID_RESPONSE',
+        retryable: false,
+        details: { operationId: 'verify-operation' },
+      });
+      expect(String(outcome)).toContain('may have executed');
+      expect(String(outcome)).not.toContain('PRIVATE-WRITTEN');
+      expect(String(outcome)).not.toContain('PRIVATE-EXPECTED');
+      expect(String(outcome)).not.toContain('PRIVATE-READBACK');
+      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('page management', () => {

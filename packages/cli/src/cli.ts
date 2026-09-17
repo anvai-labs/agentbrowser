@@ -38,11 +38,11 @@ import {
   PlanReportSchema,
   REF_PATTERN,
   UsageError,
+  createPlanReportParser,
   formatErrorForUser,
   isAgentMode,
   parseAutofillReport,
   parseAutofillRequest,
-  parsePlanReport,
   parsePlanSteps,
   validateWireAction,
 } from '@agentbrowser/sdk-typescript';
@@ -754,11 +754,8 @@ export function buildCli(deps: CliDependencies): Cli {
         .action(
           action(async (ctx, sessionId: string, pageId: string, stepsJson: string) => {
             const steps = parsePlanSteps(await readJsonArgument(stepsJson, 'plan steps'));
-            const expectedSteps = steps.length;
-            const result = parsePlanReport(
-              await ctx.client.sessions.plan(sessionId, pageId, steps),
-              expectedSteps
-            );
+            const parseResponse = createPlanReportParser(steps);
+            const result = parseResponse(await ctx.client.sessions.plan(sessionId, pageId, steps));
             if (!result.ok) exitCode = 1;
 
             ctx.emit(result, () => [

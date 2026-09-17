@@ -44,18 +44,78 @@ export function parsePlanSteps(input: unknown): Array<Record<string, unknown>> {
   return input;
 }
 
-export function parsePlanReport(input: unknown, expectedSteps?: number): PlanReport {
-  return parseExecutionReport(
-    PlanReportSchema,
-    input,
-    'plan',
-    (report) =>
-      !report.ok ||
-      (report.error === undefined &&
-        report.completed === report.results.length &&
-        (expectedSteps === undefined || report.completed === expectedSteps) &&
-        report.results.every(
-          (result, index) => result.ok && result.step === index && result.error === undefined
-        ))
+function hasVerifiedFillEvidence(result: unknown): boolean {
+  const descriptor =
+    typeof result === 'object' && result !== null
+      ? Object.getOwnPropertyDescriptor(result, 'verified')
+      : undefined;
+  return (
+    typeof result === 'object' &&
+    result !== null &&
+    !Array.isArray(result) &&
+    Object.getPrototypeOf(result) === Object.prototype &&
+    Reflect.ownKeys(result).length === 1 &&
+    descriptor !== undefined &&
+    Object.hasOwn(descriptor, 'value') &&
+    descriptor.value === true
   );
+}
+
+function validPlanReport(
+  report: PlanReport,
+  expectedSteps?: number,
+  requiresVerification?: readonly boolean[]
+): boolean {
+  return (
+    !report.ok ||
+    (report.error === undefined &&
+      report.completed === report.results.length &&
+      (expectedSteps === undefined || report.completed === expectedSteps) &&
+      report.results.every(
+        (result, index) =>
+          result.ok &&
+          result.step === index &&
+          result.error === undefined &&
+          (requiresVerification?.[index] !== true || hasVerifiedFillEvidence(result.result))
+      ))
+  );
+}
+
+export function parsePlanReport(input: unknown, expectedSteps?: number): PlanReport {
+  return parseExecutionReport(PlanReportSchema, input, 'plan', (report) =>
+    validPlanReport(report, expectedSteps)
+  );
+}
+
+/** Snapshot request-relative verification requirements without retaining private values. */
+export function createPlanReportParser(
+  actions: readonly Record<string, unknown>[]
+): (input: unknown) => PlanReport {
+  const expectedSteps = actions.length;
+  const requiresVerification = actions.map(
+    (action) =>
+      action.action === 'fill' &&
+      Object.hasOwn(action, 'expectValue') &&
+      typeof action.expectValue === 'string'
+  );
+  return (input: unknown) => {
+    const report = parseExecutionReport(PlanReportSchema, input, 'plan', (report) =>
+      validPlanReport(report, expectedSteps, requiresVerification)
+    );
+    return {
+      ...report,
+      results: report.results.map((result, index) => {
+        if (requiresVerification[index] !== true) return result;
+        const safeEvidence = report.ok || hasVerifiedFillEvidence(result.result);
+        return {
+          step: result.step,
+          ok: result.ok,
+          ...(result.actionId !== undefined ? { actionId: result.actionId } : {}),
+          ...(result.remap !== undefined ? { remap: result.remap } : {}),
+          ...(safeEvidence ? { result: { verified: true } } : {}),
+          ...(result.error !== undefined ? { error: result.error } : {}),
+        };
+      }),
+    };
+  };
 }

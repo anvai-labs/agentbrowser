@@ -154,6 +154,46 @@ describe('AgentBrowserService', () => {
       }
     });
 
+    it('preserves verified fill evidence after a stale-target plan remap', async () => {
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+      const engineSessionId = engine.getSessionIds().at(-1);
+      if (engineSessionId === undefined) throw new Error('no engine session');
+      const fakePage = engine.getFakePage(engineSessionId, pageId);
+      if (fakePage === undefined) throw new Error('no engine page');
+      fakePage.setElements([{ role: 'textbox', name: 'Name' }]);
+      const observed = await service.observe(session.sessionId, pageId, { mode: 'interactive' });
+      const ref = observed.elements[0]?.ref;
+      if (ref === undefined) throw new Error('no field ref');
+      const nativeAct = fakePage.act.bind(fakePage);
+      let fillDispatches = 0;
+      vi.spyOn(fakePage, 'act').mockImplementation(async (action) => {
+        const effect = await nativeAct(action);
+        if (action.type !== 'fill') return effect;
+        fillDispatches++;
+        return { ...effect, result: { success: true, verified: true } };
+      });
+      await service.act(session.sessionId, pageId, { action: 'scroll', direction: 'down' });
+
+      const result = await service.executePlan(session.sessionId, pageId, [
+        {
+          action: 'fill',
+          target: { ref },
+          value: 'PRIVATE-WRITTEN',
+          expectValue: 'PRIVATE-WRITTEN',
+        },
+      ]);
+
+      expect(result).toMatchObject({
+        ok: true,
+        completed: 1,
+        results: [{ step: 0, ok: true, result: { verified: true } }],
+      });
+      expect(fillDispatches).toBe(1);
+      expect(JSON.stringify(result)).not.toContain('PRIVATE-WRITTEN');
+    });
+
     it('pressure matrix row 1: a static 5-field form completes in one call with zero intermediate observations', async () => {
       const session = await service.createSession({ tenantId: 't1' });
       const pageId = (await service.createPage(session.sessionId)).pageId;

@@ -942,10 +942,33 @@ describe('AgentBrowser CLI', () => {
         };
       });
       expect(await run('--json', 'plan', 'ses_1', 'pg_1', JSON.stringify(steps))).toBe(1);
-      expect(sessions.plan).toHaveBeenCalledTimes(1);
       expect(out).toEqual([]);
       expect(err.join(' ')).toContain('may have executed');
+      expect(sessions.plan).toHaveBeenCalledTimes(1);
       expect(err.join(' ')).not.toContain('PRIVATE-REPORT');
+    });
+
+    it('rejects unsafe explicitly requested fill verification evidence', async () => {
+      const steps = [
+        {
+          action: 'fill',
+          target: { ref: 'e1_0' },
+          value: 'PRIVATE-WRITTEN',
+          expectValue: 'PRIVATE-EXPECTED',
+        },
+      ];
+      sessions.plan = vi.fn().mockResolvedValue({
+        ok: true,
+        completed: 1,
+        results: [{ step: 0, ok: true, result: { verified: true, actual: 'PRIVATE-READBACK' } }],
+      });
+      expect(await run('--json', 'plan', 'ses_1', 'pg_1', JSON.stringify(steps))).toBe(1);
+      expect(out).toEqual([]);
+      expect(err.join(' ')).toContain('may have executed');
+      expect(sessions.plan).toHaveBeenCalledTimes(1);
+      expect(err.join(' ')).not.toContain('PRIVATE-WRITTEN');
+      expect(err.join(' ')).not.toContain('PRIVATE-EXPECTED');
+      expect(err.join(' ')).not.toContain('PRIVATE-READBACK');
     });
 
     it('rejects private malformed or oversized input before dispatch', async () => {

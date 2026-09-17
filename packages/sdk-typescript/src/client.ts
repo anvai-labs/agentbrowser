@@ -1,4 +1,8 @@
-import { INTERACTION_GUIDANCE, parseAutofillReport, parsePlanReport } from '@agentbrowser/protocol';
+import {
+  INTERACTION_GUIDANCE,
+  createPlanReportParser,
+  parseAutofillReport,
+} from '@agentbrowser/protocol';
 import type { PlanReport } from '@agentbrowser/protocol';
 /**
  * AgentBrowser TypeScript SDK Client
@@ -559,12 +563,12 @@ export class SessionsClient {
     actions: Array<Record<string, unknown>>,
     options: MutationOptions = {}
   ): Promise<PlanReport> {
-    const expectedSteps = actions.length;
+    const parseResponse = createPlanReportParser(actions);
     return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/plan`, {
       method: 'POST',
       body: { actions },
       ...options,
-      parseResponse: (input) => parsePlanReport(input, expectedSteps),
+      parseResponse,
     });
   }
 
