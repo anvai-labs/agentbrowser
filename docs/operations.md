@@ -94,10 +94,15 @@ One install ships all three surfaces:
 
 ### Release assets
 
-Without Homebrew, take `agentbrowser-server-<target>.tar.gz` and
-`agentbrowser-mcp-<target>` from the [GitHub
-Releases](https://github.com/anvai-labs/agentbrowser/releases) (they need
-only `node` on PATH). The MCP server is also on npm as
+Without Homebrew, take the compiled `agentbrowser-cli-<target>` and
+`agentbrowser-mcp-<target>` clients from the [GitHub
+Releases](https://github.com/anvai-labs/agentbrowser/releases); macOS, Linux
+and Windows clients are published and need no Node runtime. The
+`agentbrowser-server-<target>.tar.gz` service archive is published for macOS
+and Linux. It requires Node 22 plus a compatible Chromium installed under
+`PLAYWRIGHT_BROWSERS_PATH`; Linux hosts must also provide Chromium's platform
+libraries. The archive launcher does not download them. The MCP server is also
+on npm as
 [`@anvailabs/agentbrowser-mcp`](https://www.npmjs.com/package/@anvailabs/agentbrowser-mcp)
 ([ADR-014](adr/014-npm-distribution.md)). A Docker image builds from the
 repo root (CI builds it every push); no registry copy is published.
