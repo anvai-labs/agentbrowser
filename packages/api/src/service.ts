@@ -1619,7 +1619,11 @@ export class AgentBrowserService {
     return { adapter: validated.value.adapter, resource: validated.value.resource };
   }
 
-  /** Operator-only: drop the binding. Safe to call when nothing is bound. */
+  /**
+   * Operator-only: drop the binding. Like bind, this requires the human to
+   * own the session and takes control as a side effect (epoch bump, any
+   * prepared review invalidated) even when nothing is bound.
+   */
   applicationUnbind(sessionId: string, principal: SessionPrincipal): { unbound: true } {
     this.applicationAuthority.unbind(sessionId, principal);
     return { unbound: true };

@@ -197,7 +197,13 @@ The SDK exposes `sessions.applicationBind/applicationUnbind/applicationDiscover/
 applicationExecute/applicationReceipt`. The CLI adds an `application` command
 group (`bind`, `unbind`, `discover`, `execute`, `receipt`); the write identity
 for `application execute` is the existing global `--operation-id`, so repeats
-of the same command replay the recorded operation instead of re-executing.
+of the same command print the recorded operation instead of re-executing.
+Replays are first-class results shaped `{replay: true, operation}` (the
+recorded operation carries the settled status) - the SDK's mutation machinery
+deliberately does not intercept them, and read operations refuse a write
+identity. Unbind, like bind, requires the human to own the session and takes
+control as a side effect (epoch bump, prepared review invalidated) even when
+nothing is bound.
 
 An HTTP oracle test (`packages/api/src/application-http.test.ts`) re-drives the
 versioned-counter fixture over the wire: wrong tenant and stale grants produce

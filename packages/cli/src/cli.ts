@@ -32,7 +32,6 @@ import type {
 } from '@agentbrowser/sdk-typescript';
 import {
   AGENT_MODE_IDS,
-  AgentBrowserError,
   AutofillReportSchema,
   AutofillRequestSchema,
   DELIVERED_EXTRACT_FORMATS,
@@ -90,7 +89,7 @@ export interface CliClient {
     ): Promise<
       | { status: 'read' | 'committed'; value: unknown }
       | { status: 'rejected'; reason: string }
-      | { replay: true; operation?: unknown }
+      | { replay: true; operation: unknown }
     >;
     applicationReceipt?(sessionId: string, operationId: string): Promise<unknown>;
     create(request: SessionRequest): Promise<SessionResponse>;
@@ -567,8 +566,10 @@ export function buildCli(deps: CliDependencies): Cli {
       application
         .command('execute <sessionId> <operation> [inputJson]')
         .description(
-          'dispatch one application operation (input defaults to null); pass the global ' +
-            '--operation-id as the write identity — repeats replay the recorded operation'
+          'dispatch one application operation (input defaults to null). The global ' +
+            '--operation-id is the WRITE identity (with --expected-version); repeats of the ' +
+            'same ID print the recorded operation without re-executing. Omit --operation-id ' +
+            'for read operations - reads refuse a write identity'
         )
         .option('--expected-version <n>', 'business version for optimistic writes')
         .action(
@@ -592,33 +593,15 @@ export function buildCli(deps: CliDependencies): Cli {
                 if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0)
                   throw new UsageError('--expected-version must be a non-negative integer');
               }
-              let result: Awaited<
-                ReturnType<NonNullable<typeof ctx.client.sessions.applicationExecute>>
-              >;
-              try {
-                result = await ctx.client.sessions.applicationExecute(sessionId, {
-                  operation,
-                  input,
-                  ...(ctx.operationId !== undefined ? { operationId: ctx.operationId } : {}),
-                  ...(expectedVersion !== undefined ? { expectedVersion } : {}),
-                });
-              } catch (error) {
-                // The SDK surfaces a replay of THIS operation ID as
-                // OPERATION_RECORDED (never as a fresh result). The recorded
-                // operation in the details is the settled truth; render it
-                // instead of failing.
-                if (error instanceof AgentBrowserError && error.code === 'OPERATION_RECORDED') {
-                  const recorded = error.details?.operation;
-                  ctx.emit({ replay: true, operation: recorded }, () => [
-                    `Replayed operation ${JSON.stringify(recorded)}`,
-                  ]);
-                  return;
-                }
-                throw error;
-              }
+              const result = await ctx.client.sessions.applicationExecute(sessionId, {
+                operation,
+                input,
+                ...(ctx.operationId !== undefined ? { operationId: ctx.operationId } : {}),
+                ...(expectedVersion !== undefined ? { expectedVersion } : {}),
+              });
               const lines =
                 'replay' in result
-                  ? [`Replayed operation ${JSON.stringify(result)}`]
+                  ? [`Replayed operation ${JSON.stringify(result.operation)} — not re-executed`]
                   : result.status === 'rejected'
                     ? [`Rejected: ${result.reason}`]
                     : [`${result.status}: ${JSON.stringify(result.value)}`];

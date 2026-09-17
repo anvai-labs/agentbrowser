@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  validateApplicationBinding,
-  validateApplicationExecute,
-} from './application.js';
+import { validateApplicationBinding, validateApplicationExecute } from './application.js';
 
 describe('application wire validators', () => {
   describe('validateApplicationBinding', () => {
@@ -22,13 +19,15 @@ describe('application wire validators', () => {
     });
 
     it('rejects identifiers outside the operation-ID space or additional properties', () => {
-      expect(validateApplicationBinding({ adapter: 'bad id!', resource: 'account' }).ok).toBe(false);
+      expect(validateApplicationBinding({ adapter: 'bad id!', resource: 'account' }).ok).toBe(
+        false
+      );
       expect(validateApplicationBinding({ adapter: 'a'.repeat(129), resource: 'r' }).ok).toBe(
         false
       );
-      expect(
-        validateApplicationBinding({ adapter: 'a', resource: 'r', extra: true }).ok
-      ).toBe(false);
+      expect(validateApplicationBinding({ adapter: 'a', resource: 'r', extra: true }).ok).toBe(
+        false
+      );
     });
   });
 

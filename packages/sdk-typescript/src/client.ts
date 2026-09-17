@@ -324,6 +324,13 @@ class HttpClient {
     const operationId =
       path.startsWith('/v1/sessions/') &&
       !path.includes('/control') &&
+      // Application routes carry their operation identity in the BODY
+      // (deduplicated and fingerprinted by the ApplicationAuthority); the
+      // server ignores the header there. Deriving one here would mint a
+      // random UUID, poison error details with a phantom ID, and make the
+      // replay guard reject legitimate application replays whose recorded
+      // operation ID can never equal a locally minted UUID.
+      !path.includes('/application') &&
       init.method &&
       init.method !== 'GET'
         ? (init.operationId ?? this.headers['x-agentbrowser-operation-id'] ?? crypto.randomUUID())
@@ -481,7 +488,11 @@ export class SessionsClient {
       body: binding,
     });
   }
-  /** Operator: drop the binding; safe when nothing is bound. */
+  /**
+   * Operator: drop the binding. Like bind, this requires the human to own
+   * the session - it takes control as a side effect (bumping the control
+   * epoch and invalidating a prepared review) even when nothing is bound.
+   */
   async applicationUnbind(sessionId: string): Promise<{ unbound: true }> {
     return this.http.requestJson(`/v1/sessions/${sessionId}/application`, { method: 'DELETE' });
   }
@@ -491,8 +502,9 @@ export class SessionsClient {
   }
   /**
    * Dispatch one application operation. Writes need operationId +
-   * expectedVersion; a repeated operationId replays the recorded
-   * operation instead of re-executing.
+   * expectedVersion; a repeated operationId returns the recorded
+   * operation (`replay: true`) instead of re-executing - the retry-safe
+   * path. Read operations must not carry either identity.
    */
   async applicationExecute(
     sessionId: string,

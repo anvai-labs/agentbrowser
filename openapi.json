@@ -657,7 +657,7 @@
         ],
         "responses": {
           "200": {
-            "description": "The binding was removed (or was already absent).",
+            "description": "The binding was removed. Like bind, this requires the human to own the session and takes control as a side effect even when nothing is bound.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4905,12 +4905,58 @@
             "additionalProperties": false,
             "type": "object",
             "required": [
-              "replay"
+              "replay",
+              "operation"
             ],
             "properties": {
               "replay": {
                 "const": true,
                 "type": "boolean"
+              },
+              "operation": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "operationId",
+                  "epoch",
+                  "status",
+                  "dispatched"
+                ],
+                "properties": {
+                  "operationId": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[a-zA-Z0-9_-]+$",
+                    "type": "string"
+                  },
+                  "epoch": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "status": {
+                    "anyOf": [
+                      {
+                        "const": "in_flight",
+                        "type": "string"
+                      },
+                      {
+                        "const": "completed",
+                        "type": "string"
+                      },
+                      {
+                        "const": "failed",
+                        "type": "string"
+                      },
+                      {
+                        "const": "outcome_unknown",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "dispatched": {
+                    "type": "boolean"
+                  }
+                }
               }
             }
           }

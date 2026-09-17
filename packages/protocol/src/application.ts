@@ -10,6 +10,7 @@
 
 import { type Static, Type } from '@sinclair/typebox';
 import { TypeCompiler } from '@sinclair/typebox/compiler';
+import { OperationRecordSchema } from './control.js';
 import type { Validated, ValidationIssue } from './validators.js';
 
 const strict = { additionalProperties: false };
@@ -51,9 +52,10 @@ export const ApplicationExecuteRequestSchema = Type.Object(
 
 /**
  * What an application execute call returns: the adapter's admitted result,
- * a rejection, or a replay of the operation record when the operation ID
- * was already admitted. `committed`/`read` carry the adapter value;
- * `rejected` carries the adapter's reason. A replay is not a new result.
+ * a rejection, or - when the operation ID was already admitted - a replay
+ * carrying the recorded operation (with its settled status). `committed`/
+ * `read` carry the adapter value; `rejected` carries the adapter's reason.
+ * A replay is not a new result.
  */
 export const ApplicationOperationResultSchema = Type.Union([
   Type.Object(
@@ -64,7 +66,7 @@ export const ApplicationOperationResultSchema = Type.Union([
     strict
   ),
   Type.Object({ status: Type.Literal('rejected'), reason: Type.String() }, strict),
-  Type.Object({ replay: Type.Literal(true) }, strict),
+  Type.Object({ replay: Type.Literal(true), operation: OperationRecordSchema }, strict),
 ]);
 
 export type ApplicationBinding = Static<typeof ApplicationBindingSchema>;

@@ -214,7 +214,8 @@ const applicationPaths = {
       parameters: [sessionIdParam],
       responses: {
         '200': {
-          description: 'The binding was removed (or was already absent).',
+          description:
+            'The binding was removed. Like bind, this requires the human to own the session and takes control as a side effect even when nothing is bound.',
           content: json({
             type: 'object',
             required: ['unbound'],
