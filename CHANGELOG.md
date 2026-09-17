@@ -5,6 +5,22 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [Unreleased]
+
+### Added
+
+- Application authority over REST/SDK/CLI (shared-infra slice 2): operator
+  binding via `PUT/DELETE /v1/sessions/{id}/application`, delegated discovery
+  (`GET .../application`), execution (`POST .../application/execute`) and
+  receipt lookup (`GET .../application/receipts/{operationId}`), backed by
+  deployment-injected `applicationAdapters`. SDK `sessions.application*`
+  methods and an `agentbrowser application` command group (bind/unbind/
+  discover/execute/receipt; the global `--operation-id` is the write identity,
+  repeats replay). New `application.discover`/`application.execute` delegated
+  capabilities granted only to the dedicated `application` agent mode; browser
+  modes stay fenced out. Binding is impossible in unauthenticated local mode;
+  without adapters the surface fails closed.
+
 ## [1.8.19] - 2026-09-17
 
 ### Added

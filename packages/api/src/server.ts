@@ -80,6 +80,12 @@ export interface ServerOptions {
   verifierRegistry?: TrustedVerifierRegistry;
   /** Trusted evidence adapters; request bodies cannot register or select arbitrary code. */
   evidenceSourceRegistry?: TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>;
+  /**
+   * Trusted application adapters for the shared-infra application surface.
+   * Without adapters the application routes fail closed: no binding can be
+   * created, so discovery returns none and execution is refused.
+   */
+  applicationAdapters?: import('@agentbrowser/control').ApplicationAdapter[];
 }
 
 /** SHA-256 hex digest. */
@@ -108,6 +114,12 @@ const delegatedRoutes: readonly {
   { method: 'POST', path: /^\/pages\/:pageId\/observe$/, capability: 'page.observe' },
   { method: 'POST', path: /^\/pages\/:pageId\/(act|plan|outcomes)$/, capability: 'page.interact' },
   { method: 'POST', path: /^\/pages\/:pageId\/autofill$/, capability: 'page.form' },
+  {
+    method: 'GET',
+    path: /^\/application(?:\/receipts\/:operationId)?$/,
+    capability: 'application.discover',
+  },
+  { method: 'POST', path: /^\/application\/execute$/, capability: 'application.execute' },
   { method: 'POST', path: /^\/pages\/:pageId\/extract$/, capability: 'page.extract' },
   {
     method: 'POST',
@@ -304,6 +316,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     ...(options.evidenceSourceRegistry
       ? { evidenceSourceRegistry: options.evidenceSourceRegistry }
       : {}),
+    ...(options.applicationAdapters ? { applicationAdapters: options.applicationAdapters } : {}),
   });
 
   fastify.addHook('onClose', async () => {
@@ -416,6 +429,12 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         if (
           template.includes('/control') ||
           template.includes('/operations/') ||
+          // Application routes admit themselves through the ApplicationAuthority
+          // (bind is an operator configure; execute/receipt open their own
+          // scoped admissions carrying the body's operation identity). An
+          // envelope ticket here would nest a second begin() and always
+          // report the session busy.
+          template.includes('/application') ||
           (request.method === 'DELETE' && template === '/v1/sessions/:sessionId')
         )
           return await handler(request, reply);
@@ -778,6 +797,68 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           if (principal?.actor === 'agent' && operation.epoch !== principal.epoch)
             throw new ServiceError('FORBIDDEN', 'Operation belongs to another control generation');
           return reply.send(operation);
+        })
+      );
+
+      // Application surface (shared-infra slice 2). Binding is operator-only
+      // while the human owns the session; discovery/execution/receipts are
+      // open to operators (ownership-checked) and to delegated grants whose
+      // mode carries the application capabilities. Every route self-admits
+      // through the ApplicationAuthority - see the route() envelope note.
+      v1.put(
+        '/sessions/:sessionId/application',
+        route(async (request, reply) => {
+          const { sessionId } = params(request, 'sessionId');
+          const principal = principals.get(request);
+          if (
+            principal?.actor !== 'operator' ||
+            !requireOwnership(reply, sessionId, tenantOf(request))
+          )
+            throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+          if (!requireBody(reply, request.body)) return reply;
+          return reply.send(service.applicationBind(sessionId, principal, request.body));
+        })
+      );
+      v1.delete(
+        '/sessions/:sessionId/application',
+        route(async (request, reply) => {
+          const { sessionId } = params(request, 'sessionId');
+          const principal = principals.get(request);
+          if (
+            principal?.actor !== 'operator' ||
+            !requireOwnership(reply, sessionId, tenantOf(request))
+          )
+            throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+          return reply.send(service.applicationUnbind(sessionId, principal));
+        })
+      );
+      v1.get(
+        '/sessions/:sessionId/application',
+        route(async (request, reply) => {
+          const { sessionId } = params(request, 'sessionId');
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
+          const principal = principals.get(request) ?? { actor: 'operator' as const, tenant: '' };
+          return reply.send(await service.applicationDiscover(sessionId, principal));
+        })
+      );
+      v1.post(
+        '/sessions/:sessionId/application/execute',
+        route(async (request, reply) => {
+          const { sessionId } = params(request, 'sessionId');
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
+          if (!requireBody(reply, request.body)) return reply;
+          const principal = principals.get(request) ?? { actor: 'operator' as const, tenant: '' };
+          return reply.send(await service.applicationExecute(sessionId, principal, request.body));
+        })
+      );
+      v1.get(
+        '/sessions/:sessionId/application/receipts/:operationId',
+        route(async (request, reply) => {
+          const { sessionId, operationId } = params(request, 'sessionId', 'operationId');
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
+          const principal = principals.get(request) ?? { actor: 'operator' as const, tenant: '' };
+          const receipt = await service.applicationReceipt(sessionId, principal, operationId);
+          return reply.send(receipt ?? null);
         })
       );
 

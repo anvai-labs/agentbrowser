@@ -20,6 +20,8 @@ import type {
 
 import type {
   AgentMode,
+  ApplicationDiscovery,
+  ApplicationOperationResult,
   AutofillReport,
   AutofillRequest,
   ControlView,
@@ -32,6 +34,12 @@ import type {
 export type { ControlView, OperationRecord, RunCursor } from '@agentbrowser/protocol';
 export type { AutofillRequest, AutofillReport } from '@agentbrowser/protocol';
 export type { OutcomeRunReport, OutcomeRunRequest } from '@agentbrowser/protocol';
+export type {
+  ApplicationBinding,
+  ApplicationDiscovery,
+  ApplicationExecuteRequest,
+  ApplicationOperationResult,
+} from '@agentbrowser/protocol';
 export interface MutationOptions {
   operationId?: string;
 }
@@ -461,6 +469,49 @@ export class SessionsClient {
   async operation(sessionId: string, operationId: string): Promise<OperationRecord> {
     return this.http.requestJson(
       `/v1/sessions/${sessionId}/operations/${encodeURIComponent(operationId)}`
+    );
+  }
+  /** Operator: bind an application adapter to a resource while the human owns the session. */
+  async applicationBind(
+    sessionId: string,
+    binding: { adapter: string; resource: string }
+  ): Promise<{ adapter: string; resource: string }> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/application`, {
+      method: 'PUT',
+      body: binding,
+    });
+  }
+  /** Operator: drop the binding; safe when nothing is bound. */
+  async applicationUnbind(sessionId: string): Promise<{ unbound: true }> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/application`, { method: 'DELETE' });
+  }
+  /** The bound adapter's operations, or null when nothing is bound. */
+  async applicationDiscover(sessionId: string): Promise<ApplicationDiscovery | null> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/application`);
+  }
+  /**
+   * Dispatch one application operation. Writes need operationId +
+   * expectedVersion; a repeated operationId replays the recorded
+   * operation instead of re-executing.
+   */
+  async applicationExecute(
+    sessionId: string,
+    request: {
+      operation: string;
+      input: unknown;
+      operationId?: string;
+      expectedVersion?: number;
+    }
+  ): Promise<ApplicationOperationResult> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/application/execute`, {
+      method: 'POST',
+      body: request,
+    });
+  }
+  /** Read one application receipt by operation ID; null when the adapter has none. */
+  async applicationReceipt(sessionId: string, operationId: string): Promise<unknown> {
+    return this.http.requestJson(
+      `/v1/sessions/${sessionId}/application/receipts/${encodeURIComponent(operationId)}`
     );
   }
   async listPages(sessionId: string): Promise<PageResponse[]> {

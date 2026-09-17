@@ -32,6 +32,7 @@ import type {
 } from '@agentbrowser/sdk-typescript';
 import {
   AGENT_MODE_IDS,
+  AgentBrowserError,
   AutofillReportSchema,
   AutofillRequestSchema,
   DELIVERED_EXTRACT_FORMATS,
@@ -68,6 +69,30 @@ export interface CliClient {
     prepareResume?(sessionId: string): Promise<unknown>;
     delegate?(sessionId: string, epoch: number, mode?: AgentMode): Promise<unknown>;
     operation?(sessionId: string, operationId: string): Promise<unknown>;
+    applicationBind?(
+      sessionId: string,
+      binding: { adapter: string; resource: string }
+    ): Promise<{ adapter: string; resource: string }>;
+    applicationUnbind?(sessionId: string): Promise<{ unbound: true }>;
+    applicationDiscover?(sessionId: string): Promise<{
+      adapter: string;
+      resource: string;
+      operations: Array<{ name: string; mode: 'read' | 'write' }>;
+    } | null>;
+    applicationExecute?(
+      sessionId: string,
+      request: {
+        operation: string;
+        input: unknown;
+        operationId?: string;
+        expectedVersion?: number;
+      }
+    ): Promise<
+      | { status: 'read' | 'committed'; value: unknown }
+      | { status: 'rejected'; reason: string }
+      | { replay: true; operation?: unknown }
+    >;
+    applicationReceipt?(sessionId: string, operationId: string): Promise<unknown>;
     create(request: SessionRequest): Promise<SessionResponse>;
     list(): Promise<SessionResponse[]>;
     close(sessionId: string): Promise<void>;
@@ -198,6 +223,7 @@ export function buildCli(deps: CliDependencies): Cli {
                 : {}),
             }),
             json: Boolean(globals.json),
+            ...(globals.operationId ? { operationId: globals.operationId as string } : {}),
             out: deps.out,
             emit: (value: unknown, render: () => string[]) => {
               if (globals.json) {
@@ -483,6 +509,136 @@ export function buildCli(deps: CliDependencies): Cli {
                   `${String(event.timestamp ?? '')} ${String(event.type ?? '?')} ${JSON.stringify(event.data ?? {})}`
               )
             );
+          })
+        );
+
+      // ---- application -------------------------------------------------------
+      // Shared-infra slice 2: operator binding + delegated discovery,
+      // execution and receipt lookup over deployment-injected adapters.
+      const application = program
+        .command('application')
+        .description('drive the session-bound application authority (bind is operator-only)');
+      application
+        .command('bind <sessionId> <adapter> <resource>')
+        .description(
+          'operator: bind an application adapter to a resource while the human owns the session'
+        )
+        .action(
+          action(async (ctx, sessionId: string, adapter: string, resource: string) => {
+            if (!ctx.client.sessions.applicationBind)
+              throw new UsageError('Client does not support the application surface');
+            const bound = await ctx.client.sessions.applicationBind(sessionId, {
+              adapter,
+              resource,
+            });
+            ctx.emit(bound, () => [`Bound ${bound.adapter} to resource ${bound.resource}`]);
+          })
+        );
+      application
+        .command('unbind <sessionId>')
+        .description('operator: drop the application binding')
+        .action(
+          action(async (ctx, sessionId: string) => {
+            if (!ctx.client.sessions.applicationUnbind)
+              throw new UsageError('Client does not support the application surface');
+            const unbound = await ctx.client.sessions.applicationUnbind(sessionId);
+            ctx.emit(unbound, () => ['Application binding removed']);
+          })
+        );
+      application
+        .command('discover <sessionId>')
+        .description('list the bound adapter and its operations (null when nothing is bound)')
+        .action(
+          action(async (ctx, sessionId: string) => {
+            if (!ctx.client.sessions.applicationDiscover)
+              throw new UsageError('Client does not support the application surface');
+            const discovery = await ctx.client.sessions.applicationDiscover(sessionId);
+            ctx.emit(discovery, () => {
+              if (!discovery) return ['No application binding on this session'];
+              return [
+                `Adapter ${discovery.adapter} bound to ${discovery.resource}`,
+                ...discovery.operations.map(
+                  (operation) => `  ${operation.mode.padEnd(5)} ${operation.name}`
+                ),
+              ];
+            });
+          })
+        );
+      application
+        .command('execute <sessionId> <operation> [inputJson]')
+        .description(
+          'dispatch one application operation (input defaults to null); pass the global ' +
+            '--operation-id as the write identity — repeats replay the recorded operation'
+        )
+        .option('--expected-version <n>', 'business version for optimistic writes')
+        .action(
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              operation: string,
+              inputJson: string | undefined,
+              options: { expectedVersion?: string }
+            ) => {
+              if (!ctx.client.sessions.applicationExecute)
+                throw new UsageError('Client does not support the application surface');
+              const input =
+                inputJson === undefined
+                  ? null
+                  : await readJsonArgument(inputJson, 'operation input');
+              let expectedVersion: number | undefined;
+              if (options.expectedVersion !== undefined) {
+                expectedVersion = Number(options.expectedVersion);
+                if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0)
+                  throw new UsageError('--expected-version must be a non-negative integer');
+              }
+              let result: Awaited<
+                ReturnType<NonNullable<typeof ctx.client.sessions.applicationExecute>>
+              >;
+              try {
+                result = await ctx.client.sessions.applicationExecute(sessionId, {
+                  operation,
+                  input,
+                  ...(ctx.operationId !== undefined ? { operationId: ctx.operationId } : {}),
+                  ...(expectedVersion !== undefined ? { expectedVersion } : {}),
+                });
+              } catch (error) {
+                // The SDK surfaces a replay of THIS operation ID as
+                // OPERATION_RECORDED (never as a fresh result). The recorded
+                // operation in the details is the settled truth; render it
+                // instead of failing.
+                if (error instanceof AgentBrowserError && error.code === 'OPERATION_RECORDED') {
+                  const recorded = error.details?.operation;
+                  ctx.emit({ replay: true, operation: recorded }, () => [
+                    `Replayed operation ${JSON.stringify(recorded)}`,
+                  ]);
+                  return;
+                }
+                throw error;
+              }
+              const lines =
+                'replay' in result
+                  ? [`Replayed operation ${JSON.stringify(result)}`]
+                  : result.status === 'rejected'
+                    ? [`Rejected: ${result.reason}`]
+                    : [`${result.status}: ${JSON.stringify(result.value)}`];
+              ctx.emit(result, () => lines);
+            }
+          )
+        );
+      application
+        .command('receipt <sessionId> <operationId>')
+        .description('read one application receipt by operation ID (null when absent)')
+        .action(
+          action(async (ctx, sessionId: string, operationId: string) => {
+            if (!ctx.client.sessions.applicationReceipt)
+              throw new UsageError('Client does not support the application surface');
+            const receipt = await ctx.client.sessions.applicationReceipt(sessionId, operationId);
+            ctx.emit(receipt ?? null, () => [
+              receipt === null || receipt === undefined
+                ? 'No receipt recorded for this operation ID'
+                : JSON.stringify(receipt, null, 2),
+            ]);
           })
         );
 
@@ -1585,6 +1741,8 @@ export function buildCli(deps: CliDependencies): Cli {
 interface CommandContext {
   client: CliClient;
   json: boolean;
+  /** The global reconciliation operation ID; the application execute write identity. */
+  operationId?: string;
   out(line: string): void;
   emit(value: unknown, render: () => string[]): void;
 }
