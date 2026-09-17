@@ -59,7 +59,8 @@ post-dispatch uncertainty now use the existing executor admission seam. See the
 [T2 packet](tasks/t2-shared-execution.md) and
 [dispatch-boundary](evidence/t2-dispatch-boundary.md) and
 [HTTP result-classification](evidence/t2-http-result-classification.md) and
-[application identity](evidence/t2-application-identity.md) evidence.
+[application identity](evidence/t2-application-identity.md) and
+[semantic result-validation](evidence/t2-semantic-result-validation.md) evidence.
 
 ## Modes
 

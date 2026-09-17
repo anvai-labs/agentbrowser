@@ -50,9 +50,25 @@ it('validates the versioned report without changing partial or unverified outcom
     };
     expect(parseAutofillReport(report)).toEqual(report);
   }
+  expect(() =>
+    parseAutofillReport(
+      {
+        ok: true,
+        receipts: [{ field: 0, match: field.match, status: 'verified', verified: true }],
+        elapsedMs: 1,
+      },
+      2
+    )
+  ).toThrow('may have executed');
 });
 
 it.each([
+  { ok: true, receipts: [], elapsedMs: 1 },
+  {
+    ok: true,
+    receipts: [{ field: 1, match: field.match, status: 'verified', verified: true }],
+    elapsedMs: 1,
+  },
   { ok: true, receipts: [], elapsedMs: '1' },
   { ok: true, receipts: [{ field: 0, status: 'verified' }], elapsedMs: 1 },
   { ok: true, receipts: [], elapsedMs: 1, secret: 'PRIVATE-REPORT' },
@@ -63,5 +79,54 @@ it.each([
   } catch (error) {
     expect(String(error)).not.toContain('PRIVATE-REPORT');
     expect(String(error)).toContain('may have executed');
+  }
+});
+
+it.each(['skipped', 'failed', 'uncertain', 'not_attempted'] as const)(
+  'rejects aggregate success with a %s receipt without exposing the report',
+  (status) => {
+    const report = {
+      ok: true,
+      receipts: [
+        {
+          field: 0,
+          match: field.match,
+          status,
+          verified: false,
+          error: { code: 'REMOTE_FAILURE', message: 'PRIVATE-REPORT' },
+        },
+      ],
+      elapsedMs: 1,
+    };
+    expect(() => parseAutofillReport(report)).toThrow(
+      /^Invalid autofill report.*may have executed/
+    );
+    try {
+      parseAutofillReport(report);
+    } catch (error) {
+      expect(String(error)).not.toContain('PRIVATE-REPORT');
+    }
+  }
+);
+
+it.each([
+  { status: 'verified', verified: false },
+  { status: 'unverified', verified: true },
+  {
+    status: 'verified',
+    verified: true,
+    error: { code: 'REMOTE_FAILURE', message: 'PRIVATE-REPORT' },
+  },
+] as const)('rejects contradictory successful receipt evidence: %j', (receipt) => {
+  const report = {
+    ok: true,
+    receipts: [{ field: 0, match: field.match, ...receipt }],
+    elapsedMs: 1,
+  };
+  expect(() => parseAutofillReport(report)).toThrow(/^Invalid autofill report.*may have executed/);
+  try {
+    parseAutofillReport(report);
+  } catch (error) {
+    expect(String(error)).not.toContain('PRIVATE-REPORT');
   }
 });

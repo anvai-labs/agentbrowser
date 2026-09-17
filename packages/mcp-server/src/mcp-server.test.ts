@@ -213,6 +213,49 @@ describe('AgentBrowser MCP server', () => {
       expect(sessions.autofill).toHaveBeenCalledTimes(1);
     });
 
+    it('rejects contradictory autofill success without structured output or retry', async () => {
+      await initialize('2025-06-18');
+      sessions.autofill = vi.fn().mockResolvedValue({
+        ...report,
+        receipts: [
+          {
+            ...report.receipts[0],
+            status: 'verified',
+            verified: false,
+            error: { code: 'REMOTE_FAILURE', message: 'PRIVATE-REPORT' },
+          },
+        ],
+      });
+      const result = JSON.parse(await call('contradictory', 'browser_autofill', args)).result;
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toBeUndefined();
+      expect(result.content[0].text).toContain('may have executed');
+      expect(JSON.stringify(result)).not.toContain('PRIVATE-REPORT');
+      expect(sessions.autofill).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects successful autofill that omits a requested field receipt', async () => {
+      await initialize('2025-06-18');
+      sessions.autofill = vi.fn().mockImplementation(async (_sessionId, _pageId, request) => {
+        request.fields.pop();
+        return {
+          ...report,
+          receipts: [{ ...report.receipts[0], actual: 'PRIVATE-REPORT' }],
+        };
+      });
+      const result = JSON.parse(
+        await call('truncated', 'browser_autofill', {
+          ...args,
+          fields: [...args.fields, { match: { label: 'Email' }, value: 'private email' }],
+        })
+      ).result;
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toBeUndefined();
+      expect(result.content[0].text).toContain('may have executed');
+      expect(JSON.stringify(result)).not.toContain('PRIVATE-REPORT');
+      expect(sessions.autofill).toHaveBeenCalledTimes(1);
+    });
+
     it.each([false, true])(
       'uses reachable reconciliation guidance for delegated=%s',
       async (delegated) => {
@@ -410,6 +453,53 @@ describe('AgentBrowser MCP server', () => {
         })
       ).result;
       expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('may have executed');
+      expect(result.content[0].text).not.toContain('PRIVATE-REPORT');
+      expect(sessions.plan).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects contradictory plan success after one call without structured output', async () => {
+      sessions.plan.mockResolvedValue({
+        ok: true,
+        completed: 1,
+        results: [],
+        error: { code: 'REMOTE_FAILURE', message: 'PRIVATE-REPORT' },
+      });
+      const result = JSON.parse(
+        await call('contradictory-report', 'browser_plan', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          actions: [],
+        })
+      ).result;
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toBeUndefined();
+      expect(result.content[0].text).toContain('may have executed');
+      expect(result.content[0].text).not.toContain('PRIVATE-REPORT');
+      expect(sessions.plan).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects successful plan that omits a requested step result', async () => {
+      sessions.plan.mockImplementation(async (_sessionId, _pageId, actions) => {
+        actions.pop();
+        return {
+          ok: true,
+          completed: 1,
+          results: [{ step: 0, ok: true, result: { secret: 'PRIVATE-REPORT' } }],
+        };
+      });
+      const result = JSON.parse(
+        await call('truncated-report', 'browser_plan', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          actions: [
+            { action: 'press', key: 'Tab' },
+            { action: 'press', key: 'Tab' },
+          ],
+        })
+      ).result;
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toBeUndefined();
       expect(result.content[0].text).toContain('may have executed');
       expect(result.content[0].text).not.toContain('PRIVATE-REPORT');
       expect(sessions.plan).toHaveBeenCalledTimes(1);

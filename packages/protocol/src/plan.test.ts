@@ -53,6 +53,9 @@ describe('canonical plan contracts', () => {
       completed: 0,
       results: [],
     });
+    expect(() =>
+      parsePlanReport({ ok: true, completed: 1, results: [{ step: 0, ok: true }] }, 2)
+    ).toThrow('may have executed');
   });
 
   it.each([
@@ -60,6 +63,35 @@ describe('canonical plan contracts', () => {
     { ok: false, completed: 0, results: [{ step: 0, ok: 'PRIVATE-REPORT' }] },
   ])('rejects malformed reports with uncertainty guidance', (report) => {
     expect(() => parsePlanReport(report)).toThrow('may have executed');
+    try {
+      parsePlanReport(report);
+    } catch (error) {
+      expect(String(error)).not.toContain('PRIVATE-REPORT');
+    }
+  });
+
+  it.each([
+    {
+      ok: true,
+      completed: 0,
+      results: [{ step: 0, ok: false, error: 'PRIVATE-REPORT' }],
+    },
+    { ok: true, completed: 1, results: [] },
+    { ok: true, completed: 0, results: [{ step: 0, ok: true }] },
+    { ok: true, completed: 1, results: [{ step: 1, ok: true }] },
+    {
+      ok: true,
+      completed: 1,
+      results: [{ step: 0, ok: true, error: 'PRIVATE-REPORT' }],
+    },
+    {
+      ok: true,
+      completed: 1,
+      results: [{ step: 0, ok: true }],
+      error: { code: 'REMOTE_FAILURE', message: 'PRIVATE-REPORT' },
+    },
+  ])('rejects contradictory aggregate success without exposing the report', (report) => {
+    expect(() => parsePlanReport(report)).toThrow(/^Invalid plan report.*may have executed/);
     try {
       parsePlanReport(report);
     } catch (error) {

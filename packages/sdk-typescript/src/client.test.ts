@@ -265,6 +265,102 @@ describe('AgentBrowser SDK', () => {
     });
   });
 
+  describe('bulk execution report validation', () => {
+    it('freezes plan cardinality at dispatch and preserves the generated operation ID', async () => {
+      let release: ((response: Response) => void) | undefined;
+      vi.mocked(fetch).mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            release = resolve;
+          })
+      );
+      const actions = [
+        { action: 'press', key: 'Tab' },
+        { action: 'press', key: 'Tab' },
+      ];
+      const pending = client.sessions.plan('ses_1', 'pg_1', actions);
+      const requestInit = vi.mocked(fetch).mock.calls[0]?.[1];
+      expect(JSON.parse(String(requestInit?.body)).actions).toHaveLength(2);
+      const operationId = new Headers(requestInit?.headers as HeadersInit).get(
+        'x-agentbrowser-operation-id'
+      );
+      expect(operationId).toBeTruthy();
+      actions.pop();
+      if (!release) throw new Error('fetch was not dispatched');
+      release(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            completed: 1,
+            results: [{ step: 0, ok: true, result: { secret: 'PRIVATE-REPORT' } }],
+          }),
+          { headers: { 'content-type': 'application/json' } }
+        )
+      );
+      const outcome = await pending.catch((error: unknown) => error);
+      expect(outcome).toBeInstanceOf(Error);
+      expect(outcome).toMatchObject({
+        code: 'INVALID_RESPONSE',
+        retryable: false,
+        details: { operationId },
+      });
+      expect((outcome as Error).message).toContain('may have executed');
+      expect((outcome as Error).message).not.toContain('PRIVATE-REPORT');
+      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+    });
+
+    it('freezes autofill cardinality at dispatch and preserves a supplied operation ID', async () => {
+      let release: ((response: Response) => void) | undefined;
+      vi.mocked(fetch).mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            release = resolve;
+          })
+      );
+      const request = {
+        fields: [
+          { match: { label: 'A' }, value: 'one' },
+          { match: { label: 'B' }, value: 'two' },
+        ],
+      };
+      const pending = client.sessions.autofill('ses_1', 'pg_1', request, {
+        operationId: 'fill-operation',
+      });
+      const requestInit = vi.mocked(fetch).mock.calls[0]?.[1];
+      expect(JSON.parse(String(requestInit?.body)).fields).toHaveLength(2);
+      request.fields.pop();
+      if (!release) throw new Error('fetch was not dispatched');
+      release(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            receipts: [
+              {
+                field: 0,
+                match: { label: 'A' },
+                status: 'verified',
+                verified: true,
+                actual: 'PRIVATE-REPORT',
+              },
+            ],
+            elapsedMs: 1,
+          }),
+          { headers: { 'content-type': 'application/json' } }
+        )
+      );
+      const outcome = await pending.catch((error: unknown) => error);
+      expect(outcome).toBeInstanceOf(Error);
+      expect(outcome).toMatchObject({
+        code: 'INVALID_RESPONSE',
+        retryable: false,
+        details: { operationId: 'fill-operation' },
+      });
+      expect((outcome as Error).message).toContain('may have executed');
+      expect((outcome as Error).message).not.toContain('PRIVATE-REPORT');
+      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('page management', () => {
     it('should create page', async () => {
       const mockPage = {

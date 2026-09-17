@@ -337,8 +337,10 @@ function buildTools(client: McpClient): ToolDefinition[] {
         } catch (error) {
           throw new UsageError(error instanceof Error ? error.message : 'Invalid autofill request');
         }
+        const expectedFields = payload.fields.length;
         return parseAutofillReport(
-          await client.sessions.autofill(sessionId, pageId, payload, ...operationOptions(args))
+          await client.sessions.autofill(sessionId, pageId, payload, ...operationOptions(args)),
+          expectedFields
         );
       },
     },
@@ -360,13 +362,11 @@ function buildTools(client: McpClient): ToolDefinition[] {
       },
       handler: async (args) => {
         const [sessionId, pageId] = sessionAndPage(args);
+        const actions = parsePlanSteps(args.actions);
+        const expectedSteps = actions.length;
         return parsePlanReport(
-          await client.sessions.plan(
-            sessionId,
-            pageId,
-            parsePlanSteps(args.actions),
-            ...operationOptions(args)
-          )
+          await client.sessions.plan(sessionId, pageId, actions, ...operationOptions(args)),
+          expectedSteps
         );
       },
     },

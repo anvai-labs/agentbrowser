@@ -754,8 +754,10 @@ export function buildCli(deps: CliDependencies): Cli {
         .action(
           action(async (ctx, sessionId: string, pageId: string, stepsJson: string) => {
             const steps = parsePlanSteps(await readJsonArgument(stepsJson, 'plan steps'));
+            const expectedSteps = steps.length;
             const result = parsePlanReport(
-              await ctx.client.sessions.plan(sessionId, pageId, steps)
+              await ctx.client.sessions.plan(sessionId, pageId, steps),
+              expectedSteps
             );
             if (!result.ok) exitCode = 1;
 
@@ -1351,8 +1353,10 @@ export function buildCli(deps: CliDependencies): Cli {
               } catch (error) {
                 throw new UsageError((error as Error).message);
               }
+              const expectedFields = parsed.fields.length;
               const report = parseAutofillReport(
-                await ctx.client.sessions.autofill(sessionId, pageId, parsed)
+                await ctx.client.sessions.autofill(sessionId, pageId, parsed),
+                expectedFields
               );
               if (!report.ok) exitCode = 1;
               ctx.emit(report, () => {

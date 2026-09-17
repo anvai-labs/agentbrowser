@@ -113,9 +113,10 @@ export function validatePlanStep(body: unknown): Validated<Record<string, unknow
 export function parseExecutionReport<S extends TSchema>(
   schema: S,
   input: unknown,
-  operation: string
+  operation: string,
+  semanticallyValid: (report: Static<S>) => boolean = () => true
 ): Static<S> {
-  if (!Value.Check(schema, input)) {
+  if (!Value.Check(schema, input) || !semanticallyValid(input)) {
     throw new Error(`Invalid ${operation} report. ${INTERACTION_GUIDANCE.uncertainWrite}`);
   }
   return input;

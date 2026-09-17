@@ -44,6 +44,18 @@ export function parsePlanSteps(input: unknown): Array<Record<string, unknown>> {
   return input;
 }
 
-export function parsePlanReport(input: unknown): PlanReport {
-  return parseExecutionReport(PlanReportSchema, input, 'plan');
+export function parsePlanReport(input: unknown, expectedSteps?: number): PlanReport {
+  return parseExecutionReport(
+    PlanReportSchema,
+    input,
+    'plan',
+    (report) =>
+      !report.ok ||
+      (report.error === undefined &&
+        report.completed === report.results.length &&
+        (expectedSteps === undefined || report.completed === expectedSteps) &&
+        report.results.every(
+          (result, index) => result.ok && result.step === index && result.error === undefined
+        ))
+  );
 }
