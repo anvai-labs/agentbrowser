@@ -55,10 +55,10 @@ non-secret run cursor and inline operator mode selection. See the
 [T1 packet](tasks/t1-context-profiles.md) and
 [qualification evidence](evidence/t1-context-profiles.md). Installed harness cursor
 consumption remains T8 work.
-T2 is active through seven incremental slices. The current branch adds the seventh:
-a configurable REST/SDK/CLI outcome run over the existing plan executor and trusted
-verifier/evidence registries. It is not released until its PR merges, and it does not
-yet include a production evidence source. See the
+T2 is active through seven incremental slices. The seventh merged to develop after
+1.8.19: a configurable REST/SDK/CLI outcome run over the existing plan executor and
+trusted verifier/evidence registries. It is not yet released and does not include a
+production evidence source. See the
 [T2 packet](tasks/t2-shared-execution.md) and
 [dispatch-boundary](evidence/t2-dispatch-boundary.md) and
 [HTTP result-classification](evidence/t2-http-result-classification.md) and

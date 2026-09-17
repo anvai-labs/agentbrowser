@@ -79,7 +79,7 @@ is qualified and the remaining authority/recovery acceptance matrix passes.
 
 - Repository: `agentbrowser`
 - Base: released 1.8.19 develop commit `b4360b93276146123076f776f7a7592bc4bf1740`
-- Status: active PR candidate; not yet merged or released
+- Delivery: PR #194 merged to develop as `52b54d7e7da6b15957de251a75d0591c22a15ee8`; not yet promoted to main or released
 - Reused owners: protocol parsers, plan executor, session authority, SDK request boundary,
   CLI command registry and API composition root
 - New dependencies and services: none

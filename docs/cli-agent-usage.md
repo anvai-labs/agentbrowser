@@ -2,8 +2,8 @@
 
 Status: CLI bulk autofill and custom widget strategies shipped through 1.8.19. Offline
 `describe`, bounded JSON input and plan/autofill result validation are delivered. The
-`outcome` examples describe the current unmerged T2 candidate; use a build containing
-that increment for those commands.
+`outcome` merged to develop after the 1.8.19 release; use a build containing that
+increment for those commands until a later release includes it.
 
 The CLI is a thin SDK client to the shared AgentBrowser service. It owns no browser
 session state or alternate executor. Use ordinary Bash/shell tools to inspect JSON;
