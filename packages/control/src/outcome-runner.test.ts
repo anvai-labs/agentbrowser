@@ -69,6 +69,154 @@ const base = () => ({
 });
 
 describe('verified outcome runner', () => {
+  it.each(['resolved', 'rejected', 'thenable'] as const)(
+    'refuses an asynchronous input parser (%s) without dispatch or unhandled rejection',
+    async (mode) => {
+      const options = base();
+      const predicate = vi.fn(() => true);
+      const result = await runVerifiedOutcome({
+        ...options,
+        verifierRegistry: new TrustedVerifierRegistry([
+          defineVerifier({
+            descriptor: verifierDescriptor(),
+            parseInput: () => {
+              if (mode === 'resolved') return Promise.resolve(2);
+              if (mode === 'rejected') return Promise.reject(new Error('PRIVATE-ASYNC'));
+              return {
+                // biome-ignore lint/suspicious/noThenProperty: exercise a misconfigured thenable parser result
+                then: (_resolve: unknown, reject: (error: Error) => void) =>
+                  reject(new Error('PRIVATE-THENABLE')),
+              };
+            },
+            parseEvidence: Number,
+            predicate,
+          }),
+        ]),
+      });
+      // Let Node deliver any unhandled rejection to the test runner.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(options.execute).not.toHaveBeenCalled();
+      expect(predicate).not.toHaveBeenCalled();
+      expect(result.outcome).toMatchObject({ availability: 'blocked', execution: 'not_started' });
+      expect(JSON.stringify(result)).not.toContain('PRIVATE');
+    }
+  );
+
+  it('rejects verifier input before dispatch or evidence reads and still settles cleanup', async () => {
+    const options = base();
+    const parseInput = vi.fn(() => {
+      throw new Error('PRIVATE-INPUT');
+    });
+    const predicate = vi.fn(() => true);
+    const read = vi.fn(() => ({ status: 'ready' as const, evidence: 2, evidenceRefIds: ['ev_1'] }));
+    const cleanup = vi.fn();
+    const result = await runVerifiedOutcome({
+      ...options,
+      verifierRegistry: new TrustedVerifierRegistry([
+        defineVerifier({
+          descriptor: verifierDescriptor(),
+          parseInput,
+          parseEvidence: (value) => value,
+          predicate,
+        }),
+      ]),
+      evidenceSources: sourceRegistry(read, cleanup),
+    });
+    expect(options.execute).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+    expect(predicate).not.toHaveBeenCalled();
+    expect(parseInput).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(result).not.toHaveProperty('result');
+    expect(result.outcome).toMatchObject({
+      availability: 'blocked',
+      execution: 'not_started',
+      verification: { status: 'unknown', evidenceRefIds: [] },
+      cleanup: 'complete',
+    });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE');
+  });
+
+  it('prepares input once and retains the original expectation across execution', async () => {
+    const input = { expected: 2 };
+    const parseInput = vi.fn((value: unknown) => {
+      const parsed = value as { expected: number };
+      if (!Number.isSafeInteger(parsed.expected)) throw new Error('invalid input');
+      return parsed;
+    });
+    const predicate = vi.fn(
+      (expected: { expected: number }, actual: number) => expected.expected === actual
+    );
+    const options = base();
+    const result = await runVerifiedOutcome({
+      ...options,
+      verifier: { ...options.verifier, input },
+      verifierRegistry: new TrustedVerifierRegistry([
+        defineVerifier({
+          descriptor: verifierDescriptor(),
+          parseInput,
+          parseEvidence: Number,
+          predicate,
+        }),
+      ]),
+      execute: async () => {
+        expect(parseInput).toHaveBeenCalledOnce();
+        await Promise.resolve();
+        input.expected = 999;
+        return { ok: true };
+      },
+    });
+    expect(result.outcome.execution).toBe('completed');
+    expect(result.outcome.verification.status).toBe('passed');
+    expect(parseInput).toHaveBeenCalledOnce();
+    expect(predicate).toHaveBeenCalledOnce();
+    expect(predicate).toHaveBeenCalledWith({ expected: 2 }, 2);
+  });
+
+  it.each(['authority', 'cancellation'] as const)(
+    'rechecks %s after preparing input before any dispatch',
+    async (revocation) => {
+      const options = base();
+      const controller = new AbortController();
+      let authorized = true;
+      const result = await runVerifiedOutcome({
+        ...options,
+        signal: controller.signal,
+        assertAuthority: () => {
+          if (!authorized) throw new Error('revoked');
+        },
+        verifierRegistry: new TrustedVerifierRegistry([
+          defineVerifier({
+            descriptor: verifierDescriptor(),
+            parseInput: (input) => {
+              if (revocation === 'authority') authorized = false;
+              else controller.abort();
+              return input;
+            },
+            parseEvidence: (value) => value,
+            predicate: () => true,
+          }),
+        ]),
+      });
+      expect(options.execute).not.toHaveBeenCalled();
+      expect(result.outcome).toMatchObject({ availability: 'blocked', execution: 'not_started' });
+    }
+  );
+
+  it('refuses execution when a legacy verifier has no input preflight contract', async () => {
+    const options = base();
+    const evaluate = vi.fn(() => true);
+    const result = await runVerifiedOutcome({
+      ...options,
+      verifierRegistry: new TrustedVerifierRegistry([
+        { descriptor: verifierDescriptor(), evaluate },
+      ]),
+    });
+    expect(options.execute).not.toHaveBeenCalled();
+    expect(evaluate).not.toHaveBeenCalled();
+    expect(result.outcome).toMatchObject({ availability: 'unsupported', execution: 'not_started' });
+  });
+
   it.each(['authority', 'cancellation'] as const)(
     'withholds verified output after %s changes during asynchronous cleanup',
     async (revocation) => {
@@ -319,6 +467,7 @@ describe('verified outcome runner', () => {
     });
     expect(assertions).toEqual([
       'before-execute',
+      'before-execute',
       'after-execute',
       'after-execute',
       'after-read',
@@ -334,11 +483,9 @@ describe('verified outcome runner', () => {
     expect(result.outcome).toMatchObject({ availability: 'blocked', execution: 'not_started' });
 
     const afterExecute = base();
-    afterExecute.assertAuthority
-      .mockImplementationOnce(() => undefined)
-      .mockImplementationOnce(() => {
-        throw new Error('PRIVATE-REVOKED');
-      });
+    afterExecute.assertAuthority.mockImplementation(() => {
+      if (afterExecute.execute.mock.calls.length) throw new Error('PRIVATE-REVOKED');
+    });
     const fenced = await runVerifiedOutcome(afterExecute);
     expect(afterExecute.execute).toHaveBeenCalledTimes(1);
     expect(fenced).not.toHaveProperty('result');

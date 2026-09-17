@@ -78,6 +78,34 @@ async function serviceWith(
 }
 
 describe('verified outcome service composition', () => {
+  it('blocks invalid verifier input before the plan and returns no private parser details', async () => {
+    const read = vi.fn(() => true);
+    const cleanup = vi.fn();
+    const fixture = await serviceWith(sourceRegistry(read, cleanup));
+    const execute = vi.spyOn(fixture.service, 'executePlan');
+    const invalid = request();
+    const input = { ...invalid, verification: { ...invalid.verification, input: 'PRIVATE-INPUT' } };
+    try {
+      const report = await fixture.service.executeOutcome(fixture.sessionId, fixture.pageId, input);
+      expect(execute).not.toHaveBeenCalled();
+      expect(read).not.toHaveBeenCalled();
+      expect(cleanup).toHaveBeenCalledOnce();
+      expect(report).toMatchObject({
+        plan: { ok: false, completed: 0, results: [], error: { code: 'OUTCOME_NOT_EXECUTED' } },
+        outcome: {
+          availability: 'blocked',
+          execution: 'not_started',
+          verification: { status: 'unknown', evidenceRefIds: [] },
+          cleanup: 'complete',
+        },
+      });
+      expect(JSON.stringify(report)).not.toContain('PRIVATE');
+      expect(JSON.stringify(report)).not.toContain('invalid fixture input');
+    } finally {
+      await fixture.service.shutdown();
+    }
+  });
+
   it('withholds plan and evidence when the page closes during cleanup', async () => {
     let closePage: () => Promise<void> = async () => {};
     const cleanup = vi.fn(async () => {
@@ -256,9 +284,9 @@ describe('verified outcome REST projection', () => {
     }
   });
 
-  it.each([false, true])(
-    'preserves delegated operation identity with cleanup takeover=%s',
-    async (takeover) => {
+  it.each(['complete', 'takeover', 'invalid-input'] as const)(
+    'preserves delegated operation identity with %s',
+    async (mode) => {
       let reads = 0;
       let duringCleanup: () => Promise<void> = async () => {};
       const cleanup = vi.fn(() => duringCleanup());
@@ -305,6 +333,10 @@ describe('verified outcome REST projection', () => {
         const payload = {
           ...request(),
           actions: [{ action: 'press', key: 'Tab' }],
+          verification: {
+            ...request().verification,
+            input: mode === 'invalid-input' ? 'PRIVATE' : true,
+          },
         };
         const url = `${base}/pages/${pageId}/outcomes`;
 
@@ -312,7 +344,7 @@ describe('verified outcome REST projection', () => {
           (await server.inject({ method: 'POST', url, headers: agent, payload })).statusCode
         ).toBe(400);
         const headers = { ...agent, 'x-agentbrowser-operation-id': 'verified-operation' };
-        if (takeover) {
+        if (mode === 'takeover') {
           duringCleanup = async () => {
             const response = await server.inject({
               method: 'POST',
@@ -324,7 +356,27 @@ describe('verified outcome REST projection', () => {
         }
         const first = await server.inject({ method: 'POST', url, headers, payload });
         expect(cleanup).toHaveBeenCalledOnce();
-        if (takeover) {
+        if (mode === 'invalid-input') {
+          expect(first.statusCode).toBe(200);
+          expect(first.json()).toMatchObject({
+            plan: { ok: false, completed: 0, error: { code: 'OUTCOME_NOT_EXECUTED' } },
+            outcome: {
+              availability: 'blocked',
+              execution: 'not_started',
+              verification: { status: 'unknown', evidenceRefIds: [] },
+            },
+          });
+          expect(first.body).not.toContain('PRIVATE');
+          const replay = await server.inject({ method: 'POST', url, headers, payload });
+          expect(replay.json()).toMatchObject({
+            replay: true,
+            operation: { status: 'failed', dispatched: false },
+          });
+          expect(reads).toBe(0);
+          expect(cleanup).toHaveBeenCalledOnce();
+          return;
+        }
+        if (mode === 'takeover') {
           expect(first.statusCode).toBe(409);
           expect(first.json()).not.toHaveProperty('plan');
           expect(first.body).not.toContain('fixture_evidence_1');

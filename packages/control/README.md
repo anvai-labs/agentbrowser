@@ -48,6 +48,16 @@ accessors, sparse arrays and non-JSON values are rejected. Serialized input is
 reused for write fingerprints, with separate bounded metadata. Reads do not
 compute a write fingerprint. Business receipts remain application-owned.
 
+`runVerifiedOutcome` composes an existing executor with trusted bounded evidence reads
+and verification. Register outcome verifiers with `defineVerifier`: its synchronous
+input parser runs once, before dispatch, against detached bounded JSON. The prepared
+evaluator accepts only evidence, so later caller input changes cannot alter the expected
+outcome. Direct `TrustedVerifierRegistry.evaluate` still accepts legacy definitions;
+outcome execution requires their `prepare` contract and otherwise reports unsupported.
+Invalid preparation blocks execution, while registered cleanup still settles. Trusted
+parsers and predicates must be synchronous and pure. No production evidence source is
+registered by default.
+
 Run `pnpm test:application-independence` after a workspace build to deploy only
 production dependencies, reject browser packages or escaping dependency links,
 and exercise delegation, a real application callback, duplicate suppression,
