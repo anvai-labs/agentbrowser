@@ -23,7 +23,7 @@ it('shares service sessions across stdio bridges without replaying a disconnecte
     const firstPage = await owner.sessions.createPage(sessionId);
     const secondPage = await owner.sessions.createPage(sessionId);
     const review = await owner.sessions.prepareResume(sessionId);
-    const { token } = await owner.sessions.delegate(sessionId, review.epoch);
+    const { token, cursor } = await owner.sessions.delegate(sessionId, review.epoch);
     const attach = async (credential = token) => {
       const harness = await openHarness({
         transport: 'stdio',
@@ -70,6 +70,7 @@ it('shares service sessions across stdio bridges without replaying a disconnecte
     );
     const replacement = await attach();
     const state = JSON.parse((await call(replacement, 'browser_session')).content[0].text);
+    expect(state.control.cursor).toEqual(cursor);
     expect(state.pages.map((page: { pageId: string }) => page.pageId).sort()).toEqual(
       [firstPage.pageId, secondPage.pageId].sort()
     );
@@ -88,10 +89,11 @@ it('shares service sessions across stdio bridges without replaying a disconnecte
     ]);
     const nextReview = await owner.sessions.prepareResume(sessionId);
     const fresh = await owner.sessions.delegate(sessionId, nextReview.epoch);
+    expect(fresh.cursor.bindingGeneration).not.toBe(cursor.bindingGeneration);
     const resumed = await attach(fresh.token);
-    expect(
-      JSON.parse((await call(resumed, 'browser_session')).content[0].text).pages[0].pageId
-    ).toBe(secondPage.pageId);
+    const resumedState = JSON.parse((await call(resumed, 'browser_session')).content[0].text);
+    expect(resumedState.control.cursor).toEqual(fresh.cursor);
+    expect(resumedState.pages[0].pageId).toBe(secondPage.pageId);
     expect((await call(second, 'browser_session')).isError).toBe(true);
     expect(effects).toBe(1);
   } finally {

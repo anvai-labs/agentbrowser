@@ -14,7 +14,33 @@ brew install anvai-labs/tap/agentbrowser
 brew services start anvai-labs/tap/agentbrowser   # the service, on 127.0.0.1:5709
 ```
 
-One install ships both halves: the **MCP server binary** (`agentbrowser-mcp`, no Node runtime needed) and the **browser service** (first start bootstraps Chromium into `$(brew --prefix)/var/agentbrowser/browsers`). Without Homebrew, grab the release assets: the `agentbrowser-mcp-<target>` binary needs no Node at all, and the `agentbrowser-server-<target>.tar.gz` needs only `node` on PATH.
+One install ships all three surfaces: the **browser service**, the standalone
+**CLI** (`agentbrowser`) and the optional **MCP adapter** (`agentbrowser-mcp`).
+The first service start bootstraps Chromium into
+`$(brew --prefix)/var/agentbrowser/browsers`. The compiled CLI and MCP binaries
+need no Node runtime. Without Homebrew, use the
+`agentbrowser-cli-<target>` and `agentbrowser-mcp-<target>` client assets for
+macOS, Linux or Windows. Service archives are published for macOS and Linux as
+`agentbrowser-server-<target>.tar.gz`; they require Node 22 and separately
+provisioned Chromium (plus its platform libraries on Linux). See the
+[operations guide](docs/operations.md#release-assets) for deployment details.
+
+### Consuming directly from a shell
+
+The CLI is the smallest universal agent interface. It connects directly to the
+HTTP service, emits structured JSON matching the service contracts and can
+describe one command at a time without contacting the service:
+
+```bash
+agentbrowser describe
+agentbrowser describe autofill --schema
+agentbrowser --base-url http://localhost:5709 --json health
+```
+
+For a local deployment, install the service and CLI; for a remote deployment,
+only the CLI is required on the agent host. MCP is optional in both cases. See
+[the shell-agent CLI guide](docs/cli-agent-usage.md) for bounded JSON input,
+operation reconciliation and bulk plan/autofill examples.
 
 ### Consuming as an MCP server
 
@@ -41,10 +67,10 @@ Engine-neutral by contract ([ADR-002](docs/adr/002-engine-neutral-protocol.md));
 
 | Engine | Status | Notes |
 | --- | --- | --- |
-| Chromium (Playwright) | Production default | Egress choke point enforced per request |
+| Chromium (Playwright) | Production default | Partial routing enforcement; redirect/DNS limitations in the [engine matrix](docs/engines.md) |
 | Chromium (remote CDP) | Supported | `cdpEndpoint` engine option |
 | Firefox / WebKit (Playwright) | Supported | Same contract suite |
-| **Real Safari (safaridriver)** | **Phase 2 shipped** ([TD-BROWSER-7](docs/td/TD-BROWSER-7-safari-webdriver-engine.md), [ADR-011](docs/adr/011-safari-via-safaridriver-webdriver.md)) | macOS only, always headed; `safaridriver --enable` required; egress unsupported (loud refusal) |
+| **Real Safari (safaridriver)** | **Direct-engine local use only** ([TD-BROWSER-7](docs/td/TD-BROWSER-7-safari-webdriver-engine.md), [ADR-011](docs/adr/011-safari-via-safaridriver-webdriver.md)) | macOS only, always headed; guarded REST creation unsupported because egress is not enforceable |
 | Obscura (Rust) | Experimental, benchmark-only | |
 
 ### Headed sessions and credential handoff
@@ -85,20 +111,28 @@ packages/
 ├── extraction/         # Page extraction
 ├── testkit/            # FakeEngine + the reusable contract suite
 ├── sdk-typescript/     # TypeScript client SDK
-├── mcp-server/         # The MCP stdio server (13 high-level tools)
+├── mcp-server/         # MCP stdio adapter to the shared service
 ├── api/                # REST + WebSocket service
-├── cli/                # Operator CLI
+├── cli/                # Human and shell-agent CLI; offline command discovery
 └── benchmarks/         # Performance benchmarks
 ```
 
-Thirteen MCP tools today: `browser_create`, `browser_navigate`,
-`browser_observe`, `browser_act`, `browser_autofill`, `browser_extract`,
-`browser_html`, `browser_screenshot`, `browser_pdf`, `browser_cookies`,
-`browser_close`, and the batched pair `browser_snapshot` + `browser_plan`. No raw
-selectors, no evaluate - element refs come from observations and die with their
-revision (ADR-009).
+The unbound MCP catalog exposes thirteen tools: `browser_create`, `browser_navigate`,
+`browser_observe`, `browser_act`, `browser_extract`, `browser_html`,
+`browser_screenshot`, `browser_pdf`, `browser_cookies`, `browser_close`, and the
+batched tools `browser_snapshot`, `browser_plan`, and `browser_autofill`.
+Delegated mode exposes twelve: it replaces create/close/cookies with
+`browser_session` and `browser_operation`. No raw selectors, no evaluate - element
+refs come from observations and die with their revision (ADR-009).
 
 ### The fast path for forms: snapshot then plan
+
+For supported native forms, prefer [scoped bulk autofill](docs/bulk-autofill.md):
+send structured fields once through CLI `autofill`, REST/SDK or `browser_autofill`; the server
+resolves and verifies them with per-field receipts. Custom widgets remain qualified
+separately.
+
+For explicit heterogeneous steps, the snapshot/plan pair remains available:
 
 Filling a multi-field form one `browser_act` at a time costs a round trip
 per field, because every action bumps the page revision. The batched pair
@@ -111,6 +145,14 @@ collapses that to two calls ([TD-BROWSER-8](docs/td/TD-BROWSER-8-batched-snapsho
    once per step; once a page has churned enough to enter `verified` mode,
    the executor requires a role+label match before remapping and aborts
    loudly (`AMBIGUOUS_REMAP`) rather than risk acting on the wrong element.
+
+### Shell and CLI agents
+
+Use `agentbrowser describe` to discover immediate commands as JSON without a running
+service, then `agentbrowser describe act press` to load only one command's details.
+Execution uses the existing SDK/service: pass `--json`, quote shell arguments and
+inspect outcomes rather than relying on exit code alone. See the
+[CLI agent guide](docs/cli-agent-usage.md) for Bash/jq examples and reconciliation.
 
 ## Development
 
@@ -128,6 +170,7 @@ surface; the rest depends on who you are.
 
 **Using AgentBrowser**
 
+- [CLI and shell agents](docs/cli-agent-usage.md) - offline command discovery, JSON output and safe reconciliation
 - [Consuming as an MCP server](#consuming-as-an-mcp-server) - Claude Code, Claude Desktop, Codex, Victor wiring
 - [Snapshot then plan](#the-fast-path-for-forms-snapshot-then-plan) - the two-call form-filling flow
 - [Interactive forms recipe](docs/recipes/interactive-forms.md) - custom comboboxes, async menus, sectioned plans, verifying what got selected

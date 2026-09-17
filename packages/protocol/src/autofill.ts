@@ -1,5 +1,6 @@
 import { type Static, Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
+import { parseExecutionReport } from './validators.js';
 
 const text = () => Type.String({ minLength: 1, maxLength: 512 });
 const strict = { additionalProperties: false };
@@ -92,7 +93,7 @@ export const AutofillReportSchema = Type.Object(
     ),
     snapshotError: Type.Optional(Type.String()),
   },
-  strict
+  { ...strict, $id: 'urn:agentbrowser:autofill-report:v1' }
 );
 export type AutofillReceipt = Omit<Static<typeof AutofillReceiptSchema>, 'actual'> & {
   actual?: string | undefined;
@@ -143,4 +144,24 @@ export function parseAutofillRequest(input: unknown): AutofillRequest {
       throw new Error('Autofill strategy does not match value/option');
   }
   return request;
+}
+
+/** Validate service output before advertising it as a structured report. */
+export function parseAutofillReport(input: unknown, expectedFields?: number): AutofillReport {
+  return parseExecutionReport(
+    AutofillReportSchema,
+    input,
+    'autofill',
+    (report) =>
+      !report.ok ||
+      (report.receipts.length > 0 &&
+        (expectedFields === undefined || report.receipts.length === expectedFields) &&
+        report.receipts.every(
+          (receipt, index) =>
+            receipt.field === index &&
+            receipt.error === undefined &&
+            ((receipt.status === 'verified' && receipt.verified) ||
+              (receipt.status === 'unverified' && !receipt.verified))
+        ))
+  );
 }

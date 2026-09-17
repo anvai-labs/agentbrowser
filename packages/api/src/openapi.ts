@@ -10,6 +10,7 @@
 import { DELIVERED_ACTION_TYPES, DELIVERED_EXTRACT_FORMATS } from '@agentbrowser/protocol';
 import {
   ActionResultSchema,
+  AgentModeSchema,
   ApiErrorDetailSchema,
   ApiErrorSchema,
   ArtifactRefSchema,
@@ -26,6 +27,8 @@ import {
   OperationRecordSchema,
   PageElementSchema,
   PageStateSchema,
+  PlanReportSchema,
+  PlanRequestSchema,
   PlanStepSchema,
   SessionRequestSchema,
   SessionResponseSchema,
@@ -116,7 +119,10 @@ const controlPaths = {
         content: json({
           type: 'object',
           required: ['epoch'],
-          properties: { epoch: { type: 'integer', minimum: 0 } },
+          properties: {
+            epoch: { type: 'integer', minimum: 0 },
+            mode: { ...AgentModeSchema, default: 'qa' },
+          },
         }),
       },
       responses: controlResponses('ControlGrant'),
@@ -588,59 +594,16 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           requestBody: {
             required: true,
             content: json({
-              type: 'object',
-              required: ['actions'],
+              ...PlanRequestSchema,
               properties: {
-                actions: {
-                  type: 'array',
-                  description:
-                    'Ordered plan steps in the flat wire shape: {action, ' +
-                    'target?: {ref}, value?, key?, waitForLabel?, waitMs?}. The nested ' +
-                    'ActionRequest shape is the service-internal representation and is ' +
-                    'not accepted here.',
-                  items: ref('PlanStep'),
-                },
+                actions: { ...PlanRequestSchema.properties.actions, items: ref('PlanStep') },
               },
             }),
           },
           responses: {
             '200': {
               description: 'The plan outcome.',
-              content: json({
-                type: 'object',
-                required: ['ok', 'completed', 'results', 'mode', 'newRevision'],
-                properties: {
-                  ok: { type: 'boolean' },
-                  completed: { type: 'integer' },
-                  results: {
-                    type: 'array',
-                    items: {
-                      type: 'object',
-                      required: ['step', 'ok'],
-                      properties: {
-                        step: { type: 'integer' },
-                        ok: { type: 'boolean' },
-                        actionId: { type: 'string' },
-                        result: {
-                          description:
-                            'Per-step evidence payload, present only for steps that produce one ' +
-                            '(upload reports the attached files), matching the single-act result.',
-                        },
-                        error: { type: 'string' },
-                      },
-                    },
-                  },
-                  mode: { type: 'string', enum: ['stable', 'verified'] },
-                  newRevision: {
-                    type: 'integer',
-                    description: "Payload economics: the plan's cheap final-state signal.",
-                  },
-                  error: {
-                    type: 'object',
-                    properties: { code: { type: 'string' }, message: { type: 'string' } },
-                  },
-                },
-              }),
+              content: json(ref('PlanReport')),
             },
             '400': INVALID_REQUEST,
             '404': NOT_FOUND,
@@ -1125,6 +1088,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         ElementTarget: ElementTargetSchema,
         ObservationRequest: ObservationRequestSchema,
         PlanStep: PlanStepSchema,
+        PlanReport: PlanReportSchema,
         ActionResult: ActionResultSchema,
         NavigationStatus: NavigationStatusSchema,
         ArtifactRef: ArtifactRefSchema,

@@ -1,3 +1,9 @@
+import {
+  INTERACTION_GUIDANCE,
+  createPlanReportParser,
+  parseAutofillReport,
+} from '@agentbrowser/protocol';
+import type { PlanReport } from '@agentbrowser/protocol';
 /**
  * AgentBrowser TypeScript SDK Client
  *
@@ -6,15 +12,17 @@
  */
 
 import type {
+  AgentMode,
   AutofillReport,
   AutofillRequest,
   ControlView,
   DELIVERED_ACTION_TYPES,
   OperationRecord,
+  RunCursor,
   SessionRequest,
 } from '@agentbrowser/protocol';
 
-export type { ControlView, OperationRecord } from '@agentbrowser/protocol';
+export type { ControlView, OperationRecord, RunCursor } from '@agentbrowser/protocol';
 export type { AutofillRequest, AutofillReport } from '@agentbrowser/protocol';
 export interface MutationOptions {
   operationId?: string;
@@ -289,7 +297,13 @@ class HttpClient {
 
   async requestJson<T>(
     path: string,
-    init: { method?: string; body?: unknown; operationId?: string; timeoutMs?: number } = {}
+    init: {
+      method?: string;
+      body?: unknown;
+      operationId?: string;
+      timeoutMs?: number;
+      parseResponse?: (input: unknown) => T;
+    } = {}
   ): Promise<T> {
     const operationId =
       path.startsWith('/v1/sessions/') &&
@@ -346,6 +360,18 @@ class HttpClient {
           false,
           { operationId, operation: result.operation }
         );
+      if (init.parseResponse) {
+        try {
+          return init.parseResponse(result);
+        } catch {
+          throw new AgentBrowserError(
+            'INVALID_RESPONSE',
+            `Invalid operation response. ${INTERACTION_GUIDANCE.uncertainWrite}`,
+            false,
+            operationId ? { operationId } : undefined
+          );
+        }
+      }
       return result as T;
     } catch (error) {
       if (controller.signal.aborted) {
@@ -398,10 +424,14 @@ export class SessionsClient {
       method: 'POST',
     });
   }
-  async delegate(sessionId: string, epoch: number): Promise<ControlView & { token: string }> {
+  async delegate(
+    sessionId: string,
+    epoch: number,
+    mode?: AgentMode
+  ): Promise<ControlView & { token: string; mode: AgentMode; cursor: RunCursor }> {
     return this.http.requestJson(`/v1/sessions/${sessionId}/control/delegate`, {
       method: 'POST',
-      body: { epoch },
+      body: { epoch, ...(mode ? { mode } : {}) },
     });
   }
   async operation(sessionId: string, operationId: string): Promise<OperationRecord> {
@@ -517,11 +547,13 @@ export class SessionsClient {
     request: AutofillRequest,
     options: MutationOptions = {}
   ): Promise<AutofillReport> {
+    const expectedFields = request.fields.length;
     return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/autofill`, {
       method: 'POST',
       body: request,
       ...options,
       timeoutMs: Math.min(240000, request.policy?.timeoutMs ?? 240000) + 30000,
+      parseResponse: (input) => parseAutofillReport(input, expectedFields),
     });
   }
 
@@ -530,17 +562,13 @@ export class SessionsClient {
     pageId: string,
     actions: Array<Record<string, unknown>>,
     options: MutationOptions = {}
-  ): Promise<{
-    ok: boolean;
-    completed: number;
-    results: Array<{ step: number; ok: boolean; error?: string }>;
-    mode?: string;
-    error?: { code: string; message: string };
-  }> {
+  ): Promise<PlanReport> {
+    const parseResponse = createPlanReportParser(actions);
     return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/plan`, {
       method: 'POST',
       body: { actions },
       ...options,
+      parseResponse,
     });
   }
 

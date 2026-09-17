@@ -14,7 +14,7 @@ export interface AutofillPorts {
   redact?(value: string): string;
   resolveValue?(value: string): Promise<string>;
   observe(): Promise<{ elements: PageElement[]; truncated?: boolean; degraded?: boolean }>;
-  act(request: ServiceActRequest): Promise<unknown>;
+  act(request: ServiceActRequest, onDispatch: () => void): Promise<unknown>;
   snapshot(): Promise<{ artifactId: string }>;
 }
 
@@ -161,7 +161,9 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
   };
   for (const [index, field] of request.fields.entries()) {
     const receipt = receipts[index] as AutofillReceipt;
-    let dispatched = false;
+    const execution: { state: 'not_started' | 'dispatched' | 'completed' } = {
+      state: 'not_started',
+    };
     try {
       let elements = await observe();
       let element: PageElement | undefined;
@@ -204,8 +206,15 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
         );
       identities.set(index, identity);
       guard();
-      dispatched = true;
-      const effect = await ports.act(strategy.action(field, element.ref));
+      const effect = await ports.act(strategy.action(field, element.ref), () => {
+        if (execution.state === 'not_started') execution.state = 'dispatched';
+      });
+      if (execution.state === 'not_started')
+        throw new AutofillFailure(
+          'ENGINE_UNSUPPORTED',
+          'Action adapter returned without reporting its dispatch boundary'
+        );
+      execution.state = 'completed';
       if (
         effect &&
         typeof effect === 'object' &&
@@ -250,7 +259,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
     } catch (error) {
       // Authority loss must escape to the enclosing operation/output guard.
       ports.assert();
-      receipt.status = dispatched ? 'uncertain' : 'failed';
+      receipt.status = execution.state === 'not_started' ? 'failed' : 'uncertain';
       receipt.error =
         error instanceof AutofillFailure
           ? { code: error.code, message: error.message }
@@ -259,7 +268,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
               message: 'Operation failed; inspect current state before another write',
             };
       if (
-        !dispatched &&
+        execution.state === 'not_started' &&
         receipt.error.code === 'TARGET_AMBIGUOUS' &&
         policy.onAmbiguous === 'skip'
       ) {

@@ -5,6 +5,7 @@
  * surface can be exercised without spawning a process or hitting a server.
  */
 
+import { Readable } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildCli } from './cli';
 import type { CliDependencies } from './cli';
@@ -25,6 +26,94 @@ describe('AgentBrowser CLI', () => {
     expect(await run('--version')).toBe(0);
     expect(out).toEqual([PRODUCT_VERSION]);
     expect(deps.createClient).not.toHaveBeenCalled();
+  });
+
+  describe('offline command discovery', () => {
+    it('lists only the immediate command surface without contacting a service', async () => {
+      expect(await run('describe')).toBe(0);
+      const catalog = lastJson();
+      expect(catalog).toMatchObject({
+        schemaVersion: 1,
+        productVersion: PRODUCT_VERSION,
+        scope: 'cli-command-definitions',
+        command: { path: [], arguments: [] },
+      });
+      expect(catalog.command.commands.map((command: { name: string }) => command.name)).toEqual(
+        expect.arrayContaining(['session', 'page', 'snapshot', 'plan', 'act', 'describe'])
+      );
+      expect(catalog.command.commands.every((command: object) => !('options' in command))).toBe(
+        true
+      );
+      expect(err).toEqual([]);
+      expect(deps.createClient).not.toHaveBeenCalled();
+    });
+
+    it('describes nested arguments and options without executing the selected command', async () => {
+      expect(await run('describe', 'act', 'press')).toBe(0);
+      const catalog = lastJson();
+      expect(catalog.command.path).toEqual(['act', 'press']);
+      expect(catalog.command.arguments).toEqual([
+        expect.objectContaining({ name: 'sessionId', required: true, variadic: false }),
+        expect.objectContaining({ name: 'pageId', required: true, variadic: false }),
+        expect.objectContaining({ name: 'key', required: true, variadic: false }),
+      ]);
+      expect(catalog.command.options).toContainEqual(
+        expect.objectContaining({ flags: '--count <n>', required: false, valueRequired: true })
+      );
+      expect(catalog.globalOptions).toContainEqual(
+        expect.objectContaining({ flags: '--operation-id <id>' })
+      );
+      expect(catalog.guidance.join(' ')).toContain('reconcile');
+      expect(catalog.guidance.join(' ')).toContain('exit code');
+      expect(deps.createClient).not.toHaveBeenCalled();
+    });
+
+    it('preserves mandatory and negated option metadata from command registration', async () => {
+      expect(await run('describe', 'session', 'create')).toBe(0);
+      expect(lastJson().command.options).toContainEqual(
+        expect.objectContaining({ flags: '--tenant <id>', required: true, valueRequired: true })
+      );
+      expect(lastJson().command.options).toContainEqual(
+        expect.objectContaining({ flags: '--no-headless', negated: true })
+      );
+      expect(deps.createClient).not.toHaveBeenCalled();
+    });
+
+    it('preserves optional variadic argument metadata', async () => {
+      expect(await run('describe', 'act', 'upload')).toBe(0);
+      expect(lastJson().command.arguments).toContainEqual(
+        expect.objectContaining({ name: 'paths', required: false, variadic: true })
+      );
+      expect(deps.createClient).not.toHaveBeenCalled();
+    });
+
+    it('never reflects credentials or current option values into discovery', async () => {
+      const secret = 'private-api-key-not-metadata';
+      expect(await run('--json', '--api-key', secret, 'describe', 'session', 'create')).toBe(0);
+      expect(out.join('\n')).not.toContain(secret);
+      expect(err).toEqual([]);
+      expect(deps.createClient).not.toHaveBeenCalled();
+    });
+
+    it('rejects unknown paths with no partial catalog or service call', async () => {
+      expect(await run('describe', 'act', 'not-a-command')).toBe(1);
+      expect(out).toEqual([]);
+      expect(err.join('\n')).toContain('Unknown command path');
+      expect(deps.createClient).not.toHaveBeenCalled();
+    });
+
+    it('resolves advertised commands, including implicit help, with useful descriptions', async () => {
+      const paths: string[][] = [[]];
+      while (paths.length > 0) {
+        const path = paths.shift() as string[];
+        out = [];
+        expect(await run('describe', ...path)).toBe(0);
+        const { command } = lastJson();
+        expect(command.description.length).toBeGreaterThan(0);
+        for (const child of command.commands) paths.push([...path, child.name]);
+      }
+      expect(deps.createClient).not.toHaveBeenCalled();
+    });
   });
 
   beforeEach(() => {
@@ -72,15 +161,26 @@ describe('AgentBrowser CLI', () => {
         url: '/v1/artifacts/dl_1',
         contentBase64: 'AA==',
       }),
-      autofill: vi.fn().mockResolvedValue({
-        ok: true,
-        receipts: [
-          { field: 0, status: 'verified', verified: true, resolvedRef: 'e1_2' },
-          { field: 1, status: 'verified', verified: true, resolvedRef: 'e1_3' },
-        ],
-        elapsedMs: 1234,
-        snapshot: { artifactId: 'art_9' },
-      }),
+      autofill: vi
+        .fn()
+        .mockImplementation(
+          async (
+            _sessionId: string,
+            _pageId: string,
+            request: { fields: Array<{ match: Record<string, unknown> }> }
+          ) => ({
+            ok: true,
+            receipts: request.fields.map((field, index) => ({
+              field: index,
+              match: field.match,
+              status: 'verified',
+              verified: true,
+              resolvedRef: `e1_${index + 2}`,
+            })),
+            elapsedMs: 1234,
+            snapshot: { artifactId: 'art_9' },
+          })
+        ),
       create: vi.fn().mockResolvedValue({
         sessionId: 'ses_1',
         status: 'ready',
@@ -670,6 +770,224 @@ describe('AgentBrowser CLI', () => {
     });
   });
 
+  describe('bulk command input and discovery', () => {
+    const payload = { fields: [{ match: { label: 'Name' }, value: 'private value' }] };
+
+    it('expands canonical nested autofill schemas only when requested, offline', async () => {
+      expect(await run('describe', 'autofill')).toBe(0);
+      expect(lastJson().command.schemas).toBeUndefined();
+      out.length = 0;
+      expect(await run('describe', 'autofill', '--schema')).toBe(0);
+      const schemas = lastJson().command.schemas;
+      expect(
+        schemas.input.properties.fields.items.properties.match.properties.block.properties.label
+          .maxLength
+      ).toBe(512);
+      expect(schemas.output.properties.receipts.items.properties.status.anyOf).toContainEqual({
+        const: 'uncertain',
+        type: 'string',
+      });
+      expect(deps.createClient).not.toHaveBeenCalled();
+    });
+
+    it('describes the canonical plan array and report without constructing a client', async () => {
+      expect(await run('describe', 'plan', '--schema')).toBe(0);
+      const { input, output } = lastJson().command.schemas;
+      expect(input.type).toBe('array');
+      expect(input.items.properties.waitMs.maximum).toBe(60000);
+      expect(output.$id).toBe('urn:agentbrowser:plan-report:v1');
+      expect(deps.createClient).not.toHaveBeenCalled();
+    });
+
+    it('rejects invalid plan steps before dispatch', async () => {
+      sessions.plan = vi.fn();
+      expect(await run('plan', 'ses_1', 'pg_1', '[{"action":"press","count":21}]')).toBe(1);
+      expect(sessions.plan).not.toHaveBeenCalled();
+    });
+
+    it('explicitly reports missing schemas instead of inventing contracts', async () => {
+      expect(await run('describe', 'act', 'press', '--schema')).toBe(0);
+      expect(lastJson().command.schemas).toBeNull();
+    });
+
+    it('passes piped autofill through one SDK call with the retained operation ID', async () => {
+      deps.stdin = Readable.from([JSON.stringify(payload)]);
+      expect(
+        await run('--json', '--operation-id', 'fill-once', 'autofill', 'ses_1', 'pg_1', '-')
+      ).toBe(0);
+      expect(sessions.autofill).toHaveBeenCalledTimes(1);
+      expect(sessions.autofill).toHaveBeenCalledWith('ses_1', 'pg_1', payload);
+      expect(deps.createClient).toHaveBeenCalledWith(
+        expect.objectContaining({ headers: { 'x-agentbrowser-operation-id': 'fill-once' } })
+      );
+    });
+
+    it('preserves partial receipts in JSON and exits nonzero on failed autofill', async () => {
+      const report = {
+        ok: false,
+        receipts: [{ field: 0, match: { label: 'Name' }, status: 'uncertain', verified: false }],
+        elapsedMs: 10,
+      };
+      sessions.autofill.mockResolvedValue(report);
+      expect(await run('--json', 'autofill', 'ses_1', 'pg_1', JSON.stringify(payload))).toBe(1);
+      expect(lastJson()).toEqual(report);
+      expect(err).toEqual([]);
+    });
+
+    it('rejects a malformed autofill report without echoing it or retrying', async () => {
+      sessions.autofill.mockResolvedValue({ ok: 'false', receipts: [], private: 'PRIVATE-REPORT' });
+      expect(await run('--json', 'autofill', 'ses_1', 'pg_1', JSON.stringify(payload))).toBe(1);
+      expect(sessions.autofill).toHaveBeenCalledTimes(1);
+      expect(out).toEqual([]);
+      expect(err.join(' ')).toContain('may have executed');
+      expect(err.join(' ')).not.toContain('PRIVATE-REPORT');
+    });
+
+    it('rejects contradictory autofill success without echoing it or retrying', async () => {
+      sessions.autofill.mockResolvedValue({
+        ok: true,
+        receipts: [
+          {
+            field: 0,
+            match: { label: 'Name' },
+            status: 'verified',
+            verified: false,
+            error: { code: 'REMOTE_FAILURE', message: 'PRIVATE-REPORT' },
+          },
+        ],
+        elapsedMs: 1,
+      });
+      expect(await run('--json', 'autofill', 'ses_1', 'pg_1', JSON.stringify(payload))).toBe(1);
+      expect(sessions.autofill).toHaveBeenCalledTimes(1);
+      expect(out).toEqual([]);
+      expect(err.join(' ')).toContain('may have executed');
+      expect(err.join(' ')).not.toContain('PRIVATE-REPORT');
+    });
+
+    it('rejects successful autofill that omits a requested field receipt', async () => {
+      const twoFields = {
+        fields: [...payload.fields, { match: { label: 'Email' }, value: 'private email' }],
+      };
+      sessions.autofill.mockImplementation(
+        async (_sessionId: string, _pageId: string, request: typeof twoFields) => {
+          request.fields.pop();
+          return {
+            ok: true,
+            receipts: [
+              {
+                field: 0,
+                match: { label: 'Name' },
+                status: 'verified',
+                verified: true,
+                actual: 'PRIVATE-REPORT',
+              },
+            ],
+            elapsedMs: 1,
+          };
+        }
+      );
+      expect(await run('--json', 'autofill', 'ses_1', 'pg_1', JSON.stringify(twoFields))).toBe(1);
+      expect(sessions.autofill).toHaveBeenCalledTimes(1);
+      expect(out).toEqual([]);
+      expect(err.join(' ')).toContain('may have executed');
+      expect(err.join(' ')).not.toContain('PRIVATE-REPORT');
+    });
+
+    it('does not retry a lost autofill response', async () => {
+      sessions.autofill.mockRejectedValue(new Error('Write outcome uncertain'));
+      expect(await run('autofill', 'ses_1', 'pg_1', JSON.stringify(payload))).toBe(1);
+      expect(sessions.autofill).toHaveBeenCalledTimes(1);
+    });
+
+    it('shares bounded stdin input with plan and preserves a failed result', async () => {
+      const steps = [{ action: 'press', key: 'Tab' }];
+      deps.stdin = Readable.from([JSON.stringify(steps)]);
+      const report = {
+        ok: false,
+        completed: 0,
+        results: [{ step: 0, ok: false, error: 'denied' }],
+      };
+      sessions.plan = vi.fn().mockResolvedValue(report);
+      expect(await run('--json', 'plan', 'ses_1', 'pg_1', '-')).toBe(1);
+      expect(sessions.plan).toHaveBeenCalledTimes(1);
+      expect(sessions.plan).toHaveBeenCalledWith('ses_1', 'pg_1', steps);
+      expect(lastJson()).toEqual(report);
+    });
+
+    it('rejects contradictory plan success without echoing it or retrying', async () => {
+      sessions.plan = vi.fn().mockResolvedValue({
+        ok: true,
+        completed: 1,
+        results: [],
+        error: { code: 'REMOTE_FAILURE', message: 'PRIVATE-REPORT' },
+      });
+      expect(await run('--json', 'plan', 'ses_1', 'pg_1', '[]')).toBe(1);
+      expect(sessions.plan).toHaveBeenCalledTimes(1);
+      expect(out).toEqual([]);
+      expect(err.join(' ')).toContain('may have executed');
+      expect(err.join(' ')).not.toContain('PRIVATE-REPORT');
+    });
+
+    it('rejects successful plan that omits a requested step result', async () => {
+      const steps = [
+        { action: 'press', key: 'Tab' },
+        { action: 'press', key: 'Tab' },
+      ];
+      sessions.plan = vi.fn().mockImplementation(async (_sessionId, _pageId, dispatchedSteps) => {
+        dispatchedSteps.pop();
+        return {
+          ok: true,
+          completed: 1,
+          results: [{ step: 0, ok: true, result: { secret: 'PRIVATE-REPORT' } }],
+        };
+      });
+      expect(await run('--json', 'plan', 'ses_1', 'pg_1', JSON.stringify(steps))).toBe(1);
+      expect(out).toEqual([]);
+      expect(err.join(' ')).toContain('may have executed');
+      expect(sessions.plan).toHaveBeenCalledTimes(1);
+      expect(err.join(' ')).not.toContain('PRIVATE-REPORT');
+    });
+
+    it('rejects unsafe explicitly requested fill verification evidence', async () => {
+      const steps = [
+        {
+          action: 'fill',
+          target: { ref: 'e1_0' },
+          value: 'PRIVATE-WRITTEN',
+          expectValue: 'PRIVATE-EXPECTED',
+        },
+      ];
+      sessions.plan = vi.fn().mockResolvedValue({
+        ok: true,
+        completed: 1,
+        results: [{ step: 0, ok: true, result: { verified: true, actual: 'PRIVATE-READBACK' } }],
+      });
+      expect(await run('--json', 'plan', 'ses_1', 'pg_1', JSON.stringify(steps))).toBe(1);
+      expect(out).toEqual([]);
+      expect(err.join(' ')).toContain('may have executed');
+      expect(sessions.plan).toHaveBeenCalledTimes(1);
+      expect(err.join(' ')).not.toContain('PRIVATE-WRITTEN');
+      expect(err.join(' ')).not.toContain('PRIVATE-EXPECTED');
+      expect(err.join(' ')).not.toContain('PRIVATE-READBACK');
+    });
+
+    it('rejects private malformed or oversized input before dispatch', async () => {
+      for (const input of ['PRIVATE-VALUE', ' '.repeat(1024 * 1024 + 1)]) {
+        err.length = 0;
+        expect(await run('autofill', 'ses_1', 'pg_1', input)).toBe(1);
+        expect(err.join(' ')).not.toContain('PRIVATE-VALUE');
+      }
+      expect(sessions.autofill).not.toHaveBeenCalled();
+    });
+
+    it('rejects two stdin payloads before consuming either', async () => {
+      deps.stdin = Readable.from([JSON.stringify(payload)]);
+      expect(await run('autofill', 'ses_1', 'pg_1', '-', '--policy', '-')).toBe(1);
+      expect(deps.stdin.readableDidRead).toBe(false);
+      expect(sessions.autofill).not.toHaveBeenCalled();
+    });
+  });
+
   describe('cli full parity additions', () => {
     it('autofill sends the parsed payload and renders receipts without field values', async () => {
       const code = await run(
@@ -695,7 +1013,7 @@ describe('AgentBrowser CLI', () => {
       expect(report.receipts).toHaveLength(2);
     });
 
-    it('autofill reads the payload from @file and pipes stdin', async () => {
+    it('autofill reads the payload from @file', async () => {
       const { writeFileSync, mkdtempSync } = await import('node:fs');
       const { tmpdir } = await import('node:os');
       const { join } = await import('node:path');
@@ -746,18 +1064,28 @@ describe('AgentBrowser CLI', () => {
     it('autofill text render omits field values', async () => {
       sessions.autofill.mockResolvedValue({
         ok: true,
-        receipts: [{ field: 0, status: 'verified', verified: true, resolvedRef: 'e1_2' }],
+        receipts: [
+          {
+            field: 0,
+            match: { label: 'A' },
+            status: 'verified',
+            verified: true,
+            resolvedRef: 'e1_2',
+            actual: 'SECRET-VALUE',
+          },
+        ],
         elapsedMs: 5,
-        actual: 'SECRET-VALUE',
-        value: 'SECRET-VALUE',
       });
-      await run(
-        'autofill',
-        'ses_1',
-        'pg_1',
-        JSON.stringify({ fields: [{ match: { label: 'A' }, value: 'x' }] })
-      );
+      expect(
+        await run(
+          'autofill',
+          'ses_1',
+          'pg_1',
+          JSON.stringify({ fields: [{ match: { label: 'A' }, value: 'x' }] })
+        )
+      ).toBe(0);
       expect(out.join('\n')).not.toContain('SECRET-VALUE');
+      expect(out.join('\n')).toContain('1/1 fields verified');
     });
 
     it('pdf forwards options and saves bytes with --out', async () => {

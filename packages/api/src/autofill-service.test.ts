@@ -3,6 +3,84 @@ import { FakeEngine } from '@agentbrowser/testkit';
 import { expect, it, vi } from 'vitest';
 import { AgentBrowserService } from './service.js';
 
+function requireFakePage(engine: FakeEngine, pageId: string) {
+  const sessionId = engine.getSessionIds()[0];
+  if (!sessionId) throw new Error('Expected one engine session');
+  const page = engine.getFakePage(sessionId, pageId);
+  if (!page) throw new Error('Expected an engine page');
+  return page;
+}
+
+it('reports approval refusal before engine dispatch as a known field failure', async () => {
+  const engine = new FakeEngine();
+  const service = new AgentBrowserService({ engine, approvalPolicy: { unknownRisk: 'required' } });
+  try {
+    const session = await service.createSession({ tenantId: 'owner' });
+    const page = await service.createPage(session.sessionId);
+    const raw = requireFakePage(engine, page.pageId);
+    raw.seedElements([
+      {
+        ref: 'company',
+        role: 'textbox',
+        name: 'Company',
+        attributes: {
+          tag: 'input',
+          type: 'text',
+          'autofill-node': 'company',
+          'autofill-block': '',
+        },
+      },
+    ]);
+    const writes = vi.spyOn(raw, 'act');
+    const report = await service.autofill(session.sessionId, page.pageId, {
+      fields: [{ match: { label: 'Company' }, value: 'blocked' }],
+      policy: { settleMs: 0 },
+    });
+    expect(report).toMatchObject({
+      ok: false,
+      receipts: [{ status: 'failed', verified: false }],
+    });
+    expect(writes).not.toHaveBeenCalled();
+  } finally {
+    await service.shutdown();
+  }
+});
+
+it('reports an engine rejection after the dispatch seam as uncertain', async () => {
+  const engine = new FakeEngine();
+  const service = new AgentBrowserService({ engine });
+  try {
+    const session = await service.createSession({ tenantId: 'owner' });
+    const page = await service.createPage(session.sessionId);
+    const raw = requireFakePage(engine, page.pageId);
+    raw.seedElements([
+      {
+        ref: 'company',
+        role: 'textbox',
+        name: 'Company',
+        attributes: {
+          tag: 'input',
+          type: 'text',
+          'autofill-node': 'company',
+          'autofill-block': '',
+        },
+      },
+    ]);
+    const writes = vi.spyOn(raw, 'act').mockRejectedValue(new Error('engine transport closed'));
+    const report = await service.autofill(session.sessionId, page.pageId, {
+      fields: [{ match: { label: 'Company' }, value: 'possibly written' }],
+      policy: { settleMs: 0 },
+    });
+    expect(report).toMatchObject({
+      ok: false,
+      receipts: [{ status: 'uncertain', verified: false }],
+    });
+    expect(writes).toHaveBeenCalledOnce();
+  } finally {
+    await service.shutdown();
+  }
+});
+
 it('does not confuse redacted display values with private verification evidence', async () => {
   const engine = new FakeEngine();
   const service = new AgentBrowserService({
@@ -12,7 +90,7 @@ it('does not confuse redacted display values with private verification evidence'
   try {
     const session = await service.createSession({ tenantId: 'owner' });
     const page = await service.createPage(session.sessionId);
-    const raw = engine.getFakePage(engine.getSessionIds()[0]!, page.pageId)!;
+    const raw = requireFakePage(engine, page.pageId);
     raw.seedElements([
       {
         ref: 'company',
@@ -53,7 +131,7 @@ it('stops the suffix and withholds output when the human takes over during a fie
       service.createPage(session.sessionId)
     );
     if ('replay' in page) throw new Error('Unexpected replay');
-    const raw = engine.getFakePage(engine.getSessionIds()[0]!, page.pageId)!;
+    const raw = requireFakePage(engine, page.pageId);
     raw.seedElements([
       {
         ref: 'company',
@@ -73,9 +151,12 @@ it('stops the suffix and withholds output when the human takes over during a fie
       service.authority.takeover(session.sessionId);
       return result;
     });
-    const review = service.authority.get(session.sessionId)!.prepareResume();
+    const control = service.authority.get(session.sessionId);
+    if (!control) throw new Error('Expected session control');
+    const review = control.prepareResume();
     const grant = service.authority.delegate(session.sessionId, review.epoch);
-    const principal = service.authority.authenticate(grant.token)!;
+    const principal = service.authority.authenticate(grant.token);
+    if (!principal) throw new Error('Expected delegated principal');
     await expect(
       service.authority.run(session.sessionId, principal, { id: 'bulk', fingerprint: 'bulk' }, () =>
         service.autofill(session.sessionId, page.pageId, {
@@ -102,7 +183,7 @@ it('resolves vault fill references for private comparison before any browser I/O
   try {
     const session = await service.createSession({ tenantId: 'owner' });
     const page = await service.createPage(session.sessionId);
-    const raw = engine.getFakePage(engine.getSessionIds()[0]!, page.pageId)!;
+    const raw = requireFakePage(engine, page.pageId);
     raw.seedElements([
       {
         ref: 'email',

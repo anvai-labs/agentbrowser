@@ -8,7 +8,10 @@
  * load (TypeCompiler), so the per-request cost is a cheap Check().
  */
 
+import type { Static, TSchema } from '@sinclair/typebox';
 import { TypeCompiler } from '@sinclair/typebox/compiler';
+import { Value } from '@sinclair/typebox/value';
+import { INTERACTION_GUIDANCE } from './interaction-guidance.js';
 import { ActionSchema, PlanStepSchema, SessionRequestSchema } from './schemas.js';
 import type { SessionRequest, SupportedAction } from './types.js';
 
@@ -104,4 +107,121 @@ export function validatePlanStep(body: unknown): Validated<Record<string, unknow
     issues.push({ path: error.path, message: error.message });
   }
   return { ok: false, issues };
+}
+
+const utf8 = new TextEncoder();
+
+export interface JsonSnapshotLimits {
+  readonly maxDepth: number;
+  readonly maxNodes: number;
+  readonly maxBytes: number;
+}
+
+interface SnapshotState {
+  readonly active: WeakSet<object>;
+  readonly limits: JsonSnapshotLimits;
+  nodes: number;
+  bytes: number;
+}
+
+function chargeString(value: string, state: SnapshotState): void {
+  if (value.length > state.limits.maxBytes - state.bytes) throw new Error('unstable report');
+  state.bytes += utf8.encode(value).byteLength;
+  if (state.bytes > state.limits.maxBytes) throw new Error('unstable report');
+}
+
+function snapshotJsonValue(input: unknown, state: SnapshotState, depth: number): unknown {
+  if (depth > state.limits.maxDepth || ++state.nodes > state.limits.maxNodes)
+    throw new Error('unstable report');
+  if (
+    input === null ||
+    input === undefined ||
+    typeof input === 'number' ||
+    typeof input === 'boolean'
+  ) {
+    return input;
+  }
+  if (typeof input === 'string') {
+    chargeString(input, state);
+    return input;
+  }
+  if (typeof input !== 'object' || state.active.has(input)) throw new Error('unstable report');
+  state.active.add(input);
+  try {
+    if (Array.isArray(input)) {
+      if (Object.getPrototypeOf(input) !== Array.prototype) throw new Error('unstable report');
+      const length = Object.getOwnPropertyDescriptor(input, 'length');
+      if (!length || !Object.hasOwn(length, 'value') || !Number.isSafeInteger(length.value))
+        throw new Error('unstable report');
+      if (length.value > state.limits.maxNodes - state.nodes) throw new Error('unstable report');
+      const keys = Reflect.ownKeys(input);
+      if (keys.length !== length.value + 1 || keys.some((key) => typeof key !== 'string'))
+        throw new Error('unstable report');
+      const snapshot: unknown[] = [];
+      for (let index = 0; index < length.value; index++) {
+        const descriptor = Object.getOwnPropertyDescriptor(input, String(index));
+        if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value'))
+          throw new Error('unstable report');
+        snapshot.push(snapshotJsonValue(descriptor.value, state, depth + 1));
+      }
+      return snapshot;
+    }
+
+    if (Object.getPrototypeOf(input) !== Object.prototype) throw new Error('unstable report');
+    const snapshot: Record<string, unknown> = {};
+    for (const key of Reflect.ownKeys(input)) {
+      if (typeof key !== 'string') throw new Error('unstable report');
+      chargeString(key, state);
+      const descriptor = Object.getOwnPropertyDescriptor(input, key);
+      if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value'))
+        throw new Error('unstable report');
+      Object.defineProperty(snapshot, key, {
+        value: snapshotJsonValue(descriptor.value, state, depth + 1),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    }
+    return snapshot;
+  } finally {
+    state.active.delete(input);
+  }
+}
+
+/** Stable and detached data, with optional bounds, for semantic validation at trust boundaries. */
+export function snapshotJsonData(input: unknown, limits?: JsonSnapshotLimits): unknown {
+  return snapshotJsonValue(
+    input,
+    {
+      active: new WeakSet<object>(),
+      limits: limits ?? {
+        maxDepth: Number.POSITIVE_INFINITY,
+        maxNodes: Number.POSITIVE_INFINITY,
+        maxBytes: Number.POSITIVE_INFINITY,
+      },
+      nodes: 0,
+      bytes: 0,
+    },
+    0
+  );
+}
+
+/** One output-boundary policy: invalid reports never prove that a write did not execute. */
+export function parseExecutionReport<S extends TSchema>(
+  schema: S,
+  input: unknown,
+  operation: string,
+  semanticallyValid: (report: Static<S>) => boolean = () => true,
+  snapshotLimits?: JsonSnapshotLimits
+): Static<S> {
+  let report: unknown;
+  try {
+    report = snapshotJsonData(input, snapshotLimits);
+  } catch {
+    throw new Error(`Invalid ${operation} report. ${INTERACTION_GUIDANCE.uncertainWrite}`);
+  }
+  if (!Value.Check(schema, report) || !semanticallyValid(report)) {
+    throw new Error(`Invalid ${operation} report. ${INTERACTION_GUIDANCE.uncertainWrite}`);
+  }
+  return report;
 }

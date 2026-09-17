@@ -20,7 +20,7 @@ it('exposes operator handoff and read-only agent reconciliation methods', async 
   await client.sessions.control('s');
   await client.sessions.takeover('s');
   await client.sessions.prepareResume('s');
-  await client.sessions.delegate('s', 3);
+  await client.sessions.delegate('s', 3, 'forms');
   await client.sessions.operation('s', 'id');
   expect(fetch.mock.calls.map((call) => new URL(call[0]).pathname)).toEqual([
     '/v1/sessions/s/control',
@@ -29,6 +29,7 @@ it('exposes operator handoff and read-only agent reconciliation methods', async 
     '/v1/sessions/s/control/delegate',
     '/v1/sessions/s/operations/id',
   ]);
+  expect(fetch.mock.calls[3]?.[1].body).toBe(JSON.stringify({ epoch: 3, mode: 'forms' }));
 });
 it('preserves operation ID on lost response without retrying', async () => {
   const fetch = vi.fn().mockRejectedValue(new TypeError('connection lost'));

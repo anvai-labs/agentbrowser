@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "status": "design-only",
+  "purpose": "Local specification context routing; not runtime tools, permissions or private memory",
+  "baseline": {
+    "agentbrowser": "cec8b657b84afd82fcea6307b40666c0168531d6",
+    "codingagent": "c8a0950fed49914bb2877feeb65f5ab32cc47b97"
+  },
+  "always": ["core"],
+  "defaultView": "agent",
+  "limits": {
+    "maxModuleBytes": 12288,
+    "maxCoreBytes": 6144,
+    "maxTaskPacketBytes": 12288,
+    "unit": "UTF-8 bytes including emitted framing for complete bundle limits"
+  },
+  "modules": {
+    "core": {"path": "core.md", "requires": []},
+    "vision": {"path": "vision.md", "requires": ["core"]},
+    "architecture": {"path": "architecture.md", "requires": ["core"]},
+    "grounding": {"path": "grounding.md", "requires": ["core"]},
+    "contracts": {"path": "contracts.md", "requires": ["core"]},
+    "execution": {"path": "execution.md", "requires": ["core"]},
+    "state-memory": {"path": "state-memory.md", "requires": ["core"]},
+    "security": {"path": "security.md", "requires": ["core"]},
+    "interfaces": {"path": "interfaces.md", "requires": ["core"]},
+    "quality-ci": {"path": "quality-ci.md", "requires": ["core"]},
+    "delivery": {"path": "delivery.md", "requires": ["core"]},
+    "review": {"path": "review.md", "requires": ["core"]},
+    "mode-qa": {"path": "modes/qa.md", "requires": ["core"]},
+    "mode-operations": {"path": "modes/operations.md", "requires": ["core"]},
+    "mode-audit": {"path": "modes/audit.md", "requires": ["core"]},
+    "mode-appsec": {"path": "modes/appsec.md", "requires": ["core"]},
+    "mode-bounty": {"path": "modes/bounty.md", "requires": ["mode-appsec"]},
+    "mode-forms": {"path": "modes/forms.md", "requires": ["core"]},
+    "mode-application": {"path": "modes/application.md", "requires": ["core"]},
+    "task-protocol": {"path": "tasks/README.md", "requires": ["core"]},
+    "task-t0": {"path": "tasks/t0-contract-catalog.md", "requires": ["task-protocol", "contracts", "interfaces", "delivery"]},
+    "task-t1": {"path": "tasks/t1-context-profiles.md", "requires": ["task-protocol", "architecture", "state-memory", "interfaces"]},
+    "task-t2": {"path": "tasks/t2-shared-execution.md", "requires": ["task-protocol", "architecture", "contracts", "execution", "grounding"]},
+    "task-t3": {"path": "tasks/t3-qa-regressions.md", "requires": ["task-protocol", "contracts", "grounding", "quality-ci"]},
+    "task-t4": {"path": "tasks/t4-application-parity.md", "requires": ["task-protocol", "contracts", "grounding", "security", "interfaces"]},
+    "task-t5": {"path": "tasks/t5-durable-recovery.md", "requires": ["task-protocol", "contracts", "execution", "state-memory", "security"]},
+    "task-t6": {"path": "tasks/t6-widget-strategies.md", "requires": ["task-protocol", "execution", "grounding", "contracts"]},
+    "task-t7": {"path": "tasks/t7-audit-security.md", "requires": ["task-protocol", "security", "contracts", "quality-ci"]},
+    "task-t8": {"path": "tasks/t8-harness-qualification.md", "requires": ["task-protocol", "interfaces", "state-memory", "quality-ci", "review"]},
+    "task-t9": {"path": "tasks/t9-release-hardening.md", "requires": ["task-protocol", "quality-ci", "delivery", "review"]}
+  },
+  "modes": {
+    "qa": {"module": "mode-qa", "purpose": "Web development and deterministic regression"},
+    "operations": {"module": "mode-operations", "purpose": "Recurring authorized business workflows"},
+    "audit": {"module": "mode-audit", "purpose": "Visual, accessibility and performance evidence"},
+    "appsec": {"module": "mode-appsec", "purpose": "Authorized application-security regression"},
+    "bounty": {"module": "mode-bounty", "purpose": "Researcher-directed profile inheriting appsec constraints"},
+    "forms": {"module": "mode-forms", "purpose": "Scoped bulk forms with private value references"},
+    "application": {"module": "mode-application", "purpose": "Browser-free application operations and parity"}
+  },
+  "views": {
+    "agent": {"modules": [], "maxBytes": 12288},
+    "contracts": {"modules": ["contracts", "grounding"], "maxBytes": 49152},
+    "algorithms": {"modules": ["execution", "state-memory", "grounding"], "maxBytes": 65536},
+    "stack": {"modules": ["architecture", "interfaces", "security", "state-memory"], "maxBytes": 65536},
+    "review": {"modules": ["vision", "architecture", "review", "quality-ci", "delivery"], "maxBytes": 98304},
+    "task": {"modules": [], "requiresTask": true, "maxBytes": 65536}
+  },
+  "tasks": {
+    "t0": {"module": "task-t0", "status": "complete", "dependsOn": [], "modes": ["qa", "operations", "audit", "appsec", "bounty", "forms", "application"]},
+    "t1": {"module": "task-t1", "status": "active", "dependsOn": ["t0"], "modes": ["qa", "operations", "audit", "appsec", "bounty", "forms", "application"]},
+    "t2": {"module": "task-t2", "status": "not_started", "dependsOn": ["t0"], "modes": ["qa", "operations", "audit", "appsec", "bounty", "forms", "application"]},
+    "t3": {"module": "task-t3", "status": "not_started", "dependsOn": ["t2"], "modes": ["qa"]},
+    "t4": {"module": "task-t4", "status": "not_started", "dependsOn": ["t2"], "modes": ["application"]},
+    "t5": {"module": "task-t5", "status": "not_started", "dependsOn": ["t2"], "modes": ["qa", "operations", "appsec", "bounty", "forms", "application"]},
+    "t6": {"module": "task-t6", "status": "not_started", "dependsOn": ["t2"], "modes": ["forms"]},
+    "t7": {"module": "task-t7", "status": "not_started", "dependsOn": ["t3"], "conditionalDependencies": [{"modes": ["appsec", "bounty"], "dependsOn": ["t4"], "gate": "Qualified test-scope enforcement and explicit testing authority"}], "modes": ["audit", "appsec", "bounty"]},
+    "t8": {"module": "task-t8", "status": "not_started", "dependsOn": ["t0"], "conditionalDependencies": [{"slice": "profiles-and-runs", "dependsOn": ["t1", "t3"]}], "modes": ["qa", "operations", "audit", "appsec", "bounty", "forms", "application"]},
+    "t9": {"module": "task-t9", "status": "not_started", "dependsOn": ["t0"], "gate": "Changed-task acceptance and explicit promotion/publication authorization", "modes": ["qa", "operations", "audit", "appsec", "bounty", "forms", "application"]}
+  }
+}

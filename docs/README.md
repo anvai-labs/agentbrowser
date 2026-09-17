@@ -5,10 +5,14 @@ decision records (ADRs), technical designs (TDs), the operations guide, the
 threat model, and audit records. For installation and day-to-day usage,
 start with the [root README](../README.md).
 
+- [Generated MCP tool catalog](mcp-tool-catalog.md) — actual unbound/delegated discovery and output contracts
+
 ## Where to look, by task
 
 | You want to… | Read |
 | --- | --- |
+| Design or implement the next product increment with minimal context | [Modular specification](spec/README.md), [mode/task manifest](spec/manifest.json) and [agent task packets](spec/tasks/README.md) |
+| Use Bash/shell tools and load command help on demand | [CLI agent guide](cli-agent-usage.md) |
 | Install the service / MCP binary, wire up a client | [README](../README.md#install-homebrew) |
 | Run, configure, monitor, or troubleshoot the service | [Operations guide](operations.md) |
 | Drive a long interactive form (custom comboboxes, repeated sections) | [Recipe: interactive forms](recipes/interactive-forms.md) |
@@ -97,9 +101,9 @@ Comprehensive implementation roadmap with:
 
 ### Before Starting Implementation
 
-1. **Read all ADRs** - Understanding the "why" behind decisions
-2. **Review Technical Design** - Understand the full roadmap
-3. **Start with Phase 0** - Foundation must be solid
+1. **Load the relevant specification** - Read shared core, one mode and the current [task packet](spec/tasks/README.md); expand only its declared inputs
+2. **Inspect existing owners** - Reuse shared helpers, schemas and state machines; consult only ADRs relevant to the change
+3. **Check delivered state** - The MVP phases are historical; follow the current task's dependencies and qualification gates
 4. **Follow TDD** - Write tests before implementation
 5. **Respect critical path** - Tasks in order, others in parallel
 

@@ -1,7 +1,9 @@
+import { createHash } from 'node:crypto';
 import { VersionedCounter } from '@agentbrowser/testkit';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ApplicationAuthority,
+  type ApplicationScope,
   ApplicationSessions,
   defineApplicationOperation,
 } from './application-authority.js';
@@ -173,6 +175,94 @@ describe('application authority without a browser', () => {
     s.port.bind('session', operator, binding);
     await expect(s.port.execute('session', operator, command)).rejects.toThrow();
     expect(s.effect).toHaveBeenCalledTimes(1);
+  });
+
+  it('scopes application write identities and receipts to the owning session', async () => {
+    const authority = new SessionAuthority();
+    authority.register('session-a', 'owner', new AbortController().signal);
+    authority.register('session-b', 'owner', new AbortController().signal);
+    const oracle = new VersionedCounter();
+    const applicationId = (scope: ApplicationScope, operationId = scope.operationId) => {
+      if (!operationId) throw new Error('MISSING_IDENTITY');
+      return createHash('sha256')
+        .update(
+          JSON.stringify([scope.tenant, scope.resource, scope.sessionIncarnation, operationId])
+        )
+        .digest('hex');
+    };
+    const port = new ApplicationAuthority(authority, [
+      {
+        id: 'counter',
+        authorize: ({ tenant, resource }) => tenant === 'owner' && resource === 'account-a',
+        operations: {
+          add: defineApplicationOperation({
+            mode: 'write',
+            parse: (input) => Number(input),
+            execute: async (amount, scope) => ({
+              status: 'committed',
+              value: oracle.execute({
+                operationId: applicationId(scope),
+                expectedVersion: scope.expectedVersion ?? -1,
+                amount,
+              }),
+            }),
+          }),
+        },
+        receipt: async (scope, operationId) => oracle.receipt(applicationId(scope, operationId)),
+      },
+    ]);
+    port.bind('session-a', operator, binding);
+    port.bind('session-b', operator, binding);
+
+    await expect(
+      port.execute('session-a', operator, {
+        ...command,
+        input: 3,
+        expectedVersion: 0,
+      })
+    ).resolves.toMatchObject({ status: 'committed', value: { version: 1, total: 3 } });
+    await expect(
+      port.execute('session-b', operator, {
+        ...command,
+        input: 4,
+        expectedVersion: 1,
+      })
+    ).resolves.toMatchObject({ status: 'committed', value: { version: 2, total: 7 } });
+    expect(await port.lookupReceipt('session-a', operator, command.operationId)).toMatchObject({
+      expectedVersion: 0,
+      amount: 3,
+      total: 3,
+    });
+    expect(await port.lookupReceipt('session-b', operator, command.operationId)).toMatchObject({
+      expectedVersion: 1,
+      amount: 4,
+      total: 7,
+    });
+
+    port.unbind('session-a', operator);
+    port.bind('session-a', operator, binding);
+    expect(await port.lookupReceipt('session-a', operator, command.operationId)).toMatchObject({
+      expectedVersion: 0,
+      amount: 3,
+      total: 3,
+    });
+
+    authority.remove('session-a');
+    authority.register('session-a', 'owner', new AbortController().signal);
+    port.bind('session-a', operator, binding);
+    expect(await port.lookupReceipt('session-a', operator, command.operationId)).toBeUndefined();
+    await expect(
+      port.execute('session-a', operator, {
+        ...command,
+        input: 5,
+        expectedVersion: 2,
+      })
+    ).resolves.toMatchObject({ status: 'committed', value: { version: 3, total: 12 } });
+    expect(await port.lookupReceipt('session-a', operator, command.operationId)).toMatchObject({
+      expectedVersion: 2,
+      amount: 5,
+      total: 12,
+    });
   });
 
   it('keeps write identities stable across key order and isolates adapter input mutations', async () => {

@@ -52,6 +52,7 @@ import type {
   PageElement,
   PageState,
   PdfRequest,
+  PlanReport,
   ScreenshotRequest,
 } from '@agentbrowser/protocol';
 import {
@@ -1232,7 +1233,8 @@ export class AgentBrowserService {
           const full = this.requirePage(sessionId, pageId).lastObservation;
           return { ...view, elements: full ? [...full.byRef.values()] : [] };
         },
-        act: (request) => this.act(sessionId, pageId, request),
+        act: (request, onDispatch) =>
+          this.actWithDispatchObserver(sessionId, pageId, request, onDispatch),
         snapshot: async () => {
           const artifact = await this.exportHtml(sessionId, pageId);
           return {
@@ -1268,30 +1270,8 @@ export class AgentBrowserService {
     sessionId: string,
     pageId: string,
     steps: ServiceActRequest[]
-  ): Promise<{
-    ok: boolean;
-    completed: number;
-    results: Array<{
-      step: number;
-      ok: boolean;
-      actionId?: string;
-      remap?: { from: string; to: string };
-      result?: unknown;
-      error?: string;
-    }>;
-    mode: 'stable' | 'verified';
-    /** Payload economics (pressure matrix row 4): the plan's cheap "final state" signal. */
-    newRevision: number;
-    error?: { code: string; message: string };
-  }> {
-    const results: Array<{
-      step: number;
-      ok: boolean;
-      actionId?: string;
-      remap?: { from: string; to: string };
-      result?: unknown;
-      error?: string;
-    }> = [];
+  ): Promise<PlanReport & { mode: 'stable' | 'verified'; newRevision: number }> {
+    const results: PlanReport['results'] = [];
     const churnKey = this.churnKey(sessionId, pageId);
     const finalRevision = (): number => this.pages.get(pageId)?.revision ?? 0;
     for (const [index, step] of steps.entries()) {
@@ -1439,6 +1419,7 @@ export class AgentBrowserService {
                 ok: true,
                 actionId: retry.actionId,
                 ...(retry.remap !== undefined ? { remap: retry.remap } : {}),
+                ...(retry.result !== undefined ? { result: retry.result } : {}),
               });
               continue;
             } catch (retryError) {
@@ -2056,6 +2037,16 @@ export class AgentBrowserService {
     pageId: string,
     request: ServiceActRequest
   ): Promise<ServiceActResult | ServiceBatchActResult> {
+    return this.actWithDispatchObserver(sessionId, pageId, request);
+  }
+
+  /** Internal single-action seam used by orchestration to observe real dispatch. */
+  private async actWithDispatchObserver(
+    sessionId: string,
+    pageId: string,
+    request: ServiceActRequest,
+    onDispatch?: () => void
+  ): Promise<ServiceActResult | ServiceBatchActResult> {
     return this.traced('act', { sessionId, pageId, action: request.action }, async (span) => {
       const page = this.requirePage(sessionId, pageId);
       this.coordinator.updateActivity(sessionId);
@@ -2150,8 +2141,10 @@ export class AgentBrowserService {
           enginePage: adapter,
           observation: this.lastObservationOf(page),
           currentRevision: page.revision,
-          beforeAction: (resolved) =>
-            this.checkApproval(sessionId, pageId, page, request, resolved?.fingerprint, span),
+          beforeAction: async (resolved) => {
+            await this.checkApproval(sessionId, pageId, page, request, resolved?.fingerprint, span);
+            onDispatch?.();
+          },
           // TD-BROWSER-9, A7: reuse the map already built in observe() rather
           // than let the executor re-scan observation.elements per action.
           ...(page.lastObservation !== undefined

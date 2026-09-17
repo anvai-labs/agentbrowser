@@ -18,12 +18,14 @@ import {
   DELIVERED_ACTION_TYPES,
   DELIVERED_EXTRACT_FORMATS,
   ErrorCode,
-  validatePlanStep,
+  agentModeAllows,
+  isAgentMode,
+  parsePlanSteps,
   validateSessionRequest,
   validateWireAction,
   validateWireActionBatch,
 } from '@agentbrowser/protocol';
-import type { SessionPolicy } from '@agentbrowser/protocol';
+import type { AgentCapability, SessionPolicy } from '@agentbrowser/protocol';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import Fastify from 'fastify';
@@ -77,6 +79,41 @@ export interface ServerOptions {
 /** SHA-256 hex digest. */
 function sha256Hex(value: string): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+const delegatedRoutes: readonly {
+  method: string;
+  path: RegExp;
+  capability: AgentCapability;
+}[] = [
+  {
+    method: 'GET',
+    path: /^(|\/control|\/operations\/:operationId)$/,
+    capability: 'session.control',
+  },
+  {
+    method: 'GET',
+    path: /^\/pages(?:|\/:pageId|\/:pageId\/snapshot)$/,
+    capability: 'page.observe',
+  },
+  { method: 'GET', path: /^\/artifacts\/:artifactId$/, capability: 'page.capture' },
+  { method: 'POST', path: /^\/pages$/, capability: 'session.manage' },
+  { method: 'POST', path: /^\/pages\/:pageId\/navigate$/, capability: 'page.navigate' },
+  { method: 'POST', path: /^\/pages\/:pageId\/observe$/, capability: 'page.observe' },
+  { method: 'POST', path: /^\/pages\/:pageId\/(act|plan)$/, capability: 'page.interact' },
+  { method: 'POST', path: /^\/pages\/:pageId\/autofill$/, capability: 'page.form' },
+  { method: 'POST', path: /^\/pages\/:pageId\/extract$/, capability: 'page.extract' },
+  {
+    method: 'POST',
+    path: /^\/pages\/:pageId\/(screenshot|pdf|html)$/,
+    capability: 'page.capture',
+  },
+  { method: 'DELETE', path: /^\/pages\/:pageId$/, capability: 'session.manage' },
+];
+
+function delegatedRouteCapability(method: string, suffix: string): AgentCapability | undefined {
+  return delegatedRoutes.find((route) => route.method === method && route.path.test(suffix))
+    ?.capability;
 }
 
 /**
@@ -311,7 +348,17 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
    */
   const principals = new WeakMap<FastifyRequest, SessionPrincipal>();
   const outputGuards = new WeakMap<FastifyRequest, () => void>();
-  const autofillFailures = new WeakSet<FastifyRequest>();
+  const executionFailures = new WeakSet<FastifyRequest>();
+  const sendExecutionResult = <T extends { ok: boolean } | { status: 'success' | 'failed' }>(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    result: T
+  ) => {
+    if ('ok' in result ? !result.ok : result.status === 'failed') {
+      executionFailures.add(request);
+    }
+    return reply.send(result);
+  };
   fastify.addHook('onSend', async (request, reply, payload) => {
     const guard = outputGuards.get(request);
     if (!guard) return payload;
@@ -378,7 +425,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             outputGuards.set(request, service.authority.outputGuard(sessionId));
             return await handler(request, reply);
           },
-          () => reply.statusCode >= 400 || autofillFailures.has(request)
+          () => reply.statusCode >= 400 || executionFailures.has(request)
         );
         if (!reply.sent) return reply.send(result);
         return result;
@@ -507,22 +554,12 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           const suffix = template.replace('/v1/sessions/:sessionId', '');
           const sameSession =
             (request.params as { sessionId?: string }).sessionId === agent.sessionId;
-          const allowed =
-            sameSession &&
-            ((request.method === 'GET' &&
-              /^(|\/control|\/pages|\/pages\/:pageId|\/pages\/:pageId\/snapshot|\/operations\/:operationId|\/artifacts\/:artifactId)$/.test(
-                suffix
-              )) ||
-              (request.method === 'POST' &&
-                /^(\/pages|\/pages\/:pageId\/(navigate|observe|act|plan|autofill|extract|screenshot|pdf|html))$/.test(
-                  suffix
-                )) ||
-              (request.method === 'DELETE' && suffix === '/pages/:pageId'));
-          if (!allowed)
+          const capability = delegatedRouteCapability(request.method, suffix);
+          if (!sameSession || !capability || !agentModeAllows(agent.mode, capability))
             return reply.code(403).send({
               error: {
                 code: 'FORBIDDEN',
-                message: 'Delegated credential does not permit this operation',
+                message: 'Delegated credential profile does not permit this operation',
                 retryable: false,
               },
             });
@@ -660,7 +697,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
           const control = service.authority.get(sessionId);
           if (!control) throw new ServiceError('NOT_FOUND', 'Session is not controlled');
-          return reply.send(control.view());
+          return reply.send(service.authority.status(sessionId));
         })
       );
       for (const action of ['takeover', 'prepare-resume', 'delegate'] as const) {
@@ -678,10 +715,13 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             if (!control) throw new ServiceError('NOT_FOUND', 'Session is not controlled');
             if (action === 'takeover') return reply.send(service.authority.takeover(sessionId));
             if (action === 'delegate') {
-              const epoch = (request.body as { epoch?: unknown } | undefined)?.epoch;
+              const body = request.body as { epoch?: unknown; mode?: unknown } | undefined;
+              const epoch = body?.epoch;
               if (!Number.isSafeInteger(epoch) || (epoch as number) < 0)
                 throw new ServiceError('INVALID_REQUEST', 'A valid review epoch is required');
-              return reply.send(service.authority.delegate(sessionId, epoch as number));
+              if (body?.mode !== undefined && !isAgentMode(body.mode))
+                throw new ServiceError('INVALID_REQUEST', 'A valid agent mode is required');
+              return reply.send(service.authority.delegate(sessionId, epoch as number, body?.mode));
             }
             const review = control.prepareResume();
             service.invalidateControlObservations(sessionId);
@@ -864,44 +904,22 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           // Empty-body tolerance resolves a zero-length JSON body to
           // undefined; every route must dereference defensively.
           const body = (request.body ?? {}) as { actions?: Array<Record<string, unknown>> };
-          if (!Array.isArray(body.actions)) {
+          let actions: Array<Record<string, unknown>>;
+          try {
+            actions = parsePlanSteps(body.actions);
+          } catch (error) {
             return reply.status(400).send({
               error: {
                 code: 'INVALID_REQUEST',
-                message: 'body.actions must be an array of plan steps',
+                message: error instanceof Error ? error.message : 'Invalid plan steps',
                 retryable: false,
               },
             });
           }
-          // Plan steps were the last unvalidated request surface (a bare
-          // array cast): garbage waitForLabel/waitMs rode straight into
-          // waitForLabel's deadline arithmetic (NaN deadline = a poll loop
-          // that never exits). Each step is schema-checked on entry now;
-          // the service-side clamp remains as defense in depth.
-          for (const [index, step] of body.actions.entries()) {
-            const validated = validatePlanStep(step);
-            if (!validated.ok) {
-              const details = validated.issues
-                .map(
-                  (issue: { path: string; message: string }) =>
-                    `actions[${index}]${issue.path}: ${issue.message}`
-                )
-                .join('; ');
-              return reply.status(400).send({
-                error: {
-                  code: 'INVALID_REQUEST',
-                  message: `Invalid plan step: ${details}`,
-                  retryable: false,
-                },
-              });
-            }
-          }
-          return reply.send(
-            await service.executePlan(
-              sessionId,
-              pageId,
-              body.actions as unknown as ServiceActRequest[]
-            )
+          return sendExecutionResult(
+            request,
+            reply,
+            await service.executePlan(sessionId, pageId, actions as unknown as ServiceActRequest[])
           );
         })
       );
@@ -1045,8 +1063,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
           const report = await service.autofill(sessionId, pageId, request.body);
-          if (!report.ok) autofillFailures.add(request);
-          return reply.send(report);
+          return sendExecutionResult(request, reply, report);
         })
       );
 
@@ -1077,9 +1094,12 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           }
           const result = await service.act(sessionId, pageId, validated.value as ServiceActRequest);
           if (validated.warnings?.length) {
-            return reply.send({ ...result, warnings: validated.warnings });
+            return sendExecutionResult(request, reply, {
+              ...result,
+              warnings: validated.warnings,
+            });
           }
-          return reply.send(result);
+          return sendExecutionResult(request, reply, result);
         })
       );
 

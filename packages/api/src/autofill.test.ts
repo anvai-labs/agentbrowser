@@ -21,14 +21,20 @@ const field = (token: string, block: string, value = ''): PageElement => ({
 
 function fixture(initial: PageElement[]) {
   let elements = initial;
-  const act = vi.fn(async (request: { target?: { ref?: string }; value?: string }) => {
-    elements = elements.map((e) =>
-      e.ref === request.target?.ref ? { ...e, value: request.value } : e
-    );
-  });
+  const dispatch = vi.fn();
+  const act = vi.fn(
+    async (request: { target?: { ref?: string }; value?: string }, onDispatch: () => void) => {
+      onDispatch();
+      dispatch();
+      elements = elements.map((e) =>
+        e.ref === request.target?.ref ? { ...e, value: request.value } : e
+      );
+    }
+  );
   const observe = vi.fn(async () => ({ elements }));
   return {
     act,
+    dispatch,
     observe,
     assert: vi.fn(),
     snapshot: vi.fn(async () => ({ artifactId: 'html' })),
@@ -41,9 +47,11 @@ function fixture(initial: PageElement[]) {
 describe('bulk autofill closed loop', () => {
   it('fills identical labels within stable blocks despite document reorder', async () => {
     const f = fixture([field('a', 'old'), field('b', 'current')]);
-    f.act.mockImplementationOnce(async () =>
-      f.replace([field('b', 'current'), field('a', 'old', 'Past')])
-    );
+    f.act.mockImplementationOnce(async (_request, onDispatch) => {
+      onDispatch();
+      f.dispatch();
+      f.replace([field('b', 'current'), field('a', 'old', 'Past')]);
+    });
     const report = await runAutofill(
       {
         fields: [
@@ -81,7 +89,10 @@ describe('bulk autofill closed loop', () => {
 
   it('retries verification reads without replaying a write', async () => {
     const f = fixture([field('a', 'one')]);
-    f.act.mockImplementation(async () => {});
+    f.act.mockImplementation(async (_request, onDispatch) => {
+      onDispatch();
+      f.dispatch();
+    });
     const report = await runAutofill(
       {
         fields: [{ match: { label: 'Company name' }, value: 'x' }],
@@ -91,12 +102,17 @@ describe('bulk autofill closed loop', () => {
     );
     expect(report.receipts[0]).toMatchObject({ status: 'failed', verified: false, actual: '' });
     expect(f.act).toHaveBeenCalledOnce();
+    expect(f.dispatch).toHaveBeenCalledOnce();
     expect(f.observe).toHaveBeenCalledTimes(4);
   });
 
   it('does not accept an identical replacement node as verification evidence', async () => {
     const f = fixture([field('a', 'one')]);
-    f.act.mockImplementation(async () => f.replace([field('replacement', 'one', 'x')]));
+    f.act.mockImplementation(async (_request, onDispatch) => {
+      onDispatch();
+      f.dispatch();
+      f.replace([field('replacement', 'one', 'x')]);
+    });
     const report = await runAutofill(
       { fields: [{ match: { label: 'Company name' }, value: 'x' }], policy: { settleMs: 0 } },
       f
@@ -106,7 +122,11 @@ describe('bulk autofill closed loop', () => {
 
   it('stops after an uncertain dispatch even with skip policy', async () => {
     const f = fixture([field('a', 'one')]);
-    f.act.mockRejectedValue(new Error('transport closed after input handler'));
+    f.act.mockImplementation(async (_request, onDispatch) => {
+      onDispatch();
+      f.dispatch();
+      throw new Error('transport closed after input handler');
+    });
     const report = await runAutofill(
       {
         fields: [
@@ -119,6 +139,23 @@ describe('bulk autofill closed loop', () => {
     );
     expect(report.receipts.map((r) => r.status)).toEqual(['uncertain', 'not_attempted']);
     expect(f.act).toHaveBeenCalledOnce();
+  });
+
+  it('reports a refusal before the dispatch callback as failed', async () => {
+    const f = fixture([field('a', 'one')]);
+    f.act.mockRejectedValue(new Error('approval refused before engine dispatch'));
+    const report = await runAutofill(
+      {
+        fields: [
+          { match: { label: 'Company name' }, value: 'x' },
+          { match: { label: 'Company name' }, value: 'y' },
+        ],
+      },
+      f
+    );
+    expect(report.receipts.map((receipt) => receipt.status)).toEqual(['failed', 'not_attempted']);
+    expect(f.dispatch).not.toHaveBeenCalled();
+    expect(f.observe).toHaveBeenCalledOnce();
   });
 
   it('refuses partial observations instead of declaring a candidate unique', async () => {
@@ -151,10 +188,16 @@ describe('bulk autofill closed loop', () => {
 it('rechecks earlier fields after later handlers modify them', async () => {
   const f = fixture([field('a', 'old'), field('b', 'current')]);
   f.act
-    .mockImplementationOnce(async () => f.replace([field('a', 'old', 'A'), field('b', 'current')]))
-    .mockImplementationOnce(async () =>
-      f.replace([field('a', 'old', 'reverted'), field('b', 'current', 'B')])
-    );
+    .mockImplementationOnce(async (_request, onDispatch) => {
+      onDispatch();
+      f.dispatch();
+      f.replace([field('a', 'old', 'A'), field('b', 'current')]);
+    })
+    .mockImplementationOnce(async (_request, onDispatch) => {
+      onDispatch();
+      f.dispatch();
+      f.replace([field('a', 'old', 'reverted'), field('b', 'current', 'B')]);
+    });
   const report = await runAutofill(
     {
       fields: [
@@ -173,7 +216,9 @@ it('does no new I/O after the cooperative deadline while draining an in-flight w
   const f = fixture([field('a', 'one')]);
   let now = 0;
   const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
-  f.act.mockImplementation(async () => {
+  f.act.mockImplementation(async (_request, onDispatch) => {
+    onDispatch();
+    f.dispatch();
     now = 200;
   });
   try {
@@ -191,7 +236,10 @@ it('does no new I/O after the cooperative deadline while draining an in-flight w
 
 it('bounds displayed actuals and compares the full private value before redaction', async () => {
   const f = fixture([field('a', 'one', 'secret'.repeat(1000))]);
-  f.act.mockImplementation(async () => {});
+  f.act.mockImplementation(async (_request, onDispatch) => {
+    onDispatch();
+    f.dispatch();
+  });
   const report = await runAutofill(
     { fields: [{ match: { label: 'Company name' }, value: '***' }], policy: { settleMs: 0 } },
     { ...f, redact: (value) => value.replaceAll('secret', '***') }

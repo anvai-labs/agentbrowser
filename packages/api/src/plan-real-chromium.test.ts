@@ -15,6 +15,7 @@ import { type Server, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
 import { NetworkPolicy } from '@agentbrowser/policy';
+import { createPlanReportParser, parsePlanReport } from '@agentbrowser/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AgentBrowserService } from './service';
 
@@ -60,13 +61,22 @@ describe('waitForLabel against real Chromium (pressure matrix row 2)', () => {
       const continueRef = obs.elements.find((e) => e.name === 'Continue')?.ref;
       expect(continueRef).toBeDefined();
 
-      const result = await service.executePlan(session.sessionId, page.pageId, [
+      const actions = [
         { action: 'click', target: { ref: continueRef } },
-        { action: 'fill', waitForLabel: 'Password', value: 'hunter2' } as never,
-      ]);
+        {
+          action: 'fill',
+          waitForLabel: 'Password',
+          value: 'hunter2',
+          expectValue: 'hunter2',
+        } as never,
+      ];
+      const parseResponse = createPlanReportParser(actions);
+      const result = await service.executePlan(session.sessionId, page.pageId, actions);
 
+      expect(parseResponse(result)).toEqual(result);
       expect(result.ok).toBe(true);
       expect(result.results).toHaveLength(2);
+      expect(result.results[1]?.result).toEqual({ verified: true });
 
       const after = (await service.observe(session.sessionId, page.pageId, {
         mode: 'interactive',
@@ -93,6 +103,7 @@ describe('waitForLabel against real Chromium (pressure matrix row 2)', () => {
         { action: 'click', waitForLabel: 'Never Appears', waitMs: 300 } as never,
       ]);
 
+      expect(parsePlanReport(result)).toEqual(result);
       expect(result.ok).toBe(false);
       expect(result.error?.code).toBe('PLAN_WAIT_TIMEOUT');
     } finally {
