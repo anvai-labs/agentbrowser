@@ -1427,6 +1427,14 @@
                             {
                               "const": "native-select",
                               "type": "string"
+                            },
+                            {
+                              "const": "react-select",
+                              "type": "string"
+                            },
+                            {
+                              "const": "chip-multiselect",
+                              "type": "string"
                             }
                           ]
                         }
@@ -1769,6 +1777,105 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PlanReport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was malformed or failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session busy, control revoked, or operation ID conflicts. Reconcile before continuing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{sessionId}/pages/{pageId}/outcomes": {
+      "post": {
+        "operationId": "executeVerifiedPageOutcome",
+        "summary": "Execute one plan and verify its outcome through a trusted source",
+        "description": "Runs the existing ordered plan exactly once, then performs bounded read-only polling through a server-registered evidence source and verifier. The response keeps execution, verification and cleanup separate and has no aggregate success flag. Controlled sessions require X-AgentBrowser-Operation-Id.",
+        "tags": [
+          "pages"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pageId",
+            "in": "path",
+            "required": true,
+            "description": "Page identifier returned by createPage.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-AgentBrowser-Operation-Id",
+            "in": "header",
+            "required": false,
+            "description": "Required for delegated-session mutations. Same ID and request returns a replay status without redispatch; a different request conflicts. Not required for observations or captures.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutcomeRunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Canonical plan/outcome report, or a no-redispatch operation record for a repeated operation ID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/OutcomeRunReport"
+                    },
+                    {
+                      "$ref": "#/components/schemas/OperationReplay"
+                    }
+                  ]
                 }
               }
             }
@@ -3550,6 +3657,7 @@
             "type": "boolean"
           },
           "operation": {
+            "additionalProperties": false,
             "type": "object",
             "required": [
               "operationId",
@@ -3559,9 +3667,13 @@
             ],
             "properties": {
               "operationId": {
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-zA-Z0-9_-]+$",
                 "type": "string"
               },
               "epoch": {
+                "minimum": 0,
                 "type": "integer"
               },
               "status": {
@@ -3703,6 +3815,7 @@
                 "type": "boolean"
               },
               "operation": {
+                "additionalProperties": false,
                 "type": "object",
                 "required": [
                   "operationId",
@@ -3712,9 +3825,13 @@
                 ],
                 "properties": {
                   "operationId": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[a-zA-Z0-9_-]+$",
                     "type": "string"
                   },
                   "epoch": {
+                    "minimum": 0,
                     "type": "integer"
                   },
                   "status": {
@@ -3896,6 +4013,7 @@
                 "type": "boolean"
               },
               "operation": {
+                "additionalProperties": false,
                 "type": "object",
                 "required": [
                   "operationId",
@@ -3905,9 +4023,13 @@
                 ],
                 "properties": {
                   "operationId": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[a-zA-Z0-9_-]+$",
                     "type": "string"
                   },
                   "epoch": {
+                    "minimum": 0,
                     "type": "integer"
                   },
                   "status": {
@@ -4125,6 +4247,7 @@
         ]
       },
       "OperationRecord": {
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "operationId",
@@ -4134,9 +4257,13 @@
         ],
         "properties": {
           "operationId": {
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9_-]+$",
             "type": "string"
           },
           "epoch": {
+            "minimum": 0,
             "type": "integer"
           },
           "status": {
@@ -4161,6 +4288,66 @@
           },
           "dispatched": {
             "type": "boolean"
+          }
+        }
+      },
+      "OperationReplay": {
+        "additionalProperties": false,
+        "$id": "urn:agentbrowser:operation-replay:v1",
+        "type": "object",
+        "required": [
+          "replay",
+          "operation"
+        ],
+        "properties": {
+          "replay": {
+            "const": true,
+            "type": "boolean"
+          },
+          "operation": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "operationId",
+              "epoch",
+              "status",
+              "dispatched"
+            ],
+            "properties": {
+              "operationId": {
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-zA-Z0-9_-]+$",
+                "type": "string"
+              },
+              "epoch": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "status": {
+                "anyOf": [
+                  {
+                    "const": "in_flight",
+                    "type": "string"
+                  },
+                  {
+                    "const": "completed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "failed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "outcome_unknown",
+                    "type": "string"
+                  }
+                ]
+              },
+              "dispatched": {
+                "type": "boolean"
+              }
+            }
           }
         }
       },
@@ -6068,6 +6255,689 @@
               },
               "message": {
                 "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "OutcomeRunRequest": {
+        "additionalProperties": false,
+        "$id": "urn:agentbrowser:outcome-run-request:v1",
+        "type": "object",
+        "required": [
+          "actions",
+          "verification"
+        ],
+        "properties": {
+          "actions": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "action"
+              ],
+              "properties": {
+                "action": {
+                  "anyOf": [
+                    {
+                      "const": "click",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dblclick",
+                      "type": "string"
+                    },
+                    {
+                      "const": "hover",
+                      "type": "string"
+                    },
+                    {
+                      "const": "fill",
+                      "type": "string"
+                    },
+                    {
+                      "const": "typeText",
+                      "type": "string"
+                    },
+                    {
+                      "const": "clear",
+                      "type": "string"
+                    },
+                    {
+                      "const": "check",
+                      "type": "string"
+                    },
+                    {
+                      "const": "uncheck",
+                      "type": "string"
+                    },
+                    {
+                      "const": "select",
+                      "type": "string"
+                    },
+                    {
+                      "const": "upload",
+                      "type": "string"
+                    },
+                    {
+                      "const": "scroll",
+                      "type": "string"
+                    },
+                    {
+                      "const": "press",
+                      "type": "string"
+                    },
+                    {
+                      "const": "wait",
+                      "type": "string"
+                    },
+                    {
+                      "const": "goBack",
+                      "type": "string"
+                    },
+                    {
+                      "const": "goForward",
+                      "type": "string"
+                    },
+                    {
+                      "const": "reload",
+                      "type": "string"
+                    },
+                    {
+                      "const": "acceptDialog",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dismissDialog",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "target": {
+                  "type": "object",
+                  "required": [
+                    "ref"
+                  ],
+                  "properties": {
+                    "ref": {
+                      "pattern": "^e\\d+_\\d+$",
+                      "type": "string"
+                    }
+                  }
+                },
+                "value": {
+                  "type": "string"
+                },
+                "values": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "paths": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "deltaX": {
+                  "type": "number"
+                },
+                "deltaY": {
+                  "type": "number"
+                },
+                "key": {
+                  "type": "string"
+                },
+                "count": {
+                  "minimum": 1,
+                  "maximum": 20,
+                  "type": "integer"
+                },
+                "delay": {
+                  "minimum": 0,
+                  "maximum": 1000,
+                  "type": "integer"
+                },
+                "direction": {
+                  "anyOf": [
+                    {
+                      "const": "up",
+                      "type": "string"
+                    },
+                    {
+                      "const": "down",
+                      "type": "string"
+                    },
+                    {
+                      "const": "left",
+                      "type": "string"
+                    },
+                    {
+                      "const": "right",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "amount": {
+                  "type": "number"
+                },
+                "observe": {
+                  "anyOf": [
+                    {
+                      "const": "after",
+                      "type": "string"
+                    },
+                    {
+                      "const": "none",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "expectedRevision": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "approvalToken": {
+                  "type": "string"
+                },
+                "promptText": {
+                  "type": "string"
+                },
+                "wait": {
+                  "type": "object",
+                  "required": [
+                    "until"
+                  ],
+                  "properties": {
+                    "until": {
+                      "anyOf": [
+                        {
+                          "const": "settled",
+                          "type": "string"
+                        },
+                        {
+                          "const": "domcontentloaded",
+                          "type": "string"
+                        },
+                        {
+                          "const": "load",
+                          "type": "string"
+                        },
+                        {
+                          "const": "networkidle",
+                          "type": "string"
+                        },
+                        {
+                          "const": "urlPattern",
+                          "type": "string"
+                        },
+                        {
+                          "const": "selectorVisible",
+                          "type": "string"
+                        },
+                        {
+                          "const": "minElements",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "timeoutMs": {
+                      "minimum": 0,
+                      "maximum": 300000,
+                      "type": "integer"
+                    },
+                    "pattern": {
+                      "minLength": 1,
+                      "maxLength": 2048,
+                      "type": "string"
+                    },
+                    "selector": {
+                      "minLength": 1,
+                      "maxLength": 500,
+                      "type": "string"
+                    },
+                    "count": {
+                      "minimum": 1,
+                      "maximum": 10000,
+                      "type": "integer"
+                    }
+                  }
+                },
+                "condition": {
+                  "type": "object",
+                  "required": [
+                    "until"
+                  ],
+                  "properties": {
+                    "until": {
+                      "anyOf": [
+                        {
+                          "const": "settled",
+                          "type": "string"
+                        },
+                        {
+                          "const": "domcontentloaded",
+                          "type": "string"
+                        },
+                        {
+                          "const": "load",
+                          "type": "string"
+                        },
+                        {
+                          "const": "networkidle",
+                          "type": "string"
+                        },
+                        {
+                          "const": "urlPattern",
+                          "type": "string"
+                        },
+                        {
+                          "const": "selectorVisible",
+                          "type": "string"
+                        },
+                        {
+                          "const": "minElements",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "timeoutMs": {
+                      "minimum": 0,
+                      "maximum": 300000,
+                      "type": "integer"
+                    },
+                    "pattern": {
+                      "minLength": 1,
+                      "maxLength": 2048,
+                      "type": "string"
+                    },
+                    "selector": {
+                      "minLength": 1,
+                      "maxLength": 500,
+                      "type": "string"
+                    },
+                    "count": {
+                      "minimum": 1,
+                      "maximum": 10000,
+                      "type": "integer"
+                    }
+                  }
+                },
+                "expectValue": {
+                  "type": "string"
+                },
+                "waitForLabel": {
+                  "minLength": 1,
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                "waitMs": {
+                  "minimum": 100,
+                  "maximum": 60000,
+                  "type": "integer"
+                },
+                "remap": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "verification": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "verifier",
+              "input"
+            ],
+            "properties": {
+              "verifier": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "id",
+                  "version"
+                ],
+                "properties": {
+                  "id": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                    "type": "string"
+                  },
+                  "version": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                    "type": "string"
+                  }
+                }
+              },
+              "input": {}
+            }
+          }
+        }
+      },
+      "OutcomeRunReport": {
+        "additionalProperties": false,
+        "$id": "urn:agentbrowser:outcome-run-report:v1",
+        "type": "object",
+        "required": [
+          "plan",
+          "outcome"
+        ],
+        "properties": {
+          "plan": {
+            "$id": "urn:agentbrowser:plan-report:v1",
+            "type": "object",
+            "required": [
+              "ok",
+              "completed",
+              "results"
+            ],
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              },
+              "completed": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "results": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "step",
+                    "ok"
+                  ],
+                  "properties": {
+                    "step": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "actionId": {
+                      "type": "string"
+                    },
+                    "remap": {
+                      "type": "object",
+                      "required": [
+                        "from",
+                        "to"
+                      ],
+                      "properties": {
+                        "from": {
+                          "type": "string"
+                        },
+                        "to": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "result": {},
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "mode": {
+                "anyOf": [
+                  {
+                    "const": "stable",
+                    "type": "string"
+                  },
+                  {
+                    "const": "verified",
+                    "type": "string"
+                  }
+                ]
+              },
+              "newRevision": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "error": {
+                "type": "object",
+                "required": [
+                  "code",
+                  "message"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "outcome": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "availability",
+              "execution",
+              "verification",
+              "cleanup",
+              "testedSeam"
+            ],
+            "properties": {
+              "availability": {
+                "anyOf": [
+                  {
+                    "const": "available",
+                    "type": "string"
+                  },
+                  {
+                    "const": "blocked",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unsupported",
+                    "type": "string"
+                  }
+                ]
+              },
+              "execution": {
+                "anyOf": [
+                  {
+                    "const": "not_started",
+                    "type": "string"
+                  },
+                  {
+                    "const": "running",
+                    "type": "string"
+                  },
+                  {
+                    "const": "completed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "failed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unknown",
+                    "type": "string"
+                  }
+                ]
+              },
+              "verification": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "status",
+                  "requiredLayer",
+                  "evidenceRefIds"
+                ],
+                "properties": {
+                  "status": {
+                    "anyOf": [
+                      {
+                        "const": "passed",
+                        "type": "string"
+                      },
+                      {
+                        "const": "failed",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unknown",
+                        "type": "string"
+                      },
+                      {
+                        "const": "not_requested",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "verifier": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "version"
+                    ],
+                    "properties": {
+                      "id": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                        "type": "string"
+                      },
+                      "version": {
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "requiredLayer": {
+                    "anyOf": [
+                      {
+                        "const": "G0",
+                        "type": "string"
+                      },
+                      {
+                        "const": "G1",
+                        "type": "string"
+                      },
+                      {
+                        "const": "G2",
+                        "type": "string"
+                      },
+                      {
+                        "const": "G3",
+                        "type": "string"
+                      },
+                      {
+                        "const": "G4",
+                        "type": "string"
+                      },
+                      {
+                        "const": "G5",
+                        "type": "string"
+                      },
+                      {
+                        "const": "G6",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "achievedLayer": {
+                    "anyOf": [
+                      {
+                        "const": "G0",
+                        "type": "string"
+                      },
+                      {
+                        "const": "G1",
+                        "type": "string"
+                      },
+                      {
+                        "const": "G2",
+                        "type": "string"
+                      },
+                      {
+                        "const": "G3",
+                        "type": "string"
+                      },
+                      {
+                        "const": "G4",
+                        "type": "string"
+                      },
+                      {
+                        "const": "G5",
+                        "type": "string"
+                      },
+                      {
+                        "const": "G6",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "evidenceRefIds": {
+                    "maxItems": 32,
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "cleanup": {
+                "anyOf": [
+                  {
+                    "const": "not_needed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "pending",
+                    "type": "string"
+                  },
+                  {
+                    "const": "complete",
+                    "type": "string"
+                  },
+                  {
+                    "const": "failed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unknown",
+                    "type": "string"
+                  }
+                ]
+              },
+              "testedSeam": {
+                "anyOf": [
+                  {
+                    "const": "ui",
+                    "type": "string"
+                  },
+                  {
+                    "const": "application",
+                    "type": "string"
+                  },
+                  {
+                    "const": "agent_tool",
+                    "type": "string"
+                  }
+                ]
               }
             }
           }

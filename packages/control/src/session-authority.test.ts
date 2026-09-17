@@ -92,6 +92,18 @@ it('keeps the binding cursor stable while existing operation status changes', as
   expect(authority.status('session')).not.toHaveProperty('operation');
 });
 
+it('exposes dispatch state only inside the admitted operation scope', async () => {
+  const authority = new SessionAuthority();
+  authority.register('session', 'owner', new AbortController().signal);
+  expect(() => authority.didDispatchInScope('session')).toThrow();
+  await authority.run('session', operator, {}, async () => {
+    expect(authority.didDispatchInScope('session')).toBe(false);
+    authority.assert('session', true);
+    expect(authority.didDispatchInScope('session')).toBe(true);
+  });
+  expect(() => authority.didDispatchInScope('session')).toThrow();
+});
+
 it('rejects duplicate registration without changing an active grant or operation', async () => {
   const authority = new SessionAuthority();
   const owner = new AbortController();

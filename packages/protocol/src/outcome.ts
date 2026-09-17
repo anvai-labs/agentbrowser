@@ -1,4 +1,12 @@
 import { type Static, Type } from '@sinclair/typebox';
+import { INTERACTION_GUIDANCE } from './interaction-guidance.js';
+import {
+  type PlanReport,
+  PlanReportSchema,
+  createPlanReportParser,
+  parsePlanReport,
+} from './plan.js';
+import { PlanStepSchema } from './schemas.js';
 import { parseExecutionReport } from './validators.js';
 
 const strict = { additionalProperties: false };
@@ -73,6 +81,31 @@ export const OutcomeProjectionSchema = Type.Object(
 );
 export type OutcomeProjection = Static<typeof OutcomeProjectionSchema>;
 
+export const OutcomeRunRequestSchema = Type.Object(
+  {
+    // A UI outcome must exercise the UI seam; an empty plan cannot attest it.
+    actions: Type.Array(PlanStepSchema, { minItems: 1 }),
+    verification: Type.Object(
+      {
+        verifier: Type.Object({ id: identifier(), version: identifier() }, strict),
+        input: Type.Unknown(),
+      },
+      strict
+    ),
+  },
+  { ...strict, $id: 'urn:agentbrowser:outcome-run-request:v1' }
+);
+export type OutcomeRunRequest = Static<typeof OutcomeRunRequestSchema>;
+
+export const OutcomeRunReportSchema = Type.Object(
+  {
+    plan: PlanReportSchema,
+    outcome: OutcomeProjectionSchema,
+  },
+  { ...strict, $id: 'urn:agentbrowser:outcome-run-report:v1' }
+);
+export type OutcomeRunReport = Static<typeof OutcomeRunReportSchema>;
+
 export const TrustedVerifierDescriptorSchema = Type.Object(
   {
     id: identifier(),
@@ -86,6 +119,8 @@ export const TrustedVerifierDescriptorSchema = Type.Object(
       {
         maxReads: Type.Integer({ minimum: 1, maximum: 100 }),
         timeoutMs: Type.Integer({ minimum: 1, maximum: 60_000 }),
+        pollIntervalMs: Type.Integer({ minimum: 1, maximum: 10_000 }),
+        cleanupTimeoutMs: Type.Integer({ minimum: 1, maximum: 60_000 }),
         maxEvidenceRefs: Type.Integer({ minimum: 1, maximum: 32 }),
       },
       strict
@@ -143,4 +178,78 @@ export function parseTrustedVerifierDescriptor(input: unknown): TrustedVerifierD
     undefined,
     VERIFICATION_SNAPSHOT_LIMITS
   );
+}
+
+export function parseOutcomeRunRequest(input: unknown): OutcomeRunRequest {
+  return parseExecutionReport(
+    OutcomeRunRequestSchema,
+    input,
+    'outcome run request',
+    undefined,
+    VERIFICATION_SNAPSHOT_LIMITS
+  );
+}
+
+function validRunAxes(plan: PlanReport, outcome: OutcomeProjection): boolean {
+  if (plan.ok !== (outcome.execution === 'completed')) return false;
+  if (!plan.ok && outcome.execution !== 'failed' && outcome.execution !== 'unknown') {
+    const unavailableBeforeExecution =
+      outcome.execution === 'not_started' &&
+      outcome.availability !== 'available' &&
+      plan.completed === 0 &&
+      plan.results.length === 0;
+    if (!unavailableBeforeExecution) return false;
+  }
+  return outcome.verification.status !== 'passed' || outcome.execution === 'completed';
+}
+
+function invalidOutcomeRunReport(): never {
+  throw new Error(`Invalid outcome run report. ${INTERACTION_GUIDANCE.uncertainWrite}`);
+}
+
+function parseRunReport(
+  input: unknown,
+  parsePlan: (input: unknown) => PlanReport,
+  verifier?: Readonly<{ id: string; version: string }>
+): OutcomeRunReport {
+  const report = parseExecutionReport(
+    OutcomeRunReportSchema,
+    input,
+    'outcome run report',
+    undefined,
+    VERIFICATION_SNAPSHOT_LIMITS
+  );
+
+  let plan: PlanReport;
+  let outcome: OutcomeProjection;
+  try {
+    plan = parsePlan(report.plan);
+    outcome = parseOutcomeProjection(report.outcome);
+  } catch {
+    return invalidOutcomeRunReport();
+  }
+
+  if (!validRunAxes(plan, outcome)) return invalidOutcomeRunReport();
+  if (
+    verifier !== undefined &&
+    (outcome.verification.verifier?.id !== verifier.id ||
+      outcome.verification.verifier.version !== verifier.version)
+  ) {
+    return invalidOutcomeRunReport();
+  }
+  return { plan, outcome };
+}
+
+export function parseOutcomeRunReport(input: unknown): OutcomeRunReport {
+  return parseRunReport(input, parsePlanReport);
+}
+
+/** Pin plan verification requirements and verifier identity before any work starts. */
+export function createOutcomeRunReportParser(
+  request: OutcomeRunRequest
+): (input: unknown) => OutcomeRunReport {
+  const snapshot = parseOutcomeRunRequest(request);
+  const parsePlan = createPlanReportParser(snapshot.actions);
+  const verifier = Object.freeze({ ...snapshot.verification.verifier });
+  return (input: unknown) => parseRunReport(input, parsePlan, verifier);
 }

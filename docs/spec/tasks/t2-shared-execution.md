@@ -92,6 +92,13 @@ An immutable trusted registry evaluates pure bounded predicates once and never a
 evidence, retries writes or runs cleanup. See the
 [outcome/verifier evidence](../evidence/t2-outcome-verifier-foundation.md).
 
-A SessionAuthority-owned vertical consumer, independent cleanup settlement and the
-remaining T2 acceptance matrix are still pending, so T2 is not complete and T3 is not
-yet unlocked.
+The seventh slice composes the existing plan executor with exact trusted evidence-source
+preflight, bounded read-only polling, verifier evaluation and all-settled cleanup. One
+request/report contract is exposed through REST, SDK and the first-class CLI; MCP is
+unchanged and optional. The response keeps execution, verification and cleanup axes
+separate, and CLI exit status derives a pass from all axes. See the
+[outcome-run evidence](../evidence/t2-outcome-run-vertical.md).
+
+No production evidence source is qualified yet, and the remaining takeover, late
+completion, application receipt and installed-surface acceptance matrix is pending.
+T2 is therefore not complete and T3 is not yet unlocked.

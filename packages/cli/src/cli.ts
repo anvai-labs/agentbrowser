@@ -20,6 +20,8 @@ import type {
   NavigationResponse,
   ObservationRequest,
   ObservationResponse,
+  OutcomeRunReport,
+  OutcomeRunRequest,
   PageResponse,
   PageSnapshot,
   PdfRequest,
@@ -34,15 +36,20 @@ import {
   AutofillRequestSchema,
   DELIVERED_EXTRACT_FORMATS,
   INTERACTION_GUIDANCE,
+  OutcomeRunReportSchema,
+  OutcomeRunRequestSchema,
   PlanActionsSchema,
   PlanReportSchema,
   REF_PATTERN,
   UsageError,
+  createOutcomeRunReportParser,
   createPlanReportParser,
   formatErrorForUser,
   isAgentMode,
+  isPassingOutcome,
   parseAutofillReport,
   parseAutofillRequest,
+  parseOutcomeRunRequest,
   parsePlanSteps,
   validateWireAction,
 } from '@agentbrowser/sdk-typescript';
@@ -105,6 +112,11 @@ export interface CliClient {
       pageId: string,
       actions: Array<Record<string, unknown>>
     ): Promise<PlanReport>;
+    outcome(
+      sessionId: string,
+      pageId: string,
+      request: OutcomeRunRequest
+    ): Promise<OutcomeRunReport>;
     snapshot(
       sessionId: string,
       pageId: string,
@@ -764,6 +776,37 @@ export function buildCli(deps: CliDependencies): Cli {
                 (r) => `  step ${r.step}: ${r.ok ? 'ok' : `FAILED - ${r.error ?? 'unknown'}`}`
               ),
               ...(result.error ? [`  ${result.error.code}: ${result.error.message}`] : []),
+            ]);
+          })
+        );
+
+      const outcome = program
+        .command('outcome')
+        .description(
+          'execute one existing plan and verify its result through a trusted server evidence source. Supply one bounded JSON object inline, via @file or stdin (-). A controlled run requires --operation-id; exit 0 means the canonical outcome passed.'
+        )
+        .argument('<sessionId>')
+        .argument('<pageId>')
+        .argument('<requestJson>', 'outcome request: inline JSON, @file, or - for stdin')
+        .action(
+          action(async (ctx, sessionId: string, pageId: string, requestJson: string) => {
+            let request: OutcomeRunRequest;
+            try {
+              request = parseOutcomeRunRequest(
+                await readJsonArgument(requestJson, 'outcome request')
+              );
+            } catch (error) {
+              throw new UsageError((error as Error).message);
+            }
+            const parseResponse = createOutcomeRunReportParser(request);
+            const report = parseResponse(
+              await ctx.client.sessions.outcome(sessionId, pageId, request)
+            );
+            if (!isPassingOutcome(report.outcome)) exitCode = 1;
+            ctx.emit(report, () => [
+              `execution: ${report.outcome.execution}; verification: ${report.outcome.verification.status}; cleanup: ${report.outcome.cleanup}`,
+              `plan: ${report.plan.completed}/${request.actions.length} steps completed`,
+              `evidence: ${report.outcome.verification.evidenceRefIds.join(', ') || 'none'}`,
             ]);
           })
         );
@@ -1492,7 +1535,12 @@ export function buildCli(deps: CliDependencies): Cli {
                               }
                             : selected === plan
                               ? { input: PlanActionsSchema, output: PlanReportSchema }
-                              : null,
+                              : selected === outcome
+                                ? {
+                                    input: OutcomeRunRequestSchema,
+                                    output: OutcomeRunReportSchema,
+                                  }
+                                : null,
                       }
                     : {}),
                   usage: selected.createHelp().commandUsage(selected),

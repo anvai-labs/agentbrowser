@@ -11,6 +11,7 @@ import type { SessionPrincipal } from './session-authority.js';
  */
 
 import { createHash, randomBytes } from 'node:crypto';
+import type { TrustedEvidenceSourceRegistry, TrustedVerifierRegistry } from '@agentbrowser/control';
 import { InMemoryTracer, MetricsRegistry, type SecretManager } from '@agentbrowser/core';
 import type { StructuredLogger } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
@@ -37,6 +38,7 @@ import {
   AgentBrowserService,
   type ServiceActRequest,
   ServiceError,
+  type ServiceOutcomeEvidenceContext,
   type ServiceSessionRequest,
 } from './service.js';
 
@@ -74,6 +76,10 @@ export interface ServerOptions {
    * the spec's trusted single-tenant local mode.
    */
   apiKeys?: Map<string, string>;
+  /** Trusted deployment-owned verifier registry for the optional outcome endpoint. */
+  verifierRegistry?: TrustedVerifierRegistry;
+  /** Trusted evidence adapters; request bodies cannot register or select arbitrary code. */
+  evidenceSourceRegistry?: TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>;
 }
 
 /** SHA-256 hex digest. */
@@ -100,7 +106,7 @@ const delegatedRoutes: readonly {
   { method: 'POST', path: /^\/pages$/, capability: 'session.manage' },
   { method: 'POST', path: /^\/pages\/:pageId\/navigate$/, capability: 'page.navigate' },
   { method: 'POST', path: /^\/pages\/:pageId\/observe$/, capability: 'page.observe' },
-  { method: 'POST', path: /^\/pages\/:pageId\/(act|plan)$/, capability: 'page.interact' },
+  { method: 'POST', path: /^\/pages\/:pageId\/(act|plan|outcomes)$/, capability: 'page.interact' },
   { method: 'POST', path: /^\/pages\/:pageId\/autofill$/, capability: 'page.form' },
   { method: 'POST', path: /^\/pages\/:pageId\/extract$/, capability: 'page.extract' },
   {
@@ -294,6 +300,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     ...(options.defaultIdleTimeoutMs !== undefined
       ? { defaultIdleTimeoutMs: options.defaultIdleTimeoutMs }
       : {}),
+    ...(options.verifierRegistry ? { verifierRegistry: options.verifierRegistry } : {}),
+    ...(options.evidenceSourceRegistry
+      ? { evidenceSourceRegistry: options.evidenceSourceRegistry }
+      : {}),
   });
 
   fastify.addHook('onClose', async () => {
@@ -357,6 +367,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     if ('ok' in result ? !result.ok : result.status === 'failed') {
       executionFailures.add(request);
     }
+    return reply.send(result);
+  };
+  const sendOutcomeResult = (
+    request: FastifyRequest,
+    reply: FastifyReply,
+    result: Awaited<ReturnType<AgentBrowserService['executeOutcome']>>
+  ) => {
+    if (result.outcome.execution !== 'completed') executionFailures.add(request);
     return reply.send(result);
   };
   fastify.addHook('onSend', async (request, reply, payload) => {
@@ -920,6 +938,20 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             request,
             reply,
             await service.executePlan(sessionId, pageId, actions as unknown as ServiceActRequest[])
+          );
+        })
+      );
+
+      v1.post(
+        '/sessions/:sessionId/pages/:pageId/outcomes',
+        route(async (request, reply) => {
+          const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
+          if (!requireBody(reply, request.body)) return reply;
+          return sendOutcomeResult(
+            request,
+            reply,
+            await service.executeOutcome(sessionId, pageId, request.body)
           );
         })
       );

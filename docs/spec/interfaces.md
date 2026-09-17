@@ -29,9 +29,15 @@ preconditions, side effects and result limitations. Workflow recipes load on dem
 | Execute explicit bounded heterogeneous steps | `browser_plan`, with its actual remap semantics |
 | One interaction or diagnostic step | `browser_act` with fresh target evidence |
 | Reconcile a delegated write | Existing operation-status surface |
+| Execute a plan with a registered verifier | Current REST/SDK/CLI `outcome`; configured evidence sources only; MCP intentionally absent |
 | Inspect raw markup | Explicit `browser_html` or authorized artifact read; sensitive data |
 | Run a repeatable test | Future TestRun adapter over shared operations |
 | Execute an application operation | Existing in-process typed port; public adapter pending |
+
+The CLI is a first-class service client. A local browser deployment needs the service,
+one qualified engine and the CLI installation; a remote deployment needs only the CLI
+and authenticated service reachability on the caller. MCP remains an optional adapter.
+Neither CLI nor MCP owns execution, browser state, verification truth or replay policy.
 
 The baseline catalog is 13 unbound tools, or 12 delegated tools. Treat counts as
 generated release facts, not constants replicated in README, smoke scripts and agent

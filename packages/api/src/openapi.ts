@@ -25,6 +25,9 @@ import {
   NavigationStatusSchema,
   ObservationRequestSchema,
   OperationRecordSchema,
+  OperationReplaySchema,
+  OutcomeRunReportSchema,
+  OutcomeRunRequestSchema,
   PageElementSchema,
   PageStateSchema,
   PlanReportSchema,
@@ -611,6 +614,29 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         },
       },
 
+      '/v1/sessions/{sessionId}/pages/{pageId}/outcomes': {
+        post: {
+          operationId: 'executeVerifiedPageOutcome',
+          summary: 'Execute one plan and verify its outcome through a trusted source',
+          description:
+            'Runs the existing ordered plan exactly once, then performs bounded read-only polling through a server-registered evidence source and verifier. The response keeps execution, verification and cleanup separate and has no aggregate success flag. Controlled sessions require X-AgentBrowser-Operation-Id.',
+          tags: ['pages'],
+          parameters: [sessionIdParam, pageIdParam],
+          requestBody: { required: true, content: json(ref('OutcomeRunRequest')) },
+          responses: {
+            '200': {
+              description:
+                'Canonical plan/outcome report, or a no-redispatch operation record for a repeated operation ID.',
+              content: json({
+                oneOf: [ref('OutcomeRunReport'), ref('OperationReplay')],
+              }),
+            },
+            '400': INVALID_REQUEST,
+            '404': NOT_FOUND,
+          },
+        },
+      },
+
       '/v1/sessions/{sessionId}/cookies': {
         get: {
           operationId: 'getSessionCookies',
@@ -1076,6 +1102,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         ControlReview: ControlReviewSchema,
         ControlGrant: ControlGrantSchema,
         OperationRecord: OperationRecordSchema,
+        OperationReplay: OperationReplaySchema,
         ApiError: ApiErrorSchema,
         ApiErrorDetail: ApiErrorDetailSchema,
         Viewport: ViewportSchema,
@@ -1089,6 +1116,8 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         ObservationRequest: ObservationRequestSchema,
         PlanStep: PlanStepSchema,
         PlanReport: PlanReportSchema,
+        OutcomeRunRequest: OutcomeRunRequestSchema,
+        OutcomeRunReport: OutcomeRunReportSchema,
         ActionResult: ActionResultSchema,
         NavigationStatus: NavigationStatusSchema,
         ArtifactRef: ArtifactRefSchema,
