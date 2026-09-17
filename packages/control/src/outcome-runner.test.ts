@@ -1,3 +1,4 @@
+import { isPassingOutcome } from '@agentbrowser/protocol';
 import { describe, expect, it, vi } from 'vitest';
 import {
   TrustedEvidenceSourceRegistry,
@@ -68,6 +69,58 @@ const base = () => ({
 });
 
 describe('verified outcome runner', () => {
+  it.each(['authority', 'cancellation'] as const)(
+    'withholds verified output after %s changes during asynchronous cleanup',
+    async (revocation) => {
+      const options = base();
+      const outer = new AbortController();
+      let authorized = true;
+      const cleanup = vi.fn(async () => {
+        await Promise.resolve();
+        if (revocation === 'authority') authorized = false;
+        else outer.abort();
+      });
+      const result = await runVerifiedOutcome({
+        ...options,
+        signal: outer.signal,
+        assertAuthority: () => {
+          if (!authorized) throw new Error('PRIVATE-REVOKED');
+        },
+        cleanups: [cleanup],
+      });
+      expect(options.execute).toHaveBeenCalledOnce();
+      expect(cleanup).toHaveBeenCalledOnce();
+      expect(isPassingOutcome(result.outcome)).toBe(false);
+      expect(result).not.toHaveProperty('result');
+      expect(result.outcome).toMatchObject({
+        availability: 'blocked',
+        execution: 'unknown',
+        verification: { status: 'unknown', evidenceRefIds: [] },
+        cleanup: 'complete',
+      });
+      expect(JSON.stringify(result)).not.toContain('PRIVATE');
+    }
+  );
+
+  it('rechecks authority after verifier evaluation even without registered cleanup', async () => {
+    let authorized = true;
+    const options = base();
+    const result = await runVerifiedOutcome({
+      ...options,
+      verifierRegistry: verifierRegistry(() => {
+        authorized = false;
+        return true;
+      }),
+      assertAuthority: () => {
+        if (!authorized) throw new Error('revoked');
+      },
+    });
+    expect(isPassingOutcome(result.outcome)).toBe(false);
+    expect(result).not.toHaveProperty('result');
+    expect(result.outcome.verification).toMatchObject({ status: 'unknown', evidenceRefIds: [] });
+    expect(options.execute).toHaveBeenCalledOnce();
+  });
+
   it('preflights an exact source and capability before executing', async () => {
     const options = base();
     const unavailable = new TrustedEvidenceSourceRegistry<undefined>([]);
@@ -264,7 +317,13 @@ describe('verified outcome runner', () => {
       evidenceSources: sourceRegistry(read),
       assertAuthority,
     });
-    expect(assertions).toEqual(['before-execute', 'after-execute', 'after-execute', 'after-read']);
+    expect(assertions).toEqual([
+      'before-execute',
+      'after-execute',
+      'after-execute',
+      'after-read',
+      'after-read',
+    ]);
 
     const blocked = base();
     blocked.assertAuthority.mockImplementation(() => {

@@ -102,3 +102,9 @@ separate, and CLI exit status derives a pass from all axes. See the
 No production evidence source is qualified yet, and the remaining takeover, late
 completion, application receipt and installed-surface acceptance matrix is pending.
 T2 is therefore not complete and T3 is not yet unlocked.
+
+Terminal authority qualification extends the seventh slice: after asynchronous cleanup,
+the shared runner rechecks authority and cancellation before releasing its projection.
+Revocation withholds plan data and evidence references, preserves cleanup status and
+reports dispatched execution conservatively as unknown. Service and delegated REST
+fixtures cover page closure and human takeover during cleanup without redispatch.
