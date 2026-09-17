@@ -18,6 +18,14 @@ The control plane suppresses duplicates but does not retry uncertain writes or
 manufacture evidence that an application committed. A trusted adapter can report
 a known rejection; malformed or lost results remain uncertain after dispatch.
 Receipt reads require current scoped authority and share the admission lock.
+Trusted adapters receive the authority-owned `sessionId` and per-registration
+`sessionIncarnation` in `ApplicationScope`. Application idempotency and receipt keys
+must include tenant, resource, session incarnation and the caller's raw operation ID
+(or an application-owned equivalent); the textual session ID is trace provenance.
+Binding generation is service-side admission provenance and must not replace session
+incarnation in a durable receipt key: an authorized same-registration, same-resource
+rebind can still reconcile the earlier application receipt. Incarnations are not
+persisted, so this contract alone makes no restart-reconciliation claim.
 
 This package currently exposes an in-process port. REST, MCP application tools,
 operator binding UI, and application-persisted restart receipts are subsequent

@@ -8,20 +8,24 @@ const { sessionId } = sessions.create(operator);
 // Independently inspected application state, not an asserted tool-response value.
 let total = 0;
 const receipts = new Map();
+const receiptKey = (scope, id = scope.operationId) =>
+  `${scope.tenant}\0${scope.resource}\0${scope.sessionIncarnation}\0${id}`;
 const port = new ApplicationAuthority(sessions.authority, [{
   id: 'owned-counter', authorize: ({ tenant, resource }) => tenant === 'owner' && resource === 'account',
   operations: { add: defineApplicationOperation({ mode: 'write',
     parse(value) { assert.equal(value, 1); return value; },
     async execute(value, scope) {
       assert.equal(scope.expectedVersion, 0);
+      assert.equal(scope.sessionId, sessionId);
+      assert.equal(scope.sessionIncarnation, sessions.authority.sessionIncarnation(sessionId));
       assert.equal(total, 0);
       total += value;
       const receipt = { operationId: scope.operationId, total };
-      receipts.set(scope.operationId, receipt);
+      receipts.set(receiptKey(scope), receipt);
       return { status: 'committed', value: receipt };
     },
   }) },
-  async receipt(_scope, id) { return receipts.get(id); },
+  async receipt(scope, id) { return receipts.get(receiptKey(scope, id)); },
 }]);
 try {
   port.bind(sessionId, operator, { adapter: 'owned-counter', resource: 'account' });

@@ -349,9 +349,9 @@ jobs:
 
           ```sh
           tar -xzf agentbrowser-server-<target>.tar.gz && ./server/agentbrowser-server
-          # needs node on PATH; browsers bootstrap on first run into
-          # ${XDG_CACHE_HOME:-$HOME/.cache}/agentbrowser/browsers
-          # (override with PLAYWRIGHT_BROWSERS_PATH)
+          # needs Node 22 plus a compatible Chromium already installed under
+          # PLAYWRIGHT_BROWSERS_PATH; the archive launcher does not download it.
+          # Linux hosts must also provide Chromium's platform libraries.
           ```
 
           Homebrew users get the server, CLI and MCP in one command:

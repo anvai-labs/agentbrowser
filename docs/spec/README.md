@@ -58,7 +58,8 @@ T2 is active with a first shared dispatch-boundary slice: pre-dispatch refusals 
 post-dispatch uncertainty now use the existing executor admission seam. See the
 [T2 packet](tasks/t2-shared-execution.md) and
 [dispatch-boundary](evidence/t2-dispatch-boundary.md) and
-[HTTP result-classification](evidence/t2-http-result-classification.md) evidence.
+[HTTP result-classification](evidence/t2-http-result-classification.md) and
+[application identity](evidence/t2-application-identity.md) evidence.
 
 ## Modes
 

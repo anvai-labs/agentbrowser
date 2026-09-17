@@ -141,6 +141,17 @@ it('detaches abort listeners and ignores late callbacks from removed owners', ()
   expect(authority.get('session')).toBeUndefined();
 });
 
+it('keeps a registration incarnation stable and fences a reused session ID', () => {
+  const authority = new SessionAuthority();
+  authority.register('session', 'owner', new AbortController().signal);
+  const first = authority.sessionIncarnation('session');
+  expect(authority.sessionIncarnation('session')).toBe(first);
+  authority.remove('session');
+  expect(() => authority.sessionIncarnation('session')).toThrow();
+  authority.register('session', 'owner', new AbortController().signal);
+  expect(authority.sessionIncarnation('session')).not.toBe(first);
+});
+
 it('cannot use a captured page after removal or under a replacement session', async () => {
   const authority = new SessionAuthority();
   authority.register('session', 'owner', new AbortController().signal);

@@ -55,5 +55,15 @@ logic. An in-band failure before dispatch is `failed`; after dispatch it is
 `outcome_unknown`; success remains `completed`. See the
 [HTTP result-classification evidence](../evidence/t2-http-result-classification.md).
 
+The third slice preserves the session component of application write identity through
+the trusted adapter boundary. `ApplicationScope` now carries the authority-owned
+session ID and a per-registration incarnation, so adapters can key application
+idempotency and receipts by tenant, resource, session incarnation and raw operation
+ID. The incarnation survives bind/unbind and changes when a textual session ID is
+reused. Binding generation remains service admission provenance and is deliberately
+excluded from durable receipt lookup, allowing an authorized same-registration,
+same-resource rebind to reconcile prior application evidence. See the
+[application identity evidence](../evidence/t2-application-identity.md).
+
 Compatible verifier projections, trusted verifier registration and the remaining T2
 acceptance matrix are still pending, so T2 is not complete.

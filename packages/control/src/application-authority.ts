@@ -5,6 +5,8 @@ import { canonicalJson } from './canonical-json.js';
 import { SessionAuthority, type SessionPrincipal } from './session-authority.js';
 
 export interface ApplicationScope {
+  readonly sessionId: string;
+  readonly sessionIncarnation: string;
   readonly tenant: string;
   readonly resource: string;
   readonly signal: AbortSignal;
@@ -200,6 +202,8 @@ export class ApplicationAuthority {
     request?: ApplicationRequest
   ): ApplicationScope {
     return Object.freeze({
+      sessionId,
+      sessionIncarnation: this.authority.sessionIncarnation(sessionId),
       tenant: binding.tenant,
       resource: binding.resource,
       signal: this.authority.signal(sessionId),
