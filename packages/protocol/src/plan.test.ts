@@ -62,6 +62,20 @@ describe('canonical plan contracts', () => {
     expect(() =>
       parsePlanReport({ ok: true, completed: 1, results: [{ step: 0, ok: true }] }, 2)
     ).toThrow('may have executed');
+
+    let nested: unknown = 'leaf';
+    for (let index = 0; index < 17; index++) nested = { next: nested };
+    const large = {
+      ok: false,
+      completed: 0,
+      results: Array.from({ length: 4100 }, (_, step) => ({
+        step,
+        ok: false,
+        ...(step === 0 ? { result: nested } : {}),
+      })),
+      error: { code: 'FAILED', message: 'x'.repeat(65_537) },
+    };
+    expect(parsePlanReport(large)).toEqual(large);
   });
 
   it.each([
