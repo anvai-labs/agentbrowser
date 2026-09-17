@@ -152,6 +152,13 @@ function captureFormEvidence(
   }
   if (node.tagName === 'INPUT') attributes.type = node.type ?? 'text';
   if (node.tagName === 'SELECT' && node.multiple) attributes.multiple = 'true';
+  // React-Select committed value: the single-value chip is a sibling inside
+  // the value container. Capturing it lets the autofill verification compare
+  // the committed selection for comboboxes whose a11y value stays empty.
+  if (node.tagName === 'INPUT' && node.closest('.select__value-container')) {
+    const chip = node.closest('.select__value-container')?.querySelector('.select__single-value');
+    if (chip?.textContent) attributes['autofill-committed'] = chip.textContent.trim().slice(0, 512);
+  }
   // Credentials never become additional observation evidence.
   const readable =
     node.tagName === 'TEXTAREA' ||

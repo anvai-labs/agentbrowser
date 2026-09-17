@@ -18,10 +18,30 @@ export interface AutofillPorts {
   snapshot(): Promise<{ artifactId: string }>;
 }
 
+interface StrategyScope {
+  /** Dispatch one wire action; marks the field dispatched on invocation. */
+  act(request: ServiceActRequest): Promise<unknown>;
+  /** Fresh, complete observation (guarded, non-degraded). */
+  observe(): Promise<PageElement[]>;
+  /** Bounded settle between strategy steps. */
+  settle(ms: number): Promise<void>;
+}
+
 interface WidgetStrategy {
-  name: 'native-input' | 'native-select';
+  name: 'native-input' | 'native-select' | 'react-select' | 'chip-multiselect';
   supports(element: PageElement, field: AutofillRequest['fields'][number]): boolean;
   action(field: AutofillRequest['fields'][number], ref: string): ServiceActRequest;
+  /**
+   * Multi-step commit for widget classes whose selection cannot be expressed
+   * as one wire action (react-select menus need open → filter → fresh option
+   * ref → click). The scope bounds every step inside the field's serial
+   * admission; `expected` is the committed state the final recheck confirms.
+   */
+  run?(
+    field: AutofillRequest['fields'][number],
+    ref: string,
+    scope: StrategyScope
+  ): Promise<{ expected: string }>;
 }
 
 // Trusted code owns the registry. No page-provided scripts or unqualified keyboard fallback.
@@ -49,6 +69,80 @@ const strategies: readonly WidgetStrategy[] = [
       values: [f.option?.value ?? ''],
       remap: false,
     }),
+  },
+  {
+    // React-Select single-select (combobox with typeahead filter). The commit
+    // path requires real per-char keystrokes to populate the option list, then
+    // a click on the exact filtered option — fill/Enter alone do not commit
+    // on Greenhouse-class portals. Verified live.
+    name: 'react-select',
+    supports: (e, f) =>
+      f.option !== undefined &&
+      e.role === 'combobox' &&
+      !!e.attributes?.['aria-autocomplete'] &&
+      e.attributes?.tag === 'input',
+    action: (f, ref) => ({ action: 'click', target: { ref }, remap: false }),
+    run: async (field, ref, scope) => {
+      const label = field.option?.value ?? '';
+      if (!label)
+        throw new AutofillFailure('INVALID_REQUEST', 'react-select requires option.value');
+      await scope.act({ action: 'click', target: { ref }, remap: false });
+      await scope.settle(2000);
+      await scope.act({ action: 'typeText', target: { ref }, value: label, delay: 35 });
+      await scope.settle(2500);
+      const options = await scope.observe();
+      const exact = options.find((e) => e.role === 'option' && (e.name ?? '').trim() === label);
+      const partial = options.find(
+        (e) =>
+          e.role === 'option' && (e.name ?? '').trim().toLowerCase().startsWith(label.toLowerCase())
+      );
+      const match = exact ?? partial;
+      if (!match)
+        throw new AutofillFailure(
+          'TARGET_NOT_FOUND',
+          `No option matching '${label}' appeared after typeahead filtering`
+        );
+      await scope.act({ action: 'click', target: { ref: match.ref }, remap: false });
+      await scope.settle(1500);
+      return { expected: label };
+    },
+  },
+  {
+    // Chip multi-select (combobox whose committed values render as chips with
+    // "press delete to clear"). Commits by typing the filter text and clicking
+    // the matching chip option; removal uses targeted press Delete on the chip.
+    name: 'chip-multiselect',
+    supports: (e, f) =>
+      f.option !== undefined && e.role === 'combobox' && !!e.attributes?.['aria-autocomplete'],
+    action: (f, ref) => ({ action: 'click', target: { ref }, remap: false }),
+    run: async (field, ref, scope) => {
+      const label = field.option?.value ?? '';
+      if (!label)
+        throw new AutofillFailure('INVALID_REQUEST', 'chip-multiselect requires option.value');
+      await scope.act({ action: 'click', target: { ref }, remap: false });
+      await scope.settle(2000);
+      await scope.act({ action: 'typeText', target: { ref }, value: label, delay: 35 });
+      await scope.settle(2500);
+      const options = await scope.observe();
+      const exact = options.find(
+        (e) => e.role === 'option' && (e.name ?? '').trim().toLowerCase() === label.toLowerCase()
+      );
+      const partial = options.find(
+        (e) =>
+          e.role === 'option' &&
+          (e.name ?? '').trim().toLowerCase().startsWith(label.toLowerCase()) &&
+          !(e.name ?? '').toLowerCase().includes('press delete')
+      );
+      const match = exact ?? partial;
+      if (!match)
+        throw new AutofillFailure(
+          'TARGET_NOT_FOUND',
+          `No chip option matching '${label}' appeared after typeahead filtering`
+        );
+      await scope.act({ action: 'click', target: { ref: match.ref }, remap: false });
+      await scope.settle(1500);
+      return { expected: label };
+    },
   },
 ];
 
@@ -206,15 +300,43 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
         );
       identities.set(index, identity);
       guard();
-      const effect = await ports.act(strategy.action(field, element.ref), () => {
-        if (execution.state === 'not_started') execution.state = 'dispatched';
-      });
-      if (execution.state === 'not_started')
-        throw new AutofillFailure(
-          'ENGINE_UNSUPPORTED',
-          'Action adapter returned without reporting its dispatch boundary'
-        );
-      execution.state = 'completed';
+      let effect: unknown;
+      if (strategy.run) {
+        // Multi-step strategy: each step dispatches through the same admission;
+        // the scope keeps the loop inside this field's serial grant.
+        const scope: StrategyScope = {
+          act: async (request) => {
+            guard();
+            const effect = await ports.act(request, () => {
+              if (execution.state === 'not_started') execution.state = 'dispatched';
+            });
+            execution.state = 'dispatched';
+            return effect;
+          },
+          observe: async () => {
+            guard();
+            return observe();
+          },
+          settle: async (ms) => {
+            await new Promise((r) => setTimeout(r, ms));
+            guard();
+          },
+        };
+        const outcome = await strategy.run(field, element.ref, scope);
+        execution.state = 'completed';
+        if (outcome.expected !== undefined) expectedValues[index] = outcome.expected;
+      } else {
+        const effect = await ports.act(strategy.action(field, element.ref), () => {
+          if (execution.state === 'not_started') execution.state = 'dispatched';
+        });
+        if (execution.state === 'not_started')
+          throw new AutofillFailure(
+            'ENGINE_UNSUPPORTED',
+            'Action adapter returned without reporting its dispatch boundary'
+          );
+        execution.state = 'completed';
+      }
+      guard();
       if (
         effect &&
         typeof effect === 'object' &&
@@ -241,7 +363,8 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
         if (resolve(fresh, field.match, blocks).attributes?.['autofill-node'] !== identity)
           throw new AutofillFailure('STALE_TARGET', 'Field identity changed after dispatch');
         display(receipt, same.value);
-        if (same.value === expected) {
+        const committed = same.attributes?.['autofill-committed'];
+        if (same.value === expected || (committed !== undefined && committed === expected)) {
           receipt.verified = true;
           receipt.status = 'verified';
           break;
