@@ -12,10 +12,17 @@ export {
   AutofillReportSchema,
   PlanActionsSchema,
   PlanReportSchema,
+  OutcomeRunRequestSchema,
+  OutcomeRunReportSchema,
+  OperationReplaySchema,
   AGENT_MODE_IDS,
   DEFAULT_AGENT_MODE,
   createPlanReportParser,
+  createOutcomeRunReportParser,
   isAgentMode,
+  isPassingOutcome,
+  parseOutcomeRunRequest,
+  parseOperationReplay,
   parsePlanSteps,
   parsePlanReport,
   parseAutofillReport,
@@ -23,4 +30,11 @@ export {
 
 export type { ExportedCookie } from './client';
 
-export type { AgentMode, PlanReport, RunCursor } from '@agentbrowser/protocol';
+export type {
+  AgentMode,
+  OutcomeRunReport,
+  OutcomeRunRequest,
+  OperationReplay,
+  PlanReport,
+  RunCursor,
+} from '@agentbrowser/protocol';

@@ -14,6 +14,11 @@ import { SessionAuthority } from './session-authority.js';
  */
 
 import {
+  type TrustedEvidenceSourceRegistry,
+  type TrustedVerifierRegistry,
+  runVerifiedOutcome,
+} from '@agentbrowser/control';
+import {
   ActionExecutor,
   ApprovalGate,
   ArtifactStore,
@@ -49,6 +54,8 @@ import { NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
 import type {
   ArtifactRef,
   ObservationRequest,
+  OutcomeRunReport,
+  OutcomeRunRequest,
   PageElement,
   PageState,
   PdfRequest,
@@ -61,7 +68,9 @@ import {
   DELIVERED_WAIT_TYPES,
   type DeliveredExtractFormat,
   REF_PATTERN,
+  createOutcomeRunReportParser,
   decodeWireAction,
+  parseOutcomeRunRequest,
   parseRef,
 } from '@agentbrowser/protocol';
 import { runAutofill } from './autofill.js';
@@ -276,6 +285,18 @@ export interface ServiceDependencies {
    */
   defaultTtlMs?: number;
   defaultIdleTimeoutMs?: number;
+  /** Trusted deployment-owned verification definitions; never populated by requests. */
+  verifierRegistry?: TrustedVerifierRegistry;
+  /** Trusted read-only evidence adapters paired to verifier capabilities. */
+  evidenceSourceRegistry?: TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>;
+}
+
+/** Minimum context exposed to a trusted evidence adapter. */
+export interface ServiceOutcomeEvidenceContext {
+  readonly sessionId: string;
+  readonly pageId: string;
+  readonly tenantId?: string;
+  readonly signal: AbortSignal;
 }
 
 interface PageContext {
@@ -340,6 +361,10 @@ export class AgentBrowserService {
   private readonly tracer?: InMemoryTracer;
   private readonly metrics?: MetricsRegistry;
   private readonly logger?: StructuredLogger;
+  private readonly verifierRegistry: TrustedVerifierRegistry | undefined;
+  private readonly evidenceSourceRegistry:
+    | TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>
+    | undefined;
   /** Per-session download policy, captured at creation (denying by default). */
   private readonly sessionDownloadPolicy = new Map<
     string,
@@ -402,6 +427,8 @@ export class AgentBrowserService {
     this.secretManager = deps.secretManager ?? new SecretManager();
     this.artifacts = deps.artifactStore ?? new ArtifactStore();
     this.downloader = deps.downloader;
+    this.verifierRegistry = deps.verifierRegistry;
+    this.evidenceSourceRegistry = deps.evidenceSourceRegistry;
     // Telemetry is opt-in per concern: each is wired only when provided.
     if (deps.tracer !== undefined) {
       this.tracer = deps.tracer;
@@ -1469,6 +1496,76 @@ export class AgentBrowserService {
       mode: this.churnMode(churnKey),
       newRevision: finalRevision(),
     };
+  }
+
+  /** Execute one plan and verify its outcome from a trusted read-only evidence source. */
+  async executeOutcome(
+    sessionId: string,
+    pageId: string,
+    input: unknown
+  ): Promise<OutcomeRunReport> {
+    let request: OutcomeRunRequest;
+    try {
+      request = parseOutcomeRunRequest(input);
+    } catch {
+      throw new ServiceError('INVALID_REQUEST', 'Invalid outcome run request.');
+    }
+    const parseReport = createOutcomeRunReportParser(request);
+    const session = this.requireSession(sessionId);
+    this.requirePage(sessionId, pageId);
+    if (!this.verifierRegistry || !this.evidenceSourceRegistry) {
+      throw new ServiceError('INVALID_REQUEST', 'Outcome verification is not configured.');
+    }
+    try {
+      // Resolve the verifier before any action can be dispatched so unsupported
+      // verifier identities are request failures, not ambiguous execution failures.
+      this.verifierRegistry.describe(
+        request.verification.verifier.id,
+        request.verification.verifier.version
+      );
+    } catch {
+      throw new ServiceError('INVALID_REQUEST', 'Unknown outcome verifier.');
+    }
+
+    const controlled = this.controlledContexts.has(session);
+    const run = await runVerifiedOutcome({
+      verifierRegistry: this.verifierRegistry,
+      evidenceSources: this.evidenceSourceRegistry,
+      verifier: { ...request.verification.verifier, input: request.verification.input },
+      context: {
+        sessionId,
+        pageId,
+        ...(session.metadata.tenantId !== undefined ? { tenantId: session.metadata.tenantId } : {}),
+        signal: session.signal,
+      },
+      execute: () =>
+        this.executePlan(sessionId, pageId, request.actions as unknown as ServiceActRequest[]),
+      executionFailed: (plan) => !plan.ok,
+      assertAuthority: () => {
+        this.requirePage(sessionId, pageId);
+      },
+      didDispatch: controlled
+        ? () => this.authority.didDispatchInScope(sessionId)
+        : () => request.actions.length > 0,
+      testedSeam: 'ui',
+      signal: session.signal,
+    });
+
+    const plan: PlanReport = run.result ?? {
+      ok: false,
+      completed: 0,
+      results: [],
+      error: {
+        code: 'OUTCOME_NOT_EXECUTED',
+        message: 'The outcome plan was not executed.',
+      },
+    };
+    try {
+      const report = parseReport({ plan, outcome: run.outcome });
+      return parseReport(this.secretManager.redact(report));
+    } catch {
+      throw new ServiceError('INTERNAL', 'Invalid internal outcome report.');
+    }
   }
 
   /**

@@ -34,13 +34,14 @@ describe one command at a time without contacting the service:
 ```bash
 agentbrowser describe
 agentbrowser describe autofill --schema
+agentbrowser describe outcome --schema
 agentbrowser --base-url http://localhost:5709 --json health
 ```
 
 For a local deployment, install the service and CLI; for a remote deployment,
 only the CLI is required on the agent host. MCP is optional in both cases. See
 [the shell-agent CLI guide](docs/cli-agent-usage.md) for bounded JSON input,
-operation reconciliation and bulk plan/autofill examples.
+operation reconciliation and bulk plan/autofill/outcome examples.
 
 ### Consuming as an MCP server
 

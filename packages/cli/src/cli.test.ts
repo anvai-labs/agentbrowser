@@ -799,6 +799,141 @@ describe('AgentBrowser CLI', () => {
       expect(deps.createClient).not.toHaveBeenCalled();
     });
 
+    it('describes the canonical outcome request and report without constructing a client', async () => {
+      expect(await run('describe', 'outcome', '--schema')).toBe(0);
+      const { input, output } = lastJson().command.schemas;
+      expect(input.properties.actions.items.properties.waitMs.maximum).toBe(60000);
+      expect(input.properties.verification.properties.verifier.required).toEqual(['id', 'version']);
+      expect(output.properties).toHaveProperty('plan');
+      expect(output.properties).toHaveProperty('outcome');
+      expect(deps.createClient).not.toHaveBeenCalled();
+    });
+
+    it('executes one canonical outcome call and exits zero only for a derived pass', async () => {
+      const request = {
+        actions: [{ action: 'press', key: 'Tab' }],
+        verification: {
+          verifier: { id: 'fixture.saved', version: '1' },
+          input: { expected: true },
+        },
+      };
+      const report = {
+        plan: { ok: true, completed: 1, results: [{ step: 0, ok: true }] },
+        outcome: {
+          availability: 'available',
+          execution: 'completed',
+          verification: {
+            status: 'passed',
+            verifier: { id: 'fixture.saved', version: '1' },
+            requiredLayer: 'G6',
+            achievedLayer: 'G6',
+            evidenceRefIds: ['receipt_1'],
+          },
+          cleanup: 'not_needed',
+          testedSeam: 'ui',
+        },
+      };
+      sessions.outcome = vi.fn().mockResolvedValue(report);
+      expect(
+        await run(
+          '--json',
+          '--operation-id',
+          'outcome-once',
+          'outcome',
+          'ses_1',
+          'pg_1',
+          JSON.stringify(request)
+        )
+      ).toBe(0);
+      expect(sessions.outcome).toHaveBeenCalledTimes(1);
+      expect(sessions.outcome).toHaveBeenCalledWith('ses_1', 'pg_1', request);
+      expect(lastJson()).toEqual(report);
+      expect(deps.createClient).toHaveBeenCalledWith(
+        expect.objectContaining({ headers: { 'x-agentbrowser-operation-id': 'outcome-once' } })
+      );
+
+      out.length = 0;
+      report.outcome.verification.status = 'failed';
+      sessions.outcome.mockResolvedValue(report);
+      expect(await run('--json', 'outcome', 'ses_1', 'pg_1', JSON.stringify(request))).toBe(1);
+      expect(lastJson()).toEqual(report);
+    });
+
+    it('reports an outcome replay as reconciliation without printing a false report', async () => {
+      const request = {
+        actions: [{ action: 'press', key: 'Tab' }],
+        verification: {
+          verifier: { id: 'fixture.saved', version: '1' },
+          input: true,
+        },
+      };
+      sessions.outcome = vi.fn().mockRejectedValue(
+        Object.assign(new Error('OPERATION_RECORDED: reconcile its status'), {
+          name: 'AgentBrowserError',
+          code: 'OPERATION_RECORDED',
+          retryable: false,
+          details: { operationId: 'outcome-once' },
+        })
+      );
+      expect(
+        await run(
+          '--json',
+          '--operation-id',
+          'outcome-once',
+          'outcome',
+          'ses_1',
+          'pg_1',
+          JSON.stringify(request)
+        )
+      ).toBe(1);
+      expect(sessions.outcome).toHaveBeenCalledOnce();
+      expect(out).toEqual([]);
+      expect(err.join(' ')).toContain('OPERATION_RECORDED');
+    });
+
+    it('rejects malformed outcome input and contradictory private reports without retrying', async () => {
+      sessions.outcome = vi.fn();
+      expect(await run('outcome', 'ses_1', 'pg_1', '{"actions":"PRIVATE-INPUT"}')).toBe(1);
+      expect(sessions.outcome).not.toHaveBeenCalled();
+      expect(err.join(' ')).not.toContain('PRIVATE-INPUT');
+
+      err.length = 0;
+      const request = {
+        actions: [{ action: 'press', key: 'Tab' }],
+        verification: {
+          verifier: { id: 'fixture.saved', version: '1' },
+          input: { expected: 'PRIVATE-EXPECTED' },
+        },
+      };
+      sessions.outcome.mockResolvedValue({
+        plan: {
+          ok: true,
+          completed: 0,
+          results: [],
+          error: { code: 'REMOTE', message: 'PRIVATE-REPORT' },
+        },
+        outcome: {
+          availability: 'available',
+          execution: 'completed',
+          verification: {
+            status: 'passed',
+            verifier: { id: 'fixture.saved', version: '1' },
+            requiredLayer: 'G6',
+            achievedLayer: 'G6',
+            evidenceRefIds: ['receipt_1'],
+          },
+          cleanup: 'not_needed',
+          testedSeam: 'ui',
+        },
+      });
+      expect(await run('--json', 'outcome', 'ses_1', 'pg_1', JSON.stringify(request))).toBe(1);
+      expect(sessions.outcome).toHaveBeenCalledTimes(1);
+      expect(out).toEqual([]);
+      expect(err.join(' ')).toContain('may have executed');
+      expect(err.join(' ')).not.toContain('PRIVATE-EXPECTED');
+      expect(err.join(' ')).not.toContain('PRIVATE-REPORT');
+    });
+
     it('rejects invalid plan steps before dispatch', async () => {
       sessions.plan = vi.fn();
       expect(await run('plan', 'ses_1', 'pg_1', '[{"action":"press","count":21}]')).toBe(1);

@@ -17,6 +17,7 @@ agentbrowser describe act press
 agentbrowser describe session create
 agentbrowser describe autofill --schema
 agentbrowser describe plan --schema
+agentbrowser describe outcome --schema
 agentbrowser describe act press | jq '{usage: .command.usage, options: .command.options}'
 agentbrowser act press --help
 ```
@@ -30,8 +31,10 @@ request that child's path to expand it.
 
 `scope: "cli-command-definitions"` means installed CLI syntax, **not** live backend
 capabilities or granted permissions. This is metadata, not a complete action JSON
-schema by default. `describe autofill --schema` and `describe plan --schema` include canonical input and
-output schemas (plan input is an array, matching its CLI payload); other commands currently return `schemas: null` with that flag.
+schema by default. `describe autofill --schema`, `describe plan --schema`, and
+`describe outcome --schema` include canonical input and output schemas (plan input is
+an array, matching its CLI payload); other commands currently return `schemas: null`
+with that flag.
 Schemas are emitted only on request, with nested constraints intact. Protocol semantic
 checks (such as exactly one value/option and the supported regex subset) still apply;
 a JSON-schema match alone is not execution authorization or semantic validation.
@@ -91,6 +94,7 @@ output: use `--json` for structured results; raw HTML is sensitive even in JSON 
 | Explicit bounded ordered steps | CLI `plan`; MCP `browser_plan` |
 | One interaction | CLI `act <command>`; MCP `browser_act` |
 | Qualified native scoped bulk forms | CLI `autofill`, SDK/REST autofill or MCP `browser_autofill` |
+| Plan plus independently registered outcome verifier | CLI `outcome` or SDK/REST outcome; MCP has no outcome tool |
 | Uncertain delegated mutation | CLI `session operation`; delegated MCP `browser_operation` |
 | Repeatable TestRun / durable workflow | Planned; do not infer availability from the design spec |
 
@@ -120,6 +124,12 @@ fi
 operation_id="$(uuidgen)"
 agentbrowser --json --operation-id "$operation_id" \
   plan "$session_id" "$page_id" - <steps.json
+
+# outcome.json contains actions plus an exact registered verifier ID/version and input.
+operation_id="$(uuidgen)"
+agentbrowser --json --operation-id "$operation_id" \
+  outcome "$session_id" "$page_id" @outcome.json >outcome-report.json
+jq '{plan, outcome}' outcome-report.json
 ```
 
 Use a **different fresh operation ID for each intended mutation**, including the plan
@@ -128,6 +138,12 @@ reconciliation. A script must not blindly resubmit failed reports. `--policy` ke
 existing wholesale replacement semantics and uses the same reader; request and policy
 cannot both consume stdin. Native widget support and all server authority checks are
 unchanged. Full-form snapshot artifacts and JSON receipts may contain private data.
+The `outcome` command exits 0 only when availability, execution, verification and
+cleanup all satisfy the canonical pass predicate. A nonzero exit may still include a
+complete report on stdout. Preserve it for diagnosis and reconcile uncertain writes;
+do not replay the mutation automatically. The server deployment must register the
+exact verifier and read-only evidence source. Verifier input is bounded JSON and can
+be private; the response contains only verifier metadata and opaque evidence IDs.
 
 Follow the shared [modular implementation plan](spec/tasks/README.md). Remaining T0
 work includes broader canonical schema coverage and installed-harness qualification.

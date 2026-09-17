@@ -311,6 +311,7 @@ agentbrowser --base-url http://localhost:5709 session create --tenant tenant1 --
 agentbrowser navigate <sessionId> <pageId> https://example.com
 agentbrowser act click <sessionId> <pageId> <ref>
 agentbrowser autofill <sessionId> <pageId> '@fields.json'   # bulk fill, per-field receipts
+agentbrowser outcome <sessionId> <pageId> '@outcome.json'  # plan + registered verifier
 agentbrowser pdf <sessionId> <pageId> --out page.pdf
 agentbrowser artifact get <sessionId> <artifactId> --out evidence.bin
 agentbrowser health            # exit 1 when unhealthy; --ready / --live select the probe
