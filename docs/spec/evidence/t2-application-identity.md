@@ -71,6 +71,34 @@ duplicate-suppression, rebinding and no-replay tests remain in the focused suite
 
 This identity prevents aliasing inside the current in-process, ephemeral authority. A
 future durable outcome reference must persist its host/service fence and return a
-typed, independently verifiable result. Generic verifier registration remains deferred
-until T4 has a public typed output/rejection/receipt consumer. Main promotion and
+typed, independently verifiable result. Trusted verifier registration now exists in the
+[outcome foundation](t2-outcome-verifier-foundation.md), but public application receipt
+consumers and production source qualification remain unfinished. Main promotion and
 release are outside this slice's develop delivery.
+
+## Admitted receipt read follow-up
+
+`ApplicationAuthority.readReceiptInScope` requires an existing admitted operation and
+reuses its captured output guard. Standalone `lookupReceipt` retains principal admission
+and delegates to that same helper. This allows trusted composition to read a receipt
+without opening another ticket and failing `SESSION_BUSY`.
+
+The adapter receives the current authority-owned tenant, resource and session incarnation,
+plus the business receipt ID as a separate argument. Neither an outer service operation
+ID nor binding generation becomes a receipt key. The read checks binding and adapter
+authorization before I/O and after settlement, with authority and cancellation fences
+around authorization callbacks. Its optional read-deadline signal is combined with the
+session signal. Cancellation cannot turn late completion into usable evidence, and the
+helper awaits adapter settlement without retries or early admission release.
+
+Failure-first coverage exposed the missing admitted-read seam and an existing standalone
+lookup that returned data after adapter authorization was revoked. Tests now cover distinct
+outer/business IDs, no read dispatch marker, outside/cross-session admission refusal,
+malformed IDs, cancellation before I/O, takeover, session replacement, session abort,
+read abort with pending-admission drain, and synchronous revocation inside authorization.
+The existing incarnation, same-resource rebind and class-adapter receiver tests use the
+shared lookup implementation unchanged.
+
+This is an in-process foundation only. The HTTP outcome source still needs explicit
+business correlation; no production evidence source, public receipt endpoint, durable
+receipt schema, new CLI/MCP command or application-commit claim is introduced.

@@ -185,15 +185,37 @@ export class ApplicationAuthority {
   async lookupReceipt(sessionId: string, principal: SessionPrincipal, operationId: string) {
     if (!CONTROL_OPERATION_ID.test(operationId))
       throw new ControlError('INVALID_REQUEST', 'Invalid receipt ID');
-    return this.authority.run(sessionId, principal, {}, async () => {
-      const binding = this.binding(sessionId);
-      const adapter = this.adapter(binding.adapter);
-      const scope = this.scope(sessionId, binding);
-      if (!adapter.authorize(scope))
+    return this.authority.run(sessionId, principal, {}, () =>
+      this.readReceiptInScope(sessionId, operationId)
+    );
+  }
+
+  /** Read-only composition inside an existing admission; never opens a second ticket. */
+  async readReceiptInScope(sessionId: string, operationId: string, signal?: AbortSignal) {
+    if (!CONTROL_OPERATION_ID.test(operationId))
+      throw new ControlError('INVALID_REQUEST', 'Invalid receipt ID');
+    const guard = this.authority.outputGuard(sessionId);
+    const binding = this.binding(sessionId);
+    const adapter = this.adapter(binding.adapter);
+    const ownedScope = this.scope(sessionId, binding);
+    const scope = signal
+      ? Object.freeze({ ...ownedScope, signal: AbortSignal.any([ownedScope.signal, signal]) })
+      : ownedScope;
+    const checkAuthority = () => {
+      guard();
+      if (scope.signal.aborted)
+        throw new ControlError('CONTROL_REVOKED', 'Application receipt read cancelled');
+      if (this.binding(sessionId) !== binding || !adapter.authorize(scope))
         throw new ControlError('CONTROL_REQUIRED', 'Application scope was revoked');
-      this.authority.assert(sessionId);
-      return adapter.receipt(scope, operationId);
-    });
+      // Trusted authorization can synchronously revoke ownership or cancel the read.
+      guard();
+      if (scope.signal.aborted)
+        throw new ControlError('CONTROL_REVOKED', 'Application receipt read cancelled');
+    };
+    checkAuthority();
+    const receipt = await adapter.receipt(scope, operationId);
+    checkAuthority();
+    return receipt;
   }
 
   private scope(
