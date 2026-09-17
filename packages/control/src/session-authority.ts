@@ -234,6 +234,15 @@ export class SessionAuthority {
     else entry.control.check(scope.ticket);
   }
 
+  /** Read-only dispatch classification for composition helpers in the admitted operation scope. */
+  didDispatchInScope(sessionId: string): boolean {
+    this.assert(sessionId);
+    const scope = this.scope.getStore();
+    if (!scope || scope.sessionId !== sessionId)
+      throw new ControlError('CONTROL_REQUIRED', 'Missing operation authority');
+    return scope.ticket.didDispatch;
+  }
+
   outputGuard(sessionId: string): () => void {
     this.assert(sessionId);
     const scope = this.scope.getStore();

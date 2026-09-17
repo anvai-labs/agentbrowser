@@ -52,6 +52,8 @@ documents, never logical authority. The harness owns reasoning, not outcome trut
 | `BoundedCache` in core/bounded-cache | Evictable non-authoritative cache entries | Eviction of still-valid operation deduplication records |
 | `SessionControl` / `SessionAuthority` | Admission, epochs, draining and authorized output | A per-mode lock or authority inferred from a connection |
 | `defineApplicationOperation` / `ApplicationAuthority` | Trusted typed adapters and scoped application execution | Caller-supplied arbitrary code or destinations |
+| Protocol outcome parsers and `OperationReplay` | One bounded request/report and replay-validation boundary for every client | A caller-defined success flag or unvalidated replay envelope |
+| `TrustedVerifierRegistry`, `TrustedEvidenceSourceRegistry`, `runVerifiedOutcome` in control | Exact verifier/source selection, bounded read polling and all-settled cleanup around an existing executor | A second plan executor, arbitrary runtime plugin loader or production oracle by itself |
 | Core `SecretManager`, `ArtifactStore`, API artifact-auth | Scoped private values and authorized evidence lifecycle | A global user-memory/profile store |
 | API `autofill.ts` | Existing browser-independent form sequencing and strategy seam | Plan-style ordinal remapping for strict block identities |
 | SDK `client.ts` request boundary | Timeout classification and no blind mutation retry | Independent retries in every CLI/MCP call site |
@@ -87,7 +89,7 @@ marketplace or dependency-injection framework for seven configuration profiles.
 
 | Composition | Required runtime | Must be absent unless selected |
 | --- | --- | --- |
-| Harness bridge | Existing MCP adapter or CLI plus service client | Browser binaries, scanners, user-profile database, model SDK |
+| Harness bridge | First-class CLI or optional MCP adapter plus service client | Browser binaries, scanners, user-profile database, model SDK |
 | Application-only service | Protocol, control and trusted application adapter | Playwright, CDP, browser downloads and rendering processes |
 | Local browser service | Shared control plus one installed qualified engine | Other engines and scanner modules |
 | QA extension | Browser service plus assertions/report adapters | LLM for deterministic replay; scanner engine |

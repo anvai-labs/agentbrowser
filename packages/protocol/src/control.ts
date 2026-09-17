@@ -1,5 +1,8 @@
 import { type Static, Type } from '@sinclair/typebox';
 import { AgentModeSchema } from './mode-profile.js';
+import { parseExecutionReport } from './validators.js';
+
+const strict = { additionalProperties: false };
 
 export const ControlStateSchema = Type.Union([
   Type.Literal('HUMAN_ACTIVE'),
@@ -8,17 +11,24 @@ export const ControlStateSchema = Type.Union([
   Type.Literal('PAUSE_REQUESTED'),
   Type.Literal('STOPPED'),
 ]);
-export const OperationRecordSchema = Type.Object({
-  operationId: Type.String(),
-  epoch: Type.Integer(),
-  status: Type.Union([
-    Type.Literal('in_flight'),
-    Type.Literal('completed'),
-    Type.Literal('failed'),
-    Type.Literal('outcome_unknown'),
-  ]),
-  dispatched: Type.Boolean(),
-});
+export const OperationRecordSchema = Type.Object(
+  {
+    operationId: Type.String({ minLength: 1, maxLength: 128, pattern: '^[a-zA-Z0-9_-]+$' }),
+    epoch: Type.Integer({ minimum: 0 }),
+    status: Type.Union([
+      Type.Literal('in_flight'),
+      Type.Literal('completed'),
+      Type.Literal('failed'),
+      Type.Literal('outcome_unknown'),
+    ]),
+    dispatched: Type.Boolean(),
+  },
+  strict
+);
+export const OperationReplaySchema = Type.Object(
+  { replay: Type.Literal(true), operation: OperationRecordSchema },
+  { ...strict, $id: 'urn:agentbrowser:operation-replay:v1' }
+);
 export const RunCursorSchema = Type.Object({
   version: Type.Literal(1),
   serviceGeneration: Type.String({ pattern: '^[A-Za-z0-9_-]{22}$' }),
@@ -37,9 +47,18 @@ export const ControlViewSchema = Type.Object({
 });
 export type ControlState = Static<typeof ControlStateSchema>;
 export type OperationRecord = Static<typeof OperationRecordSchema>;
+export type OperationReplay = Static<typeof OperationReplaySchema>;
 export type RunCursor = Static<typeof RunCursorSchema>;
 export type ControlView = Static<typeof ControlViewSchema>;
 export const CONTROL_OPERATION_ID = /^[a-zA-Z0-9_-]{1,128}$/;
+
+export function parseOperationReplay(input: unknown): OperationReplay {
+  return parseExecutionReport(OperationReplaySchema, input, 'operation replay', undefined, {
+    maxDepth: 4,
+    maxNodes: 32,
+    maxBytes: 4096,
+  });
+}
 
 export const ControlReviewSchema = Type.Intersect([
   ControlViewSchema,

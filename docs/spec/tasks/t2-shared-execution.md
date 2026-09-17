@@ -92,6 +92,27 @@ An immutable trusted registry evaluates pure bounded predicates once and never a
 evidence, retries writes or runs cleanup. See the
 [outcome/verifier evidence](../evidence/t2-outcome-verifier-foundation.md).
 
-A SessionAuthority-owned vertical consumer, independent cleanup settlement and the
-remaining T2 acceptance matrix are still pending, so T2 is not complete and T3 is not
-yet unlocked.
+The seventh slice composes the existing plan executor with exact trusted evidence-source
+preflight, bounded read-only polling, verifier evaluation and all-settled cleanup. One
+request/report contract is exposed through REST, SDK and the first-class CLI; MCP is
+unchanged and optional. The response keeps execution, verification and cleanup axes
+separate, and CLI exit status derives a pass from all axes. See the
+[outcome-run evidence](../evidence/t2-outcome-run-vertical.md).
+
+No production evidence source is qualified yet, and the remaining takeover, late
+completion, application receipt and installed-surface acceptance matrix is pending.
+T2 is therefore not complete and T3 is not yet unlocked.
+
+Terminal authority qualification extends the seventh slice: after asynchronous cleanup,
+the shared runner rechecks authority and cancellation before releasing its projection.
+Revocation withholds plan data and evidence references, preserves cleanup status and
+reports dispatched execution conservatively as unknown. Service and delegated REST
+fixtures cover page closure and human takeover during cleanup without redispatch.
+
+Verifier input preflight further qualifies the same slice: the shared registry snapshots
+and parses expected input before dispatch and captures an evidence-only evaluator.
+Invalid input is blocked without executing; legacy definitions lacking preparation are
+unsupported for outcome runs. Direct registry evaluation remains compatible. The runner
+rechecks authority and cancellation after preparation, settles cleanup on refusal, and
+delegated HTTP replay records the refusal as failed with no dispatch. Application receipt
+correlation and production evidence-source qualification are still pending.

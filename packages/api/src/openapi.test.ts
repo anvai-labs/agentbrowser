@@ -70,6 +70,7 @@ describe('OpenAPI document', () => {
       // spec-generated client.
       ['/v1/sessions/{sessionId}/pages/{pageId}/snapshot', 'get'],
       ['/v1/sessions/{sessionId}/pages/{pageId}/plan', 'post'],
+      ['/v1/sessions/{sessionId}/pages/{pageId}/outcomes', 'post'],
       // A3 evidence completion (Phase 2).
       ['/v1/sessions/{sessionId}/trace', 'post'],
       ['/v1/sessions/{sessionId}/pages/{pageId}/html', 'post'],
@@ -201,6 +202,9 @@ describe('OpenAPI document', () => {
       'PageState',
       'PageElement',
       'PlanStep',
+      'OutcomeRunRequest',
+      'OutcomeRunReport',
+      'OperationReplay',
       'ActionResult',
       'ObservationRequest',
       'ArtifactRef',
@@ -233,6 +237,26 @@ describe('OpenAPI document', () => {
       expect(report.$id).toBe('urn:agentbrowser:plan-report:v1');
       expect(report.properties.results.items.properties.remap.properties.to.type).toBe('string');
       expect(report.properties.results.items.properties.result).toBeDefined();
+    });
+
+    it('projects the canonical outcome request and report without an aggregate pass flag', () => {
+      const operation = doc.paths['/v1/sessions/{sessionId}/pages/{pageId}/outcomes'].post;
+      expect(operation.requestBody.content['application/json'].schema.$ref).toBe(
+        '#/components/schemas/OutcomeRunRequest'
+      );
+      expect(operation.responses['200'].content['application/json'].schema.oneOf).toEqual([
+        { $ref: '#/components/schemas/OutcomeRunReport' },
+        { $ref: '#/components/schemas/OperationReplay' },
+      ]);
+      expect(doc.components.schemas.OperationReplay.$id).toBe(
+        'urn:agentbrowser:operation-replay:v1'
+      );
+      const report = doc.components.schemas.OutcomeRunReport;
+      expect(report.$id).toBe('urn:agentbrowser:outcome-run-report:v1');
+      expect(report.properties).toHaveProperty('plan');
+      expect(report.properties).toHaveProperty('outcome');
+      expect(report.properties).not.toHaveProperty('ok');
+      expect(report.properties).not.toHaveProperty('pass');
     });
 
     it('should carry the protocol error taxonomy', () => {

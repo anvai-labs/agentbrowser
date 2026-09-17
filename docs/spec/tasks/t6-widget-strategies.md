@@ -1,6 +1,6 @@
 # T6: qualified widget strategies without duplicate orchestration
 
-Status: not started. Repository: agentbrowser. Depends on: T2.
+Status: active. Repository: agentbrowser. Depends on: T2.
 Inputs: core, forms mode, execution, grounding, contracts.
 
 ## Reuse and scope
@@ -32,3 +32,12 @@ Record accepted transfer sizes and cooperative versus hard deadline limitations.
 
 Close R09 for named strategies only. Keep unsupported cases explicit. Do not add a
 generic keyboard guesser, unrestricted regex or site-specific engine fork to pass a demo.
+
+## Current implementation state
+
+AgentBrowser 1.8.19 extends the existing autofill strategy registry with explicit
+`react-select` and `chip-multiselect` strategies. Both reuse the same scoped field
+resolution, action executor, receipt assembly and verification loop; they do not add a
+second bulk orchestrator. This is a bounded T6 slice, not completion of T6: reusable
+mapping, removal/rollback semantics, broader async/recycled-option coverage and
+cross-engine actual-surface qualification remain open.

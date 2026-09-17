@@ -1,7 +1,7 @@
 # Interfaces, harness integration and human experience
 
-Status: shared interface design; new profiles, remote MCP and public application tools
-remain implementation tasks. Reuse existing adapters and SDK rather than add gateways.
+Status: fixed mode profiles and CLI discovery are delivered; remote MCP and public
+application tools remain implementation tasks. Reuse existing adapters and SDK.
 
 ## One operation contract, several projections
 
@@ -17,7 +17,7 @@ durable receipts or event resynchronization.
 
 ## Tool and schema selection
 
-Proposed profiles project a subset of one canonical tool registry. Avoid parallel
+Fixed profiles project a subset of one canonical tool registry. Avoid parallel
 names such as `qa_click`, `forms_click` and `security_click`. Global instructions
 cover shared invariants once; individual descriptions state purpose, selection rule,
 preconditions, side effects and result limitations. Workflow recipes load on demand.
@@ -29,9 +29,15 @@ preconditions, side effects and result limitations. Workflow recipes load on dem
 | Execute explicit bounded heterogeneous steps | `browser_plan`, with its actual remap semantics |
 | One interaction or diagnostic step | `browser_act` with fresh target evidence |
 | Reconcile a delegated write | Existing operation-status surface |
+| Execute a plan with a registered verifier | Current REST/SDK/CLI `outcome`; configured evidence sources only; MCP intentionally absent |
 | Inspect raw markup | Explicit `browser_html` or authorized artifact read; sensitive data |
 | Run a repeatable test | Future TestRun adapter over shared operations |
 | Execute an application operation | Existing in-process typed port; public adapter pending |
+
+The CLI is a first-class service client. A local browser deployment needs the service,
+one qualified engine and the CLI installation; a remote deployment needs only the CLI
+and authenticated service reachability on the caller. MCP remains an optional adapter.
+Neither CLI nor MCP owns execution, browser state, verification truth or replay policy.
 
 The baseline catalog is 13 unbound tools, or 12 delegated tools. Treat counts as
 generated release facts, not constants replicated in README, smoke scripts and agent
@@ -52,7 +58,8 @@ The MCP spec supports these result mechanisms; annotations are hints, not author
 
 ## Protocol and harness compatibility
 
-Current AgentBrowser advertises `2024-11-05`. Negotiate only tested revisions; never
+Current AgentBrowser negotiates `2024-11-05` and `2025-06-18`, with structured plan
+and autofill reports for the latter. Negotiate only tested revisions; never
 change a version constant and claim full compatibility. Service session IDs, operation
 IDs and event cursors remain application contracts independent of MCP transport
 sessions. In particular, newer HTTP transport semantics differ from older optional

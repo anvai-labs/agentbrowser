@@ -1,9 +1,16 @@
 import {
   INTERACTION_GUIDANCE,
+  createOutcomeRunReportParser,
   createPlanReportParser,
   parseAutofillReport,
+  parseOperationReplay,
 } from '@agentbrowser/protocol';
-import type { PlanReport } from '@agentbrowser/protocol';
+import type {
+  OperationReplay,
+  OutcomeRunReport,
+  OutcomeRunRequest,
+  PlanReport,
+} from '@agentbrowser/protocol';
 /**
  * AgentBrowser TypeScript SDK Client
  *
@@ -24,6 +31,7 @@ import type {
 
 export type { ControlView, OperationRecord, RunCursor } from '@agentbrowser/protocol';
 export type { AutofillRequest, AutofillReport } from '@agentbrowser/protocol';
+export type { OutcomeRunReport, OutcomeRunRequest } from '@agentbrowser/protocol';
 export interface MutationOptions {
   operationId?: string;
 }
@@ -352,24 +360,40 @@ class HttpClient {
         );
       }
 
-      const result = (await response.json()) as T & { replay?: boolean; operation?: unknown };
-      if (result?.replay === true)
+      const result: unknown = await response.json();
+      const invalidResponse = () =>
+        new AgentBrowserError(
+          'INVALID_RESPONSE',
+          `Invalid operation response. ${INTERACTION_GUIDANCE.uncertainWrite}`,
+          false,
+          operationId ? { operationId } : undefined
+        );
+      const replayShaped =
+        typeof result === 'object' &&
+        result !== null &&
+        !Array.isArray(result) &&
+        Object.hasOwn(result, 'replay') &&
+        (result as { replay?: unknown }).replay === true;
+      if (operationId && replayShaped) {
+        let replay: OperationReplay;
+        try {
+          replay = parseOperationReplay(result);
+        } catch {
+          throw invalidResponse();
+        }
+        if (replay.operation.operationId !== operationId) throw invalidResponse();
         throw new AgentBrowserError(
           'OPERATION_RECORDED',
           'Operation already recorded; reconcile its status before taking further action',
           false,
-          { operationId, operation: result.operation }
+          { operationId, operation: replay.operation }
         );
+      }
       if (init.parseResponse) {
         try {
           return init.parseResponse(result);
         } catch {
-          throw new AgentBrowserError(
-            'INVALID_RESPONSE',
-            `Invalid operation response. ${INTERACTION_GUIDANCE.uncertainWrite}`,
-            false,
-            operationId ? { operationId } : undefined
-          );
+          throw invalidResponse();
         }
       }
       return result as T;
@@ -567,6 +591,22 @@ export class SessionsClient {
     return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/plan`, {
       method: 'POST',
       body: { actions },
+      ...options,
+      parseResponse,
+    });
+  }
+
+  /** Execute one existing plan and verify its outcome through a trusted server source. */
+  async outcome(
+    sessionId: string,
+    pageId: string,
+    request: OutcomeRunRequest,
+    options: MutationOptions = {}
+  ): Promise<OutcomeRunReport> {
+    const parseResponse = createOutcomeRunReportParser(request);
+    return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/outcomes`, {
+      method: 'POST',
+      body: request,
       ...options,
       parseResponse,
     });

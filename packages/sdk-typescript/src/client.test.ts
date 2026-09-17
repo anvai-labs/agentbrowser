@@ -266,6 +266,178 @@ describe('AgentBrowser SDK', () => {
   });
 
   describe('bulk execution report validation', () => {
+    it('validates an outcome replay before returning a reconciliation error', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            replay: true,
+            operation: {
+              operationId: 'outcome-once',
+              epoch: 2,
+              status: 'completed',
+              dispatched: true,
+            },
+          }),
+          { headers: { 'content-type': 'application/json' } }
+        )
+      );
+      const result = await client.sessions
+        .outcome(
+          'ses_1',
+          'pg_1',
+          {
+            actions: [{ action: 'press', key: 'Tab' }],
+            verification: {
+              verifier: { id: 'fixture.saved', version: '1' },
+              input: true,
+            },
+          },
+          { operationId: 'outcome-once' }
+        )
+        .catch((error: unknown) => error);
+      expect(result).toMatchObject({
+        code: 'OPERATION_RECORDED',
+        retryable: false,
+        details: {
+          operationId: 'outcome-once',
+          operation: { status: 'completed', dispatched: true },
+        },
+      });
+      expect(vi.mocked(fetch)).toHaveBeenCalledOnce();
+    });
+
+    it('rejects malformed replay data privately and ignores the marker on a read', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce(
+        new Response(JSON.stringify({ replay: true, operation: { secret: 'PRIVATE-REPLAY' } }), {
+          headers: { 'content-type': 'application/json' },
+        })
+      );
+      const malformed = await client.sessions
+        .outcome(
+          'ses_1',
+          'pg_1',
+          {
+            actions: [{ action: 'press', key: 'Tab' }],
+            verification: {
+              verifier: { id: 'fixture.saved', version: '1' },
+              input: true,
+            },
+          },
+          { operationId: 'outcome-once' }
+        )
+        .catch((error: unknown) => error);
+      expect(malformed).toMatchObject({
+        code: 'INVALID_RESPONSE',
+        retryable: false,
+        details: { operationId: 'outcome-once' },
+      });
+      expect(JSON.stringify(malformed)).not.toContain('PRIVATE-REPLAY');
+
+      vi.mocked(fetch).mockResolvedValueOnce(
+        new Response(JSON.stringify({ replay: true, operation: { secret: 'read-data' } }), {
+          headers: { 'content-type': 'application/json' },
+        })
+      );
+      await expect(client.health()).resolves.toEqual({
+        replay: true,
+        operation: { secret: 'read-data' },
+      });
+    });
+
+    it('rejects a valid replay for a different operation without leaking its record', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            replay: true,
+            operation: {
+              operationId: 'different-operation',
+              epoch: 2,
+              status: 'completed',
+              dispatched: true,
+            },
+          }),
+          { headers: { 'content-type': 'application/json' } }
+        )
+      );
+      const mismatch = await client.sessions
+        .outcome(
+          'ses_1',
+          'pg_1',
+          {
+            actions: [{ action: 'press', key: 'Tab' }],
+            verification: {
+              verifier: { id: 'fixture.saved', version: '1' },
+              input: true,
+            },
+          },
+          { operationId: 'outcome-once' }
+        )
+        .catch((error: unknown) => error);
+      expect(mismatch).toMatchObject({
+        code: 'INVALID_RESPONSE',
+        retryable: false,
+        details: { operationId: 'outcome-once' },
+      });
+      expect(JSON.stringify(mismatch)).not.toContain('different-operation');
+    });
+
+    it('freezes an outcome request at dispatch and validates the canonical report once', async () => {
+      let release: ((response: Response) => void) | undefined;
+      vi.mocked(fetch).mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            release = resolve;
+          })
+      );
+      const request = {
+        actions: [{ action: 'press', key: 'Tab' }],
+        verification: {
+          verifier: { id: 'fixture.saved', version: '1' },
+          input: { expected: 'PRIVATE-EXPECTED' },
+        },
+      };
+      const pending = client.sessions.outcome('ses_1', 'pg_1', request, {
+        operationId: 'outcome-once',
+      });
+      const init = vi.mocked(fetch).mock.calls[0]?.[1];
+      expect(JSON.parse(String(init?.body))).toEqual(request);
+      expect(new Headers(init?.headers as HeadersInit).get('x-agentbrowser-operation-id')).toBe(
+        'outcome-once'
+      );
+      request.actions.pop();
+      if (!release) throw new Error('fetch was not dispatched');
+      release(
+        new Response(
+          JSON.stringify({
+            plan: { ok: true, completed: 0, results: [] },
+            outcome: {
+              availability: 'available',
+              execution: 'completed',
+              verification: {
+                status: 'passed',
+                verifier: { id: 'fixture.saved', version: '1' },
+                requiredLayer: 'G6',
+                achievedLayer: 'G6',
+                evidenceRefIds: ['receipt_1'],
+              },
+              cleanup: 'not_needed',
+              testedSeam: 'ui',
+            },
+          }),
+          { headers: { 'content-type': 'application/json' } }
+        )
+      );
+      const outcome = await pending.catch((error: unknown) => error);
+      expect(outcome).toMatchObject({
+        code: 'INVALID_RESPONSE',
+        retryable: false,
+        details: { operationId: 'outcome-once' },
+      });
+      expect(String(outcome)).toContain('may have executed');
+      expect(String(outcome)).not.toContain('PRIVATE-EXPECTED');
+      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+    });
+
     it('freezes plan cardinality at dispatch and preserves the generated operation ID', async () => {
       let release: ((response: Response) => void) | undefined;
       vi.mocked(fetch).mockImplementationOnce(

@@ -10,12 +10,23 @@ current user scope and the [task protocol](tasks/README.md).
 | Area | Baseline evidence | Proposed delta |
 | --- | --- | --- |
 | Shared authority | Core control machine, session/application authority, delegated continuity tests | Common vNext results and qualified durable recovery |
-| Native bulk forms | 1.8.17 native strategies, scoped identities and readback | Custom strategies and stronger transfer/deadline qualification |
+| Native bulk forms | 1.8.19 native, react-select and chip-multiselect strategies, scoped identities and readback | Broader widget/cross-engine and transfer/deadline qualification |
 | Application-only path | Typed in-process port and independence audits | Public authorized interfaces and durable outcome parity |
 | Agent surfaces | CLI/SDK/stdio MCP; 13 unbound/12 delegated tools | Generated profiles, typed results and qualified context reduction |
 | QA | Browser primitives and strong internal fixtures | Reusable user-facing regression definition/reporting |
 | Security | Policy and known engine limitations | Scoped external scanner adapters after enforcement qualification |
 | Memory | Ephemeral bounded control state; artifact store | Optional journal and explicit mode-scoped context lifecycle |
+
+## Current progress and gates
+
+| Work | Repository reality | Next evidence gate |
+| --- | --- | --- |
+| Discovery and profiles | T0 released; T1 local loader, profiles and run cursor released | Installed harness consumes and preserves profile/cursor semantics |
+| Shared outcomes | Six T2 slices released; REST/SDK/CLI outcome run merged to develop after 1.8.19 | Release only after qualification; add a production evidence source and complete the recovery matrix |
+| Bulk forms | Named react-select and chip-multiselect strategies released in 1.8.19 | Broader widgets, reusable mappings and cross-engine commitment evidence |
+| QA, application and durable runs | Design packets only | Complete T2, then deliver T3/T4/T5 independently |
+| Audit, appsec and bounty | Mode contracts and profiles exist; no scanner/product vertical | Scope enforcement plus T3, and T4 for application parity |
+| MCP | Existing generated catalog remains 13 unbound/12 delegated in QA; outcome has no MCP tool | Add only if measured harness demand justifies another projection |
 
 ## Dependency order
 
