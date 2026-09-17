@@ -161,27 +161,26 @@ describe('AgentBrowser CLI', () => {
         url: '/v1/artifacts/dl_1',
         contentBase64: 'AA==',
       }),
-      autofill: vi.fn().mockResolvedValue({
-        ok: true,
-        receipts: [
-          {
-            field: 0,
-            match: { label: 'First Name' },
-            status: 'verified',
-            verified: true,
-            resolvedRef: 'e1_2',
-          },
-          {
-            field: 1,
-            match: { label: 'Last Name' },
-            status: 'verified',
-            verified: true,
-            resolvedRef: 'e1_3',
-          },
-        ],
-        elapsedMs: 1234,
-        snapshot: { artifactId: 'art_9' },
-      }),
+      autofill: vi
+        .fn()
+        .mockImplementation(
+          async (
+            _sessionId: string,
+            _pageId: string,
+            request: { fields: Array<{ match: Record<string, unknown> }> }
+          ) => ({
+            ok: true,
+            receipts: request.fields.map((field, index) => ({
+              field: index,
+              match: field.match,
+              status: 'verified',
+              verified: true,
+              resolvedRef: `e1_${index + 2}`,
+            })),
+            elapsedMs: 1234,
+            snapshot: { artifactId: 'art_9' },
+          })
+        ),
       create: vi.fn().mockResolvedValue({
         sessionId: 'ses_1',
         status: 'ready',
@@ -844,6 +843,56 @@ describe('AgentBrowser CLI', () => {
       expect(err.join(' ')).not.toContain('PRIVATE-REPORT');
     });
 
+    it('rejects contradictory autofill success without echoing it or retrying', async () => {
+      sessions.autofill.mockResolvedValue({
+        ok: true,
+        receipts: [
+          {
+            field: 0,
+            match: { label: 'Name' },
+            status: 'verified',
+            verified: false,
+            error: { code: 'REMOTE_FAILURE', message: 'PRIVATE-REPORT' },
+          },
+        ],
+        elapsedMs: 1,
+      });
+      expect(await run('--json', 'autofill', 'ses_1', 'pg_1', JSON.stringify(payload))).toBe(1);
+      expect(sessions.autofill).toHaveBeenCalledTimes(1);
+      expect(out).toEqual([]);
+      expect(err.join(' ')).toContain('may have executed');
+      expect(err.join(' ')).not.toContain('PRIVATE-REPORT');
+    });
+
+    it('rejects successful autofill that omits a requested field receipt', async () => {
+      const twoFields = {
+        fields: [...payload.fields, { match: { label: 'Email' }, value: 'private email' }],
+      };
+      sessions.autofill.mockImplementation(
+        async (_sessionId: string, _pageId: string, request: typeof twoFields) => {
+          request.fields.pop();
+          return {
+            ok: true,
+            receipts: [
+              {
+                field: 0,
+                match: { label: 'Name' },
+                status: 'verified',
+                verified: true,
+                actual: 'PRIVATE-REPORT',
+              },
+            ],
+            elapsedMs: 1,
+          };
+        }
+      );
+      expect(await run('--json', 'autofill', 'ses_1', 'pg_1', JSON.stringify(twoFields))).toBe(1);
+      expect(sessions.autofill).toHaveBeenCalledTimes(1);
+      expect(out).toEqual([]);
+      expect(err.join(' ')).toContain('may have executed');
+      expect(err.join(' ')).not.toContain('PRIVATE-REPORT');
+    });
+
     it('does not retry a lost autofill response', async () => {
       sessions.autofill.mockRejectedValue(new Error('Write outcome uncertain'));
       expect(await run('autofill', 'ses_1', 'pg_1', JSON.stringify(payload))).toBe(1);
@@ -863,6 +912,40 @@ describe('AgentBrowser CLI', () => {
       expect(sessions.plan).toHaveBeenCalledTimes(1);
       expect(sessions.plan).toHaveBeenCalledWith('ses_1', 'pg_1', steps);
       expect(lastJson()).toEqual(report);
+    });
+
+    it('rejects contradictory plan success without echoing it or retrying', async () => {
+      sessions.plan = vi.fn().mockResolvedValue({
+        ok: true,
+        completed: 1,
+        results: [],
+        error: { code: 'REMOTE_FAILURE', message: 'PRIVATE-REPORT' },
+      });
+      expect(await run('--json', 'plan', 'ses_1', 'pg_1', '[]')).toBe(1);
+      expect(sessions.plan).toHaveBeenCalledTimes(1);
+      expect(out).toEqual([]);
+      expect(err.join(' ')).toContain('may have executed');
+      expect(err.join(' ')).not.toContain('PRIVATE-REPORT');
+    });
+
+    it('rejects successful plan that omits a requested step result', async () => {
+      const steps = [
+        { action: 'press', key: 'Tab' },
+        { action: 'press', key: 'Tab' },
+      ];
+      sessions.plan = vi.fn().mockImplementation(async (_sessionId, _pageId, dispatchedSteps) => {
+        dispatchedSteps.pop();
+        return {
+          ok: true,
+          completed: 1,
+          results: [{ step: 0, ok: true, result: { secret: 'PRIVATE-REPORT' } }],
+        };
+      });
+      expect(await run('--json', 'plan', 'ses_1', 'pg_1', JSON.stringify(steps))).toBe(1);
+      expect(sessions.plan).toHaveBeenCalledTimes(1);
+      expect(out).toEqual([]);
+      expect(err.join(' ')).toContain('may have executed');
+      expect(err.join(' ')).not.toContain('PRIVATE-REPORT');
     });
 
     it('rejects private malformed or oversized input before dispatch', async () => {

@@ -147,6 +147,21 @@ export function parseAutofillRequest(input: unknown): AutofillRequest {
 }
 
 /** Validate service output before advertising it as a structured report. */
-export function parseAutofillReport(input: unknown): AutofillReport {
-  return parseExecutionReport(AutofillReportSchema, input, 'autofill');
+export function parseAutofillReport(input: unknown, expectedFields?: number): AutofillReport {
+  return parseExecutionReport(
+    AutofillReportSchema,
+    input,
+    'autofill',
+    (report) =>
+      !report.ok ||
+      (report.receipts.length > 0 &&
+        (expectedFields === undefined || report.receipts.length === expectedFields) &&
+        report.receipts.every(
+          (receipt, index) =>
+            receipt.field === index &&
+            receipt.error === undefined &&
+            ((receipt.status === 'verified' && receipt.verified) ||
+              (receipt.status === 'unverified' && !receipt.verified))
+        ))
+  );
 }

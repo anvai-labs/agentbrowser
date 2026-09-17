@@ -65,5 +65,16 @@ excluded from durable receipt lookup, allowing an authorized same-registration,
 same-resource rebind to reconcile prior application evidence. See the
 [application identity evidence](../evidence/t2-application-identity.md).
 
+The fourth slice makes aggregate success a conservative projection of nested results
+at the shared protocol-parser boundary. A successful plan has a contiguous, error-free
+list of successful steps whose count matches both `completed` and the original request.
+A successful autofill report contains one contiguous, error-free `verified/true` or
+intentionally `unverified/false` receipt for every requested field. The SDK supplies
+request cardinality to the canonical parsers; CLI and MCP retain the same check around
+injected clients. All three reject contradictory HTTP 200 reports with uncertain write
+guidance, no private report echo and no retry. Pessimistic `ok: false` reports and
+`verify: none` remain compatible. See the
+[semantic result evidence](../evidence/t2-semantic-result-validation.md).
+
 Compatible verifier projections, trusted verifier registration and the remaining T2
 acceptance matrix are still pending, so T2 is not complete.
