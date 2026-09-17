@@ -14,7 +14,33 @@ brew install anvai-labs/tap/agentbrowser
 brew services start anvai-labs/tap/agentbrowser   # the service, on 127.0.0.1:5709
 ```
 
-One install ships both halves: the **MCP server binary** (`agentbrowser-mcp`, no Node runtime needed) and the **browser service** (first start bootstraps Chromium into `$(brew --prefix)/var/agentbrowser/browsers`). Without Homebrew, grab the release assets: the `agentbrowser-mcp-<target>` binary needs no Node at all, and the `agentbrowser-server-<target>.tar.gz` needs only `node` on PATH.
+One install ships all three surfaces: the **browser service**, the standalone
+**CLI** (`agentbrowser`) and the optional **MCP adapter** (`agentbrowser-mcp`).
+The first service start bootstraps Chromium into
+`$(brew --prefix)/var/agentbrowser/browsers`. The compiled CLI and MCP binaries
+need no Node runtime. Without Homebrew, use the
+`agentbrowser-cli-<target>` and `agentbrowser-mcp-<target>` client assets for
+macOS, Linux or Windows. Service archives are published for macOS and Linux as
+`agentbrowser-server-<target>.tar.gz`; they require Node 22 and separately
+provisioned Chromium (plus its platform libraries on Linux). See the
+[operations guide](docs/operations.md#release-assets) for deployment details.
+
+### Consuming directly from a shell
+
+The CLI is the smallest universal agent interface. It connects directly to the
+HTTP service, emits structured JSON matching the service contracts and can
+describe one command at a time without contacting the service:
+
+```bash
+agentbrowser describe
+agentbrowser describe autofill --schema
+agentbrowser --base-url http://localhost:5709 --json health
+```
+
+For a local deployment, install the service and CLI; for a remote deployment,
+only the CLI is required on the agent host. MCP is optional in both cases. See
+[the shell-agent CLI guide](docs/cli-agent-usage.md) for bounded JSON input,
+operation reconciliation and bulk plan/autofill examples.
 
 ### Consuming as an MCP server
 
