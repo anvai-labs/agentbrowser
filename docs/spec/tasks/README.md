@@ -1,8 +1,8 @@
 # Agent implementation task packets
 
 Status: implementation activated by the user's subsequent foundation-first instruction.
-The table below records repository reality at AgentBrowser 1.8.19 plus the current
-unmerged outcome-run candidate. Reading this task list alone does not
+The table below records repository reality at AgentBrowser 1.8.19 plus the outcome-run
+vertical merged to develop afterward. Reading this task list alone does not
 authorize implementation or publication; follow the current user-authorized scope.
 
 ## Start a task with minimal context
@@ -18,7 +18,7 @@ declared files and budgets without contacting a service.
 | --- | --- | --- | --- |
 | [T0](t0-contract-catalog.md) | Complete | Released discovery/catalog foundation | None |
 | [T1](t1-context-profiles.md) | Active | Local loader, fixed profiles and run cursor delivered; installed-harness consumption remains | T0 |
-| [T2](t2-shared-execution.md) | Active | Six released slices; outcome-run vertical is an unmerged candidate; production evidence source and recovery matrix remain | T0 |
+| [T2](t2-shared-execution.md) | Active | Six released slices; outcome-run vertical is merged on develop but unreleased; production evidence source and recovery matrix remain | T0 |
 | [T3](t3-qa-regressions.md) | Not started | Deterministic user-facing regression and reports | T2 |
 | [T4](t4-application-parity.md) | Not started | Public typed application operations and independent parity | T2 |
 | [T5](t5-durable-recovery.md) | Not started | Optional single-owner durable recovery | T2 |

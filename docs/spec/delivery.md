@@ -22,7 +22,7 @@ current user scope and the [task protocol](tasks/README.md).
 | Work | Repository reality | Next evidence gate |
 | --- | --- | --- |
 | Discovery and profiles | T0 released; T1 local loader, profiles and run cursor released | Installed harness consumes and preserves profile/cursor semantics |
-| Shared outcomes | Six T2 slices released; REST/SDK/CLI outcome run is the current PR candidate | Merge the reviewed head, then qualify a production evidence source and recovery matrix |
+| Shared outcomes | Six T2 slices released; REST/SDK/CLI outcome run merged to develop after 1.8.19 | Release only after qualification; add a production evidence source and complete the recovery matrix |
 | Bulk forms | Named react-select and chip-multiselect strategies released in 1.8.19 | Broader widgets, reusable mappings and cross-engine commitment evidence |
 | QA, application and durable runs | Design packets only | Complete T2, then deliver T3/T4/T5 independently |
 | Audit, appsec and bounty | Mode contracts and profiles exist; no scanner/product vertical | Scope enforcement plus T3, and T4 for application parity |
