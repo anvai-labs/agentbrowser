@@ -48,8 +48,9 @@ The internal strategy registry is trusted server code; request payloads cannot r
 | Native text/email/tel/url/search/number input and textarea | Delivered | One native fill, settled property read, final form recheck |
 | Native single select | Delivered | Select by option value, settled selected value, final form recheck |
 | Password, file input, native multi-select | Refused | Need separate privacy/upload/selection contracts |
-| React-select / active-descendant combobox | Refused | Highlight/focus/input text does not prove committed selection; Enter may submit |
-| Chip multi-select | Refused | Needs stable chip identity, committed membership and removal evidence |
+| React-select single-select (typeahead filter) | Delivered | Click-open, per-char typeText filter, fresh-observe exact match click, settled committed-chip recheck |
+| Chip multi-select | Delivered | Click-open, typeText filter, click matching chip option, settled committed-chip recheck |
+| Active-descendant combobox (keyboard-commit) | Refused | Highlight/focus does not prove committed selection; needs aria-activedescendant readback contract |
 | Hidden/disabled observed control | Skip with report | No write |
 | Adapter without identity/value evidence | Refused before writing that field | No silent browser-engine switch |
 

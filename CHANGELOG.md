@@ -1,7 +1,5 @@
 # Changelog
 
-# Changelog
-
 All notable changes to **AgentBrowser** are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); releases are tagged `vX.Y.Z` and
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
