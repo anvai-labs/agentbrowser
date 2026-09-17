@@ -14,6 +14,7 @@ export * from './errors.js';
 export * from './wire-action.js';
 
 export * from './control.js';
+export * from './application.js';
 export * from './autofill.js';
 export * from './interaction-guidance.js';
 export * from './plan.js';

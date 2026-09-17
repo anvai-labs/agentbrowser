@@ -468,6 +468,416 @@
         }
       }
     },
+    "/v1/sessions/{sessionId}/application": {
+      "get": {
+        "operationId": "discoverApplication",
+        "summary": "List the bound adapter and its operations; null when nothing is bound",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The discovery view of the current binding, or null while unbound.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ApplicationDiscovery"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Credential is absent, expired, or revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Operator, binding or session authority is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session busy or review revoked. Do not blindly repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "bindApplication",
+        "summary": "Operator: bind an application adapter to a resource while the human owns the session",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplicationBinding"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The binding that is now active.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "adapter",
+                    "resource"
+                  ],
+                  "properties": {
+                    "adapter": {
+                      "type": "string"
+                    },
+                    "resource": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Credential is absent, expired, or revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Operator authority is required, or the adapter refuses this tenant/resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session busy or agent-owned. Take over before changing the binding.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "unbindApplication",
+        "summary": "Operator: drop the application binding",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The binding was removed. Like bind, this requires the human to own the session and takes control as a side effect even when nothing is bound.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "unbound"
+                  ],
+                  "properties": {
+                    "unbound": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Credential is absent, expired, or revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Operator authority is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{sessionId}/application/execute": {
+      "post": {
+        "operationId": "executeApplication",
+        "summary": "Dispatch one application operation; writes need an operation ID and expected version",
+        "description": "The application enforces business versioning independently of the control epoch. A repeated operation ID replays the recorded operation instead of re-executing.",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplicationExecuteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Application authority result. A replay body reports an already-admitted operation ID; it is not a new result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationOperationResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Credential is absent, expired, or revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Operator, binding or session authority is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session busy or review revoked. Do not blindly repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{sessionId}/application/receipts/{operationId}": {
+      "get": {
+        "operationId": "getApplicationReceipt",
+        "summary": "Read one application receipt; an application-verified outcome, not a browser receipt",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Whatever receipt the adapter recorded for this operation ID, or null.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was malformed or failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Credential is absent, expired, or revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Binding or session authority is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/openapi.json": {
       "get": {
         "operationId": "getOpenApiDocument",
@@ -4350,6 +4760,207 @@
             }
           }
         }
+      },
+      "ApplicationBinding": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "adapter",
+          "resource"
+        ],
+        "properties": {
+          "adapter": {
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "type": "string"
+          },
+          "resource": {
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "type": "string"
+          }
+        }
+      },
+      "ApplicationDiscovery": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "adapter",
+          "resource",
+          "operations"
+        ],
+        "properties": {
+          "adapter": {
+            "type": "string"
+          },
+          "resource": {
+            "type": "string"
+          },
+          "operations": {
+            "maxItems": 256,
+            "type": "array",
+            "items": {
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "name",
+                "mode"
+              ],
+              "properties": {
+                "name": {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-zA-Z0-9_-]+$",
+                  "type": "string"
+                },
+                "mode": {
+                  "anyOf": [
+                    {
+                      "const": "read",
+                      "type": "string"
+                    },
+                    {
+                      "const": "write",
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "ApplicationExecuteRequest": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "operation",
+          "input"
+        ],
+        "properties": {
+          "operation": {
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "type": "string"
+          },
+          "input": {},
+          "operationId": {
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "type": "string"
+          },
+          "expectedVersion": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        }
+      },
+      "ApplicationOperationResult": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "status",
+              "value"
+            ],
+            "properties": {
+              "status": {
+                "anyOf": [
+                  {
+                    "const": "read",
+                    "type": "string"
+                  },
+                  {
+                    "const": "committed",
+                    "type": "string"
+                  }
+                ]
+              },
+              "value": {}
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "status",
+              "reason"
+            ],
+            "properties": {
+              "status": {
+                "const": "rejected",
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "replay",
+              "operation"
+            ],
+            "properties": {
+              "replay": {
+                "const": true,
+                "type": "boolean"
+              },
+              "operation": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "operationId",
+                  "epoch",
+                  "status",
+                  "dispatched"
+                ],
+                "properties": {
+                  "operationId": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[a-zA-Z0-9_-]+$",
+                    "type": "string"
+                  },
+                  "epoch": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "status": {
+                    "anyOf": [
+                      {
+                        "const": "in_flight",
+                        "type": "string"
+                      },
+                      {
+                        "const": "completed",
+                        "type": "string"
+                      },
+                      {
+                        "const": "failed",
+                        "type": "string"
+                      },
+                      {
+                        "const": "outcome_unknown",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "dispatched": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        ]
       },
       "ApiError": {
         "type": "object",

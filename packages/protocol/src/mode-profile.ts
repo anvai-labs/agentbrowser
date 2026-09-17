@@ -24,6 +24,8 @@ export const AGENT_CAPABILITIES = Object.freeze([
   'page.form',
   'page.extract',
   'page.capture',
+  'application.discover',
+  'application.execute',
 ] as const);
 
 export type AgentCapability = (typeof AGENT_CAPABILITIES)[number];
@@ -34,9 +36,24 @@ export interface AgentModeProfile {
   readonly capabilities: readonly AgentCapability[];
 }
 
-const FULL_BROWSER_PROFILE = AGENT_CAPABILITIES;
-const AUDIT_PROFILE = AGENT_CAPABILITIES.filter((capability) => capability !== 'page.form');
-const APPLICATION_PROFILE = ['session.control'] as const satisfies readonly AgentCapability[];
+// Application capabilities are opt-in per mode, never part of the browser
+// baseline: an agent driving pages must stay fenced out of the application
+// authority (no browser-click fallback for an application operation).
+const APPLICATION_CAPABILITIES: readonly AgentCapability[] = [
+  'application.discover',
+  'application.execute',
+];
+const BROWSER_PROFILE = AGENT_CAPABILITIES.filter(
+  (capability) => !APPLICATION_CAPABILITIES.includes(capability)
+);
+const FULL_BROWSER_PROFILE = BROWSER_PROFILE;
+const AUDIT_PROFILE = BROWSER_PROFILE.filter((capability) => capability !== 'page.form');
+// The application mode drives the application surface only: discovery,
+// execution and receipt reads. It never receives browser capabilities.
+const APPLICATION_PROFILE = [
+  'session.control',
+  ...APPLICATION_CAPABILITIES,
+] as const satisfies readonly AgentCapability[];
 
 const profiles = Object.freeze({
   qa: profile('qa', FULL_BROWSER_PROFILE),

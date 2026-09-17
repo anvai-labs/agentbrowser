@@ -1,7 +1,8 @@
 # Application operations under delegated authority
 
-Status: typed in-process port and application-only lifecycle implemented; REST/MCP,
-operator binding UI and durable application receipt qualification remain pending.
+Status: typed in-process port, application-only lifecycle and the REST/SDK/CLI
+surface are implemented; MCP tools, the operator binding UI and durable
+application receipt qualification remain pending.
 Transport, reconnection and durable recovery are specified in the
 [shared infrastructure design](shared-session-infrastructure.md).
 Baseline: `develop` at `ed8ac67`, after PRs [156](https://github.com/anvai-labs/agentbrowser/pull/156),
@@ -158,3 +159,55 @@ even when the event loop delays cleanup timers. Duplicate registration and stale
 abort/page callbacks cannot replace or act under another owner. See the
 [shared infrastructure refinement](shared-session-infrastructure.md#resource-bounds-and-lifecycle-refinement)
 for the reasoning, continuity qualification and remaining transport boundaries.
+
+## Delivered HTTP/SDK/CLI surface
+
+The service composes an `ApplicationAuthority` over its own `SessionAuthority`
+(`ServiceDependencies.applicationAdapters`; the server mirrors this as
+`ServerOptions.applicationAdapters`). Adapters are deployment-injected trusted
+code; request bodies can never register, select or re-scope one. Without
+adapters the surface fails closed - no binding can exist, so discovery returns
+none and execution is refused. Binding additionally requires a tenant, so the
+unauthenticated local mode cannot bind even with a configured adapter.
+
+Routes (all documented in `openapi.json`):
+
+| Method | Path | Authority |
+| --- | --- | --- |
+| PUT | `/v1/sessions/{sessionId}/application` | Operator only, human-owned session (bind) |
+| DELETE | `/v1/sessions/{sessionId}/application` | Operator only (unbind) |
+| GET | `/v1/sessions/{sessionId}/application` | Operator with ownership, or delegated `application.discover` |
+| POST | `/v1/sessions/{sessionId}/application/execute` | Operator with ownership, or delegated `application.execute` |
+| GET | `/v1/sessions/{sessionId}/application/receipts/{operationId}` | Same read authority as discovery |
+
+The delegated capability vocabulary gained `application.discover` and
+`application.execute`. They are granted only to the dedicated `application`
+agent mode - browser modes (qa/audit/forms/...) are deliberately fenced out so
+an agent driving pages can never fall back from an application operation to a
+browser click, and the application mode never receives browser capabilities.
+
+Application routes are excluded from the controlled-session route envelope:
+they admit themselves through the `ApplicationAuthority` (bind is an operator
+`configure`; execute and receipt reads open their own scoped admissions
+carrying the body's operation identity). An envelope ticket would nest a
+second `begin()` and always report the session busy. The envelope's
+principal/tenant match check still applies.
+
+The SDK exposes `sessions.applicationBind/applicationUnbind/applicationDiscover/
+applicationExecute/applicationReceipt`. The CLI adds an `application` command
+group (`bind`, `unbind`, `discover`, `execute`, `receipt`); the write identity
+for `application execute` is the existing global `--operation-id`, so repeats
+of the same command print the recorded operation instead of re-executing.
+Replays are first-class results shaped `{replay: true, operation}` (the
+recorded operation carries the settled status) - the SDK's mutation machinery
+deliberately does not intercept them, and read operations refuse a write
+identity. Unbind, like bind, requires the human to own the session and takes
+control as a side effect (epoch bump, prepared review invalidated) even when
+nothing is bound.
+
+An HTTP oracle test (`packages/api/src/application-http.test.ts`) re-drives the
+versioned-counter fixture over the wire: wrong tenant and stale grants produce
+zero effects; duplicate operation IDs replay without re-execution; a stale
+business version is an admitted rejection, not an error; receipts remain
+operator-readable after the grant that produced them is revoked; and one
+admitted principal at a time holds for application calls too.

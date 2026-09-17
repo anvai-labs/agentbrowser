@@ -14,6 +14,8 @@ import { SessionAuthority } from './session-authority.js';
  */
 
 import {
+  type ApplicationAdapter,
+  ApplicationAuthority,
   type TrustedEvidenceSourceRegistry,
   type TrustedVerifierRegistry,
   runVerifiedOutcome,
@@ -72,6 +74,8 @@ import {
   decodeWireAction,
   parseOutcomeRunRequest,
   parseRef,
+  validateApplicationBinding,
+  validateApplicationExecute,
 } from '@agentbrowser/protocol';
 import { runAutofill } from './autofill.js';
 import {
@@ -79,6 +83,7 @@ import {
   DownloadTransport,
   type DownloadTransportOptions,
 } from './download-transport.js';
+import type { SessionPrincipal } from './session-authority.js';
 
 /** Typed failure carrying a protocol error code. */
 export class ServiceError extends Error {
@@ -289,6 +294,13 @@ export interface ServiceDependencies {
   verifierRegistry?: TrustedVerifierRegistry;
   /** Trusted read-only evidence adapters paired to verifier capabilities. */
   evidenceSourceRegistry?: TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>;
+  /**
+   * Trusted application adapters for the shared-infra application surface.
+   * The service composes the ApplicationAuthority over its own
+   * SessionAuthority - bindings key on the authority's SessionControl
+   * objects, so an externally built authority could never see them.
+   */
+  applicationAdapters?: readonly ApplicationAdapter[];
 }
 
 /** Minimum context exposed to a trusted evidence adapter. */
@@ -344,6 +356,12 @@ const DELIVERED_INCLUDES = new Set<string>(['overlays', 'fileInputs', 'formContr
 
 export class AgentBrowserService {
   readonly authority = new SessionAuthority();
+  /**
+   * Composed over this service's own SessionAuthority; without adapters
+   * every application operation still fails closed (bind rejects, no
+   * binding can exist), so the surface is inert until a deployment opts in.
+   */
+  readonly applicationAuthority: ApplicationAuthority;
   private readonly controlledContexts = new WeakSet<SessionContext>();
   private readonly engine: BrowserEngine;
   private readonly engines: Map<string, BrowserEngine> = new Map();
@@ -391,6 +409,10 @@ export class AgentBrowserService {
   private sweepTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(deps: ServiceDependencies) {
+    this.applicationAuthority = new ApplicationAuthority(
+      this.authority,
+      deps.applicationAdapters ?? []
+    );
     this.actionRiskPolicy = new ActionRiskPolicy(deps.approvalPolicy);
     this.engine = deps.engine;
     for (const [name, engine] of Object.entries(deps.engines ?? {})) {
@@ -1569,6 +1591,77 @@ export class AgentBrowserService {
     } catch {
       throw new ServiceError('INTERNAL', 'Invalid internal outcome report.');
     }
+  }
+
+  // ------------------------------------------------------------------
+  // Application surface (shared-infra slice 2): thin wrappers around the
+  // composed ApplicationAuthority. Every method demands a principal from
+  // the surface; the authority itself enforces tenant match, binding
+  // state and (for writes) operation identity + business version.
+  // ------------------------------------------------------------------
+
+  /** Operator-only: bind an application adapter to a resource while the human owns the session. */
+  applicationBind(
+    sessionId: string,
+    principal: SessionPrincipal,
+    input: unknown
+  ): { adapter: string; resource: string } {
+    const validated = validateApplicationBinding(input);
+    if (!validated.ok) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `Invalid application bind request: ${validated.issues
+          .map((issue) => `${issue.path || '(root)'}: ${issue.message}`)
+          .join('; ')}`
+      );
+    }
+    this.applicationAuthority.bind(sessionId, principal, validated.value);
+    return { adapter: validated.value.adapter, resource: validated.value.resource };
+  }
+
+  /**
+   * Operator-only: drop the binding. Like bind, this requires the human to
+   * own the session and takes control as a side effect (epoch bump, any
+   * prepared review invalidated) even when nothing is bound.
+   */
+  applicationUnbind(sessionId: string, principal: SessionPrincipal): { unbound: true } {
+    this.applicationAuthority.unbind(sessionId, principal);
+    return { unbound: true };
+  }
+
+  /** Discovery: the bound adapter's operations, or null when nothing is bound. */
+  async applicationDiscover(
+    sessionId: string,
+    principal: SessionPrincipal
+  ): Promise<Awaited<ReturnType<ApplicationAuthority['discover']>>> {
+    return this.applicationAuthority.discover(sessionId, principal);
+  }
+
+  /** Dispatch one application operation. Writes require operation ID + expected version. */
+  async applicationExecute(
+    sessionId: string,
+    principal: SessionPrincipal,
+    input: unknown
+  ): Promise<Awaited<ReturnType<ApplicationAuthority['execute']>>> {
+    const validated = validateApplicationExecute(input);
+    if (!validated.ok) {
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `Invalid application execute request: ${validated.issues
+          .map((issue) => `${issue.path || '(root)'}: ${issue.message}`)
+          .join('; ')}`
+      );
+    }
+    return this.applicationAuthority.execute(sessionId, principal, validated.value);
+  }
+
+  /** Read one application receipt by its operation ID. */
+  async applicationReceipt(
+    sessionId: string,
+    principal: SessionPrincipal,
+    operationId: string
+  ): Promise<unknown> {
+    return this.applicationAuthority.lookupReceipt(sessionId, principal, operationId);
   }
 
   /**

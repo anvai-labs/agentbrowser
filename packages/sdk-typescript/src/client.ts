@@ -20,6 +20,8 @@ import type {
 
 import type {
   AgentMode,
+  ApplicationDiscovery,
+  ApplicationOperationResult,
   AutofillReport,
   AutofillRequest,
   ControlView,
@@ -32,6 +34,12 @@ import type {
 export type { ControlView, OperationRecord, RunCursor } from '@agentbrowser/protocol';
 export type { AutofillRequest, AutofillReport } from '@agentbrowser/protocol';
 export type { OutcomeRunReport, OutcomeRunRequest } from '@agentbrowser/protocol';
+export type {
+  ApplicationBinding,
+  ApplicationDiscovery,
+  ApplicationExecuteRequest,
+  ApplicationOperationResult,
+} from '@agentbrowser/protocol';
 export interface MutationOptions {
   operationId?: string;
 }
@@ -316,6 +324,13 @@ class HttpClient {
     const operationId =
       path.startsWith('/v1/sessions/') &&
       !path.includes('/control') &&
+      // Application routes carry their operation identity in the BODY
+      // (deduplicated and fingerprinted by the ApplicationAuthority); the
+      // server ignores the header there. Deriving one here would mint a
+      // random UUID, poison error details with a phantom ID, and make the
+      // replay guard reject legitimate application replays whose recorded
+      // operation ID can never equal a locally minted UUID.
+      !path.includes('/application') &&
       init.method &&
       init.method !== 'GET'
         ? (init.operationId ?? this.headers['x-agentbrowser-operation-id'] ?? crypto.randomUUID())
@@ -461,6 +476,54 @@ export class SessionsClient {
   async operation(sessionId: string, operationId: string): Promise<OperationRecord> {
     return this.http.requestJson(
       `/v1/sessions/${sessionId}/operations/${encodeURIComponent(operationId)}`
+    );
+  }
+  /** Operator: bind an application adapter to a resource while the human owns the session. */
+  async applicationBind(
+    sessionId: string,
+    binding: { adapter: string; resource: string }
+  ): Promise<{ adapter: string; resource: string }> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/application`, {
+      method: 'PUT',
+      body: binding,
+    });
+  }
+  /**
+   * Operator: drop the binding. Like bind, this requires the human to own
+   * the session - it takes control as a side effect (bumping the control
+   * epoch and invalidating a prepared review) even when nothing is bound.
+   */
+  async applicationUnbind(sessionId: string): Promise<{ unbound: true }> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/application`, { method: 'DELETE' });
+  }
+  /** The bound adapter's operations, or null when nothing is bound. */
+  async applicationDiscover(sessionId: string): Promise<ApplicationDiscovery | null> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/application`);
+  }
+  /**
+   * Dispatch one application operation. Writes need operationId +
+   * expectedVersion; a repeated operationId returns the recorded
+   * operation (`replay: true`) instead of re-executing - the retry-safe
+   * path. Read operations must not carry either identity.
+   */
+  async applicationExecute(
+    sessionId: string,
+    request: {
+      operation: string;
+      input: unknown;
+      operationId?: string;
+      expectedVersion?: number;
+    }
+  ): Promise<ApplicationOperationResult> {
+    return this.http.requestJson(`/v1/sessions/${sessionId}/application/execute`, {
+      method: 'POST',
+      body: request,
+    });
+  }
+  /** Read one application receipt by operation ID; null when the adapter has none. */
+  async applicationReceipt(sessionId: string, operationId: string): Promise<unknown> {
+    return this.http.requestJson(
+      `/v1/sessions/${sessionId}/application/receipts/${encodeURIComponent(operationId)}`
     );
   }
   async listPages(sessionId: string): Promise<PageResponse[]> {

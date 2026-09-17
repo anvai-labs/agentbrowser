@@ -1069,6 +1069,92 @@ describe('AgentBrowser SDK', () => {
       );
     });
   });
+  describe('application authority', () => {
+    it('binds and unbinds with the operator routes', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ adapter: 'owned-counter', resource: 'account' }),
+        })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ unbound: true }) });
+      expect(
+        await client.sessions.applicationBind('ses_1', {
+          adapter: 'owned-counter',
+          resource: 'account',
+        })
+      ).toEqual({ adapter: 'owned-counter', resource: 'account' });
+      expect(await client.sessions.applicationUnbind('ses_1')).toEqual({ unbound: true });
+      const calls = (mockFetch.mock as { calls: unknown[][] }).calls;
+      const [bindCall, unbindCall] = calls.slice(-2) as [
+        [string, { method: string; body: string }],
+        [string, { method: string }],
+      ];
+      expect(bindCall[0]).toBe('http://localhost:5709/v1/sessions/ses_1/application');
+      expect(bindCall[1].method).toBe('PUT');
+      expect(JSON.parse(bindCall[1].body)).toEqual({
+        adapter: 'owned-counter',
+        resource: 'account',
+      });
+      expect(unbindCall[0]).toBe('http://localhost:5709/v1/sessions/ses_1/application');
+      expect(unbindCall[1].method).toBe('DELETE');
+    });
+
+    it('discovers as a GET and passes a null binding through', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => null });
+      expect(await client.sessions.applicationDiscover('ses_1')).toBeNull();
+      const call = (mockFetch.mock as { calls: unknown[][] }).calls[0] as [
+        string,
+        { method?: string },
+      ];
+      expect(call[0]).toBe('http://localhost:5709/v1/sessions/ses_1/application');
+      expect(call[1].method).toBe('GET');
+    });
+
+    it('executes with the body identities and no mutation operation-id header', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: 'committed', value: { operationId: 'effect-1', total: 1 } }),
+      });
+      const result = await client.sessions.applicationExecute('ses_1', {
+        operation: 'add',
+        input: 1,
+        operationId: 'effect-1',
+        expectedVersion: 0,
+      });
+      expect(result).toEqual({
+        status: 'committed',
+        value: { operationId: 'effect-1', total: 1 },
+      });
+      const call = (mockFetch.mock as { calls: unknown[][] }).calls[0] as [
+        string,
+        { method: string; body: string; headers: Record<string, string> },
+      ];
+      expect(call[0]).toBe('http://localhost:5709/v1/sessions/ses_1/application/execute');
+      expect(call[1].method).toBe('POST');
+      expect(JSON.parse(call[1].body)).toEqual({
+        operation: 'add',
+        input: 1,
+        operationId: 'effect-1',
+        expectedVersion: 0,
+      });
+      expect(call[1].headers['x-agentbrowser-operation-id']).toBeUndefined();
+    });
+
+    it('returns an application replay as a first-class result, never OPERATION_RECORDED', async () => {
+      const replayBody = {
+        replay: true,
+        operation: { operationId: 'effect-1', epoch: 2, status: 'completed', dispatched: true },
+      };
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => replayBody });
+      const result = await client.sessions.applicationExecute('ses_1', {
+        operation: 'add',
+        input: 1,
+        operationId: 'effect-1',
+        expectedVersion: 0,
+      });
+      expect(result).toEqual(replayBody);
+    });
+  });
 });
 
 describe('SessionsClient.extract schema passthrough', () => {
