@@ -1555,10 +1555,13 @@ export class AgentBrowserService {
       ok: false,
       completed: 0,
       results: [],
-      error: {
-        code: 'OUTCOME_NOT_EXECUTED',
-        message: 'The outcome plan was not executed.',
-      },
+      error:
+        run.outcome.execution === 'not_started'
+          ? { code: 'OUTCOME_NOT_EXECUTED', message: 'The outcome plan was not executed.' }
+          : {
+              code: 'OUTCOME_REPORT_UNAVAILABLE',
+              message: 'The plan result is unavailable; dispatched effects may be unknown.',
+            },
     };
     try {
       const report = parseReport({ plan, outcome: run.outcome });

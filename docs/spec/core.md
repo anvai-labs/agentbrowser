@@ -63,8 +63,10 @@ operations. Modes are profiles over shared primitives.
 Semantic actions, artifacts, native scoped autofill, delegated session authority
 and typed in-process application operations exist. Native autofill has a cooperative
 budget and ephemeral operation status; it is not a durable resumable job.
-General TestRun orchestration, cross-mode tool profiles, durable recovery, public
-application REST/MCP and scanner adapters are proposed. Do not call invented tools.
+Fixed mode profiles, a scoped run cursor and offline CLI discovery are delivered.
+The configurable CLI/SDK/REST outcome runner is on develop after 1.8.19; production
+evidence sources remain unqualified. General TestRun orchestration, durable recovery,
+public application REST/MCP and scanner adapters remain proposed. Do not call invented tools.
 
 ## Context versus memory
 

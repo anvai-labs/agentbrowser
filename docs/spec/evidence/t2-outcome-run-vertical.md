@@ -33,7 +33,9 @@ Missing evidence capability is an honest `unsupported/not_started` result with a
 value-free synthetic plan report. Unknown verifier identity is rejected before
 execution. Once execution fails or becomes unknown, evidence is not read. Authority is
 checked before execution and around every read; late or cancelled reads cannot produce
-a pass. Every cleanup receives a cancellation signal. A rejection is failed cleanup;
+a pass. Authority and cancellation are checked again after cleanup before output;
+revocation drops execution data and evidence references and preserves uncertainty
+about dispatched effects. Every cleanup receives a cancellation signal. A rejection is failed cleanup;
 a timeout is unknown cleanup, releases the request, and prevents a passing outcome.
 Outcome requests require at least one action because this route attests the UI seam.
 
@@ -85,3 +87,18 @@ is qualified and the remaining authority/recovery acceptance matrix passes.
 - New dependencies and services: none
 - MCP changes: none
 - Remaining limit: no production evidence source is registered by default
+
+## Terminal authority regression follow-up
+
+Three runner regressions first failed because authority loss during asynchronous cleanup,
+cancellation during cleanup, or revocation inside verifier evaluation still returned a
+passing projection. The final synchronous authority/signal check makes them pass and
+retains the existing executor, cancellation, registry and result-schema owners.
+
+Service coverage closes a page during cleanup and verifies that the result is withheld.
+Delegated HTTP coverage performs human takeover during cleanup, observes refusal with
+no plan/evidence payload, and reconciles `outcome_unknown` with dispatch recorded. The
+old grant cannot redispatch. An unavailable execution report now says that effects may
+be unknown instead of incorrectly claiming the plan never executed. Independent review
+confirmed that `requirePage` already invokes the shared authority check; no duplicate
+service guard was added. This closes one terminal boundary, not the full T2 matrix.

@@ -384,6 +384,22 @@ export async function runVerifiedOutcome<Result, Context>(
             ? 'unknown'
             : 'complete';
   }
+  // Cleanup is asynchronous: authority or cancellation may change after evidence
+  // was accepted. Fence the final projection before releasing any result or refs.
+  let outputAuthorized = !options.signal?.aborted;
+  try {
+    options.assertAuthority();
+  } catch {
+    outputAuthorized = false;
+  }
+  if (!outputAuthorized || options.signal?.aborted) {
+    availability = 'blocked';
+    verification = unknownVerification(descriptor);
+    hasResult = false;
+    result = undefined;
+    if (execution !== 'not_started')
+      execution = wasDispatched(options.didDispatch) ? 'unknown' : 'failed';
+  }
   const outcome: OutcomeProjection = {
     availability,
     execution,

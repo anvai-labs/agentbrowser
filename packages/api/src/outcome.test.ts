@@ -4,6 +4,7 @@ import {
   defineEvidenceSource,
   defineVerifier,
 } from '@agentbrowser/control';
+import { isPassingOutcome } from '@agentbrowser/protocol';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { describe, expect, it, vi } from 'vitest';
 import { buildServer } from './server';
@@ -45,7 +46,7 @@ const verifier = defineVerifier({
 });
 
 const verifierRegistry = () => new TrustedVerifierRegistry([verifier]);
-const sourceRegistry = (read: () => boolean = () => true) =>
+const sourceRegistry = (read: () => boolean = () => true, cleanup?: () => void | Promise<void>) =>
   new TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>([
     defineEvidenceSource({
       descriptor: { id: 'fixture.snapshot', capability: 'fixture.read' },
@@ -54,6 +55,7 @@ const sourceRegistry = (read: () => boolean = () => true) =>
         evidence: read(),
         evidenceRefIds: ['fixture_evidence_1'],
       }),
+      ...(cleanup ? { cleanup } : {}),
     }),
   ]);
 
@@ -76,6 +78,49 @@ async function serviceWith(
 }
 
 describe('verified outcome service composition', () => {
+  it('withholds plan and evidence when the page closes during cleanup', async () => {
+    let closePage: () => Promise<void> = async () => {};
+    const cleanup = vi.fn(async () => {
+      await closePage();
+    });
+    const fixture = await serviceWith(
+      new TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>([
+        defineEvidenceSource({
+          descriptor: { id: 'fixture.snapshot', capability: 'fixture.read' },
+          read: () => ({
+            status: 'ready',
+            evidence: true,
+            evidenceRefIds: ['fixture_evidence_1'],
+          }),
+          cleanup,
+        }),
+      ])
+    );
+    closePage = () => fixture.service.closePage(fixture.sessionId, fixture.pageId);
+    const execute = vi.spyOn(fixture.service, 'executePlan');
+    try {
+      const report = await fixture.service.executeOutcome(
+        fixture.sessionId,
+        fixture.pageId,
+        request()
+      );
+      expect(execute).toHaveBeenCalledOnce();
+      expect(cleanup).toHaveBeenCalledOnce();
+      expect(isPassingOutcome(report.outcome)).toBe(false);
+      expect(report).toMatchObject({
+        plan: { ok: false, results: [], error: { code: 'OUTCOME_REPORT_UNAVAILABLE' } },
+        outcome: {
+          availability: 'blocked',
+          execution: 'unknown',
+          verification: { status: 'unknown', evidenceRefIds: [] },
+          cleanup: 'complete',
+        },
+      });
+    } finally {
+      await fixture.service.shutdown();
+    }
+  });
+
   it('preflights an exact evidence capability before executing', async () => {
     const fixture = await serviceWith(new TrustedEvidenceSourceRegistry([]));
     const execute = vi.spyOn(fixture.service, 'executePlan');
@@ -211,75 +256,107 @@ describe('verified outcome REST projection', () => {
     }
   });
 
-  it('uses delegated mutation admission and replays an operation without redispatch', async () => {
-    let reads = 0;
-    const apiKeys = new Map([
-      [createHash('sha256').update('operator').digest('hex'), 'fixture-tenant'],
-    ]);
-    const server = await buildServer({
-      engine: new FakeEngine(),
-      apiKeys,
-      verifierRegistry: verifierRegistry(),
-      evidenceSourceRegistry: sourceRegistry(() => {
-        reads++;
-        return true;
-      }),
-    });
-    const operator = { authorization: 'Bearer operator' };
-    try {
-      const session = await server.inject({
-        method: 'POST',
-        url: '/v1/sessions',
-        headers: operator,
-        payload: { controlMode: 'delegated' },
+  it.each([false, true])(
+    'preserves delegated operation identity with cleanup takeover=%s',
+    async (takeover) => {
+      let reads = 0;
+      let duringCleanup: () => Promise<void> = async () => {};
+      const cleanup = vi.fn(() => duringCleanup());
+      const apiKeys = new Map([
+        [createHash('sha256').update('operator').digest('hex'), 'fixture-tenant'],
+      ]);
+      const server = await buildServer({
+        engine: new FakeEngine(),
+        apiKeys,
+        verifierRegistry: verifierRegistry(),
+        evidenceSourceRegistry: sourceRegistry(() => {
+          reads++;
+          return true;
+        }, cleanup),
       });
-      const sessionId = session.json().sessionId as string;
-      const base = `/v1/sessions/${sessionId}`;
-      const page = await server.inject({
-        method: 'POST',
-        url: `${base}/pages`,
-        headers: { ...operator, 'x-agentbrowser-operation-id': 'create-page' },
-      });
-      const pageId = page.json().pageId as string;
-      const review = await server.inject({
-        method: 'POST',
-        url: `${base}/control/prepare-resume`,
-        headers: operator,
-      });
-      const delegated = await server.inject({
-        method: 'POST',
-        url: `${base}/control/delegate`,
-        headers: operator,
-        payload: { epoch: review.json().epoch },
-      });
-      const agent = { authorization: `Bearer ${delegated.json().token as string}` };
-      const payload = {
-        ...request(),
-        actions: [{ action: 'press', key: 'Tab' }],
-      };
-      const url = `${base}/pages/${pageId}/outcomes`;
+      const operator = { authorization: 'Bearer operator' };
+      try {
+        const session = await server.inject({
+          method: 'POST',
+          url: '/v1/sessions',
+          headers: operator,
+          payload: { controlMode: 'delegated' },
+        });
+        const sessionId = session.json().sessionId as string;
+        const base = `/v1/sessions/${sessionId}`;
+        const page = await server.inject({
+          method: 'POST',
+          url: `${base}/pages`,
+          headers: { ...operator, 'x-agentbrowser-operation-id': 'create-page' },
+        });
+        const pageId = page.json().pageId as string;
+        const review = await server.inject({
+          method: 'POST',
+          url: `${base}/control/prepare-resume`,
+          headers: operator,
+        });
+        const delegated = await server.inject({
+          method: 'POST',
+          url: `${base}/control/delegate`,
+          headers: operator,
+          payload: { epoch: review.json().epoch },
+        });
+        const agent = { authorization: `Bearer ${delegated.json().token as string}` };
+        const payload = {
+          ...request(),
+          actions: [{ action: 'press', key: 'Tab' }],
+        };
+        const url = `${base}/pages/${pageId}/outcomes`;
 
-      expect(
-        (await server.inject({ method: 'POST', url, headers: agent, payload })).statusCode
-      ).toBe(400);
-      const headers = { ...agent, 'x-agentbrowser-operation-id': 'verified-operation' };
-      const first = await server.inject({ method: 'POST', url, headers, payload });
-      expect(first.statusCode).toBe(200);
-      expect(first.json()).toMatchObject({
-        plan: { ok: true, completed: 1 },
-        outcome: { execution: 'completed', verification: { status: 'passed' } },
-      });
-      expect(reads).toBe(1);
+        expect(
+          (await server.inject({ method: 'POST', url, headers: agent, payload })).statusCode
+        ).toBe(400);
+        const headers = { ...agent, 'x-agentbrowser-operation-id': 'verified-operation' };
+        if (takeover) {
+          duringCleanup = async () => {
+            const response = await server.inject({
+              method: 'POST',
+              url: `${base}/control/takeover`,
+              headers: operator,
+            });
+            expect(response.statusCode).toBe(200);
+          };
+        }
+        const first = await server.inject({ method: 'POST', url, headers, payload });
+        expect(cleanup).toHaveBeenCalledOnce();
+        if (takeover) {
+          expect(first.statusCode).toBe(409);
+          expect(first.json()).not.toHaveProperty('plan');
+          expect(first.body).not.toContain('fixture_evidence_1');
+          const status = await server.inject({
+            url: `${base}/operations/verified-operation`,
+            headers: operator,
+          });
+          expect(status.statusCode).toBe(200);
+          expect(status.json()).toMatchObject({ status: 'outcome_unknown', dispatched: true });
+          const revoked = await server.inject({ method: 'POST', url, headers, payload });
+          expect(revoked.statusCode).not.toBe(200);
+          expect(reads).toBe(1);
+          expect(cleanup).toHaveBeenCalledOnce();
+          return;
+        }
+        expect(first.statusCode).toBe(200);
+        expect(first.json()).toMatchObject({
+          plan: { ok: true, completed: 1 },
+          outcome: { execution: 'completed', verification: { status: 'passed' } },
+        });
+        expect(reads).toBe(1);
 
-      const replay = await server.inject({ method: 'POST', url, headers, payload });
-      expect(replay.json()).toMatchObject({
-        replay: true,
-        operation: { status: 'completed', dispatched: true },
-      });
-      expect(reads).toBe(1);
-    } finally {
-      await server.close();
+        const replay = await server.inject({ method: 'POST', url, headers, payload });
+        expect(replay.json()).toMatchObject({
+          replay: true,
+          operation: { status: 'completed', dispatched: true },
+        });
+        expect(reads).toBe(1);
+      } finally {
+        await server.close();
+      }
     }
-  });
+  );
 });
 import { createHash } from 'node:crypto';

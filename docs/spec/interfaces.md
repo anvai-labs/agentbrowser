@@ -1,7 +1,7 @@
 # Interfaces, harness integration and human experience
 
-Status: shared interface design; new profiles, remote MCP and public application tools
-remain implementation tasks. Reuse existing adapters and SDK rather than add gateways.
+Status: fixed mode profiles and CLI discovery are delivered; remote MCP and public
+application tools remain implementation tasks. Reuse existing adapters and SDK.
 
 ## One operation contract, several projections
 
@@ -17,7 +17,7 @@ durable receipts or event resynchronization.
 
 ## Tool and schema selection
 
-Proposed profiles project a subset of one canonical tool registry. Avoid parallel
+Fixed profiles project a subset of one canonical tool registry. Avoid parallel
 names such as `qa_click`, `forms_click` and `security_click`. Global instructions
 cover shared invariants once; individual descriptions state purpose, selection rule,
 preconditions, side effects and result limitations. Workflow recipes load on demand.
@@ -58,7 +58,8 @@ The MCP spec supports these result mechanisms; annotations are hints, not author
 
 ## Protocol and harness compatibility
 
-Current AgentBrowser advertises `2024-11-05`. Negotiate only tested revisions; never
+Current AgentBrowser negotiates `2024-11-05` and `2025-06-18`, with structured plan
+and autofill reports for the latter. Negotiate only tested revisions; never
 change a version constant and claim full compatibility. Service session IDs, operation
 IDs and event cursors remain application contracts independent of MCP transport
 sessions. In particular, newer HTTP transport semantics differ from older optional
