@@ -1,16 +1,47 @@
 # Changelog
 
-All notable changes to **AgentBrowser** are documented here. The format is based on
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); releases are tagged `vX.Y.Z` and
-built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
-`@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
-
 # Changelog
 
 All notable changes to **AgentBrowser** are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); releases are tagged `vX.Y.Z` and
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
+
+## [1.8.19] - 2026-09-17
+
+### Added
+
+- Qualified multi-step widget strategies for react-select single-select and
+  chip-multi-select in the autofill orchestrator. React-select commits via
+  click-open → per-char typeText filter → fresh-observe exact match click;
+  chip-multi-select commits by typing the filter text and clicking the
+  matching chip option. Both verified via post-commit chip text or
+  committed-attribute evidence (#191).
+- `ServiceActRequest` gains `delay` for typeText per-char pacing (#191).
+
+### Fixed
+
+- MCP tool catalog regenerated from the current build (#191).
+
+## [1.8.18] - 2026-09-16
+
+### Added
+
+- CLI full parity with the REST/MCP/SDK surfaces: `autofill` (payload inline,
+  `@file`, or stdin; `--policy` override; per-field receipt render that omits
+  values and redacted excerpts), `pdf`, `health [--ready|--live]` (exit 1 when
+  unhealthy), `artifact get --out`, `page list/get/close`, `page create --url`,
+  `session get`, and `download` + `download collect`.
+- Flag completions: `screenshot --quality/--mask-sensitive/--out`,
+  `observe --since-revision`, `extract --records`.
+- SDK: three health methods, `SessionsClient.download`/`collectDownload`, and
+  the `parseAutofillRequest` re-export.
+
+### Changed
+
+- Recipe: deterministic keyboard-menu commit procedure (type-to-filter →
+  short walk → Enter), the focus-purity rule for keyboard menus, and
+  targeted-press-`Delete` chip removal (#170).
 
 ## [1.8.17] - 2026-09-16
 
