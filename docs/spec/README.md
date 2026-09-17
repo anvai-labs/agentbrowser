@@ -60,7 +60,8 @@ post-dispatch uncertainty now use the existing executor admission seam. See the
 [dispatch-boundary](evidence/t2-dispatch-boundary.md) and
 [HTTP result-classification](evidence/t2-http-result-classification.md) and
 [application identity](evidence/t2-application-identity.md) and
-[semantic result-validation](evidence/t2-semantic-result-validation.md) evidence.
+[semantic result-validation](evidence/t2-semantic-result-validation.md) and
+[plan verification-evidence](evidence/t2-plan-verification-evidence.md) evidence.
 
 ## Modes
 

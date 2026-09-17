@@ -110,14 +110,71 @@ export function validatePlanStep(body: unknown): Validated<Record<string, unknow
 }
 
 /** One output-boundary policy: invalid reports never prove that a write did not execute. */
+function snapshotJsonData(input: unknown, seen = new WeakSet<object>()): unknown {
+  if (
+    input === null ||
+    input === undefined ||
+    typeof input === 'string' ||
+    typeof input === 'number' ||
+    typeof input === 'boolean'
+  ) {
+    return input;
+  }
+  if (typeof input !== 'object' || seen.has(input)) throw new Error('unstable report');
+  seen.add(input);
+  try {
+    if (Array.isArray(input)) {
+      if (Object.getPrototypeOf(input) !== Array.prototype) throw new Error('unstable report');
+      const length = Object.getOwnPropertyDescriptor(input, 'length');
+      if (!length || !Object.hasOwn(length, 'value') || !Number.isSafeInteger(length.value))
+        throw new Error('unstable report');
+      const keys = Reflect.ownKeys(input);
+      if (keys.length !== length.value + 1 || keys.some((key) => typeof key !== 'string'))
+        throw new Error('unstable report');
+      const snapshot: unknown[] = [];
+      for (let index = 0; index < length.value; index++) {
+        const descriptor = Object.getOwnPropertyDescriptor(input, String(index));
+        if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value'))
+          throw new Error('unstable report');
+        snapshot.push(snapshotJsonData(descriptor.value, seen));
+      }
+      return snapshot;
+    }
+
+    if (Object.getPrototypeOf(input) !== Object.prototype) throw new Error('unstable report');
+    const snapshot: Record<string, unknown> = {};
+    for (const key of Reflect.ownKeys(input)) {
+      if (typeof key !== 'string') throw new Error('unstable report');
+      const descriptor = Object.getOwnPropertyDescriptor(input, key);
+      if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value'))
+        throw new Error('unstable report');
+      Object.defineProperty(snapshot, key, {
+        value: snapshotJsonData(descriptor.value, seen),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    }
+    return snapshot;
+  } finally {
+    seen.delete(input);
+  }
+}
+
 export function parseExecutionReport<S extends TSchema>(
   schema: S,
   input: unknown,
   operation: string,
   semanticallyValid: (report: Static<S>) => boolean = () => true
 ): Static<S> {
-  if (!Value.Check(schema, input) || !semanticallyValid(input)) {
+  let report: unknown;
+  try {
+    report = snapshotJsonData(input);
+  } catch {
     throw new Error(`Invalid ${operation} report. ${INTERACTION_GUIDANCE.uncertainWrite}`);
   }
-  return input;
+  if (!Value.Check(schema, report) || !semanticallyValid(report)) {
+    throw new Error(`Invalid ${operation} report. ${INTERACTION_GUIDANCE.uncertainWrite}`);
+  }
+  return report;
 }

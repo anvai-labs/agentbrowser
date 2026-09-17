@@ -505,6 +505,35 @@ describe('AgentBrowser MCP server', () => {
       expect(sessions.plan).toHaveBeenCalledTimes(1);
     });
 
+    it('rejects unsafe explicitly requested fill verification evidence', async () => {
+      sessions.plan.mockResolvedValue({
+        ok: true,
+        completed: 1,
+        results: [{ step: 0, ok: true, result: { verified: true, actual: 'PRIVATE-READBACK' } }],
+      });
+      const result = JSON.parse(
+        await call('missing-verification', 'browser_plan', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          actions: [
+            {
+              action: 'fill',
+              target: { ref: 'e1_0' },
+              value: 'PRIVATE-WRITTEN',
+              expectValue: 'PRIVATE-EXPECTED',
+            },
+          ],
+        })
+      ).result;
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toBeUndefined();
+      expect(result.content[0].text).toContain('may have executed');
+      expect(JSON.stringify(result)).not.toContain('PRIVATE-WRITTEN');
+      expect(JSON.stringify(result)).not.toContain('PRIVATE-EXPECTED');
+      expect(JSON.stringify(result)).not.toContain('PRIVATE-READBACK');
+      expect(sessions.plan).toHaveBeenCalledTimes(1);
+    });
+
     it('executes a plan through the service client', async () => {
       const response = JSON.parse(
         await call('td5', 'browser_plan', {

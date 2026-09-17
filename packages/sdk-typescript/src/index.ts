@@ -14,6 +14,7 @@ export {
   PlanReportSchema,
   AGENT_MODE_IDS,
   DEFAULT_AGENT_MODE,
+  createPlanReportParser,
   isAgentMode,
   parsePlanSteps,
   parsePlanReport,

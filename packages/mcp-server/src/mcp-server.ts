@@ -21,10 +21,10 @@ import {
   UsageError,
   WireActionEnvelopeSchema,
   agentModeAllows,
+  createPlanReportParser,
   formatErrorForUser,
   parseAutofillReport,
   parseAutofillRequest,
-  parsePlanReport,
   parsePlanSteps,
   validateWireAction,
 } from '@agentbrowser/protocol';
@@ -363,10 +363,9 @@ function buildTools(client: McpClient): ToolDefinition[] {
       handler: async (args) => {
         const [sessionId, pageId] = sessionAndPage(args);
         const actions = parsePlanSteps(args.actions);
-        const expectedSteps = actions.length;
-        return parsePlanReport(
-          await client.sessions.plan(sessionId, pageId, actions, ...operationOptions(args)),
-          expectedSteps
+        const parseResponse = createPlanReportParser(actions);
+        return parseResponse(
+          await client.sessions.plan(sessionId, pageId, actions, ...operationOptions(args))
         );
       },
     },
