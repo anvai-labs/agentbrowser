@@ -20,7 +20,10 @@ function deferred() {
   return { promise, resolve };
 }
 
-function setup() {
+function setup(
+  authorize = ({ tenant, resource }: { tenant: string; resource: string }) =>
+    tenant === 'owner' && resource === 'account-a'
+) {
   const authority = new SessionAuthority();
   const abort = new AbortController();
   authority.register('session', 'owner', abort.signal);
@@ -52,7 +55,7 @@ function setup() {
   const port = new ApplicationAuthority(authority, [
     {
       id: 'counter',
-      authorize: ({ tenant, resource }) => tenant === 'owner' && resource === 'account-a',
+      authorize,
       operations: {
         add: defineApplicationOperation({ mode: 'write', parse, execute: effect }),
         state: defineApplicationOperation({
@@ -74,6 +77,139 @@ function setup() {
 afterEach(() => vi.useRealTimers());
 
 describe('application authority without a browser', () => {
+  it('reads a business receipt in the existing admission without another ticket or write', async () => {
+    const s = setup();
+    s.port.bind('session', operator, binding);
+    await s.port.execute('session', operator, command);
+    const incarnation = s.authority.sessionIncarnation('session');
+    const result = await s.authority.run(
+      'session',
+      operator,
+      { id: 'outcome-run-1', fingerprint: 'fixture' },
+      async () => {
+        await expect(
+          s.port.lookupReceipt('session', operator, command.operationId)
+        ).rejects.toThrow('busy');
+        return s.port.readReceiptInScope('session', command.operationId);
+      }
+    );
+    expect(result).toMatchObject({ total: 3 });
+    expect(s.receipt).toHaveBeenCalledOnce();
+    expect(s.receipt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'session',
+        sessionIncarnation: incarnation,
+        tenant: 'owner',
+        resource: 'account-a',
+      }),
+      command.operationId
+    );
+    const scope = s.receipt.mock.calls[0]?.[0] as ApplicationScope;
+    expect(scope).not.toHaveProperty('operationId');
+    expect(scope).not.toHaveProperty('bindingGeneration');
+    expect(s.authority.get('session')?.operation('outcome-run-1')).toMatchObject({
+      status: 'completed',
+      dispatched: false,
+    });
+    expect(s.effect).toHaveBeenCalledOnce();
+  });
+
+  it('refuses receipt reads outside or across admission, with invalid IDs, or after cancellation', async () => {
+    const s = setup();
+    s.port.bind('session', operator, binding);
+    await expect(s.port.readReceiptInScope('session', 'receipt-1')).rejects.toThrow();
+    s.authority.register('other-session', 'owner', new AbortController().signal);
+    s.port.bind('other-session', operator, binding);
+    const cancelled = new AbortController();
+    cancelled.abort();
+    await s.authority.run('session', operator, {}, async () => {
+      await expect(s.port.readReceiptInScope('other-session', 'receipt-1')).rejects.toThrow();
+      await expect(s.port.readReceiptInScope('session', '../private')).rejects.toThrow();
+      await expect(
+        s.port.readReceiptInScope('session', 'receipt-1', cancelled.signal)
+      ).rejects.toThrow();
+    });
+    expect(s.receipt).not.toHaveBeenCalled();
+  });
+
+  it.each(['takeover', 'replacement', 'deadline', 'session-abort', 'authorization'] as const)(
+    'withholds receipt output after %s changes during a pending read',
+    async (revocation) => {
+      let authorized = true;
+      const s = setup(() => authorized);
+      s.port.bind('session', operator, binding);
+      const agent = s.grant();
+      const pending = deferred();
+      const readAbort = new AbortController();
+      let readSignal: AbortSignal | undefined;
+      s.receipt.mockImplementationOnce(async (scope: ApplicationScope) => {
+        readSignal = scope.signal;
+        await pending.promise;
+        return { private: 'receipt' } as never;
+      });
+      const read = s.authority.run('session', agent, {}, () =>
+        s.port.readReceiptInScope('session', 'receipt-1', readAbort.signal)
+      );
+      const refused = expect(read).rejects.toThrow();
+      expect(s.receipt).toHaveBeenCalledOnce();
+      if (revocation === 'takeover') s.authority.takeover('session');
+      if (revocation === 'replacement') {
+        s.authority.remove('session');
+        s.authority.register('session', 'owner', new AbortController().signal);
+      }
+      if (revocation === 'deadline') {
+        readAbort.abort();
+        expect(readSignal?.aborted).toBe(true);
+        await expect(s.port.lookupReceipt('session', agent, 'another')).rejects.toThrow('busy');
+      }
+      if (revocation === 'session-abort') {
+        s.abort.abort();
+        expect(readSignal?.aborted).toBe(true);
+      }
+      if (revocation === 'authorization') authorized = false;
+      pending.resolve();
+      await refused;
+      expect(s.effect).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['before', 'after'] as const)(
+    'fences synchronous authorization takeover %s receipt I/O',
+    async (stage) => {
+      let revoke: () => void = () => {};
+      const s = setup(() => {
+        revoke();
+        return true;
+      });
+      s.port.bind('session', operator, binding);
+      const agent = s.grant();
+      const takeover = () => s.authority.takeover('session');
+      if (stage === 'before') revoke = takeover;
+      else
+        s.receipt.mockImplementationOnce(async () => {
+          revoke = takeover;
+          return undefined;
+        });
+      await expect(
+        s.authority.run('session', agent, {}, () =>
+          s.port.readReceiptInScope('session', 'receipt-1')
+        )
+      ).rejects.toThrow();
+      expect(s.receipt).toHaveBeenCalledTimes(stage === 'before' ? 0 : 1);
+    }
+  );
+
+  it('rechecks adapter authorization after standalone receipt lookup', async () => {
+    let authorized = true;
+    const s = setup(() => authorized);
+    s.port.bind('session', operator, binding);
+    s.receipt.mockImplementationOnce(async () => {
+      authorized = false;
+      return { private: 'receipt' } as never;
+    });
+    await expect(s.port.lookupReceipt('session', operator, 'receipt-1')).rejects.toThrow();
+  });
+
   it('preserves class-based trusted adapters and their method receivers', async () => {
     const s = setup();
     class Adapter {

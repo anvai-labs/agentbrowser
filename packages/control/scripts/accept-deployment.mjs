@@ -38,6 +38,13 @@ try {
   assert.equal(total, 1);
   assert.equal((await port.execute(sessionId, agent, request)).replay, true);
   assert.equal(total, 1);
+  await assert.rejects(port.readReceiptInScope(sessionId, 'effect-1'));
+  const receipt = await sessions.authority.run(sessionId, agent,
+    { id: 'outer-run-1', fingerprint: 'fixture-read' },
+    () => port.readReceiptInScope(sessionId, 'effect-1'));
+  assert.deepEqual(receipt, { operationId: 'effect-1', total: 1 });
+  assert.equal(sessions.authority.get(sessionId).operation('outer-run-1').dispatched, false);
+  assert.equal(total, 1);
   sessions.authority.takeover(sessionId);
   assert.equal(sessions.authority.authenticate(token), undefined);
   await assert.rejects(port.execute(sessionId, agent, request));
