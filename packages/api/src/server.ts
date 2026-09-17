@@ -348,7 +348,17 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
    */
   const principals = new WeakMap<FastifyRequest, SessionPrincipal>();
   const outputGuards = new WeakMap<FastifyRequest, () => void>();
-  const autofillFailures = new WeakSet<FastifyRequest>();
+  const executionFailures = new WeakSet<FastifyRequest>();
+  const sendExecutionResult = <T extends { ok: boolean } | { status: 'success' | 'failed' }>(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    result: T
+  ) => {
+    if ('ok' in result ? !result.ok : result.status === 'failed') {
+      executionFailures.add(request);
+    }
+    return reply.send(result);
+  };
   fastify.addHook('onSend', async (request, reply, payload) => {
     const guard = outputGuards.get(request);
     if (!guard) return payload;
@@ -415,7 +425,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             outputGuards.set(request, service.authority.outputGuard(sessionId));
             return await handler(request, reply);
           },
-          () => reply.statusCode >= 400 || autofillFailures.has(request)
+          () => reply.statusCode >= 400 || executionFailures.has(request)
         );
         if (!reply.sent) return reply.send(result);
         return result;
@@ -906,7 +916,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               },
             });
           }
-          return reply.send(
+          return sendExecutionResult(
+            request,
+            reply,
             await service.executePlan(sessionId, pageId, actions as unknown as ServiceActRequest[])
           );
         })
@@ -1051,8 +1063,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
           const report = await service.autofill(sessionId, pageId, request.body);
-          if (!report.ok) autofillFailures.add(request);
-          return reply.send(report);
+          return sendExecutionResult(request, reply, report);
         })
       );
 
@@ -1083,9 +1094,12 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           }
           const result = await service.act(sessionId, pageId, validated.value as ServiceActRequest);
           if (validated.warnings?.length) {
-            return reply.send({ ...result, warnings: validated.warnings });
+            return sendExecutionResult(request, reply, {
+              ...result,
+              warnings: validated.warnings,
+            });
           }
-          return reply.send(result);
+          return sendExecutionResult(request, reply, result);
         })
       );
 

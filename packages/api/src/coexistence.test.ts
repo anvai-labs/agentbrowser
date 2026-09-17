@@ -26,6 +26,14 @@ async function setup() {
   return { server, engine, id, url };
 }
 
+function requireFakePage(engine: FakeEngine, pageId: string) {
+  const sessionId = engine.getSessionIds()[0];
+  if (!sessionId) throw new Error('Expected one engine session');
+  const page = engine.getFakePage(sessionId, pageId);
+  if (!page) throw new Error('Expected an engine page');
+  return page;
+}
+
 async function delegate(
   server: Awaited<ReturnType<typeof buildServer>>,
   url: string,
@@ -192,7 +200,7 @@ describe('delegated coexistence', () => {
       headers: { ...operator, 'x-agentbrowser-operation-id': 'page' },
     });
     const pageId = created.json().pageId;
-    const raw = engine.getFakePage(engine.getSessionIds()[0]!, pageId)!;
+    const raw = requireFakePage(engine, pageId);
     const screenshot = raw.screenshot.bind(raw);
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
@@ -239,7 +247,7 @@ describe('delegated coexistence', () => {
       url: `${url}/pages`,
       headers: { ...operator, 'x-agentbrowser-operation-id': 'page' },
     });
-    const raw = engine.getFakePage(engine.getSessionIds()[0]!, created.json().pageId)!;
+    const raw = requireFakePage(engine, created.json().pageId);
     vi.spyOn(raw, 'observe').mockRejectedValueOnce(new Error('Observation failed'));
     const review = await server.inject({
       method: 'POST',
@@ -269,7 +277,7 @@ describe('delegated coexistence', () => {
       headers: { ...operator, 'x-agentbrowser-operation-id': 'metadata-page' },
     });
     const pageId = created.json().pageId;
-    const raw = engine.getFakePage(engine.getSessionIds()[0]!, pageId)!;
+    const raw = requireFakePage(engine, pageId);
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
     vi.spyOn(raw, 'getTitle').mockImplementation(async () => {
@@ -311,7 +319,7 @@ describe('delegated coexistence', () => {
       headers: { ...operator, 'x-agentbrowser-operation-id': 'page' },
     });
     const pageId = created.json().pageId;
-    const raw = engine.getFakePage(engine.getSessionIds()[0]!, pageId)!;
+    const raw = requireFakePage(engine, pageId);
     const act = raw.act.bind(raw);
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
@@ -350,6 +358,108 @@ describe('delegated coexistence', () => {
       (await server.inject({ url: `${url}/control`, headers: operator })).json()
     ).toMatchObject({ state: 'HUMAN_ACTIVE', busy: false });
   });
+
+  it.each([
+    { surface: 'plan', path: 'plan', field: 'actions' },
+    { surface: 'batch action', path: 'act', field: 'steps' },
+  ])('records a partially applied $surface report as uncertain', async ({ path, field }) => {
+    const { server, engine, url } = await setup();
+    const created = await server.inject({
+      method: 'POST',
+      url: `${url}/pages`,
+      headers: { ...operator, 'x-agentbrowser-operation-id': `${path}-page` },
+    });
+    const pageId = created.json().pageId;
+    const raw = requireFakePage(engine, pageId);
+    raw.seedElements([{ ref: 'submit', role: 'button', name: 'Submit' }]);
+    const observed = await server.inject({
+      method: 'POST',
+      url: `${url}/pages/${pageId}/observe`,
+      headers: operator,
+      payload: { mode: 'interactive' },
+    });
+    const ref = observed.json().elements[0]?.ref;
+    if (!ref) throw new Error('Expected one observed element');
+    const act = raw.act.bind(raw);
+    const resolutions = vi.spyOn(raw, 'resolve');
+    const writes = vi.spyOn(raw, 'act').mockImplementationOnce(async (action) => {
+      const effect = await act(action);
+      resolutions.mockRejectedValue(new Error('target replaced after first action'));
+      return effect;
+    });
+    const agent = await delegate(server, url);
+    const request = {
+      method: 'POST' as const,
+      url: `${url}/pages/${pageId}/${path}`,
+      headers: { ...agent, 'x-agentbrowser-operation-id': `${path}-partial` },
+      payload: {
+        [field]: [
+          { action: 'click', target: { ref } },
+          { action: 'click', target: { ref } },
+        ],
+      },
+    };
+
+    const report = await server.inject(request);
+    expect(report.statusCode).toBe(200);
+    expect(report.json()).toMatchObject(
+      path === 'plan' ? { ok: false, completed: 1 } : { status: 'failed', completed: 1 }
+    );
+    expect(writes).toHaveBeenCalledOnce();
+    expect(
+      (await server.inject({ url: `${url}/operations/${path}-partial`, headers: agent })).json()
+    ).toMatchObject({ status: 'outcome_unknown', dispatched: true });
+    expect((await server.inject(request)).json()).toMatchObject({
+      replay: true,
+      operation: { status: 'outcome_unknown', dispatched: true },
+    });
+    expect(writes).toHaveBeenCalledOnce();
+
+    const success = await server.inject({
+      ...request,
+      headers: { ...agent, 'x-agentbrowser-operation-id': `${path}-success` },
+      payload: { [field]: [{ action: 'press', key: 'Tab' }] },
+    });
+    expect(success.statusCode).toBe(200);
+    expect(success.json()).toMatchObject(path === 'plan' ? { ok: true } : { status: 'success' });
+    expect(
+      (await server.inject({ url: `${url}/operations/${path}-success`, headers: agent })).json()
+    ).toMatchObject({ status: 'completed', dispatched: true });
+    expect(writes).toHaveBeenCalledTimes(2);
+  });
+
+  it('records an in-band plan refusal before dispatch as failed', async () => {
+    const { server, engine, url } = await setup();
+    const created = await server.inject({
+      method: 'POST',
+      url: `${url}/pages`,
+      headers: { ...operator, 'x-agentbrowser-operation-id': 'wait-page' },
+    });
+    const pageId = created.json().pageId;
+    const raw = requireFakePage(engine, pageId);
+    const writes = vi.spyOn(raw, 'act');
+    const agent = await delegate(server, url);
+    const request = {
+      method: 'POST' as const,
+      url: `${url}/pages/${pageId}/plan`,
+      headers: { ...agent, 'x-agentbrowser-operation-id': 'wait-refusal' },
+      payload: {
+        actions: [{ action: 'click', target: { ref: 'e0_0' } }],
+      },
+    };
+
+    const report = await server.inject(request);
+    expect(report.statusCode).toBe(200);
+    expect(report.json()).toMatchObject({ ok: false, completed: 0 });
+    expect(writes).not.toHaveBeenCalled();
+    expect(
+      (await server.inject({ url: `${url}/operations/wait-refusal`, headers: agent })).json()
+    ).toMatchObject({ status: 'failed', dispatched: false });
+    expect((await server.inject(request)).json()).toMatchObject({
+      replay: true,
+      operation: { status: 'failed', dispatched: false },
+    });
+  });
 });
 
 it('records a partially applied autofill as uncertain and refuses replay of the batch', async () => {
@@ -360,7 +470,7 @@ it('records a partially applied autofill as uncertain and refuses replay of the 
     headers: { ...operator, 'x-agentbrowser-operation-id': 'page' },
   });
   const pageId = created.json().pageId;
-  const raw = engine.getFakePage(engine.getSessionIds()[0]!, pageId)!;
+  const raw = requireFakePage(engine, pageId);
   raw.seedElements([
     {
       ref: 'company',

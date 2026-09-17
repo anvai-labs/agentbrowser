@@ -60,6 +60,17 @@ monotonic no-throw state, one dispatch across read retries, unchanged public sur
 and continued separation of snapshot evidence. Its only suggestion was to consolidate
 overlapping retry tests; that cleanup was applied before delivery.
 
+## Develop delivery
+
+[PR #183](https://github.com/anvai-labs/agentbrowser/pull/183) was independently
+reviewed at head `5cb7a84a2ef239b6fb651426a958a698cf9704f3` and merged to `develop` as
+`618817b2f74e10fe575f01b63ddd685f12ca2570`. All eight jobs passed in the
+[exact-head run](https://github.com/anvai-labs/agentbrowser/actions/runs/35092394891)
+and the [post-merge run](https://github.com/anvai-labs/agentbrowser/actions/runs/35092745217).
+GitHub did not permit a formal self-approval by the authenticated PR owner; the
+independent review was recorded in the delivery workflow. No main promotion or release
+was performed.
+
 ## Remaining boundary
 
 This slice does not define a new public result union, durable dispatch journal or

@@ -47,5 +47,13 @@ dependency or second execution state machine was added.
 The focused unit/service tests and the complete API suite cover approval refusal,
 post-dispatch engine rejection and exactly one dispatch across verification retries.
 See the [dispatch-boundary evidence](../evidence/t2-dispatch-boundary.md). Compatible
-shared result/verifier projections, trusted verifier registration and the remaining
-T2 acceptance matrix are still pending, so T2 is not complete.
+
+The second slice replaces the autofill-only HTTP failure marker with one typed
+execution-envelope classifier. Autofill, plan and single/batched action routes now
+project their existing top-level result into the same `SessionAuthority` completion
+logic. An in-band failure before dispatch is `failed`; after dispatch it is
+`outcome_unknown`; success remains `completed`. See the
+[HTTP result-classification evidence](../evidence/t2-http-result-classification.md).
+
+Compatible verifier projections, trusted verifier registration and the remaining T2
+acceptance matrix are still pending, so T2 is not complete.
