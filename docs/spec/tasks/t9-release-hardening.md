@@ -1,7 +1,7 @@
 # T9: repository, CI and release hardening
 
-Status: not started as a follow-up task. Repository: agentbrowser; coordinate separate
-Victor delivery where changed. Depends on: T0 and each release candidate's acceptance.
+Status: active recurring gate. Repository: agentbrowser; coordinate separate Victor
+delivery where changed. Depends on: T0 and each release candidate's acceptance.
 Inputs: core, quality-ci, delivery, review.
 
 ## Reuse and scope
@@ -37,3 +37,10 @@ Close R14/R15 for implemented gates. Publication is a separate authorized action
 provide a concrete candidate and evidence before requesting any missing approval.
 Never claim main promotion or release from a local version bump. Preserve concurrent
 branches and use the reviewed final commit identity for each merge.
+
+## Current implementation state
+
+Main/develop PR promotion, required checks, admin enforcement and force-push/deletion
+blocks are in use, and 1.8.19 was released from protected main. Tag ancestry,
+least-privilege publication and measured runner-use improvements remain open. T9 stays
+active because every candidate needs fresh review, exact-head CI and promotion evidence.

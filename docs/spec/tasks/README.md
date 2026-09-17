@@ -1,8 +1,8 @@
 # Agent implementation task packets
 
 Status: implementation activated by the user's subsequent foundation-first instruction.
-T0 is delivered; T1 and T2 have active incremental slices; later tasks remain not
-started. Reading this task list alone does not
+The table below records repository reality at AgentBrowser 1.8.19 plus the current
+unmerged outcome-run candidate. Reading this task list alone does not
 authorize implementation or publication; follow the current user-authorized scope.
 
 ## Start a task with minimal context
@@ -14,18 +14,18 @@ view with a 64 KiB complete-context ceiling. A task whose hard dependency is not
 complete is rejected. `--list` and `--check` expose selection metadata and validate all
 declared files and budgets without contacting a service.
 
-| Task | Outcome | Hard task dependencies |
-| --- | --- | --- |
-| [T0](t0-contract-catalog.md) | Accurate discovery and canonical contract projection | None |
-| [T1](t1-context-profiles.md) | Selective context/tool loading with measured isolation | T0 |
-| [T2](t2-shared-execution.md) | Shared result, verification and execution helper contracts | T0 |
-| [T3](t3-qa-regressions.md) | Deterministic user-facing regression and reports | T2 |
-| [T4](t4-application-parity.md) | Public typed application operations and independent parity | T2 |
-| [T5](t5-durable-recovery.md) | Optional single-owner durable recovery | T2 |
-| [T6](t6-widget-strategies.md) | Qualified custom-widget strategy increments | T2 |
-| [T7](t7-audit-security.md) | Optional audit/security adapters and profiles | T3; T4 additionally for application-security parity |
-| [T8](t8-harness-qualification.md) | Qualified harness transport, schema and footprint behavior | T0; profile/full-run slices also require T1/T3 |
-| [T9](t9-release-hardening.md) | Safe, economical per-repository promotion and release | T0; each release also requires its changed tasks' acceptance |
+| Task | Current state | Delivered or next gate | Hard task dependencies |
+| --- | --- | --- | --- |
+| [T0](t0-contract-catalog.md) | Complete | Released discovery/catalog foundation | None |
+| [T1](t1-context-profiles.md) | Active | Local loader, fixed profiles and run cursor delivered; installed-harness consumption remains | T0 |
+| [T2](t2-shared-execution.md) | Active | Six released slices; outcome-run vertical is an unmerged candidate; production evidence source and recovery matrix remain | T0 |
+| [T3](t3-qa-regressions.md) | Not started | Deterministic user-facing regression and reports | T2 |
+| [T4](t4-application-parity.md) | Not started | Public typed application operations and independent parity | T2 |
+| [T5](t5-durable-recovery.md) | Not started | Optional single-owner durable recovery | T2 |
+| [T6](t6-widget-strategies.md) | Active | React-select and chip-multiselect shipped in 1.8.19; mapping and broader qualification remain | T2 |
+| [T7](t7-audit-security.md) | Not started | Optional audit/security adapters and profiles | T3; T4 additionally for application-security parity |
+| [T8](t8-harness-qualification.md) | Not started | Transport risks documented; installed Victor/Codex/Claude qualification remains | T0; profile/full-run slices also require T1/T3 |
+| [T9](t9-release-hardening.md) | Recurring | Branch protection and release process exist; every changed slice still needs its own promotion evidence | T0; each release also requires its changed tasks' acceptance |
 
 T7 has additional scope-enforcement and customer-demand gates. T8 transport repair
 may start immediately after T0; do not wait for T3 to fix a known correlation hazard.

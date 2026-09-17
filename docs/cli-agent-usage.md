@@ -1,8 +1,9 @@
 # AgentBrowser from shell-based agents
 
-Status: CLI bulk autofill shipped in 1.8.18 (#177/#178). Offline `describe`, optional
-autofill schemas and bounded JSON input are local foundation-discovery additions;
-use a build containing this increment for the examples below.
+Status: CLI bulk autofill and custom widget strategies shipped through 1.8.19. Offline
+`describe`, bounded JSON input and plan/autofill result validation are delivered. The
+`outcome` examples describe the current unmerged T2 candidate; use a build containing
+that increment for those commands.
 
 The CLI is a thin SDK client to the shared AgentBrowser service. It owns no browser
 session state or alternate executor. Use ordinary Bash/shell tools to inspect JSON;
@@ -79,6 +80,10 @@ Do not place mutations in automatic retry loops. Missing/expired operation recor
 leave the outcome uncertain and require independent application evidence. Operation
 records currently do not provide durable report recovery across service restart.
 
+When a service returns an existing operation record, the SDK/CLI validates the complete
+bounded replay envelope and requires its operation ID to equal the requested ID. A
+malformed or mismatched replay is an uncertain invalid response, never a new outcome.
+
 Autofill and plan now exit 1 for `ok: false`, preserving the complete report on stdout
 with `--json`. This is a deliberate change from 1.8.18: scripts must capture stdout even
 on nonzero exit. Exit 0 still does not prove verification (for example, `verify: none`);
@@ -145,7 +150,8 @@ do not replay the mutation automatically. The server deployment must register th
 exact verifier and read-only evidence source. Verifier input is bounded JSON and can
 be private; the response contains only verifier metadata and opaque evidence IDs.
 
-Follow the shared [modular implementation plan](spec/tasks/README.md). Remaining T0
-work includes broader canonical schema coverage and installed-harness qualification.
-The subsequent MCP increment adds a [generated catalog](mcp-tool-catalog.md) and negotiated
-structured autofill and plan reports; other MCP result contracts remain to be qualified.
+Follow the shared [modular implementation plan](spec/tasks/README.md). T0 is complete;
+T8 owns installed-harness qualification. The existing MCP increment has a
+[generated catalog](mcp-tool-catalog.md) and negotiated structured autofill and plan
+reports. Outcome remains CLI/SDK/REST only unless measured demand justifies an MCP
+projection; other MCP result contracts remain to be qualified.

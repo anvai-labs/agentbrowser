@@ -381,6 +381,7 @@ class HttpClient {
         } catch {
           throw invalidResponse();
         }
+        if (replay.operation.operationId !== operationId) throw invalidResponse();
         throw new AgentBrowserError(
           'OPERATION_RECORDED',
           'Operation already recorded; reconcile its status before taking further action',

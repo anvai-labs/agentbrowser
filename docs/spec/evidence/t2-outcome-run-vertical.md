@@ -51,7 +51,9 @@ stdio bridge or additional daemon. Controlled sessions still require the existin
 operation ID and authority ledger because the plan can mutate state.
 The REST 200 schema also documents the existing no-redispatch operation replay
 envelope. SDK/CLI callers receive the existing `OPERATION_RECORDED` reconciliation
-error for that envelope instead of treating it as a fresh outcome report.
+error for that envelope instead of treating it as a fresh outcome report. The replay
+schema is strict and bounded, and its operation ID must equal the requested operation
+ID; malformed or misrouted data becomes a private-safe `INVALID_RESPONSE`.
 
 ## TDD coverage and limits
 
@@ -61,7 +63,25 @@ monotonic deadlines, per-read cancellation, authority revocation, malformed sour
 data, first-ready single evaluation, cleanup settlement, request mutation, private
 field rejection, REST projection, SDK validation, CLI schema discovery and exit codes.
 
+The final local candidate on 1.8.19 passed the full pre-commit gate: workspace
+type-check, lint, build and package tests, including 183 protocol, 62 control, 56 SDK,
+106 CLI and 566 API tests (two API tests skipped by their declared environment gates).
+Focused replay validation subsequently passed all 42 SDK client tests. Independent
+adversarial review found and then verified fixes for cleanup cancellation, poll yielding,
+empty UI plans, strict/private replay parsing and request/replay operation-ID binding.
+
 This seam reports `testedSeam: ui` because it executes the browser plan. A future
 application-mode adapter must retain its own seam and durable receipt identity rather
 than relabel this report. T2 remains open until at least one production evidence source
 is qualified and the remaining authority/recovery acceptance matrix passes.
+
+## Delivery record
+
+- Repository: `agentbrowser`
+- Base: released 1.8.19 develop commit `b4360b93276146123076f776f7a7592bc4bf1740`
+- Status: active PR candidate; not yet merged or released
+- Reused owners: protocol parsers, plan executor, session authority, SDK request boundary,
+  CLI command registry and API composition root
+- New dependencies and services: none
+- MCP changes: none
+- Remaining limit: no production evidence source is registered by default

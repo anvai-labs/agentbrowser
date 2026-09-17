@@ -17,7 +17,7 @@ Markdown into runtime permissions. Reuse one catalog projector and existing cred
    clients require stable catalogs. Enforce profile policy at the service as well. **Implemented.**
 3. Add scoped run-cursor/memory selection and accessible inline mode/decision UI using
    existing components. Measure cold/warm footprint before expanding functionality.
-   **Implemented locally; delivery pending.**
+   **Delivered through PR #182.**
 
 ## TDD and acceptance
 

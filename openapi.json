@@ -1427,6 +1427,14 @@
                             {
                               "const": "native-select",
                               "type": "string"
+                            },
+                            {
+                              "const": "react-select",
+                              "type": "string"
+                            },
+                            {
+                              "const": "chip-multiselect",
+                              "type": "string"
                             }
                           ]
                         }
@@ -1856,11 +1864,18 @@
         },
         "responses": {
           "200": {
-            "description": "Canonical plan and outcome report. Clients derive pass with all required axes.",
+            "description": "Canonical plan/outcome report, or a no-redispatch operation record for a repeated operation ID.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OutcomeRunReport"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/OutcomeRunReport"
+                    },
+                    {
+                      "$ref": "#/components/schemas/OperationReplay"
+                    }
+                  ]
                 }
               }
             }
@@ -3642,6 +3657,7 @@
             "type": "boolean"
           },
           "operation": {
+            "additionalProperties": false,
             "type": "object",
             "required": [
               "operationId",
@@ -3651,9 +3667,13 @@
             ],
             "properties": {
               "operationId": {
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-zA-Z0-9_-]+$",
                 "type": "string"
               },
               "epoch": {
+                "minimum": 0,
                 "type": "integer"
               },
               "status": {
@@ -3795,6 +3815,7 @@
                 "type": "boolean"
               },
               "operation": {
+                "additionalProperties": false,
                 "type": "object",
                 "required": [
                   "operationId",
@@ -3804,9 +3825,13 @@
                 ],
                 "properties": {
                   "operationId": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[a-zA-Z0-9_-]+$",
                     "type": "string"
                   },
                   "epoch": {
+                    "minimum": 0,
                     "type": "integer"
                   },
                   "status": {
@@ -3988,6 +4013,7 @@
                 "type": "boolean"
               },
               "operation": {
+                "additionalProperties": false,
                 "type": "object",
                 "required": [
                   "operationId",
@@ -3997,9 +4023,13 @@
                 ],
                 "properties": {
                   "operationId": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[a-zA-Z0-9_-]+$",
                     "type": "string"
                   },
                   "epoch": {
+                    "minimum": 0,
                     "type": "integer"
                   },
                   "status": {
@@ -4217,6 +4247,7 @@
         ]
       },
       "OperationRecord": {
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "operationId",
@@ -4226,9 +4257,13 @@
         ],
         "properties": {
           "operationId": {
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9_-]+$",
             "type": "string"
           },
           "epoch": {
+            "minimum": 0,
             "type": "integer"
           },
           "status": {
@@ -4253,6 +4288,66 @@
           },
           "dispatched": {
             "type": "boolean"
+          }
+        }
+      },
+      "OperationReplay": {
+        "additionalProperties": false,
+        "$id": "urn:agentbrowser:operation-replay:v1",
+        "type": "object",
+        "required": [
+          "replay",
+          "operation"
+        ],
+        "properties": {
+          "replay": {
+            "const": true,
+            "type": "boolean"
+          },
+          "operation": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "operationId",
+              "epoch",
+              "status",
+              "dispatched"
+            ],
+            "properties": {
+              "operationId": {
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-zA-Z0-9_-]+$",
+                "type": "string"
+              },
+              "epoch": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "status": {
+                "anyOf": [
+                  {
+                    "const": "in_flight",
+                    "type": "string"
+                  },
+                  {
+                    "const": "completed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "failed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "outcome_unknown",
+                    "type": "string"
+                  }
+                ]
+              },
+              "dispatched": {
+                "type": "boolean"
+              }
+            }
           }
         }
       },
@@ -6175,6 +6270,7 @@
         ],
         "properties": {
           "actions": {
+            "minItems": 1,
             "type": "array",
             "items": {
               "type": "object",
