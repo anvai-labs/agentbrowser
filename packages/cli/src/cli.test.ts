@@ -1345,4 +1345,128 @@ describe('AgentBrowser CLI', () => {
       }
     });
   });
+
+  describe('application authority commands', () => {
+    beforeEach(() => {
+      sessions.applicationBind = vi
+        .fn()
+        .mockResolvedValue({ adapter: 'owned-counter', resource: 'account' });
+      sessions.applicationUnbind = vi.fn().mockResolvedValue({ unbound: true });
+      sessions.applicationDiscover = vi.fn().mockResolvedValue({
+        adapter: 'owned-counter',
+        resource: 'account',
+        operations: [
+          { name: 'add', mode: 'write' },
+          { name: 'balance', mode: 'read' },
+        ],
+      });
+      sessions.applicationExecute = vi
+        .fn()
+        .mockResolvedValue({ status: 'committed', value: { operationId: 'effect-1', total: 1 } });
+      sessions.applicationReceipt = vi
+        .fn()
+        .mockResolvedValue({ operationId: 'effect-1', total: 1 });
+    });
+
+    it('binds an adapter and renders the binding', async () => {
+      expect(await run('application', 'bind', 'ses_1', 'owned-counter', 'account')).toBe(0);
+      expect(sessions.applicationBind).toHaveBeenCalledWith('ses_1', {
+        adapter: 'owned-counter',
+        resource: 'account',
+      });
+      expect(out).toEqual(['Bound owned-counter to resource account']);
+    });
+
+    it('discovers operations in readable form and reports an empty binding', async () => {
+      expect(await run('application', 'discover', 'ses_1')).toBe(0);
+      expect(sessions.applicationDiscover).toHaveBeenCalledWith('ses_1');
+      expect(out).toEqual([
+        'Adapter owned-counter bound to account',
+        '  write add',
+        '  read  balance',
+      ]);
+      sessions.applicationDiscover = vi.fn().mockResolvedValue(null);
+      out = [];
+      expect(await run('application', 'discover', 'ses_1')).toBe(0);
+      expect(out).toEqual(['No application binding on this session']);
+    });
+
+    it('executes a write with both identities and renders the receipt value', async () => {
+      // The write identity rides the global reconciliation --operation-id.
+      expect(
+        await run(
+          '--operation-id',
+          'effect-1',
+          'application',
+          'execute',
+          'ses_1',
+          'add',
+          '1',
+          '--expected-version',
+          '0'
+        )
+      ).toBe(0);
+      expect(sessions.applicationExecute).toHaveBeenCalledWith('ses_1', {
+        operation: 'add',
+        input: 1,
+        operationId: 'effect-1',
+        expectedVersion: 0,
+      });
+      expect(out).toEqual(['committed: {"operationId":"effect-1","total":1}']);
+    });
+
+    it('renders rejections, replays, and defaults input to null', async () => {
+      sessions.applicationExecute = vi
+        .fn()
+        .mockResolvedValue({ status: 'rejected', reason: 'stale business version' });
+      expect(await run('application', 'execute', 'ses_1', 'add', '1')).toBe(0);
+      expect(sessions.applicationExecute).toHaveBeenCalledWith('ses_1', {
+        operation: 'add',
+        input: 1,
+      });
+      expect(out).toEqual(['Rejected: stale business version']);
+      sessions.applicationExecute = vi
+        .fn()
+        .mockResolvedValue({ replay: true, operation: { operationId: 'effect-1' } });
+      out = [];
+      expect(await run('application', 'execute', 'ses_1', 'balance')).toBe(0);
+      expect(sessions.applicationExecute).toHaveBeenCalledWith('ses_1', {
+        operation: 'balance',
+        input: null,
+      });
+      expect(out.join('\n')).toContain('Replayed operation');
+    });
+
+    it('refuses a malformed --expected-version before calling the client', async () => {
+      expect(
+        await run(
+          'application',
+          'execute',
+          'ses_1',
+          'add',
+          '1',
+          '--expected-version',
+          'not-a-number'
+        )
+      ).toBe(1);
+      expect(err.join('\n')).toContain('--expected-version');
+      expect(sessions.applicationExecute).not.toHaveBeenCalled();
+    });
+
+    it('reads a receipt and renders a missing one without failing', async () => {
+      expect(await run('application', 'receipt', 'ses_1', 'effect-1')).toBe(0);
+      expect(sessions.applicationReceipt).toHaveBeenCalledWith('ses_1', 'effect-1');
+      expect(JSON.parse(out.join('\n'))).toEqual({ operationId: 'effect-1', total: 1 });
+      sessions.applicationReceipt = vi.fn().mockResolvedValue(null);
+      out = [];
+      expect(await run('application', 'receipt', 'ses_1', 'effect-404')).toBe(0);
+      expect(out).toEqual(['No receipt recorded for this operation ID']);
+    });
+
+    it('unbinds and renders the confirmation', async () => {
+      expect(await run('application', 'unbind', 'ses_1')).toBe(0);
+      expect(sessions.applicationUnbind).toHaveBeenCalledWith('ses_1');
+      expect(out).toEqual(['Application binding removed']);
+    });
+  });
 });

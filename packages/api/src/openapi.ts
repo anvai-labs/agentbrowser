@@ -13,6 +13,10 @@ import {
   AgentModeSchema,
   ApiErrorDetailSchema,
   ApiErrorSchema,
+  ApplicationBindingSchema,
+  ApplicationDiscoverySchema,
+  ApplicationExecuteRequestSchema,
+  ApplicationOperationResultSchema,
   ArtifactRefSchema,
   AutofillReportSchema,
   AutofillRequestSchema,
@@ -150,6 +154,123 @@ const controlPaths = {
   },
 };
 
+const applicationResponses = {
+  '200': {
+    description:
+      'Application authority result. A replay body reports an already-admitted operation ID; it is not a new result.',
+    content: json(ref('ApplicationOperationResult')),
+  },
+  '401': errorResponse('Credential is absent, expired, or revoked.'),
+  '403': errorResponse('Operator, binding or session authority is required.'),
+  '404': NOT_FOUND,
+  '409': errorResponse('Session busy or review revoked. Do not blindly repeat a write.'),
+};
+
+const applicationPaths = {
+  '/v1/sessions/{sessionId}/application': {
+    get: {
+      operationId: 'discoverApplication',
+      summary: 'List the bound adapter and its operations; null when nothing is bound',
+      tags: ['sessions'],
+      parameters: [sessionIdParam],
+      responses: {
+        ...applicationResponses,
+        '200': {
+          description: 'The discovery view of the current binding, or null while unbound.',
+          content: json({
+            oneOf: [ref('ApplicationDiscovery'), { type: 'null' }],
+          }),
+        },
+      },
+    },
+    put: {
+      operationId: 'bindApplication',
+      summary:
+        'Operator: bind an application adapter to a resource while the human owns the session',
+      tags: ['sessions'],
+      parameters: [sessionIdParam],
+      requestBody: { required: true, content: json(ref('ApplicationBinding')) },
+      responses: {
+        '200': {
+          description: 'The binding that is now active.',
+          content: json({
+            type: 'object',
+            required: ['adapter', 'resource'],
+            properties: { adapter: { type: 'string' }, resource: { type: 'string' } },
+          }),
+        },
+        '401': errorResponse('Credential is absent, expired, or revoked.'),
+        '403': errorResponse(
+          'Operator authority is required, or the adapter refuses this tenant/resource.'
+        ),
+        '404': NOT_FOUND,
+        '409': errorResponse('Session busy or agent-owned. Take over before changing the binding.'),
+      },
+    },
+    delete: {
+      operationId: 'unbindApplication',
+      summary: 'Operator: drop the application binding',
+      tags: ['sessions'],
+      parameters: [sessionIdParam],
+      responses: {
+        '200': {
+          description:
+            'The binding was removed. Like bind, this requires the human to own the session and takes control as a side effect even when nothing is bound.',
+          content: json({
+            type: 'object',
+            required: ['unbound'],
+            properties: { unbound: { const: true } },
+          }),
+        },
+        '401': errorResponse('Credential is absent, expired, or revoked.'),
+        '403': errorResponse('Operator authority is required.'),
+        '404': NOT_FOUND,
+      },
+    },
+  },
+  '/v1/sessions/{sessionId}/application/execute': {
+    post: {
+      operationId: 'executeApplication',
+      summary:
+        'Dispatch one application operation; writes need an operation ID and expected version',
+      description:
+        'The application enforces business versioning independently of the control epoch. ' +
+        'A repeated operation ID replays the recorded operation instead of re-executing.',
+      tags: ['sessions'],
+      parameters: [sessionIdParam],
+      requestBody: { required: true, content: json(ref('ApplicationExecuteRequest')) },
+      responses: applicationResponses,
+    },
+  },
+  '/v1/sessions/{sessionId}/application/receipts/{operationId}': {
+    get: {
+      operationId: 'getApplicationReceipt',
+      summary:
+        'Read one application receipt; an application-verified outcome, not a browser receipt',
+      tags: ['sessions'],
+      parameters: [
+        sessionIdParam,
+        {
+          name: 'operationId',
+          in: 'path',
+          required: true,
+          schema: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,128}$' },
+        },
+      ],
+      responses: {
+        '200': {
+          description: 'Whatever receipt the adapter recorded for this operation ID, or null.',
+          content: json({ oneOf: [{ type: 'object' }, { type: 'null' }] }),
+        },
+        '401': errorResponse('Credential is absent, expired, or revoked.'),
+        '403': errorResponse('Binding or session authority is required.'),
+        '404': NOT_FOUND,
+        '400': INVALID_REQUEST,
+      },
+    },
+  },
+};
+
 /**
  * Build the OpenAPI 3.1 document describing the AgentBrowser HTTP API.
  */
@@ -179,6 +300,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
     ],
     paths: {
       ...controlPaths,
+      ...applicationPaths,
       '/openapi.json': {
         get: {
           operationId: 'getOpenApiDocument',
@@ -1103,6 +1225,10 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         ControlGrant: ControlGrantSchema,
         OperationRecord: OperationRecordSchema,
         OperationReplay: OperationReplaySchema,
+        ApplicationBinding: ApplicationBindingSchema,
+        ApplicationDiscovery: ApplicationDiscoverySchema,
+        ApplicationExecuteRequest: ApplicationExecuteRequestSchema,
+        ApplicationOperationResult: ApplicationOperationResultSchema,
         ApiError: ApiErrorSchema,
         ApiErrorDetail: ApiErrorDetailSchema,
         Viewport: ViewportSchema,

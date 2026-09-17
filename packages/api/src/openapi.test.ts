@@ -45,6 +45,12 @@ describe('OpenAPI document', () => {
       ['/v1/sessions/{sessionId}/control/prepare-resume', 'post'],
       ['/v1/sessions/{sessionId}/control/delegate', 'post'],
       ['/v1/sessions/{sessionId}/operations/{operationId}', 'get'],
+      // Shared-infra slice 2: the application authority surface.
+      ['/v1/sessions/{sessionId}/application', 'get'],
+      ['/v1/sessions/{sessionId}/application', 'put'],
+      ['/v1/sessions/{sessionId}/application', 'delete'],
+      ['/v1/sessions/{sessionId}/application/execute', 'post'],
+      ['/v1/sessions/{sessionId}/application/receipts/{operationId}', 'get'],
       ['/health/live', 'get'],
       ['/health/ready', 'get'],
       ['/metrics', 'get'],

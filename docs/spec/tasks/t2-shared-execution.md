@@ -116,3 +116,11 @@ unsupported for outcome runs. Direct registry evaluation remains compatible. The
 rechecks authority and cancellation after preparation, settles cleanup on refusal, and
 delegated HTTP replay records the refusal as failed with no dispatch. Application receipt
 correlation and production evidence-source qualification are still pending.
+
+The application receipt foundation now offers one read helper inside an existing
+admission, reused by standalone receipt lookup. It derives scope from existing session
+authority, preserves the separate business receipt ID and rechecks owner, binding,
+adapter authorization and cancellation after asynchronous I/O. It adds no nested ticket,
+write dispatch, ledger or retry loop. Wiring request correlation into an outcome source
+and qualifying that source are separate, unfinished steps. See the
+[application receipt evidence](../evidence/t2-application-identity.md#admitted-receipt-read-follow-up).

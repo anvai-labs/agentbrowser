@@ -18,6 +18,13 @@ The control plane suppresses duplicates but does not retry uncertain writes or
 manufacture evidence that an application committed. A trusted adapter can report
 a known rejection; malformed or lost results remain uncertain after dispatch.
 Receipt reads require current scoped authority and share the admission lock.
+Standalone `lookupReceipt` admits its principal once and delegates to
+`readReceiptInScope`. Trusted composition already inside an admitted operation uses
+the latter directly, avoiding nested admission. It keeps the business receipt ID
+separate from the outer service operation ID and rechecks ownership, binding, adapter
+authorization and cancellation before returning. An optional bounded read signal is
+combined with session cancellation. The helper waits for adapter settlement; it does
+not retry, release admission early, or turn arbitrary receipts into verified evidence.
 Trusted adapters receive the authority-owned `sessionId` and per-registration
 `sessionIncarnation` in `ApplicationScope`. Application idempotency and receipt keys
 must include tenant, resource, session incarnation and the caller's raw operation ID

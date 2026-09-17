@@ -45,7 +45,26 @@ describe('trusted agent mode profiles', () => {
     expect(agentModeProfile('bounty').capabilities).toEqual(
       agentModeProfile('appsec').capabilities
     );
-    expect(agentModeProfile('application').capabilities).toEqual(['session.control']);
+    expect(agentModeProfile('application').capabilities).toEqual([
+      'session.control',
+      'application.discover',
+      'application.execute',
+    ]);
+  });
+
+  it('fences browser modes out of the application surface', () => {
+    // Application capabilities are opt-in: no browser-driving mode may fall
+    // back from an application operation to a browser click, so only the
+    // dedicated application mode carries them.
+    for (const mode of AGENT_MODE_IDS.filter((mode) => mode !== 'application')) {
+      expect(agentModeAllows(mode, 'application.discover')).toBe(false);
+      expect(agentModeAllows(mode, 'application.execute')).toBe(false);
+    }
+    expect(agentModeAllows('application', 'application.discover')).toBe(true);
+    expect(agentModeAllows('application', 'application.execute')).toBe(true);
+    // The application mode never receives browser capabilities in exchange.
+    expect(agentModeAllows('application', 'page.interact')).toBe(false);
+    expect(agentModeAllows('application', 'page.form')).toBe(false);
   });
 
   it('rejects caller-invented mode names', () => {
