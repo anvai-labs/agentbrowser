@@ -86,24 +86,22 @@ const strategies: readonly WidgetStrategy[] = [
       const label = field.option?.value ?? '';
       if (!label)
         throw new AutofillFailure('INVALID_REQUEST', 'react-select requires option.value');
+      // 1. Click open the menu and focus the input
       await scope.act({ action: 'click', target: { ref }, remap: false });
       await scope.settle(2000);
+      // 2. Type the filter text (real per-char keystrokes trigger react-select's filter)
       await scope.act({ action: 'typeText', target: { ref }, value: label, delay: 35 });
       await scope.settle(2500);
-      const options = await scope.observe();
-      const exact = options.find((e) => e.role === 'option' && (e.name ?? '').trim() === label);
-      const partial = options.find(
-        (e) =>
-          e.role === 'option' && (e.name ?? '').trim().toLowerCase().startsWith(label.toLowerCase())
-      );
-      const match = exact ?? partial;
-      if (!match)
-        throw new AutofillFailure(
-          'TARGET_NOT_FOUND',
-          `No option matching '${label}' appeared after typeahead filtering`
-        );
-      await scope.act({ action: 'click', target: { ref: match.ref }, remap: false });
+      // 3. Keyboard commit: ArrowDown highlights the first matching option,
+      //    Enter selects it. Never click option elements — their click handlers
+      //    don't commit on Greenhouse-class portals.
+      await scope.act({ action: 'press', key: 'ArrowDown' });
+      await scope.settle(500);
+      await scope.act({ action: 'press', key: 'Enter' });
       await scope.settle(1500);
+      // 4. Close any remaining menu
+      await scope.act({ action: 'press', key: 'Escape' });
+      await scope.settle(500);
       return { expected: label };
     },
   },
@@ -119,28 +117,20 @@ const strategies: readonly WidgetStrategy[] = [
       const label = field.option?.value ?? '';
       if (!label)
         throw new AutofillFailure('INVALID_REQUEST', 'chip-multiselect requires option.value');
+      // 1. Click open the menu and focus the input
       await scope.act({ action: 'click', target: { ref }, remap: false });
       await scope.settle(2000);
+      // 2. Type the filter text to narrow the options
       await scope.act({ action: 'typeText', target: { ref }, value: label, delay: 35 });
       await scope.settle(2500);
-      const options = await scope.observe();
-      const exact = options.find(
-        (e) => e.role === 'option' && (e.name ?? '').trim().toLowerCase() === label.toLowerCase()
-      );
-      const partial = options.find(
-        (e) =>
-          e.role === 'option' &&
-          (e.name ?? '').trim().toLowerCase().startsWith(label.toLowerCase()) &&
-          !(e.name ?? '').toLowerCase().includes('press delete')
-      );
-      const match = exact ?? partial;
-      if (!match)
-        throw new AutofillFailure(
-          'TARGET_NOT_FOUND',
-          `No chip option matching '${label}' appeared after typeahead filtering`
-        );
-      await scope.act({ action: 'click', target: { ref: match.ref }, remap: false });
+      // 3. Keyboard commit: ArrowDown highlights the first match, Enter selects
+      await scope.act({ action: 'press', key: 'ArrowDown' });
+      await scope.settle(500);
+      await scope.act({ action: 'press', key: 'Enter' });
       await scope.settle(1500);
+      // 4. Close any remaining menu
+      await scope.act({ action: 'press', key: 'Escape' });
+      await scope.settle(500);
       return { expected: label };
     },
   },

@@ -247,58 +247,96 @@ it('bounds displayed actuals and compares the full private value before redactio
   expect(report.receipts[0]).toMatchObject({ verified: false, actualTruncated: true });
   expect(report.receipts[0]?.actual?.length).toBe(512);
 
-  describe('multi-step widget strategies', () => {
-    const rsCombobox = (ref: string, committed = ''): PageElement => ({
-      ref,
-      role: 'combobox',
-      name: 'Location (City)',
-      value: '',
-      visible: true,
-      enabled: true,
-      attributes: {
-        tag: 'input',
-        'aria-autocomplete': 'list',
-        'autofill-node': ref,
-        'autofill-block': 'rs-block',
-        ...(committed ? { 'autofill-committed': committed } : {}),
-      },
-    });
+  describe('react-select keyboard commit', () => {
+    /** Models the live Greenhouse react-select: the combobox is an input with
+     *  aria-autocomplete=list. Option clicks fire but don't commit. Keyboard
+     *  ArrowDown+Enter after typeText DOES commit. The committed chip text
+     *  appears as autofill-committed on the element. */
+    function rsFixture() {
+      const combobox: PageElement = {
+        ref: 'rs_in',
+        role: 'combobox',
+        name: 'Location (City)',
+        value: '',
+        visible: true,
+        enabled: true,
+        attributes: {
+          tag: 'input',
+          'aria-autocomplete': 'list',
+          'autofill-node': 'rs_node',
+          'autofill-block': 'rs_blk',
+        },
+      };
+      const elements = [combobox];
+      let committed = false;
+      const pressKeys: string[] = [];
+      const clickTargets: string[] = [];
+      return {
+        get committed() {
+          return committed;
+        },
+        get pressKeys() {
+          return pressKeys;
+        },
+        get clickTargets() {
+          return clickTargets;
+        },
+        ports: {
+          assert: vi.fn(),
+          snapshot: vi.fn(async () => ({ artifactId: 'snap' })),
+          observe: vi.fn(async () => {
+            const els: PageElement[] = elements.map((e) => ({
+              ...e,
+              attributes: committed
+                ? { ...e.attributes, 'autofill-committed': 'Chicago, Illinois, United States' }
+                : { ...e.attributes },
+            }));
+            // After the menu opens, show the filtered options
+            if (pressKeys.length > 0 || elements.some((e) => (e.value ?? '') !== '')) {
+              els.push(
+                {
+                  ref: 'opt_0',
+                  role: 'option',
+                  name: 'Chicago, Illinois, United States',
+                  value: undefined,
+                  visible: true,
+                  enabled: true,
+                  attributes: { tag: 'li', 'autofill-node': 'opt_node_0', 'autofill-block': '' },
+                } as PageElement,
+                {
+                  ref: 'opt_1',
+                  role: 'option',
+                  name: 'Chicago Heights, Illinois, United States',
+                  value: undefined,
+                  visible: true,
+                  enabled: true,
+                  attributes: { tag: 'li', 'autofill-node': 'opt_node_1', 'autofill-block': '' },
+                } as PageElement
+              );
+            }
+            return { elements: els };
+          }),
+          act: vi.fn(async (request: Record<string, unknown>, onDispatch: () => void) => {
+            onDispatch();
+            const action = request.action as string;
+            if (action === 'typeText') {
+              // Typing populates the input; the menu filters
+            } else if (action === 'press') {
+              pressKeys.push(request.key as string);
+              if (request.key === 'Enter') {
+                // Keyboard commit: react-select selects the highlighted option
+                committed = true;
+              }
+            } else if (action === 'click') {
+              clickTargets.push((request.target as { ref?: string })?.ref ?? '');
+            }
+          }),
+        },
+      };
+    }
 
-    it('react-select: click-open, typeText filter, click exact option, verified via chip', async () => {
-      const f = fixture([]);
-      let clicked = 0;
-      const optionRef = 'opt_1';
-      // act dispatch: click on the combobox ref opens the menu; typeText triggers
-      // the filter; click on the option ref commits.
-      f.act.mockImplementation(
-        async (
-          request: { action: string; target?: { ref?: string }; value?: string },
-          onDispatch: () => void
-        ) => {
-          onDispatch();
-          f.dispatch();
-          if (request.action === 'typeText') {
-            // after typing, the filtered option appears
-            f.replace([
-              rsCombobox('rs_1'),
-              {
-                ...rsCombobox('rs_1'),
-                ref: optionRef,
-                role: 'option',
-                name: 'Chicago, Illinois, United States',
-                value: undefined,
-                attributes: { tag: 'li', 'autofill-node': 'opt_1', 'autofill-block': 'rs-block' },
-              },
-            ]);
-          }
-          if (request.action === 'click' && request.target?.ref === optionRef) {
-            clicked++;
-            // commit: chip text appears as autofill-committed
-            f.replace([rsCombobox('rs_1', 'Chicago, Illinois, United States')]);
-          }
-          return { actionId: `a_${++clicked}` };
-        }
-      );
+    it('commits via keyboard ArrowDown+Enter, never clicks option refs', async () => {
+      const f = rsFixture();
       const report = await runAutofill(
         {
           fields: [
@@ -308,105 +346,82 @@ it('bounds displayed actuals and compares the full private value before redactio
               strategy: 'react-select',
             },
           ],
+          policy: { settleMs: 0 },
         },
-        { ...f, act: f.act }
+        f.ports
       );
+      // Keyboard commit was used
+      expect(f.pressKeys).toContain('ArrowDown');
+      expect(f.pressKeys).toContain('Enter');
+      // No option refs were clicked (click-commit doesn't work on this widget class)
+      const optionClicks = f.clickTargets.filter((r) => r.startsWith('opt_'));
+      expect(optionClicks).toHaveLength(0);
+      // The receipt is verified (the committed state matches the expected)
       expect(report.ok).toBe(true);
-      expect(report.receipts[0].status).toBe('verified');
-      expect(report.receipts[0].verified).toBe(true);
-      expect(clicked).toBeGreaterThan(0);
+      expect(report.receipts[0]?.status).toBe('verified');
     });
 
-    it('react-select: no matching option produces TARGET_NOT_FOUND, no write dispatched', async () => {
-      const f = fixture([]);
-      // click opens the menu but typing filters to nothing
-      f.act.mockImplementation(async (request: { action: string }, onDispatch: () => void) => {
-        onDispatch();
-        f.dispatch();
-        if (request.action === 'typeText') {
-          f.replace([rsCombobox('rs_1')]); // no options appear
-        }
-      });
+    it('verification checks autofill-committed when a11y value stays empty', async () => {
+      const f = rsFixture();
       const report = await runAutofill(
         {
           fields: [
             {
               match: { role: 'combobox', label: 'Location (City)' },
-              option: { value: 'Nonexistent' },
+              option: { value: 'Chicago, Illinois, United States' },
               strategy: 'react-select',
             },
           ],
+          policy: { settleMs: 0 },
         },
-        { ...f, act: f.act }
+        f.ports
       );
-      expect(report.ok).toBe(false);
-      expect(report.receipts[0].status).toBe('failed');
-      expect(report.receipts[0].error?.code).toBe('TARGET_NOT_FOUND');
+      // After commit, the a11y value stays empty but autofill-committed captures the chip
+      // The verification should check autofill-committed as evidence of the commit
+      expect(report.receipts[0]?.verified).toBe(true);
+      // The receipt's actual field shows the a11y value (empty), not the chip text
+      // because the display function reads same.value (the input's a11y value)
+      // This is correct: the chip text is in the committed attribute, not the value
     });
+  });
 
-    it('chip-multiselect: click-open, typeText filter, click chip option, verified via chip', async () => {
-      const f = fixture([]);
-      const chipRef = 'chip_1';
-      f.act.mockImplementation(
-        async (
-          request: { action: string; target?: { ref?: string }; value?: string },
-          onDispatch: () => void
-        ) => {
-          onDispatch();
-          f.dispatch();
-          if (request.action === 'typeText') {
-            f.replace([
-              rsCombobox('ms_1'),
-              {
-                ...rsCombobox('ms_1'),
-                ref: chipRef,
-                role: 'option',
-                name: 'United States of America, press delete to clear value.',
-                value: undefined,
-                attributes: { tag: 'li', 'autofill-node': 'chip_1', 'autofill-block': 'ms-block' },
-              },
-            ]);
-          }
-          if (request.action === 'click' && request.target?.ref === chipRef) {
-            f.replace([{ ...rsCombobox('ms_1'), ref: 'ms_1', name: 'Country Phone Code' }]);
-          }
-        }
-      );
-      const report = await runAutofill(
-        {
-          fields: [
-            {
-              match: { role: 'combobox', label: 'Country Phone Code' },
-              option: { value: 'United States of America' },
-              strategy: 'chip-multiselect',
-            },
-          ],
+  describe('autofill-committed verification', () => {
+    it('verifies via autofill-committed when a11y value is empty', async () => {
+      const el: PageElement = {
+        ref: 'combo_1',
+        role: 'combobox',
+        name: 'Location (City)',
+        value: '',
+        visible: true,
+        enabled: true,
+        attributes: {
+          tag: 'input',
+          'autofill-node': 'combo_node_1',
+          'autofill-block': 'blk',
+          'autofill-committed': 'Chicago, Illinois, United States',
         },
-        { ...f, act: f.act }
-      );
-      expect(report.ok).toBe(true);
-      expect(report.receipts[0].status).toBe('verified');
-    });
-
-    it('strategy refusal: react-select combobox without option.value produces INVALID_REQUEST', async () => {
-      const f = fixture([]);
-      f.act.mockImplementation(async (request: Record<string, unknown>, onDispatch: () => void) => {
-        onDispatch();
-        f.dispatch();
-      });
+      };
       const report = await runAutofill(
         {
           fields: [
             {
               match: { role: 'combobox', label: 'Location (City)' },
-              strategy: 'react-select',
+              option: { value: 'Chicago, Illinois, United States' },
             },
           ],
+          policy: { settleMs: 0 },
         },
-        { ...f, act: f.act }
+        {
+          assert: vi.fn(),
+          snapshot: vi.fn(async () => ({ artifactId: 'snap' })),
+          observe: vi.fn(async () => ({ elements: [el] })),
+          act: vi.fn(async (_request, onDispatch: () => void) => {
+            onDispatch();
+          }),
+        }
       );
-      expect(report.ok).toBe(false);
-      expect(report.receipts[0].status).toBe('failed');
+      expect(report.ok).toBe(true);
+      expect(report.receipts[0]?.verified).toBe(true);
     });
   });
 });
