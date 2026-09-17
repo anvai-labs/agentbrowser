@@ -264,6 +264,7 @@ export async function runVerifiedOutcome<Result, Context>(
   let result: Result | undefined;
   let hasResult = false;
   let cleanup: OutcomeProjection['cleanup'] = 'pending';
+  let prepared: ReturnType<TrustedVerifierRegistry['prepare']>;
   const now = options.now ?? (() => performance.now());
 
   try {
@@ -288,6 +289,15 @@ export async function runVerifiedOutcome<Result, Context>(
       } else {
         try {
           options.assertAuthority();
+          prepared = options.verifierRegistry.prepare(
+            descriptor.id,
+            descriptor.version,
+            options.verifier.input,
+            options.signal
+          );
+          if (!prepared) availability = 'unsupported';
+          options.assertAuthority();
+          if (options.signal?.aborted) availability = 'blocked';
         } catch {
           availability = 'blocked';
         }
@@ -313,7 +323,7 @@ export async function runVerifiedOutcome<Result, Context>(
       }
     }
 
-    if (execution === 'completed') {
+    if (execution === 'completed' && prepared) {
       const started = now();
       for (let reads = 0; reads < descriptor.budget.maxReads; reads++) {
         const remaining = descriptor.budget.timeoutMs - (now() - started);
@@ -350,14 +360,7 @@ export async function runVerifiedOutcome<Result, Context>(
           if (!elapsed) break;
           continue;
         }
-        verification = options.verifierRegistry.evaluate(
-          descriptor.id,
-          descriptor.version,
-          options.verifier.input,
-          read.evidence,
-          read.evidenceRefIds,
-          options.signal
-        );
+        verification = prepared.evaluate(read.evidence, read.evidenceRefIds, options.signal);
         break;
       }
     }

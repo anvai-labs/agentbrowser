@@ -15,7 +15,8 @@ execution, then rejects contradictory reports.
 
 The control package owns one reusable `runVerifiedOutcome` composition helper. It:
 
-1. resolves the verifier and exact evidence-source capability before dispatch;
+1. resolves the verifier and exact evidence-source capability, then snapshots and
+   parses verifier input before dispatch;
 2. executes the injected existing executor at most once;
 3. polls only the registered read-only source within verifier read/time budgets,
    yielding for the trusted interval after each pending result;
@@ -102,3 +103,28 @@ old grant cannot redispatch. An unavailable execution report now says that effec
 be unknown instead of incorrectly claiming the plan never executed. Independent review
 confirmed that `requirePage` already invokes the shared authority check; no duplicate
 service guard was added. This closes one terminal boundary, not the full T2 matrix.
+
+## Verifier input preflight follow-up
+
+The shared registry prepares an evidence-only evaluator from bounded, detached input
+before the runner invokes its executor. `defineVerifier` parses that input once;
+mutating the caller's input during asynchronous execution cannot change the expected
+outcome. Direct and prepared verification reuse one evidence/projection helper.
+
+Invalid input produces `blocked/not_started` with unknown verification and no evidence
+references. It dispatches no plan, reads no evidence and still settles registered
+cleanup. A legacy trusted definition with only `evaluate` remains compatible with
+direct registry evaluation, but outcome execution requires `prepare`; otherwise it
+reports `unsupported/not_started`. Preparation errors never expose parser details or
+input values. Authority and cancellation are rechecked after preparation before dispatch.
+Asynchronous parser/preparation results are rejected before execution; promise and
+thenable rejections are consumed without exposing their errors. Asynchronous evidence
+parsers or predicates yield unknown verification rather than an accidental pass.
+
+Five runner regressions and a service regression first reproduced the missing preflight.
+Adversarial review identified asynchronous input parsing as another dispatch bypass;
+three additional regressions reproduced it before the synchronous-result guard was added.
+Coverage also exercises bounded/accessor/cyclic input, callback capture, prepared
+evidence validation and delegated HTTP replay recording `failed/dispatched: false`.
+No protocol schema, public CLI command, dependency or second execution path is added.
+Application-receipt correlation and production evidence-source qualification remain open.

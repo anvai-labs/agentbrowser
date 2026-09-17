@@ -108,3 +108,11 @@ the shared runner rechecks authority and cancellation before releasing its proje
 Revocation withholds plan data and evidence references, preserves cleanup status and
 reports dispatched execution conservatively as unknown. Service and delegated REST
 fixtures cover page closure and human takeover during cleanup without redispatch.
+
+Verifier input preflight further qualifies the same slice: the shared registry snapshots
+and parses expected input before dispatch and captures an evidence-only evaluator.
+Invalid input is blocked without executing; legacy definitions lacking preparation are
+unsupported for outcome runs. Direct registry evaluation remains compatible. The runner
+rechecks authority and cancellation after preparation, settles cleanup on refusal, and
+delegated HTTP replay records the refusal as failed with no dispatch. Application receipt
+correlation and production evidence-source qualification are still pending.
