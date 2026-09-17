@@ -61,7 +61,8 @@ post-dispatch uncertainty now use the existing executor admission seam. See the
 [HTTP result-classification](evidence/t2-http-result-classification.md) and
 [application identity](evidence/t2-application-identity.md) and
 [semantic result-validation](evidence/t2-semantic-result-validation.md) and
-[plan verification-evidence](evidence/t2-plan-verification-evidence.md) evidence.
+[plan verification-evidence](evidence/t2-plan-verification-evidence.md) and
+[outcome/verifier foundation](evidence/t2-outcome-verifier-foundation.md) evidence.
 
 ## Modes
 

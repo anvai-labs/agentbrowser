@@ -18,3 +18,4 @@ export * from './autofill.js';
 export * from './interaction-guidance.js';
 export * from './plan.js';
 export * from './mode-profile.js';
+export * from './outcome.js';

@@ -85,5 +85,13 @@ execution. This establishes native browser readback, not an application commit o
 oracle. See the
 [plan verification evidence](../evidence/t2-plan-verification-evidence.md).
 
-Compatible verifier projections, trusted verifier registration and the remaining T2
-acceptance matrix are still pending, so T2 is not complete.
+The sixth slice adds one strict reference-only outcome projection with separate
+availability, execution, verification, cleanup and tested-seam axes. A pass is derived
+only from completed execution, sufficient registered verification and settled cleanup.
+An immutable trusted registry evaluates pure bounded predicates once and never acquires
+evidence, retries writes or runs cleanup. See the
+[outcome/verifier evidence](../evidence/t2-outcome-verifier-foundation.md).
+
+A SessionAuthority-owned vertical consumer, independent cleanup settlement and the
+remaining T2 acceptance matrix are still pending, so T2 is not complete and T3 is not
+yet unlocked.
