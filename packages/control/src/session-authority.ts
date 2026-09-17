@@ -22,6 +22,7 @@ export type SessionPrincipal =
     };
 type Entry = {
   control: SessionControl;
+  incarnation: string;
   tenant: string;
   grant?: string | undefined;
   agent?: Extract<SessionPrincipal, { actor: 'agent' }> | undefined;
@@ -57,6 +58,7 @@ export class SessionAuthority {
       throw new ControlError('INVALID_REQUEST', 'Invalid authority TTL');
     const entry: Entry = {
       control: new SessionControl(),
+      incarnation: randomBytes(16).toString('base64url'),
       tenant,
       signal,
       abortListener: () => {
@@ -245,6 +247,11 @@ export class SessionAuthority {
 
   currentEpoch(sessionId: string): number | undefined {
     return this.active(sessionId)?.control.view().epoch;
+  }
+
+  /** Stable for one registration; changes when a textual session ID is reused. */
+  sessionIncarnation(sessionId: string): string {
+    return this.require(sessionId).incarnation;
   }
 
   /** Trusted composition changes require idle human control and invalidate review. */
