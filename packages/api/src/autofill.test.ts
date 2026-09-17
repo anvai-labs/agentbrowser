@@ -246,4 +246,167 @@ it('bounds displayed actuals and compares the full private value before redactio
   );
   expect(report.receipts[0]).toMatchObject({ verified: false, actualTruncated: true });
   expect(report.receipts[0]?.actual?.length).toBe(512);
+
+  describe('multi-step widget strategies', () => {
+    const rsCombobox = (ref: string, committed = ''): PageElement => ({
+      ref,
+      role: 'combobox',
+      name: 'Location (City)',
+      value: '',
+      visible: true,
+      enabled: true,
+      attributes: {
+        tag: 'input',
+        'aria-autocomplete': 'list',
+        'autofill-node': ref,
+        'autofill-block': 'rs-block',
+        ...(committed ? { 'autofill-committed': committed } : {}),
+      },
+    });
+
+    it('react-select: click-open, typeText filter, click exact option, verified via chip', async () => {
+      const f = fixture([]);
+      let clicked = 0;
+      const optionRef = 'opt_1';
+      // act dispatch: click on the combobox ref opens the menu; typeText triggers
+      // the filter; click on the option ref commits.
+      f.act.mockImplementation(
+        async (
+          request: { action: string; target?: { ref?: string }; value?: string },
+          onDispatch: () => void
+        ) => {
+          onDispatch();
+          f.dispatch();
+          if (request.action === 'typeText') {
+            // after typing, the filtered option appears
+            f.replace([
+              rsCombobox('rs_1'),
+              {
+                ...rsCombobox('rs_1'),
+                ref: optionRef,
+                role: 'option',
+                name: 'Chicago, Illinois, United States',
+                value: undefined,
+                attributes: { tag: 'li', 'autofill-node': 'opt_1', 'autofill-block': 'rs-block' },
+              },
+            ]);
+          }
+          if (request.action === 'click' && request.target?.ref === optionRef) {
+            clicked++;
+            // commit: chip text appears as autofill-committed
+            f.replace([rsCombobox('rs_1', 'Chicago, Illinois, United States')]);
+          }
+          return { actionId: `a_${++clicked}` };
+        }
+      );
+      const report = await runAutofill(
+        {
+          fields: [
+            {
+              match: { role: 'combobox', label: 'Location (City)' },
+              option: { value: 'Chicago, Illinois, United States' },
+              strategy: 'react-select',
+            },
+          ],
+        },
+        { ...f, act: f.act }
+      );
+      expect(report.ok).toBe(true);
+      expect(report.receipts[0].status).toBe('verified');
+      expect(report.receipts[0].verified).toBe(true);
+      expect(clicked).toBeGreaterThan(0);
+    });
+
+    it('react-select: no matching option produces TARGET_NOT_FOUND, no write dispatched', async () => {
+      const f = fixture([]);
+      // click opens the menu but typing filters to nothing
+      f.act.mockImplementation(async (request: { action: string }, onDispatch: () => void) => {
+        onDispatch();
+        f.dispatch();
+        if (request.action === 'typeText') {
+          f.replace([rsCombobox('rs_1')]); // no options appear
+        }
+      });
+      const report = await runAutofill(
+        {
+          fields: [
+            {
+              match: { role: 'combobox', label: 'Location (City)' },
+              option: { value: 'Nonexistent' },
+              strategy: 'react-select',
+            },
+          ],
+        },
+        { ...f, act: f.act }
+      );
+      expect(report.ok).toBe(false);
+      expect(report.receipts[0].status).toBe('failed');
+      expect(report.receipts[0].error?.code).toBe('TARGET_NOT_FOUND');
+    });
+
+    it('chip-multiselect: click-open, typeText filter, click chip option, verified via chip', async () => {
+      const f = fixture([]);
+      const chipRef = 'chip_1';
+      f.act.mockImplementation(
+        async (
+          request: { action: string; target?: { ref?: string }; value?: string },
+          onDispatch: () => void
+        ) => {
+          onDispatch();
+          f.dispatch();
+          if (request.action === 'typeText') {
+            f.replace([
+              rsCombobox('ms_1'),
+              {
+                ...rsCombobox('ms_1'),
+                ref: chipRef,
+                role: 'option',
+                name: 'United States of America, press delete to clear value.',
+                value: undefined,
+                attributes: { tag: 'li', 'autofill-node': 'chip_1', 'autofill-block': 'ms-block' },
+              },
+            ]);
+          }
+          if (request.action === 'click' && request.target?.ref === chipRef) {
+            f.replace([{ ...rsCombobox('ms_1'), ref: 'ms_1', name: 'Country Phone Code' }]);
+          }
+        }
+      );
+      const report = await runAutofill(
+        {
+          fields: [
+            {
+              match: { role: 'combobox', label: 'Country Phone Code' },
+              option: { value: 'United States of America' },
+              strategy: 'chip-multiselect',
+            },
+          ],
+        },
+        { ...f, act: f.act }
+      );
+      expect(report.ok).toBe(true);
+      expect(report.receipts[0].status).toBe('verified');
+    });
+
+    it('strategy refusal: react-select combobox without option.value produces INVALID_REQUEST', async () => {
+      const f = fixture([]);
+      f.act.mockImplementation(async (request: Record<string, unknown>, onDispatch: () => void) => {
+        onDispatch();
+        f.dispatch();
+      });
+      const report = await runAutofill(
+        {
+          fields: [
+            {
+              match: { role: 'combobox', label: 'Location (City)' },
+              strategy: 'react-select',
+            },
+          ],
+        },
+        { ...f, act: f.act }
+      );
+      expect(report.ok).toBe(false);
+      expect(report.receipts[0].status).toBe('failed');
+    });
+  });
 });

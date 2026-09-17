@@ -177,6 +177,8 @@ export interface ServiceActRequest {
   approvalToken?: string | undefined;
   /** Prompt answer for acceptDialog. */
   promptText?: string | undefined;
+  /** Per-character delay for typeText keystrokes (0-1000ms). */
+  delay?: number | undefined;
   /** Post-action wait condition (spec 11.1). */
   wait?: ServiceWaitCondition | undefined;
   /** Wait-action condition (the `wait` ACTION; distinct from post-action wait). */

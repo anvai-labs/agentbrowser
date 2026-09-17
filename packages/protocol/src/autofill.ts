@@ -29,7 +29,12 @@ export const AutofillRequestSchema = Type.Object(
           option: Type.Optional(Type.Object({ value: Type.String({ maxLength: 8192 }) }, strict)),
           verify: Type.Optional(Type.Union([Type.Literal('exact'), Type.Literal('none')])),
           strategy: Type.Optional(
-            Type.Union([Type.Literal('native-input'), Type.Literal('native-select')])
+            Type.Union([
+              Type.Literal('native-input'),
+              Type.Literal('native-select'),
+              Type.Literal('react-select'),
+              Type.Literal('chip-multiselect'),
+            ])
           ),
         },
         strict
