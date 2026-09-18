@@ -106,3 +106,41 @@ connects explicit business IDs to this helper through an operator-authorized fix
 source, reusing v1.8.20 public application binding and execution. The correlation slice
 adds no production evidence source, durable receipt schema, CLI/MCP command or
 application-commit claim. It does not grant browser modes access to application receipts.
+
+## Receipt preflight and admitted identity
+
+`SessionAuthority` validates agent session, tenant, epoch, mode and binding generation
+against its stored grant before admitting an operation. It captures an immutable
+`SessionAdmission` from authority-owned state, so later caller mutation cannot change
+the admitted actor, tenant or mode. Operators have no delegated mode. The accessor
+requires the original live ticket; it cannot be read outside admission or after takeover.
+
+`ApplicationAuthority.prepareReceiptReadInScope` performs the existing authority,
+binding, authorization and cancellation checks synchronously before the caller dispatches
+its executor. It captures one frozen identity and the existing adapter callbacks without
+reading evidence, dispatching a write or opening a second admission. Each read validates
+the business ID, combines its own deadline with session cancellation and rechecks before
+and after receipt I/O. Explicit guards perform the same checks. A caught authority
+failure permanently invalidates that reader, including while a receipt is pending; late
+results are withheld and the operation remains admitted until the adapter settles.
+Standalone and admitted receipt lookup both reuse the prepared implementation.
+
+Failure-first tests exposed the missing preparation helper and acceptance of altered
+grant metadata. Coverage includes frozen identity, no preflight I/O, wrong/missing
+admission, unbound/unauthorized scope, caller mutation, ticket lifetime, observed
+deny/regrant, malformed IDs, independent per-read deadlines and pending receipt drain.
+Caller principal fields are read once before consulting authority state; a regression
+test rejects session removal from a property getter during principal validation.
+The packaged browser-free acceptance checks the same identity and reader contract.
+
+Validation on 2026-09-18: all 109 control tests and 21 application HTTP/outcome tests
+pass, along with control type-check, packaged application independence, all 82 spec
+context selections and repository documentation links. Existing receipt cancellation,
+takeover, incarnation, rebind and adapter-receiver tests remain in the shared suite.
+
+This foundation adds no wire capability or delegated browser-mode permission. A future
+policy must separately authorize an exact source/predicate and bounded input domain,
+and fence permission changes with a monotonic generation. An unobserved revoke/regrant
+cycle is not detected by the existing boolean adapter authorization. Causal UI-to-commit
+qualification and a production evidence source are still pending; correlation alone
+cannot establish that a new UI action caused a pre-existing application receipt.

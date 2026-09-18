@@ -134,12 +134,24 @@ qualify correlation only, not causal UI-to-application commits or a production s
 Delegated browser-mode application receipt verification requires an explicit permission
 policy checked before dispatch; generic correlation opt-in does not grant that authority.
 
+Receipt permission prerequisites now live in the same owners: `SessionAuthority`
+captures a frozen admitted actor/tenant/mode from the stored grant, and
+`ApplicationAuthority.prepareReceiptReadInScope` validates and captures the application
+binding before executor dispatch. Existing receipt lookup reuses that reader. Reads and
+explicit guards retain the original ticket, binding and cancellation checks; an observed
+authority failure cannot be revived by regranting permission. The packaged browser-free
+acceptance exercises the same helpers. This adds no delegated permission or wire surface.
+See the [preflight evidence](../evidence/t2-application-identity.md#receipt-preflight-and-admitted-identity).
+
 ## Next slice: receipt permission and causal qualification
 
 1. Define explicit permission to expose an application-derived predicate to a delegated
    browser mode. Reuse trusted source registration and existing admission preflight;
    keep raw application discovery/execution permissions separate. Deny unconfigured
    receipt sources before dispatch, including when a caller supplies a valid business ID.
+   Compose the admitted identity and prepared receipt reader above; bind permission to
+   source, verifier/version, bounded input domain and captured application identity.
+   Use a monotonic permission generation so revoke/regrant cannot revive stale authority.
 2. Qualify one application-owned fixture whose UI write and receipt share an explicit
    correlation contract. A pre-existing receipt, wrong session/resource, failed UI write
    or blocked commit must not establish that this run caused a commit. Do not relabel

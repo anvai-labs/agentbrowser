@@ -77,6 +77,152 @@ function setup(
 afterEach(() => vi.useRealTimers());
 
 describe('application authority without a browser', () => {
+  it('prepares a receipt reader with frozen admitted identity before any effect or read', async () => {
+    const s = setup();
+    s.port.bind('session', operator, binding);
+    const principal = s.grant();
+    let captured: ReturnType<ApplicationAuthority['prepareReceiptReadInScope']> | undefined;
+    await s.authority.run('session', principal, {}, async () => {
+      const reader = s.port.prepareReceiptReadInScope('session');
+      captured = reader;
+      expect(reader.identity).toEqual({
+        admission: { actor: 'agent', tenant: 'owner', mode: 'qa' },
+        adapter: 'counter',
+        resource: 'account-a',
+        sessionId: 'session',
+        sessionIncarnation: s.authority.sessionIncarnation('session'),
+      });
+      expect(Object.isFrozen(reader)).toBe(true);
+      expect(Object.isFrozen(reader.identity)).toBe(true);
+      expect(Object.isFrozen(reader.identity.admission)).toBe(true);
+      expect(s.receipt).not.toHaveBeenCalled();
+      expect(s.effect).not.toHaveBeenCalled();
+      expect(s.authority.didDispatchInScope('session')).toBe(false);
+      Object.assign(principal, { mode: 'application' });
+      expect(reader.identity.admission).toMatchObject({ mode: 'qa' });
+      reader.assertAuthority();
+      await reader.read('business-1');
+      await reader.read('business-2');
+      expect(s.receipt.mock.calls.map((call) => call[1])).toEqual(['business-1', 'business-2']);
+    });
+    expect(() => captured?.assertAuthority()).toThrow();
+    await expect(captured?.read('business-3')).rejects.toThrow();
+    await s.authority.run('session', { ...principal, mode: 'qa' }, {}, async () => {
+      await expect(captured?.read('business-3')).rejects.toThrow();
+    });
+    expect(s.receipt).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['outside', 'cross-session', 'unbound', 'unauthorized'] as const)(
+    'refuses receipt preparation before dispatch: %s',
+    async (mode) => {
+      let allowed = true;
+      const s = setup(() => allowed);
+      if (mode !== 'unbound') s.port.bind('session', operator, binding);
+      s.authority.register('other', 'owner', new AbortController().signal);
+      const execute = vi.fn();
+      const prepareThenExecute = () => {
+        s.port.prepareReceiptReadInScope(mode === 'cross-session' ? 'other' : 'session');
+        execute();
+      };
+      if (mode === 'unauthorized') allowed = false;
+      if (mode === 'outside') expect(prepareThenExecute).toThrow();
+      else
+        await s.authority.run('session', operator, {}, async () => {
+          expect(prepareThenExecute).toThrow();
+          expect(s.authority.didDispatchInScope('session')).toBe(false);
+        });
+      expect(execute).not.toHaveBeenCalled();
+      expect(s.receipt).not.toHaveBeenCalled();
+    }
+  );
+
+  it('does not revive a prepared reader after observed permission loss and regrant', async () => {
+    let allowed = true;
+    const s = setup(() => allowed);
+    s.port.bind('session', operator, binding);
+    await s.authority.run('session', operator, {}, async () => {
+      const reader = s.port.prepareReceiptReadInScope('session');
+      expect(reader.identity.admission).toEqual({ actor: 'operator', tenant: 'owner' });
+      allowed = false;
+      expect(() => reader.assertAuthority()).toThrow();
+      allowed = true;
+      expect(() => reader.assertAuthority()).toThrow();
+      await expect(reader.read('business-1')).rejects.toThrow();
+    });
+    expect(s.receipt).not.toHaveBeenCalled();
+  });
+
+  it('rejects a prepared reader used outside its admission while the original is still pending', async () => {
+    const s = setup();
+    s.port.bind('session', operator, binding);
+    const release = deferred();
+    let reader: ReturnType<ApplicationAuthority['prepareReceiptReadInScope']> | undefined;
+    const pending = s.authority.run('session', operator, {}, async () => {
+      reader = s.port.prepareReceiptReadInScope('session');
+      await release.promise;
+    });
+    try {
+      expect(reader).toBeDefined();
+      await expect(reader?.read('business-1')).rejects.toThrow();
+    } finally {
+      release.resolve();
+      await pending;
+    }
+    expect(s.receipt).not.toHaveBeenCalled();
+  });
+
+  it('uses a fresh per-read deadline and rejects malformed IDs before adapter I/O', async () => {
+    const s = setup();
+    s.port.bind('session', operator, binding);
+    const first = new AbortController();
+    const second = new AbortController();
+    const signals: AbortSignal[] = [];
+    s.receipt.mockImplementation(async (scope: ApplicationScope) => {
+      signals.push(scope.signal);
+      return undefined;
+    });
+    await s.authority.run('session', operator, {}, async () => {
+      const reader = s.port.prepareReceiptReadInScope('session');
+      for (const id of ['', '../private', 'x'.repeat(129), 42]) {
+        await expect(reader.read(id as string)).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+      }
+      expect(s.receipt).not.toHaveBeenCalled();
+      await reader.read('first', first.signal);
+      first.abort();
+      expect(signals[0]?.aborted).toBe(true);
+      await reader.read('second', second.signal);
+      expect(signals[1]?.aborted).toBe(false);
+      expect(signals[0]).not.toBe(signals[1]);
+      expect(s.authority.didDispatchInScope('session')).toBe(false);
+    });
+    expect(s.receipt).toHaveBeenCalledTimes(2);
+  });
+
+  it('withholds an in-flight prepared receipt after observed revoke/regrant and drains its admission', async () => {
+    let allowed = true;
+    const s = setup(() => allowed);
+    s.port.bind('session', operator, binding);
+    const release = deferred();
+    s.receipt.mockImplementationOnce(async () => {
+      await release.promise;
+      return { private: 'receipt' } as never;
+    });
+    await s.authority.run('session', operator, {}, async () => {
+      const reader = s.port.prepareReceiptReadInScope('session');
+      const read = reader.read('business-1');
+      const refused = expect(read).rejects.toThrow();
+      allowed = false;
+      expect(() => reader.assertAuthority()).toThrow();
+      allowed = true;
+      await expect(s.port.lookupReceipt('session', operator, 'business-2')).rejects.toThrow('busy');
+      release.resolve();
+      await refused;
+      await expect(reader.read('business-2')).rejects.toThrow();
+    });
+    expect(s.receipt).toHaveBeenCalledOnce();
+  });
+
   it('reads a business receipt in the existing admission without another ticket or write', async () => {
     const s = setup();
     s.port.bind('session', operator, binding);
