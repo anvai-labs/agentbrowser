@@ -144,3 +144,44 @@ and fence permission changes with a monotonic generation. An unobserved revoke/r
 cycle is not detected by the existing boolean adapter authorization. Causal UI-to-commit
 qualification and a production evidence source are still pending; correlation alone
 cannot establish that a new UI action caused a pre-existing application receipt.
+
+## Receipt timeout and admission drain
+
+The generic outcome runner bounds reads with a deadline race. A receipt adapter can
+ignore cancellation, so that race can return unknown verification before the underlying
+read settles. Previously the outer `SessionAuthority.run` then finished its ticket,
+allowing a second operation while the first receipt was still pending. Direct receipt
+tests alone did not expose this composition defect.
+
+`SessionAuthority.trackReadInScope` now registers read-only observation with the existing
+ticket before invoking its callback. Writes must settle inside `run`; this helper must
+not detach their completion. Application receipt reads use it for the full authorization,
+adapter I/O and output-check sequence. When composition returns, the authority closes
+the logical scope immediately and retains the busy ticket until all registered work
+settles. `assert`, admission access, output guards, page guards and `isAgent` cannot
+retain authority through stale continuations. There is no new operation state, queue,
+retry path, package or wire field; the existing `in_flight` state lasts through drain.
+
+The HTTP response remains bounded and reports unknown verification. While draining,
+duplicate operation IDs replay the in-flight record without executing again; other
+operations, binding changes and resume review fail busy. Takeover enters
+`PAUSE_REQUESTED` until settlement. The finalizer uses the precomputed execution
+classification unless authority was revoked, in which case dispatched work becomes
+`outcome_unknown` and undispatched work `failed`. A `completed` operation ledger never
+converts unknown verification to a passing outcome. Finalization targets the captured
+control object, so removal and same-ID registration cannot release a replacement ticket.
+
+Failure-first coverage reproduced both direct early completion and a real operator
+HTTP outcome returning while its receipt remained unresolved. The passing tests cover
+the HTTP output guard, bounded unknown response, in-flight replay, overlapping operation
+and review refusal, multiple pending tasks, rejection, late scope access, takeover,
+session replacement and throwing expiration cleanup. On 2026-09-18, all 116 control
+tests and 24 focused application HTTP/outcome/owner-lifecycle tests pass, along with
+control type-check.
+
+This guarantee applies only to explicitly tracked work, initially application receipt
+I/O. Generic source reads, cleanup and engine calls are not automatically drained.
+A receipt that never settles can keep a live session busy until host removal/TTL;
+removing authority restores capacity through a new incarnation but cannot cancel
+non-cooperative external I/O or free everything it retains. Exact delegated predicate
+permission, versioned policy fences and causal UI-to-commit qualification remain next.

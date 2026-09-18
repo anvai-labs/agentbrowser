@@ -263,10 +263,12 @@ export class ApplicationAuthority {
         const scope = signal
           ? Object.freeze({ ...ownedScope, signal: AbortSignal.any([ownedScope.signal, signal]) })
           : ownedScope;
-        checkAuthority(scope);
-        const receipt = await adapter.receipt(scope, operationId);
-        checkAuthority(scope);
-        return receipt;
+        return this.authority.trackReadInScope(sessionId, async () => {
+          checkAuthority(scope);
+          const receipt = await adapter.receipt(scope, operationId);
+          checkAuthority(scope);
+          return receipt;
+        });
       },
     });
   }

@@ -16,6 +16,144 @@ function grant(authority: SessionAuthority, id: string) {
   return { token, principal: authority.authenticate(token)! };
 }
 
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+it.each([false, true])(
+  'retains tracked work after response and fences late authority (takeover: %s)',
+  async (takeover) => {
+    const authority = new SessionAuthority();
+    authority.register('session', 'owner', new AbortController().signal);
+    const agent = grant(authority, 'session');
+    const release = deferred();
+    const callback = vi.fn();
+    expect(() => authority.trackReadInScope('session', callback)).toThrow();
+    let work!: Promise<void>;
+    const run = () =>
+      authority.run(
+        'session',
+        agent.principal,
+        { id: 'tracked', fingerprint: 'same' },
+        async () => {
+          expect(() => authority.trackReadInScope('other', callback)).toThrow();
+          authority.assert('session', true);
+          const guard = authority.outputGuard('session');
+          work = authority.trackReadInScope('session', async () => {
+            expect(authority.isAgent()).toBe(true);
+            await release.promise;
+            expect(authority.isAgent()).toBe(false);
+            expect(() => authority.assert('session')).toThrow();
+            expect(() => authority.admissionInScope('session')).toThrow();
+            expect(guard).toThrow();
+            expect(() => authority.trackReadInScope('session', callback)).toThrow();
+          });
+          return 'bounded response';
+        }
+      );
+    expect(await run()).toBe('bounded response');
+    expect(authority.status('session')).toMatchObject({
+      busy: true,
+      operation: { status: 'in_flight', dispatched: true },
+    });
+    expect(await run()).toMatchObject({ replay: true, operation: { status: 'in_flight' } });
+    expect(() => authority.get('session')?.prepareResume()).toThrow('busy');
+    if (takeover) {
+      expect(authority.takeover('session').state).toBe('PAUSE_REQUESTED');
+      expect(authority.authenticate(agent.token)).toBeUndefined();
+    }
+    release.resolve();
+    await work;
+    await vi.waitFor(() => expect(authority.status('session').busy).toBe(false));
+    expect(authority.get('session')?.operation('tracked')?.status).toBe(
+      takeover ? 'outcome_unknown' : 'completed'
+    );
+    expect(callback).not.toHaveBeenCalled();
+  }
+);
+
+it('drains nested observations without changing completed execution after a late read rejection', async () => {
+  const authority = new SessionAuthority();
+  authority.register('session', 'owner', new AbortController().signal);
+  const first = deferred();
+  const second = deferred();
+  let firstWork!: Promise<void>;
+  let secondWork!: Promise<void>;
+  await authority.run('session', operator, { id: 'tracked', fingerprint: 'same' }, async () => {
+    authority.assert('session', true);
+    firstWork = authority.trackReadInScope('session', async () => {
+      secondWork = authority.trackReadInScope('session', () => second.promise);
+      await first.promise;
+      throw new Error('late');
+    });
+  });
+  first.resolve();
+  await expect(firstWork).rejects.toThrow('late');
+  expect(authority.status('session').busy).toBe(true);
+  second.resolve();
+  await secondWork;
+  await vi.waitFor(() => expect(authority.status('session').busy).toBe(false));
+  expect(authority.get('session')?.operation('tracked')?.status).toBe('completed');
+  await expect(
+    authority.run('session', operator, {}, () =>
+      authority.trackReadInScope('session', () => {
+        throw new Error('synchronous');
+      })
+    )
+  ).rejects.toThrow('synchronous');
+  expect(authority.status('session').busy).toBe(false);
+});
+
+it('finishes only the captured owner after removal and session ID reuse', async () => {
+  const authority = new SessionAuthority();
+  authority.register('session', 'owner', new AbortController().signal);
+  const oldControl = authority.get('session');
+  const old = deferred();
+  const replacement = deferred();
+  let work!: Promise<void>;
+  await authority.run('session', operator, {}, async () => {
+    work = authority.trackReadInScope('session', () => old.promise);
+  });
+  authority.remove('session');
+  authority.register('session', 'owner', new AbortController().signal);
+  const replacementRun = authority.run('session', operator, {}, () => replacement.promise);
+  old.resolve();
+  await work;
+  await vi.waitFor(() => expect(oldControl?.view().busy).toBe(false));
+  expect(authority.status('session').busy).toBe(true);
+  replacement.resolve();
+  await replacementRun;
+  expect(authority.status('session').busy).toBe(false);
+});
+
+it('settles the captured ticket even when expiration cleanup throws during deferred finalization', async () => {
+  let now = 0;
+  const authority = new SessionAuthority({ now: () => now });
+  const expired = vi.fn(() => {
+    throw new Error('host cleanup failed');
+  });
+  authority.register('session', 'owner', new AbortController().signal, {
+    ttlMs: 100,
+    onExpire: expired,
+  });
+  const control = authority.get('session');
+  const release = deferred();
+  let work!: Promise<void>;
+  await authority.run('session', operator, { id: 'tracked', fingerprint: 'same' }, async () => {
+    work = authority.trackReadInScope('session', () => release.promise);
+  });
+  now = 100;
+  release.resolve();
+  await work;
+  await vi.waitFor(() => expect(control?.view().busy).toBe(false));
+  expect(control?.operation('tracked')?.status).toBe('failed');
+  expect(expired).toHaveBeenCalledOnce();
+});
+
 it('binds a trusted mode to the bearer grant and defaults old callers to qa', () => {
   const authority = new SessionAuthority();
   authority.register('session', 'owner', new AbortController().signal);

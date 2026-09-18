@@ -143,6 +143,16 @@ authority failure cannot be revived by regranting permission. The packaged brows
 acceptance exercises the same helpers. This adds no delegated permission or wire surface.
 See the [preflight evidence](../evidence/t2-application-identity.md#receipt-preflight-and-admitted-identity).
 
+The receipt timeout follow-up keeps pending adapter I/O owned by its original ticket
+after a bounded outcome response. Scope authority closes at response completion, while
+tracked receipt work drains before `SessionControl.finish` releases the admission.
+HTTP regression coverage distinguishes an unknown verification response from an
+in-flight operation ledger, blocks overlapping admission, and proves safe settlement
+and replay. This closes the receipt-specific timeout gap without changing generic
+runner timeouts or granting delegated permissions. Untracked evidence, cleanup and
+engine work remain outside this guarantee. See the
+[receipt drain evidence](../evidence/t2-application-identity.md#receipt-timeout-and-admission-drain).
+
 ## Next slice: receipt permission and causal qualification
 
 1. Define explicit permission to expose an application-derived predicate to a delegated

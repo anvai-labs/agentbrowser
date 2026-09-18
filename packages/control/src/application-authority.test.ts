@@ -77,6 +77,55 @@ function setup(
 afterEach(() => vi.useRealTimers());
 
 describe('application authority without a browser', () => {
+  it.each(['resolve', 'reject'] as const)(
+    'retains admission until an abandoned receipt settles: %s',
+    async (settlement) => {
+      const s = setup();
+      s.port.bind('session', operator, binding);
+      const release = deferred();
+      s.receipt.mockImplementationOnce(async () => {
+        await release.promise;
+        if (settlement === 'reject') throw new Error('private adapter failure');
+        return { private: 'late receipt' } as never;
+      });
+      let read!: Promise<unknown>;
+      let staleGuard!: () => void;
+      await s.authority.run('session', operator, { id: 'outer', fingerprint: 'same' }, async () => {
+        const reader = s.port.prepareReceiptReadInScope('session');
+        staleGuard = s.authority.outputGuard('session');
+        read = reader.read('business-1');
+        void read.catch(() => undefined);
+        // A deadline race can finish composition while the adapter ignores cancellation.
+        return { verification: 'unknown' };
+      });
+      try {
+        expect(s.authority.status('session')).toMatchObject({
+          busy: true,
+          operation: { operationId: 'outer', status: 'in_flight' },
+        });
+        expect(staleGuard).toThrow();
+        await expect(
+          s.authority.run('session', operator, {}, async () => undefined)
+        ).rejects.toMatchObject({
+          code: 'SESSION_BUSY',
+        });
+        expect(() => s.port.unbind('session', operator)).toThrow('busy');
+        expect(() => s.authority.get('session')?.prepareResume()).toThrow('busy');
+        expect(s.authority.takeover('session').state).toBe('PAUSE_REQUESTED');
+      } finally {
+        release.resolve();
+        await expect(read).rejects.toThrow();
+      }
+      await vi.waitFor(() => expect(s.authority.status('session').busy).toBe(false));
+      expect(s.authority.status('session').state).toBe('HUMAN_ACTIVE');
+      expect(s.authority.get('session')?.operation('outer')).toMatchObject({ status: 'failed' });
+      await expect(
+        s.port.lookupReceipt('session', operator, 'business-2')
+      ).resolves.toBeUndefined();
+      expect(s.receipt).toHaveBeenCalledTimes(2);
+    }
+  );
+
   it('prepares a receipt reader with frozen admitted identity before any effect or read', async () => {
     const s = setup();
     s.port.bind('session', operator, binding);

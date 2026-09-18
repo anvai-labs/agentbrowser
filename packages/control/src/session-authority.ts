@@ -39,6 +39,8 @@ type Scope = {
   entry: Entry;
   ticket: ControlTicket;
   admission: SessionAdmission;
+  open: boolean;
+  pending: Set<Promise<unknown>>;
 };
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 
@@ -212,29 +214,74 @@ export class SessionAuthority {
         : {}),
     });
     if ('replay' in ticket) return { replay: true, operation: ticket.replay };
-    return this.scope.run({ sessionId, entry, ticket, admission }, async () => {
+    const scope: Scope = { sessionId, entry, ticket, admission, open: true, pending: new Set() };
+    return this.scope.run(scope, async () => {
+      let status: Parameters<SessionControl['finish']>[1] = 'failed';
       try {
         const result = await fn();
         if (this.require(sessionId) !== entry)
           throw new ControlError('CONTROL_REVOKED', 'Session owner changed');
         entry.control.check(ticket);
         const failure = failed();
-        entry.control.finish(
-          ticket,
+        status =
           failure === 'rejected'
             ? 'failed'
             : failure
               ? ticket.didDispatch
                 ? 'outcome_unknown'
                 : 'failed'
-              : 'completed'
-        );
+              : 'completed';
         return result;
       } catch (error) {
-        entry.control.finish(ticket, ticket.didDispatch ? 'outcome_unknown' : 'failed');
+        status = ticket.didDispatch ? 'outcome_unknown' : 'failed';
         throw error;
+      } finally {
+        // Response completion ends permission to do more work, even while prior I/O drains.
+        scope.open = false;
+        const finish = () => {
+          try {
+            if (this.require(sessionId) !== entry)
+              throw new ControlError('CONTROL_REVOKED', 'Session owner changed');
+            entry.control.check(ticket);
+          } catch {
+            status = ticket.didDispatch ? 'outcome_unknown' : 'failed';
+          }
+          // Finish only the captured control; removal/re-registration cannot release a new owner.
+          entry.control.finish(ticket, status);
+        };
+        if (scope.pending.size === 0) finish();
+        else
+          void Promise.allSettled([...scope.pending])
+            .then(finish)
+            .catch(() => undefined);
       }
     });
+  }
+
+  /** Retain read-only observation I/O through drain; writes must settle inside run itself. */
+  trackReadInScope<T>(sessionId: string, callback: () => T | PromiseLike<T>): Promise<T> {
+    this.assert(sessionId);
+    const scope = this.scope.getStore();
+    if (!scope) throw new ControlError('CONTROL_REQUIRED', 'Missing operation authority');
+    let start: () => void = () => {};
+    const task = new Promise<T>((resolve, reject) => {
+      start = () => {
+        try {
+          resolve(callback());
+        } catch (error) {
+          reject(error);
+        }
+      };
+    });
+    scope.pending.add(task);
+    // Attach both handlers immediately: tracking must never introduce unhandled rejection.
+    void task.then(
+      () => scope.pending.delete(task),
+      () => scope.pending.delete(task)
+    );
+    // Register before invocation while preserving the caller's synchronous admission checks.
+    start();
+    return task;
   }
 
   assertPrincipal(sessionId: string, principal: SessionPrincipal): void {
@@ -283,7 +330,7 @@ export class SessionAuthority {
     const entry =
       this.active(sessionId) ?? (scope?.sessionId === sessionId ? scope.entry : undefined);
     if (!entry) throw new ControlError('CONTROL_REVOKED', 'Controlled session is unavailable');
-    if (!scope || scope.sessionId !== sessionId || scope.entry !== entry)
+    if (!scope || !scope.open || scope.sessionId !== sessionId || scope.entry !== entry)
       throw new ControlError(
         'CONTROL_REQUIRED',
         'Controlled browser access requires an admitted principal'
@@ -315,7 +362,7 @@ export class SessionAuthority {
     const scope = this.scope.getStore();
     if (!scope) throw new ControlError('CONTROL_REQUIRED', 'Missing output authority');
     return () => {
-      if (this.active(sessionId) !== scope.entry)
+      if (!scope.open || this.active(sessionId) !== scope.entry)
         throw new ControlError('CONTROL_REVOKED', 'Session owner expired or changed');
       scope.entry.control.check(scope.ticket);
     };
@@ -348,7 +395,14 @@ export class SessionAuthority {
     return this.require(sessionId).signal;
   }
   isAgent(): boolean {
-    return this.scope.getStore()?.ticket.actor === 'agent';
+    const scope = this.scope.getStore();
+    if (!scope || !scope.open || scope.ticket.actor !== 'agent') return false;
+    try {
+      this.assert(scope.sessionId);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   guardPage(sessionId: string, page: EnginePage): EnginePage {
