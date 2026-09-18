@@ -34,10 +34,25 @@ incarnation in a durable receipt key: an authorized same-registration, same-reso
 rebind can still reconcile the earlier application receipt. Incarnations are not
 persisted, so this contract alone makes no restart-reconciliation claim.
 
-This package currently exposes an in-process port. REST, MCP application tools,
-operator binding UI, and application-persisted restart receipts are subsequent
-qualification work. Existing browser interfaces retain their current behavior.
+This package exposes an in-process port; v1.8.20 also provides application binding,
+discovery, execution and receipt lookup through REST, SDK and the first-class CLI.
+MCP application tools, operator binding UI, and application-persisted restart receipts
+remain subsequent work. Existing browser interfaces retain their current behavior.
 Session state is ephemeral; restarting the host does not restore grants.
+
+Trusted composition can call `prepareReceiptReadInScope` before dispatching its
+existing executor. Preparation validates the live admission and application binding
+without reading a receipt or marking a write. The frozen reader identity contains the
+authority-owned adapter, resource, session ID/incarnation and `SessionAdmission`.
+`admissionInScope` exposes the same immutable actor/tenant/mode snapshot for that ticket;
+agent identity must match the stored grant, and operators have no delegated mode.
+Each reader check and read requires that original active admission and binding, checks
+authorization around I/O, and combines a fresh per-read deadline with session cancellation.
+Observed authority failure permanently invalidates that reader. It does not detect
+unobserved permission revoke/regrant cycles: the future delegated predicate policy needs
+its own versioned permission fence. Both existing receipt helpers reuse this preparation.
+These helpers establish identity and preflight, not permission for browser modes to
+receive application-derived evidence.
 
 Authority guards require a registered live owner. Hosts supporting uncontrolled
 sessions must choose that path explicitly, rather than infer it from a missing

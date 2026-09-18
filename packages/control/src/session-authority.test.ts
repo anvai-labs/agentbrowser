@@ -1,7 +1,11 @@
 import type { EnginePage } from '@agentbrowser/engine';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ApplicationSessions } from './application-authority.js';
-import { SessionAuthority, type SessionPrincipal } from './session-authority.js';
+import {
+  type SessionAdmission,
+  SessionAuthority,
+  type SessionPrincipal,
+} from './session-authority.js';
 
 const operator: SessionPrincipal = { actor: 'operator', tenant: 'owner' };
 afterEach(() => vi.useRealTimers());
@@ -102,6 +106,139 @@ it('exposes dispatch state only inside the admitted operation scope', async () =
     expect(authority.didDispatchInScope('session')).toBe(true);
   });
   expect(() => authority.didDispatchInScope('session')).toThrow();
+});
+
+it('rejects altered and unknown principals without changing the original grant', async () => {
+  const authority = new SessionAuthority();
+  authority.register('session', 'owner', new AbortController().signal);
+  const original = grant(authority, 'session');
+  const effect = vi.fn(async () => undefined);
+  const altered: SessionPrincipal[] = [
+    { ...original.principal, sessionId: 'other' },
+    { ...original.principal, tenant: 'other' },
+    { ...original.principal, mode: 'audit' },
+    { ...original.principal, bindingGeneration: 'replacement-binding' },
+    { ...original.principal, epoch: original.principal.epoch + 1 },
+  ];
+  for (const principal of altered) {
+    await expect(authority.run('session', principal, {}, effect)).rejects.toThrow();
+  }
+  await expect(
+    authority.run(
+      'session',
+      { actor: 'intruder', tenant: 'owner' } as unknown as SessionPrincipal,
+      {},
+      effect
+    )
+  ).rejects.toThrow();
+  expect(effect).not.toHaveBeenCalled();
+  expect(authority.authenticate(original.token)).toEqual(original.principal);
+});
+
+it('snapshots caller principal properties once before reading authority state', async () => {
+  const authority = new SessionAuthority();
+  authority.register('session', 'owner', new AbortController().signal);
+  const original = grant(authority, 'session').principal;
+  const reads = new Map<keyof typeof original, number>();
+  const principal = Object.create(null) as Record<string, unknown>;
+  for (const key of Object.keys(original) as Array<keyof typeof original>) {
+    Object.defineProperty(principal, key, {
+      enumerable: true,
+      get: () => {
+        reads.set(key, (reads.get(key) ?? 0) + 1);
+        return original[key];
+      },
+    });
+  }
+  await authority.run('session', principal as unknown as SessionPrincipal, {}, async () => {
+    expect(authority.admissionInScope('session')).toEqual({
+      actor: 'agent',
+      tenant: 'owner',
+      mode: 'qa',
+    });
+  });
+  expect(Object.fromEntries(reads)).toEqual({
+    actor: 1,
+    tenant: 1,
+    sessionId: 1,
+    epoch: 1,
+    mode: 1,
+    bindingGeneration: 1,
+  });
+});
+
+it('revalidates authority after reentrant caller property access', () => {
+  const authority = new SessionAuthority();
+  authority.register('session', 'owner', new AbortController().signal);
+  const principal = {
+    get actor() {
+      return 'operator' as const;
+    },
+    get tenant() {
+      authority.remove('session');
+      return 'owner';
+    },
+  };
+  expect(() => authority.assertPrincipal('session', principal)).toThrow();
+  expect(authority.get('session')).toBeUndefined();
+});
+
+it('captures a frozen authority-owned admission instead of the mutable caller principal', async () => {
+  const authority = new SessionAuthority();
+  authority.register('session', 'owner', new AbortController().signal);
+  const authenticated = grant(authority, 'session').principal;
+  const mutable = { ...authenticated };
+  await authority.run('session', mutable, {}, async () => {
+    mutable.tenant = 'changed';
+    mutable.mode = 'audit';
+    mutable.bindingGeneration = 'changed';
+    const admission = authority.admissionInScope('session');
+    expect(admission).toEqual({ actor: 'agent', tenant: 'owner', mode: 'qa' });
+    expect(Object.isFrozen(admission)).toBe(true);
+    expect(admission).not.toHaveProperty('bindingGeneration');
+    expect(admission).not.toHaveProperty('epoch');
+    expect(() => Object.assign(admission, { mode: 'forms' })).toThrow();
+  });
+
+  await authority.takeover('session');
+  await authority.run('session', operator, {}, async () => {
+    const admission: SessionAdmission = authority.admissionInScope('session');
+    expect(admission).toEqual({ actor: 'operator', tenant: 'owner' });
+    expect(admission).not.toHaveProperty('mode');
+    expect(Object.isFrozen(admission)).toBe(true);
+  });
+});
+
+it('exposes admission only in its live session operation scope', async () => {
+  const authority = new SessionAuthority();
+  authority.register('session', 'owner', new AbortController().signal);
+  authority.register('other', 'owner', new AbortController().signal);
+  expect(() => authority.admissionInScope('session')).toThrow();
+  let afterSettlement!: () => SessionAdmission;
+  await authority.run('session', operator, {}, async () => {
+    expect(authority.admissionInScope('session')).toEqual({
+      actor: 'operator',
+      tenant: 'owner',
+    });
+    expect(() => authority.admissionInScope('other')).toThrow();
+    afterSettlement = () => authority.admissionInScope('session');
+  });
+  expect(afterSettlement).toBeTypeOf('function');
+  expect(() => afterSettlement()).toThrow();
+});
+
+it('denies admission projection after takeover invalidates the ticket', async () => {
+  const authority = new SessionAuthority();
+  authority.register('session', 'owner', new AbortController().signal);
+  const delegated = grant(authority, 'session');
+  await expect(
+    authority.run('session', delegated.principal, {}, async () => {
+      expect(authority.admissionInScope('session')).toMatchObject({ actor: 'agent', mode: 'qa' });
+      authority.takeover('session');
+      expect(() => authority.admissionInScope('session')).toThrow();
+    })
+  ).rejects.toThrow();
+  expect(authority.authenticate(delegated.token)).toBeUndefined();
 });
 
 it('rejects duplicate registration without changing an active grant or operation', async () => {
