@@ -436,6 +436,198 @@ describe('verified outcome REST projection', () => {
     }
   );
 
+  it('keeps a timed-out correlated receipt admitted until its ignored read settles', async () => {
+    const operator = { authorization: 'Bearer operator' };
+    const tenant = 'fixture-tenant';
+    const receiptEntered = Promise.withResolvers<void>();
+    const receiptRelease = Promise.withResolvers<void>();
+    const receipt = vi.fn(async (_scope: ApplicationScope, _id: string) => {
+      receiptEntered.resolve();
+      // Deliberately ignore the verifier deadline signal: the admitted adapter I/O
+      // must retain the ticket even after the bounded outcome response is sent.
+      await receiptRelease.promise;
+      return true;
+    });
+    let application: AgentBrowserService['applicationAuthority'] | undefined;
+    const originalCreate = AgentBrowserService.prototype.createSession;
+    const create = vi
+      .spyOn(AgentBrowserService.prototype, 'createSession')
+      .mockImplementation(async function (this: AgentBrowserService, ...args) {
+        application = this.applicationAuthority;
+        return originalCreate.apply(this, args);
+      });
+    const execute = vi.spyOn(AgentBrowserService.prototype, 'executePlan');
+    let server: Awaited<ReturnType<typeof buildServer>> | undefined;
+    let released = false;
+    try {
+      server = await buildServer({
+        engine: new FakeEngine(),
+        apiKeys: new Map([[createHash('sha256').update('operator').digest('hex'), tenant]]),
+        applicationAdapters: [
+          {
+            id: 'fixture-app',
+            authorize: (scope) => scope.tenant === tenant && scope.resource === 'profile',
+            operations: {},
+            receipt,
+          },
+        ],
+        verifierRegistry: verifierRegistry(),
+        evidenceSourceRegistry: new TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>([
+          defineEvidenceSource({
+            descriptor: {
+              id: 'fixture.snapshot',
+              capability: 'fixture.read',
+              correlation: 'required',
+            },
+            read: async (context, signal, correlationId) => {
+              if (!application || !correlationId) throw new Error('Missing fixture setup');
+              const evidence = await application.readReceiptInScope(
+                context.sessionId,
+                correlationId,
+                signal
+              );
+              return { status: 'ready', evidence, evidenceRefIds: ['fixture_receipt_1'] };
+            },
+          }),
+        ]),
+      });
+      const session = await server.inject({
+        method: 'POST',
+        url: '/v1/sessions',
+        headers: operator,
+        payload: { controlMode: 'delegated' },
+      });
+      expect(session.statusCode).toBe(201);
+      const sessionId = session.json().sessionId as string;
+      const base = `/v1/sessions/${sessionId}`;
+      expect(
+        (
+          await server.inject({
+            method: 'PUT',
+            url: `${base}/application`,
+            headers: operator,
+            payload: { adapter: 'fixture-app', resource: 'profile' },
+          })
+        ).statusCode
+      ).toBe(200);
+      const page = await server.inject({
+        method: 'POST',
+        url: `${base}/pages`,
+        headers: { ...operator, 'x-agentbrowser-operation-id': 'create-page' },
+      });
+      expect(page.statusCode).toBe(201);
+      const url = `${base}/pages/${page.json().pageId as string}/outcomes`;
+      const payload = {
+        ...request(),
+        verification: {
+          ...request().verification,
+          evidenceCorrelationId: 'business-receipt-1',
+        },
+      };
+      const firstHeaders = {
+        ...operator,
+        'x-agentbrowser-operation-id': 'outcome-drain-1',
+      };
+      const pendingResponse = server.inject({
+        method: 'POST',
+        url,
+        headers: firstHeaders,
+        payload,
+      });
+      await receiptEntered.promise;
+      const first = await pendingResponse;
+
+      // The verifier deadline returns through Fastify's onSend hook while the
+      // ignored adapter read remains owned by the original operation ticket.
+      expect(first.statusCode).toBe(200);
+      expect(first.json()).toMatchObject({
+        plan: { ok: true, completed: 1 },
+        outcome: {
+          availability: 'available',
+          execution: 'completed',
+          verification: { status: 'unknown', evidenceRefIds: [] },
+        },
+      });
+      expect(first.body).not.toContain('fixture_receipt_1');
+      expect(execute).toHaveBeenCalledOnce();
+      expect(receipt).toHaveBeenCalledOnce();
+
+      const operation = await server.inject({
+        url: `${base}/operations/outcome-drain-1`,
+        headers: operator,
+      });
+      expect(operation.statusCode).toBe(200);
+      expect(operation.json()).toMatchObject({ status: 'in_flight', dispatched: true });
+      const control = await server.inject({ url: `${base}/control`, headers: operator });
+      expect(control.json()).toMatchObject({ busy: true });
+
+      const replay = await server.inject({
+        method: 'POST',
+        url,
+        headers: firstHeaders,
+        payload,
+      });
+      expect(replay.statusCode).toBe(200);
+      expect(replay.json()).toMatchObject({
+        replay: true,
+        operation: { operationId: 'outcome-drain-1', status: 'in_flight', dispatched: true },
+      });
+      expect(execute).toHaveBeenCalledOnce();
+      expect(receipt).toHaveBeenCalledOnce();
+
+      const secondHeaders = {
+        ...operator,
+        'x-agentbrowser-operation-id': 'outcome-drain-2',
+      };
+      const blocked = await server.inject({
+        method: 'POST',
+        url,
+        headers: secondHeaders,
+        payload,
+      });
+      expect(blocked.statusCode).toBe(409);
+      expect(blocked.json()).toMatchObject({ error: { code: 'SESSION_BUSY' } });
+      const review = await server.inject({
+        method: 'POST',
+        url: `${base}/control/prepare-resume`,
+        headers: operator,
+      });
+      expect(review.statusCode).toBe(409);
+      expect(review.json()).toMatchObject({ error: { code: 'SESSION_BUSY' } });
+      expect(execute).toHaveBeenCalledOnce();
+      expect(receipt).toHaveBeenCalledOnce();
+
+      released = true;
+      receiptRelease.resolve();
+      await vi.waitFor(async () => {
+        const settled = await server?.inject({
+          url: `${base}/operations/outcome-drain-1`,
+          headers: operator,
+        });
+        expect(settled?.json()).toMatchObject({ status: 'completed', dispatched: true });
+      });
+      expect(
+        (await server.inject({ url: `${base}/control`, headers: operator })).json()
+      ).toMatchObject({ busy: false });
+
+      const next = await server.inject({
+        method: 'POST',
+        url,
+        headers: secondHeaders,
+        payload,
+      });
+      expect(next.statusCode).toBe(200);
+      expect(next.json().outcome.verification.status).toBe('passed');
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(receipt).toHaveBeenCalledTimes(2);
+    } finally {
+      if (!released) receiptRelease.resolve();
+      create.mockRestore();
+      execute.mockRestore();
+      await server?.close();
+    }
+  });
+
   it('exposes the same canonical report without an MCP dependency', async () => {
     const server = await buildServer({
       engine: new FakeEngine(),

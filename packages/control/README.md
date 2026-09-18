@@ -54,6 +54,21 @@ its own versioned permission fence. Both existing receipt helpers reuse this pre
 These helpers establish identity and preflight, not permission for browser modes to
 receive application-derived evidence.
 
+Receipt I/O is registered with `SessionAuthority.trackReadInScope` before its callback
+starts. This helper is for read-only observation; writes must settle inside `run`.
+If a verifier deadline returns while an adapter ignores cancellation, the
+response can still report unknown verification, but the original ticket remains busy
+and its operation record stays `in_flight` until the receipt settles. The completed
+response closes all scope-derived authority immediately; a late continuation cannot
+dispatch, read evidence, or register more work. Duplicate operation IDs replay the
+in-flight record, and other operations and resume review remain blocked. Settlement
+preserves the response's execution classification; intervening revocation makes a
+dispatched operation `outcome_unknown` and an undispatched operation `failed`.
+Only explicitly tracked I/O receives this guarantee. Generic evidence callbacks,
+cleanup and engine work are not automatically tracked. A never-settling receipt keeps
+a live session busy until host removal/TTL; removal cannot make external I/O settle,
+and old work remains fenced from a replacement session incarnation.
+
 Authority guards require a registered live owner. Hosts supporting uncontrolled
 sessions must choose that path explicitly, rather than infer it from a missing
 authority entry. Active IDs cannot be registered twice, and captured page guards
