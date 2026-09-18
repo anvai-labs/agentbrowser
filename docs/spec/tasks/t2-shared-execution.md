@@ -114,13 +114,39 @@ and parses expected input before dispatch and captures an evidence-only evaluato
 Invalid input is blocked without executing; legacy definitions lacking preparation are
 unsupported for outcome runs. Direct registry evaluation remains compatible. The runner
 rechecks authority and cancellation after preparation, settles cleanup on refusal, and
-delegated HTTP replay records the refusal as failed with no dispatch. Application receipt
-correlation and production evidence-source qualification are still pending.
+delegated HTTP replay records the refusal as failed with no dispatch. Production
+evidence-source qualification is still pending.
 
 The application receipt foundation now offers one read helper inside an existing
 admission, reused by standalone receipt lookup. It derives scope from existing session
 authority, preserves the separate business receipt ID and rechecks owner, binding,
 adapter authorization and cancellation after asynchronous I/O. It adds no nested ticket,
-write dispatch, ledger or retry loop. Wiring request correlation into an outcome source
-and qualifying that source are separate, unfinished steps. See the
+write dispatch, ledger or retry loop. See the
 [application receipt evidence](../evidence/t2-application-identity.md#admitted-receipt-read-follow-up).
+
+Outcome requests now carry an optional bounded business receipt correlation ID, separate
+from the outer service operation ID. Opted-in sources require it; other sources reject
+it before dispatch. One prepared reader captures the ID for every bounded poll. The
+protocol owns the shared operation-ID schema; REST, SDK, CLI and offline discovery reuse
+it. Operator-authorized REST fixtures verify scoped application receipt reads, missing/cross-session
+negative controls, replay suppression and changed-correlation conflicts. These fixtures
+qualify correlation only, not causal UI-to-application commits or a production source.
+Delegated browser-mode application receipt verification requires an explicit permission
+policy checked before dispatch; generic correlation opt-in does not grant that authority.
+
+## Next slice: receipt permission and causal qualification
+
+1. Define explicit permission to expose an application-derived predicate to a delegated
+   browser mode. Reuse trusted source registration and existing admission preflight;
+   keep raw application discovery/execution permissions separate. Deny unconfigured
+   receipt sources before dispatch, including when a caller supplies a valid business ID.
+2. Qualify one application-owned fixture whose UI write and receipt share an explicit
+   correlation contract. A pre-existing receipt, wrong session/resource, failed UI write
+   or blocked commit must not establish that this run caused a commit. Do not relabel
+   the current pre-seeded correlation fixture as production or G6 evidence.
+3. Exercise revoked permission, takeover and late receipt completion through the real
+   outcome route, retaining one admitted operation, one executor and bounded reads.
+   Demonstrate CLI-to-service acceptance using the same protocol, without MCP.
+4. Record the source's exact qualified layers and limits. Reuse the existing evidence
+   registry, application authority and result parser; add no receipt store, generalized
+   workflow engine or new package to obtain this qualification.

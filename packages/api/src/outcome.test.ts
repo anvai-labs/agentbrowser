@@ -1,4 +1,5 @@
 import {
+  type ApplicationScope,
   TrustedEvidenceSourceRegistry,
   TrustedVerifierRegistry,
   defineEvidenceSource,
@@ -251,6 +252,190 @@ describe('verified outcome service composition', () => {
 });
 
 describe('verified outcome REST projection', () => {
+  it.each(['match', 'missing-receipt', 'other-session', 'missing-correlation'] as const)(
+    'correlates a business receipt under operator authority: %s',
+    async (mode) => {
+      const operator = { authorization: 'Bearer operator' };
+      const tenant = 'fixture-tenant';
+      const businessId = 'save-profile-42';
+      const receipts = new Map<string, boolean>();
+      const key = (
+        scope: Pick<ApplicationScope, 'tenant' | 'resource' | 'sessionIncarnation'>,
+        id: string
+      ) => JSON.stringify([scope.tenant, scope.resource, scope.sessionIncarnation, id]);
+      const receipt = vi.fn(async (scope: ApplicationScope, id: string) =>
+        receipts.get(key(scope, id))
+      );
+      let application: AgentBrowserService['applicationAuthority'] | undefined;
+      // Capture the service-owned authority only for trusted fixture composition.
+      const originalCreate = AgentBrowserService.prototype.createSession;
+      const create = vi
+        .spyOn(AgentBrowserService.prototype, 'createSession')
+        .mockImplementation(async function (this: AgentBrowserService, ...args) {
+          application = this.applicationAuthority;
+          return originalCreate.apply(this, args);
+        });
+      const execute = vi.spyOn(AgentBrowserService.prototype, 'executePlan');
+      const cleanup = vi.fn();
+      let server: Awaited<ReturnType<typeof buildServer>> | undefined;
+      try {
+        server = await buildServer({
+          engine: new FakeEngine(),
+          apiKeys: new Map([[createHash('sha256').update('operator').digest('hex'), tenant]]),
+          applicationAdapters: [
+            {
+              id: 'fixture-app',
+              authorize: (scope) => scope.tenant === tenant && scope.resource === 'profile',
+              operations: {
+                seed: {
+                  mode: 'write',
+                  prepare: () => async (scope) => {
+                    if (!scope.operationId) throw new Error('Missing fixture operation ID');
+                    receipts.set(key(scope, scope.operationId), true);
+                    return { status: 'committed', value: true };
+                  },
+                },
+              },
+              receipt,
+            },
+          ],
+          verifierRegistry: verifierRegistry(),
+          evidenceSourceRegistry: new TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>([
+            defineEvidenceSource({
+              descriptor: {
+                id: 'fixture.snapshot',
+                capability: 'fixture.read',
+                correlation: 'required',
+              },
+              read: async (context, signal, correlationId) => {
+                if (!application || !correlationId) throw new Error('Missing fixture setup');
+                const evidence = await application.readReceiptInScope(
+                  context.sessionId,
+                  correlationId,
+                  signal
+                );
+                return evidence === undefined
+                  ? { status: 'pending' }
+                  : { status: 'ready', evidence, evidenceRefIds: ['fixture_receipt_1'] };
+              },
+              cleanup,
+            }),
+          ]),
+        });
+        const firstSession = await server.inject({
+          method: 'POST',
+          url: '/v1/sessions',
+          headers: operator,
+          payload: { controlMode: 'delegated' },
+        });
+        expect(firstSession.statusCode).toBe(201);
+        const ownerSession = firstSession.json().sessionId as string;
+        const bind = async (id: string) => {
+          if (!server) throw new Error('Missing fixture server');
+          const result = await server.inject({
+            method: 'PUT',
+            url: `/v1/sessions/${id}/application`,
+            headers: operator,
+            payload: { adapter: 'fixture-app', resource: 'profile' },
+          });
+          expect(result.statusCode).toBe(200);
+        };
+        await bind(ownerSession);
+        // Seed independently of the UI action: this qualifies receipt routing, not UI causality.
+        const seeded = await server.inject({
+          method: 'POST',
+          url: `/v1/sessions/${ownerSession}/application/execute`,
+          headers: operator,
+          payload: { operation: 'seed', input: null, operationId: businessId, expectedVersion: 0 },
+        });
+        expect(seeded.statusCode).toBe(200);
+        expect(seeded.json()).toEqual({ status: 'committed', value: true });
+        let sessionId = ownerSession;
+        if (mode === 'other-session') {
+          const second = await server.inject({
+            method: 'POST',
+            url: '/v1/sessions',
+            headers: operator,
+            payload: { controlMode: 'delegated' },
+          });
+          expect(second.statusCode).toBe(201);
+          sessionId = second.json().sessionId as string;
+          await bind(sessionId);
+          expect(sessionId).not.toBe(ownerSession);
+        }
+        const base = `/v1/sessions/${sessionId}`;
+        const page = await server.inject({
+          method: 'POST',
+          url: `${base}/pages`,
+          headers: { ...operator, 'x-agentbrowser-operation-id': 'create-page' },
+        });
+        expect(page.statusCode).toBe(201);
+        const headers = {
+          ...operator,
+          'x-agentbrowser-operation-id': 'outcome-run-1',
+        };
+        const correlation = mode === 'missing-receipt' ? 'missing-receipt' : businessId;
+        const payload = {
+          ...request(),
+          verification: {
+            ...request().verification,
+            ...(mode !== 'missing-correlation' ? { evidenceCorrelationId: correlation } : {}),
+          },
+        };
+        const url = `${base}/pages/${page.json().pageId as string}/outcomes`;
+        const response = await server.inject({ method: 'POST', url, headers, payload });
+        expect(response.statusCode).toBe(200);
+        expect(isPassingOutcome(response.json().outcome)).toBe(mode === 'match');
+        expect(response.body).not.toContain(correlation);
+        expect(cleanup).toHaveBeenCalledOnce();
+        if (mode === 'missing-correlation') {
+          expect(response.json().outcome).toMatchObject({
+            availability: 'unsupported',
+            execution: 'not_started',
+          });
+          expect(execute).not.toHaveBeenCalled();
+          expect(receipt).not.toHaveBeenCalled();
+        } else {
+          expect(execute).toHaveBeenCalledOnce();
+          expect(receipt).toHaveBeenCalledTimes(mode === 'match' ? 1 : 2);
+          for (const [scope, id] of receipt.mock.calls) {
+            expect(id).toBe(correlation);
+            expect(scope).toMatchObject({ tenant, resource: 'profile', sessionId });
+            expect(scope).not.toHaveProperty('operationId');
+            expect(scope).not.toHaveProperty('bindingGeneration');
+          }
+          expect(response.json().outcome.verification.status).toBe(
+            mode === 'match' ? 'passed' : 'unknown'
+          );
+        }
+        const reads = receipt.mock.calls.length;
+        const replay = await server.inject({ method: 'POST', url, headers, payload });
+        expect(replay.json()).toMatchObject({
+          replay: true,
+          operation: { operationId: 'outcome-run-1', dispatched: mode !== 'missing-correlation' },
+        });
+        expect(receipt).toHaveBeenCalledTimes(reads);
+        expect(cleanup).toHaveBeenCalledOnce();
+        const changed = await server.inject({
+          method: 'POST',
+          url,
+          headers,
+          payload: {
+            ...payload,
+            verification: { ...payload.verification, evidenceCorrelationId: 'different-receipt' },
+          },
+        });
+        expect(changed.statusCode).toBe(409);
+        expect(receipt).toHaveBeenCalledTimes(reads);
+        expect(execute).toHaveBeenCalledTimes(mode === 'missing-correlation' ? 0 : 1);
+      } finally {
+        create.mockRestore();
+        execute.mockRestore();
+        await server?.close();
+      }
+    }
+  );
+
   it('exposes the same canonical report without an MCP dependency', async () => {
     const server = await buildServer({
       engine: new FakeEngine(),

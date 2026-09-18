@@ -10,13 +10,13 @@
 
 import { type Static, Type } from '@sinclair/typebox';
 import { TypeCompiler } from '@sinclair/typebox/compiler';
-import { OperationRecordSchema } from './control.js';
+import { OperationIdSchema, OperationRecordSchema } from './control.js';
 import type { Validated, ValidationIssue } from './validators.js';
 
 const strict = { additionalProperties: false };
 
 /** Adapter and resource identifiers share the control operation-ID space. */
-const ID_SCHEMA = Type.String({ minLength: 1, maxLength: 128, pattern: '^[a-zA-Z0-9_-]+$' });
+const ID_SCHEMA = OperationIdSchema;
 
 export const ApplicationBindingSchema = Type.Object(
   { adapter: ID_SCHEMA, resource: ID_SCHEMA },

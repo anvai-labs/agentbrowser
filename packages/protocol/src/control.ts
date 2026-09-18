@@ -3,6 +3,13 @@ import { AgentModeSchema } from './mode-profile.js';
 import { parseExecutionReport } from './validators.js';
 
 const strict = { additionalProperties: false };
+const OPERATION_ID_PATTERN = '^[a-zA-Z0-9_-]{1,128}$';
+export const CONTROL_OPERATION_ID = new RegExp(OPERATION_ID_PATTERN);
+export const OperationIdSchema = Type.String({
+  minLength: 1,
+  maxLength: 128,
+  pattern: OPERATION_ID_PATTERN,
+});
 
 export const ControlStateSchema = Type.Union([
   Type.Literal('HUMAN_ACTIVE'),
@@ -13,7 +20,7 @@ export const ControlStateSchema = Type.Union([
 ]);
 export const OperationRecordSchema = Type.Object(
   {
-    operationId: Type.String({ minLength: 1, maxLength: 128, pattern: '^[a-zA-Z0-9_-]+$' }),
+    operationId: OperationIdSchema,
     epoch: Type.Integer({ minimum: 0 }),
     status: Type.Union([
       Type.Literal('in_flight'),
@@ -50,7 +57,6 @@ export type OperationRecord = Static<typeof OperationRecordSchema>;
 export type OperationReplay = Static<typeof OperationReplaySchema>;
 export type RunCursor = Static<typeof RunCursorSchema>;
 export type ControlView = Static<typeof ControlViewSchema>;
-export const CONTROL_OPERATION_ID = /^[a-zA-Z0-9_-]{1,128}$/;
 
 export function parseOperationReplay(input: unknown): OperationReplay {
   return parseExecutionReport(OperationReplaySchema, input, 'operation replay', undefined, {

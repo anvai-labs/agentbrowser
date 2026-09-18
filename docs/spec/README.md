@@ -2,9 +2,9 @@
 
 Status: active product architecture and implementation contract. A capability is
 delivered only when its task evidence records a merged and qualified implementation.
-Source baseline: AgentBrowser `b4360b93276146123076f776f7a7592bc4bf1740`
-(released 1.8.19); Victor was last inspected at
-`c8a0950fed49914bb2877feeb65f5ab32cc47b97`. Reviewed 2026-09-17 UTC.
+Source baseline: AgentBrowser `52e2c74d65d3cad2d3092e3ff568a803220354ae`
+(released 1.8.20); Victor was last inspected at
+`c8a0950fed49914bb2877feeb65f5ab32cc47b97`. Reviewed 2026-09-18 UTC.
 
 Build a shared execution and verification service for people and agents. A mode
 selects a small policy and capability profile; it does not create another runner,
@@ -55,10 +55,10 @@ non-secret run cursor and inline operator mode selection. See the
 [T1 packet](tasks/t1-context-profiles.md) and
 [qualification evidence](evidence/t1-context-profiles.md). Installed harness cursor
 consumption remains T8 work.
-T2 is active through seven incremental slices. The seventh merged to develop after
-1.8.19: a configurable REST/SDK/CLI outcome run over the existing plan executor and
-trusted verifier/evidence registries. It is not yet released and does not include a
-production evidence source. See the
+T2 is active through seven incremental slices released through 1.8.20, including a
+configurable REST/SDK/CLI outcome run over the existing plan executor and trusted
+verifier/evidence registries. It still does not include a production evidence source.
+See the
 [T2 packet](tasks/t2-shared-execution.md) and
 [dispatch-boundary](evidence/t2-dispatch-boundary.md) and
 [HTTP result-classification](evidence/t2-http-result-classification.md) and
@@ -68,9 +68,19 @@ production evidence source. See the
 [outcome/verifier foundation](evidence/t2-outcome-verifier-foundation.md) and
 [outcome-run vertical](evidence/t2-outcome-run-vertical.md) evidence.
 
+T4 has one public-interface slice delivered in 1.8.20 by PR #201: bounded,
+authenticated application discovery, execution and receipt lookup now use the shared
+`ApplicationAuthority` through REST, the TypeScript SDK and a first-class CLI command
+group. This is not the complete application-parity vertical. Delegated browser receipt-verification permission
+and operator-binding UX, an independent UI/API parity oracle, production application
+evidence and durable restart receipts remain open. MCP is optional and has no
+application-operation projection. See the
+[application authority guide](../application-operation-authority.md) and
+[T4 packet](tasks/t4-application-parity.md).
+
 T6 is partially delivered in 1.8.19: the existing autofill orchestrator now has named
 `react-select` and `chip-multiselect` strategies. Broader widget qualification,
-reusable mapping and cross-engine acceptance remain open. T3, T4, T5 and T7 have no
+reusable mapping and cross-engine acceptance remain open. T3, T5 and T7 have no
 delivered product vertical; T8 still needs installed-harness qualification. T9 is a
 recurring release gate rather than a one-time feature.
 

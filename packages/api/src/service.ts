@@ -1554,6 +1554,9 @@ export class AgentBrowserService {
       verifierRegistry: this.verifierRegistry,
       evidenceSources: this.evidenceSourceRegistry,
       verifier: { ...request.verification.verifier, input: request.verification.input },
+      ...(request.verification.evidenceCorrelationId !== undefined
+        ? { evidenceCorrelationId: request.verification.evidenceCorrelationId }
+        : {}),
       context: {
         sessionId,
         pageId,

@@ -158,6 +158,38 @@ const runReport = () => ({
 });
 
 describe('outcome run contracts', () => {
+  it('accepts a bounded business correlation ID and snapshots it independently of input', () => {
+    const request = {
+      ...runRequest(),
+      verification: { ...runRequest().verification, evidenceCorrelationId: 'save-profile_42' },
+    };
+    const parsed = parseOutcomeRunRequest(request);
+    request.verification.evidenceCorrelationId = 'changed';
+    expect(parsed.verification.evidenceCorrelationId).toBe('save-profile_42');
+    expect(parseOutcomeRunRequest(runRequest()).verification).not.toHaveProperty(
+      'evidenceCorrelationId'
+    );
+  });
+
+  it('rejects malformed correlation IDs without exposing their contents', () => {
+    for (const evidenceCorrelationId of [
+      '',
+      'x'.repeat(129),
+      '../PRIVATE',
+      'https://PRIVATE',
+      null,
+      42,
+      {},
+    ]) {
+      expect(() =>
+        parseOutcomeRunRequest({
+          ...runRequest(),
+          verification: { ...runRequest().verification, evidenceCorrelationId },
+        })
+      ).toThrow('Invalid outcome run request');
+    }
+  });
+
   it('defines strict request and report envelopes without aggregate success flags', () => {
     expect(OutcomeRunRequestSchema.$id).toBe('urn:agentbrowser:outcome-run-request:v1');
     expect(OutcomeRunReportSchema.$id).toBe('urn:agentbrowser:outcome-run-report:v1');

@@ -65,6 +65,18 @@ Invalid preparation blocks execution, while registered cleanup still settles. Tr
 parsers and predicates must be synchronous and pure. No production evidence source is
 registered by default.
 
+Evidence sources that read business receipts declare `correlation: 'required'` in their
+trusted descriptor. The runner requires a bounded `evidenceCorrelationId` before dispatch
+and supplies it as the third argument to `read(context, signal, correlationId)`. A prepared
+reader captures that ID once for every poll; direct registry reads use the same validation.
+An absent ID for a correlated source or a supplied ID for an uncorrelated source is
+unsupported. The ID selects application evidence; it does not confer authority or replace
+the outer operation ID. Use `readReceiptInScope` for receipt reads within existing admission
+and derive tenant/resource/incarnation from authority, never from the correlation string.
+This low-level helper does not grant delegated browser modes application access. A
+production receipt source must enforce an explicit permission/declassification policy
+before delegated plan dispatch; the operator fixture is not that policy.
+
 Run `pnpm test:application-independence` after a workspace build to deploy only
 production dependencies, reject browser packages or escaping dependency links,
 and exercise delegation, a real application callback, duplicate suppression,

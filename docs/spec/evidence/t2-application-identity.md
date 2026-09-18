@@ -72,8 +72,9 @@ duplicate-suppression, rebinding and no-replay tests remain in the focused suite
 This identity prevents aliasing inside the current in-process, ephemeral authority. A
 future durable outcome reference must persist its host/service fence and return a
 typed, independently verifiable result. Trusted verifier registration now exists in the
-[outcome foundation](t2-outcome-verifier-foundation.md), but public application receipt
-consumers and production source qualification remain unfinished. Main promotion and
+[outcome foundation](t2-outcome-verifier-foundation.md), and v1.8.20 exposes application binding, discovery, execution and receipt lookup
+through REST, SDK and CLI. Production outcome-source qualification and explicit permission
+for delegated browser-mode receipt verification remain unfinished. Main promotion and
 release are outside this slice's develop delivery.
 
 ## Admitted receipt read follow-up
@@ -99,6 +100,9 @@ read abort with pending-admission drain, and synchronous revocation inside autho
 The existing incarnation, same-resource rebind and class-adapter receiver tests use the
 shared lookup implementation unchanged.
 
-This is an in-process foundation only. The HTTP outcome source still needs explicit
-business correlation; no production evidence source, public receipt endpoint, durable
-receipt schema, new CLI/MCP command or application-commit claim is introduced.
+This is an in-process foundation. The subsequent
+[outcome correlation slice](t2-outcome-run-vertical.md#business-receipt-correlation-follow-up)
+connects explicit business IDs to this helper through an operator-authorized fixture
+source, reusing v1.8.20 public application binding and execution. The correlation slice
+adds no production evidence source, durable receipt schema, CLI/MCP command or
+application-commit claim. It does not grant browser modes access to application receipts.

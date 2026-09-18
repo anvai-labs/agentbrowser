@@ -1,4 +1,5 @@
-import { type Static, Type } from '@sinclair/typebox';
+import { type Static, type TString, Type } from '@sinclair/typebox';
+import { OperationIdSchema } from './control.js';
 import { INTERACTION_GUIDANCE } from './interaction-guidance.js';
 import {
   type PlanReport,
@@ -81,6 +82,12 @@ export const OutcomeProjectionSchema = Type.Object(
 );
 export type OutcomeProjection = Static<typeof OutcomeProjectionSchema>;
 
+const evidenceCorrelationIdSchema: TString = {
+  ...OperationIdSchema,
+  description:
+    'Business receipt operation ID for an opted-in trusted evidence source; distinct from the service operation ID and conveys no authority.',
+};
+
 export const OutcomeRunRequestSchema = Type.Object(
   {
     // A UI outcome must exercise the UI seam; an empty plan cannot attest it.
@@ -89,6 +96,7 @@ export const OutcomeRunRequestSchema = Type.Object(
       {
         verifier: Type.Object({ id: identifier(), version: identifier() }, strict),
         input: Type.Unknown(),
+        evidenceCorrelationId: Type.Optional(evidenceCorrelationIdSchema),
       },
       strict
     ),

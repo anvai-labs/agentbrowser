@@ -394,6 +394,7 @@ describe('AgentBrowser SDK', () => {
         verification: {
           verifier: { id: 'fixture.saved', version: '1' },
           input: { expected: 'PRIVATE-EXPECTED' },
+          evidenceCorrelationId: 'save-profile-42',
         },
       };
       const pending = client.sessions.outcome('ses_1', 'pg_1', request, {
@@ -404,6 +405,10 @@ describe('AgentBrowser SDK', () => {
       expect(new Headers(init?.headers as HeadersInit).get('x-agentbrowser-operation-id')).toBe(
         'outcome-once'
       );
+      expect(JSON.parse(String(init?.body)).verification.evidenceCorrelationId).toBe(
+        'save-profile-42'
+      );
+      request.verification.evidenceCorrelationId = 'mutated-after-dispatch';
       request.actions.pop();
       if (!release) throw new Error('fetch was not dispatched');
       release(
@@ -437,6 +442,30 @@ describe('AgentBrowser SDK', () => {
       expect(String(outcome)).not.toContain('PRIVATE-EXPECTED');
       expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
     });
+
+    it.each(['', 'bad.correlation', 'x'.repeat(129)])(
+      'rejects malformed outcome evidence correlation %j before fetch',
+      async (evidenceCorrelationId) => {
+        const outcome = await client.sessions
+          .outcome(
+            'ses_1',
+            'pg_1',
+            {
+              actions: [{ action: 'press', key: 'Tab' }],
+              verification: {
+                verifier: { id: 'fixture.saved', version: '1' },
+                input: true,
+                evidenceCorrelationId,
+              },
+            },
+            { operationId: 'outcome-once' }
+          )
+          .catch((error: unknown) => error);
+
+        expect(outcome).toBeInstanceOf(Error);
+        expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+      }
+    );
 
     it('freezes plan cardinality at dispatch and preserves the generated operation ID', async () => {
       let release: ((response: Response) => void) | undefined;
