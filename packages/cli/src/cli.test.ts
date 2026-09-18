@@ -804,6 +804,13 @@ describe('AgentBrowser CLI', () => {
       const { input, output } = lastJson().command.schemas;
       expect(input.properties.actions.items.properties.waitMs.maximum).toBe(60000);
       expect(input.properties.verification.properties.verifier.required).toEqual(['id', 'version']);
+      expect(input.properties.verification.properties.evidenceCorrelationId).toMatchObject({
+        type: 'string',
+        minLength: 1,
+        maxLength: 128,
+        pattern: '^[a-zA-Z0-9_-]{1,128}$',
+      });
+      expect(input.properties.verification.required).not.toContain('evidenceCorrelationId');
       expect(output.properties).toHaveProperty('plan');
       expect(output.properties).toHaveProperty('outcome');
       expect(deps.createClient).not.toHaveBeenCalled();
@@ -815,6 +822,7 @@ describe('AgentBrowser CLI', () => {
         verification: {
           verifier: { id: 'fixture.saved', version: '1' },
           input: { expected: true },
+          evidenceCorrelationId: 'save-profile-42',
         },
       };
       const report = {
@@ -847,6 +855,7 @@ describe('AgentBrowser CLI', () => {
       ).toBe(0);
       expect(sessions.outcome).toHaveBeenCalledTimes(1);
       expect(sessions.outcome).toHaveBeenCalledWith('ses_1', 'pg_1', request);
+      expect(request.verification.evidenceCorrelationId).not.toBe('outcome-once');
       expect(lastJson()).toEqual(report);
       expect(deps.createClient).toHaveBeenCalledWith(
         expect.objectContaining({ headers: { 'x-agentbrowser-operation-id': 'outcome-once' } })
@@ -896,6 +905,25 @@ describe('AgentBrowser CLI', () => {
       expect(await run('outcome', 'ses_1', 'pg_1', '{"actions":"PRIVATE-INPUT"}')).toBe(1);
       expect(sessions.outcome).not.toHaveBeenCalled();
       expect(err.join(' ')).not.toContain('PRIVATE-INPUT');
+
+      err.length = 0;
+      expect(
+        await run(
+          'outcome',
+          'ses_1',
+          'pg_1',
+          JSON.stringify({
+            actions: [{ action: 'press', key: 'Tab' }],
+            verification: {
+              verifier: { id: 'fixture.saved', version: '1' },
+              input: true,
+              evidenceCorrelationId: 'PRIVATE.INVALID',
+            },
+          })
+        )
+      ).toBe(1);
+      expect(sessions.outcome).not.toHaveBeenCalled();
+      expect(err.join(' ')).not.toContain('PRIVATE.INVALID');
 
       err.length = 0;
       const request = {

@@ -66,11 +66,11 @@
   "tasks": {
     "t0": {"module": "task-t0", "status": "complete", "dependsOn": [], "modes": ["qa", "operations", "audit", "appsec", "bounty", "forms", "application"]},
     "t1": {"module": "task-t1", "status": "active", "dependsOn": ["t0"], "modes": ["qa", "operations", "audit", "appsec", "bounty", "forms", "application"]},
-    "t2": {"module": "task-t2", "status": "not_started", "dependsOn": ["t0"], "modes": ["qa", "operations", "audit", "appsec", "bounty", "forms", "application"]},
+    "t2": {"module": "task-t2", "status": "active", "dependsOn": ["t0"], "modes": ["qa", "operations", "audit", "appsec", "bounty", "forms", "application"]},
     "t3": {"module": "task-t3", "status": "not_started", "dependsOn": ["t2"], "modes": ["qa"]},
-    "t4": {"module": "task-t4", "status": "not_started", "dependsOn": ["t2"], "modes": ["application"]},
+    "t4": {"module": "task-t4", "status": "active", "dependsOn": ["t2"], "modes": ["application"]},
     "t5": {"module": "task-t5", "status": "not_started", "dependsOn": ["t2"], "modes": ["qa", "operations", "appsec", "bounty", "forms", "application"]},
-    "t6": {"module": "task-t6", "status": "not_started", "dependsOn": ["t2"], "modes": ["forms"]},
+    "t6": {"module": "task-t6", "status": "active", "dependsOn": ["t2"], "modes": ["forms"]},
     "t7": {"module": "task-t7", "status": "not_started", "dependsOn": ["t3"], "conditionalDependencies": [{"modes": ["appsec", "bounty"], "dependsOn": ["t4"], "gate": "Qualified test-scope enforcement and explicit testing authority"}], "modes": ["audit", "appsec", "bounty"]},
     "t8": {"module": "task-t8", "status": "not_started", "dependsOn": ["t0"], "conditionalDependencies": [{"slice": "profiles-and-runs", "dependsOn": ["t1", "t3"]}], "modes": ["qa", "operations", "audit", "appsec", "bounty", "forms", "application"]},
     "t9": {"module": "task-t9", "status": "not_started", "dependsOn": ["t0"], "gate": "Changed-task acceptance and explicit promotion/publication authorization", "modes": ["qa", "operations", "audit", "appsec", "bounty", "forms", "application"]}

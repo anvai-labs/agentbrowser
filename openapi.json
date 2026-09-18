@@ -4079,7 +4079,7 @@
               "operationId": {
                 "minLength": 1,
                 "maxLength": 128,
-                "pattern": "^[a-zA-Z0-9_-]+$",
+                "pattern": "^[a-zA-Z0-9_-]{1,128}$",
                 "type": "string"
               },
               "epoch": {
@@ -4237,7 +4237,7 @@
                   "operationId": {
                     "minLength": 1,
                     "maxLength": 128,
-                    "pattern": "^[a-zA-Z0-9_-]+$",
+                    "pattern": "^[a-zA-Z0-9_-]{1,128}$",
                     "type": "string"
                   },
                   "epoch": {
@@ -4435,7 +4435,7 @@
                   "operationId": {
                     "minLength": 1,
                     "maxLength": 128,
-                    "pattern": "^[a-zA-Z0-9_-]+$",
+                    "pattern": "^[a-zA-Z0-9_-]{1,128}$",
                     "type": "string"
                   },
                   "epoch": {
@@ -4669,7 +4669,7 @@
           "operationId": {
             "minLength": 1,
             "maxLength": 128,
-            "pattern": "^[a-zA-Z0-9_-]+$",
+            "pattern": "^[a-zA-Z0-9_-]{1,128}$",
             "type": "string"
           },
           "epoch": {
@@ -4727,7 +4727,7 @@
               "operationId": {
                 "minLength": 1,
                 "maxLength": 128,
-                "pattern": "^[a-zA-Z0-9_-]+$",
+                "pattern": "^[a-zA-Z0-9_-]{1,128}$",
                 "type": "string"
               },
               "epoch": {
@@ -4772,13 +4772,13 @@
           "adapter": {
             "minLength": 1,
             "maxLength": 128,
-            "pattern": "^[a-zA-Z0-9_-]+$",
+            "pattern": "^[a-zA-Z0-9_-]{1,128}$",
             "type": "string"
           },
           "resource": {
             "minLength": 1,
             "maxLength": 128,
-            "pattern": "^[a-zA-Z0-9_-]+$",
+            "pattern": "^[a-zA-Z0-9_-]{1,128}$",
             "type": "string"
           }
         }
@@ -4812,7 +4812,7 @@
                 "name": {
                   "minLength": 1,
                   "maxLength": 128,
-                  "pattern": "^[a-zA-Z0-9_-]+$",
+                  "pattern": "^[a-zA-Z0-9_-]{1,128}$",
                   "type": "string"
                 },
                 "mode": {
@@ -4843,14 +4843,14 @@
           "operation": {
             "minLength": 1,
             "maxLength": 128,
-            "pattern": "^[a-zA-Z0-9_-]+$",
+            "pattern": "^[a-zA-Z0-9_-]{1,128}$",
             "type": "string"
           },
           "input": {},
           "operationId": {
             "minLength": 1,
             "maxLength": 128,
-            "pattern": "^[a-zA-Z0-9_-]+$",
+            "pattern": "^[a-zA-Z0-9_-]{1,128}$",
             "type": "string"
           },
           "expectedVersion": {
@@ -4926,7 +4926,7 @@
                   "operationId": {
                     "minLength": 1,
                     "maxLength": 128,
-                    "pattern": "^[a-zA-Z0-9_-]+$",
+                    "pattern": "^[a-zA-Z0-9_-]{1,128}$",
                     "type": "string"
                   },
                   "epoch": {
@@ -7228,7 +7228,14 @@
                   }
                 }
               },
-              "input": {}
+              "input": {},
+              "evidenceCorrelationId": {
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-zA-Z0-9_-]{1,128}$",
+                "type": "string",
+                "description": "Business receipt operation ID for an opted-in trusted evidence source; distinct from the service operation ID and conveys no authority."
+              }
             }
           }
         }
