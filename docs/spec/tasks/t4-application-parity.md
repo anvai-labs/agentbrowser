@@ -25,7 +25,9 @@ operations over REST, the TypeScript SDK and CLI. Deployment code injects truste
 adapters; unauthenticated local mode cannot bind, missing adapters fail closed, browser
 modes cannot request application capabilities, and duplicate write identities return
 the recorded operation without re-execution. This delivery does not qualify slice 3 or
-complete T4.
+complete T4. Subsequent develop composition adds explicit delegated predicate
+permission over authority-owned identity via the shared evidence registry; see
+[permission qualification](../evidence/t2-application-evidence-permission.md).
 
 ## TDD and acceptance
 
@@ -42,7 +44,8 @@ the grant that created a receipt must not erase an operator-authorized receipt.
 ## Completion / stop
 
 The public-interface portion of R10 is partially delivered. Completion still requires
-delegated browser receipt-verification permission and operator-binding UX, an independent UI/API parity oracle,
+production qualification of the delegated receipt predicate, operator-binding UX,
+an independent UI/API parity oracle,
 a production evidence source and the remaining receipt-correlation acceptance. Durable
 service-restart claims depend on T5. If an external app cannot supply durable idempotency
 or receipts, advertise weaker observed outcomes and refuse automatic replay. No

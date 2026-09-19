@@ -49,8 +49,8 @@ agent identity must match the stored grant, and operators have no delegated mode
 Each reader check and read requires that original active admission and binding, checks
 authorization around I/O, and combines a fresh per-read deadline with session cancellation.
 Observed authority failure permanently invalidates that reader. It does not detect
-unobserved permission revoke/regrant cycles: the future delegated predicate policy needs
-its own versioned permission fence. Both existing receipt helpers reuse this preparation.
+unobserved permission revoke/regrant cycles: the delegated predicate policy needs
+its own versioned permission fence, composed by the evidence helper below. Both existing receipt helpers reuse this preparation.
 These helpers establish identity and preflight, not permission for browser modes to
 receive application-derived evidence.
 
@@ -125,6 +125,24 @@ Generic context remains a trusted host reference: an application source must com
 the immutable admitted identity and receipt reader before claiming tenant/resource/mode
 isolation. This generic gate does not grant browser modes raw application access,
 register a production source, or establish a causal UI-to-commit relationship.
+
+`defineApplicationReceiptEvidenceSource` supplies that application composition. It
+requires correlation and an explicit synchronous policy over frozen source/verifier/raw
+input plus authority-owned admitted actor/tenant/mode and application identity. The
+policy receives no host context or receipt method. Each prepared read privately captures
+its own guarded receipt closure; no cross-session reader cache is used. Application
+and generation authority are checked before execution, around receipt/reference work
+and before final publication after cleanup. An absent receipt remains pending.
+
+The registry's additive `{ kind: 'authorized_access_v1', permission, access }` result
+keeps opaque access private to one prepared read and its paired source callback. Existing
+permission-only source definitions and three-argument readers remain valid. These are
+trusted constructor interfaces; callers use the registry's guarded read/preparation API.
+The service offers an optional synchronous `evidenceSourceRegistryProvider` with a
+frozen `applicationReceipt(config)` builder. It is mutually exclusive with a prebuilt
+registry and exposes no raw application authority. No request field or CLI command
+changes. This qualifies scoped observation, not a causal UI-to-commit relationship;
+see [application permission evidence](../../docs/spec/evidence/t2-application-evidence-permission.md).
 
 Run `pnpm test:application-independence` after a workspace build to deploy only
 production dependencies, reject browser packages or escaping dependency links,

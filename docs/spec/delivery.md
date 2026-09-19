@@ -11,7 +11,7 @@ current user scope and the [task protocol](tasks/README.md).
 | --- | --- | --- |
 | Shared authority | Core control machine, session/application authority, delegated continuity tests | Common vNext results and qualified durable recovery |
 | Native bulk forms | 1.8.19 native, react-select and chip-multiselect strategies, scoped identities and readback | Broader widget/cross-engine and transfer/deadline qualification |
-| Application-only path | Typed authority plus bounded authenticated REST/SDK/CLI surface released in 1.8.20 | Delegated browser receipt-verification permission and binding UX, independent UI/API parity and durable receipt recovery |
+| Application-only path | Typed authority plus bounded authenticated REST/SDK/CLI surface released in 1.8.20 | Production receipt-predicate qualification and binding UX, independent UI/API parity and durable receipt recovery |
 | Agent surfaces | CLI and SDK are first-class HTTP clients; stdio MCP remains optional with 13 unbound/12 delegated tools | Generated profiles, typed results and qualified context reduction |
 | QA | Browser primitives and strong internal fixtures | Reusable user-facing regression definition/reporting |
 | Security | Policy and known engine limitations | Scoped external scanner adapters after enforcement qualification |
@@ -22,9 +22,9 @@ current user scope and the [task protocol](tasks/README.md).
 | Work | Repository reality | Next evidence gate |
 | --- | --- | --- |
 | Discovery and profiles | T0 released; T1 local loader, profiles and run cursor released | Installed harness consumes and preserves profile/cursor semantics |
-| Shared outcomes | Seven T2 slices, including the REST/SDK/CLI outcome run, released through 1.8.20 | Qualify a production evidence source and the recovery matrix; the current slice adds an operator receipt-correlation fixture |
+| Shared outcomes | REST/SDK/CLI outcome run released in 1.8.20; correlation, admitted receipt drain and permission composition follow on develop | Qualify UI-caused application evidence through CLI/service and the recovery matrix |
 | Bulk forms | Named react-select and chip-multiselect strategies released in 1.8.19 | Broader widgets, reusable mappings and cross-engine commitment evidence |
-| Application parity | First T4 public-interface slice released in 1.8.20 by PR #201: application bind, discovery, execute and receipt operations over REST, SDK and CLI | Qualify delegated browser receipt-verification permission and binding UX, an independent UI/API parity oracle, production evidence and T5 durable restart receipts |
+| Application parity | First T4 public-interface slice released in 1.8.20 by PR #201: application bind, discovery, execute and receipt operations over REST, SDK and CLI | Qualify the scoped receipt predicate in a production fixture, binding UX, independent UI/API parity and T5 durable restart receipts |
 | QA and durable runs | Design packets only | Complete their T3 and T5 verticals independently on the shared authority and result contracts |
 | Audit, appsec and bounty | Mode contracts and profiles exist; no scanner/product vertical | Scope enforcement plus T3, and T4 for application parity |
 | MCP | Existing generated catalog remains 13 unbound/12 delegated in QA; outcome and application operations have no MCP tools | Add only if measured harness demand justifies another optional projection |

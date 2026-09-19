@@ -55,9 +55,11 @@ non-secret run cursor and inline operator mode selection. See the
 [T1 packet](tasks/t1-context-profiles.md) and
 [qualification evidence](evidence/t1-context-profiles.md). Installed harness cursor
 consumption remains T8 work.
-T2 is active through seven incremental slices released through 1.8.20, including a
-configurable REST/SDK/CLI outcome run over the existing plan executor and trusted
-verifier/evidence registries. It still does not include a production evidence source.
+T2 includes a configurable REST/SDK/CLI outcome run released in 1.8.20, over the
+existing plan executor and trusted verifier/evidence registries. Subsequent develop
+increments through PR #206 add receipt correlation, admission/drain and generic
+predicate permission. Application-bound permission composition follows on develop;
+causal/CLI qualification remains active and no production evidence source is qualified.
 See the
 [T2 packet](tasks/t2-shared-execution.md) and
 [dispatch-boundary](evidence/t2-dispatch-boundary.md) and
@@ -71,8 +73,8 @@ See the
 T4 has one public-interface slice delivered in 1.8.20 by PR #201: bounded,
 authenticated application discovery, execution and receipt lookup now use the shared
 `ApplicationAuthority` through REST, the TypeScript SDK and a first-class CLI command
-group. This is not the complete application-parity vertical. Delegated browser receipt-verification permission
-and operator-binding UX, an independent UI/API parity oracle, production application
+group. This is not the complete application-parity vertical. A delegated receipt-permission composition now exists on develop;
+operator-binding UX, an independent UI/API parity oracle, production application
 evidence and durable restart receipts remain open. MCP is optional and has no
 application-operation projection. See the
 [application authority guide](../application-operation-authority.md) and

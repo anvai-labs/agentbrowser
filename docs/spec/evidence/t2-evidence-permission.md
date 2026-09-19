@@ -1,7 +1,8 @@
 # T2 evidence permission gate
 
-Status: implemented generic foundation; application-bound permission and causal
-qualification remain pending. Owner: `@agentbrowser/control`.
+Status: implemented generic foundation (PR #206). Application-bound composition
+follows in [application permission](t2-application-evidence-permission.md); causal
+qualification remains pending. Owner: `@agentbrowser/control`.
 
 ## Contract and reuse
 
@@ -59,7 +60,7 @@ tests pass, along with control/API type-checks, packaged browser-free applicatio
 acceptance, all 82 spec context selections and documentation-link checks. Independent
 review reproduced the callback replacement defect before the passing regression.
 
-## Remaining application boundary
+## Application composition boundary
 
 Context is an opaque trusted host reference, not a new authenticated wire object.
 Application composition must supply frozen authority-owned actor/mode/tenant, captured
@@ -70,7 +71,7 @@ remains necessary for deadline-abandoned application I/O; this gate does not tra
 arbitrary source or cleanup work.
 
 No raw application route permission, mode profile, CLI/MCP command, wire schema,
-production source or durable policy store is added. Next qualify application-bound
-permission through the existing CLI/service path, then use an independent app-issued
+production source or durable policy store was added by this generic slice. Qualify
+application-bound permission through the existing CLI/service path, then use an independent app-issued
 event/version discriminator to prove UI-caused commits. A pre-existing receipt alone
 must never establish causality.

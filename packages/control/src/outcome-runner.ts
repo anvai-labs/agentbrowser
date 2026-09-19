@@ -4,7 +4,11 @@ import {
   type TrustedVerifierDescriptor,
   type VerificationProjection,
 } from '@agentbrowser/protocol';
-import { snapshotAuthorizationInput, synchronousResult } from './trusted-callback.js';
+import {
+  evidencePermissionGuard,
+  snapshotAuthorizationInput,
+  synchronousResult,
+} from './trusted-callback.js';
 import type { TrustedVerifierRegistry } from './verifier-registry.js';
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -32,6 +36,12 @@ export interface EvidencePermission {
   currentGeneration(): number;
 }
 
+export interface EvidenceAuthorizedAccess<Access = unknown> {
+  readonly kind: 'authorized_access_v1';
+  readonly permission: EvidencePermission;
+  readonly access: Access;
+}
+
 export interface PreparedEvidenceRead {
   (signal: AbortSignal): EvidenceRead<unknown> | Promise<EvidenceRead<unknown>>;
   readonly assertAuthorized: () => void;
@@ -45,13 +55,16 @@ export type EvidenceRead<Evidence> =
       readonly evidenceRefIds: readonly string[];
     };
 
-export interface TrustedEvidenceSourceDefinition<Context, Evidence = unknown> {
+export interface TrustedEvidenceSourceDefinition<Context, Evidence = unknown, Access = unknown> {
   readonly descriptor: TrustedEvidenceSourceDescriptor;
-  authorize?(request: EvidenceAuthorizationRequest<Context>): EvidencePermission | undefined;
+  authorize?(
+    request: EvidenceAuthorizationRequest<Context>
+  ): EvidencePermission | EvidenceAuthorizedAccess<Access> | undefined;
   read(
     context: Context,
     signal: AbortSignal,
-    correlationId?: string
+    correlationId?: string,
+    access?: Access
   ): EvidenceRead<Evidence> | Promise<EvidenceRead<Evidence>>;
   cleanup?(context: Context, signal: AbortSignal): void | Promise<void>;
 }
@@ -59,12 +72,15 @@ export interface TrustedEvidenceSourceDefinition<Context, Evidence = unknown> {
 type StoredEvidenceSource<Context> = {
   readonly descriptor: TrustedEvidenceSourceDescriptor;
   readonly authorize?:
-    | ((request: EvidenceAuthorizationRequest<Context>) => EvidencePermission | undefined)
+    | ((
+        request: EvidenceAuthorizationRequest<Context>
+      ) => EvidencePermission | EvidenceAuthorizedAccess | undefined)
     | undefined;
   readonly read: (
     context: Context,
     signal: AbortSignal,
-    correlationId?: string
+    correlationId?: string,
+    access?: unknown
   ) => EvidenceRead<unknown> | Promise<EvidenceRead<unknown>>;
   readonly cleanup?: ((context: Context, signal: AbortSignal) => void | Promise<void>) | undefined;
 };
@@ -99,9 +115,9 @@ function sourceDescriptor(input: unknown): TrustedEvidenceSourceDescriptor {
   });
 }
 
-export function defineEvidenceSource<Context, Evidence>(
-  definition: TrustedEvidenceSourceDefinition<Context, Evidence>
-): TrustedEvidenceSourceDefinition<Context, Evidence> {
+export function defineEvidenceSource<Context, Evidence, Access = unknown>(
+  definition: TrustedEvidenceSourceDefinition<Context, Evidence, Access>
+): TrustedEvidenceSourceDefinition<Context, Evidence, Access> {
   const descriptor = sourceDescriptor(definition.descriptor);
   const { read, cleanup, authorize } = definition;
   if (
@@ -119,35 +135,6 @@ export function defineEvidenceSource<Context, Evidence>(
   });
 }
 
-function permissionGuard(permission: EvidencePermission | undefined): () => void {
-  if (!permission || Object.getPrototypeOf(permission) !== Object.prototype)
-    throw new Error('Evidence authorization unavailable');
-  const own = Object.getOwnPropertyDescriptors(permission);
-  const generation = own.generation?.value;
-  const callback = own.currentGeneration?.value;
-  if (
-    Reflect.ownKeys(own).some((key) => key !== 'generation' && key !== 'currentGeneration') ||
-    Object.values(own).some((property) => !Object.hasOwn(property, 'value')) ||
-    typeof generation !== 'number' ||
-    !Number.isSafeInteger(generation) ||
-    generation < 0 ||
-    typeof callback !== 'function'
-  )
-    throw new Error('Evidence authorization unavailable');
-  const currentGeneration = callback.bind(permission) as () => number;
-  let revoked = false;
-  const assertAuthorized = () => {
-    try {
-      if (revoked || synchronousResult(currentGeneration()) !== generation) throw new Error();
-    } catch {
-      revoked = true;
-      throw new Error('Evidence authorization unavailable');
-    }
-  };
-  assertAuthorized();
-  return assertAuthorized;
-}
-
 /** Trusted constructor-only sources; no caller-supplied scripts or mutable registration. */
 export class TrustedEvidenceSourceRegistry<Context> {
   readonly #sources = new Map<string, StoredEvidenceSource<Context>>();
@@ -163,8 +150,7 @@ export class TrustedEvidenceSourceRegistry<Context> {
         Object.freeze({
           descriptor,
           ...(authorize ? { authorize } : {}),
-          read: (context: Context, signal: AbortSignal, correlationId?: string) =>
-            read(context, signal, correlationId),
+          read: (...args: Parameters<StoredEvidenceSource<Context>['read']>) => read(...args),
           ...(cleanup
             ? { cleanup: (context: Context, signal: AbortSignal) => cleanup(context, signal) }
             : {}),
@@ -212,6 +198,8 @@ export class TrustedEvidenceSourceRegistry<Context> {
     if (!this.supportsCorrelation(id, capability, correlationId)) return undefined;
     const source = this.require(id, capability);
     let assertAuthorized = () => {};
+    let hasAccess = false;
+    let access: unknown;
     if (source.descriptor.authorization === 'required') {
       try {
         if (!source.authorize || !verifier) throw new Error();
@@ -238,18 +226,38 @@ export class TrustedEvidenceSourceRegistry<Context> {
           context,
           ...(correlationId !== undefined ? { correlationId } : {}),
         });
-        assertAuthorized = permissionGuard(synchronousResult(source.authorize(request)));
+        const authorization = synchronousResult(source.authorize(request));
+        const properties = authorization && Object.getOwnPropertyDescriptors(authorization);
+        if (properties && Object.hasOwn(properties, 'kind')) {
+          if (
+            Object.getPrototypeOf(authorization) !== Object.prototype ||
+            Reflect.ownKeys(properties).length !== 3 ||
+            Object.values(properties).some((property) => !Object.hasOwn(property, 'value')) ||
+            properties.kind?.value !== 'authorized_access_v1' ||
+            !properties.permission ||
+            !properties.access
+          )
+            throw new Error('Invalid evidence access');
+          assertAuthorized = evidencePermissionGuard(properties.permission.value);
+          access = properties.access.value;
+          hasAccess = true;
+        } else {
+          assertAuthorized = evidencePermissionGuard(authorization);
+        }
       } catch {
         throw new Error('Evidence authorization unavailable');
       }
     }
+    const readSource = (signal: AbortSignal) =>
+      hasAccess
+        ? source.read(context, signal, correlationId, access)
+        : source.read(context, signal, correlationId);
     const read = (signal: AbortSignal) => {
       assertAuthorized();
-      if (source.descriptor.authorization !== 'required')
-        return source.read(context, signal, correlationId);
+      if (source.descriptor.authorization !== 'required') return readSource(signal);
       return (async () => {
         if (signal.aborted) throw new Error('Evidence read cancelled');
-        const result = await source.read(context, signal, correlationId);
+        const result = await readSource(signal);
         assertAuthorized();
         if (signal.aborted) throw new Error('Evidence read cancelled');
         return result;
