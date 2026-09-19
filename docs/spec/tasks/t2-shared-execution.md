@@ -1,6 +1,6 @@
 # T2: shared execution, verification and result helpers
 
-Status: complete on develop; final foundation increments are not released. Repository: agentbrowser. Depends on: T0.
+Status: complete; AgentBrowser 1.9.0 includes this foundation. Repository: agentbrowser. Depends on: T0.
 Inputs: core, architecture, contracts, execution, grounding.
 
 ## Reuse and scope
@@ -59,6 +59,9 @@ The controlled qualification uses a compiled CLI, independently extracted servic
 real Chromium, with seven cases and seven reconciled replays against an application
 oracle. PR #208 and its exact develop merge passed all eight CI jobs. See
 [installed CLI application outcome](../evidence/t2-cli-application-outcome.md).
+
+AgentBrowser 1.9.0 includes the merged foundation through PR #208. The linked evidence
+preserves the exact develop-slice identities and does not by itself claim publication.
 
 ## Completion record and remaining limits
 

@@ -5,6 +5,48 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [1.9.0] - 2026-09-19
+
+### Added
+
+- Completed the T2 shared execution and verification foundation. REST, the SDK
+  and the first-class CLI use the existing executor, authority ledger and outcome
+  contract; MCP remains optional. Optional `verification.evidenceCorrelationId`
+  identifies a business receipt separately from the outer service operation ID
+  and grants no permission by itself (#203).
+- Scoped application receipt preflight uses authority-owned actor, tenant, mode,
+  resource and session-incarnation identity. Deadline-abandoned receipt reads keep
+  admission busy until they settle; cancellation or revocation withholds late
+  evidence, and operation replay never redispatches writes (#204, #205).
+- Evidence sources can require explicit permission for the exact verifier,
+  version and bounded input. Generation fences apply through execution, reads,
+  evaluation and cleanup. The application receipt helper and narrow deployment
+  registry provider compose these checks without another executor or store
+  (#206, #207).
+
+### Fixed
+
+- Empty subprocess input now closes stdin without an empty pipe write, avoiding
+  an EPIPE race while preserving errors for undelivered nonempty input (#208).
+
+### Qualification and limits
+
+- The existing packaged acceptance job now drives seven real compiled-CLI cases
+  and their reconciled replays through an extracted service and Chromium. An
+  independent controlled application oracle distinguishes a UI-caused commit
+  from a historical receipt, ignored action, failed action, stale state or wrong
+  resource, including a lost response after commit (#208).
+- This is controlled G4 fixture qualification under an exclusive UI actor
+  contract. No production evidence source is installed by default. Deployments
+  must register trusted verifiers/sources and explicitly authorize protected
+  predicates. Production UI/API parity and G6 remain T4 work; durable recovery
+  remains T5. The user-facing QA regression/reporting vertical (T3) is ready to
+  begin, not included in this release. See the
+  [foundation qualification](docs/spec/evidence/t2-foundation-qualification.md).
+- Existing application REST/SDK/CLI commands, bulk-form strategies and outcome
+  semantics remain available. No new MCP tool, dependency, package or CI job
+  was added for this foundation checkpoint.
+
 ## [1.8.20] - 2026-09-17
 
 ### Added
