@@ -1,7 +1,7 @@
 # T2 installed CLI application outcome
 
-Status: local controlled-fixture qualification passed. Exact-head CI, merge and release
-delivery remain pending.
+Status: controlled G4 qualification delivered to develop in PR #208. Exact-head and
+merge-commit CI passed all eight jobs. Main promotion and release are outside this slice.
 
 ## Runtime boundary
 
@@ -37,7 +37,7 @@ counts. This independent observation falsifies accidental success in the CLI/res
 projection and proves at-most-one controlled fixture effect. It does not make the
 fixture a production oracle.
 
-The intended qualification is G4 for this controlled, exclusive-UI-actor fixture. It
+The qualified layer is G4 for this controlled, exclusive-UI-actor fixture. It
 does not qualify G6, a production evidence source, durable receipt recovery or an
 independently deployed application. The permission generation is fixture-local and
 separate from application version/commit identity.
@@ -59,7 +59,7 @@ Each case then repeats the exact outer service operation ID. The CLI must return
 application effect, source claim or evidence read. The outer admission ID remains
 different from the application business correlation ID.
 
-## Validation record and remaining gate
+## Validation record and delivery
 
 The actual seven-case run passed locally against an audited extracted dirty candidate
 based on `03c2144`. It used the real compiled CLI as a separate process, JSON stdin, an
@@ -76,9 +76,10 @@ service and fixture cleanup. The first CI candidate exposed an empty-stdin pipe 
 during packaging; a deterministic closed-reader regression reproduces it. Empty input
 now sends EOF without a zero-byte write, while undelivered nonempty input still fails.
 
-Because the candidate was dirty, this is local qualification evidence rather than
-release evidence. The same acceptance must pass exact-head CI through the existing Bun
-compile and extracted-candidate smoke job before merge or delivery is claimed. T2
-remains active and T3 remains locked. Production-source qualification, G6 independence,
-durable restart evidence and any remaining revoke/takeover/late-receipt matrix stay
-outside this gate.
+The dirty local candidate is not release evidence. The subsequent clean candidate
+passed all eight jobs in [PR CI](https://github.com/anvai-labs/agentbrowser/actions/runs/35431407886)
+and [merge CI](https://github.com/anvai-labs/agentbrowser/actions/runs/35433726360).
+Reviewed head: `dfcc9d5bb6d6db4dd5b1a5300f066bfceeb52047`.
+Develop merge: `944229096647e5047620a4afafa537b3d78dced6`.
+Independent exact-head adversarial review is clean. No gate was skipped or weakened.
+See [foundation qualification](t2-foundation-qualification.md) for T2 closure and limits.

@@ -232,3 +232,16 @@ test('validates every allowed actual manifest selection and reports exact counts
   assert.ok(active.modules.some(({ id }) => id === 'task-t1'));
   assert.ok(!active.modules.some(({ id }) => id === 'task-t0'));
 });
+
+test('completed T2 unlocks actual QA task context without loading unrelated modes or history', async () => {
+  const context = await loadSpecContext({ mode: 'qa', task: 't3' });
+  assert.equal(context.selection.task, 't3');
+  assert.equal(context.selection.view, 'task');
+  const ids = context.modules.map(({ id }) => id);
+  assert.ok(ids.includes('task-t3'));
+  assert.ok(ids.includes('grounding'));
+  assert.ok(!ids.includes('task-t2'));
+  assert.ok(!ids.includes('mode-forms'));
+  assert.ok(!ids.includes('mode-appsec'));
+  assert.ok(context.serializedBytes <= 64 * 1024);
+});
