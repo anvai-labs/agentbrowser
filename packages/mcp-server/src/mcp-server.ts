@@ -168,7 +168,17 @@ function operationOptions(args: Record<string, unknown>): [] | [MutationOptions]
   return [{ operationId: args.operationId }];
 }
 
-function buildTools(client: McpClient): ToolDefinition[] {
+// Delegated-mutation tools: these carry the operation-id contract (choose an
+// ID before dispatch; reconcile after a lost response). Single declaration -
+// the schema injection and the runtime requirement read it together.
+export const OPERATION_ID_TOOLS = Object.freeze([
+  'browser_act',
+  'browser_plan',
+  'browser_autofill',
+  'browser_navigate',
+] as const);
+
+export function buildTools(client: McpClient): ToolDefinition[] {
   return [
     {
       name: 'browser_create',
@@ -761,9 +771,7 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
   for (const tool of tools) {
     if (deps.sessionId && Array.isArray(tool.inputSchema.required))
       tool.inputSchema.required = tool.inputSchema.required.filter((name) => name !== 'sessionId');
-    if (
-      ['browser_act', 'browser_plan', 'browser_autofill', 'browser_navigate'].includes(tool.name)
-    ) {
+    if ((OPERATION_ID_TOOLS as readonly string[]).includes(tool.name)) {
       (tool.inputSchema.properties as Record<string, unknown>).operationId = {
         type: 'string',
         pattern: '^[a-zA-Z0-9_-]{1,128}$',
@@ -890,9 +898,7 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
                 throw new UsageError('This MCP connection is bound to another session');
               if (
                 deps.sessionId &&
-                ['browser_act', 'browser_plan', 'browser_autofill', 'browser_navigate'].includes(
-                  name
-                ) &&
+                (OPERATION_ID_TOOLS as readonly string[]).includes(name) &&
                 args.operationId === undefined
               )
                 throw new UsageError(
