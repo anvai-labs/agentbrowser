@@ -2,9 +2,9 @@
 
 Status: active product architecture and implementation contract. A capability is
 delivered only when its task evidence records a merged and qualified implementation.
-Source baseline: AgentBrowser `52e2c74d65d3cad2d3092e3ff568a803220354ae`
-(released 1.8.20); Victor was last inspected at
-`c8a0950fed49914bb2877feeb65f5ab32cc47b97`. Reviewed 2026-09-18 UTC.
+Functional baseline: AgentBrowser `de95a3ba2a99c675c0039e9cbb001d43172a9851`
+(1.9.0 release candidate); Victor was last inspected at
+`c8a0950fed49914bb2877feeb65f5ab32cc47b97`. Reviewed 2026-09-19 UTC.
 
 Build a shared execution and verification service for people and agents. A mode
 selects a small policy and capability profile; it does not create another runner,
@@ -55,11 +55,10 @@ non-secret run cursor and inline operator mode selection. See the
 [T1 packet](tasks/t1-context-profiles.md) and
 [qualification evidence](evidence/t1-context-profiles.md). Installed harness cursor
 consumption remains T8 work.
-T2 is complete on develop. The configurable REST/SDK/CLI outcome run shipped in
-1.8.20; subsequent shared evidence/permission increments and the controlled G4 CLI
-qualification merged through PR #208. Exact-head and merge-commit CI passed all eight
-jobs. These final increments are not yet released. T3 is dependency-ready; production
-evidence sources, G6 and durable recovery remain explicitly unqualified. See the
+T2 is complete. AgentBrowser 1.9.0 includes the configurable REST/SDK/CLI outcome run,
+shared receipt correlation, admission/drain and evidence-permission foundations, and
+the controlled G4 CLI qualification delivered through PR #208. T3 is dependency-ready;
+production evidence sources, G6 and durable recovery remain explicitly unqualified. See the
 [foundation qualification](evidence/t2-foundation-qualification.md) for the acceptance
 mapping and delivery record.
 See the
@@ -77,9 +76,10 @@ See the
 T4 has one public-interface slice delivered in 1.8.20 by PR #201: bounded,
 authenticated application discovery, execution and receipt lookup now use the shared
 `ApplicationAuthority` through REST, the TypeScript SDK and a first-class CLI command
-group. This is not the complete application-parity vertical. A delegated receipt-permission composition now exists on develop;
-operator-binding UX, an independent UI/API parity oracle, production application
-evidence and durable restart receipts remain open. MCP is optional and has no
+group. This is not the complete application-parity vertical. The 1.9.0 foundation
+adds delegated receipt-permission composition; operator-binding UX, an independent
+UI/API parity oracle, production application evidence and durable restart receipts
+remain open. MCP is optional and has no
 application-operation projection. See the
 [application authority guide](../application-operation-authority.md) and
 [T4 packet](tasks/t4-application-parity.md).

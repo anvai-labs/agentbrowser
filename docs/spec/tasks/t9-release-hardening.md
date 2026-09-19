@@ -41,6 +41,8 @@ branches and use the reviewed final commit identity for each merge.
 ## Current implementation state
 
 Main/develop PR promotion, required checks, admin enforcement and force-push/deletion
-blocks are in use, and 1.8.19 was released from protected main. Tag ancestry,
+blocks are in use. The published baseline is 1.8.20; the owner selected 1.9.0
+for the completed T2 foundation. Its promotion and publication require fresh
+evidence in the [release tracker](../../release-milestones.md). Tag ancestry,
 least-privilege publication and measured runner-use improvements remain open. T9 stays
 active because every candidate needs fresh review, exact-head CI and promotion evidence.

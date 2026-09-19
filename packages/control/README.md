@@ -36,6 +36,9 @@ persisted, so this contract alone makes no restart-reconciliation claim.
 
 This package exposes an in-process port; v1.8.20 also provides application binding,
 discovery, execution and receipt lookup through REST, SDK and the first-class CLI.
+AgentBrowser 1.9.0 adds business receipt correlation, admitted receipt drain, generic
+generation-fenced evidence permission and application-bound receipt composition. Its
+candidate qualification covers a controlled G4 fixture, not a production source or G6.
 MCP application tools, operator binding UI, and application-persisted restart receipts
 remain subsequent work. Existing browser interfaces retain their current behavior.
 Session state is ephemeral; restarting the host does not restore grants.

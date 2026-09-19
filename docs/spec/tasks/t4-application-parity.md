@@ -25,8 +25,8 @@ operations over REST, the TypeScript SDK and CLI. Deployment code injects truste
 adapters; unauthenticated local mode cannot bind, missing adapters fail closed, browser
 modes cannot request application capabilities, and duplicate write identities return
 the recorded operation without re-execution. This delivery does not qualify slice 3 or
-complete T4. Subsequent develop composition adds explicit delegated predicate
-permission over authority-owned identity via the shared evidence registry; see
+complete T4. The 1.9.0 foundation adds explicit delegated predicate permission over
+authority-owned identity via the shared evidence registry; see
 [permission qualification](../evidence/t2-application-evidence-permission.md).
 
 ## TDD and acceptance

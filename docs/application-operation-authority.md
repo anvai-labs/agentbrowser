@@ -1,11 +1,12 @@
 # Application operations under delegated authority
 
-Status: typed in-process port, application-only lifecycle and the REST/SDK/CLI
-surface are implemented; MCP tools, the operator binding UI and durable
-application receipt qualification remain pending.
+Status: typed in-process port, application-only lifecycle and REST/SDK/CLI surface are
+implemented. AgentBrowser 1.9.0 includes scoped delegated receipt permission and
+controlled G4 qualification; MCP tools, operator binding UI, production/G6 evidence
+and durable application receipts remain pending.
 Transport, reconnection and durable recovery are specified in the
 [shared infrastructure design](shared-session-infrastructure.md).
-Baseline: `develop` at `ed8ac67`, after PRs [156](https://github.com/anvai-labs/agentbrowser/pull/156),
+Historical design baseline: `develop` at `ed8ac67`, after PRs [156](https://github.com/anvai-labs/agentbrowser/pull/156),
 [157](https://github.com/anvai-labs/agentbrowser/pull/157), and
 [159](https://github.com/anvai-labs/agentbrowser/pull/159). See the
 [promotion and recovery audit](evidence/coexistence-promotion.md).

@@ -333,11 +333,14 @@ jobs:
           # Single-quoted heredoc: nothing expands, so the bun version below is
           # written literally. Keep it in sync with the pinned setup-bun above.
           cat > notes.md <<'EOF'
-          ## agentbrowser-mcp ${{ github.ref_name }}
+          ## AgentBrowser ${{ github.ref_name }}
 
-          Single-binary MCP server distribution (TD-BROWSER-5). The binary is
-          **only the MCP stdio adapter**: point it at a reachable AgentBrowser
-          service via `AGENTBROWSER_BASE_URL` (default `http://localhost:5709`).
+          AgentBrowser ships a first-class CLI, a service and an optional MCP
+          adapter. Point either client at a reachable AgentBrowser service via
+          `AGENTBROWSER_BASE_URL` (default `http://localhost:5709`). The MCP
+          executable is only the stdio adapter, not the service.
+          See the [versioned changelog](https://github.com/anvai-labs/agentbrowser/blob/${{ github.ref_name }}/CHANGELOG.md)
+          for included capabilities and qualification limits.
 
           The service is now installable too: `agentbrowser-server-<target>.tar.gz`
           is a self-contained server build (pruned production `node_modules` +
@@ -373,7 +376,7 @@ jobs:
           targets/omissions as the MCP binary).
 
           Each smoke ran `initialize` + `tools/list` against the compiled
-          artifact and required the full 11-tool catalog and the exact release version
+          artifact and required the full 13-tool unbound catalog and the exact release version
           in `serverInfo`.
 
           Server acceptance uses Node 22 on native Linux x64/ARM and Darwin ARM.
