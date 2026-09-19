@@ -5,6 +5,7 @@ import {
   parseTrustedVerifierDescriptor,
   snapshotJsonData,
 } from '@agentbrowser/protocol';
+import { snapshotAuthorizationInput, synchronousResult } from './trusted-callback.js';
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
@@ -16,24 +17,13 @@ export interface TrustedVerifierDefinition {
 }
 
 export interface PreparedVerifier {
+  /** Detached, bounded raw-domain input for trusted authorization policy. */
+  readonly authorizationInput: unknown;
   evaluate(
     evidence: unknown,
     evidenceRefIds: unknown,
     signal?: AbortSignal
   ): VerificationProjection;
-}
-
-/** Fail closed on misconfigured async callbacks and consume their rejection safely. */
-function synchronousResult<T>(value: T): T {
-  if (
-    value !== null &&
-    (typeof value === 'object' || typeof value === 'function') &&
-    typeof (value as { then?: unknown }).then === 'function'
-  ) {
-    void Promise.resolve(value).catch(() => undefined);
-    throw new Error('Invalid asynchronous verifier callback');
-  }
-  return value;
 }
 
 function freezeDescriptor(input: unknown): TrustedVerifierDescriptor {
@@ -162,11 +152,16 @@ export class TrustedVerifierRegistry {
     if (!verifier.prepare) return undefined;
     try {
       if (signal?.aborted) throw new Error();
-      const stableInput = snapshotJsonData(input, VERIFICATION_SNAPSHOT_LIMITS);
+      const authorizationInput = snapshotAuthorizationInput(input);
       if (signal?.aborted) throw new Error();
-      const evaluate = synchronousResult(verifier.prepare(stableInput));
+      // Policy and parser receive distinct copies of one raw-domain snapshot.
+      // A trusted parser can mutate its private copy without changing policy identity.
+      const parserInput = snapshotJsonData(authorizationInput, VERIFICATION_SNAPSHOT_LIMITS);
+      if (signal?.aborted) throw new Error();
+      const evaluate = synchronousResult(verifier.prepare(parserInput));
       if (signal?.aborted || typeof evaluate !== 'function') throw new Error();
       return Object.freeze({
+        authorizationInput,
         evaluate: (evidence: unknown, refs: unknown, evaluationSignal?: AbortSignal) =>
           projectVerification(
             verifier.descriptor,

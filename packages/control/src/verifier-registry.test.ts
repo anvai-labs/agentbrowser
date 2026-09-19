@@ -75,13 +75,71 @@ describe('trusted verifier registry', () => {
     mutable.prepare = () => () => false;
     const input = { expected: 2 };
     const prepared = registry.prepare('counter-equals', '1.0.0', input);
-    expect(Object.keys(prepared ?? {})).toEqual(['evaluate']);
+    expect(Object.keys(prepared ?? {})).toEqual(['authorizationInput', 'evaluate']);
     expect(Object.isFrozen(prepared)).toBe(true);
     input.expected = 3;
     expect(prepared?.evaluate(2, ['ev_1']).status).toBe('passed');
     expect(prepared?.evaluate(3, ['ev_2']).status).toBe('failed');
     expect(parseInput).toHaveBeenCalledOnce();
     expect(parseInput.mock.calls[0]?.[0]).not.toBe(input);
+  });
+
+  it('captures deeply frozen raw authorization input apart from parser evaluation state', () => {
+    const caller = {
+      expected: { value: 2 },
+      policy: { tenants: ['fixture-tenant'] },
+    };
+    let parserInput: { expected: { value: number }; policy: { tenants: string[] } } | undefined;
+    const parseInput = vi.fn((input: unknown) => {
+      parserInput = input as typeof parserInput;
+      if (!parserInput) throw new Error('missing input');
+      parserInput.expected.value = 3;
+      parserInput.policy.tenants.push('parser-only');
+      return parserInput.expected.value;
+    });
+    const registry = new TrustedVerifierRegistry([
+      defineVerifier({
+        descriptor: descriptor(),
+        parseInput,
+        parseEvidence: Number,
+        predicate: (expected, evidence) => expected === evidence,
+      }),
+    ]);
+
+    const prepared = registry.prepare('counter-equals', '1.0.0', caller);
+    expect(prepared?.authorizationInput).toEqual({
+      expected: { value: 2 },
+      policy: { tenants: ['fixture-tenant'] },
+    });
+    expect(prepared?.authorizationInput).not.toBe(caller);
+    expect((prepared?.authorizationInput as typeof caller).expected).not.toBe(caller.expected);
+    expect(Object.isFrozen(prepared?.authorizationInput)).toBe(true);
+    expect(Object.isFrozen((prepared?.authorizationInput as typeof caller).expected)).toBe(true);
+    expect(Object.isFrozen((prepared?.authorizationInput as typeof caller).policy.tenants)).toBe(
+      true
+    );
+    expect(parserInput).not.toBe(prepared?.authorizationInput);
+    expect(parserInput).toEqual({
+      expected: { value: 3 },
+      policy: { tenants: ['fixture-tenant', 'parser-only'] },
+    });
+    expect(caller).toEqual({
+      expected: { value: 2 },
+      policy: { tenants: ['fixture-tenant'] },
+    });
+
+    caller.expected.value = 99;
+    caller.policy.tenants.push('caller-only');
+    expect(() => {
+      (prepared?.authorizationInput as typeof caller).expected.value = 100;
+    }).toThrow(TypeError);
+    expect(prepared?.authorizationInput).toEqual({
+      expected: { value: 2 },
+      policy: { tenants: ['fixture-tenant'] },
+    });
+    expect(prepared?.evaluate(3, ['ev_1']).status).toBe('passed');
+    expect(prepared?.evaluate(99, ['ev_2']).status).toBe('failed');
+    expect(parseInput).toHaveBeenCalledOnce();
   });
 
   it('rejects unsafe input before invoking trusted preparation without leaking parser data', () => {

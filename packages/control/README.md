@@ -107,6 +107,25 @@ This low-level helper does not grant delegated browser modes application access.
 production receipt source must enforce an explicit permission/declassification policy
 before delegated plan dispatch; the operator fixture is not that policy.
 
+Sources requiring predicate-specific permission declare `authorization: 'required'`
+and provide synchronous `authorize(request)`. The request contains the captured source
+descriptor, exact verifier ID/version, bounded frozen raw verifier input, correlation
+ID when present, and host-owned context. The parser receives a separate input copy.
+Returning `{ generation, currentGeneration }` grants that prepared reader permission;
+missing, denied, throwing or asynchronous policies block before dispatch. Generations
+are nonnegative safe integers and must increase on every permission change, including
+regrant. A detected change or failed check permanently invalidates that reader.
+
+`prepareRead` remains callable and exposes `assertAuthorized()`. Protected reads check
+permission before and after I/O; the runner also checks around execution, evaluation
+and final output after cleanup. Cleanup still runs on denial/revocation. Caller changes
+cannot replace the captured host authority, signal, executor or result provenance.
+Existing sources without an authorization declaration retain their prior behavior.
+Generic context remains a trusted host reference: an application source must compose
+the immutable admitted identity and receipt reader before claiming tenant/resource/mode
+isolation. This generic gate does not grant browser modes raw application access,
+register a production source, or establish a causal UI-to-commit relationship.
+
 Run `pnpm test:application-independence` after a workspace build to deploy only
 production dependencies, reject browser packages or escaping dependency links,
 and exercise delegation, a real application callback, duplicate suppression,

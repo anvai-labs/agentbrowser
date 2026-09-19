@@ -1,5 +1,6 @@
 import {
   type ApplicationScope,
+  type EvidenceAuthorizationRequest,
   TrustedEvidenceSourceRegistry,
   TrustedVerifierRegistry,
   defineEvidenceSource,
@@ -627,6 +628,166 @@ describe('verified outcome REST projection', () => {
       await server?.close();
     }
   });
+
+  it.each(['denied', 'revoked-in-cleanup'] as const)(
+    'qualifies generic evidence permission across the REST operation boundary: %s',
+    async (mode) => {
+      const operator = { authorization: 'Bearer operator' };
+      let generation = 1;
+      const authorize = vi.fn(
+        (_request: EvidenceAuthorizationRequest<ServiceOutcomeEvidenceContext>) =>
+          mode === 'denied' ? undefined : { generation, currentGeneration: () => generation }
+      );
+      const read = vi.fn(() => ({
+        status: 'ready' as const,
+        evidence: true,
+        evidenceRefIds: ['fixture_evidence_1'],
+      }));
+      const cleanup = vi.fn(() => {
+        if (mode === 'revoked-in-cleanup') generation++;
+      });
+      const execute = vi.spyOn(AgentBrowserService.prototype, 'executePlan');
+      const server = await buildServer({
+        engine: new FakeEngine(),
+        apiKeys: new Map([
+          [createHash('sha256').update('operator').digest('hex'), 'fixture-tenant'],
+        ]),
+        verifierRegistry: verifierRegistry(),
+        evidenceSourceRegistry: new TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>([
+          defineEvidenceSource({
+            descriptor: {
+              id: 'fixture.snapshot',
+              capability: 'fixture.read',
+              authorization: 'required',
+            },
+            authorize,
+            read,
+            cleanup,
+          }),
+        ]),
+      });
+      try {
+        const session = await server.inject({
+          method: 'POST',
+          url: '/v1/sessions',
+          headers: operator,
+          payload: { controlMode: 'delegated' },
+        });
+        expect(session.statusCode).toBe(201);
+        const sessionId = session.json().sessionId as string;
+        const base = `/v1/sessions/${sessionId}`;
+        const page = await server.inject({
+          method: 'POST',
+          url: `${base}/pages`,
+          headers: { ...operator, 'x-agentbrowser-operation-id': 'permission-page' },
+        });
+        expect(page.statusCode).toBe(201);
+        const pageId = page.json().pageId as string;
+        const review = await server.inject({
+          method: 'POST',
+          url: `${base}/control/prepare-resume`,
+          headers: operator,
+        });
+        expect(review.statusCode).toBe(200);
+        const delegated = await server.inject({
+          method: 'POST',
+          url: `${base}/control/delegate`,
+          headers: operator,
+          payload: { epoch: review.json().epoch },
+        });
+        expect(delegated.statusCode).toBe(200);
+        const agent = { authorization: `Bearer ${delegated.json().token as string}` };
+        const headers = {
+          ...agent,
+          'x-agentbrowser-operation-id': `permission-${mode}`,
+        };
+        const url = `${base}/pages/${pageId}/outcomes`;
+        const payload = request();
+        const first = await server.inject({ method: 'POST', url, headers, payload });
+
+        expect(first.statusCode).toBe(200);
+        expect(authorize).toHaveBeenCalledOnce();
+        const permissionRequest = authorize.mock.calls[0]?.[0];
+        expect(Object.isFrozen(permissionRequest)).toBe(true);
+        expect(Object.isFrozen(permissionRequest?.source)).toBe(true);
+        expect(Object.isFrozen(permissionRequest?.verifier)).toBe(true);
+        expect(permissionRequest).toMatchObject({
+          source: {
+            id: 'fixture.snapshot',
+            capability: 'fixture.read',
+            authorization: 'required',
+          },
+          verifier: { id: 'fixture.equals', version: '1.0.0', input: true },
+          context: { sessionId, pageId, tenantId: 'fixture-tenant' },
+        });
+        expect(permissionRequest).not.toHaveProperty('correlationId');
+        expect(permissionRequest?.context).not.toHaveProperty('actor');
+        expect(permissionRequest?.context).not.toHaveProperty('mode');
+        expect(cleanup).toHaveBeenCalledOnce();
+
+        if (mode === 'denied') {
+          expect(first.json()).toMatchObject({
+            plan: {
+              ok: false,
+              completed: 0,
+              results: [],
+              error: { code: 'OUTCOME_NOT_EXECUTED' },
+            },
+            outcome: {
+              availability: 'blocked',
+              execution: 'not_started',
+              verification: { status: 'unknown', evidenceRefIds: [] },
+              cleanup: 'complete',
+            },
+          });
+          expect(execute).not.toHaveBeenCalled();
+          expect(read).not.toHaveBeenCalled();
+        } else {
+          expect(first.json()).toMatchObject({
+            plan: {
+              ok: false,
+              completed: 0,
+              results: [],
+              error: { code: 'OUTCOME_REPORT_UNAVAILABLE' },
+            },
+            outcome: {
+              availability: 'blocked',
+              execution: 'unknown',
+              verification: { status: 'unknown', evidenceRefIds: [] },
+              cleanup: 'complete',
+            },
+          });
+          expect(first.body).not.toContain('fixture_evidence_1');
+          expect(execute).toHaveBeenCalledOnce();
+          expect(read).toHaveBeenCalledOnce();
+        }
+
+        const expectedStatus = mode === 'denied' ? 'failed' : 'outcome_unknown';
+        const operation = await server.inject({
+          url: `${base}/operations/permission-${mode}`,
+          headers: operator,
+        });
+        expect(operation.statusCode).toBe(200);
+        expect(operation.json()).toMatchObject({
+          status: expectedStatus,
+          dispatched: mode !== 'denied',
+        });
+        const replay = await server.inject({ method: 'POST', url, headers, payload });
+        expect(replay.statusCode).toBe(200);
+        expect(replay.json()).toMatchObject({
+          replay: true,
+          operation: { status: expectedStatus, dispatched: mode !== 'denied' },
+        });
+        expect(authorize).toHaveBeenCalledOnce();
+        expect(execute).toHaveBeenCalledTimes(mode === 'denied' ? 0 : 1);
+        expect(read).toHaveBeenCalledTimes(mode === 'denied' ? 0 : 1);
+        expect(cleanup).toHaveBeenCalledOnce();
+      } finally {
+        execute.mockRestore();
+        await server.close();
+      }
+    }
+  );
 
   it('exposes the same canonical report without an MCP dependency', async () => {
     const server = await buildServer({

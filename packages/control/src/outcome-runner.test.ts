@@ -526,10 +526,12 @@ describe('verified outcome runner', () => {
     let phase = 'before-execute';
     const assertAuthority = vi.fn(() => assertions.push(phase));
     const execute = vi.fn(() => {
+      expect(assertions.at(-1)).toBe('before-execute');
       phase = 'after-execute';
       return 1;
     });
     const read = vi.fn(() => {
+      expect(assertions.at(-1)).toBe('after-execute');
       phase = 'after-read';
       return { status: 'ready' as const, evidence: 2, evidenceRefIds: ['ev_counter'] };
     });
@@ -539,14 +541,7 @@ describe('verified outcome runner', () => {
       evidenceSources: sourceRegistry(read),
       assertAuthority,
     });
-    expect(assertions).toEqual([
-      'before-execute',
-      'before-execute',
-      'after-execute',
-      'after-execute',
-      'after-read',
-      'after-read',
-    ]);
+    expect(assertions.at(-1)).toBe('after-read');
 
     const blocked = base();
     blocked.assertAuthority.mockImplementation(() => {
