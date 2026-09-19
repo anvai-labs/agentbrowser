@@ -5,6 +5,50 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { apiRequest, auditDependencyClosure, resolvePackagedModules, validateArtifact, withManagedChild } from './package-acceptance.mjs';
 
+test('agent CLI spawn receives only its delegated key and explicit runtime environment', async () => {
+  const { runAgentCli } = await import('./cli-outcome-acceptance.mjs');
+  assert.equal(typeof runAgentCli, 'function');
+  const sentinel = 'PRIVATE_OPERATOR_SENTINEL';
+  const observed = JSON.parse(
+    (
+      await runAgentCli(
+        [process.execPath, '-e', 'process.stdout.write(JSON.stringify(process.env))'],
+        {
+          env: {
+            PATH: process.env.PATH,
+            LANG: 'C',
+            TMPDIR: tmpdir(),
+            AGENTBROWSER_API_KEY: sentinel,
+            AGENTBROWSER_API_KEYS: `${sentinel}:operator`,
+            OPERATOR_SECRET: sentinel,
+            AWS_SECRET_ACCESS_KEY: sentinel,
+            HTTP_PROXY: sentinel,
+            https_proxy: sentinel,
+            ALL_PROXY: sentinel,
+            NODE_OPTIONS: '--require=PRIVATE_OPERATOR_SENTINEL',
+            NODE_PATH: sentinel,
+            AGENTBROWSER_BASE_URL: sentinel,
+            HOME: sentinel,
+          },
+          token: 'delegated-fixture-token',
+        }
+      )
+    ).stdout
+  );
+  assert.equal(observed.AGENTBROWSER_API_KEY, 'delegated-fixture-token');
+  assert.equal(observed.PATH, process.env.PATH);
+  assert.equal(observed.LANG, 'C');
+  assert.equal(observed.TMPDIR, tmpdir());
+  assert.ok(!JSON.stringify(observed).includes(sentinel));
+  // macOS CoreFoundation adds this in the runtime after spawn, not from the parent.
+  assert.deepEqual(
+    Object.keys(observed)
+      .filter((name) => name !== '__CF_USER_TEXT_ENCODING')
+      .sort(),
+    ['AGENTBROWSER_API_KEY', 'LANG', 'PATH', 'TMPDIR']
+  );
+});
+
 test('artifact validation rejects empty, truncated and mismatched captures', () => {
   const capture = (bytes) => ({ metadata: { sizeBytes: bytes.length }, contentBase64: bytes.toString('base64') });
   assert.throws(() => validateArtifact(capture(Buffer.alloc(0)), 'png'), /empty/);

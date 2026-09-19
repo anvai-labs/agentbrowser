@@ -20,3 +20,4 @@ export * from './interaction-guidance.js';
 export * from './plan.js';
 export * from './mode-profile.js';
 export * from './outcome.js';
+export * from './test-run.js';

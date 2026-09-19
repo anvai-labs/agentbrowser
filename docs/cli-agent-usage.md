@@ -170,3 +170,7 @@ T8 owns installed-harness qualification. The existing MCP increment has a
 [generated catalog](mcp-tool-catalog.md) and negotiated structured autofill and plan
 reports. Outcome remains CLI/SDK/REST only unless measured demand justifies an MCP
 projection; other MCP result contracts remain to be qualified.
+
+For cross-version integration and common-helper reuse, use the on-demand
+[Claude foundation handoff](agent-handoffs/claude-foundation-reuse.md). It separates
+published capabilities, installed binaries and the T3 candidate.
