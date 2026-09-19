@@ -1533,4 +1533,29 @@ describe('AgentBrowser CLI', () => {
       expect(out).toEqual(['Application binding removed']);
     });
   });
+
+  describe('wire-contract declarations (T0 drift gate)', () => {
+    it('audits the command tree: JSON-input commands advertise or are exempt', async () => {
+      // The audit is a snapshot of THIS instance's most recent run.
+      const cli = buildCli(deps);
+      expect(await cli.run(['describe'])).toBe(0);
+      const audit = cli.jsonContractAudit();
+      const byPath = new Map(audit.map((entry) => [entry.path.join(' '), entry]));
+      // The bounded-reader consumers advertise their canonical contracts...
+      for (const path of ['plan', 'outcome', 'autofill', 'application execute']) {
+        expect(byPath.get(path)).toMatchObject({ advertised: true, exempt: false });
+      }
+      // ...and extract's selector payloads carry their reviewed exemption.
+      expect(byPath.get('extract')).toMatchObject({ advertised: false, exempt: true });
+      // Commands without JSON input carry neither marker.
+      expect(byPath.get('session create')).toMatchObject({ advertised: false, exempt: false });
+    });
+
+    it('routes extract selector JSON through the bounded reader', async () => {
+      sessions.extract = vi.fn().mockResolvedValue({ data: { ok: true } });
+      expect(await run('extract', 'ses_1', 'pg_1', '--schema', '{bad json')).toBe(1);
+      expect(err.join('\n')).toContain('--schema must be valid JSON.');
+      expect(sessions.extract).not.toHaveBeenCalled();
+    });
+  });
 });

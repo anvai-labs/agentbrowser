@@ -181,16 +181,57 @@ export interface CliDependencies {
 export interface Cli {
   /** Run with user-style argv (no node/script prefix). Resolves to an exit code. */
   run(argv: string[]): Promise<number>;
+  /**
+   * Offline audit of wire-contract declarations across the command tree
+   * (T0 drift gate). `advertised` commands project canonical schemas through
+   * `describe --schema`; `exempt` commands carry a reviewed reason.
+   */
+  jsonContractAudit(): Array<{
+    path: string[];
+    advertised: boolean;
+    exempt: boolean;
+  }>;
+}
+
+/** Canonical request/response schemas projected through describe --schema. */
+interface WireContract {
+  input: object;
+  output: object;
 }
 
 const DEFAULT_BASE_URL = 'http://localhost:5709';
 
 export function buildCli(deps: CliDependencies): Cli {
+  // The command tree is built per run(); the audit it produces is captured
+  // here so jsonContractAudit() can serve the most recent run's snapshot.
+  let lastContractAudit: Array<{ path: string[]; advertised: boolean; exempt: boolean }> = [];
   return {
     async run(argv: string[]): Promise<number> {
       let exitCode = 0;
 
       const readJsonArgument = createJsonArgumentReader(deps.stdin ? { stdin: deps.stdin } : {});
+
+      // Wire-contract metadata declared at command definition (T0 contract
+      // catalog, slice 4): a JSON-input command must advertise the canonical
+      // request/response schemas its payload maps to, and the describe
+      // --schema projection reads exactly this map. Enforcement is at
+      // runtime, in readCommandJson: a JSON-input command without an
+      // advertised contract (or a recorded exemption) fails loudly instead
+      // of silently projecting schemas: null - the drift class the
+      // application-execute omission demonstrated.
+      const wireContracts = new Map<Command, WireContract>();
+      const wireContractExemptions = new Map<Command, string>();
+      const advertiseWireSchema = (command: Command, contract: WireContract): Command => {
+        wireContracts.set(command, contract);
+        return command;
+      };
+      const readCommandJson = async (command: Command, raw: string, label: string) => {
+        if (!wireContracts.has(command) && !wireContractExemptions.has(command))
+          throw new UsageError(
+            `${label}: this command accepts JSON input but declares no wire contract. Advertise its canonical schemas (advertiseWireSchema) or record an exemption so describe --schema stays complete.`
+          );
+        return readJsonArgument(raw, label);
+      };
       const program = new Command();
       program
         .name('agentbrowser')
@@ -588,7 +629,7 @@ export function buildCli(deps: CliDependencies): Cli {
               const input =
                 inputJson === undefined
                   ? null
-                  : await readJsonArgument(inputJson, 'operation input');
+                  : await readCommandJson(applicationExecute, inputJson, 'operation input');
               let expectedVersion: number | undefined;
               if (options.expectedVersion !== undefined) {
                 expectedVersion = Number(options.expectedVersion);
@@ -611,6 +652,10 @@ export function buildCli(deps: CliDependencies): Cli {
             }
           )
         );
+      advertiseWireSchema(applicationExecute, {
+        input: ApplicationExecuteRequestSchema,
+        output: ApplicationOperationResultSchema,
+      });
       application
         .command('receipt <sessionId> <operationId>')
         .description('read one application receipt by operation ID (null when absent)')
@@ -906,7 +951,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .argument('<stepsJson>', 'JSON array of plan steps: inline, @file, or - for stdin')
         .action(
           action(async (ctx, sessionId: string, pageId: string, stepsJson: string) => {
-            const steps = parsePlanSteps(await readJsonArgument(stepsJson, 'plan steps'));
+            const steps = parsePlanSteps(await readCommandJson(plan, stepsJson, 'plan steps'));
             const parseResponse = createPlanReportParser(steps);
             const result = parseResponse(await ctx.client.sessions.plan(sessionId, pageId, steps));
             if (!result.ok) exitCode = 1;
@@ -921,6 +966,8 @@ export function buildCli(deps: CliDependencies): Cli {
           })
         );
 
+      advertiseWireSchema(plan, { input: PlanActionsSchema, output: PlanReportSchema });
+
       const outcome = program
         .command('outcome')
         .description(
@@ -934,7 +981,7 @@ export function buildCli(deps: CliDependencies): Cli {
             let request: OutcomeRunRequest;
             try {
               request = parseOutcomeRunRequest(
-                await readJsonArgument(requestJson, 'outcome request')
+                await readCommandJson(outcome, requestJson, 'outcome request')
               );
             } catch (error) {
               throw new UsageError((error as Error).message);
@@ -951,6 +998,11 @@ export function buildCli(deps: CliDependencies): Cli {
             ]);
           })
         );
+
+      advertiseWireSchema(outcome, {
+        input: OutcomeRunRequestSchema,
+        output: OutcomeRunReportSchema,
+      });
 
       // ---- act -------------------------------------------------------------
       const act = program.command('act').description(INTERACTION_GUIDANCE.action);
@@ -1274,7 +1326,7 @@ export function buildCli(deps: CliDependencies): Cli {
         );
 
       // ---- extract ----------------------------------------------------------
-      program
+      const extract = program
         .command('extract')
         .description('extract deterministic structured data from a page')
         .argument('<sessionId>')
@@ -1298,19 +1350,19 @@ export function buildCli(deps: CliDependencies): Cli {
             ) => {
               let schemaValue: Record<string, unknown> | undefined;
               if (options.schema !== undefined) {
-                try {
-                  schemaValue = JSON.parse(options.schema) as Record<string, unknown>;
-                } catch {
-                  throw new UsageError('--schema must be valid inline JSON.');
-                }
+                schemaValue = (await readCommandJson(
+                  extract,
+                  options.schema,
+                  '--schema'
+                )) as Record<string, unknown>;
               }
               let recordsValue: Record<string, unknown> | undefined;
               if (options.records !== undefined) {
-                try {
-                  recordsValue = JSON.parse(options.records) as Record<string, unknown>;
-                } catch {
-                  throw new UsageError('--records must be valid inline JSON.');
-                }
+                recordsValue = (await readCommandJson(
+                  extract,
+                  options.records,
+                  '--records'
+                )) as Record<string, unknown>;
               }
               const result = (await ctx.client.sessions.extract(sessionId, pageId, {
                 format: (options.format ?? 'text') as never,
@@ -1323,6 +1375,14 @@ export function buildCli(deps: CliDependencies): Cli {
             }
           )
         );
+      // Reviewed exemption: --schema/--records are extraction selector
+      // directives, not a qualified wire contract (no protocol schema exists
+      // for them; a T0/T2 migration would introduce one). The bounded reader
+      // still applies; only the schema advertisement is exempt.
+      wireContractExemptions.set(
+        extract,
+        'selector payloads are extraction directives, not a qualified wire contract'
+      );
 
       // ---- screenshot ------------------------------------------------------
       program
@@ -1519,13 +1579,13 @@ export function buildCli(deps: CliDependencies): Cli {
               if (requestJson === '-' && options.policy === '-') {
                 throw new UsageError('Stdin can be used only once per command.');
               }
-              const request = await readJsonArgument(requestJson, 'autofill request');
+              const request = await readCommandJson(autofill, requestJson, 'autofill request');
               if (typeof request !== 'object' || request === null || Array.isArray(request)) {
                 throw new UsageError('Autofill request must be an object.');
               }
               if (options.policy !== undefined) {
                 Object.assign(request, {
-                  policy: await readJsonArgument(options.policy, '--policy'),
+                  policy: await readCommandJson(autofill, options.policy, '--policy'),
                 });
               }
               let parsed: AutofillRequest;
@@ -1560,6 +1620,11 @@ export function buildCli(deps: CliDependencies): Cli {
             }
           )
         );
+
+      advertiseWireSchema(autofill, {
+        input: AutofillRequestSchema,
+        output: AutofillReportSchema,
+      });
 
       const download = program
         .command('download')
@@ -1668,25 +1733,10 @@ export function buildCli(deps: CliDependencies): Cli {
                   path,
                   ...(options.schema
                     ? {
-                        schemas:
-                          selected === autofill
-                            ? {
-                                input: AutofillRequestSchema,
-                                output: AutofillReportSchema,
-                              }
-                            : selected === plan
-                              ? { input: PlanActionsSchema, output: PlanReportSchema }
-                              : selected === outcome
-                                ? {
-                                    input: OutcomeRunRequestSchema,
-                                    output: OutcomeRunReportSchema,
-                                  }
-                                : selected === applicationExecute
-                                  ? {
-                                      input: ApplicationExecuteRequestSchema,
-                                      output: ApplicationOperationResultSchema,
-                                    }
-                                  : null,
+                        // T0: wire contracts are declared at command
+                        // definition (advertiseWireSchema) and projected
+                        // here; there is no per-command hand list.
+                        schemas: wireContracts.get(selected) ?? null,
                       }
                     : {}),
                   usage: selected.createHelp().commandUsage(selected),
@@ -1723,7 +1773,28 @@ export function buildCli(deps: CliDependencies): Cli {
         return code === 0 ? 0 : 1;
       }
 
+      const contractAudit: Array<{
+        path: string[];
+        advertised: boolean;
+        exempt: boolean;
+      }> = [];
+      const walkTree = (command: Command, path: string[]) => {
+        for (const child of command.commands) {
+          const childPath = [...path, child.name()];
+          contractAudit.push({
+            path: childPath,
+            advertised: wireContracts.has(child),
+            exempt: wireContractExemptions.has(child),
+          });
+          walkTree(child, childPath);
+        }
+      };
+      walkTree(program, []);
+      lastContractAudit = contractAudit;
       return exitCode;
+    },
+    jsonContractAudit() {
+      return lastContractAudit;
     },
   };
 }
