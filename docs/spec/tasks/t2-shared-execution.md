@@ -55,28 +55,30 @@ Application permission composition uses the same generic gate with a private per
 receipt capability, authority-owned identity and a narrow service registry provider.
 See [application permission](../evidence/t2-application-evidence-permission.md).
 
-No production evidence source or causal UI-to-commit contract is qualified. Installed CLI and causal acceptance remain below. Raw application
-route permissions have not expanded; correlation and a generic gate do not grant browser
-modes receipt access. Persisted incarnation/receipt recovery remains T5. T2 is active;
-T3 is not yet unlocked.
+The next controlled qualification is implemented as a compiled CLI talking to an
+independent extracted service and real Chromium, with seven cases, including five negative controls,
+and an application oracle. The full matrix and every replay pass locally against an
+audited extracted dirty candidate; exact-head CI and delivery remain pending. See
+[installed CLI application outcome](../evidence/t2-cli-application-outcome.md).
+
+No production evidence source or causal UI-to-commit contract is qualified. Raw
+application route permissions have not expanded; correlation and a generic gate do not
+grant browser modes receipt access. Persisted incarnation/receipt recovery remains T5.
+T2 is active; T3 is not yet unlocked.
 
 ## Next slice: receipt permission and causal qualification
 
-1. Qualify explicit permission to expose an application-derived predicate to a delegated
-   browser mode. The common composition now exists; retain its negative controls. Reuse trusted source registration and existing admission preflight;
-   keep raw application discovery/execution permissions separate. Deny unconfigured
-   receipt sources before dispatch, including when a caller supplies a valid business ID.
-   Reuse the generic permission gate with the admitted identity and prepared receipt
-   reader above; bind permission to
-   source, verifier/version, bounded input domain and captured application identity.
-   Use a monotonic permission generation so revoke/regrant cannot revive stale authority.
-2. Qualify one application-owned fixture whose UI write and receipt share an explicit
-   correlation contract. A pre-existing receipt, wrong session/resource, failed UI write
-   or blocked commit must not establish that this run caused a commit. Do not relabel
-   the current pre-seeded correlation fixture as production or G6 evidence.
-3. Exercise revoked permission, takeover and late receipt completion through the real
-   outcome route, retaining one admitted operation, one executor and bounded reads.
-   Demonstrate CLI-to-service acceptance using the same protocol, without MCP.
-4. Record the source's exact qualified layers and limits. Reuse the existing evidence
-   registry, application authority and result parser; add no receipt store, generalized
-   workflow engine or new package to obtain this qualification.
+1. Drive the locally passing seven-case compiled-CLI acceptance through the existing
+   exact-head Bun compile and extracted-candidate smoke job. Require the replay oracle
+   to prove no second dispatch, claim, read or application effect. This qualifies only
+   the controlled exclusive-UI-actor G4 fixture; do not relabel it as G6 or production.
+2. Preserve the application permission negative controls for exact admitted identity,
+   source/capability, verifier/version, bounded input, business correlation and monotonic
+   generation. Keep raw application discovery/execution permissions separate.
+3. Exercise any remaining revoked-permission, takeover and late-receipt boundaries
+   through the real outcome route, retaining one admitted operation, one executor and
+   bounded reads.
+4. Audit the remaining T2 acceptance matrix and record exact qualified layers and limits
+   before unlocking T3. Production evidence remains explicitly unqualified by this fixture.
+   Reuse the existing registry, authority and result parser; add no receipt store, workflow
+   engine, package or CI job merely to obtain this qualification.

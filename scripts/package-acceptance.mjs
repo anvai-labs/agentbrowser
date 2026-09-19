@@ -118,10 +118,12 @@ export async function resolvePackagedModules(serverRoot, expectedVersion, option
   const api = await contained(join(root, 'dist/index.js'));
   const engine = await contained(require.resolve('@agentbrowser/engine-playwright'));
   const policy = await contained(require.resolve('@agentbrowser/policy'));
+  const control = manifest.dependencies?.['@agentbrowser/control']
+    ? await contained(require.resolve('@agentbrowser/control')) : undefined;
   const engineRequire = createRequire(engine);
   const playwright = await contained(engineRequire.resolve('playwright'));
   const playwrightCli = await contained(join(dirname(engineRequire.resolve('playwright/package.json')), 'cli.js'));
-  return { root, api, engine, policy, playwright, playwrightCli, commit: stamp.commit, dirty: stamp.dirty ?? false, closure };
+  return { root, api, engine, policy, ...(control ? { control } : {}), playwright, playwrightCli, commit: stamp.commit, dirty: stamp.dirty ?? false, closure };
 }
 
 export async function apiRequest(baseUrl, path, options = {}) {
@@ -274,7 +276,7 @@ async function listen(server) {
   return server.address().port;
 }
 
-async function waitFor(predicate, guard, label) {
+export async function waitFor(predicate, guard, label) {
   let stopped = false;
   try {
     await within(guard((async () => {
@@ -554,6 +556,8 @@ export async function checkPackagedServer(options) {
         assert.deepEqual(ready.modules, modules, 'Packaged child resolved unexpected dependencies');
         await workflow(ready.baseUrl, key, fixture, process, options, report);
       });
+      const { checkCliApplicationOutcome } = await import('./cli-outcome-acceptance.mjs');
+      report.push(await checkCliApplicationOutcome({ ...options, modules, directory, env }, { withManagedChild, apiRequest, waitFor }));
     }
   } finally {
     try { await fixture?.close(); }

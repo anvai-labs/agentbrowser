@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
@@ -32,6 +33,39 @@ function commandFrom(value: unknown): CounterCommand {
     expectedVersion: record.expectedVersion as number,
     amount: record.amount as number,
   };
+}
+
+/** Controlled-fixture identity supplied by application authority, never by page input. */
+export interface CounterIntentScope {
+  tenant: string;
+  resource: string;
+  sessionId: string;
+  sessionIncarnation: string;
+}
+export interface CounterUiIntent {
+  readonly scope: Readonly<CounterIntentScope>;
+  readonly command: Readonly<CounterCommand>;
+}
+export interface CounterUiReceipt extends CounterReceipt {
+  scope: CounterIntentScope;
+  channel: 'reserved_ui';
+  eventId: string;
+}
+const SCOPE_KEYS = ['tenant', 'resource', 'sessionId', 'sessionIncarnation'] as const;
+function intentScopeFrom(scope: CounterIntentScope): Readonly<CounterIntentScope> {
+  const snapshot = {
+    tenant: scope.tenant,
+    resource: scope.resource,
+    sessionId: scope.sessionId,
+    sessionIncarnation: scope.sessionIncarnation,
+  };
+  if (
+    Object.values(snapshot).some(
+      (value) => typeof value !== 'string' || !value.length || value.length > 128
+    )
+  )
+    throw new Error('INVALID_INTENT_SCOPE');
+  return Object.freeze(snapshot);
 }
 
 /** In-memory fixture only. A real application needs a durable atomic transaction. */
@@ -90,6 +124,54 @@ export async function startVersionedApp(
 ) {
   const oracle = new VersionedCounter();
   let loseResponse = options.loseFirstResponse ?? false;
+  // Exactly one reservation per fixture instance; lifetime ends with this local app.
+  let intent: CounterUiIntent | undefined;
+  let uiToken: string | undefined;
+  let claimed = false;
+  let uiReceipt: CounterUiReceipt | undefined;
+  const requireIntent = (scope: CounterIntentScope, operationId: string) => {
+    const identity = intentScopeFrom(scope);
+    const reserved = intent;
+    if (
+      !reserved ||
+      operationId !== reserved.command.operationId ||
+      SCOPE_KEYS.some((key) => identity[key] !== reserved.scope[key])
+    )
+      throw new Error('INTENT_SCOPE_MISMATCH');
+    return reserved;
+  };
+  const reserveIntent = (scope: CounterIntentScope, amount: number): CounterUiIntent => {
+    if (intent) throw new Error('INTENT_ALREADY_RESERVED');
+    const identity = intentScopeFrom(scope);
+    const command = Object.freeze(
+      commandFrom({ operationId: randomUUID(), expectedVersion: oracle.snapshot().version, amount })
+    );
+    const token = randomUUID();
+    intent = Object.freeze({ scope: identity, command });
+    uiToken = token;
+    return intent;
+  };
+  const claimIntent = (scope: CounterIntentScope, operationId: string, input: unknown) => {
+    const reserved = requireIntent(scope, operationId);
+    const expected = commandFrom(input);
+    if (
+      claimed ||
+      expected.operationId !== operationId ||
+      expected.expectedVersion !== reserved.command.expectedVersion ||
+      expected.amount !== reserved.command.amount ||
+      oracle.receipt(operationId) ||
+      oracle.snapshot().version !== reserved.command.expectedVersion
+    )
+      throw new Error('INTENT_NOT_FRESH');
+    claimed = true;
+  };
+  const intentReceipt = (
+    scope: CounterIntentScope,
+    operationId: string
+  ): CounterUiReceipt | undefined => {
+    requireIntent(scope, operationId);
+    return uiReceipt ? { ...uiReceipt, scope: { ...uiReceipt.scope } } : undefined;
+  };
   const server = createServer(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     const json = (status: number, data: unknown) => {
@@ -99,17 +181,48 @@ export async function startVersionedApp(
     const pathname = new URL(req.url ?? '/', 'http://fixture.invalid').pathname;
     if (req.method === 'GET' && pathname === '/state') return json(200, oracle.snapshot());
     if (req.method === 'GET' && pathname.startsWith('/receipts/')) {
-      const receipt = oracle.receipt(pathname.slice('/receipts/'.length));
+      const id = pathname.slice('/receipts/'.length);
+      const receipt = id === intent?.command.operationId ? undefined : oracle.receipt(id);
       return json(receipt ? 200 : 404, receipt ?? { error: 'UNKNOWN_OPERATION' });
     }
-    if (req.method === 'POST' && pathname === '/commands') {
+    const uiSubmit = intent !== undefined && pathname === `/ui-submit/${uiToken}`;
+    if (req.method === 'POST' && (pathname === '/commands' || uiSubmit)) {
       try {
         let body = '';
         for await (const chunk of req) {
           body += chunk;
           if (body.length > 4096) return json(413, { error: 'BODY_TOO_LARGE' });
         }
-        const receipt = oracle.execute(commandFrom(JSON.parse(body)));
+        const input = JSON.parse(body);
+        let receipt: CounterReceipt;
+        if (uiSubmit && intent) {
+          if (
+            !claimed ||
+            !input ||
+            Object.keys(input).join(',') !== 'amount' ||
+            input.amount !== intent.command.amount
+          )
+            throw new Error('INTENT_CONFLICT');
+          if (uiReceipt) receipt = uiReceipt;
+          else {
+            // No await between freshness check, counter transition and event creation.
+            if (oracle.receipt(intent.command.operationId)) throw new Error('INTENT_CONFLICT');
+            const eventId = randomUUID();
+            const committed = oracle.execute(intent.command);
+            uiReceipt = {
+              ...committed,
+              scope: { ...intent.scope },
+              channel: 'reserved_ui',
+              eventId,
+            };
+            receipt = uiReceipt;
+          }
+        } else {
+          const command = commandFrom(input);
+          if (command.operationId === intent?.command.operationId)
+            throw new Error('INTENT_CONFLICT');
+          receipt = oracle.execute(command);
+        }
         if (loseResponse) {
           loseResponse = false;
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -128,11 +241,12 @@ export async function startVersionedApp(
     res.writeHead(200, { 'Content-Type': 'text/html' });
     res.end(`<!doctype html><html lang="en"><meta charset="utf-8"><title>Versioned counter</title>
       <h1>Shared application state</h1><p>Version <output id="version">0</output>. Total <output id="total">0</output>.</p>
-      <form id="form"><label>Amount <input id="amount" type="text" inputmode="numeric" value="1"></label>
+      <form id="form" action="${intent ? `/ui-submit/${uiToken}` : '/commands'}"><label>Amount <input id="amount" type="text" inputmode="numeric" value="${intent?.command.amount ?? 1}"></label>
       <button id="add" disabled>Add</button></form><p id="status" role="status">Loading</p>
       <script>
       const form = document.getElementById('form'), amount = document.getElementById('amount'),
         add = document.getElementById('add'), status = document.getElementById('status');
+      const reserved = ${JSON.stringify(intent?.command ?? null)};
       let version = 0, pending;
       function show(text) { status.textContent = text; status.setAttribute('aria-label', text); }
       function render(state) {
@@ -145,11 +259,11 @@ export async function startVersionedApp(
         event.preventDefault();
         if (${options.ignoreUiClicks === true}) { show('Click ignored'); return; }
         add.disabled = true;
-        pending ??= { operationId: crypto.randomUUID(), expectedVersion: version, amount: Number(amount.value) };
+        pending ??= reserved ?? { operationId: crypto.randomUUID(), expectedVersion: version, amount: Number(amount.value) };
         try {
           // A previous response may have been lost. Reconcile before sending again.
-          const known = await fetch('/receipts/' + pending.operationId);
-          const response = known.ok ? known : await fetch('/commands', { method: 'POST', body: JSON.stringify(pending) });
+          const known = reserved ? { ok: false } : await fetch('/receipts/' + pending.operationId);
+          const response = known.ok ? known : await fetch(form.action, { method: 'POST', body: JSON.stringify(reserved ? { amount: Number(amount.value) } : pending) });
           const receipt = await response.json();
           if (!response.ok) {
             show(receipt.error + ': reload and review current state');
@@ -172,6 +286,9 @@ export async function startVersionedApp(
   return {
     url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
     oracle,
+    reserveIntent,
+    claimIntent,
+    intentReceipt,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
