@@ -32,6 +32,8 @@ import type {
 } from '@agentbrowser/sdk-typescript';
 import {
   AGENT_MODE_IDS,
+  ApplicationExecuteRequestSchema,
+  ApplicationOperationResultSchema,
   AutofillReportSchema,
   AutofillRequestSchema,
   DELIVERED_EXTRACT_FORMATS,
@@ -563,7 +565,7 @@ export function buildCli(deps: CliDependencies): Cli {
             });
           })
         );
-      application
+      const applicationExecute = application
         .command('execute <sessionId> <operation> [inputJson]')
         .description(
           'dispatch one application operation (input defaults to null). The global ' +
@@ -1679,7 +1681,12 @@ export function buildCli(deps: CliDependencies): Cli {
                                     input: OutcomeRunRequestSchema,
                                     output: OutcomeRunReportSchema,
                                   }
-                                : null,
+                                : selected === applicationExecute
+                                  ? {
+                                      input: ApplicationExecuteRequestSchema,
+                                      output: ApplicationOperationResultSchema,
+                                    }
+                                  : null,
                       }
                     : {}),
                   usage: selected.createHelp().commandUsage(selected),
