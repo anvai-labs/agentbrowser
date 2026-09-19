@@ -25,6 +25,7 @@ const VERSION = '1';
 const CASES = new Set([
   'pass',
   'pass-repeat',
+  'navigation-reset',
   'lost-response',
   'historical',
   'ignored',

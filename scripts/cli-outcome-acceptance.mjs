@@ -35,6 +35,7 @@ const childScript = fileURLToPath(new URL('./cli-outcome-child.mjs', import.meta
 const cases = [
   'pass',
   'pass-repeat',
+  'navigation-reset',
   'lost-response',
   'historical',
   'ignored',
@@ -175,7 +176,7 @@ export async function checkCliApplicationOutcome(
           let assertion = { id: 'save', status: 'skipped', reasonCode: 'PRECONDITION_UNAVAILABLE' };
           const invocations = [];
           const outerId = `cli-outcome-${name}`;
-          const positive = ['pass', 'pass-repeat', 'lost-response', 'cleanup-failure'].includes(
+          const positive = ['pass', 'pass-repeat', 'navigation-reset', 'lost-response', 'cleanup-failure'].includes(
             name
           );
           const denied = ['historical', 'wrong-resource', 'api-shortcut'].includes(name);
@@ -185,8 +186,10 @@ export async function checkCliApplicationOutcome(
           let oracle;
           let caseError;
           let observedEnvironment = environment;
+          let navigationReset;
           const otherResource =
-            name === 'wrong-resource' ? await proc.rpc('oracle', { name: 'pass' }) : undefined;
+            ['wrong-resource', 'navigation-reset'].includes(name)
+              ? await proc.rpc('oracle', { name: 'pass' }) : undefined;
           try {
             const { url } = await proc.rpc('fixture', { name });
             fixtures.set(name, url); // acquire first, register immediately, even if setup fails
@@ -246,12 +249,14 @@ export async function checkCliApplicationOutcome(
               await request(`${pagePath}/navigate`, {
                 method: 'POST',
                 operationId: `navigate-${name}`,
-                body: { url },
+                body: { url: name === 'navigation-reset' ? otherResource.url : url },
               });
               let button;
+              let initialSnapshot;
               await waitFor(
                 async () => {
                   const snapshot = await request(`${pagePath}/snapshot`);
+                  initialSnapshot = snapshot;
                   button = snapshot.fields.find(
                     (field) => field.role === 'button' && field.label === 'Add' && !field.disabled
                   );
@@ -270,6 +275,47 @@ export async function checkCliApplicationOutcome(
                 method: 'POST',
                 body: { epoch: review.epoch, mode: 'qa' },
               });
+              if (name === 'navigation-reset') {
+                const before = await proc.rpc('oracle', { name });
+                const oldRef = button.ref;
+                const navigated = JSON.parse((await invoke([
+                  '--operation-id', 'navigation-reset', 'navigate',
+                  session.sessionId, page.pageId, url, '--wait-until', 'networkidle',
+                ], grant.token)).stdout);
+                assert.equal(navigated.status, 'success');
+                assert.equal(new URL(navigated.url).origin, url);
+                const refreshed = JSON.parse((await invoke([
+                  'snapshot', session.sessionId, page.pageId,
+                  '--max-elements', '30', '--max-bytes', '12000',
+                ], grant.token)).stdout);
+                assert.equal(new URL(refreshed.url).origin, url, 'Reset must reach the target fixture');
+                assert.ok(refreshed.revision > initialSnapshot.revision);
+                assert.notEqual(refreshed.truncated, true);
+                assert.notEqual(refreshed.degraded, true);
+                button = refreshed.fields.find(
+                  (field) => field.role === 'button' && field.label === 'Add'
+                );
+                assert.ok(button, 'Reset must reacquire the current button');
+                assert.notEqual(button.ref, oldRef);
+                const refused = await invoke([
+                  '--operation-id', 'navigation-stale-probe', 'act', 'click',
+                  session.sessionId, page.pageId, oldRef,
+                ], grant.token, undefined, 1);
+                assert.equal(refused.stdout, '');
+                assert.match(refused.stderr, /STALE_TARGET/u);
+                assert.deepEqual(await proc.rpc('oracle', { name }), before,
+                  'Stale reference must not dispatch, read evidence or mutate the target');
+                assert.deepEqual(await proc.rpc('oracle', { name: 'pass' }), otherResource,
+                  'Navigation and stale reference must not mutate the source fixture');
+                navigationReset = {
+                  previousRevision: initialSnapshot.revision,
+                  revision: refreshed.revision,
+                  staleRefRejected: true,
+                  cliNavigationCalls: 1,
+                  cliSnapshotCalls: 1,
+                  cliStaleProbeCalls: 1,
+                };
+              }
               // A QA grant cannot bypass the UI through raw application routes.
               await request(`${base}/application/execute`, {
                 key: grant.token,
@@ -414,7 +460,7 @@ export async function checkCliApplicationOutcome(
           const passing = contract.isPassing(report);
           assert.equal(
             passing,
-            ['pass', 'pass-repeat', 'lost-response'].includes(name),
+            ['pass', 'pass-repeat', 'navigation-reset', 'lost-response'].includes(name),
             `${name}: bound verdict`
           );
           if (name === 'cleanup-failure')
@@ -424,6 +470,7 @@ export async function checkCliApplicationOutcome(
             passing,
             report,
             reportBytes: Buffer.byteLength(JSON.stringify(report)),
+            ...(navigationReset ? { navigationReset } : {}),
             ...(execution ? { execution, verification, replay } : {}),
             cliAssertionCalls: invocations.length,
             cliReplayCalls: invocations.length,

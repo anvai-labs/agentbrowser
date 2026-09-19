@@ -41,8 +41,18 @@ branches and use the reviewed final commit identity for each merge.
 ## Current implementation state
 
 Main/develop PR promotion, required checks, admin enforcement and force-push/deletion
-blocks are in use. The published baseline is 1.8.20; the owner selected 1.9.0
-for the completed T2 foundation. Its promotion and publication require fresh
-evidence in the [release tracker](../../release-milestones.md). Tag ancestry,
-least-privilege publication and measured runner-use improvements remain open. T9 stays
-active because every candidate needs fresh review, exact-head CI and promotion evidence.
+blocks are in use. The published baseline is **1.9.0** at exact main/tag commit
+`02f263f3764b41f923553c69c11dff69c819fae5`. Promotion PR 210, all eight main
+checks and all twelve release jobs passed; published asset, checksum, npm and
+package acceptance completed. Main was synchronized back to develop by PR 211
+at `4dbd48921346057431468e8d1185c936283f5881`, with all eight post-merge checks,
+and Homebrew PR 57 completed with all three post-merge checks. Exact links and
+qualification limits are recorded in the [release tracker](../../release-milestones.md).
+
+T3's first bounded report foundation then merged through PR 212 to develop as
+`4dd96e9749f363ce8b78cdacccacfd4b87bf9b0b`; its eight PR and eight post-merge
+checks passed. This starts T3 rather than completing it and creates no new release.
+The 1.9.0 candidate's tag ancestry and delivery are verified; a reusable ancestry
+gate, least-privilege publication review and measured runner-use improvements remain
+open. T9 stays active because every candidate needs fresh review, exact-head CI,
+promotion and publication evidence.

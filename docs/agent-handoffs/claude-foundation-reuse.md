@@ -8,8 +8,8 @@ This is an on-demand handoff, not part of the default model context.
 ## Verified baseline and limits
 
 Release **v1.9.0** is published from main `02f263f`; develop includes it through
-`4dbd489` (PR #211). The first T3 bound-report slice is a candidate on
-`feat/t3-bound-regression-report`; its delivery must be checked before reuse.
+`4dbd489` (PR #211). The first T3 bound-report slice merged to develop at
+`4dd96e9` (PR #212), with all eight PR and merge CI checks green.
 A package version alone does not identify this post-release candidate.
 
 | Foundation | Already available | Still needs qualification or implementation |
@@ -17,7 +17,7 @@ A package version alone does not identify this post-release candidate.
 | T0 | Released CLI offline `describe`, canonical bulk schemas, bounded JSON reader, SDK/service execution and MCP bulk result validation | Discover the actual installed command and schema; offline metadata does not prove live capability or permission. |
 | T1 | Local selective spec loader, shared mode registry, service-enforced grants, fixed MCP profiles and non-secret run cursor | Loader is checkout tooling, not a new installed CLI command. Installed Claude/Codex/Victor cursor consumption and context retirement remain T8; T1 overall remains active. |
 | T2 | Released CLI/SDK/REST `outcome`, bound verification, application permissions and receipt correlation | Configure a trusted verifier, source and explicit policy for each application. No production receipt source is registered by default; G4 fixture evidence is not G6 independence or durable recovery. |
-| T3 | Candidate protocol `createTestCaseRunContract` and 12-case packaged acceptance using the existing CLI `outcome` | Not in the published 1.9.0 protocol. No `agentbrowser test run`, public runner, JUnit/HTML exporter or MCP outcome tool. T3 remains active. |
+| T3 | Develop protocol `createTestCaseRunContract` and 12-case packaged acceptance using the existing CLI `outcome` | Not in the published 1.9.0 protocol. No `agentbrowser test run`, public runner, JUnit/HTML exporter or MCP outcome tool. T3 remains active. |
 
 Local cross-check during this handoff:
 
@@ -28,8 +28,9 @@ Local cross-check during this handoff:
   promotion did not upgrade this machine. Do not infer server/MCP runtime versions
   solely from their link paths, or upgrade/restart a user's service implicitly.
 - The old published protocol fails the new T3 factory acceptance probe, as expected.
-  The candidate's dirty extracted package passed all eight acceptance groups on
-  Node 22, with `releaseEvidence: false`. That is not release or merge proof.
+  The first slice's dirty extracted package passed all eight acceptance groups on
+  Node 22, with `releaseEvidence: false`. PR #212 supplies separate merge/CI proof;
+  this package artifact remains local evidence, not release proof.
 - A running service and installed Claude integration were not qualified here.
   Server/MCP launchers are not safe generic `--version` probes: inspect package/build
   metadata, CLI discovery and the documented service health interface instead.
