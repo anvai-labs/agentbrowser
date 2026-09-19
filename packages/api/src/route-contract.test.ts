@@ -164,6 +164,72 @@ describe('route contract metadata', () => {
   });
 });
 
+describe('auto-generated HEAD duplicates follow GET capability', () => {
+  // Fastify copies route config onto auto-generated HEAD duplicates, so a
+  // delegated agent's HEAD is gated exactly like the GET it mirrors. (The
+  // old regex table was method-keyed and 403'd every HEAD; that was an
+  // accident of matching, not a boundary.) Pinned so the behavior stays a
+  // decision, not a surprise.
+  let server: FastifyInstance;
+  let sessionPath: string;
+  let token: string;
+
+  beforeAll(async () => {
+    server = await buildServer({
+      apiKeys: new Map([
+        [
+          (await import('node:crypto')).createHash('sha256').update('operator').digest('hex'),
+          'owner',
+        ],
+      ]),
+    });
+    const operatorHeaders = { authorization: 'Bearer operator' };
+    const create = await server.inject({
+      method: 'POST',
+      url: '/v1/sessions',
+      headers: operatorHeaders,
+      payload: { controlMode: 'delegated' },
+    });
+    sessionPath = `/v1/sessions/${create.json().sessionId}`;
+    const review = await server.inject({
+      method: 'POST',
+      url: `${sessionPath}/control/prepare-resume`,
+      headers: operatorHeaders,
+    });
+    const grant = await server.inject({
+      method: 'POST',
+      url: `${sessionPath}/control/delegate`,
+      headers: operatorHeaders,
+      payload: { epoch: review.json().epoch, mode: 'audit' },
+    });
+    token = grant.json().token as string;
+  });
+
+  afterAll(async () => {
+    await server.close();
+  });
+
+  it('HEAD carries the GET capability: allowed where GET is allowed', async () => {
+    const head = await server.inject({
+      method: 'HEAD',
+      url: `${sessionPath}/pages`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    // audit carries page.observe; past the capability gate (downstream
+    // statuses differ, but never a capability 403).
+    expect(head.statusCode).not.toBe(403);
+  });
+
+  it('HEAD stays 403 where GET has no delegated capability', async () => {
+    const head = await server.inject({
+      method: 'HEAD',
+      url: `${sessionPath}/cookies`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(head.statusCode).toBe(403);
+  });
+});
+
 describe('delegated capability spot checks', () => {
   let server: FastifyInstance;
   let sessionPath: string;
