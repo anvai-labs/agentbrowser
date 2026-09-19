@@ -51,16 +51,19 @@ evidence modules; load those only for the boundary being changed.
 | Business correlation | A bounded receipt ID is separate from the outer service operation ID. Opted-in sources require it and other sources reject it before dispatch. Operator REST fixtures cover scoped reads, replay and conflicts, using public application binding/execution. These fixtures establish correlation only. [Correlation](../evidence/t2-outcome-run-vertical.md#business-receipt-correlation-follow-up). |
 | Generic evidence permission | Opted-in sources authorize an exact verifier/version and frozen bounded raw input, with a generation fence through execution, reads, evaluation and cleanup. The runner captures host references before policy callbacks; observed revocation cannot revive. Delegated HTTP fixtures qualify this generic gate. [Permission](../evidence/t2-evidence-permission.md). |
 
-No production evidence source or causal UI-to-commit contract is qualified. Application-
-bound permission composition and installed CLI acceptance remain below. Raw application
+Application permission composition uses the same generic gate with a private per-read
+receipt capability, authority-owned identity and a narrow service registry provider.
+See [application permission](../evidence/t2-application-evidence-permission.md).
+
+No production evidence source or causal UI-to-commit contract is qualified. Installed CLI and causal acceptance remain below. Raw application
 route permissions have not expanded; correlation and a generic gate do not grant browser
 modes receipt access. Persisted incarnation/receipt recovery remains T5. T2 is active;
 T3 is not yet unlocked.
 
 ## Next slice: receipt permission and causal qualification
 
-1. Define explicit permission to expose an application-derived predicate to a delegated
-   browser mode. Reuse trusted source registration and existing admission preflight;
+1. Qualify explicit permission to expose an application-derived predicate to a delegated
+   browser mode. The common composition now exists; retain its negative controls. Reuse trusted source registration and existing admission preflight;
    keep raw application discovery/execution permissions separate. Deny unconfigured
    receipt sources before dispatch, including when a caller supplies a valid business ID.
    Reuse the generic permission gate with the admitted identity and prepared receipt
