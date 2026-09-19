@@ -132,7 +132,10 @@ export async function runExecutable(command, options = {}) {
   assert.ok(typeof stdin === 'string' || Buffer.isBuffer(stdin), 'Executable stdin must be a string or Buffer');
   assert.ok(Buffer.byteLength(stdin) <= maxInputBytes, 'Executable input exceeded the acceptance limit');
   return withProcess(command, options, async ({ child, closed, output }) => {
-    child.stdin.end(stdin);
+    // Empty chunks still issue a pipe write and can EPIPE after a short-lived
+    // child closes its reader. EOF alone needs no write; real input errors fail.
+    if (Buffer.byteLength(stdin) === 0) child.stdin.end();
+    else child.stdin.end(stdin);
     const result = await closed;
     assert.equal(
       result.code,

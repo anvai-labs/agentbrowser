@@ -69,10 +69,12 @@ seven same-operation-ID replays returned recorded-without-dispatch and preserved
 oracle. No MCP binary or transport participated.
 
 Supporting validation is also green: 13 local versioned-fixture tests, one
-real-Chromium legacy parity test and 35 executable/package-helper tests, composed of 22
+real-Chromium legacy parity test and 36 executable/package-helper tests, composed of 23
 release-smoke tests and 13 package-acceptance tests. The full existing extracted-package
 acceptance also passed all eight check groups, including this CLI matrix, with graceful
-service and fixture cleanup.
+service and fixture cleanup. The first CI candidate exposed an empty-stdin pipe race
+during packaging; a deterministic closed-reader regression reproduces it. Empty input
+now sends EOF without a zero-byte write, while undelivered nonempty input still fails.
 
 Because the candidate was dirty, this is local qualification evidence rather than
 release evidence. The same acceptance must pass exact-head CI through the existing Bun

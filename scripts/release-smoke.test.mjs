@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -274,5 +275,37 @@ test('MCP smoke rejects mismatched structured/text data and unflagged failed rep
     await assert.rejects(checkMcp(mcp({ reply }), {
       ...options, exercise: async ({ callTool }) => callTool('browser_autofill', {}),
     }), /structured|failed/);
+  }
+});
+
+
+test('empty stdin EOF tolerates a closed reader but undelivered nonempty input fails', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agentbrowser-closed-stdin-'));
+  try {
+    const inputs = [undefined, '', Buffer.alloc(0), '{}'];
+    for (const [index, stdin] of inputs.entries()) {
+      const marker = join(directory, String(index));
+      const executable = command(`
+        const fs = await import('node:fs');
+        fs.closeSync(0);
+        fs.writeFileSync(${JSON.stringify(marker)}, 'closed');
+        setTimeout(() => process.stdout.write('done'), 100);
+      `);
+      const run = runExecutable(executable, {
+        ...(stdin === undefined ? {} : { stdin }),
+        onSpawn() {
+          // Child startup is independent of this event loop. Wait for proof that
+          // its read end is closed before the runner attempts to finish stdin.
+          const deadline = Date.now() + 2000;
+          while (!existsSync(marker) && Date.now() < deadline)
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+          assert.ok(existsSync(marker), 'Child failed to close stdin within the bound');
+        },
+      });
+      if (stdin === '{}') await assert.rejects(run, /EPIPE/);
+      else assert.deepEqual(await run, { stdout: 'done', stderr: '', code: 0 });
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 });
