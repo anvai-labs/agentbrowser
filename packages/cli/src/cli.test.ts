@@ -110,6 +110,7 @@ describe('AgentBrowser CLI', () => {
       // input, optional write identities, additional properties refused.
       expect(schemas.input).toMatchObject({
         type: 'object',
+        additionalProperties: false,
         required: ['operation', 'input'],
         properties: {
           operation: { type: 'string' },
