@@ -1533,4 +1533,26 @@ describe('AgentBrowser CLI', () => {
       expect(out).toEqual(['Application binding removed']);
     });
   });
+
+  describe('structural SDK mirror', () => {
+    it('the real SDK client satisfies the CliClient slice (ADR-015)', async () => {
+      // Compile-time enforcement lives in src/contracts.ts via
+      // `pnpm -r type-check` (vitest does not type-check). This companion
+      // constructs the real client as the mirror so the wiring stays honest
+      // at runtime too.
+      const { AgentBrowserClient } = await import('@agentbrowser/sdk-typescript');
+      const real: CliClient = new AgentBrowserClient({ baseUrl: 'http://127.0.0.1:1' });
+      for (const member of [
+        'get',
+        'create',
+        'autofill',
+        'plan',
+        'outcome',
+        'applicationBind',
+        'applicationExecute',
+      ] as const) {
+        expect(typeof real.sessions[member]).toBe('function');
+      }
+    });
+  });
 });
