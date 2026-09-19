@@ -1,17 +1,38 @@
 # Release milestones and acceptance gates
 
-## Current checkpoint: 1.9.0 preparation (2026-09-19)
+## Current checkpoint: 1.9.0 delivered; T3 started (2026-09-19)
 
-The owner selected **1.9.0** for the completed T2 shared foundation before T3
-implementation. The published baseline is 1.8.20. PRs #203–208 and completion
-PR #209 are integrated on develop; the release candidate also synchronizes
-first-party versions and current capability documentation. See the
-[changelog](../CHANGELOG.md) and [T2 qualification](spec/evidence/t2-foundation-qualification.md).
+**1.9.0** delivers the completed T2 shared foundation. Promotion
+[PR 210](https://github.com/anvai-labs/agentbrowser/pull/210) merged to main as
+`02f263f3764b41f923553c69c11dff69c819fae5`; all eight
+[main checks](https://github.com/anvai-labs/agentbrowser/actions/runs/35437386997)
+and all twelve [release jobs](https://github.com/anvai-labs/agentbrowser/actions/runs/35437701325)
+passed on that exact commit. The `v1.9.0` tag and main point to the same commit.
+All fifteen expected release assets were published, all fourteen downloadable
+artifact bytes matched the checksum manifest, the four server archives carried
+clean 1.9.0/main build stamps, and the published npm MCP and Darwin ARM package
+passed their recorded acceptance. See the [changelog](../CHANGELOG.md) and
+[T2 qualification](spec/evidence/t2-foundation-qualification.md).
 
-Promotion, tag publication, downloaded-artifact/npm verification and Homebrew
-delivery each require their own evidence. Version preparation alone does not
-complete them. T3 remains unimplemented; production evidence/G6, durable recovery
-and independent UI/API parity retain their task gates. The repeatable sequence
+[PR 211](https://github.com/anvai-labs/agentbrowser/pull/211) synchronized main
+back to develop as `4dbd48921346057431468e8d1185c936283f5881`; all eight
+[post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/35439037452)
+passed. Homebrew [tap PR 57](https://github.com/anvai-labs/homebrew-tap/pull/57)
+merged as `6bc2e800a5331e541a87aaa7d2fc3de147240253`, and all three
+[tap post-merge checks](https://github.com/anvai-labs/homebrew-tap/actions/runs/35442466428)
+passed. No administration bypass, rerun, force push or artifact replacement was
+used. This evidence covers isolated published-package delivery; the owner's
+installed service was not changed and no installed-upgrade claim is made.
+
+T3 began from that synchronized baseline. Its first bounded report foundation
+[PR 212](https://github.com/anvai-labs/agentbrowser/pull/212) merged to develop as
+`4dd96e9749f363ce8b78cdacccacfd4b87bf9b0b`; all eight
+[PR checks](https://github.com/anvai-labs/agentbrowser/actions/runs/35459535641)
+and all eight [post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/35459717523)
+passed. T3 is not complete: reusable regression integration, broader QA reporting
+and later task slices retain their gates. The subsequent
+[navigation-reset qualification](spec/evidence/t3-navigation-reset.md) is tracked separately. Production evidence/G6, durable recovery and
+independent UI/API parity also remain open. The repeatable release sequence
 below remains applicable; earlier checkpoint statuses are historical.
 
 ## Historical checkpoint (2026-09-08)

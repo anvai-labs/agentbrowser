@@ -1,6 +1,6 @@
 # T3 first slice: bound regression report
 
-Status: implemented internal candidate under qualification. It is not a user-facing
+Status: first internal foundation delivered through PR #212. It is not a user-facing
 runner or a claim that T3 is complete.
 
 ## Decision

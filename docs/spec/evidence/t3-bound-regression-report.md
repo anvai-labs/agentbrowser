@@ -1,9 +1,9 @@
-# T3 bound regression report: local qualification
+# T3 bound regression report: delivered foundation
 
-Status: local candidate passed; exact-head/post-commit CI, merge and release evidence
-are pending. T3 remains active; T7 and the T3-dependent T8 gates remain closed.
+Status: delivered to develop through PR #212 at commit `4dd96e9`. T3 remains active;
+T7 and the T3-dependent T8 gates remain closed.
 
-## Qualified candidate boundary
+## Delivered foundation boundary
 
 The first T3 foundation adds one protocol-owned bound TestCase report and extends the
 existing packaged CLI/application acceptance. The descriptor has 1–16 assertions and
@@ -39,7 +39,7 @@ even if the bound report itself passed.
 
 ## Local measurements
 
-The local matrix passed all 12 expected case verdicts. Ten cases executed one compiled
+The pre-merge local matrix passed all 12 expected case verdicts. Ten cases executed one compiled
 CLI assertion and one exact-operation-ID replay; required-skip and partial-setup
 executed neither. Two offline CLI discovery calls established local version metadata.
 Model calls: 0. MCP calls: 0. Serialized reports ranged from 340 to 923 bytes. The two
@@ -51,6 +51,10 @@ v22.23.2, 37 executable/package helper tests passed, and the protocol suite pass
 206 tests. Independent code rereview was clean after five findings were fixed. The
 candidate explicitly reported `releaseEvidence: false` because the tree was dirty.
 
+PR run `35459535641` and merge run `35459717523` subsequently passed all eight
+required checks. Adversarial review `133085aa` was clean. These gates qualify the
+merged foundation; they do not convert the earlier dirty artifact into release evidence.
+
 The environment report used the actual CLI `--version`, local CLI `describe`, service
 health, authenticated engine state and child fixture identity; the bound parser pins
 their projected values. This controlled fixture has an exclusive UI actor and qualifies
@@ -58,8 +62,9 @@ G4 only. It is not a production causal source or G6 qualification.
 
 ## Delivery limits
 
-The validation artifact was produced from a dirty local candidate and is not release,
-merge or exact-head CI proof. Post-commit CI and final review remain required. This
-foundation does not complete the reusable user-facing regression workflow, navigation
-reset, Playwright/Vitest export, JUnit/HTML reporting or durable run history. It does
-not unlock T7 or the T3-dependent part of T8.
+The foundation does not complete the reusable user-facing regression workflow,
+Playwright/Vitest export, JUnit/HTML reporting or durable run history. Its 12-case
+delivery did not include navigation reset; a separate
+[13-case local candidate](t3-navigation-reset.md) now covers that risk and passes
+full package acceptance; its exact-head CI and merge remain pending. Neither slice unlocks T7 or the
+T3-dependent part of T8.

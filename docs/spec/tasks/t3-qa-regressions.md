@@ -1,6 +1,7 @@
 # T3: deterministic regressions and reports
 
-Status: active; first internal foundation under qualification. Repository: agentbrowser. Depends on: T2.
+Status: active; first internal foundation delivered, navigation-reset slice under
+qualification. Repository: agentbrowser. Depends on: T2.
 Inputs: core, qa mode, contracts, grounding, quality-ci.
 
 ## Reuse and scope
@@ -34,12 +35,12 @@ Do not add scanner dependencies or cross-browser jobs for unrelated changes.
 
 ## Current implementation state
 
-The candidate adds one protocol-owned bound TestCase contract and extends existing
-packaged CLI/application acceptance. It adds no public CLI command, endpoint, SDK or
+The foundation merged through PR #212 and adds one protocol-owned bound TestCase
+contract to existing packaged CLI/application acceptance. It adds no public CLI command, endpoint, SDK or
 MCP projection, dependency or CI job. At least one assertion must be required, so an
 all-optional or all-skipped case cannot pass.
 
-The local controlled matrix has 12 cases: two fixed runs produce distinct application
+The original controlled matrix had 12 cases: two fixed runs produce distinct application
 events; lost response passes once; historical, ignored, failed action, stale application state,
 wrong resource and API shortcut cannot satisfy the UI assertion; required skip,
 partial setup and cleanup failure stay non-passing. Ten assertions and ten exact-ID
@@ -47,13 +48,20 @@ replays used the compiled CLI, two calls used offline discovery, and no model or
 call participated. Reports were 340–923 bytes. See the
 [local qualification record](../evidence/t3-bound-regression-report.md).
 
-The complete extracted-package acceptance passed all eight groups under Node
-v22.23.2; 37 helper tests and 206 protocol tests passed. The dirty candidate reported
-`releaseEvidence: false`.
+The original extracted-package candidate passed all eight groups under Node v22.23.2;
+37 helper tests and 206 protocol tests passed. PR run `35459535641` and merge run
+`35459717523` then passed all eight required checks at develop commit `4dd96e9`.
+Adversarial review `133085aa` was clean.
 
-This is an internal foundation, not T3 completion. Exact-head/post-commit CI remains
-pending, as do a reusable product-facing regression surface, exports/report adapters,
-navigation reset and the later slices below.
+The next local candidate adds a thirteenth `navigation-reset` case. The QA CLI navigates
+the same page from the earlier `pass` fixture to a fresh target, snapshots bounded
+current state, rejects the old ref with `STALE_TARGET`, then passes and replays the
+fresh bound outcome. See the
+[navigation-reset evidence](../evidence/t3-navigation-reset.md). All eight candidate
+package acceptance groups pass on Node 22.23.2; exact-head CI and merge remain pending.
+
+This is still an internal foundation, not T3 completion. A reusable product-facing
+integration/export, report adapters and the later slices below remain pending.
 
 ## Completion / stop
 
