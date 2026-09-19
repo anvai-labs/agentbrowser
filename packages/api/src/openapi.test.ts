@@ -5,6 +5,7 @@
  * JSON Schema, so polyglot clients can be generated instead of hand-written.
  */
 
+import { readFileSync } from 'node:fs';
 import Ajv2020 from 'ajv/dist/2020';
 import type { FastifyInstance } from 'fastify';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -18,6 +19,17 @@ describe('OpenAPI document', () => {
 
   beforeAll(() => {
     doc = buildOpenApiDocument() as Json;
+  });
+
+  describe('committed artifact', () => {
+    it('is byte-fresh against the generator (pnpm --filter @agentbrowser/api openapi)', () => {
+      // The committed root openapi.json is a generated catalog, not a
+      // hand-maintained file (the MCP catalog digest gate, applied to REST).
+      // A stale artifact means a generated client would disagree with the
+      // served surface.
+      const committed = readFileSync(new URL('../../../openapi.json', import.meta.url), 'utf8');
+      expect(`${JSON.stringify(doc, null, 2)}\n`).toBe(committed);
+    });
   });
 
   describe('envelope', () => {
@@ -39,55 +51,6 @@ describe('OpenAPI document', () => {
   });
 
   describe('paths', () => {
-    const expectedPaths = [
-      ['/v1/sessions/{sessionId}/control', 'get'],
-      ['/v1/sessions/{sessionId}/control/takeover', 'post'],
-      ['/v1/sessions/{sessionId}/control/prepare-resume', 'post'],
-      ['/v1/sessions/{sessionId}/control/delegate', 'post'],
-      ['/v1/sessions/{sessionId}/operations/{operationId}', 'get'],
-      // Shared-infra slice 2: the application authority surface.
-      ['/v1/sessions/{sessionId}/application', 'get'],
-      ['/v1/sessions/{sessionId}/application', 'put'],
-      ['/v1/sessions/{sessionId}/application', 'delete'],
-      ['/v1/sessions/{sessionId}/application/execute', 'post'],
-      ['/v1/sessions/{sessionId}/application/receipts/{operationId}', 'get'],
-      ['/health/live', 'get'],
-      ['/health/ready', 'get'],
-      ['/metrics', 'get'],
-      ['/openapi.json', 'get'],
-      ['/v1/sessions', 'post'],
-      ['/v1/sessions', 'get'],
-      ['/v1/sessions/{sessionId}', 'get'],
-      ['/v1/sessions/{sessionId}', 'delete'],
-      ['/v1/sessions/{sessionId}/pages', 'post'],
-      ['/v1/sessions/{sessionId}/pages/{pageId}', 'get'],
-      ['/v1/sessions/{sessionId}/pages/{pageId}', 'delete'],
-      ['/v1/sessions/{sessionId}/pages/{pageId}/navigate', 'post'],
-      ['/v1/sessions/{sessionId}/pages/{pageId}/observe', 'post'],
-      ['/v1/sessions/{sessionId}/pages/{pageId}/act', 'post'],
-      ['/v1/sessions/{sessionId}/pages/{pageId}/screenshot', 'post'],
-      ['/v1/sessions/{sessionId}/pages/{pageId}/pdf', 'post'],
-      ['/v1/sessions/{sessionId}/pages/{pageId}/extract', 'post'],
-      ['/v1/sessions/{sessionId}/pages/{pageId}/download', 'post'],
-      ['/v1/sessions/{sessionId}/artifacts/{artifactId}', 'get'],
-      ['/v1/sessions/{sessionId}/events', 'get'],
-      // TD-BROWSER-8 (contract-honesty fix, Phase 2): these two were
-      // implemented since Phase 1 but never documented - invisible to any
-      // spec-generated client.
-      ['/v1/sessions/{sessionId}/pages/{pageId}/snapshot', 'get'],
-      ['/v1/sessions/{sessionId}/pages/{pageId}/plan', 'post'],
-      ['/v1/sessions/{sessionId}/pages/{pageId}/outcomes', 'post'],
-      // A3 evidence completion (Phase 2).
-      ['/v1/sessions/{sessionId}/trace', 'post'],
-      ['/v1/sessions/{sessionId}/pages/{pageId}/html', 'post'],
-      ['/v1/sessions/{sessionId}/events/replay', 'get'],
-    ] as const;
-
-    it.each(expectedPaths)('should document %s %s', (path, method) => {
-      expect(doc.paths[path]).toBeDefined();
-      expect(doc.paths[path][method]).toBeDefined();
-    });
-
     it('should give every operation a unique operationId', () => {
       const ids: string[] = [];
       for (const item of Object.values(doc.paths) as Json[]) {
@@ -384,17 +347,27 @@ describe('OpenAPI endpoint', () => {
     expect(served.paths['/v1/sessions'].post).toBeDefined();
   });
 
-  it('should serve a document covering every registered route', async () => {
+  it('should serve a document exactly covering every registered route', async () => {
     const served = (await server.inject({ method: 'GET', url: '/openapi.json' })).json();
 
-    // Fastify's own route table, normalized to OpenAPI path templates.
-    const registered = server.printRoutes({ commonPrefix: false }).split('\n').join('');
-
-    for (const path of Object.keys(served.paths)) {
-      const fastifyPath = path.replace(/\{(\w+)\}/g, ':$1');
-      const segments = fastifyPath.split('/').filter(Boolean);
-      const leaf = segments[segments.length - 1] ?? '';
-      expect(registered).toContain(leaf.replace(':', ''));
-    }
+    // Bidirectional exact-set equality, from the server's own registration
+    // records (see the onRoute collector in buildServer). This is the
+    // stronger successor of the former leaf-substring spot check, which let
+    // "implemented but never documented" routes pass CI - the exact failure
+    // mode the old expectedPaths hand list once recorded in its own comment.
+    const toOpenApiTemplate = (url: string) => url.replace(/:(\w+)/g, '{$1}');
+    const registered = new Set(
+      server.registeredRoutes
+        // The operator panel is a human HTML page, deliberately not part of
+        // the machine contract. OPTIONS is the CORS preflight catch-all.
+        .filter((route) => route.url !== '/operator' && route.method !== 'OPTIONS')
+        .map((route) => `${route.method} ${toOpenApiTemplate(route.url)}`)
+    );
+    const documented = new Set(
+      Object.entries(served.paths as Json).flatMap(([path, item]) =>
+        Object.keys(item as Json).map((method) => `${method.toUpperCase()} ${path}`)
+      )
+    );
+    expect([...registered].sort()).toEqual([...documented].sort());
   });
 });
