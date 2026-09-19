@@ -1,5 +1,6 @@
 import {
   INTERACTION_GUIDANCE,
+  SELF_ADMITTING_ROUTE_SEGMENTS,
   createOutcomeRunReportParser,
   createPlanReportParser,
   parseAutofillReport,
@@ -323,14 +324,13 @@ class HttpClient {
   ): Promise<T> {
     const operationId =
       path.startsWith('/v1/sessions/') &&
-      !path.includes('/control') &&
-      // Application routes carry their operation identity in the BODY
-      // (deduplicated and fingerprinted by the ApplicationAuthority); the
-      // server ignores the header there. Deriving one here would mint a
-      // random UUID, poison error details with a phantom ID, and make the
-      // replay guard reject legitimate application replays whose recorded
+      // Self-admitting route families (control, operations, application)
+      // carry their operation identity in their own contracts; the server
+      // ignores the header on them. Deriving one here would mint a random
+      // UUID, poison error details with a phantom ID, and make the replay
+      // guard reject legitimate application replays whose recorded
       // operation ID can never equal a locally minted UUID.
-      !path.includes('/application') &&
+      !SELF_ADMITTING_ROUTE_SEGMENTS.some((segment) => path.includes(segment)) &&
       init.method &&
       init.method !== 'GET'
         ? (init.operationId ?? this.headers['x-agentbrowser-operation-id'] ?? crypto.randomUUID())
