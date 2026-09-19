@@ -178,19 +178,37 @@ export interface Cli {
   /**
    * Offline audit of wire-contract declarations across the command tree
    * (T0 drift gate). `advertised` commands project canonical schemas through
-   * `describe --schema`; `exempt` commands carry a reviewed reason.
+   * `describe --schema`; `exempt` commands carry a reviewed reason. The
+   * snapshot is frozen: a caller mutating it cannot corrupt later audits.
    */
-  jsonContractAudit(): Array<{
-    path: string[];
-    advertised: boolean;
-    exempt: boolean;
+  jsonContractAudit(): ReadonlyArray<{
+    readonly path: readonly string[];
+    readonly advertised: boolean;
+    readonly exempt: boolean;
   }>;
 }
 
 /** Canonical request/response schemas projected through describe --schema. */
-interface WireContract {
+export interface WireContract {
   input: object;
   output: object;
+}
+
+/**
+ * The T0 runtime gate: a JSON-input command must either advertise its
+ * canonical schemas (advertiseWireSchema) or carry a reviewed exemption.
+ * Exported pure so the refusal branch is directly testable.
+ */
+export function requireWireContract(
+  command: Command,
+  wireContracts: Map<Command, WireContract>,
+  exemptions: Map<Command, string>,
+  label: string
+): void {
+  if (!wireContracts.has(command) && !exemptions.has(command))
+    throw new UsageError(
+      `${label}: this command accepts JSON input but declares no wire contract. Advertise its canonical schemas (advertiseWireSchema) or record an exemption so describe --schema stays complete.`
+    );
 }
 
 const DEFAULT_BASE_URL = 'http://localhost:5709';
@@ -198,7 +216,9 @@ const DEFAULT_BASE_URL = 'http://localhost:5709';
 export function buildCli(deps: CliDependencies): Cli {
   // The command tree is built per run(); the audit it produces is captured
   // here so jsonContractAudit() can serve the most recent run's snapshot.
-  let lastContractAudit: Array<{ path: string[]; advertised: boolean; exempt: boolean }> = [];
+  let lastContractAudit: Cli['jsonContractAudit'] extends () => infer R ? R : never = Object.freeze(
+    []
+  );
   return {
     async run(argv: string[]): Promise<number> {
       let exitCode = 0;
@@ -220,10 +240,7 @@ export function buildCli(deps: CliDependencies): Cli {
         return command;
       };
       const readCommandJson = async (command: Command, raw: string, label: string) => {
-        if (!wireContracts.has(command) && !wireContractExemptions.has(command))
-          throw new UsageError(
-            `${label}: this command accepts JSON input but declares no wire contract. Advertise its canonical schemas (advertiseWireSchema) or record an exemption so describe --schema stays complete.`
-          );
+        requireWireContract(command, wireContracts, wireContractExemptions, label);
         return readJsonArgument(raw, label);
       };
       const program = new Command();
@@ -1768,23 +1785,25 @@ export function buildCli(deps: CliDependencies): Cli {
       }
 
       const contractAudit: Array<{
-        path: string[];
-        advertised: boolean;
-        exempt: boolean;
+        readonly path: readonly string[];
+        readonly advertised: boolean;
+        readonly exempt: boolean;
       }> = [];
       const walkTree = (command: Command, path: string[]) => {
         for (const child of command.commands) {
           const childPath = [...path, child.name()];
-          contractAudit.push({
-            path: childPath,
-            advertised: wireContracts.has(child),
-            exempt: wireContractExemptions.has(child),
-          });
+          contractAudit.push(
+            Object.freeze({
+              path: Object.freeze(childPath),
+              advertised: wireContracts.has(child),
+              exempt: wireContractExemptions.has(child),
+            })
+          );
           walkTree(child, childPath);
         }
       };
       walkTree(program, []);
-      lastContractAudit = contractAudit;
+      lastContractAudit = Object.freeze(contractAudit);
       return exitCode;
     },
     jsonContractAudit() {

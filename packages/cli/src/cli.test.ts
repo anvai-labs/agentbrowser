@@ -1535,6 +1535,32 @@ describe('AgentBrowser CLI', () => {
   });
 
   describe('wire-contract declarations (T0 drift gate)', () => {
+    it('the gate refuses a JSON-input command with neither advertisement nor exemption', async () => {
+      const { Command } = await import('commander');
+      const { requireWireContract } = await import('./cli');
+      type WireContract = import('./cli').WireContract;
+      const contracts = new Map<Command, WireContract>();
+      const command = new Command('future-json-command');
+      expect(() => requireWireContract(command, contracts, new Map(), '--payload')).toThrow(
+        'declares no wire contract'
+      );
+      contracts.set(command, { input: { type: 'object' }, output: { type: 'object' } });
+      expect(() => requireWireContract(command, contracts, new Map(), '--payload')).not.toThrow();
+      const exempt = new Command('exempt-json-command');
+      const exemptions = new Map([[exempt, 'reviewed reason']]);
+      expect(() => requireWireContract(exempt, contracts, exemptions, '--payload')).not.toThrow();
+    });
+
+    it('the audit snapshot is frozen against caller mutation', async () => {
+      const cli = buildCli(deps);
+      expect(await cli.run(['describe'])).toBe(0);
+      const audit = cli.jsonContractAudit();
+      expect(() => {
+        (audit as unknown as { push: unknown }).push({} as never);
+      }).toThrow();
+      expect(Object.isFrozen(audit)).toBe(true);
+    });
+
     it('audits the command tree: JSON-input commands advertise or are exempt', async () => {
       // The audit is a snapshot of THIS instance's most recent run.
       const cli = buildCli(deps);
