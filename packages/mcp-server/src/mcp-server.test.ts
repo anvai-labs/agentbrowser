@@ -8,7 +8,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildMcpServer } from './mcp-server';
-import type { McpDependencies } from './mcp-server';
+import type { McpClient, McpDependencies } from './mcp-server';
 
 describe('AgentBrowser MCP server', () => {
   let sessions: Record<string, ReturnType<typeof vi.fn>>;
@@ -1126,5 +1126,18 @@ describe('AgentBrowser MCP server', () => {
       const response = JSON.parse(await request('abc-123', 'ping'));
       expect(response.id).toBe('abc-123');
     });
+  });
+});
+
+describe('structural SDK mirror (ADR-015)', () => {
+  it('the real SDK client satisfies the McpClient slice', async () => {
+    // Compile-time enforcement lives in src/contracts.ts via
+    // `pnpm -r type-check` (vitest does not type-check). This companion
+    // constructs the real client as the mirror.
+    const { AgentBrowserClient } = await import('@agentbrowser/sdk-typescript');
+    const real: McpClient = new AgentBrowserClient({ baseUrl: 'http://127.0.0.1:1' });
+    for (const member of ['create', 'autofill', 'plan', 'navigate', 'observe'] as const) {
+      expect(typeof real.sessions[member]).toBe('function');
+    }
   });
 });
