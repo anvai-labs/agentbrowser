@@ -102,6 +102,41 @@ describe('AgentBrowser CLI', () => {
       expect(deps.createClient).not.toHaveBeenCalled();
     });
 
+    it('projects canonical schemas for the application execute JSON-input command', async () => {
+      expect(await run('describe', 'application', 'execute', '--schema')).toBe(0);
+      const schemas = lastJson().command.schemas;
+      expect(schemas).not.toBeNull();
+      // The input schema is the protocol's execute request: operation plus
+      // input, optional write identities, additional properties refused.
+      expect(schemas.input).toMatchObject({
+        type: 'object',
+        required: ['operation', 'input'],
+        properties: {
+          operation: { type: 'string' },
+          input: {},
+          operationId: { type: 'string' },
+          expectedVersion: { type: 'integer' },
+        },
+      });
+      // The output schema is the operation-result union: admitted result,
+      // rejection, or a replay carrying the recorded operation record.
+      expect(Array.isArray(schemas.output.anyOf)).toBe(true);
+      const replay = schemas.output.anyOf.find(
+        (variant: { properties?: { replay?: unknown } }) => variant.properties?.replay
+      );
+      expect(replay.properties.operation).toMatchObject({ type: 'object' });
+      expect(deps.createClient).not.toHaveBeenCalled();
+    });
+
+    it('keeps schema projection null for application commands without qualified contracts', async () => {
+      for (const leaf of ['bind', 'unbind', 'discover', 'receipt']) {
+        out = [];
+        expect(await run('describe', 'application', leaf, '--schema')).toBe(0);
+        expect(lastJson().command.schemas).toBeNull();
+      }
+      expect(deps.createClient).not.toHaveBeenCalled();
+    });
+
     it('resolves advertised commands, including implicit help, with useful descriptions', async () => {
       const paths: string[][] = [[]];
       while (paths.length > 0) {
