@@ -43,6 +43,22 @@ import {
   type ServiceSessionRequest,
 } from './service.js';
 
+/** One registered HTTP route, recorded for the contract-completeness gates. */
+export interface RegisteredRoute {
+  method: string;
+  url: string;
+}
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    /**
+     * Every route registered on this server (auto-generated HEAD duplicates
+     * filtered). Collected for the openapi completeness gates; read-only.
+     */
+    readonly registeredRoutes: RegisteredRoute[];
+  }
+}
+
 export interface ServerOptions {
   /** Operator-owned rules. Client-supplied session policy can only restrict these. */
   approvalPolicy?: import('@agentbrowser/core').ActionRiskPolicyOptions;
@@ -98,7 +114,8 @@ function sha256Hex(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-const delegatedRoutes: readonly {
+/** Exported read-only for the contract-sync gate (contract-sync.test.ts). */
+export const delegatedRoutes: readonly {
   method: string;
   path: RegExp;
   capability: AgentCapability;
@@ -225,6 +242,25 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   const fastify = Fastify({
     logger: false, // Disable logging for cleaner test output
   });
+
+  // Contract-completeness collector (the MCP generated-catalog pattern
+  // applied to the REST surface): record every route so openapi.test.ts can
+  // enforce that implemented ⇔ documented bidirectionally. Must be added
+  // BEFORE any fastify.register call - child-plugin routes are only seen by
+  // an onRoute hook registered at the root beforehand.
+  const registeredRoutes: RegisteredRoute[] = [];
+  fastify.addHook('onRoute', (routeOptions) => {
+    const methods = Array.isArray(routeOptions.method)
+      ? routeOptions.method
+      : [routeOptions.method];
+    for (const method of methods) {
+      // Fastify auto-generates HEAD duplicates for GET routes; they carry no
+      // contract of their own.
+      if (method === 'HEAD') continue;
+      registeredRoutes.push({ method, url: routeOptions.url });
+    }
+  });
+  fastify.decorate('registeredRoutes', registeredRoutes);
 
   // Fastify's default JSON parser rejects any request whose payload is
   // empty while content-type is application/json (FST_ERR_CTP_EMPTY_JSON_BODY),

@@ -1039,6 +1039,41 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         },
       },
 
+      '/v1/sessions/{sessionId}/pages/{pageId}/downloads/{filename}': {
+        post: {
+          operationId: 'collectDownloadedFile',
+          summary: 'Collect the browser-session download of one file as a stored artifact',
+          description:
+            'Finalizes the session download of `filename` (already fetched under the same ' +
+            'allowDownloads / egress / maxDownloadBytes rules as the download endpoint) ' +
+            'into an artifact whose bytes are retrievable via the artifact endpoint.',
+          tags: ['artifacts'],
+          parameters: [
+            sessionIdParam,
+            pageIdParam,
+            {
+              name: 'filename',
+              in: 'path',
+              required: true,
+              description: 'Download filename as reported by the session download.',
+              schema: { type: 'string' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'The stored artifact metadata.',
+              content: json(ref('ArtifactRef')),
+            },
+            '400': INVALID_REQUEST,
+            '403': errorResponse(
+              'Downloads are disabled for this session, or the target was denied by policy.'
+            ),
+            '404': NOT_FOUND,
+            '500': INTERNAL,
+          },
+        },
+      },
+
       '/v1/sessions/{sessionId}/artifacts/{artifactId}': {
         get: {
           operationId: 'getArtifact',

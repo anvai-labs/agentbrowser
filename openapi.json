@@ -3611,6 +3611,117 @@
         }
       }
     },
+    "/v1/sessions/{sessionId}/pages/{pageId}/downloads/{filename}": {
+      "post": {
+        "operationId": "collectDownloadedFile",
+        "summary": "Collect the browser-session download of one file as a stored artifact",
+        "description": "Finalizes the session download of `filename` (already fetched under the same allowDownloads / egress / maxDownloadBytes rules as the download endpoint) into an artifact whose bytes are retrievable via the artifact endpoint.",
+        "tags": [
+          "artifacts"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pageId",
+            "in": "path",
+            "required": true,
+            "description": "Page identifier returned by createPage.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "description": "Download filename as reported by the session download.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-AgentBrowser-Operation-Id",
+            "in": "header",
+            "required": false,
+            "description": "Required for delegated-session mutations. Same ID and request returns a replay status without redispatch; a different request conflicts. Not required for observations or captures.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The stored artifact metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactRef"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was malformed or failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Downloads are disabled for this session, or the target was denied by policy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session busy, control revoked, or operation ID conflicts. Reconcile before continuing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected server error occurred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/sessions/{sessionId}/artifacts/{artifactId}": {
       "get": {
         "operationId": "getArtifact",
