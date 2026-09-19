@@ -12,6 +12,8 @@ import type {
   ActionRequest,
   ActionResult,
   AgentMode,
+  ApplicationDiscovery,
+  ApplicationOperationResult,
   ArtifactRef,
   AutofillReport,
   AutofillRequest,
@@ -75,11 +77,7 @@ export interface CliClient {
       binding: { adapter: string; resource: string }
     ): Promise<{ adapter: string; resource: string }>;
     applicationUnbind?(sessionId: string): Promise<{ unbound: true }>;
-    applicationDiscover?(sessionId: string): Promise<{
-      adapter: string;
-      resource: string;
-      operations: Array<{ name: string; mode: 'read' | 'write' }>;
-    } | null>;
+    applicationDiscover?(sessionId: string): Promise<ApplicationDiscovery | null>;
     applicationExecute?(
       sessionId: string,
       request: {
@@ -88,11 +86,7 @@ export interface CliClient {
         operationId?: string;
         expectedVersion?: number;
       }
-    ): Promise<
-      | { status: 'read' | 'committed'; value: unknown }
-      | { status: 'rejected'; reason: string }
-      | { replay: true; operation: unknown }
-    >;
+    ): Promise<ApplicationOperationResult>;
     applicationReceipt?(sessionId: string, operationId: string): Promise<unknown>;
     create(request: SessionRequest): Promise<SessionResponse>;
     list(): Promise<SessionResponse[]>;

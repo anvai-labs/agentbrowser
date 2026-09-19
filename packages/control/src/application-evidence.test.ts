@@ -71,6 +71,23 @@ function setup(
   };
 }
 
+describe('application receipt evidence source descriptor', () => {
+  it('stamps authorization and correlation as required (anti-weakening)', () => {
+    // The receipt source is the one place where permission gating is
+    // structural: if this stamp ever loosens, reads could be admitted
+    // without an explicit policy decision. Guarded here so a weakening
+    // edit fails before any deployment composes it.
+    const authority = new SessionAuthority();
+    const app = new ApplicationAuthority(authority, []);
+    const source = defineApplicationReceiptEvidenceSource(app, {
+      descriptor: { id: 'receipt', capability: 'receipt.predicate' },
+      authorize: () => undefined,
+    });
+    expect(source.descriptor.authorization).toBe('required');
+    expect(source.descriptor.correlation).toBe('required');
+  });
+});
+
 describe('application receipt evidence permission', () => {
   it('uses frozen admitted identity and bounded raw input without giving policy a reader or context', async () => {
     const f = setup();

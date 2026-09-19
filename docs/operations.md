@@ -413,6 +413,37 @@ support. Record these limitations rather than substituting workspace code.
   safe whenever no session is mid-flight. Check the
   [changelog](../CHANGELOG.md) for behavior changes before rolling.
 
+## Outcome verification over the application surface
+
+Deployments that bind application adapters and verify outcomes compose three
+`ServerOptions` fields. One builder assembles them so the receipt evidence
+source's identity is derived from the verifier's own descriptor — the source
+and capability identifiers exist exactly once per deployment:
+
+```ts
+import { applicationReceiptOutcomeOptions, buildServer } from '@agentbrowser/api';
+
+const server = await buildServer({
+  engine,
+  apiKeys,
+  ...applicationReceiptOutcomeOptions({
+    adapters: [myApplicationAdapter],
+    verifierRegistry,
+    verifier: { id: 'my-verifier', version: '1' },
+    authorize: (request) => myPolicy(request), // permission fence or undefined to deny
+    evidenceRefs: (receipt) => [`evt-${receipt.eventId}`],
+  }),
+});
+```
+
+The builder keeps the provider synchronous (the service rejects async
+providers), stamps the receipt source `authorization: required` /
+`correlation: required`, and delegates every admission decision to the
+deployment's `authorize` callback. See
+[application operation authority](application-operation-authority.md) for the
+authority model and the acceptance fixture
+(`scripts/cli-outcome-child.mjs`) for a complete worked composition.
+
 ## Troubleshooting
 
 | Symptom | Likely cause / fix |

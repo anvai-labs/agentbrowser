@@ -8,7 +8,7 @@
 import { Readable } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildCli } from './cli';
-import type { CliDependencies } from './cli';
+import type { CliClient, CliDependencies } from './cli';
 import { PRODUCT_VERSION } from './product-version.js';
 
 describe('AgentBrowser CLI', () => {
@@ -1556,6 +1556,28 @@ describe('AgentBrowser CLI', () => {
       expect(await run('extract', 'ses_1', 'pg_1', '--schema', '{bad json')).toBe(1);
       expect(err.join('\n')).toContain('--schema must be valid JSON.');
       expect(sessions.extract).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('structural SDK mirror', () => {
+    it('the real SDK client satisfies the CliClient slice (ADR-015)', async () => {
+      // Compile-time enforcement lives in src/contracts.ts via
+      // `pnpm -r type-check` (vitest does not type-check). This companion
+      // constructs the real client as the mirror so the wiring stays honest
+      // at runtime too.
+      const { AgentBrowserClient } = await import('@agentbrowser/sdk-typescript');
+      const real: CliClient = new AgentBrowserClient({ baseUrl: 'http://127.0.0.1:1' });
+      for (const member of [
+        'get',
+        'create',
+        'autofill',
+        'plan',
+        'outcome',
+        'applicationBind',
+        'applicationExecute',
+      ] as const) {
+        expect(typeof real.sessions[member]).toBe('function');
+      }
     });
   });
 });
