@@ -6,9 +6,8 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { AGENT_CAPABILITIES, AGENT_MODE_IDS } from '@agentbrowser/protocol';
+import { AGENT_MODE_IDS } from '@agentbrowser/protocol';
 import { describe, expect, it } from 'vitest';
-import { delegatedRoutes } from './server.js';
 
 interface SpecManifest {
   modes: Record<string, unknown>;
@@ -34,13 +33,8 @@ describe('contract vocabulary sync', () => {
       }
     }
   });
-
-  it('keeps delegated route capabilities inside the protocol capability registry', () => {
-    // A capability string the protocol does not know would make
-    // agentModeAllows unreachable (never allowed); one the table invents is
-    // a silent always-403.
-    for (const route of delegatedRoutes) {
-      expect(AGENT_CAPABILITIES).toContain(route.capability);
-    }
-  });
+  // Delegated-route capability vocabulary membership is enforced by the
+  // compiler: route registration meta types `capability` as AgentCapability
+  // (see the `on` helper in server.ts), and route-contract.test.ts pins the
+  // per-route values.
 });
