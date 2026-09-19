@@ -144,10 +144,11 @@ export async function checkCliApplicationOutcome(
             positive,
             `${name}: canonical outcome`
           );
+          const denied = name === 'historical' || name === 'wrong-resource';
+          assert.equal(outcome.availability, denied ? 'blocked' : 'available');
+          assert.equal(outcome.cleanup, 'not_needed');
           if (positive) {
-            assert.equal(outcome.availability, 'available');
             assert.equal(outcome.execution, 'completed');
-            assert.equal(outcome.cleanup, 'not_needed');
           } else {
             assert.deepEqual(outcome.verification.evidenceRefIds, []);
             if (name === 'historical' || name === 'wrong-resource')
@@ -157,6 +158,9 @@ export async function checkCliApplicationOutcome(
             if (name === 'failed-action') assert.notEqual(outcome.execution, 'completed');
           }
           const oracle = await proc.rpc('oracle', { name });
+          assert.equal(oracle.claims, denied ? 0 : 1, `${name}: admitted claims`);
+          if (denied || name === 'failed-action') assert.equal(oracle.reads, 0);
+          else assert.ok(oracle.reads > 0 && oracle.reads <= 20);
           assert.deepEqual(
             oracle.snapshot,
             positive || name === 'historical'
@@ -174,8 +178,6 @@ export async function checkCliApplicationOutcome(
             assert.deepEqual(oracle.receipt.scope, intent.scope);
             for (const [key, value] of Object.entries(intent.command))
               assert.equal(oracle.receipt[key], value);
-            assert.equal(oracle.claims, 1);
-            assert.ok(oracle.reads > 0 && oracle.reads <= 20);
             assert.match(oracle.receipt.eventId, /^[a-f0-9-]{36}$/u);
           } else assert.equal(oracle.receipt, null, `${name}: no UI commit evidence`);
           const recorded = await request(`${base}/operations/${outerId}`);
