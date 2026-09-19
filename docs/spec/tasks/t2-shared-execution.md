@@ -1,6 +1,6 @@
 # T2: shared execution, verification and result helpers
 
-Status: active. Repository: agentbrowser. Depends on: T0.
+Status: complete on develop; final foundation increments are not released. Repository: agentbrowser. Depends on: T0.
 Inputs: core, architecture, contracts, execution, grounding.
 
 ## Reuse and scope
@@ -55,30 +55,19 @@ Application permission composition uses the same generic gate with a private per
 receipt capability, authority-owned identity and a narrow service registry provider.
 See [application permission](../evidence/t2-application-evidence-permission.md).
 
-The next controlled qualification is implemented as a compiled CLI talking to an
-independent extracted service and real Chromium, with seven cases, including five negative controls,
-and an application oracle. The full matrix and every replay pass locally against an
-audited extracted dirty candidate; exact-head CI and delivery remain pending. See
+The controlled qualification uses a compiled CLI, independently extracted service and
+real Chromium, with seven cases and seven reconciled replays against an application
+oracle. PR #208 and its exact develop merge passed all eight CI jobs. See
 [installed CLI application outcome](../evidence/t2-cli-application-outcome.md).
 
-No production evidence source or causal UI-to-commit contract is qualified. Raw
-application route permissions have not expanded; correlation and a generic gate do not
-grant browser modes receipt access. Persisted incarnation/receipt recovery remains T5.
-T2 is active; T3 is not yet unlocked.
+## Completion record and remaining limits
 
-## Next slice: receipt permission and causal qualification
+The [foundation qualification](../evidence/t2-foundation-qualification.md) maps the
+complete acceptance matrix to regression tests and records exact delivery identities.
+Independent adversarial audits close R02 execution, R04 foundation and R12 shared
+ownership. T3/T4/T5/T6 are dependency-ready; their own acceptance remains required.
 
-1. Drive the locally passing seven-case compiled-CLI acceptance through the existing
-   exact-head Bun compile and extracted-candidate smoke job. Require the replay oracle
-   to prove no second dispatch, claim, read or application effect. This qualifies only
-   the controlled exclusive-UI-actor G4 fixture; do not relabel it as G6 or production.
-2. Preserve the application permission negative controls for exact admitted identity,
-   source/capability, verifier/version, bounded input, business correlation and monotonic
-   generation. Keep raw application discovery/execution permissions separate.
-3. Exercise any remaining revoked-permission, takeover and late-receipt boundaries
-   through the real outcome route, retaining one admitted operation, one executor and
-   bounded reads.
-4. Audit the remaining T2 acceptance matrix and record exact qualified layers and limits
-   before unlocking T3. Production evidence remains explicitly unqualified by this fixture.
-   Reuse the existing registry, authority and result parser; add no receipt store, workflow
-   engine, package or CI job merely to obtain this qualification.
+The controlled exclusive-UI-actor contract qualifies G4 only. No production evidence
+source or G6 independence is qualified. Raw application route permissions have not
+expanded. Production UI/API parity and evidence qualification remain T4; persisted
+incarnation/receipt recovery remains T5. CLI stays first-class and MCP optional.

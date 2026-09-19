@@ -1,7 +1,8 @@
 # T2 application-bound receipt permission
 
-Status: application permission composition; causal UI-to-commit and installed CLI
-qualification remain separate gates. This increment is develop-only, not a release.
+Status: application permission composition delivered in PR #207 on develop. The separate
+[installed CLI qualification](t2-cli-application-outcome.md) follows in PR #208.
+These increments are not a release.
 
 ## Ownership and interfaces
 
@@ -53,7 +54,8 @@ prove that this run's UI action caused a commit. The application adapter and dep
 policy are trusted synchronous configuration; this is not isolation from malicious
 in-process host code. Generation owners must monotonically increment on policy changes.
 Receipt retention and durable application identity remain application responsibilities.
-No production evidence source is registered by default, and T2 remains active.
+No production evidence source is registered by default. Current T2 readiness and its
+acceptance mapping are recorded in [foundation qualification](t2-foundation-qualification.md).
 
 Validation on 2026-09-19: 185 control tests and 35 focused API tests pass,
 including actual delegated HTTP observation and replay. Packaged browser-free
@@ -62,12 +64,12 @@ also pass. Failure-first tests reproduced
 reference processing after revocation, mutable preparation callbacks, invalid provider
 acceptance, resource allocation before construction failure and an unconsumed rejected
 provider promise. The fixes reuse existing guards and keep legacy callback receiver and
-argument counts. Independent adversarial review is clean; commit/push hooks and exact-
-head CI remain delivery gates, recorded in the PR rather than duplicated here.
+argument counts. Independent adversarial review, commit/push hooks and delivery CI
+passed for PR #207; its delivery record remains in that PR.
 
-## Next acceptance
+## Follow-up acceptance
 
-Qualify one application-owned UI-to-receipt contract, falsified by pre-existing receipts,
-wrong session/resource, failed UI writes and blocked commits. Run the installed CLI
-against the same service fixture without MCP. Only then claim the corresponding causal
-layer or close that portion of T2. Durable recovery remains T5; UI/API parity remains T4.
+The [installed CLI matrix](t2-cli-application-outcome.md) extends this permission boundary
+with a controlled application-owned UI-to-receipt contract and independent negative
+controls. Its G4 qualification does not make this helper a production causal source.
+Durable recovery remains T5; independent production UI/API parity remains T4.

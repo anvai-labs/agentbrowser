@@ -55,13 +55,13 @@ non-secret run cursor and inline operator mode selection. See the
 [T1 packet](tasks/t1-context-profiles.md) and
 [qualification evidence](evidence/t1-context-profiles.md). Installed harness cursor
 consumption remains T8 work.
-T2 includes a configurable REST/SDK/CLI outcome run released in 1.8.20, over the
-existing plan executor and trusted verifier/evidence registries. Subsequent develop
-increments through PR #206 add receipt correlation, admission/drain and generic
-predicate permission. PR #207 adds application-bound permission composition on develop;
-the compiled-CLI/extracted-service causal matrix and replays pass locally against an
-audited extracted dirty candidate. Exact-head CI and delivery remain pending. T2 stays
-active and no production evidence source is qualified.
+T2 is complete on develop. The configurable REST/SDK/CLI outcome run shipped in
+1.8.20; subsequent shared evidence/permission increments and the controlled G4 CLI
+qualification merged through PR #208. Exact-head and merge-commit CI passed all eight
+jobs. These final increments are not yet released. T3 is dependency-ready; production
+evidence sources, G6 and durable recovery remain explicitly unqualified. See the
+[foundation qualification](evidence/t2-foundation-qualification.md) for the acceptance
+mapping and delivery record.
 See the
 [T2 packet](tasks/t2-shared-execution.md) and
 [dispatch-boundary](evidence/t2-dispatch-boundary.md) and

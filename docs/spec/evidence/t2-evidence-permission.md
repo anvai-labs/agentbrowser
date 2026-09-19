@@ -1,8 +1,8 @@
 # T2 evidence permission gate
 
-Status: implemented generic foundation (PR #206). Application-bound composition
-follows in [application permission](t2-application-evidence-permission.md); causal
-qualification remains pending. Owner: `@agentbrowser/control`.
+Status: implemented generic foundation (PR #206). Follow-up boundaries are documented
+in [application permission](t2-application-evidence-permission.md) and the
+[installed CLI matrix](t2-cli-application-outcome.md). Owner: `@agentbrowser/control`.
 
 ## Contract and reuse
 

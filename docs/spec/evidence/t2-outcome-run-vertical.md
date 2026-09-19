@@ -78,8 +78,10 @@ empty UI plans, strict/private replay parsing and request/replay operation-ID bi
 
 This seam reports `testedSeam: ui` because it executes the browser plan. A future
 application-mode adapter must retain its own seam and durable receipt identity rather
-than relabel this report. T2 remains open until at least one production evidence source
-is qualified and the remaining authority/recovery acceptance matrix passes.
+than relabel this report. Production-source qualification and independent UI/API parity
+remain T4 gates; durable recovery remains T5. The shared foundation closes against the
+T2 acceptance matrix, with unsupported levels explicit; see the current
+[foundation qualification](t2-foundation-qualification.md).
 
 ## Delivery record
 
@@ -164,8 +166,9 @@ second plan/read, and changed correlation with the same outer ID conflicts.
 The fixture receipt is pre-created and its boolean predicate is fixture-specific. This
 proves correlation, admission and session isolation, not that the UI caused an application
 commit. No default production source, new binding endpoint, receipt store, workflow engine,
-MCP tool or dependency is added. Causal UI negative controls, receipt qualification and
-production-source acceptance remain open; T2 is active and T3 is not yet unlocked.
+MCP tool or dependency is added. This correlation-only slice left causal qualification
+open; the follow-up [installed CLI matrix](t2-cli-application-outcome.md) supplies controlled
+G4 negative controls. Production-source acceptance remains a separate T4 limit.
 
 Application receipt verification by delegated browser modes remains a separate permission
 boundary. Browser grants intentionally cannot use the application API. The fixture uses
