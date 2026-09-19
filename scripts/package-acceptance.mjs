@@ -118,12 +118,14 @@ export async function resolvePackagedModules(serverRoot, expectedVersion, option
   const api = await contained(join(root, 'dist/index.js'));
   const engine = await contained(require.resolve('@agentbrowser/engine-playwright'));
   const policy = await contained(require.resolve('@agentbrowser/policy'));
+  const protocol = manifest.dependencies?.['@agentbrowser/protocol']
+    ? await contained(require.resolve('@agentbrowser/protocol')) : undefined;
   const control = manifest.dependencies?.['@agentbrowser/control']
     ? await contained(require.resolve('@agentbrowser/control')) : undefined;
   const engineRequire = createRequire(engine);
   const playwright = await contained(engineRequire.resolve('playwright'));
   const playwrightCli = await contained(join(dirname(engineRequire.resolve('playwright/package.json')), 'cli.js'));
-  return { root, api, engine, policy, ...(control ? { control } : {}), playwright, playwrightCli, commit: stamp.commit, dirty: stamp.dirty ?? false, closure };
+  return { root, api, engine, policy, ...(protocol ? { protocol } : {}), ...(control ? { control } : {}), playwright, playwrightCli, commit: stamp.commit, dirty: stamp.dirty ?? false, closure };
 }
 
 export async function apiRequest(baseUrl, path, options = {}) {

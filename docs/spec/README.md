@@ -57,8 +57,10 @@ non-secret run cursor and inline operator mode selection. See the
 consumption remains T8 work.
 T2 is complete. AgentBrowser 1.9.0 includes the configurable REST/SDK/CLI outcome run,
 shared receipt correlation, admission/drain and evidence-permission foundations, and
-the controlled G4 CLI qualification delivered through PR #208. T3 is dependency-ready;
-production evidence sources, G6 and durable recovery remain explicitly unqualified. See the
+the controlled G4 CLI qualification delivered through PR #208. T3 is active with a
+locally qualified internal bound-report foundation; exact-head CI and its public
+regression/reporting slices remain. Production evidence sources, G6 and durable
+recovery remain explicitly unqualified. See the
 [foundation qualification](evidence/t2-foundation-qualification.md) for the acceptance
 mapping and delivery record.
 See the
@@ -73,6 +75,13 @@ See the
 [application permission](evidence/t2-application-evidence-permission.md) and
 [installed CLI application outcome](evidence/t2-cli-application-outcome.md) evidence.
 
+The T3 candidate reuses that CLI/service path for a 12-case deterministic matrix and
+adds no public CLI, REST, SDK or MCP surface, dependency or CI job. It remains active,
+does not unlock T7 or T3-dependent T8 qualification, and is documented in the
+[bound-report design](design/t3-regression-report.md),
+[T3 packet](tasks/t3-qa-regressions.md) and
+[local qualification](evidence/t3-bound-regression-report.md).
+
 T4 has one public-interface slice delivered in 1.8.20 by PR #201: bounded,
 authenticated application discovery, execution and receipt lookup now use the shared
 `ApplicationAuthority` through REST, the TypeScript SDK and a first-class CLI command
@@ -86,8 +95,9 @@ application-operation projection. See the
 
 T6 is partially delivered in 1.8.19: the existing autofill orchestrator now has named
 `react-select` and `chip-multiselect` strategies. Broader widget qualification,
-reusable mapping and cross-engine acceptance remain open. T3, T5 and T7 have no
-delivered product vertical; T8 still needs installed-harness qualification. T9 is a
+reusable mapping and cross-engine acceptance remain open. T3 has an active internal
+foundation but no delivered product vertical; T5 and T7 have none. T8 still needs
+installed-harness qualification. T9 is a
 recurring release gate rather than a one-time feature.
 
 ## Modes

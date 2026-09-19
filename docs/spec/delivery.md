@@ -25,7 +25,7 @@ current user scope and the [task protocol](tasks/README.md).
 | Shared outcomes | T2 is complete; 1.9.0 includes REST/SDK/CLI outcome, correlation, admitted receipt drain, permission composition and controlled G4 CLI/service qualification | Qualify production UI-caused evidence and G6 under T4; durable recovery under T5 |
 | Bulk forms | Named react-select and chip-multiselect strategies released in 1.8.19 | Broader widgets, reusable mappings and cross-engine commitment evidence |
 | Application parity | First T4 public-interface slice released in 1.8.20 by PR #201: application bind, discovery, execute and receipt operations over REST, SDK and CLI | Qualify the scoped receipt predicate in a production fixture, binding UX, independent UI/API parity and T5 durable restart receipts |
-| QA and durable runs | T2 dependency satisfied; T3 and T5 are not started | Complete their regression/reporting and durable-recovery verticals independently |
+| QA and durable runs | T3 active: first bound-report foundation passes a local 12-case controlled matrix; T5 not started | Exact-head CI, reusable regression/export/report slices and navigation reset for T3; durable recovery independently under T5 |
 | Audit, appsec and bounty | Mode contracts and profiles exist; no scanner/product vertical | Scope enforcement plus T3, and T4 for application parity |
 | MCP | Existing generated catalog remains 13 unbound/12 delegated in QA; outcome and application operations have no MCP tools | Add only if measured harness demand justifies another optional projection |
 
@@ -51,7 +51,7 @@ correctness fixes. T9 starts by checking current protection/release state and be
 a gate for each later release. T7 security work additionally requires independently
 qualified scope enforcement. Durable workflows cannot be advertised until T5 passes.
 
-Default execution priority is T0, T1, T2, T3, then T4/T5 as customer demand requires.
+Current execution priority is the remaining T3 slices, then T4/T5 as demand requires.
 T6 addresses concrete blocked widgets. T7 follows actual audit/security demand, not
 a speculative full scanner roadmap. T8/T9 accompany delivery. Each task may be split
 into reviewable sub-PRs using its declared slices; avoid one giant implementation PR.

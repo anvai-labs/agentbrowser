@@ -40,11 +40,12 @@ migration path; finish independently compatible documentation work. Unlock T1/T2
 ## Current implementation state
 
 Delivered through PR #179 and merged to develop as `e1835682`, after rebasing the
-candidate onto `2144455` (#177). #178 released the upstream CLI parity batch as 1.8.18;
-develop still stamps 1.8.16. The original local work remains preserved in stash
+candidate onto `2144455` (#177). At that historical checkpoint, #178 had released CLI
+parity as 1.8.18 while develop still stamped 1.8.16. These are not current versions.
+The original local work was preserved in stash
 `bb41ee8c07c0cbcc67e7b8dcec4f6e4cb1ab9399`.
 
-Implemented locally:
+Delivered implementation:
 
 - Shared protocol interaction/reconciliation guidance and offline shallow CLI discovery.
 - One bounded JSON input reader for existing autofill/policy and plan commands, canonical
@@ -55,7 +56,7 @@ Implemented locally:
   and plan results alongside equivalent text; explicit 2024-11-05 clients retain legacy catalogs.
   Failed autofill/plan reports set isError while preserving receipts. No retry added.
 
-Latest contract slice: protocol 140, MCP 71, CLI 97, and 295 API regression tests passed,
+Validation at that checkpoint: protocol 140, MCP 71, CLI 97, and 295 API regression tests passed,
 including OpenAPI consistency and real Chromium plan success/timeout. Workspace build,
 type-check and lint passed (existing lint warnings remain); actual Node/Bun stdio checks
 cover both bulk tools in both protocol/binding modes. PR and post-merge develop CI each
@@ -75,7 +76,8 @@ both catalogs. T1 must measure selection savings rather than claim shrinking all
 2. Preserve the adversarial review resolution: autofill reports are validated before
    CLI success/output and the malformed-report case has a red-then-green regression.
 3. Continue dependency-ready increments. Installed Victor, Codex and Claude structured-
-   result qualification remains T8; runtime mode profiles remain T1. Registry metadata
+   result qualification remains T8; implemented runtime profiles and remaining
+   qualification are tracked under T1. Registry metadata
    is conditional on selecting publication.
 
 Detailed evidence, compatibility decisions, measurements and earlier validation are in
