@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { checkCli, checkMcp, EXPECTED_TOOLS, runExecutable } from './release-smoke.mjs';
@@ -138,6 +141,95 @@ test('child output is bounded and nonzero exit/spawn errors fail', async () => {
   await assert.rejects(runExecutable(command("process.stderr.write('x'.repeat(2048));"), { maxOutputBytes: 1024 }), /output/);
   await assert.rejects(runExecutable(command('process.exit(7)'), {}), /exited/);
   await assert.rejects(runExecutable(['/definitely-missing-agentbrowser-fixture'], {}), /ENOENT/);
+});
+
+test('executable runner inspects an expected failed JSON exit with isolated stdin, env and cwd', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agentbrowser-executable-'));
+  try {
+    const actualDirectory = await realpath(directory);
+    const executable = command(`
+      let input = '';
+      process.stdin.setEncoding('utf8');
+      for await (const chunk of process.stdin) input += chunk;
+      process.stdout.write(JSON.stringify({ input: JSON.parse(input), cwd: process.cwd(), marker: process.env.ACCEPTANCE_MARKER, inherited: process.env.HOME }) + '\\n');
+      process.exitCode = 1;
+    `);
+    const result = await runExecutable(executable, {
+      cwd: directory,
+      env: { ACCEPTANCE_MARKER: 'isolated' },
+      stdin: JSON.stringify({ request: 'outcome' }),
+      expectedExitCode: 1,
+    });
+    assert.equal(result.code, 1);
+    assert.equal(result.stderr, '');
+    assert.deepEqual(JSON.parse(result.stdout), {
+      input: { request: 'outcome' },
+      cwd: actualDirectory,
+      marker: 'isolated',
+    });
+    await assert.rejects(
+      runExecutable(command('process.exit(1)'), { expectedExitCode: 2 }),
+      /expected 2/
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('executable runner rejects oversized stdin before spawn', async () => {
+  let spawned = false;
+  await assert.rejects(
+    runExecutable(command('process.exit(0)'), {
+      stdin: '12345',
+      maxInputBytes: 4,
+      onSpawn: () => {
+        spawned = true;
+      },
+    }),
+    /input exceeded/
+  );
+  assert.equal(spawned, false);
+  for (const expectedExitCode of [-1, 1.5, 256]) {
+    await assert.rejects(
+      runExecutable(command('process.exit(0)'), {
+        expectedExitCode,
+        onSpawn: () => {
+          spawned = true;
+        },
+      }),
+      /Invalid expected exit code/
+    );
+  }
+  assert.equal(spawned, false);
+});
+
+test('executable runner never accepts a signal exit as an expected code', async () => {
+  await assert.rejects(
+    runExecutable(command("process.kill(process.pid, 'SIGTERM')"), { expectedExitCode: 0 }),
+    /SIGTERM/
+  );
+});
+
+test('executable runner closes stdin and kills a child that hangs after EOF', async () => {
+  let pid;
+  await assert.rejects(
+    runExecutable(
+      command(`
+        for await (const _chunk of process.stdin) {}
+        setInterval(() => {}, 1000);
+      `),
+      {
+        stdin: '{}',
+        timeoutMs: 50,
+        onSpawn: (child) => {
+          pid = child.pid;
+        },
+      }
+    ),
+    /deadline/
+  );
+  assert.ok(pid);
+  assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
 });
 
 test('public smoke commands accept explicit versions and propagate failure exit codes', async () => {

@@ -58,8 +58,10 @@ consumption remains T8 work.
 T2 includes a configurable REST/SDK/CLI outcome run released in 1.8.20, over the
 existing plan executor and trusted verifier/evidence registries. Subsequent develop
 increments through PR #206 add receipt correlation, admission/drain and generic
-predicate permission. Application-bound permission composition follows on develop;
-causal/CLI qualification remains active and no production evidence source is qualified.
+predicate permission. PR #207 adds application-bound permission composition on develop;
+the compiled-CLI/extracted-service causal matrix and replays pass locally against an
+audited extracted dirty candidate. Exact-head CI and delivery remain pending. T2 stays
+active and no production evidence source is qualified.
 See the
 [T2 packet](tasks/t2-shared-execution.md) and
 [dispatch-boundary](evidence/t2-dispatch-boundary.md) and
@@ -68,7 +70,9 @@ See the
 [semantic result-validation](evidence/t2-semantic-result-validation.md) and
 [plan verification-evidence](evidence/t2-plan-verification-evidence.md) and
 [outcome/verifier foundation](evidence/t2-outcome-verifier-foundation.md) and
-[outcome-run vertical](evidence/t2-outcome-run-vertical.md) evidence.
+[outcome-run vertical](evidence/t2-outcome-run-vertical.md) and
+[application permission](evidence/t2-application-evidence-permission.md) and
+[installed CLI application outcome](evidence/t2-cli-application-outcome.md) evidence.
 
 T4 has one public-interface slice delivered in 1.8.20 by PR #201: bounded,
 authenticated application discovery, execution and receipt lookup now use the shared
