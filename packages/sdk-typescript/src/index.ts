@@ -8,6 +8,8 @@ export * from './client.js';
 export * from './subprocess.js';
 export {
   INTERACTION_GUIDANCE,
+  ApplicationExecuteRequestSchema,
+  ApplicationOperationResultSchema,
   AutofillRequestSchema,
   AutofillReportSchema,
   PlanActionsSchema,

@@ -19,6 +19,7 @@ agentbrowser describe session create
 agentbrowser describe autofill --schema
 agentbrowser describe plan --schema
 agentbrowser describe outcome --schema
+agentbrowser describe application execute --schema
 agentbrowser describe act press | jq '{usage: .command.usage, options: .command.options}'
 agentbrowser act press --help
 ```
@@ -32,10 +33,10 @@ request that child's path to expand it.
 
 `scope: "cli-command-definitions"` means installed CLI syntax, **not** live backend
 capabilities or granted permissions. This is metadata, not a complete action JSON
-schema by default. `describe autofill --schema`, `describe plan --schema`, and
-`describe outcome --schema` include canonical input and output schemas (plan input is
-an array, matching its CLI payload); other commands currently return `schemas: null`
-with that flag.
+schema by default. `describe autofill --schema`, `describe plan --schema`,
+`describe outcome --schema`, and `describe application execute --schema` include
+canonical input and output schemas (plan input is an array, matching its CLI
+payload); other commands currently return `schemas: null` with that flag.
 Schemas are emitted only on request, with nested constraints intact. Protocol semantic
 checks (such as exactly one value/option and the supported regex subset) still apply;
 a JSON-schema match alone is not execution authorization or semantic validation.
