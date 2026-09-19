@@ -1,8 +1,8 @@
 # Agent implementation task packets
 
 Status: implementation activated by the user's subsequent foundation-first instruction.
-The table below records repository reality at AgentBrowser 1.8.19 plus the outcome-run
-vertical merged to develop afterward. Reading this task list alone does not
+The table separates the AgentBrowser 1.9.0 release candidate from subsequent work.
+Reading this task list alone does not
 authorize implementation or publication; follow the current user-authorized scope.
 
 ## Start a task with minimal context
@@ -18,9 +18,9 @@ declared files and budgets without contacting a service.
 | --- | --- | --- | --- |
 | [T0](t0-contract-catalog.md) | Complete | Released discovery/catalog foundation | None |
 | [T1](t1-context-profiles.md) | Active | Local loader, fixed profiles and run cursor delivered; installed-harness consumption remains | T0 |
-| [T2](t2-shared-execution.md) | Active | Six released slices; outcome-run vertical is merged on develop but unreleased; production evidence source and recovery matrix remain | T0 |
-| [T3](t3-qa-regressions.md) | Not started | Deterministic user-facing regression and reports | T2 |
-| [T4](t4-application-parity.md) | Not started | Public typed application operations and independent parity | T2 |
+| [T2](t2-shared-execution.md) | Complete | 1.9.0 includes shared execution, evidence permission and controlled G4 CLI/application qualification through #208; production/G6 and durability retain separate gates | T0 |
+| [T3](t3-qa-regressions.md) | Not started; dependency-ready | Deterministic user-facing regression and reports; T2 gate satisfied | T2 |
+| [T4](t4-application-parity.md) | Active | REST/SDK/CLI public interface shipped in 1.8.20; the 1.9.0 foundation includes delegated permission composition; independent UI/API parity, production-evidence and durability gates remain | T2 |
 | [T5](t5-durable-recovery.md) | Not started | Optional single-owner durable recovery | T2 |
 | [T6](t6-widget-strategies.md) | Active | React-select and chip-multiselect shipped in 1.8.19; mapping and broader qualification remain | T2 |
 | [T7](t7-audit-security.md) | Not started | Optional audit/security adapters and profiles | T3; T4 additionally for application-security parity |

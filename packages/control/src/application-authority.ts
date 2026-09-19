@@ -2,7 +2,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { ControlError, type SessionControl } from '@agentbrowser/core';
 import { CONTROL_OPERATION_ID } from '@agentbrowser/protocol';
 import { canonicalJson } from './canonical-json.js';
-import { SessionAuthority, type SessionPrincipal } from './session-authority.js';
+import {
+  type SessionAdmission,
+  SessionAuthority,
+  type SessionPrincipal,
+} from './session-authority.js';
 
 export interface ApplicationScope {
   readonly sessionId: string;
@@ -13,6 +17,24 @@ export interface ApplicationScope {
   readonly operationId?: string;
   readonly expectedVersion?: number;
 }
+/** Authority-owned identity for trusted receipt composition; not a wire capability. */
+export interface PreparedApplicationReceiptReader {
+  readonly identity: Readonly<{
+    admission: SessionAdmission;
+    adapter: string;
+    resource: string;
+    sessionId: string;
+    sessionIncarnation: string;
+  }>;
+  assertAuthority(): void;
+  read(operationId: string, signal?: AbortSignal): Promise<unknown>;
+}
+
+function assertReceiptId(operationId: string): void {
+  if (typeof operationId !== 'string' || !CONTROL_OPERATION_ID.test(operationId))
+    throw new ControlError('INVALID_REQUEST', 'Invalid receipt ID');
+}
+
 export type ApplicationResult<T = unknown> =
   | { status: 'read' | 'committed'; value: T }
   | { status: 'rejected'; reason: string };
@@ -183,8 +205,7 @@ export class ApplicationAuthority {
   }
 
   async lookupReceipt(sessionId: string, principal: SessionPrincipal, operationId: string) {
-    if (!CONTROL_OPERATION_ID.test(operationId))
-      throw new ControlError('INVALID_REQUEST', 'Invalid receipt ID');
+    assertReceiptId(operationId);
     return this.authority.run(sessionId, principal, {}, () =>
       this.readReceiptInScope(sessionId, operationId)
     );
@@ -192,30 +213,64 @@ export class ApplicationAuthority {
 
   /** Read-only composition inside an existing admission; never opens a second ticket. */
   async readReceiptInScope(sessionId: string, operationId: string, signal?: AbortSignal) {
-    if (!CONTROL_OPERATION_ID.test(operationId))
-      throw new ControlError('INVALID_REQUEST', 'Invalid receipt ID');
+    assertReceiptId(operationId);
+    return this.prepareReceiptReadInScope(sessionId).read(operationId, signal);
+  }
+
+  /** Capture and validate a receipt binding before a caller dispatches its existing executor. */
+  prepareReceiptReadInScope(sessionId: string): PreparedApplicationReceiptReader {
     const guard = this.authority.outputGuard(sessionId);
+    const admission = this.authority.admissionInScope(sessionId);
     const binding = this.binding(sessionId);
     const adapter = this.adapter(binding.adapter);
     const ownedScope = this.scope(sessionId, binding);
-    const scope = signal
-      ? Object.freeze({ ...ownedScope, signal: AbortSignal.any([ownedScope.signal, signal]) })
-      : ownedScope;
-    const checkAuthority = () => {
-      guard();
-      if (scope.signal.aborted)
-        throw new ControlError('CONTROL_REVOKED', 'Application receipt read cancelled');
-      if (this.binding(sessionId) !== binding || !adapter.authorize(scope))
-        throw new ControlError('CONTROL_REQUIRED', 'Application scope was revoked');
-      // Trusted authorization can synchronously revoke ownership or cancel the read.
-      guard();
-      if (scope.signal.aborted)
-        throw new ControlError('CONTROL_REVOKED', 'Application receipt read cancelled');
+    let revoked = false;
+    const checkAuthority = (scope: ApplicationScope = ownedScope) => {
+      if (revoked) throw new ControlError('CONTROL_REVOKED', 'Application receipt reader revoked');
+      try {
+        const checkAdmission = () => {
+          guard();
+          if (this.authority.admissionInScope(sessionId) !== admission)
+            throw new ControlError('CONTROL_REQUIRED', 'Application receipt admission changed');
+          if (scope.signal.aborted)
+            throw new ControlError('CONTROL_REVOKED', 'Application receipt read cancelled');
+          if (this.binding(sessionId) !== binding)
+            throw new ControlError('CONTROL_REQUIRED', 'Application scope was revoked');
+        };
+        checkAdmission();
+        if (!adapter.authorize(scope))
+          throw new ControlError('CONTROL_REQUIRED', 'Application scope was revoked');
+        // Trusted callbacks can synchronously replace authority, bindings, or cancel the read.
+        checkAdmission();
+      } catch (error) {
+        // A failed prepared capability cannot revive after a later permission regrant.
+        revoked = true;
+        throw error;
+      }
     };
     checkAuthority();
-    const receipt = await adapter.receipt(scope, operationId);
-    checkAuthority();
-    return receipt;
+    return Object.freeze({
+      identity: Object.freeze({
+        admission,
+        adapter: binding.adapter,
+        resource: binding.resource,
+        sessionId,
+        sessionIncarnation: ownedScope.sessionIncarnation,
+      }),
+      assertAuthority: () => checkAuthority(),
+      read: async (operationId: string, signal?: AbortSignal) => {
+        assertReceiptId(operationId);
+        const scope = signal
+          ? Object.freeze({ ...ownedScope, signal: AbortSignal.any([ownedScope.signal, signal]) })
+          : ownedScope;
+        return this.authority.trackReadInScope(sessionId, async () => {
+          checkAuthority(scope);
+          const receipt = await adapter.receipt(scope, operationId);
+          checkAuthority(scope);
+          return receipt;
+        });
+      },
+    });
   }
 
   private scope(

@@ -1,9 +1,9 @@
 # AgentBrowser from shell-based agents
 
-Status: CLI bulk autofill and custom widget strategies shipped through 1.8.19. Offline
-`describe`, bounded JSON input and plan/autofill result validation are delivered. The
-`outcome` merged to develop after the 1.8.19 release; use a build containing that
-increment for those commands until a later release includes it.
+Status: AgentBrowser 1.9.0 includes offline `describe`, bounded JSON input,
+plan/autofill result validation and receipt-correlated `outcome`. Its installed
+CLI/service qualification covers a controlled G4 fixture; it does not qualify a
+production evidence source, G6 independence or durable recovery.
 
 The CLI is a thin SDK client to the shared AgentBrowser service. It owns no browser
 session state or alternate executor. Use ordinary Bash/shell tools to inspect JSON;
@@ -149,6 +149,21 @@ complete report on stdout. Preserve it for diagnosis and reconcile uncertain wri
 do not replay the mutation automatically. The server deployment must register the
 exact verifier and read-only evidence source. Verifier input is bounded JSON and can
 be private; the response contains only verifier metadata and opaque evidence IDs.
+
+For a trusted source configured to require business receipt correlation, include
+`"evidenceCorrelationId": "save-profile-42"` inside `verification` in `outcome.json`.
+This is the application's receipt operation ID, obtained through that application's
+supported contract. It is separate from the CLI `--operation-id`, which identifies
+the service invocation. The correlation ID permits 1–128 ASCII letters, digits,
+underscores or hyphens and grants no additional access. Do not substitute the service
+ID or invent a receipt ID for an application that provides no correlation contract.
+A missing ID for a source that requires it, or an ID supplied to a source that does
+not support correlation, prevents execution with `unsupported/not_started`. Changing
+correlation under an already-used service operation ID conflicts; it cannot replay a
+write. No production receipt source is registered by default. AgentBrowser 1.9.0
+qualifies application-receipt verification only with a controlled, operator-authorized
+G4 fixture; delegated browser modes require an explicit permission policy before
+production use.
 
 Follow the shared [modular implementation plan](spec/tasks/README.md). T0 is complete;
 T8 owns installed-harness qualification. The existing MCP increment has a

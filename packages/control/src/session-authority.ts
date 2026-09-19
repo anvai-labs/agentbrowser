@@ -20,6 +20,9 @@ export type SessionPrincipal =
       mode: AgentMode;
       bindingGeneration: string;
     };
+export type SessionAdmission =
+  | Readonly<{ actor: 'operator'; tenant: string }>
+  | Readonly<{ actor: 'agent'; tenant: string; mode: AgentMode }>;
 type Entry = {
   control: SessionControl;
   incarnation: string;
@@ -31,8 +34,34 @@ type Entry = {
   expiresAt?: number;
   onExpire?: () => void;
 };
-type Scope = { sessionId: string; entry: Entry; ticket: ControlTicket };
+type Scope = {
+  sessionId: string;
+  entry: Entry;
+  ticket: ControlTicket;
+  admission: SessionAdmission;
+  open: boolean;
+  pending: Set<Promise<unknown>>;
+};
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
+
+/** Read caller-owned fields once before consulting mutable authority state. */
+function snapshotPrincipal(principal: SessionPrincipal): SessionPrincipal {
+  const actor = principal.actor;
+  if (actor === 'operator') {
+    const tenant = principal.tenant;
+    return { actor, ...(tenant !== undefined ? { tenant } : {}) };
+  }
+  if (actor === 'agent')
+    return {
+      actor,
+      tenant: principal.tenant,
+      sessionId: principal.sessionId,
+      epoch: principal.epoch,
+      mode: principal.mode,
+      bindingGeneration: principal.bindingGeneration,
+    };
+  throw new ControlError('CONTROL_REQUIRED', 'Session authority does not match');
+}
 
 /** Credentials stay in the shared composition layer, separate from core state. */
 export class SessionAuthority {
@@ -175,49 +204,125 @@ export class SessionAuthority {
     fn: () => Promise<T>,
     failed: () => boolean | 'rejected' = () => false
   ): Promise<T | { replay: true; operation: unknown }> {
-    this.assertPrincipal(sessionId, principal);
-    const entry = this.require(sessionId);
+    const admitted = this.admit(sessionId, principal);
+    const { entry, admission } = admitted;
     const ticket = entry.control.begin({
-      actor: principal.actor,
-      ...(principal.actor === 'agent' ? { epoch: principal.epoch } : {}),
+      actor: admission.actor,
+      ...(admitted.epoch !== undefined ? { epoch: admitted.epoch } : {}),
       ...(operation.id
         ? { operationId: operation.id, fingerprint: operation.fingerprint ?? '' }
         : {}),
     });
     if ('replay' in ticket) return { replay: true, operation: ticket.replay };
-    return this.scope.run({ sessionId, entry, ticket }, async () => {
+    const scope: Scope = { sessionId, entry, ticket, admission, open: true, pending: new Set() };
+    return this.scope.run(scope, async () => {
+      let status: Parameters<SessionControl['finish']>[1] = 'failed';
       try {
         const result = await fn();
         if (this.require(sessionId) !== entry)
           throw new ControlError('CONTROL_REVOKED', 'Session owner changed');
         entry.control.check(ticket);
         const failure = failed();
-        entry.control.finish(
-          ticket,
+        status =
           failure === 'rejected'
             ? 'failed'
             : failure
               ? ticket.didDispatch
                 ? 'outcome_unknown'
                 : 'failed'
-              : 'completed'
-        );
+              : 'completed';
         return result;
       } catch (error) {
-        entry.control.finish(ticket, ticket.didDispatch ? 'outcome_unknown' : 'failed');
+        status = ticket.didDispatch ? 'outcome_unknown' : 'failed';
         throw error;
+      } finally {
+        // Response completion ends permission to do more work, even while prior I/O drains.
+        scope.open = false;
+        const finish = () => {
+          try {
+            if (this.require(sessionId) !== entry)
+              throw new ControlError('CONTROL_REVOKED', 'Session owner changed');
+            entry.control.check(ticket);
+          } catch {
+            status = ticket.didDispatch ? 'outcome_unknown' : 'failed';
+          }
+          // Finish only the captured control; removal/re-registration cannot release a new owner.
+          entry.control.finish(ticket, status);
+        };
+        if (scope.pending.size === 0) finish();
+        else
+          void Promise.allSettled([...scope.pending])
+            .then(finish)
+            .catch(() => undefined);
       }
     });
   }
 
+  /** Retain read-only observation I/O through drain; writes must settle inside run itself. */
+  trackReadInScope<T>(sessionId: string, callback: () => T | PromiseLike<T>): Promise<T> {
+    this.assert(sessionId);
+    const scope = this.scope.getStore();
+    if (!scope) throw new ControlError('CONTROL_REQUIRED', 'Missing operation authority');
+    let start: () => void = () => {};
+    const task = new Promise<T>((resolve, reject) => {
+      start = () => {
+        try {
+          resolve(callback());
+        } catch (error) {
+          reject(error);
+        }
+      };
+    });
+    scope.pending.add(task);
+    // Attach both handlers immediately: tracking must never introduce unhandled rejection.
+    void task.then(
+      () => scope.pending.delete(task),
+      () => scope.pending.delete(task)
+    );
+    // Register before invocation while preserving the caller's synchronous admission checks.
+    start();
+    return task;
+  }
+
   assertPrincipal(sessionId: string, principal: SessionPrincipal): void {
+    this.admit(sessionId, principal);
+  }
+
+  private admit(
+    sessionId: string,
+    principal: SessionPrincipal
+  ): { entry: Entry; admission: SessionAdmission; epoch?: number } {
+    const candidate = snapshotPrincipal(principal);
     const entry = this.require(sessionId);
-    if (
-      principal.tenant !== entry.tenant ||
-      (principal.actor === 'agent' && principal.sessionId !== sessionId)
-    )
-      throw new ControlError('CONTROL_REQUIRED', 'Session authority does not match');
-    if (principal.actor === 'agent') entry.control.authorizeAgent(principal.epoch);
+    if (candidate.actor === 'operator') {
+      if (candidate.tenant !== entry.tenant)
+        throw new ControlError('CONTROL_REQUIRED', 'Session authority does not match');
+      return {
+        entry,
+        admission: Object.freeze({ actor: 'operator', tenant: entry.tenant }),
+      };
+    }
+    if (candidate.actor === 'agent') {
+      const agent = entry.agent;
+      if (
+        !agent ||
+        candidate.sessionId !== sessionId ||
+        candidate.sessionId !== agent.sessionId ||
+        candidate.tenant !== entry.tenant ||
+        candidate.tenant !== agent.tenant ||
+        candidate.epoch !== agent.epoch ||
+        candidate.mode !== agent.mode ||
+        candidate.bindingGeneration !== agent.bindingGeneration
+      )
+        throw new ControlError('CONTROL_REQUIRED', 'Session authority does not match');
+      entry.control.authorizeAgent(agent.epoch);
+      return {
+        entry,
+        admission: Object.freeze({ actor: 'agent', tenant: entry.tenant, mode: agent.mode }),
+        epoch: agent.epoch,
+      };
+    }
+    throw new ControlError('CONTROL_REQUIRED', 'Session authority does not match');
   }
 
   assert(sessionId: string, dispatch = false): void {
@@ -225,7 +330,7 @@ export class SessionAuthority {
     const entry =
       this.active(sessionId) ?? (scope?.sessionId === sessionId ? scope.entry : undefined);
     if (!entry) throw new ControlError('CONTROL_REVOKED', 'Controlled session is unavailable');
-    if (!scope || scope.sessionId !== sessionId || scope.entry !== entry)
+    if (!scope || !scope.open || scope.sessionId !== sessionId || scope.entry !== entry)
       throw new ControlError(
         'CONTROL_REQUIRED',
         'Controlled browser access requires an admitted principal'
@@ -243,12 +348,21 @@ export class SessionAuthority {
     return scope.ticket.didDispatch;
   }
 
+  /** Immutable identity captured from trusted authority state when this ticket was admitted. */
+  admissionInScope(sessionId: string): SessionAdmission {
+    this.assert(sessionId);
+    const scope = this.scope.getStore();
+    if (!scope || scope.sessionId !== sessionId)
+      throw new ControlError('CONTROL_REQUIRED', 'Missing operation authority');
+    return scope.admission;
+  }
+
   outputGuard(sessionId: string): () => void {
     this.assert(sessionId);
     const scope = this.scope.getStore();
     if (!scope) throw new ControlError('CONTROL_REQUIRED', 'Missing output authority');
     return () => {
-      if (this.active(sessionId) !== scope.entry)
+      if (!scope.open || this.active(sessionId) !== scope.entry)
         throw new ControlError('CONTROL_REVOKED', 'Session owner expired or changed');
       scope.entry.control.check(scope.ticket);
     };
@@ -281,7 +395,14 @@ export class SessionAuthority {
     return this.require(sessionId).signal;
   }
   isAgent(): boolean {
-    return this.scope.getStore()?.ticket.actor === 'agent';
+    const scope = this.scope.getStore();
+    if (!scope || !scope.open || scope.ticket.actor !== 'agent') return false;
+    try {
+      this.assert(scope.sessionId);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   guardPage(sessionId: string, page: EnginePage): EnginePage {

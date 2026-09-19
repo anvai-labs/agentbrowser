@@ -69,6 +69,80 @@ const base = () => ({
 });
 
 describe('verified outcome runner', () => {
+  it.each([
+    { required: true, correlation: undefined, availability: 'unsupported' },
+    { required: false, correlation: 'business-1', availability: 'unsupported' },
+    { required: true, correlation: '../PRIVATE', availability: 'blocked' },
+    { required: true, correlation: 'x'.repeat(129), availability: 'blocked' },
+  ])(
+    'preflights source correlation before dispatch (%j)',
+    async ({ required, correlation, availability }) => {
+      const options = base();
+      const read = vi.fn(() => ({
+        status: 'ready' as const,
+        evidence: 2,
+        evidenceRefIds: ['ev_1'],
+      }));
+      const cleanup = vi.fn();
+      const result = await runVerifiedOutcome({
+        ...options,
+        ...(correlation !== undefined ? { evidenceCorrelationId: correlation } : {}),
+        evidenceSources: new TrustedEvidenceSourceRegistry<undefined>([
+          defineEvidenceSource({
+            descriptor: {
+              id: 'counter.snapshot',
+              capability: 'application.read.counter',
+              ...(required ? { correlation: 'required' as const } : {}),
+            },
+            read,
+            cleanup,
+          }),
+        ]),
+      });
+      expect(result.outcome).toMatchObject({
+        availability,
+        execution: 'not_started',
+        verification: { status: 'unknown', evidenceRefIds: [] },
+        cleanup: 'complete',
+      });
+      expect(options.execute).not.toHaveBeenCalled();
+      expect(read).not.toHaveBeenCalled();
+      expect(cleanup).toHaveBeenCalledOnce();
+      expect(JSON.stringify(result)).not.toContain('PRIVATE');
+    }
+  );
+
+  it('passes one stable business correlation to every read despite caller mutation', async () => {
+    const read = vi
+      .fn()
+      .mockReturnValueOnce({ status: 'pending' })
+      .mockReturnValueOnce({ status: 'ready', evidence: 2, evidenceRefIds: ['ev_business'] });
+    const options = {
+      ...base(),
+      evidenceCorrelationId: 'business-1',
+      evidenceSources: new TrustedEvidenceSourceRegistry<undefined>([
+        defineEvidenceSource({
+          descriptor: {
+            id: 'counter.snapshot',
+            capability: 'application.read.counter',
+            correlation: 'required',
+          },
+          read,
+        }),
+      ]),
+    };
+    options.execute.mockImplementation(async () => {
+      options.evidenceCorrelationId = 'changed';
+      return { ok: true };
+    });
+    const result = await runVerifiedOutcome(options);
+    expect(result.outcome.verification.status).toBe('passed');
+    expect(options.execute).toHaveBeenCalledOnce();
+    expect(read).toHaveBeenCalledTimes(2);
+    for (const call of read.mock.calls) expect(call[2]).toBe('business-1');
+    expect(JSON.stringify(result)).not.toContain('business-1');
+  });
+
   it.each(['resolved', 'rejected', 'thenable'] as const)(
     'refuses an asynchronous input parser (%s) without dispatch or unhandled rejection',
     async (mode) => {
@@ -452,10 +526,12 @@ describe('verified outcome runner', () => {
     let phase = 'before-execute';
     const assertAuthority = vi.fn(() => assertions.push(phase));
     const execute = vi.fn(() => {
+      expect(assertions.at(-1)).toBe('before-execute');
       phase = 'after-execute';
       return 1;
     });
     const read = vi.fn(() => {
+      expect(assertions.at(-1)).toBe('after-execute');
       phase = 'after-read';
       return { status: 'ready' as const, evidence: 2, evidenceRefIds: ['ev_counter'] };
     });
@@ -465,14 +541,7 @@ describe('verified outcome runner', () => {
       evidenceSources: sourceRegistry(read),
       assertAuthority,
     });
-    expect(assertions).toEqual([
-      'before-execute',
-      'before-execute',
-      'after-execute',
-      'after-execute',
-      'after-read',
-      'after-read',
-    ]);
+    expect(assertions.at(-1)).toBe('after-read');
 
     const blocked = base();
     blocked.assertAuthority.mockImplementation(() => {
@@ -607,6 +676,56 @@ describe('verified outcome runner', () => {
 });
 
 describe('trusted evidence source registry', () => {
+  it('captures the opted-in descriptor and callback and enforces correlation for direct reads', async () => {
+    const descriptor: { id: string; capability: string; correlation?: 'required' } = {
+      id: 'counter.snapshot',
+      capability: 'application.read.counter',
+      correlation: 'required',
+    };
+    const read = vi.fn(() => ({ status: 'pending' as const }));
+    const definition = { descriptor, read };
+    const registry = new TrustedEvidenceSourceRegistry([definition]);
+    Object.assign(descriptor, { correlation: undefined });
+    definition.read = vi.fn(() => {
+      throw new Error('PRIVATE-REPLACED');
+    });
+    const prepared = registry.prepareRead(
+      'counter.snapshot',
+      'application.read.counter',
+      undefined,
+      'business-1'
+    );
+    const signal = new AbortController().signal;
+    expect(await prepared?.(signal)).toEqual({ status: 'pending' });
+    expect(read).toHaveBeenCalledWith(undefined, signal, 'business-1');
+    expect(() =>
+      registry.read('counter.snapshot', 'application.read.counter', undefined, signal)
+    ).toThrow('Unsupported evidence correlation');
+    expect(() =>
+      registry.read('counter.snapshot', 'application.read.counter', undefined, signal, '../PRIVATE')
+    ).toThrow(/^Invalid evidence correlation$/);
+    expect(read).toHaveBeenCalledOnce();
+  });
+
+  it('rejects malformed or accessor-backed source correlation declarations without invoking accessors', () => {
+    const descriptor = { id: 'counter.snapshot', capability: 'application.read.counter' };
+    const get = vi.fn(() => 'required');
+    for (const candidate of [
+      { ...descriptor, correlation: 'optional' },
+      { ...descriptor, correlation: undefined },
+      { ...descriptor, correlation: 'required', private: true },
+      Object.defineProperty({ ...descriptor }, 'correlation', { enumerable: true, get }),
+    ]) {
+      expect(() =>
+        defineEvidenceSource({
+          descriptor: candidate as never,
+          read: () => ({ status: 'pending' }),
+        })
+      ).toThrow('Invalid evidence source descriptor');
+    }
+    expect(get).not.toHaveBeenCalled();
+  });
+
   it('snapshots descriptors, captures callbacks, rejects duplicates, and has no registration API', async () => {
     const descriptor = { id: 'counter.snapshot', capability: 'application.read.counter' };
     const definition = {

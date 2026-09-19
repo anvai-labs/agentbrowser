@@ -41,7 +41,15 @@ try {
   await assert.rejects(port.readReceiptInScope(sessionId, 'effect-1'));
   const receipt = await sessions.authority.run(sessionId, agent,
     { id: 'outer-run-1', fingerprint: 'fixture-read' },
-    () => port.readReceiptInScope(sessionId, 'effect-1'));
+    async () => {
+      const prepared = port.prepareReceiptReadInScope(sessionId);
+      assert.deepEqual(prepared.identity.admission, { actor: 'agent', tenant: 'owner', mode: 'qa' });
+      assert.equal(prepared.identity.adapter, 'owned-counter');
+      assert.equal(prepared.identity.resource, 'account');
+      assert.ok(Object.isFrozen(prepared.identity));
+      prepared.assertAuthority();
+      return prepared.read('effect-1');
+    });
   assert.deepEqual(receipt, { operationId: 'effect-1', total: 1 });
   assert.equal(sessions.authority.get(sessionId).operation('outer-run-1').dispatched, false);
   assert.equal(total, 1);

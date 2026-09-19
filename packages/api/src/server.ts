@@ -38,6 +38,7 @@ import {
   AgentBrowserService,
   type ServiceActRequest,
   ServiceError,
+  type ServiceEvidenceSourceBuilder,
   type ServiceOutcomeEvidenceContext,
   type ServiceSessionRequest,
 } from './service.js';
@@ -80,6 +81,10 @@ export interface ServerOptions {
   verifierRegistry?: TrustedVerifierRegistry;
   /** Trusted evidence adapters; request bodies cannot register or select arbitrary code. */
   evidenceSourceRegistry?: TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>;
+  /** Lazy evidence composition over this service's application authority. */
+  evidenceSourceRegistryProvider?: (
+    sources: ServiceEvidenceSourceBuilder
+  ) => TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>;
   /**
    * Trusted application adapters for the shared-infra application surface.
    * Without adapters the application routes fail closed: no binding can be
@@ -313,8 +318,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       ? { defaultIdleTimeoutMs: options.defaultIdleTimeoutMs }
       : {}),
     ...(options.verifierRegistry ? { verifierRegistry: options.verifierRegistry } : {}),
-    ...(options.evidenceSourceRegistry
+    ...(options.evidenceSourceRegistry !== undefined
       ? { evidenceSourceRegistry: options.evidenceSourceRegistry }
+      : {}),
+    ...(options.evidenceSourceRegistryProvider !== undefined
+      ? { evidenceSourceRegistryProvider: options.evidenceSourceRegistryProvider }
       : {}),
     ...(options.applicationAdapters ? { applicationAdapters: options.applicationAdapters } : {}),
   });

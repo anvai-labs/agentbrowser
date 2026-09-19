@@ -5,7 +5,9 @@
 
 AgentBrowser lets AI agents safely and reliably operate **authorized** websites through a compact, deterministic interface: semantic observations instead of screenshots, stable element references with staleness detection, egress policy enforcement, and approval gates for side effects.
 
-The opt-in [delegated-session workflow](docs/delegated-sessions.md) adds a human control panel, revocable session tokens, and operation reconciliation for cooperating agent harnesses. Use a build containing this feature; the existing release installation below remains the legacy entry point.
+The opt-in [delegated-session workflow](docs/delegated-sessions.md) adds a human control
+panel, revocable session tokens, and operation reconciliation for cooperating agent
+harnesses.
 
 ## Install (Homebrew)
 
@@ -42,6 +44,11 @@ For a local deployment, install the service and CLI; for a remote deployment,
 only the CLI is required on the agent host. MCP is optional in both cases. See
 [the shell-agent CLI guide](docs/cli-agent-usage.md) for bounded JSON input,
 operation reconciliation and bulk plan/autofill/outcome examples.
+
+AgentBrowser 1.9.0 includes receipt-correlated `outcome` verification for deployments
+that register an exact verifier and trusted evidence source. The controlled
+qualification establishes G4 evidence, not a production application commit or G6
+independence; see the CLI guide for the authority and evidence boundaries.
 
 ### Consuming as an MCP server
 

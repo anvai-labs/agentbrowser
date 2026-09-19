@@ -72,8 +72,9 @@ duplicate-suppression, rebinding and no-replay tests remain in the focused suite
 This identity prevents aliasing inside the current in-process, ephemeral authority. A
 future durable outcome reference must persist its host/service fence and return a
 typed, independently verifiable result. Trusted verifier registration now exists in the
-[outcome foundation](t2-outcome-verifier-foundation.md), but public application receipt
-consumers and production source qualification remain unfinished. Main promotion and
+[outcome foundation](t2-outcome-verifier-foundation.md), and v1.8.20 exposes application binding, discovery, execution and receipt lookup
+through REST, SDK and CLI. Production outcome-source qualification and explicit permission
+for delegated browser-mode receipt verification remain unfinished. Main promotion and
 release are outside this slice's develop delivery.
 
 ## Admitted receipt read follow-up
@@ -99,6 +100,88 @@ read abort with pending-admission drain, and synchronous revocation inside autho
 The existing incarnation, same-resource rebind and class-adapter receiver tests use the
 shared lookup implementation unchanged.
 
-This is an in-process foundation only. The HTTP outcome source still needs explicit
-business correlation; no production evidence source, public receipt endpoint, durable
-receipt schema, new CLI/MCP command or application-commit claim is introduced.
+This is an in-process foundation. The subsequent
+[outcome correlation slice](t2-outcome-run-vertical.md#business-receipt-correlation-follow-up)
+connects explicit business IDs to this helper through an operator-authorized fixture
+source, reusing v1.8.20 public application binding and execution. The correlation slice
+adds no production evidence source, durable receipt schema, CLI/MCP command or
+application-commit claim. It does not grant browser modes access to application receipts.
+
+## Receipt preflight and admitted identity
+
+`SessionAuthority` validates agent session, tenant, epoch, mode and binding generation
+against its stored grant before admitting an operation. It captures an immutable
+`SessionAdmission` from authority-owned state, so later caller mutation cannot change
+the admitted actor, tenant or mode. Operators have no delegated mode. The accessor
+requires the original live ticket; it cannot be read outside admission or after takeover.
+
+`ApplicationAuthority.prepareReceiptReadInScope` performs the existing authority,
+binding, authorization and cancellation checks synchronously before the caller dispatches
+its executor. It captures one frozen identity and the existing adapter callbacks without
+reading evidence, dispatching a write or opening a second admission. Each read validates
+the business ID, combines its own deadline with session cancellation and rechecks before
+and after receipt I/O. Explicit guards perform the same checks. A caught authority
+failure permanently invalidates that reader, including while a receipt is pending; late
+results are withheld and the operation remains admitted until the adapter settles.
+Standalone and admitted receipt lookup both reuse the prepared implementation.
+
+Failure-first tests exposed the missing preparation helper and acceptance of altered
+grant metadata. Coverage includes frozen identity, no preflight I/O, wrong/missing
+admission, unbound/unauthorized scope, caller mutation, ticket lifetime, observed
+deny/regrant, malformed IDs, independent per-read deadlines and pending receipt drain.
+Caller principal fields are read once before consulting authority state; a regression
+test rejects session removal from a property getter during principal validation.
+The packaged browser-free acceptance checks the same identity and reader contract.
+
+Validation on 2026-09-18: all 109 control tests and 21 application HTTP/outcome tests
+pass, along with control type-check, packaged application independence, all 82 spec
+context selections and repository documentation links. Existing receipt cancellation,
+takeover, incarnation, rebind and adapter-receiver tests remain in the shared suite.
+
+This foundation adds no wire capability or delegated browser-mode permission. A future
+policy must separately authorize an exact source/predicate and bounded input domain,
+and fence permission changes with a monotonic generation. An unobserved revoke/regrant
+cycle is not detected by the existing boolean adapter authorization. Causal UI-to-commit
+qualification and a production evidence source are still pending; correlation alone
+cannot establish that a new UI action caused a pre-existing application receipt.
+
+## Receipt timeout and admission drain
+
+The generic outcome runner bounds reads with a deadline race. A receipt adapter can
+ignore cancellation, so that race can return unknown verification before the underlying
+read settles. Previously the outer `SessionAuthority.run` then finished its ticket,
+allowing a second operation while the first receipt was still pending. Direct receipt
+tests alone did not expose this composition defect.
+
+`SessionAuthority.trackReadInScope` now registers read-only observation with the existing
+ticket before invoking its callback. Writes must settle inside `run`; this helper must
+not detach their completion. Application receipt reads use it for the full authorization,
+adapter I/O and output-check sequence. When composition returns, the authority closes
+the logical scope immediately and retains the busy ticket until all registered work
+settles. `assert`, admission access, output guards, page guards and `isAgent` cannot
+retain authority through stale continuations. There is no new operation state, queue,
+retry path, package or wire field; the existing `in_flight` state lasts through drain.
+
+The HTTP response remains bounded and reports unknown verification. While draining,
+duplicate operation IDs replay the in-flight record without executing again; other
+operations, binding changes and resume review fail busy. Takeover enters
+`PAUSE_REQUESTED` until settlement. The finalizer uses the precomputed execution
+classification unless authority was revoked, in which case dispatched work becomes
+`outcome_unknown` and undispatched work `failed`. A `completed` operation ledger never
+converts unknown verification to a passing outcome. Finalization targets the captured
+control object, so removal and same-ID registration cannot release a replacement ticket.
+
+Failure-first coverage reproduced both direct early completion and a real operator
+HTTP outcome returning while its receipt remained unresolved. The passing tests cover
+the HTTP output guard, bounded unknown response, in-flight replay, overlapping operation
+and review refusal, multiple pending tasks, rejection, late scope access, takeover,
+session replacement and throwing expiration cleanup. On 2026-09-18, all 116 control
+tests and 24 focused application HTTP/outcome/owner-lifecycle tests pass, along with
+control type-check.
+
+This guarantee applies only to explicitly tracked work, initially application receipt
+I/O. Generic source reads, cleanup and engine calls are not automatically drained.
+A receipt that never settles can keep a live session busy until host removal/TTL;
+removing authority restores capacity through a new incarnation but cannot cancel
+non-cooperative external I/O or free everything it retains. Exact delegated predicate
+permission, versioned policy fences and causal UI-to-commit qualification remain next.

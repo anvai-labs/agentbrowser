@@ -8,6 +8,8 @@ durable TestRun store, new MCP tool, or all of T2.
 
 `POST /v1/sessions/{sessionId}/pages/{pageId}/outcomes` accepts one bounded request:
 the existing plan actions plus an exact trusted verifier ID/version and verifier input.
+An optional `verification.evidenceCorrelationId` selects a business receipt for a source
+that explicitly requires it; it grants no authority and is separate from the service ID.
 It returns the existing plan report beside the canonical outcome projection. There is
 no caller-supplied or returned aggregate `ok`/`pass` field. The request-relative parser
 pins action count, verified-fill evidence requirements and verifier identity before
@@ -15,8 +17,8 @@ execution, then rejects contradictory reports.
 
 The control package owns one reusable `runVerifiedOutcome` composition helper. It:
 
-1. resolves the verifier and exact evidence-source capability, then snapshots and
-   parses verifier input before dispatch;
+1. resolves the verifier, exact evidence-source capability and correlation compatibility,
+   then snapshots and parses verifier input before dispatch;
 2. executes the injected existing executor at most once;
 3. polls only the registered read-only source within verifier read/time budgets,
    yielding for the trusted interval after each pending result;
@@ -26,8 +28,9 @@ The control package owns one reusable `runVerifiedOutcome` composition helper. I
 
 The helper owns no browser, service session, HTTP route, artifact store or retrying
 write path. The API supplies current session/page authority and the existing plan
-executor. Evidence adapters receive only session/page/tenant identity and an abort
-signal. Request data cannot register code, arbitrary evidence readers or verifier
+executor. Evidence adapters receive session/page/tenant identity and an abort signal;
+an opted-in source receives the validated correlation ID as a separate argument.
+Request data cannot register code, arbitrary evidence readers or verifier
 predicates.
 
 Missing evidence capability is an honest `unsupported/not_started` result with a
@@ -75,8 +78,10 @@ empty UI plans, strict/private replay parsing and request/replay operation-ID bi
 
 This seam reports `testedSeam: ui` because it executes the browser plan. A future
 application-mode adapter must retain its own seam and durable receipt identity rather
-than relabel this report. T2 remains open until at least one production evidence source
-is qualified and the remaining authority/recovery acceptance matrix passes.
+than relabel this report. Production-source qualification and independent UI/API parity
+remain T4 gates; durable recovery remains T5. The shared foundation closes against the
+T2 acceptance matrix, with unsupported levels explicit; see the current
+[foundation qualification](t2-foundation-qualification.md).
 
 ## Delivery record
 
@@ -127,4 +132,48 @@ three additional regressions reproduced it before the synchronous-result guard w
 Coverage also exercises bounded/accessor/cyclic input, callback capture, prepared
 evidence validation and delegated HTTP replay recording `failed/dispatched: false`.
 No protocol schema, public CLI command, dependency or second execution path is added.
-Application-receipt correlation and production evidence-source qualification remain open.
+Production evidence-source qualification remains open.
+
+## Business receipt correlation follow-up
+
+The request's optional `verification.evidenceCorrelationId` uses the same bounded
+operation-ID schema as the operation ledger: 1–128 ASCII letters, digits, underscores
+or hyphens. The business ID is not inferred from `X-AgentBrowser-Operation-Id`.
+It is not a URL, resource binding, tenant, credential or session incarnation.
+
+Trusted source descriptors opt in with `correlation: 'required'`. Missing correlation
+for such a source, or supplied correlation for an uncorrelated source, returns
+`unsupported/not_started` before plan execution or evidence I/O. Malformed request IDs
+fail canonical input validation; malformed programmatic IDs block the runner. Registered
+cleanup still settles. Existing uncorrelated requests/sources retain their behavior.
+
+`TrustedEvidenceSourceRegistry.prepareRead` validates once and captures the stored reader,
+context and primitive business ID. All polls use that prepared reader; direct registry
+reads delegate to the same preparation logic. The service forwards only the canonical
+request field. SDK and CLI need no separate implementation, and their offline schema
+and OpenAPI projections expose the same optional field. Reports do not add correlation
+or raw receipt data; adapters remain responsible for safe evidence references.
+
+Protocol and runner tests first exposed rejection of a valid correlated request and
+silent ignoring of correlation by an uncorrelated source. Tests cover bounded/malformed
+IDs, immutable callback/descriptor capture, caller mutation during execution, every poll
+using the same ID, and no dispatch/read on correlation mismatch. Operator-authorized REST fixtures
+bind and seed receipts through the public application API added in v1.8.20, then use
+the service-owned `ApplicationAuthority.readReceiptInScope` inside the admitted outcome
+with distinct outer/business IDs. Missing and cross-session receipts cannot pass; replay performs no
+second plan/read, and changed correlation with the same outer ID conflicts.
+
+The fixture receipt is pre-created and its boolean predicate is fixture-specific. This
+proves correlation, admission and session isolation, not that the UI caused an application
+commit. No default production source, new binding endpoint, receipt store, workflow engine,
+MCP tool or dependency is added. This correlation-only slice left causal qualification
+open; the follow-up [installed CLI matrix](t2-cli-application-outcome.md) supplies controlled
+G4 negative controls. Production-source acceptance remains a separate T4 limit.
+
+Application receipt verification by delegated browser modes remains a separate permission
+boundary. Browser grants intentionally cannot use the application API. The fixture uses
+operator authorization; production evidence context remains data-only. A production
+receipt source must enforce an explicit permission/declassification policy during
+preflight, before any delegated UI dispatch. `correlation: 'required'` validates an ID;
+it grants no application capability and does not establish that policy. Raw receipt
+access and permission to expose a verified predicate must be reviewed separately.

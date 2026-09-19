@@ -1,4 +1,6 @@
 import {
+  type ApplicationScope,
+  type EvidenceAuthorizationRequest,
   TrustedEvidenceSourceRegistry,
   TrustedVerifierRegistry,
   defineEvidenceSource,
@@ -251,6 +253,542 @@ describe('verified outcome service composition', () => {
 });
 
 describe('verified outcome REST projection', () => {
+  it.each(['match', 'missing-receipt', 'other-session', 'missing-correlation'] as const)(
+    'correlates a business receipt under operator authority: %s',
+    async (mode) => {
+      const operator = { authorization: 'Bearer operator' };
+      const tenant = 'fixture-tenant';
+      const businessId = 'save-profile-42';
+      const receipts = new Map<string, boolean>();
+      const key = (
+        scope: Pick<ApplicationScope, 'tenant' | 'resource' | 'sessionIncarnation'>,
+        id: string
+      ) => JSON.stringify([scope.tenant, scope.resource, scope.sessionIncarnation, id]);
+      const receipt = vi.fn(async (scope: ApplicationScope, id: string) =>
+        receipts.get(key(scope, id))
+      );
+      let application: AgentBrowserService['applicationAuthority'] | undefined;
+      // Capture the service-owned authority only for trusted fixture composition.
+      const originalCreate = AgentBrowserService.prototype.createSession;
+      const create = vi
+        .spyOn(AgentBrowserService.prototype, 'createSession')
+        .mockImplementation(async function (this: AgentBrowserService, ...args) {
+          application = this.applicationAuthority;
+          return originalCreate.apply(this, args);
+        });
+      const execute = vi.spyOn(AgentBrowserService.prototype, 'executePlan');
+      const cleanup = vi.fn();
+      let server: Awaited<ReturnType<typeof buildServer>> | undefined;
+      try {
+        server = await buildServer({
+          engine: new FakeEngine(),
+          apiKeys: new Map([[createHash('sha256').update('operator').digest('hex'), tenant]]),
+          applicationAdapters: [
+            {
+              id: 'fixture-app',
+              authorize: (scope) => scope.tenant === tenant && scope.resource === 'profile',
+              operations: {
+                seed: {
+                  mode: 'write',
+                  prepare: () => async (scope) => {
+                    if (!scope.operationId) throw new Error('Missing fixture operation ID');
+                    receipts.set(key(scope, scope.operationId), true);
+                    return { status: 'committed', value: true };
+                  },
+                },
+              },
+              receipt,
+            },
+          ],
+          verifierRegistry: verifierRegistry(),
+          evidenceSourceRegistry: new TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>([
+            defineEvidenceSource({
+              descriptor: {
+                id: 'fixture.snapshot',
+                capability: 'fixture.read',
+                correlation: 'required',
+              },
+              read: async (context, signal, correlationId) => {
+                if (!application || !correlationId) throw new Error('Missing fixture setup');
+                const evidence = await application.readReceiptInScope(
+                  context.sessionId,
+                  correlationId,
+                  signal
+                );
+                return evidence === undefined
+                  ? { status: 'pending' }
+                  : { status: 'ready', evidence, evidenceRefIds: ['fixture_receipt_1'] };
+              },
+              cleanup,
+            }),
+          ]),
+        });
+        const firstSession = await server.inject({
+          method: 'POST',
+          url: '/v1/sessions',
+          headers: operator,
+          payload: { controlMode: 'delegated' },
+        });
+        expect(firstSession.statusCode).toBe(201);
+        const ownerSession = firstSession.json().sessionId as string;
+        const bind = async (id: string) => {
+          if (!server) throw new Error('Missing fixture server');
+          const result = await server.inject({
+            method: 'PUT',
+            url: `/v1/sessions/${id}/application`,
+            headers: operator,
+            payload: { adapter: 'fixture-app', resource: 'profile' },
+          });
+          expect(result.statusCode).toBe(200);
+        };
+        await bind(ownerSession);
+        // Seed independently of the UI action: this qualifies receipt routing, not UI causality.
+        const seeded = await server.inject({
+          method: 'POST',
+          url: `/v1/sessions/${ownerSession}/application/execute`,
+          headers: operator,
+          payload: { operation: 'seed', input: null, operationId: businessId, expectedVersion: 0 },
+        });
+        expect(seeded.statusCode).toBe(200);
+        expect(seeded.json()).toEqual({ status: 'committed', value: true });
+        let sessionId = ownerSession;
+        if (mode === 'other-session') {
+          const second = await server.inject({
+            method: 'POST',
+            url: '/v1/sessions',
+            headers: operator,
+            payload: { controlMode: 'delegated' },
+          });
+          expect(second.statusCode).toBe(201);
+          sessionId = second.json().sessionId as string;
+          await bind(sessionId);
+          expect(sessionId).not.toBe(ownerSession);
+        }
+        const base = `/v1/sessions/${sessionId}`;
+        const page = await server.inject({
+          method: 'POST',
+          url: `${base}/pages`,
+          headers: { ...operator, 'x-agentbrowser-operation-id': 'create-page' },
+        });
+        expect(page.statusCode).toBe(201);
+        const headers = {
+          ...operator,
+          'x-agentbrowser-operation-id': 'outcome-run-1',
+        };
+        const correlation = mode === 'missing-receipt' ? 'missing-receipt' : businessId;
+        const payload = {
+          ...request(),
+          verification: {
+            ...request().verification,
+            ...(mode !== 'missing-correlation' ? { evidenceCorrelationId: correlation } : {}),
+          },
+        };
+        const url = `${base}/pages/${page.json().pageId as string}/outcomes`;
+        const response = await server.inject({ method: 'POST', url, headers, payload });
+        expect(response.statusCode).toBe(200);
+        expect(isPassingOutcome(response.json().outcome)).toBe(mode === 'match');
+        expect(response.body).not.toContain(correlation);
+        expect(cleanup).toHaveBeenCalledOnce();
+        if (mode === 'missing-correlation') {
+          expect(response.json().outcome).toMatchObject({
+            availability: 'unsupported',
+            execution: 'not_started',
+          });
+          expect(execute).not.toHaveBeenCalled();
+          expect(receipt).not.toHaveBeenCalled();
+        } else {
+          expect(execute).toHaveBeenCalledOnce();
+          expect(receipt).toHaveBeenCalledTimes(mode === 'match' ? 1 : 2);
+          for (const [scope, id] of receipt.mock.calls) {
+            expect(id).toBe(correlation);
+            expect(scope).toMatchObject({ tenant, resource: 'profile', sessionId });
+            expect(scope).not.toHaveProperty('operationId');
+            expect(scope).not.toHaveProperty('bindingGeneration');
+          }
+          expect(response.json().outcome.verification.status).toBe(
+            mode === 'match' ? 'passed' : 'unknown'
+          );
+        }
+        const reads = receipt.mock.calls.length;
+        const replay = await server.inject({ method: 'POST', url, headers, payload });
+        expect(replay.json()).toMatchObject({
+          replay: true,
+          operation: { operationId: 'outcome-run-1', dispatched: mode !== 'missing-correlation' },
+        });
+        expect(receipt).toHaveBeenCalledTimes(reads);
+        expect(cleanup).toHaveBeenCalledOnce();
+        const changed = await server.inject({
+          method: 'POST',
+          url,
+          headers,
+          payload: {
+            ...payload,
+            verification: { ...payload.verification, evidenceCorrelationId: 'different-receipt' },
+          },
+        });
+        expect(changed.statusCode).toBe(409);
+        expect(receipt).toHaveBeenCalledTimes(reads);
+        expect(execute).toHaveBeenCalledTimes(mode === 'missing-correlation' ? 0 : 1);
+      } finally {
+        create.mockRestore();
+        execute.mockRestore();
+        await server?.close();
+      }
+    }
+  );
+
+  it('keeps a timed-out correlated receipt admitted until its ignored read settles', async () => {
+    const operator = { authorization: 'Bearer operator' };
+    const tenant = 'fixture-tenant';
+    const receiptEntered = Promise.withResolvers<void>();
+    const receiptRelease = Promise.withResolvers<void>();
+    const receipt = vi.fn(async (_scope: ApplicationScope, _id: string) => {
+      receiptEntered.resolve();
+      // Deliberately ignore the verifier deadline signal: the admitted adapter I/O
+      // must retain the ticket even after the bounded outcome response is sent.
+      await receiptRelease.promise;
+      return true;
+    });
+    let application: AgentBrowserService['applicationAuthority'] | undefined;
+    const originalCreate = AgentBrowserService.prototype.createSession;
+    const create = vi
+      .spyOn(AgentBrowserService.prototype, 'createSession')
+      .mockImplementation(async function (this: AgentBrowserService, ...args) {
+        application = this.applicationAuthority;
+        return originalCreate.apply(this, args);
+      });
+    const execute = vi.spyOn(AgentBrowserService.prototype, 'executePlan');
+    let server: Awaited<ReturnType<typeof buildServer>> | undefined;
+    let released = false;
+    try {
+      server = await buildServer({
+        engine: new FakeEngine(),
+        apiKeys: new Map([[createHash('sha256').update('operator').digest('hex'), tenant]]),
+        applicationAdapters: [
+          {
+            id: 'fixture-app',
+            authorize: (scope) => scope.tenant === tenant && scope.resource === 'profile',
+            operations: {},
+            receipt,
+          },
+        ],
+        verifierRegistry: verifierRegistry(),
+        evidenceSourceRegistry: new TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>([
+          defineEvidenceSource({
+            descriptor: {
+              id: 'fixture.snapshot',
+              capability: 'fixture.read',
+              correlation: 'required',
+            },
+            read: async (context, signal, correlationId) => {
+              if (!application || !correlationId) throw new Error('Missing fixture setup');
+              const evidence = await application.readReceiptInScope(
+                context.sessionId,
+                correlationId,
+                signal
+              );
+              return { status: 'ready', evidence, evidenceRefIds: ['fixture_receipt_1'] };
+            },
+          }),
+        ]),
+      });
+      const session = await server.inject({
+        method: 'POST',
+        url: '/v1/sessions',
+        headers: operator,
+        payload: { controlMode: 'delegated' },
+      });
+      expect(session.statusCode).toBe(201);
+      const sessionId = session.json().sessionId as string;
+      const base = `/v1/sessions/${sessionId}`;
+      expect(
+        (
+          await server.inject({
+            method: 'PUT',
+            url: `${base}/application`,
+            headers: operator,
+            payload: { adapter: 'fixture-app', resource: 'profile' },
+          })
+        ).statusCode
+      ).toBe(200);
+      const page = await server.inject({
+        method: 'POST',
+        url: `${base}/pages`,
+        headers: { ...operator, 'x-agentbrowser-operation-id': 'create-page' },
+      });
+      expect(page.statusCode).toBe(201);
+      const url = `${base}/pages/${page.json().pageId as string}/outcomes`;
+      const payload = {
+        ...request(),
+        verification: {
+          ...request().verification,
+          evidenceCorrelationId: 'business-receipt-1',
+        },
+      };
+      const firstHeaders = {
+        ...operator,
+        'x-agentbrowser-operation-id': 'outcome-drain-1',
+      };
+      const pendingResponse = server.inject({
+        method: 'POST',
+        url,
+        headers: firstHeaders,
+        payload,
+      });
+      await receiptEntered.promise;
+      const first = await pendingResponse;
+
+      // The verifier deadline returns through Fastify's onSend hook while the
+      // ignored adapter read remains owned by the original operation ticket.
+      expect(first.statusCode).toBe(200);
+      expect(first.json()).toMatchObject({
+        plan: { ok: true, completed: 1 },
+        outcome: {
+          availability: 'available',
+          execution: 'completed',
+          verification: { status: 'unknown', evidenceRefIds: [] },
+        },
+      });
+      expect(first.body).not.toContain('fixture_receipt_1');
+      expect(execute).toHaveBeenCalledOnce();
+      expect(receipt).toHaveBeenCalledOnce();
+
+      const operation = await server.inject({
+        url: `${base}/operations/outcome-drain-1`,
+        headers: operator,
+      });
+      expect(operation.statusCode).toBe(200);
+      expect(operation.json()).toMatchObject({ status: 'in_flight', dispatched: true });
+      const control = await server.inject({ url: `${base}/control`, headers: operator });
+      expect(control.json()).toMatchObject({ busy: true });
+
+      const replay = await server.inject({
+        method: 'POST',
+        url,
+        headers: firstHeaders,
+        payload,
+      });
+      expect(replay.statusCode).toBe(200);
+      expect(replay.json()).toMatchObject({
+        replay: true,
+        operation: { operationId: 'outcome-drain-1', status: 'in_flight', dispatched: true },
+      });
+      expect(execute).toHaveBeenCalledOnce();
+      expect(receipt).toHaveBeenCalledOnce();
+
+      const secondHeaders = {
+        ...operator,
+        'x-agentbrowser-operation-id': 'outcome-drain-2',
+      };
+      const blocked = await server.inject({
+        method: 'POST',
+        url,
+        headers: secondHeaders,
+        payload,
+      });
+      expect(blocked.statusCode).toBe(409);
+      expect(blocked.json()).toMatchObject({ error: { code: 'SESSION_BUSY' } });
+      const review = await server.inject({
+        method: 'POST',
+        url: `${base}/control/prepare-resume`,
+        headers: operator,
+      });
+      expect(review.statusCode).toBe(409);
+      expect(review.json()).toMatchObject({ error: { code: 'SESSION_BUSY' } });
+      expect(execute).toHaveBeenCalledOnce();
+      expect(receipt).toHaveBeenCalledOnce();
+
+      released = true;
+      receiptRelease.resolve();
+      await vi.waitFor(async () => {
+        const settled = await server?.inject({
+          url: `${base}/operations/outcome-drain-1`,
+          headers: operator,
+        });
+        expect(settled?.json()).toMatchObject({ status: 'completed', dispatched: true });
+      });
+      expect(
+        (await server.inject({ url: `${base}/control`, headers: operator })).json()
+      ).toMatchObject({ busy: false });
+
+      const next = await server.inject({
+        method: 'POST',
+        url,
+        headers: secondHeaders,
+        payload,
+      });
+      expect(next.statusCode).toBe(200);
+      expect(next.json().outcome.verification.status).toBe('passed');
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(receipt).toHaveBeenCalledTimes(2);
+    } finally {
+      if (!released) receiptRelease.resolve();
+      create.mockRestore();
+      execute.mockRestore();
+      await server?.close();
+    }
+  });
+
+  it.each(['denied', 'revoked-in-cleanup'] as const)(
+    'qualifies generic evidence permission across the REST operation boundary: %s',
+    async (mode) => {
+      const operator = { authorization: 'Bearer operator' };
+      let generation = 1;
+      const authorize = vi.fn(
+        (_request: EvidenceAuthorizationRequest<ServiceOutcomeEvidenceContext>) =>
+          mode === 'denied' ? undefined : { generation, currentGeneration: () => generation }
+      );
+      const read = vi.fn(() => ({
+        status: 'ready' as const,
+        evidence: true,
+        evidenceRefIds: ['fixture_evidence_1'],
+      }));
+      const cleanup = vi.fn(() => {
+        if (mode === 'revoked-in-cleanup') generation++;
+      });
+      const execute = vi.spyOn(AgentBrowserService.prototype, 'executePlan');
+      const server = await buildServer({
+        engine: new FakeEngine(),
+        apiKeys: new Map([
+          [createHash('sha256').update('operator').digest('hex'), 'fixture-tenant'],
+        ]),
+        verifierRegistry: verifierRegistry(),
+        evidenceSourceRegistry: new TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>([
+          defineEvidenceSource({
+            descriptor: {
+              id: 'fixture.snapshot',
+              capability: 'fixture.read',
+              authorization: 'required',
+            },
+            authorize,
+            read,
+            cleanup,
+          }),
+        ]),
+      });
+      try {
+        const session = await server.inject({
+          method: 'POST',
+          url: '/v1/sessions',
+          headers: operator,
+          payload: { controlMode: 'delegated' },
+        });
+        expect(session.statusCode).toBe(201);
+        const sessionId = session.json().sessionId as string;
+        const base = `/v1/sessions/${sessionId}`;
+        const page = await server.inject({
+          method: 'POST',
+          url: `${base}/pages`,
+          headers: { ...operator, 'x-agentbrowser-operation-id': 'permission-page' },
+        });
+        expect(page.statusCode).toBe(201);
+        const pageId = page.json().pageId as string;
+        const review = await server.inject({
+          method: 'POST',
+          url: `${base}/control/prepare-resume`,
+          headers: operator,
+        });
+        expect(review.statusCode).toBe(200);
+        const delegated = await server.inject({
+          method: 'POST',
+          url: `${base}/control/delegate`,
+          headers: operator,
+          payload: { epoch: review.json().epoch },
+        });
+        expect(delegated.statusCode).toBe(200);
+        const agent = { authorization: `Bearer ${delegated.json().token as string}` };
+        const headers = {
+          ...agent,
+          'x-agentbrowser-operation-id': `permission-${mode}`,
+        };
+        const url = `${base}/pages/${pageId}/outcomes`;
+        const payload = request();
+        const first = await server.inject({ method: 'POST', url, headers, payload });
+
+        expect(first.statusCode).toBe(200);
+        expect(authorize).toHaveBeenCalledOnce();
+        const permissionRequest = authorize.mock.calls[0]?.[0];
+        expect(Object.isFrozen(permissionRequest)).toBe(true);
+        expect(Object.isFrozen(permissionRequest?.source)).toBe(true);
+        expect(Object.isFrozen(permissionRequest?.verifier)).toBe(true);
+        expect(permissionRequest).toMatchObject({
+          source: {
+            id: 'fixture.snapshot',
+            capability: 'fixture.read',
+            authorization: 'required',
+          },
+          verifier: { id: 'fixture.equals', version: '1.0.0', input: true },
+          context: { sessionId, pageId, tenantId: 'fixture-tenant' },
+        });
+        expect(permissionRequest).not.toHaveProperty('correlationId');
+        expect(permissionRequest?.context).not.toHaveProperty('actor');
+        expect(permissionRequest?.context).not.toHaveProperty('mode');
+        expect(cleanup).toHaveBeenCalledOnce();
+
+        if (mode === 'denied') {
+          expect(first.json()).toMatchObject({
+            plan: {
+              ok: false,
+              completed: 0,
+              results: [],
+              error: { code: 'OUTCOME_NOT_EXECUTED' },
+            },
+            outcome: {
+              availability: 'blocked',
+              execution: 'not_started',
+              verification: { status: 'unknown', evidenceRefIds: [] },
+              cleanup: 'complete',
+            },
+          });
+          expect(execute).not.toHaveBeenCalled();
+          expect(read).not.toHaveBeenCalled();
+        } else {
+          expect(first.json()).toMatchObject({
+            plan: {
+              ok: false,
+              completed: 0,
+              results: [],
+              error: { code: 'OUTCOME_REPORT_UNAVAILABLE' },
+            },
+            outcome: {
+              availability: 'blocked',
+              execution: 'unknown',
+              verification: { status: 'unknown', evidenceRefIds: [] },
+              cleanup: 'complete',
+            },
+          });
+          expect(first.body).not.toContain('fixture_evidence_1');
+          expect(execute).toHaveBeenCalledOnce();
+          expect(read).toHaveBeenCalledOnce();
+        }
+
+        const expectedStatus = mode === 'denied' ? 'failed' : 'outcome_unknown';
+        const operation = await server.inject({
+          url: `${base}/operations/permission-${mode}`,
+          headers: operator,
+        });
+        expect(operation.statusCode).toBe(200);
+        expect(operation.json()).toMatchObject({
+          status: expectedStatus,
+          dispatched: mode !== 'denied',
+        });
+        const replay = await server.inject({ method: 'POST', url, headers, payload });
+        expect(replay.statusCode).toBe(200);
+        expect(replay.json()).toMatchObject({
+          replay: true,
+          operation: { status: expectedStatus, dispatched: mode !== 'denied' },
+        });
+        expect(authorize).toHaveBeenCalledOnce();
+        expect(execute).toHaveBeenCalledTimes(mode === 'denied' ? 0 : 1);
+        expect(read).toHaveBeenCalledTimes(mode === 'denied' ? 0 : 1);
+        expect(cleanup).toHaveBeenCalledOnce();
+      } finally {
+        execute.mockRestore();
+        await server.close();
+      }
+    }
+  );
+
   it('exposes the same canonical report without an MCP dependency', async () => {
     const server = await buildServer({
       engine: new FakeEngine(),

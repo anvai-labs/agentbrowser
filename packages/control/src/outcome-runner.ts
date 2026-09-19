@@ -1,8 +1,14 @@
-import type {
-  OutcomeProjection,
-  TrustedVerifierDescriptor,
-  VerificationProjection,
+import {
+  CONTROL_OPERATION_ID,
+  type OutcomeProjection,
+  type TrustedVerifierDescriptor,
+  type VerificationProjection,
 } from '@agentbrowser/protocol';
+import {
+  evidencePermissionGuard,
+  snapshotAuthorizationInput,
+  synchronousResult,
+} from './trusted-callback.js';
 import type { TrustedVerifierRegistry } from './verifier-registry.js';
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -10,6 +16,35 @@ const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 export interface TrustedEvidenceSourceDescriptor {
   readonly id: string;
   readonly capability: string;
+  /** Requires a business operation ID with the protocol's operation-ID grammar. */
+  readonly correlation?: 'required';
+  /** Require trusted predicate-specific permission before execution or evidence reads. */
+  readonly authorization?: 'required';
+}
+
+export interface EvidenceAuthorizationRequest<Context> {
+  readonly source: TrustedEvidenceSourceDescriptor;
+  readonly verifier: Readonly<{ id: string; version: string; input: unknown }>;
+  /** Host-owned context; application composition must supply immutable authority identity. */
+  readonly context: Context;
+  readonly correlationId?: string;
+}
+
+export interface EvidencePermission {
+  readonly generation: number;
+  /** Policy owners increment this monotonically on every permission change, including regrant. */
+  currentGeneration(): number;
+}
+
+export interface EvidenceAuthorizedAccess<Access = unknown> {
+  readonly kind: 'authorized_access_v1';
+  readonly permission: EvidencePermission;
+  readonly access: Access;
+}
+
+export interface PreparedEvidenceRead {
+  (signal: AbortSignal): EvidenceRead<unknown> | Promise<EvidenceRead<unknown>>;
+  readonly assertAuthorized: () => void;
 }
 
 export type EvidenceRead<Evidence> =
@@ -20,20 +55,32 @@ export type EvidenceRead<Evidence> =
       readonly evidenceRefIds: readonly string[];
     };
 
-export interface TrustedEvidenceSourceDefinition<Context, Evidence = unknown> {
+export interface TrustedEvidenceSourceDefinition<Context, Evidence = unknown, Access = unknown> {
   readonly descriptor: TrustedEvidenceSourceDescriptor;
+  authorize?(
+    request: EvidenceAuthorizationRequest<Context>
+  ): EvidencePermission | EvidenceAuthorizedAccess<Access> | undefined;
   read(
     context: Context,
-    signal: AbortSignal
+    signal: AbortSignal,
+    correlationId?: string,
+    access?: Access
   ): EvidenceRead<Evidence> | Promise<EvidenceRead<Evidence>>;
   cleanup?(context: Context, signal: AbortSignal): void | Promise<void>;
 }
 
 type StoredEvidenceSource<Context> = {
   readonly descriptor: TrustedEvidenceSourceDescriptor;
+  readonly authorize?:
+    | ((
+        request: EvidenceAuthorizationRequest<Context>
+      ) => EvidencePermission | EvidenceAuthorizedAccess | undefined)
+    | undefined;
   readonly read: (
     context: Context,
-    signal: AbortSignal
+    signal: AbortSignal,
+    correlationId?: string,
+    access?: unknown
   ) => EvidenceRead<unknown> | Promise<EvidenceRead<unknown>>;
   readonly cleanup?: ((context: Context, signal: AbortSignal) => void | Promise<void>) | undefined;
 };
@@ -44,36 +91,48 @@ function sourceDescriptor(input: unknown): TrustedEvidenceSourceDescriptor {
   const own = Object.getOwnPropertyDescriptors(input);
   if (
     Object.getPrototypeOf(input) !== Object.prototype ||
-    Reflect.ownKeys(own).some((key) => typeof key !== 'string') ||
-    Object.keys(own).length !== 2 ||
+    Reflect.ownKeys(own).some(
+      (key) =>
+        typeof key !== 'string' ||
+        !['id', 'capability', 'correlation', 'authorization'].includes(key)
+    ) ||
+    Object.values(own).some((property) => 'get' in property || 'set' in property) ||
     !own.id ||
     !own.capability ||
-    'get' in own.id ||
-    'set' in own.id ||
-    'get' in own.capability ||
-    'set' in own.capability ||
     typeof own.id.value !== 'string' ||
     typeof own.capability.value !== 'string' ||
     !IDENTIFIER.test(own.id.value) ||
-    !IDENTIFIER.test(own.capability.value)
+    !IDENTIFIER.test(own.capability.value) ||
+    (own.correlation !== undefined && own.correlation.value !== 'required') ||
+    (own.authorization !== undefined && own.authorization.value !== 'required')
   )
     throw new Error('Invalid evidence source descriptor');
-  return Object.freeze({ id: own.id.value, capability: own.capability.value });
+  return Object.freeze({
+    id: own.id.value,
+    capability: own.capability.value,
+    ...(own.correlation ? { correlation: 'required' as const } : {}),
+    ...(own.authorization ? { authorization: 'required' as const } : {}),
+  });
 }
 
-export function defineEvidenceSource<Context, Evidence>(definition: {
-  readonly descriptor: TrustedEvidenceSourceDescriptor;
-  read(
-    context: Context,
-    signal: AbortSignal
-  ): EvidenceRead<Evidence> | Promise<EvidenceRead<Evidence>>;
-  cleanup?(context: Context, signal: AbortSignal): void | Promise<void>;
-}): TrustedEvidenceSourceDefinition<Context, Evidence> {
+export function defineEvidenceSource<Context, Evidence, Access = unknown>(
+  definition: TrustedEvidenceSourceDefinition<Context, Evidence, Access>
+): TrustedEvidenceSourceDefinition<Context, Evidence, Access> {
   const descriptor = sourceDescriptor(definition.descriptor);
-  const { read, cleanup } = definition;
-  if (typeof read !== 'function' || (cleanup !== undefined && typeof cleanup !== 'function'))
+  const { read, cleanup, authorize } = definition;
+  if (
+    typeof read !== 'function' ||
+    (cleanup !== undefined && typeof cleanup !== 'function') ||
+    (authorize !== undefined &&
+      (typeof authorize !== 'function' || descriptor.authorization !== 'required'))
+  )
     throw new Error('Invalid evidence source definition');
-  return Object.freeze({ descriptor, read, ...(cleanup ? { cleanup } : {}) });
+  return Object.freeze({
+    descriptor,
+    read,
+    ...(cleanup ? { cleanup } : {}),
+    ...(authorize ? { authorize } : {}),
+  });
 }
 
 /** Trusted constructor-only sources; no caller-supplied scripts or mutable registration. */
@@ -82,21 +141,16 @@ export class TrustedEvidenceSourceRegistry<Context> {
 
   constructor(definitions: readonly TrustedEvidenceSourceDefinition<Context, unknown>[] = []) {
     for (const definition of definitions) {
-      const descriptor = sourceDescriptor(definition.descriptor);
+      const captured = defineEvidenceSource(definition);
+      const { descriptor, read, cleanup, authorize } = captured;
       const key = this.key(descriptor.id, descriptor.capability);
       if (this.#sources.has(key)) throw new Error('Invalid duplicate evidence source');
-      if (
-        typeof definition.read !== 'function' ||
-        (definition.cleanup !== undefined && typeof definition.cleanup !== 'function')
-      )
-        throw new Error('Invalid evidence source definition');
-      const read = definition.read;
-      const cleanup = definition.cleanup;
       this.#sources.set(
         key,
         Object.freeze({
           descriptor,
-          read: (context: Context, signal: AbortSignal) => read(context, signal),
+          ...(authorize ? { authorize } : {}),
+          read: (...args: Parameters<StoredEvidenceSource<Context>['read']>) => read(...args),
           ...(cleanup
             ? { cleanup: (context: Context, signal: AbortSignal) => cleanup(context, signal) }
             : {}),
@@ -113,9 +167,103 @@ export class TrustedEvidenceSourceRegistry<Context> {
     id: string,
     capability: string,
     context: Context,
-    signal: AbortSignal
+    signal: AbortSignal,
+    correlationId?: string,
+    verifier?: EvidenceAuthorizationRequest<Context>['verifier']
   ): EvidenceRead<unknown> | Promise<EvidenceRead<unknown>> {
-    return this.require(id, capability).read(context, signal);
+    const read = this.prepareRead(id, capability, context, correlationId, verifier);
+    if (!read) throw new Error('Unsupported evidence correlation');
+    return read(signal);
+  }
+
+  /** Shared correlation preflight, before input parsing or policy callbacks. */
+  supportsCorrelation(id: string, capability: string, correlationId?: string): boolean {
+    const source = this.require(id, capability);
+    if (
+      correlationId !== undefined &&
+      (typeof correlationId !== 'string' || !CONTROL_OPERATION_ID.test(correlationId))
+    )
+      throw new Error('Invalid evidence correlation');
+    return (source.descriptor.correlation === 'required') === (correlationId !== undefined);
+  }
+
+  /** Capture a callable reader and permission fence; undefined means unsupported correlation. */
+  prepareRead(
+    id: string,
+    capability: string,
+    context: Context,
+    correlationId?: string,
+    verifier?: EvidenceAuthorizationRequest<Context>['verifier']
+  ): PreparedEvidenceRead | undefined {
+    if (!this.supportsCorrelation(id, capability, correlationId)) return undefined;
+    const source = this.require(id, capability);
+    let assertAuthorized = () => {};
+    let hasAccess = false;
+    let access: unknown;
+    if (source.descriptor.authorization === 'required') {
+      try {
+        if (!source.authorize || !verifier) throw new Error();
+        const own = Object.getOwnPropertyDescriptors(verifier);
+        if (
+          Object.getPrototypeOf(verifier) !== Object.prototype ||
+          Reflect.ownKeys(own).length !== 3 ||
+          Object.values(own).some((property) => !Object.hasOwn(property, 'value')) ||
+          typeof own.id?.value !== 'string' ||
+          !IDENTIFIER.test(own.id.value) ||
+          typeof own.version?.value !== 'string' ||
+          !IDENTIFIER.test(own.version.value) ||
+          !own.input
+        )
+          throw new Error();
+        const stable = Object.freeze({
+          id: own.id.value as string,
+          version: own.version.value as string,
+          input: snapshotAuthorizationInput(own.input.value),
+        });
+        const request = Object.freeze({
+          source: source.descriptor,
+          verifier: stable,
+          context,
+          ...(correlationId !== undefined ? { correlationId } : {}),
+        });
+        const authorization = synchronousResult(source.authorize(request));
+        const properties = authorization && Object.getOwnPropertyDescriptors(authorization);
+        if (properties && Object.hasOwn(properties, 'kind')) {
+          if (
+            Object.getPrototypeOf(authorization) !== Object.prototype ||
+            Reflect.ownKeys(properties).length !== 3 ||
+            Object.values(properties).some((property) => !Object.hasOwn(property, 'value')) ||
+            properties.kind?.value !== 'authorized_access_v1' ||
+            !properties.permission ||
+            !properties.access
+          )
+            throw new Error('Invalid evidence access');
+          assertAuthorized = evidencePermissionGuard(properties.permission.value);
+          access = properties.access.value;
+          hasAccess = true;
+        } else {
+          assertAuthorized = evidencePermissionGuard(authorization);
+        }
+      } catch {
+        throw new Error('Evidence authorization unavailable');
+      }
+    }
+    const readSource = (signal: AbortSignal) =>
+      hasAccess
+        ? source.read(context, signal, correlationId, access)
+        : source.read(context, signal, correlationId);
+    const read = (signal: AbortSignal) => {
+      assertAuthorized();
+      if (source.descriptor.authorization !== 'required') return readSource(signal);
+      return (async () => {
+        if (signal.aborted) throw new Error('Evidence read cancelled');
+        const result = await readSource(signal);
+        assertAuthorized();
+        if (signal.aborted) throw new Error('Evidence read cancelled');
+        return result;
+      })();
+    };
+    return Object.freeze(Object.assign(read, { assertAuthorized }));
   }
 
   cleanup(
@@ -148,6 +296,7 @@ export interface VerifiedOutcomeRunOptions<Result, Context> {
   readonly evidenceSources: TrustedEvidenceSourceRegistry<Context>;
   readonly verifier: { readonly id: string; readonly version: string; readonly input: unknown };
   readonly context: Context;
+  readonly evidenceCorrelationId?: string;
   readonly execute: () => Result | Promise<Result>;
   readonly executionFailed?: (result: Result) => boolean;
   readonly assertAuthority: () => void;
@@ -253,11 +402,25 @@ function isRead(value: unknown): value is EvidenceRead<unknown> {
 export async function runVerifiedOutcome<Result, Context>(
   options: VerifiedOutcomeRunOptions<Result, Context>
 ): Promise<OutcomeRunResult<Result>> {
-  const descriptor = options.verifierRegistry.describe(
-    options.verifier.id,
-    options.verifier.version
-  );
-  const cleanups = [...(options.cleanups ?? [])];
+  // Trusted source callbacks cannot replace the host's fences or execution provenance.
+  const {
+    verifierRegistry,
+    evidenceSources,
+    verifier,
+    context,
+    evidenceCorrelationId: correlationId,
+    execute,
+    executionFailed,
+    assertAuthority,
+    didDispatch,
+    signal,
+    testedSeam,
+    now: clock,
+    cleanups: registeredCleanups,
+  } = options;
+  const { id: verifierId, version: verifierVersion, input: verifierInput } = verifier;
+  const cleanups = [...(registeredCleanups ?? [])];
+  const descriptor = verifierRegistry.describe(verifierId, verifierVersion);
   let availability: OutcomeProjection['availability'] = 'available';
   let execution: OutcomeProjection['execution'] = 'not_started';
   let verification = unknownVerification(descriptor);
@@ -265,18 +428,34 @@ export async function runVerifiedOutcome<Result, Context>(
   let hasResult = false;
   let cleanup: OutcomeProjection['cleanup'] = 'pending';
   let prepared: ReturnType<TrustedVerifierRegistry['prepare']>;
-  const now = options.now ?? (() => performance.now());
+  let readEvidence: ReturnType<TrustedEvidenceSourceRegistry<Context>['prepareRead']>;
+  const now = clock ?? (() => performance.now());
+  let accessRevoked = false;
+  const assertAccess = () => {
+    try {
+      if (accessRevoked) throw new Error();
+      assertAuthority();
+      if (readEvidence) {
+        readEvidence.assertAuthorized();
+        // Permission callbacks can synchronously revoke the host's admission.
+        assertAuthority();
+      }
+    } catch {
+      accessRevoked = true;
+      throw new Error('Outcome authority unavailable');
+    }
+  };
 
   try {
-    const exactSource = options.evidenceSources.supports(
+    const exactSource = evidenceSources.supports(
       descriptor.evidenceSource,
       descriptor.requiredCapability
     );
     if (exactSource) {
-      const sourceCleanup = options.evidenceSources.cleanup(
+      const sourceCleanup = evidenceSources.cleanup(
         descriptor.evidenceSource,
         descriptor.requiredCapability,
-        options.context
+        context
       );
       if (sourceCleanup) cleanups.push(sourceCleanup);
     } else {
@@ -284,20 +463,45 @@ export async function runVerifiedOutcome<Result, Context>(
     }
 
     if (availability === 'available') {
-      if (options.signal?.aborted) {
+      if (signal?.aborted) {
         availability = 'blocked';
       } else {
         try {
-          options.assertAuthority();
-          prepared = options.verifierRegistry.prepare(
-            descriptor.id,
-            descriptor.version,
-            options.verifier.input,
-            options.signal
+          assertAccess();
+          const correlationSupported = evidenceSources.supportsCorrelation(
+            descriptor.evidenceSource,
+            descriptor.requiredCapability,
+            correlationId
           );
-          if (!prepared) availability = 'unsupported';
-          options.assertAuthority();
-          if (options.signal?.aborted) availability = 'blocked';
+          if (correlationSupported) {
+            prepared = verifierRegistry.prepare(
+              descriptor.id,
+              descriptor.version,
+              verifierInput,
+              signal
+            );
+            if (!prepared) availability = 'unsupported';
+            else {
+              assertAccess();
+              if (signal?.aborted) throw new Error();
+              readEvidence = evidenceSources.prepareRead(
+                descriptor.evidenceSource,
+                descriptor.requiredCapability,
+                context,
+                correlationId,
+                {
+                  id: descriptor.id,
+                  version: descriptor.version,
+                  input: prepared.authorizationInput,
+                }
+              );
+              if (!readEvidence) availability = 'unsupported';
+            }
+          } else {
+            availability = 'unsupported';
+          }
+          assertAccess();
+          if (signal?.aborted) availability = 'blocked';
         } catch {
           availability = 'blocked';
         }
@@ -307,43 +511,29 @@ export async function runVerifiedOutcome<Result, Context>(
     if (availability === 'available') {
       execution = 'running';
       try {
-        result = await options.execute();
+        result = await execute();
         hasResult = true;
-        options.assertAuthority();
-        const failed = options.executionFailed?.(result) === true;
-        execution = failed
-          ? wasDispatched(options.didDispatch)
-            ? 'unknown'
-            : 'failed'
-          : 'completed';
+        assertAccess();
+        const failed = executionFailed?.(result) === true;
+        execution = failed ? (wasDispatched(didDispatch) ? 'unknown' : 'failed') : 'completed';
       } catch {
         hasResult = false;
         result = undefined;
-        execution = wasDispatched(options.didDispatch) ? 'unknown' : 'failed';
+        execution = wasDispatched(didDispatch) ? 'unknown' : 'failed';
       }
     }
 
-    if (execution === 'completed' && prepared) {
+    if (execution === 'completed' && prepared && readEvidence) {
       const started = now();
       for (let reads = 0; reads < descriptor.budget.maxReads; reads++) {
         const remaining = descriptor.budget.timeoutMs - (now() - started);
-        if (remaining <= 0 || options.signal?.aborted) break;
+        if (remaining <= 0 || signal?.aborted) break;
         let read: EvidenceRead<unknown> | typeof TIMEOUT;
         try {
-          options.assertAuthority();
-          read = await within(
-            (signal) =>
-              options.evidenceSources.read(
-                descriptor.evidenceSource,
-                descriptor.requiredCapability,
-                options.context,
-                signal
-              ),
-            remaining,
-            options.signal
-          );
+          assertAccess();
+          read = await within(readEvidence, remaining, signal);
           if (read === TIMEOUT) break;
-          options.assertAuthority();
+          assertAccess();
         } catch {
           break;
         }
@@ -355,18 +545,18 @@ export async function runVerifiedOutcome<Result, Context>(
           if (afterRead <= 0) break;
           const elapsed = await pause(
             Math.min(descriptor.budget.pollIntervalMs, afterRead),
-            options.signal
+            signal
           );
           if (!elapsed) break;
           continue;
         }
-        verification = prepared.evaluate(read.evidence, read.evidenceRefIds, options.signal);
+        verification = prepared.evaluate(read.evidence, read.evidenceRefIds, signal);
+        assertAccess();
         break;
       }
     }
   } catch {
-    if (execution === 'running')
-      execution = wasDispatched(options.didDispatch) ? 'unknown' : 'failed';
+    if (execution === 'running') execution = wasDispatched(didDispatch) ? 'unknown' : 'failed';
   } finally {
     // Promise.resolve().then invokes synchronous callbacks inside the settled promise.
     const settled = await Promise.allSettled(
@@ -389,26 +579,25 @@ export async function runVerifiedOutcome<Result, Context>(
   }
   // Cleanup is asynchronous: authority or cancellation may change after evidence
   // was accepted. Fence the final projection before releasing any result or refs.
-  let outputAuthorized = !options.signal?.aborted;
+  let outputAuthorized = !signal?.aborted;
   try {
-    options.assertAuthority();
+    assertAccess();
   } catch {
     outputAuthorized = false;
   }
-  if (!outputAuthorized || options.signal?.aborted) {
+  if (!outputAuthorized || signal?.aborted) {
     availability = 'blocked';
     verification = unknownVerification(descriptor);
     hasResult = false;
     result = undefined;
-    if (execution !== 'not_started')
-      execution = wasDispatched(options.didDispatch) ? 'unknown' : 'failed';
+    if (execution !== 'not_started') execution = wasDispatched(didDispatch) ? 'unknown' : 'failed';
   }
   const outcome: OutcomeProjection = {
     availability,
     execution,
     verification,
     cleanup,
-    testedSeam: options.testedSeam,
+    testedSeam: testedSeam,
   };
   return {
     outcome,

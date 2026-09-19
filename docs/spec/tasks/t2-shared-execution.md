@@ -1,6 +1,6 @@
 # T2: shared execution, verification and result helpers
 
-Status: active. Repository: agentbrowser. Depends on: T0.
+Status: complete; AgentBrowser 1.9.0 includes this foundation. Repository: agentbrowser. Depends on: T0.
 Inputs: core, architecture, contracts, execution, grounding.
 
 ## Reuse and scope
@@ -37,90 +37,40 @@ unsupported evidence levels rather than inventing commits. Unlock T3/T4/T5/T6.
 
 ## Current implementation state
 
-The first slice reuses the existing `ActionExecutor.beforeAction` admission seam to
-report when autofill has crossed from validation and approval into engine dispatch.
-Autofill now reports a refusal before that seam as `failed` and an exception after it
-as `uncertain`; bounded verification reads still cannot replay the write. The public
-service method and HTTP, OpenAPI, SDK, CLI and MCP contracts are unchanged, and no
-dependency or second execution state machine was added.
+The common foundations below are implemented. Detailed qualification lives in the linked
+evidence modules; load those only for the boundary being changed.
 
-The focused unit/service tests and the complete API suite cover approval refusal,
-post-dispatch engine rejection and exactly one dispatch across verification retries.
-See the [dispatch-boundary evidence](../evidence/t2-dispatch-boundary.md). Compatible
+| Foundation | Qualified behavior and evidence |
+| --- | --- |
+| Dispatch and completion | Autofill uses `ActionExecutor.beforeAction`: refusal before dispatch is failed; engine failure afterward is uncertain. One HTTP envelope classifier projects autofill, plan and action completion into `SessionAuthority`, without retrying writes. [Dispatch](../evidence/t2-dispatch-boundary.md), [HTTP classification](../evidence/t2-http-result-classification.md). |
+| Application identity | Authority-owned session incarnation separates receipt/write identity across registrations, survives same-registration rebind, and changes on textual ID reuse. Binding generation stays admission provenance. [Identity](../evidence/t2-application-identity.md). |
+| Conservative result parsing | Aggregate success requires coherent nested results and request cardinality across SDK, CLI and MCP. Explicit native fill verification retains only value-free G5 readback; this is not commit proof. [Semantic results](../evidence/t2-semantic-result-validation.md), [plan verification](../evidence/t2-plan-verification-evidence.md). |
+| Shared outcome runner | Separate availability, execution, verification, cleanup and tested-seam axes; one existing executor; bounded read-only polling; all-settled cleanup; terminal authority recheck. REST, SDK and first-class CLI share the contract; MCP is optional. Verifier input is prepared once before dispatch; legacy definitions without preparation are unsupported. [Verifier foundation](../evidence/t2-outcome-verifier-foundation.md), [vertical slice](../evidence/t2-outcome-run-vertical.md). |
+| Receipt preflight | Standalone and admitted receipt lookup share one prepared reader. Frozen admitted actor/tenant/mode comes from the validated grant. Owner, binding, adapter authorization and cancellation are checked around I/O; observed failure cannot revive the reader. No nested ticket or write dispatch. [Preflight](../evidence/t2-application-identity.md#receipt-preflight-and-admitted-identity). |
+| Receipt drain | Bounded response completion closes scope authority immediately; explicitly tracked pending receipt I/O retains the busy ticket until settlement. HTTP tests prove in-flight replay, blocked overlap, late-output withholding, takeover and safe replacement ownership. Generic source/cleanup/engine work is not automatically tracked. [Drain](../evidence/t2-application-identity.md#receipt-timeout-and-admission-drain). |
+| Business correlation | A bounded receipt ID is separate from the outer service operation ID. Opted-in sources require it and other sources reject it before dispatch. Operator REST fixtures cover scoped reads, replay and conflicts, using public application binding/execution. These fixtures establish correlation only. [Correlation](../evidence/t2-outcome-run-vertical.md#business-receipt-correlation-follow-up). |
+| Generic evidence permission | Opted-in sources authorize an exact verifier/version and frozen bounded raw input, with a generation fence through execution, reads, evaluation and cleanup. The runner captures host references before policy callbacks; observed revocation cannot revive. Delegated HTTP fixtures qualify this generic gate. [Permission](../evidence/t2-evidence-permission.md). |
 
-The second slice replaces the autofill-only HTTP failure marker with one typed
-execution-envelope classifier. Autofill, plan and single/batched action routes now
-project their existing top-level result into the same `SessionAuthority` completion
-logic. An in-band failure before dispatch is `failed`; after dispatch it is
-`outcome_unknown`; success remains `completed`. See the
-[HTTP result-classification evidence](../evidence/t2-http-result-classification.md).
+Application permission composition uses the same generic gate with a private per-read
+receipt capability, authority-owned identity and a narrow service registry provider.
+See [application permission](../evidence/t2-application-evidence-permission.md).
 
-The third slice preserves the session component of application write identity through
-the trusted adapter boundary. `ApplicationScope` now carries the authority-owned
-session ID and a per-registration incarnation, so adapters can key application
-idempotency and receipts by tenant, resource, session incarnation and raw operation
-ID. The incarnation survives bind/unbind and changes when a textual session ID is
-reused. Binding generation remains service admission provenance and is deliberately
-excluded from durable receipt lookup, allowing an authorized same-registration,
-same-resource rebind to reconcile prior application evidence. See the
-[application identity evidence](../evidence/t2-application-identity.md).
+The controlled qualification uses a compiled CLI, independently extracted service and
+real Chromium, with seven cases and seven reconciled replays against an application
+oracle. PR #208 and its exact develop merge passed all eight CI jobs. See
+[installed CLI application outcome](../evidence/t2-cli-application-outcome.md).
 
-The fourth slice makes aggregate success a conservative projection of nested results
-at the shared protocol-parser boundary. A successful plan has a contiguous, error-free
-list of successful steps whose count matches both `completed` and the original request.
-A successful autofill report contains one contiguous, error-free `verified/true` or
-intentionally `unverified/false` receipt for every requested field. The SDK supplies
-request cardinality to the canonical parsers; CLI and MCP retain the same check around
-injected clients. All three reject contradictory HTTP 200 reports with uncertain write
-guidance, no private report echo and no retry. Pessimistic `ok: false` reports and
-`verify: none` remain compatible. See the
-[semantic result evidence](../evidence/t2-semantic-result-validation.md).
+AgentBrowser 1.9.0 includes the merged foundation through PR #208. The linked evidence
+preserves the exact develop-slice identities and does not by itself claim publication.
 
-The fifth slice binds an explicitly verified native fill in a plan to its existing G5
-readback evidence. A request-relative parser snapshots only which steps require
-verification, retains no field values, and accepts only the exact value-free projection
-`{ verified: true }` for those successful steps. SDK, CLI and MCP reuse that parser;
-the stale-target remap path now preserves the same sanitized result as ordinary plan
-execution. This establishes native browser readback, not an application commit or G6
-oracle. See the
-[plan verification evidence](../evidence/t2-plan-verification-evidence.md).
+## Completion record and remaining limits
 
-The sixth slice adds one strict reference-only outcome projection with separate
-availability, execution, verification, cleanup and tested-seam axes. A pass is derived
-only from completed execution, sufficient registered verification and settled cleanup.
-An immutable trusted registry evaluates pure bounded predicates once and never acquires
-evidence, retries writes or runs cleanup. See the
-[outcome/verifier evidence](../evidence/t2-outcome-verifier-foundation.md).
+The [foundation qualification](../evidence/t2-foundation-qualification.md) maps the
+complete acceptance matrix to regression tests and records exact delivery identities.
+Independent adversarial audits close R02 execution, R04 foundation and R12 shared
+ownership. T3/T4/T5/T6 are dependency-ready; their own acceptance remains required.
 
-The seventh slice composes the existing plan executor with exact trusted evidence-source
-preflight, bounded read-only polling, verifier evaluation and all-settled cleanup. One
-request/report contract is exposed through REST, SDK and the first-class CLI; MCP is
-unchanged and optional. The response keeps execution, verification and cleanup axes
-separate, and CLI exit status derives a pass from all axes. See the
-[outcome-run evidence](../evidence/t2-outcome-run-vertical.md).
-
-No production evidence source is qualified yet, and the remaining takeover, late
-completion, application receipt and installed-surface acceptance matrix is pending.
-T2 is therefore not complete and T3 is not yet unlocked.
-
-Terminal authority qualification extends the seventh slice: after asynchronous cleanup,
-the shared runner rechecks authority and cancellation before releasing its projection.
-Revocation withholds plan data and evidence references, preserves cleanup status and
-reports dispatched execution conservatively as unknown. Service and delegated REST
-fixtures cover page closure and human takeover during cleanup without redispatch.
-
-Verifier input preflight further qualifies the same slice: the shared registry snapshots
-and parses expected input before dispatch and captures an evidence-only evaluator.
-Invalid input is blocked without executing; legacy definitions lacking preparation are
-unsupported for outcome runs. Direct registry evaluation remains compatible. The runner
-rechecks authority and cancellation after preparation, settles cleanup on refusal, and
-delegated HTTP replay records the refusal as failed with no dispatch. Application receipt
-correlation and production evidence-source qualification are still pending.
-
-The application receipt foundation now offers one read helper inside an existing
-admission, reused by standalone receipt lookup. It derives scope from existing session
-authority, preserves the separate business receipt ID and rechecks owner, binding,
-adapter authorization and cancellation after asynchronous I/O. It adds no nested ticket,
-write dispatch, ledger or retry loop. Wiring request correlation into an outcome source
-and qualifying that source are separate, unfinished steps. See the
-[application receipt evidence](../evidence/t2-application-identity.md#admitted-receipt-read-follow-up).
+The controlled exclusive-UI-actor contract qualifies G4 only. No production evidence
+source or G6 independence is qualified. Raw application route permissions have not
+expanded. Production UI/API parity and evidence qualification remain T4; persisted
+incarnation/receipt recovery remains T5. CLI stays first-class and MCP optional.

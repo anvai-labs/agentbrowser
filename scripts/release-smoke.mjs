@@ -65,7 +65,11 @@ async function withProcess(command, options, exercise) {
   const env = { ...(options.env ?? process.env) };
   // A runtime version override must never make an incorrectly stamped artifact pass.
   delete env.AGENTBROWSER_MCP_VERSION;
-  const child = spawn(command[0], command.slice(1), { env, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(command[0], command.slice(1), {
+    ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+    env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
   let rejectFailure;
   const failure = new Promise((_, reject) => { rejectFailure = reject; });
   // Install immediately: spawn/stream errors can precede the first request.
@@ -118,10 +122,29 @@ async function withProcess(command, options, exercise) {
 }
 
 export async function runExecutable(command, options = {}) {
-  return withProcess(command, options, async ({ closed, output }) => {
+  const expectedExitCode = options.expectedExitCode ?? 0;
+  assert.ok(
+    Number.isSafeInteger(expectedExitCode) && expectedExitCode >= 0 && expectedExitCode <= 255,
+    'Invalid expected exit code'
+  );
+  const maxInputBytes = positiveInteger(options.maxInputBytes ?? 1024 * 1024, 'input limit');
+  const stdin = options.stdin ?? '';
+  assert.ok(typeof stdin === 'string' || Buffer.isBuffer(stdin), 'Executable stdin must be a string or Buffer');
+  assert.ok(Buffer.byteLength(stdin) <= maxInputBytes, 'Executable input exceeded the acceptance limit');
+  return withProcess(command, options, async ({ child, closed, output }) => {
+    // Empty chunks still issue a pipe write and can EPIPE after a short-lived
+    // child closes its reader. EOF alone needs no write; real input errors fail.
+    if (Buffer.byteLength(stdin) === 0) child.stdin.end();
+    else child.stdin.end(stdin);
     const result = await closed;
-    assert.equal(result.code, 0, `Executable exited unsuccessfully (${result.code ?? result.signal})`);
-    return output();
+    assert.equal(
+      result.code,
+      expectedExitCode,
+      expectedExitCode === 0
+        ? `Executable exited unsuccessfully (${result.code ?? result.signal})`
+        : `Executable exited unexpectedly (${result.code ?? result.signal}; expected ${expectedExitCode})`
+    );
+    return { ...output(), code: result.code };
   });
 }
 

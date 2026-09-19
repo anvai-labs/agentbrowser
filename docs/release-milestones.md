@@ -1,6 +1,22 @@
 # Release milestones and acceptance gates
 
-Status (2026-09-08): **local functional delivery is the active priority.**
+## Current checkpoint: 1.9.0 preparation (2026-09-19)
+
+The owner selected **1.9.0** for the completed T2 shared foundation before T3
+implementation. The published baseline is 1.8.20. PRs #203–208 and completion
+PR #209 are integrated on develop; the release candidate also synchronizes
+first-party versions and current capability documentation. See the
+[changelog](../CHANGELOG.md) and [T2 qualification](spec/evidence/t2-foundation-qualification.md).
+
+Promotion, tag publication, downloaded-artifact/npm verification and Homebrew
+delivery each require their own evidence. Version preparation alone does not
+complete them. T3 remains unimplemented; production evidence/G6, durable recovery
+and independent UI/API parity retain their task gates. The repeatable sequence
+below remains applicable; earlier checkpoint statuses are historical.
+
+## Historical checkpoint (2026-09-08)
+
+Status then: **local functional delivery is the active priority.**
 v1.8.5 is published; M2 design and T2c1 are complete. Functional PRs 104-107
 are merged to develop but are not yet released. The owner has deferred new
 gateway, browser-enforcement and containment work for trusted single-user

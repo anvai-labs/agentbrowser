@@ -254,6 +254,14 @@ describe('OpenAPI document', () => {
         { $ref: '#/components/schemas/OutcomeRunReport' },
         { $ref: '#/components/schemas/OperationReplay' },
       ]);
+      const request = doc.components.schemas.OutcomeRunRequest;
+      expect(request.properties.verification.properties.evidenceCorrelationId).toMatchObject({
+        type: 'string',
+        minLength: 1,
+        maxLength: 128,
+        pattern: '^[a-zA-Z0-9_-]{1,128}$',
+      });
+      expect(request.properties.verification.required).not.toContain('evidenceCorrelationId');
       expect(doc.components.schemas.OperationReplay.$id).toBe(
         'urn:agentbrowser:operation-replay:v1'
       );

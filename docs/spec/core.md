@@ -64,9 +64,12 @@ Semantic actions, artifacts, native scoped autofill, delegated session authority
 and typed in-process application operations exist. Native autofill has a cooperative
 budget and ephemeral operation status; it is not a durable resumable job.
 Fixed mode profiles, a scoped run cursor and offline CLI discovery are delivered.
-The configurable CLI/SDK/REST outcome runner is on develop after 1.8.19; production
-evidence sources remain unqualified. General TestRun orchestration, durable recovery,
-public application REST/MCP and scanner adapters remain proposed. Do not call invented tools.
+The configurable CLI/SDK/REST outcome runner and public application REST/SDK/CLI
+operations shipped in 1.8.20. AgentBrowser 1.9.0 includes business receipt correlation,
+receipt admission/drain, generic evidence permissions and controlled G4 application
+receipt qualification. Production evidence sources and G6 remain unqualified. General
+TestRun orchestration, durable recovery, application MCP tools and scanner adapters
+remain proposed. Do not call invented tools.
 
 ## Context versus memory
 

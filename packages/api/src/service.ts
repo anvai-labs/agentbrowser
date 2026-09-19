@@ -16,8 +16,10 @@ import { SessionAuthority } from './session-authority.js';
 import {
   type ApplicationAdapter,
   ApplicationAuthority,
-  type TrustedEvidenceSourceRegistry,
+  type ApplicationReceiptEvidenceSourceOptions,
+  TrustedEvidenceSourceRegistry,
   type TrustedVerifierRegistry,
+  defineApplicationReceiptEvidenceSource,
   runVerifiedOutcome,
 } from '@agentbrowser/control';
 import {
@@ -295,6 +297,13 @@ export interface ServiceDependencies {
   /** Trusted read-only evidence adapters paired to verifier capabilities. */
   evidenceSourceRegistry?: TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>;
   /**
+   * Build evidence sources after the service-owned ApplicationAuthority exists.
+   * Mutually exclusive with a prebuilt evidenceSourceRegistry.
+   */
+  evidenceSourceRegistryProvider?: (
+    sources: ServiceEvidenceSourceBuilder
+  ) => TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>;
+  /**
    * Trusted application adapters for the shared-infra application surface.
    * The service composes the ApplicationAuthority over its own
    * SessionAuthority - bindings key on the authority's SessionControl
@@ -309,6 +318,13 @@ export interface ServiceOutcomeEvidenceContext {
   readonly pageId: string;
   readonly tenantId?: string;
   readonly signal: AbortSignal;
+}
+
+/** Narrow lazy source factory; it exposes no raw authority or receipt reader. */
+export interface ServiceEvidenceSourceBuilder {
+  applicationReceipt(
+    config: ApplicationReceiptEvidenceSourceOptions
+  ): ReturnType<typeof defineApplicationReceiptEvidenceSource<ServiceOutcomeEvidenceContext>>;
 }
 
 interface PageContext {
@@ -409,10 +425,40 @@ export class AgentBrowserService {
   private sweepTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(deps: ServiceDependencies) {
+    const { evidenceSourceRegistry, evidenceSourceRegistryProvider } = deps;
+    if (evidenceSourceRegistry !== undefined && evidenceSourceRegistryProvider !== undefined)
+      throw new Error('Evidence source registry and provider are mutually exclusive');
     this.applicationAuthority = new ApplicationAuthority(
       this.authority,
       deps.applicationAdapters ?? []
     );
+    if (evidenceSourceRegistryProvider !== undefined) {
+      if (typeof evidenceSourceRegistryProvider !== 'function')
+        throw new Error('Invalid evidence source registry provider');
+      const applicationAuthority = this.applicationAuthority;
+      const sources: ServiceEvidenceSourceBuilder = Object.freeze({
+        applicationReceipt: (config: ApplicationReceiptEvidenceSourceOptions) =>
+          defineApplicationReceiptEvidenceSource<ServiceOutcomeEvidenceContext>(
+            applicationAuthority,
+            config
+          ),
+      });
+      const registry = evidenceSourceRegistryProvider(sources);
+      if (
+        registry !== null &&
+        (typeof registry === 'object' || typeof registry === 'function') &&
+        'then' in registry &&
+        typeof registry.then === 'function'
+      ) {
+        void Promise.resolve(registry).catch(() => undefined);
+        throw new Error('Evidence source registry provider must be synchronous');
+      }
+      if (!(registry instanceof TrustedEvidenceSourceRegistry))
+        throw new Error('Evidence source registry provider returned an invalid registry');
+      this.evidenceSourceRegistry = registry;
+    } else {
+      this.evidenceSourceRegistry = evidenceSourceRegistry;
+    }
     this.actionRiskPolicy = new ActionRiskPolicy(deps.approvalPolicy);
     this.engine = deps.engine;
     for (const [name, engine] of Object.entries(deps.engines ?? {})) {
@@ -450,7 +496,6 @@ export class AgentBrowserService {
     this.artifacts = deps.artifactStore ?? new ArtifactStore();
     this.downloader = deps.downloader;
     this.verifierRegistry = deps.verifierRegistry;
-    this.evidenceSourceRegistry = deps.evidenceSourceRegistry;
     // Telemetry is opt-in per concern: each is wired only when provided.
     if (deps.tracer !== undefined) {
       this.tracer = deps.tracer;
@@ -1554,6 +1599,9 @@ export class AgentBrowserService {
       verifierRegistry: this.verifierRegistry,
       evidenceSources: this.evidenceSourceRegistry,
       verifier: { ...request.verification.verifier, input: request.verification.input },
+      ...(request.verification.evidenceCorrelationId !== undefined
+        ? { evidenceCorrelationId: request.verification.evidenceCorrelationId }
+        : {}),
       context: {
         sessionId,
         pageId,
