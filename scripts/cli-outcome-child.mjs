@@ -9,12 +9,10 @@ const modules = await resolvePackagedModules(process.argv[2], process.argv[3], {
   expectedCommit: process.argv[4],
   allowDirty: process.argv[5] === 'allow-dirty',
 });
-const { buildServer } = await import(pathToFileURL(modules.api));
+const { applicationReceiptOutcomeOptions, buildServer } = await import(pathToFileURL(modules.api));
 const { PlaywrightChromiumEngine } = await import(pathToFileURL(modules.engine));
 const { NetworkPolicy } = await import(pathToFileURL(modules.policy));
-const { TrustedEvidenceSourceRegistry, TrustedVerifierRegistry, defineVerifier } = await import(
-  pathToFileURL(modules.control)
-);
+const { TrustedVerifierRegistry, defineVerifier } = await import(pathToFileURL(modules.control));
 
 const TENANT = 'cli-outcome';
 const ADAPTER = 'fixture-counter';
@@ -285,54 +283,51 @@ const server = await buildServer({
     blockMetadata: true,
   }),
   apiKeys: new Map([[createHash('sha256').update(apiKey).digest('hex'), TENANT]]),
-  verifierRegistry,
-  applicationAdapters: [applicationAdapter],
-  evidenceSourceRegistryProvider: (sources) =>
-    new TrustedEvidenceSourceRegistry([
-      sources.applicationReceipt({
-        descriptor: { id: SOURCE, capability: CAPABILITY },
-        authorize(request) {
-          const { identity, source, verifier, correlationId } = request;
-          if (
-            source.id !== SOURCE ||
-            source.capability !== CAPABILITY ||
-            source.authorization !== 'required' ||
-            source.correlation !== 'required' ||
-            verifier.id !== VERIFIER ||
-            verifier.version !== VERSION ||
-            identity.admission.actor !== 'agent' ||
-            identity.admission.mode !== 'qa' ||
-            identity.admission.tenant !== TENANT ||
-            identity.adapter !== ADAPTER
-          )
-            return undefined;
-          const fixture = fixtures.get(identity.resource);
-          if (!fixture || fixture.closed) return undefined;
-          const command = counterCommand(verifier.input);
-          if (correlationId !== command.operationId) return undefined;
-          fixture.app.claimIntent(
-            {
-              tenant: identity.admission.tenant,
-              resource: identity.resource,
-              sessionId: identity.sessionId,
-              sessionIncarnation: identity.sessionIncarnation,
-            },
-            correlationId,
-            command
-          );
-          fixture.claims++;
-          if (identity.resource === 'stale') {
-            fixture.app.oracle.execute({
-              operationId: 'stale-other-writer',
-              expectedVersion: 0,
-              amount: 1,
-            });
-          }
-          return { generation: 0, currentGeneration: () => 0 };
+  ...applicationReceiptOutcomeOptions({
+    adapters: [applicationAdapter],
+    verifierRegistry,
+    verifier: { id: VERIFIER, version: VERSION },
+    authorize(request) {
+      const { identity, source, verifier, correlationId } = request;
+      if (
+        source.id !== SOURCE ||
+        source.capability !== CAPABILITY ||
+        source.authorization !== 'required' ||
+        source.correlation !== 'required' ||
+        verifier.id !== VERIFIER ||
+        verifier.version !== VERSION ||
+        identity.admission.actor !== 'agent' ||
+        identity.admission.mode !== 'qa' ||
+        identity.admission.tenant !== TENANT ||
+        identity.adapter !== ADAPTER
+      )
+        return undefined;
+      const fixture = fixtures.get(identity.resource);
+      if (!fixture || fixture.closed) return undefined;
+      const command = counterCommand(verifier.input);
+      if (correlationId !== command.operationId) return undefined;
+      fixture.app.claimIntent(
+        {
+          tenant: identity.admission.tenant,
+          resource: identity.resource,
+          sessionId: identity.sessionId,
+          sessionIncarnation: identity.sessionIncarnation,
         },
-        evidenceRefs: (receipt) => [`fixture-ui-event-${receipt.eventId}`],
-      }),
-    ]),
+        correlationId,
+        command
+      );
+      fixture.claims++;
+      if (identity.resource === 'stale') {
+        fixture.app.oracle.execute({
+          operationId: 'stale-other-writer',
+          expectedVersion: 0,
+          amount: 1,
+        });
+      }
+      return { generation: 0, currentGeneration: () => 0 };
+    },
+    evidenceRefs: (receipt) => [`fixture-ui-event-${receipt.eventId}`],
+  }),
 });
 const baseUrl = await server.listen({ port: 0, host: '127.0.0.1' });
 
