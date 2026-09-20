@@ -170,15 +170,21 @@ escape content and never inline active page HTML or private requests.
    Outer-finalizer failure must yield zero evaluator calls; evaluator N failure must
    yield no partial export. Retain first-failure and resource-closure evidence. Do not equate expected-negative fixture
    controls with customer tests that passed.
-5. **Conventional runner/report qualification:** positive and broken flows use the CLI,
-   independent oracle and framework cleanup against a preconfigured deployment. Qualify
-   exit/failure behavior, including cleanup failure. Evaluator portability does not prove
-   portable end-to-end setup. JUnit/HTML and impact selection retain separate gates.
+5. **Conventional runner/report qualification:** the shipped fixed Node recipe uses the
+   installed CLI, independent oracle and framework cleanup against a preconfigured
+   deployment for positive, broken and cleanup-failure controls. The current follow-up
+   qualifies Node's native JUnit on those same live invocations. Evaluator and recipe
+   portability still do not prove portable end-to-end setup. HTML and impact selection
+   retain separate gates.
 6. **Delivery:** focused local gates, exact-head adversarial review, one ready PR through
    existing required checks, normal merge verification, accurate develop/release status.
 
 Steps 1–4 are implemented; see [qualification](../evidence/t3-cli-evaluation.md).
-Step 5 continues via [native JUnit qualification](t3-node-test-qualification.md);
-framework-owned live execution and an external deployment recipe remain pending. A public execution
-runner, fixture/plugin configuration, scheduling, parallelism, durable history and public
-npm publication remain deferred until evidence justifies their added ownership.
+Step 5 delivered the internal finalized-result JUnit probes in
+[native JUnit qualification](t3-node-test-qualification.md), the application-owned live
+recipe in PR #227 and private report links in PR #229. The
+[live-JUnit candidate](t3-live-junit.md) qualifies the actual three recipe processes
+without adding cases or changing their owner. This remains a fixed controlled deployment,
+not a general external harness. A public execution runner, portable fixture/plugin
+configuration, scheduling, parallelism, durable history, HTML and public npm publication
+remain deferred until evidence justifies their added ownership.

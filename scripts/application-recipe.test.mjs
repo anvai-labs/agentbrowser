@@ -571,3 +571,18 @@ test('recipe qualification closes its fixture even when artifact removal fails',
     await assert.rejects(access(join(directory, 'application-recipe-pass.json')), { code: 'ENOENT' });
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+test('native report qualification never echoes unexpected private stderr', async () => {
+  const { validateApplicationRecipeNativeReport } = await import('./application-recipe-acceptance.mjs');
+  let failure;
+  try {
+    validateApplicationRecipeNativeReport({
+      name: 'pass', stdout: '', stderr: 'PRIVATE_STDERR /private/operator/path',
+      digest: 'a'.repeat(64),
+    });
+  } catch (error) { failure = error; }
+  assert.equal(failure?.message, 'Application recipe native report is invalid');
+  assert.equal(failure.cause, undefined);
+  assert.ok(!failure.stack.includes('PRIVATE_STDERR'));
+  assert.ok(!failure.stack.includes('/private/operator/path'));
+});

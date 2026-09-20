@@ -6,6 +6,8 @@ import { isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 
+export const APPLICATION_RECIPE_FAILURE = 'Application outcome recipe failed.';
+
 const BYTE_LIMIT = 64 * 1024;
 const CLI_TIMEOUT_MS = 20_000;
 const HTTP_TIMEOUT_MS = 5_000;
@@ -33,7 +35,12 @@ const RUNTIME_ENV = new Set([
   'NODE_EXTRA_CA_CERTS',
 ]);
 
-function fail(message = 'Application outcome recipe failed.') {
+export function applicationRecipeTestName(name) {
+  if (!Object.hasOwn(CASE_RESOURCES, name)) fail();
+  return `application outcome: ${name}`;
+}
+
+function fail(message = APPLICATION_RECIPE_FAILURE) {
   throw new Error(message);
 }
 
@@ -603,7 +610,7 @@ async function main() {
   const abort = () => controller.abort();
   process.once('SIGTERM', abort);
   process.once('SIGINT', abort);
-  test('installed CLI verifies the application-owned UI outcome', async (context) => {
+  test(applicationRecipeTestName(config.caseName), async (context) => {
     let artifact;
     try {
       const result = await runCounterCase(config, { signal: controller.signal });
@@ -617,7 +624,7 @@ async function main() {
       if (controller.signal.aborted && artifact) {
         await cleanupRecipeFiles([`${config.reportPath}.manifest.json`, config.reportPath]);
       }
-      throw new Error('Application outcome recipe failed.');
+      throw new Error(APPLICATION_RECIPE_FAILURE);
     } finally {
       process.removeListener('SIGTERM', abort);
       process.removeListener('SIGINT', abort);

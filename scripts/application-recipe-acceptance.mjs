@@ -4,11 +4,14 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  APPLICATION_RECIPE_FAILURE,
+  applicationRecipeTestName,
   counterDescriptor,
   createCliEnvironment,
   readJson,
 } from '../examples/node-test/application-outcome.mjs';
 import { cleanupRecipeFiles, readRecipeArtifacts } from '../examples/node-test/report-artifacts.mjs';
+import { validateNativeNodeReport, summarizeNativeNodeReport } from './node-junit-report.mjs';
 import { runExecutable } from './release-smoke.mjs';
 
 const recipeScript = fileURLToPath(
@@ -115,6 +118,23 @@ export function validateApplicationRecipeResult({
   };
 }
 
+/** Fixed live controls only: reporting supplements the canonical evaluation and oracle. */
+export function validateApplicationRecipeNativeReport({ name, stdout, stderr, digest }) {
+  try {
+    const definition = cases.find((entry) => entry.name === name);
+    assert.ok(definition && stderr === '');
+    const counts = validateNativeNodeReport(stdout, {
+      cases: [{ name: applicationRecipeTestName(name), passing: definition.exitCode === 0 }],
+      failureMessage: APPLICATION_RECIPE_FAILURE,
+      diagnostic: `Private evaluation artifact: sha256:${digest}`,
+    });
+    return {
+      reporter: 'junit', runtime: process.version, counts,
+      artifact: summarizeNativeNodeReport(stdout),
+    };
+  } catch { throw new Error('Application recipe native report is invalid'); }
+}
+
 export async function runNodeRecipe({ configPath, env, expectedExitCode, proc }) {
   let child;
   let escalation;
@@ -132,7 +152,7 @@ export async function runNodeRecipe({ configPath, env, expectedExitCode, proc })
   let execution;
   try {
     proc.signal.throwIfAborted();
-    execution = runExecutable([process.execPath, recipeScript, configPath], {
+    execution = runExecutable([process.execPath, '--test-reporter=junit', recipeScript, configPath], {
       env,
       expectedExitCode,
       timeoutMs: 60_000,
@@ -212,9 +232,12 @@ export async function qualifyApplicationRecipe({
       );
       const { evaluation, manifest } = await readRecipeArtifacts(reportPath);
       assert.equal(manifest.oracleMatches, true, 'Application recipe oracle mismatch');
-      const diagnostic = `Private evaluation artifact: sha256:${manifest.evaluation.sha256}`;
-      assert.ok(processResult.stdout.includes(diagnostic), 'Missing recipe artifact link');
-      assert.ok(!`${processResult.stdout}${processResult.stderr}`.includes(reportPath), 'Recipe exposed report path');
+      const nativeReport = validateApplicationRecipeNativeReport({
+        name: definition.name, stdout: processResult.stdout, stderr: processResult.stderr,
+        digest: manifest.evaluation.sha256,
+      });
+      for (const privatePath of [configPath, reportPath])
+        assert.ok(!`${processResult.stdout}${processResult.stderr}`.includes(privatePath), 'Recipe exposed private path');
       const oracle = await proc.rpc('oracle', { name: definition.resource });
       const result = validateApplicationRecipeResult({
         name: definition.name,
@@ -233,7 +256,10 @@ export async function qualifyApplicationRecipe({
         { operatorKey: key, statuses: [404], signal: proc.signal }
       );
       const { href: _href, ...artifact } = manifest.evaluation;
-      staged.push({ ...result, sessionCleanup: 'verified', artifact });
+      staged.push({
+        ...result, sessionCleanup: 'verified', artifact,
+        nativeReport,
+      });
     } finally {
       try {
         await cleanupRecipeFiles([configPath, reportPath, `${reportPath}.manifest.json`]);
