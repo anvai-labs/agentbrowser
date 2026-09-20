@@ -13,7 +13,9 @@ repeating any assignments below. Installed CLI/service now report 1.9.0; earlier
 1.8.20 installation observations in this original handoff are historical. Navigation
 reset is delivered. The develop candidate now implements [offline CLI evaluation](../spec/evidence/t3-cli-evaluation.md):
 reuse `test evaluate` after discovering its schema, without copying case verdict logic.
-Published 1.9.0 lacks this command; conventional-runner qualification remains separate.
+Published 1.9.0 lacks this command. The [native JUnit slice](../spec/design/t3-node-test-qualification.md)
+adds internal failure-report probes; external conventional-runner qualification remains
+separate. Do not mistake deliberately red probe XML for an ordinary passing CI suite.
 
 ## Verified baseline and limits
 

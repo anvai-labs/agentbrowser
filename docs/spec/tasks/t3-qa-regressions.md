@@ -73,9 +73,15 @@ All 13 cases retain their expected verdicts after outer cleanup; candidate gates
 the command/schema. See [qualification and limits](../evidence/t3-cli-evaluation.md).
 This adds no service/fixture registry and is not published in 1.9.0.
 
-Next is conventional-runner/report qualification against a preconfigured deployment,
-then report adapters and impact selection. T3 is not complete; portable end-to-end
-fixture setup and installed harness qualification are not implied.
+The candidate also qualifies [native Node/JUnit reporting](../design/t3-node-test-qualification.md)
+from fresh, finalized results without repeating the browser matrix. Its deliberately
+failing report probes preserve the broken-flow and cleanup-failure verdicts. This is
+internal report qualification, not framework-owned live execution or a public exporter.
+See [local tests and delivery boundaries](../evidence/t3-node-test-qualification.md).
+
+Still required: a conventional-runner recipe against an application-owned preconfigured
+deployment, artifact-link conventions, any justified HTML adapter and impact selection.
+T3 is not complete; portable setup and installed harness qualification are not implied.
 
 ## Completion / stop
 

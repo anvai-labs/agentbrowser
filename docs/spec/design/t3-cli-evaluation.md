@@ -178,6 +178,7 @@ escape content and never inline active page HTML or private requests.
    existing required checks, normal merge verification, accurate develop/release status.
 
 Steps 1–4 are implemented; see [qualification](../evidence/t3-cli-evaluation.md).
-Step 5 is the next integration/report slice. A public execution
+Step 5 continues via [native JUnit qualification](t3-node-test-qualification.md);
+framework-owned live execution and an external deployment recipe remain pending. A public execution
 runner, fixture/plugin configuration, scheduling, parallelism, durable history and public
 npm publication remain deferred until evidence justifies their added ownership.
