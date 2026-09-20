@@ -1,7 +1,7 @@
 /** Application-owned Node test using an installed CLI and a preconfigured service. */
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { cleanupRecipeFiles, publishRecipeArtifacts, readPrivateRecipeBytes } from './report-artifacts.mjs';
 import { isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
@@ -582,10 +582,7 @@ export async function runCounterCase(rawConfig, options = {}) {
 async function readPrivateConfig(path) {
   try {
     if (typeof path !== 'string' || !isAbsolute(path)) fail();
-    const metadata = await stat(path);
-    if (!metadata.isFile() || metadata.size < 2 || metadata.size > BYTE_LIMIT) fail();
-    if (process.platform !== 'win32' && (metadata.mode & 0o077) !== 0) fail();
-    return parseConfig(JSON.parse(await readFile(path, 'utf8')));
+    return parseConfig(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(await readPrivateRecipeBytes(path))));
   } catch {
     return fail('Application outcome recipe configuration is invalid.');
   }
@@ -606,20 +603,20 @@ async function main() {
   const abort = () => controller.abort();
   process.once('SIGTERM', abort);
   process.once('SIGINT', abort);
-  test('installed CLI verifies the application-owned UI outcome', async () => {
+  test('installed CLI verifies the application-owned UI outcome', async (context) => {
+    let artifact;
     try {
       const result = await runCounterCase(config, { signal: controller.signal });
       controller.signal.throwIfAborted();
-      await writeFile(config.reportPath, `${JSON.stringify(result.evaluation)}\n`, {
-        flag: 'wx',
-        mode: 0o600,
-        signal: controller.signal,
-      });
+      artifact = await publishRecipeArtifacts(config.reportPath, result, { signal: controller.signal });
       controller.signal.throwIfAborted();
+      context.diagnostic(`Private evaluation artifact: sha256:${artifact.evaluation.sha256}`);
       assert.equal(result.evaluation.verdict, 'passed', 'Application outcome did not pass.');
       assert.equal(result.oracleMatches, true, 'Independent application outcome did not match.');
     } catch {
-      if (controller.signal.aborted) await rm(config.reportPath, { force: true });
+      if (controller.signal.aborted && artifact) {
+        await cleanupRecipeFiles([`${config.reportPath}.manifest.json`, config.reportPath]);
+      }
       throw new Error('Application outcome recipe failed.');
     } finally {
       process.removeListener('SIGTERM', abort);

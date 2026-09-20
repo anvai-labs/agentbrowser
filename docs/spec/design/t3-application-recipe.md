@@ -1,6 +1,6 @@
 # T3: application-owned installed-CLI recipe
 
-Status: implemented and locally qualified from develop `0762554` (PR #226).
+Status: merged through PR #227 to develop `b5484df`; PR and post-merge CI passed 8/8.
 Load only for this slice. T3 remains active.
 
 ## Decision

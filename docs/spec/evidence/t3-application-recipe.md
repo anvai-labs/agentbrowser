@@ -1,6 +1,6 @@
 # T3 application-owned CLI recipe qualification
 
-Status: implemented and locally qualified from develop `0762554` (PR #226).
+Status: merged through PR #227 to develop `b5484df`; PR and post-merge CI passed 8/8.
 Design: [application-owned recipe](../design/t3-application-recipe.md).
 Usage: [standalone Node example](../../../examples/node-test/README.md).
 

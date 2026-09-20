@@ -19,7 +19,7 @@ declared files and budgets without contacting a service.
 | [T0](t0-contract-catalog.md) | Complete | Released discovery/catalog foundation | None |
 | [T1](t1-context-profiles.md) | Active | Local loader, fixed profiles and run cursor delivered; installed-harness consumption remains | T0 |
 | [T2](t2-shared-execution.md) | Complete | 1.9.0 includes shared execution, evidence permission and controlled G4 CLI/application qualification through #208; production/G6 and durability retain separate gates | T0 |
-| [T3](t3-qa-regressions.md) | Active | Bound-report and navigation foundation delivered; offline CLI evaluation qualified across 13 cases in the develop candidate; native JUnit probes implemented; application-owned CLI recipe locally qualified; artifact/report slices remain | T2 |
+| [T3](t3-qa-regressions.md) | Active | Bound-report/navigation foundation plus PR #225 offline evaluation, #226 native JUnit and #227 application-owned recipe merged; example-local private report links are the current candidate | T2 |
 | [T4](t4-application-parity.md) | Active | REST/SDK/CLI public interface shipped in 1.8.20; the 1.9.0 foundation includes delegated permission composition; independent UI/API parity, production-evidence and durability gates remain | T2 |
 | [T5](t5-durable-recovery.md) | Not started | Optional single-owner durable recovery | T2 |
 | [T6](t6-widget-strategies.md) | Active | React-select and chip-multiselect shipped in 1.8.19; mapping and broader qualification remain | T2 |
@@ -37,12 +37,13 @@ acceptance infrastructure; they are not instructions to create ten packages/serv
 The alignment sequence through #222 is merged. Follow the
 [verified handback](../evidence/foundation-handback-recheck.md), not stale open-PR or
 navigation-reset observations. T3's
-[offline CLI evaluation](../evidence/t3-cli-evaluation.md) is implemented in the
-develop candidate; [native JUnit probes](../design/t3-node-test-qualification.md)
-advance internal reporting. The [application-owned CLI recipe](../design/t3-application-recipe.md)
-qualifies a fixed external deployment boundary; broader provisioning and report slices remain. SDK-derived client slices and compiler
-fault probes now cover the guard gaps; download discovery documents ID-preferred
-collection. Preserve those existing owners while continuing T3.
+[offline CLI evaluation](../evidence/t3-cli-evaluation.md),
+[native JUnit probes](../design/t3-node-test-qualification.md) and
+[application-owned CLI recipe](../design/t3-application-recipe.md) are merged through
+PR #227; PR #228 supplies the Node 24 qualification baseline. The current
+[private report-link slice](../design/t3-report-artifacts.md) stays inside the example;
+broader provisioning and public report APIs remain. Preserve those owners while
+continuing T3.
 
 ## Common execution protocol
 
