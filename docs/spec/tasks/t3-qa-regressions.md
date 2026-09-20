@@ -1,7 +1,8 @@
 # T3: deterministic regressions and reports
 
-Status: active; bound reports, navigation reset, offline CLI evaluation, native JUnit
-qualification and the fixed application-owned recipe are implemented. Repository:
+Status: active; bound reports, navigation reset, offline CLI evaluation, internal native
+JUnit projection, the fixed application-owned recipe and private report links are
+implemented. Live-recipe JUnit qualification is the current candidate. Repository:
 agentbrowser. Depends on: T2.
 Inputs: core, qa mode, contracts, grounding, quality-ci.
 
@@ -90,12 +91,34 @@ See the [usage example](../../../examples/node-test/README.md). It does not prov
 arbitrary applications. PR #228 then merged the Node 24 qualification baseline at
 develop `a437c48` while retaining Node 22 as the published minimum.
 
-The current candidate adds the
-[example-local private report-link convention](../design/t3-report-artifacts.md): a
+PR #229 merged the
+[example-local private report-link convention](../design/t3-report-artifacts.md) at
+develop `7c452b1`: a
 bounded evaluation file plus sibling digest manifest after recipe lifecycle settlement.
 It introduces no public CLI/protocol artifact API, HTML renderer, dependency, runner or
-CI job. General artifact APIs, any justified HTML adapter and impact selection remain.
-T3 is not complete; portable setup and installed harness qualification are not implied.
+CI job. The current [live-JUnit candidate](../design/t3-live-junit.md) runs the same
+three recipe invocations under Node's native reporter with case-bound names and the same
+process owner. The original three finalized-result probes remain a separate qualification;
+neither slice repeats the browser matrix. General artifact APIs, any justified HTML
+adapter and impact selection remain. T3 is not complete; portable setup and a general
+installed harness are not implied.
+
+## Focused local loop
+
+Use the narrow checks while changing this slice:
+
+```sh
+node --test scripts/application-recipe.test.mjs scripts/application-recipe-lifecycle.test.mjs
+node --test --test-name-pattern='application recipe|native JUnit|shared native JUnit' scripts/package-acceptance.test.mjs
+node scripts/check-doc-links.mjs
+node --test scripts/spec-context.test.mjs
+```
+
+The name filter is an explicit local optimization, not a new selector or evidence that
+unselected tests are unaffected. Run full package acceptance when the changed ownership
+or dependency reach is unknown, and keep normal hooks and required CI authoritative.
+Measure recurring local cost and misses before adding an impact selector. HTML remains
+deferred until a concrete consumer justifies its security and rendering ownership.
 
 ## Completion / stop
 

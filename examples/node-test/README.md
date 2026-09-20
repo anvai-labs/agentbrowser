@@ -11,7 +11,9 @@ not a general website runner. A stock service does not register `fixture-counter
 `fixture.ui-commit`; it must reject this recipe. Application owners adapt the fixed
 setup and oracle code to their own registered adapter/verifier. See the
 [design and trust boundary](../../docs/spec/design/t3-application-recipe.md) and the
-[private report-link design](../../docs/spec/design/t3-report-artifacts.md).
+[private report-link design](../../docs/spec/design/t3-report-artifacts.md), delivered
+by PR #229. The [live JUnit design](../../docs/spec/design/t3-live-junit.md) describes
+the current candidate qualification of these same three invocations.
 
 ## Requirements
 
@@ -78,6 +80,32 @@ both files can replace both values. The independent oracle and Node exit remain
 separate requirements, so neither a digest nor the evaluation file alone proves the
 application outcome.
 
+### Native JUnit output
+
+Node's native reporter is an opt-in for the same application-owned test. Redirect it
+to a mode-0600 file in a private directory and capture the process status directly:
+
+```sh
+umask 077
+private_junit=$(mktemp /absolute/private/directory/application-outcome.XXXXXX) || exit 1
+recipe_status=0
+node --test-reporter=junit examples/node-test/application-outcome.mjs \
+  /absolute/private/directory/config.json >"$private_junit" || recipe_status=$?
+test "$recipe_status" -eq 0
+```
+
+Do not pipe this command through another program without separately preserving the Node
+exit status. The `broken` and `cleanup-failure` controls intentionally return 1, so their
+caller must require that exact failure together with the canonical evaluation and oracle
+checks rather than applying the final `test` above. The native testcase name is bound to
+`pass`, `broken` or `cleanup-failure`; the current package candidate qualifies those same
+three live cases without starting another host or browser case.
+
+Treat the raw XML as private. Node can include runner paths and host metadata. Its fixed
+digest diagnostic links to the sibling manifest and evaluation bytes, but the comment,
+manifest and digest do not authenticate the producer or prove freshness. Preserve the
+Node exit, canonical evaluation and independent oracle result as separate requirements.
+
 The two fault controls use their own fresh deployment resources:
 
 | `caseName` | Resource | Deployment behavior | Expected Node exit |
@@ -103,7 +131,8 @@ abort after publication removes only files created by that invocation; hard-kill
 hostile parent-directory recovery remain outside this example.
 
 The existing package gate exercises all three cases against the same composed service
-used by its 13-case matrix. This adds no browser matrix or CI job. The package parent
+used by its 13-case matrix. The current live-JUnit candidate changes their reporter,
+not their process owner, and adds no browser matrix or CI job. The package parent
 validates the artifact pair, the independent fixture oracle and session cleanup, then
 removes both private files. HTML export, a general public artifact API and arbitrary
 application provisioning remain separate work.

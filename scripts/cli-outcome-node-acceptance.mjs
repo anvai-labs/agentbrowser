@@ -1,10 +1,10 @@
 /** Internal reporter fault controls, consuming only fresh, finalized qualification results. */
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
+import { validateNativeNodeReport, summarizeNativeNodeReport } from './node-junit-report.mjs';
 import { runAgentCli } from './cli-outcome-acceptance.mjs';
 
 export const NODE_OUTCOME_CONTROLS = Object.freeze([
@@ -32,34 +32,9 @@ export function validateNodeOutcomeArtifacts({ sidecar, junit, expectedVersion }
       schemaVersion: 1, productVersion: expectedVersion, runtime: process.version,
       cases: NODE_OUTCOME_CONTROLS,
     }));
-    assert.ok(typeof junit === 'string' && Buffer.byteLength(junit) <= MAX_BYTES);
-    assert.match(junit, /^<\?xml\b/u);
-    assert.equal((junit.match(/<testsuites>/gu) ?? []).length, 1);
-    assert.equal((junit.match(/<\/testsuites>/gu) ?? []).length, 1);
-    assert.ok(!/<(?:error|skipped)\b|<!DOCTYPE|<!ENTITY/u.test(junit));
-    const entries = [...junit.matchAll(/<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/gu)];
-    assert.equal(entries.length, 3);
-    assert.equal((junit.match(/<testcase\b/gu) ?? []).length, 3);
-    assert.equal((junit.match(/<failure\b/gu) ?? []).length, 2);
-    for (const [index, match] of entries.entries()) {
-      const control = NODE_OUTCOME_CONTROLS[index];
-      const name = /(?:^|\s)name="([^"]*)"/u.exec(match[1])?.[1];
-      assert.equal(name, control.name);
-      const failures = [...(match[2] ?? '').matchAll(/<failure\b([^>]*)>/gu)];
-      assert.equal(failures.length, control.passing ? 0 : 1);
-      if (failures.length) {
-        assert.match(failures[0][1], /\btype="testCodeFailure"/u);
-        assert.ok(failures[0][1].includes(`message="${NODE_OUTCOME_FAILURE}"`));
-      }
-    }
-    for (const [name, count] of Object.entries({
-      tests: 3, suites: 0, pass: 1, fail: 2, cancelled: 0, skipped: 0, todo: 0,
-    })) {
-      const matches = [...junit.matchAll(new RegExp(`<!--\\s*${name} (\\d+)\\s*-->`, 'gu'))];
-      assert.equal(matches.length, 1);
-      assert.equal(Number(matches[0][1]), count);
-    }
-    return { tests: 3, passed: 1, failed: 2, cancelled: 0, skipped: 0 };
+    return validateNativeNodeReport(junit, {
+      cases: NODE_OUTCOME_CONTROLS, failureMessage: NODE_OUTCOME_FAILURE,
+    });
   } catch { throw failure(); }
 }
 
@@ -98,10 +73,7 @@ export async function qualifyCliOutcomeWithNodeTest(
         liveExecutionOwner: 'package-acceptance',
         reporter: 'junit', runtime: sidecar.runtime, exitCode: output.code, counts,
         cases,
-        artifact: {
-          mediaType: 'application/xml', sizeBytes: Buffer.byteLength(output.stdout),
-          sha256: createHash('sha256').update(output.stdout).digest('hex'),
-        },
+        artifact: summarizeNativeNodeReport(output.stdout),
       },
     };
   } catch { throw failure(); }

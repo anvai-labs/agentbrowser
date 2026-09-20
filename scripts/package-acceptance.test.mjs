@@ -564,3 +564,77 @@ test('node runner qualification exercises the native JUnit reporter without priv
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('shared native JUnit checker preserves fixed case identities and exact digest diagnostics', async () => {
+  const { validateNativeNodeReport } = await import('./node-junit-report.mjs');
+  const cases = [{ name: 'live recipe', passing: false }];
+  const diagnostic = `Private evaluation artifact: sha256:${'a'.repeat(64)}`;
+  const junit = `<?xml version="1.0" encoding="utf-8"?>
+<testsuites><testcase name="live recipe"><failure type="testCodeFailure" message="Recipe failed">fixed</failure></testcase>
+<!-- ${diagnostic} -->
+<!-- tests 1 --><!-- suites 0 --><!-- pass 0 --><!-- fail 1 -->
+<!-- cancelled 0 --><!-- skipped 0 --><!-- todo 0 --></testsuites>`;
+  const expected = { cases, failureMessage: 'Recipe failed', diagnostic };
+  assert.deepEqual(validateNativeNodeReport(junit, expected), {
+    tests: 1, passed: 0, failed: 1, cancelled: 0, skipped: 0,
+  });
+  for (const changed of [
+    junit.replace('name="live recipe"', 'name="wrong recipe"'),
+    junit.replace('type="testCodeFailure"', 'type="hookFailed"'),
+    junit.replace('message="Recipe failed"', 'message="Other failure"'),
+    junit.replace('<!-- skipped 0 -->', '<!-- skipped 1 -->'),
+    junit.replace('<!-- cancelled 0 -->', '<!-- cancelled 1 -->'),
+    junit.replace('<!-- tests 1 -->', '<!-- tests 0 -->'),
+    junit.replace('<!-- todo 0 -->', '<!-- todo 1 -->'),
+    junit.replace('</failure>', ''),
+    junit.replace('name="live recipe"', 'name="live recipe" name="other"'),
+    junit.replace('<testsuites>', '<!DOCTYPE testsuites><testsuites>'),
+    junit.replace('<failure ', '<error '),
+    junit.replace('</testsuites>', '<testcase name="extra"/></testsuites>'),
+    junit.replace(`<!-- ${diagnostic} -->`, ''),
+    junit.replace(`<!-- ${diagnostic} -->`, `<!-- ${diagnostic} EXTRA -->`),
+    junit.replace(`<!-- ${diagnostic} -->`, `<!-- ${diagnostic} --><!-- ${diagnostic} -->`),
+    junit.replace(`<!-- ${diagnostic} -->`, '').replace('>fixed</failure>', `>${diagnostic}</failure>`),
+    junit.replace('</testsuites>', ''),
+    junit + 'x'.repeat(65537),
+  ]) assert.throws(() => validateNativeNodeReport(changed, expected), {
+    message: 'Node test qualification failed',
+  });
+  assert.throws(() => validateNativeNodeReport(junit, {
+    ...expected, cases: [{ name: 'live recipe', passing: true }],
+  }));
+});
+
+test('shared checker qualifies actual native JUnit and fixed digest comments for each recipe case', async () => {
+  const { validateNativeNodeReport, summarizeNativeNodeReport } = await import('./node-junit-report.mjs');
+  const { APPLICATION_RECIPE_FAILURE, applicationRecipeTestName, createCliEnvironment } =
+    await import('../examples/node-test/application-outcome.mjs');
+  const { runExecutable } = await import('./release-smoke.mjs');
+  const { createHash } = await import('node:crypto');
+  for (const name of ['pass', 'broken', 'cleanup-failure']) {
+    const passing = name === 'pass';
+    const testName = applicationRecipeTestName(name);
+    const diagnostic = `Private evaluation artifact: sha256:${'b'.repeat(64)}`;
+    const source = `require('node:test')(${JSON.stringify(testName)},t=>{
+      t.diagnostic(${JSON.stringify(diagnostic)});
+      if(!${passing})throw Error(${JSON.stringify(APPLICATION_RECIPE_FAILURE)});
+    });`;
+    const output = await runExecutable([process.execPath, '--test-reporter=junit', '-e', source], {
+      env: createCliEnvironment(process.env), expectedExitCode: passing ? 0 : 1,
+      timeoutMs: 5000, maxOutputBytes: 65536,
+    });
+    assert.equal(output.stderr, '');
+    assert.deepEqual(validateNativeNodeReport(output.stdout, {
+      cases: [{ name: testName, passing }], failureMessage: APPLICATION_RECIPE_FAILURE, diagnostic,
+    }), { tests: 1, passed: passing ? 1 : 0, failed: passing ? 0 : 1, cancelled: 0, skipped: 0 });
+    const { validateApplicationRecipeNativeReport } = await import('./application-recipe-acceptance.mjs');
+    assert.equal(validateApplicationRecipeNativeReport({
+      name, stdout: output.stdout, stderr: '', digest: 'b'.repeat(64),
+    }).counts.failed, passing ? 0 : 1);
+    assert.deepEqual(summarizeNativeNodeReport(output.stdout), {
+      mediaType: 'application/xml', sizeBytes: Buffer.byteLength(output.stdout),
+      sha256: createHash('sha256').update(output.stdout).digest('hex'),
+    });
+  }
+  assert.throws(() => applicationRecipeTestName('PRIVATE_UNKNOWN_CASE'));
+});

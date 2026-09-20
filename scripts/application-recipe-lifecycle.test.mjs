@@ -96,6 +96,7 @@ setInterval(()=>{},1000);\n`,
       'Node recipe remained alive when caller cleanup resumed'
     );
     await assert.rejects(stat(reportPath), { code: 'ENOENT' });
+    await assert.rejects(stat(`${reportPath}.manifest.json`), { code: 'ENOENT' });
   } finally {
     controller.abort();
     try {

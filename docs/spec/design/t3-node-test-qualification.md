@@ -1,6 +1,6 @@
 # T3: native Node/JUnit report qualification
 
-Status: implemented in the develop candidate from `ba31a09` (PR #225).
+Status: merged by PR #226 at develop `0762554`.
 See [local qualification](../evidence/t3-node-test-qualification.md).
 Load only for this report slice; [T3](../tasks/t3-qa-regressions.md) remains active.
 
@@ -17,11 +17,15 @@ existing subprocess helper kills its direct child on timeout, not an entire brow
 process tree. Adding another lifetime boundary needs separate cancellation design.
 No new runner framework or process-tree supervisor is justified just to emit JUnit.
 
-This qualifies repository-internal report projection only. It does not qualify
-framework-owned live execution, portable external deployment or the whole integration
-step in the [CLI evaluation design](t3-cli-evaluation.md). The fixture child still
-imports private packaged modules to configure adapters and verifiers. Public `test
-run`, plugins, scheduling, HTML rendering and npm publication remain deferred.
+This qualifies repository-internal report projection only. PR #227 later delivered a
+fixed application-owned live recipe, and PR #229 linked its private reports to digest
+diagnostics. The [current live-JUnit candidate](t3-live-junit.md) applies Node's native
+reporter to those same three live processes while retaining their existing owner. The
+projection probes in this document remain separate and still run only after the browser
+matrix settles. Neither qualification proves portable external deployment or the whole
+integration step in the [CLI evaluation design](t3-cli-evaluation.md). The fixture child
+still imports private packaged modules to configure adapters and verifiers. Public
+`test run`, plugins, scheduling, HTML rendering and npm publication remain deferred.
 
 ## Truth and reporting
 
@@ -94,8 +98,10 @@ XML parser or an importer for untrusted third-party reports. See
 
 ## Remaining T3 work
 
-Framework-owned live execution against an application-owned preconfigured deployment,
-a reusable external recipe, failure-linked artifact conventions, any justified HTML
-adapter and local impact selection retain separate design/acceptance gates. This slice
-does not finish T3 or unlock T7 or T3-dependent T8 qualification gates. Continue on develop; release promotion remains a
-separate checkpoint decision. Published 1.9.0 lacks the offline evaluator.
+The fixed application-owned recipe and example-local failure links are now delivered.
+The live-JUnit candidate qualifies that recipe's three existing cases; it does not turn
+this older finalized-result projection into a general runner. Portable deployment setup,
+a public execution surface, any justified HTML adapter and measured local impact
+selection retain separate design/acceptance gates. This slice does not finish T3 or
+unlock T7 or T3-dependent T8 qualification gates. Continue on develop; release promotion
+remains a separate checkpoint decision. Published 1.9.0 lacks the offline evaluator.
