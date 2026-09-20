@@ -4,6 +4,51 @@ import test from 'node:test';
 const moduleUrl = new URL('../examples/node-test/application-outcome.mjs', import.meta.url);
 const command = (code) => [process.execPath, '-e', code, '--'];
 
+test('copied recipe loads with only its documented companion from an unrelated cwd', async () => {
+  const { withStandaloneRecipe } = await import('./application-recipe-acceptance.mjs');
+  const { mkdtemp, readFile, readdir, rm, stat, access } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join, dirname } = await import('node:path');
+  const { pathToFileURL } = await import('node:url');
+  const { runExecutable } = await import('./release-smoke.mjs');
+  const directory = await mkdtemp(join(tmpdir(), 'recipe-copy-test-'));
+  let staged;
+  try {
+    const result = await withStandaloneRecipe(directory, async ({ script, cwd }) => {
+      staged = dirname(script);
+      assert.notEqual(cwd, staged);
+      assert.deepEqual((await readdir(staged)).sort(), ['application-outcome.mjs', 'report-artifacts.mjs']);
+      for (const name of await readdir(staged)) {
+        assert.deepEqual(await readFile(join(staged, name)), await readFile(new URL(`../examples/node-test/${name}`, import.meta.url)));
+        assert.equal((await stat(join(staged, name))).mode & 0o777, 0o600);
+      }
+      const probe = `const m = await import(${JSON.stringify(pathToFileURL(script).href)}); console.log(m.applicationRecipeTestName('pass'));`;
+      const loaded = await runExecutable([process.execPath, '--input-type=module', '-e', probe], { cwd });
+      assert.equal(loaded.stdout.trim(), 'application outcome: pass');
+      const direct = await runExecutable([process.execPath, script, join(cwd, 'absent-config.json')], {
+        cwd,
+        expectedExitCode: 1,
+      });
+      assert.equal(direct.stdout, '');
+      assert.equal(direct.stderr.trim(), 'Application outcome recipe configuration is invalid.');
+      // Prove the companion is loaded from the copied location, not the workspace.
+      await rm(join(staged, 'report-artifacts.mjs'));
+      await assert.rejects(runExecutable([process.execPath, '--input-type=module', '-e', probe], { cwd }));
+      return 'qualified';
+    });
+    assert.equal(result, 'qualified');
+    await assert.rejects(access(staged), { code: 'ENOENT' });
+    assert.deepEqual(await readdir(directory), []);
+    const sentinel = new Error('exercise failure');
+    await assert.rejects(withStandaloneRecipe(directory, async () => { throw sentinel; }), (error) => error === sentinel);
+    assert.deepEqual(await readdir(directory), []);
+    await assert.rejects(withStandaloneRecipe(directory, async () => { throw sentinel; }, {
+      remove: async (path, options) => { await rm(path, options); throw new Error('PRIVATE_CLEANUP_PATH'); },
+    }), { message: 'Standalone recipe execution and cleanup failed' });
+    assert.deepEqual(await readdir(directory), []);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test('application recipe isolates CLI credentials and Node injection from operator context', async () => {
   const { callInstalledCli } = await import(moduleUrl);
   const result = await callInstalledCli(
@@ -414,7 +459,9 @@ test('private report artifacts bind exact bytes and retain an independent oracle
     });
     assert.ok(!JSON.stringify(manifest).includes('PRIVATE_REPORT'));
     assert.ok(!JSON.stringify(manifest).includes(directory));
-    assert.deepEqual(await readRecipeArtifacts(path), { evaluation, manifest });
+    const manifestBytes = (await readFile(`${path}.manifest.json`)).length;
+    const observed = await readRecipeArtifacts(path);
+    assert.deepEqual(observed, { evaluation, manifest, manifestBytes });
     if (process.platform !== 'win32') {
       assert.equal((await stat(path)).mode & 0o077, 0);
       assert.equal((await stat(`${path}.manifest.json`)).mode & 0o077, 0);

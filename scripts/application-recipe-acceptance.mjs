@@ -1,6 +1,6 @@
 /** Qualify the standalone Node recipe against the already-running composed host. */
 import assert from 'node:assert/strict';
-import { writeFile } from 'node:fs/promises';
+import { copyFile, chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -17,6 +17,34 @@ import { runExecutable } from './release-smoke.mjs';
 const recipeScript = fileURLToPath(
   new URL('../examples/node-test/application-outcome.mjs', import.meta.url)
 );
+
+/** Exercise exactly the documented two-file copy; own and remove all staging. */
+export async function withStandaloneRecipe(directory, exercise, { remove = rm } = {}) {
+  let root;
+  try { root = await realpath(await mkdtemp(join(directory, 'standalone-recipe-'))); }
+  catch { throw new Error('Standalone recipe staging failed'); }
+  let failed = false;
+  try {
+    const source = join(root, 'source');
+    const cwd = join(root, 'unrelated-cwd');
+    try {
+      await mkdir(source, { mode: 0o700 });
+      await mkdir(cwd, { mode: 0o700 });
+      for (const name of ['application-outcome.mjs', 'report-artifacts.mjs']) {
+        const target = join(source, name);
+        await copyFile(new URL(`../examples/node-test/${name}`, import.meta.url), target);
+        await chmod(target, 0o600);
+      }
+    } catch { throw new Error('Standalone recipe staging failed'); }
+    return await exercise({ script: join(source, 'application-outcome.mjs'), cwd });
+  } catch (error) {
+    failed = true;
+    throw error;
+  } finally {
+    try { await remove(root, { recursive: true, force: true }); }
+    catch { throw new Error(failed ? 'Standalone recipe execution and cleanup failed' : 'Standalone recipe cleanup failed'); }
+  }
+}
 const cases = Object.freeze([
   Object.freeze({ name: 'pass', resource: 'recipe-pass', exitCode: 0 }),
   Object.freeze({ name: 'broken', resource: 'recipe-broken', exitCode: 1 }),
@@ -135,7 +163,7 @@ export function validateApplicationRecipeNativeReport({ name, stdout, stderr, di
   } catch { throw new Error('Application recipe native report is invalid'); }
 }
 
-export async function runNodeRecipe({ configPath, env, expectedExitCode, proc }) {
+export async function runNodeRecipe({ configPath, env, expectedExitCode, proc, script = recipeScript, cwd }) {
   let child;
   let escalation;
   let terminationRequested = false;
@@ -152,8 +180,9 @@ export async function runNodeRecipe({ configPath, env, expectedExitCode, proc })
   let execution;
   try {
     proc.signal.throwIfAborted();
-    execution = runExecutable([process.execPath, '--test-reporter=junit', recipeScript, configPath], {
+    execution = runExecutable([process.execPath, '--test-reporter=junit', script, configPath], {
       env,
+      cwd,
       expectedExitCode,
       timeoutMs: 60_000,
       maxOutputBytes: 64 * 1024,
@@ -191,90 +220,109 @@ export async function qualifyApplicationRecipe({
   fixture,
   expectedVersion,
 }) {
+  const started = performance.now();
   assert.ok(proc?.rpc && proc?.guard && proc?.signal, 'Managed composed host is required');
   assert.ok(Array.isArray(cli) && cli.length > 0, 'Installed CLI command is required');
   assert.deepEqual(fixture, { id: 'fixture-counter', version: '1' });
   const staged = [];
-  for (const definition of cases) {
-    const configPath = join(directory, `application-recipe-${definition.name}.json`);
-    const reportPath = join(directory, `application-recipe-${definition.name}.report.json`);
-    let url;
-    try {
-      ({ url } = await proc.rpc('fixture', { name: definition.resource }));
-      const config = {
-        caseName: definition.name,
-        serviceBaseUrl: baseUrl,
-        cli,
-        application: {
-          adapter: 'fixture-counter',
-          resource: definition.resource,
-          url,
-          fixture,
-          verifier: { id: 'fixture.ui-commit', version: '1' },
-        },
-        expectedVersion,
-        reportPath,
-      };
-      await writeFile(configPath, `${JSON.stringify(config)}\n`, { flag: 'wx', mode: 0o600 });
-      const recipeEnv = {
-        ...createCliEnvironment(env),
-        AGENTBROWSER_RECIPE_OPERATOR_KEY: key,
-      };
-      const processResult = await runNodeRecipe({
-        configPath,
-        env: recipeEnv,
-        expectedExitCode: definition.exitCode,
-        proc,
-      });
-      assert.ok(
-        !`${processResult.stdout}${processResult.stderr}`.includes(key),
-        'Application recipe exposed its operator credential'
-      );
-      const { evaluation, manifest } = await readRecipeArtifacts(reportPath);
-      assert.equal(manifest.oracleMatches, true, 'Application recipe oracle mismatch');
-      const nativeReport = validateApplicationRecipeNativeReport({
-        name: definition.name, stdout: processResult.stdout, stderr: processResult.stderr,
-        digest: manifest.evaluation.sha256,
-      });
-      for (const privatePath of [configPath, reportPath])
-        assert.ok(!`${processResult.stdout}${processResult.stderr}`.includes(privatePath), 'Recipe exposed private path');
-      const oracle = await proc.rpc('oracle', { name: definition.resource });
-      const result = validateApplicationRecipeResult({
-        name: definition.name,
-        exitCode: processResult.code,
-        evaluation,
-        oracle,
-        expectedVersion,
-      });
-      await readJson(`${baseUrl}/v1/sessions/${encodeURIComponent(oracle.claimSessionId)}`, {
-        operatorKey: key,
-        statuses: [404],
-        signal: proc.signal,
-      });
-      await readJson(
-        `${baseUrl}/v1/sessions/${encodeURIComponent(oracle.claimSessionId)}/application`,
-        { operatorKey: key, statuses: [404], signal: proc.signal }
-      );
-      const { href: _href, ...artifact } = manifest.evaluation;
-      staged.push({
-        ...result, sessionCleanup: 'verified', artifact,
-        nativeReport,
-      });
-    } finally {
+  await withStandaloneRecipe(directory, async ({ script, cwd }) => {
+    for (const definition of cases) {
+      const configPath = join(directory, `application-recipe-${definition.name}.json`);
+      const reportPath = join(directory, `application-recipe-${definition.name}.report.json`);
+      let url;
       try {
-        await cleanupRecipeFiles([configPath, reportPath, `${reportPath}.manifest.json`]);
+        ({ url } = await proc.rpc('fixture', { name: definition.resource }));
+        const config = {
+          caseName: definition.name,
+          serviceBaseUrl: baseUrl,
+          cli,
+          application: {
+            adapter: 'fixture-counter',
+            resource: definition.resource,
+            url,
+            fixture,
+            verifier: { id: 'fixture.ui-commit', version: '1' },
+          },
+          expectedVersion,
+          reportPath,
+        };
+        const serializedConfig = `${JSON.stringify(config)}\n`;
+        await writeFile(configPath, serializedConfig, { flag: 'wx', mode: 0o600 });
+        const recipeEnv = {
+          ...createCliEnvironment(env),
+          AGENTBROWSER_RECIPE_OPERATOR_KEY: key,
+        };
+        const processResult = await runNodeRecipe({
+          configPath,
+          env: recipeEnv,
+          expectedExitCode: definition.exitCode,
+          proc,
+          script,
+          cwd,
+        });
+        assert.ok(
+          !`${processResult.stdout}${processResult.stderr}`.includes(key),
+          'Application recipe exposed its operator credential'
+        );
+        const { evaluation, manifest, manifestBytes } = await readRecipeArtifacts(reportPath);
+        assert.equal(manifest.oracleMatches, true, 'Application recipe oracle mismatch');
+        const nativeReport = validateApplicationRecipeNativeReport({
+          name: definition.name, stdout: processResult.stdout, stderr: processResult.stderr,
+          digest: manifest.evaluation.sha256,
+        });
+        for (const privatePath of [configPath, reportPath])
+          assert.ok(!`${processResult.stdout}${processResult.stderr}`.includes(privatePath), 'Recipe exposed private path');
+        const oracle = await proc.rpc('oracle', { name: definition.resource });
+        const result = validateApplicationRecipeResult({
+          name: definition.name,
+          exitCode: processResult.code,
+          evaluation,
+          oracle,
+          expectedVersion,
+        });
+        await readJson(`${baseUrl}/v1/sessions/${encodeURIComponent(oracle.claimSessionId)}`, {
+          operatorKey: key,
+          statuses: [404],
+          signal: proc.signal,
+        });
+        await readJson(
+          `${baseUrl}/v1/sessions/${encodeURIComponent(oracle.claimSessionId)}/application`,
+          { operatorKey: key, statuses: [404], signal: proc.signal }
+        );
+        const { href: _href, ...artifact } = manifest.evaluation;
+        staged.push({
+          ...result, sessionCleanup: 'verified', artifact,
+          nativeReport,
+          configBytes: Buffer.byteLength(serializedConfig),
+          manifestBytes,
+        });
       } finally {
-        if (url !== undefined) {
-          await proc.rpc('closeFixture', { name: definition.resource });
-          const closed = await proc.rpc('fixtureState', { name: definition.resource });
-          assert.equal(closed.closed, true, 'Application recipe fixture remained open');
+        try {
+          await cleanupRecipeFiles([configPath, reportPath, `${reportPath}.manifest.json`]);
+        } finally {
+          if (url !== undefined) {
+            await proc.rpc('closeFixture', { name: definition.resource });
+            const closed = await proc.rpc('fixtureState', { name: definition.resource });
+            assert.equal(closed.closed, true, 'Application recipe fixture remained open');
+          }
         }
       }
     }
-  }
+  });
   return {
     cases: staged,
+    standalone: { copiedFiles: 2, unrelatedCwd: true, cleanup: 'verified' },
+    measurements: {
+      sampleCount: 1,
+      elapsedMs: Math.round(performance.now() - started),
+      maxConfigBytes: Math.max(...staged.map((entry) => entry.configBytes)),
+      maxEvaluationBytes: Math.max(...staged.map((entry) => entry.artifact.sizeBytes)),
+      maxManifestBytes: Math.max(...staged.map((entry) => entry.manifestBytes)),
+      maxJunitBytes: Math.max(...staged.map((entry) => entry.nativeReport.artifact.sizeBytes)),
+      countBasis: 'fixed qualified call paths; excludes browser descendants and executable internals',
+    },
     nodeTestCalls: staged.length,
+    cliVersionCalls: staged.length,
     cliDiscoveryCalls: staged.length * 2,
     cliOutcomeCalls: staged.length,
     cliEvaluationCalls: staged.length,

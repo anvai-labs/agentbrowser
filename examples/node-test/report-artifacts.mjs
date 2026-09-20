@@ -97,11 +97,12 @@ export async function publishRecipeArtifacts(path, { evaluation, oracleMatches }
 export async function readRecipeArtifacts(path) {
   try {
     const bytes = await readPrivateRecipeBytes(path);
-    const manifest = decode(await readPrivateRecipeBytes(`${path}.manifest.json`));
+    const manifestBytes = await readPrivateRecipeBytes(`${path}.manifest.json`);
+    const manifest = decode(manifestBytes);
     const expected = describe(path, bytes, manifest?.oracleMatches);
     if (!isDeepStrictEqual(manifest, expected)) throw invalid();
     const evaluation = decode(bytes);
     if (!evaluation || typeof evaluation !== 'object' || Array.isArray(evaluation)) throw invalid();
-    return { evaluation, manifest };
+    return { evaluation, manifest, manifestBytes: manifestBytes.length };
   } catch { throw invalid(); }
 }

@@ -516,6 +516,7 @@ async function workflow(baseUrl, key, fixture, process, options, report) {
 }
 
 export async function checkPackagedServer(options) {
+  const started = performance.now();
   assert.ok(['candidate', 'baseline'].includes(options.profile ?? 'candidate'), 'Unknown acceptance profile');
   options = { ...options, profile: options.profile ?? 'candidate' };
   const modules = await resolvePackagedModules(options.serverRoot, options.expectedVersion, options);
@@ -585,7 +586,7 @@ export async function checkPackagedServer(options) {
     try { await fixture?.close(); }
     finally { await rm(directory, { recursive: true, force: true }); }
   }
-  return { expectedVersion: options.expectedVersion, profile: options.profile, releaseEvidence: !modules.dirty && report.every((check) => check.status === 'pass'), platform: process.platform, arch: process.arch, node: process.version, modules, executables: { cli, mcp }, checks: report, cleanup: 'graceful API exits and fixture closure verified' };
+  return { expectedVersion: options.expectedVersion, profile: options.profile, releaseEvidence: !modules.dirty && report.every((check) => check.status === 'pass'), platform: process.platform, arch: process.arch, node: process.version, modules, executables: { cli, mcp }, checks: report, measurements: { sampleCount: 1, elapsedMs: Math.round(performance.now() - started), scope: 'extracted-package acceptance through cleanup; excludes build, packaging and report serialization' }, cleanup: 'graceful API exits and fixture closure verified' };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

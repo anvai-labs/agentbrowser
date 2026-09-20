@@ -34,7 +34,7 @@ smaller prompts with actual dependency independence.
 | R12 P1 | CLI/MCP/server can each accumulate retry, schema and result translations | Canonical schema/result helpers and exactly one transport retry classifier; T0/T2/T8 |
 | R13 P1 | Raw artifacts can contain private values and attacker-controlled HTML | Scoped reads, safe viewer, default summary/reference policy and retention tests; T2/T7 |
 | R14 P1 | Main protection does not constrain release tags or prove release ancestry | Re-read settings; protected-main ancestry and artifact provenance gates; T9 |
-| R15 P2 | Full PR suites and packaging can duplicate work; unsafe filtering can skip requirements | Measured impact selection with always-reporting required checks; T3/T9 |
+| R15 P2 | Full PR suites and packaging can duplicate work; unsafe filtering can skip requirements | T3 measures an explicit focused loop and fails to the full gate when impact is uncertain; required checks keep reporting. Any automatic CI selector or gate change needs separate T9 evidence |
 | R16 P2 | Hidden navigation/decision UI excludes users with unavailable arrow keys | Inline accessible decision component, mouse/Tab/Enter/plain text tests; T1/T8 |
 
 Source anchors: [MCP definitions](../../packages/mcp-server/src/mcp-server.ts),

@@ -13,7 +13,7 @@ setup and oracle code to their own registered adapter/verifier. See the
 [design and trust boundary](../../docs/spec/design/t3-application-recipe.md) and the
 [private report-link design](../../docs/spec/design/t3-report-artifacts.md), delivered
 by PR #229. The [live JUnit design](../../docs/spec/design/t3-live-junit.md) describes
-the current candidate qualification of these same three invocations.
+the same three invocations delivered by PR #230.
 
 ## Requirements
 
@@ -64,6 +64,12 @@ When moving the recipe outside this checkout, copy both modules and keep them to
 cp examples/node-test/application-outcome.mjs examples/node-test/report-artifacts.mjs /private/recipe/
 node /private/recipe/application-outcome.mjs /absolute/private/directory/config.json
 ```
+
+The current T3 closure candidate exercises this exact two-file copy from a private
+temporary source directory and an unrelated working directory. It reuses the existing
+three live cases and preconfigured service, so it adds no browser case or host start.
+This qualifies absence of workspace imports and current-working-directory assumptions;
+it does not configure an arbitrary application's adapter, verifier or fixture.
 
 The direct Node entry emits native test results. Exit zero requires a passed canonical
 case **and** an independently observed application commit. It writes the private
@@ -131,8 +137,18 @@ abort after publication removes only files created by that invocation; hard-kill
 hostile parent-directory recovery remain outside this example.
 
 The existing package gate exercises all three cases against the same composed service
-used by its 13-case matrix. The current live-JUnit candidate changes their reporter,
-not their process owner, and adds no browser matrix or CI job. The package parent
+used by its 13-case matrix. Live JUnit changes their reporter, not their process owner,
+and adds no browser matrix or CI job. The package parent
 validates the artifact pair, the independent fixture oracle and session cleanup, then
 removes both private files. HTML export, a general public artifact API and arbitrary
 application provisioning remain separate work.
+
+The closure candidate records one local sample of the three-case elapsed time and the
+largest config, evaluation, manifest and JUnit byte counts. Its Node-test and CLI call
+counts describe fixed, validated recipe paths; they are not process telemetry and do
+not include browser descendants or executable internals. The matrix invokes no model
+or MCP, so schema/config byte counts are not model context. One sample is a bounded
+baseline, not latency percentiles or evidence of a speedup. Default qualification uses
+Node 24.21.0; Node 22 remains the supported floor and requires its focused compatibility
+check before this candidate can claim closure. No candidate measurement or compatibility
+result is asserted here before that evidence exists.
