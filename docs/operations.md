@@ -99,7 +99,7 @@ Without Homebrew, take the compiled `agentbrowser-cli-<target>` and
 Releases](https://github.com/anvai-labs/agentbrowser/releases); macOS, Linux
 and Windows clients are published and need no Node runtime. The
 `agentbrowser-server-<target>.tar.gz` service archive is published for macOS
-and Linux. It requires Node 22 plus a compatible Chromium installed under
+and Linux. It requires Node 22 or newer plus a compatible Chromium installed under
 `PLAYWRIGHT_BROWSERS_PATH`; Linux hosts must also provide Chromium's platform
 libraries. The archive launcher does not download them. The MCP server is also
 on npm as
@@ -110,7 +110,7 @@ repo root (CI builds it every push); no registry copy is published.
 ### From source
 
 ```bash
-pnpm install            # Node 22, pnpm 9.15
+pnpm install            # Node 24.21.0, pnpm 9.15
 pnpm -r build
 node packages/api/dist/bin.js       # the service
 node packages/mcp-server/dist/bin.js  # the MCP server (stdio)

@@ -4,7 +4,7 @@
 # Build stage: install, build the workspace, and produce a self-contained
 # production deployment of the API server via pnpm deploy.
 # ---------------------------------------------------------------------------
-FROM node:22-bookworm-slim AS build
+FROM node:24.21.0-bookworm-slim AS build
 RUN corepack enable
 
 WORKDIR /app
@@ -43,12 +43,12 @@ RUN pnpm --filter @agentbrowser/api deploy --prod /deploy \
   && find /deploy -type d -name src -prune -exec rm -rf {} +
 
 # ---------------------------------------------------------------------------
-# Runtime stage: the Playwright base ships Chromium and its system libraries
-# and nothing else. Runs as the base image's non-root user (pwuser, uid 1000).
+# Runtime stage: the Playwright base ships Node 24, Chromium and its system
+# libraries. Runs as the base image's non-root user (pwuser, uid 1000).
 # The service is stateless by design (ephemeral sessions, in-memory stores),
 # so the container is safe under --read-only with a tmpfs on /tmp.
 # ---------------------------------------------------------------------------
-FROM mcr.microsoft.com/playwright:v1.62.1-noble
+FROM mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
 
 ENV NODE_ENV=production \
     PORT=5709 \
