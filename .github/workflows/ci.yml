@@ -32,7 +32,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version-file: '.tool-versions'
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -63,7 +63,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version-file: '.tool-versions'
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -104,7 +104,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version-file: '.tool-versions'
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -165,7 +165,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version-file: '.tool-versions'
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -192,7 +192,12 @@ jobs:
             --tmpfs /tmp \
             agentbrowser:${{ github.sha }})
           trap 'docker rm -f "$CONTAINER_ID" >/dev/null' EXIT
-          for i in $(seq 1 30); do
+          RUNTIME_NODE=$(docker exec "$CONTAINER_ID" node --version)
+          case "$RUNTIME_NODE" in
+            v24.*) ;;
+            *) echo "unexpected production Node runtime: $RUNTIME_NODE" >&2; exit 1 ;;
+          esac
+          for _ in $(seq 1 30); do
             if docker exec "$CONTAINER_ID" node -e "Promise.all(['live','ready'].map(async p=>{const r=await fetch('http://127.0.0.1:5709/health/'+p,{signal:AbortSignal.timeout(1000)});if(!r.ok)throw Error(p);return r.json()})).then(r=>console.log(JSON.stringify(r))).catch(()=>process.exit(1))"; then
               exit 0
             fi
@@ -214,7 +219,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version-file: '.tool-versions'
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -258,7 +263,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version-file: '.tool-versions'
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -294,7 +299,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version-file: '.tool-versions'
           cache: 'pnpm'
 
       - name: Install dependencies
