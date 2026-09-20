@@ -34,6 +34,9 @@ const CASES = new Set([
   'failed-action',
   'stale',
   'wrong-resource',
+  'recipe-pass',
+  'recipe-broken',
+  'recipe-cleanup-failure',
 ]);
 const fixtures = new Map();
 
@@ -156,6 +159,7 @@ function stateOfFixture(name) {
     receipt,
     genericReceipt,
     claims: fixture.claims,
+    claimSessionId: fixture.claimScope?.sessionId ?? null,
     reads: fixture.reads,
     actions: fixture.actions,
     shortcuts: fixture.shortcuts,
@@ -316,6 +320,7 @@ const server = await buildServer({
         correlationId,
         command
       );
+      fixture.claimScope = Object.freeze({ ...identity });
       fixture.claims++;
       if (identity.resource === 'stale') {
         fixture.app.oracle.execute({
@@ -374,7 +379,9 @@ process.on('message', ({ id, method, params }) => {
         assert.ok(CASES.has(name), 'Unknown CLI outcome fixture case');
         assert.ok(!fixtures.has(name), 'CLI outcome fixture already exists');
         const app = await startVersionedApp({
-          ...(name === 'ignored' || name === 'api-shortcut' ? { ignoreUiClicks: true } : {}),
+          ...(name === 'ignored' || name === 'api-shortcut' || name === 'recipe-broken'
+            ? { ignoreUiClicks: true }
+            : {}),
           ...(name === 'lost-response' ? { loseFirstResponse: true } : {}),
         });
         fixtures.set(name, {
@@ -383,6 +390,7 @@ process.on('message', ({ id, method, params }) => {
           closed: false,
           issued: undefined,
           claims: 0,
+          claimScope: undefined,
           reads: 0,
           actions: 0,
           shortcuts: 0,

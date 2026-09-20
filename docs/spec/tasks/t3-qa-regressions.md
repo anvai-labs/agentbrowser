@@ -79,8 +79,14 @@ failing report probes preserve the broken-flow and cleanup-failure verdicts. Thi
 internal report qualification, not framework-owned live execution or a public exporter.
 See [local tests and delivery boundaries](../evidence/t3-node-test-qualification.md).
 
-Still required: a conventional-runner recipe against an application-owned preconfigured
-deployment, artifact-link conventions, any justified HTML adapter and impact selection.
+The next slice supplies an [application-owned Node recipe](../design/t3-application-recipe.md)
+using the installed CLI against a preconfigured counter deployment. It shares assertion,
+descriptor and credential-isolation helpers with existing acceptance. Three live controls
+qualify a commit, ignored action and failed primary cleanup in the same composed host;
+the existing 13-case counts remain distinct. See the [usage example](../../../examples/node-test/README.md).
+This slice is locally qualified; it does not provision arbitrary applications.
+
+Still required: artifact-link conventions, any justified HTML adapter and impact selection.
 T3 is not complete; portable setup and installed harness qualification are not implied.
 
 ## Completion / stop

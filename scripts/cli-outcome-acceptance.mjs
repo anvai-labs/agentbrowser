@@ -4,35 +4,19 @@ import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import {
+  counterAssertion,
+  counterDescriptor,
+  createCliEnvironment,
+} from '../examples/node-test/application-outcome.mjs';
+import { qualifyApplicationRecipe } from './application-recipe-acceptance.mjs';
+import {
   runExecutable,
   validateCliTestEvaluationDiscovery,
 } from './release-smoke.mjs';
 
 /** Agent processes inherit runtime essentials, never the operator/server environment. */
 export function runAgentCli(command, { env, token, ...options }) {
-  const allowed = new Set([
-    'PATH',
-    'PATHEXT',
-    'SYSTEMROOT',
-    'WINDIR',
-    'COMSPEC',
-    'TMPDIR',
-    'TMP',
-    'TEMP',
-    'LANG',
-    'LC_ALL',
-    'LC_CTYPE',
-    'SSL_CERT_FILE',
-    'SSL_CERT_DIR',
-    'NODE_EXTRA_CA_CERTS',
-  ]);
-  const isolated = Object.fromEntries(
-    Object.entries(env).filter(
-      ([name, value]) => allowed.has(name.toUpperCase()) && typeof value === 'string'
-    )
-  );
-  if (token !== undefined) isolated.AGENTBROWSER_API_KEY = token;
-  return runExecutable(command, { ...options, env: isolated });
+  return runExecutable(command, { ...options, env: createCliEnvironment(env, token) });
 }
 
 const childScript = fileURLToPath(new URL('./cli-outcome-child.mjs', import.meta.url));
@@ -51,19 +35,6 @@ const cases = [
   'partial-setup',
   'cleanup-failure',
 ];
-
-// The assertion builder receives only the frozen page/command context. Operator
-// credentials, fixture readers and lifecycle ownership stay in the adapter below.
-function counterAssertion(context) {
-  return {
-    actions: [{ action: 'click', target: { ref: context.targetRef } }],
-    verification: {
-      verifier: { id: 'fixture.ui-commit', version: '1' },
-      input: context.command,
-      evidenceCorrelationId: context.businessCorrelationId,
-    },
-  };
-}
 
 /** Evaluate only after execution ownership has fully settled; return only a complete batch. */
 export async function evaluateBufferedTestCaseBundles(
@@ -160,23 +131,13 @@ export async function checkCliApplicationOutcome(
   // Keep the audited dependency-closure requirement even though verdict ownership
   // now stays behind the compiled CLI boundary.
   assert.ok(modules.control && modules.protocol, 'Audited packaged outcome modules are required');
-  const descriptor = {
-    id: 'counter.ui-add',
-    version: '1',
-    testedSeam: 'ui',
-    environment: {
-      productVersion: expectedVersion,
-      cliVersion: expectedVersion,
-      engine: { name: 'playwright-chromium', version: '1.0.0' },
-      fixture: { id: 'fixture-counter', version: '1' },
-    },
-    assertions: [{ id: 'save', required: true }],
-  };
+  const descriptor = counterDescriptor(expectedVersion);
   const key = randomBytes(24).toString('hex');
   const bufferedBundles = [];
   const eventIds = new Set();
   const injectedSetupFailure = new Error('INJECTED_SETUP_FAILURE');
   const injectedCleanupFailure = new Error('INJECTED_CLEANUP_FAILURE');
+  let applicationRecipe;
   const settlement = withManagedChild(
     [
       process.execPath,
@@ -591,6 +552,10 @@ export async function checkCliApplicationOutcome(
         assert.equal(fixtures.size, 0);
         assert.equal(closedFixtures.size, cases.length);
       }
+      applicationRecipe = await qualifyApplicationRecipe({
+        proc, cli, directory, env, key, baseUrl: ready.baseUrl,
+        fixture: ready.fixture, expectedVersion,
+      });
     }
   );
   const evaluated = await evaluateBufferedTestCaseBundles({
@@ -603,10 +568,12 @@ export async function checkCliApplicationOutcome(
     expectedVersion,
   });
   assert.equal(evaluated.cases.length, cases.length, 'Every staged case must be evaluated');
+  assert.ok(applicationRecipe, 'Application-owned Node recipe did not settle');
   return {
     check: 'packaged-cli-application-outcome',
     status: 'pass',
     ...evaluated,
+    applicationRecipe,
     cliDiscoveryCalls: 2,
     modelCalls: 0,
     mcpCalls: 0,
