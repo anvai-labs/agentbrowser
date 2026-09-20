@@ -19,7 +19,7 @@ declared files and budgets without contacting a service.
 | [T0](t0-contract-catalog.md) | Complete | Released discovery/catalog foundation | None |
 | [T1](t1-context-profiles.md) | Active | Local loader, fixed profiles and run cursor delivered; installed-harness consumption remains | T0 |
 | [T2](t2-shared-execution.md) | Complete | 1.9.0 includes shared execution, evidence permission and controlled G4 CLI/application qualification through #208; production/G6 and durability retain separate gates | T0 |
-| [T3](t3-qa-regressions.md) | Active | Bound-report and navigation foundation delivered; offline CLI evaluation qualified across 13 cases in the develop candidate; conventional-runner/report slices remain | T2 |
+| [T3](t3-qa-regressions.md) | Active | Bound-report and navigation foundation delivered; offline CLI evaluation qualified across 13 cases in the develop candidate; native JUnit probes implemented; external runner/report slices remain | T2 |
 | [T4](t4-application-parity.md) | Active | REST/SDK/CLI public interface shipped in 1.8.20; the 1.9.0 foundation includes delegated permission composition; independent UI/API parity, production-evidence and durability gates remain | T2 |
 | [T5](t5-durable-recovery.md) | Not started | Optional single-owner durable recovery | T2 |
 | [T6](t6-widget-strategies.md) | Active | React-select and chip-multiselect shipped in 1.8.19; mapping and broader qualification remain | T2 |
@@ -38,7 +38,8 @@ The alignment sequence through #222 is merged. Follow the
 [verified handback](../evidence/foundation-handback-recheck.md), not stale open-PR or
 navigation-reset observations. T3's
 [offline CLI evaluation](../evidence/t3-cli-evaluation.md) is implemented in the
-develop candidate; conventional-runner/report qualification remains. SDK-derived client slices and compiler
+develop candidate; [native JUnit probes](../design/t3-node-test-qualification.md)
+advance internal reporting while external runner qualification remains. SDK-derived client slices and compiler
 fault probes now cover the guard gaps; download discovery documents ID-preferred
 collection. Preserve those existing owners while continuing T3.
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { apiRequest, auditDependencyClosure, resolvePackagedModules, validateArtifact, withManagedChild } from './package-acceptance.mjs';
 
@@ -395,4 +395,172 @@ test('managed child rejects output flood and forced shutdown cannot pass cleanup
     await message();
   }), /forced|cleanup/);
   assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+});
+
+const nodeOutcomeResult = () => ({
+  check: 'packaged-cli-application-outcome',
+  status: 'pass',
+  cases: [
+    { name: 'pass', passing: true, report: { private: 'PRIVATE-REPORT-SENTINEL' } },
+    { name: 'ignored', passing: false, report: { private: 'PRIVATE-REPORT-SENTINEL' } },
+    { name: 'cleanup-failure', passing: false, report: { private: 'PRIVATE-REPORT-SENTINEL' } },
+    ...Array.from({ length: 10 }, (_, index) => ({ name: `other-${index}`, passing: false })),
+  ],
+  cliEvaluationCalls: 13,
+});
+
+const nodeOutcomeJunit = `<?xml version="1.0" encoding="utf-8"?>
+<testsuites>
+  <testcase name="pass" time="0.1" classname="test" file="fixture"/>
+  <testcase name="ignored" time="0.1" classname="test" file="fixture" failure="Outcome case did not pass"><failure type="testCodeFailure" message="Outcome case did not pass">fixed</failure></testcase>
+  <testcase name="cleanup-failure" time="0.1" classname="test" file="fixture" failure="Outcome case did not pass"><failure type="testCodeFailure" message="Outcome case did not pass">fixed</failure></testcase>
+  <!-- tests 3 --><!-- suites 0 --><!-- pass 1 --><!-- fail 2 --><!-- cancelled 0 --><!-- skipped 0 --><!-- todo 0 -->
+</testsuites>`;
+
+test('node runner qualification rejects missing, extra, skipped and wrong native controls', async () => {
+  const { validateNodeOutcomeArtifacts } = await import('./cli-outcome-node-acceptance.mjs');
+  const sidecar = {
+    schemaVersion: 1,
+    productVersion: '1.9.0',
+    runtime: process.version,
+    cases: [
+      { name: 'pass', passing: true },
+      { name: 'ignored', passing: false },
+      { name: 'cleanup-failure', passing: false },
+    ],
+  };
+  const junit = nodeOutcomeJunit;
+  assert.equal(validateNodeOutcomeArtifacts({ sidecar, junit, expectedVersion: '1.9.0' }).failed, 2);
+  for (const changed of [
+    junit.replace('<!-- cancelled 0 -->', '<!-- cancelled 1 -->'),
+    junit.replace('<!-- skipped 0 -->', '<!-- skipped 1 -->'),
+    junit.replace('</testsuites>', '<testcase name="extra"/></testsuites>'),
+    junit.replace('name="ignored"', 'name="renamed"'),
+    junit.replace('<!-- fail 2 -->', '<!-- fail 1 -->'),
+    junit
+      .replace(
+        '<testcase name="pass" time="0.1" classname="test" file="fixture"/>',
+        '<testcase name="pass" failure="Outcome case did not pass"><failure type="testCodeFailure" message="Outcome case did not pass">fixed</failure></testcase>'
+      )
+      .replace(
+        '<testcase name="ignored" time="0.1" classname="test" file="fixture" failure="Outcome case did not pass"><failure type="testCodeFailure" message="Outcome case did not pass">fixed</failure></testcase>',
+        '<testcase name="ignored"/>'
+      ),
+  ]) {
+    assert.throws(
+      () => validateNodeOutcomeArtifacts({ sidecar, junit: changed, expectedVersion: '1.9.0' }),
+      /Node test qualification failed/
+    );
+  }
+  assert.throws(
+    () => validateNodeOutcomeArtifacts({ sidecar: undefined, junit, expectedVersion: '1.9.0' }),
+    /Node test qualification failed/
+  );
+});
+
+test('node runner qualification invokes one process and always removes private transport', async () => {
+  const { qualifyCliOutcomeWithNodeTest } = await import('./cli-outcome-node-acceptance.mjs');
+  const directory = await mkdtemp(join(tmpdir(), 'agentbrowser-node-qualification-test-'));
+  let calls = 0;
+  let privateDirectory;
+  try {
+    const result = await qualifyCliOutcomeWithNodeTest(
+      nodeOutcomeResult(),
+      { directory, env: { PATH: process.env.PATH }, expectedVersion: '1.9.0' },
+      {
+        runner: async (command, options) => {
+          calls++;
+          assert.equal(options.expectedExitCode, 1);
+          const configPath = command.at(-1);
+          privateDirectory = dirname(configPath);
+          assert.equal((await stat(configPath)).mode & 0o777, 0o600);
+          assert.equal((await stat(privateDirectory)).mode & 0o777, 0o700);
+          const config = JSON.parse(await readFile(configPath, 'utf8'));
+          assert.ok(!JSON.stringify(config).includes('PRIVATE-REPORT-SENTINEL'));
+          await writeFile(
+            config.resultPath,
+            JSON.stringify({
+              schemaVersion: 1,
+              productVersion: config.expectedVersion,
+              runtime: process.version,
+              cases: config.cases,
+            }),
+            { flag: 'wx', mode: 0o600 }
+          );
+          return {
+            code: 1,
+            stderr: '',
+            stdout: nodeOutcomeJunit,
+          };
+        },
+      }
+    );
+    assert.equal(calls, 1);
+    assert.equal(result.cases.length, 13);
+    assert.deepEqual(result.conventionalRunner.counts, { tests: 3, passed: 1, failed: 2, cancelled: 0, skipped: 0 });
+    assert.equal(result.conventionalRunner.exitCode, 1);
+    assert.ok(!JSON.stringify(result.conventionalRunner).includes('PRIVATE-REPORT-SENTINEL'));
+    await assert.rejects(stat(privateDirectory), { code: 'ENOENT' });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('node runner qualification rejects missing sidecars and private runner failures after cleanup', async () => {
+  const { qualifyCliOutcomeWithNodeTest } = await import('./cli-outcome-node-acceptance.mjs');
+  const directory = await mkdtemp(join(tmpdir(), 'agentbrowser-node-qualification-refusal-'));
+  try {
+    await assert.rejects(
+      qualifyCliOutcomeWithNodeTest(
+        nodeOutcomeResult(),
+        { directory, env: { PATH: process.env.PATH }, expectedVersion: '1.9.0' },
+        { runner: async () => ({ code: 1, stdout: nodeOutcomeJunit, stderr: '' }) }
+      ),
+      /Node test qualification failed/
+    );
+    assert.deepEqual(await readdir(directory), []);
+
+    let failure;
+    await assert.rejects(
+      qualifyCliOutcomeWithNodeTest(
+        nodeOutcomeResult(),
+        { directory, env: { PATH: process.env.PATH }, expectedVersion: '1.9.0' },
+        { runner: async () => { throw new Error('PRIVATE-RUNNER-SENTINEL'); } }
+      ),
+      (error) => {
+        failure = error;
+        return true;
+      }
+    );
+    assert.match(failure.message, /Node test qualification failed/);
+    assert.doesNotMatch(failure.stack, /PRIVATE-RUNNER-SENTINEL/);
+    assert.deepEqual(await readdir(directory), []);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('node runner qualification exercises the native JUnit reporter without private report data', async () => {
+  const { qualifyCliOutcomeWithNodeTest } = await import('./cli-outcome-node-acceptance.mjs');
+  const directory = await mkdtemp(join(tmpdir(), 'agentbrowser-node-qualification-native-'));
+  try {
+    const result = await qualifyCliOutcomeWithNodeTest(nodeOutcomeResult(), {
+      directory,
+      env: { PATH: process.env.PATH, LANG: 'C' },
+      expectedVersion: '1.9.0',
+    });
+    assert.equal(result.conventionalRunner.reporter, 'junit');
+    assert.match(result.conventionalRunner.runtime, /^v\d+\./);
+    assert.ok(result.conventionalRunner.artifact.sizeBytes > 0);
+    assert.ok(result.conventionalRunner.artifact.sizeBytes <= 64 * 1024);
+    assert.deepEqual(
+      Object.keys(result.conventionalRunner.artifact).sort(),
+      ['mediaType', 'sha256', 'sizeBytes']
+    );
+    assert.equal(result.conventionalRunner.artifact.mediaType, 'application/xml');
+    assert.match(result.conventionalRunner.artifact.sha256, /^[a-f0-9]{64}$/);
+    assert.ok(!JSON.stringify(result.conventionalRunner).includes('PRIVATE-REPORT-SENTINEL'));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

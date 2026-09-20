@@ -575,7 +575,11 @@ export async function checkPackagedServer(options) {
         await workflow(ready.baseUrl, key, fixture, process, options, report);
       });
       const { checkCliApplicationOutcome } = await import('./cli-outcome-acceptance.mjs');
-      report.push(await checkCliApplicationOutcome({ ...options, modules, directory, env }, { withManagedChild, apiRequest, waitFor }));
+      const outcome = await checkCliApplicationOutcome({ ...options, modules, directory, env }, { withManagedChild, apiRequest, waitFor });
+      // The reporter subprocess owns no browser descendants: start only after the
+      // existing live coordinator has settled every fixture and process finalizer.
+      const { qualifyCliOutcomeWithNodeTest } = await import('./cli-outcome-node-acceptance.mjs');
+      report.push(await qualifyCliOutcomeWithNodeTest(outcome, { directory, env, expectedVersion: options.expectedVersion }));
     }
   } finally {
     try { await fixture?.close(); }
