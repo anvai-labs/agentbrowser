@@ -25,6 +25,12 @@ test('copied recipe loads with only its documented companion from an unrelated c
       const probe = `const m = await import(${JSON.stringify(pathToFileURL(script).href)}); console.log(m.applicationRecipeTestName('pass'));`;
       const loaded = await runExecutable([process.execPath, '--input-type=module', '-e', probe], { cwd });
       assert.equal(loaded.stdout.trim(), 'application outcome: pass');
+      const direct = await runExecutable([process.execPath, script, join(cwd, 'absent-config.json')], {
+        cwd,
+        expectedExitCode: 1,
+      });
+      assert.equal(direct.stdout, '');
+      assert.equal(direct.stderr.trim(), 'Application outcome recipe configuration is invalid.');
       // Prove the companion is loaded from the copied location, not the workspace.
       await rm(join(staged, 'report-artifacts.mjs'));
       await assert.rejects(runExecutable([process.execPath, '--input-type=module', '-e', probe], { cwd }));

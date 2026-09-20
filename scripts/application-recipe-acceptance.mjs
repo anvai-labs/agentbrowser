@@ -1,6 +1,6 @@
 /** Qualify the standalone Node recipe against the already-running composed host. */
 import assert from 'node:assert/strict';
-import { copyFile, chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -21,7 +21,7 @@ const recipeScript = fileURLToPath(
 /** Exercise exactly the documented two-file copy; own and remove all staging. */
 export async function withStandaloneRecipe(directory, exercise, { remove = rm } = {}) {
   let root;
-  try { root = await mkdtemp(join(directory, 'standalone-recipe-')); }
+  try { root = await realpath(await mkdtemp(join(directory, 'standalone-recipe-'))); }
   catch { throw new Error('Standalone recipe staging failed'); }
   let failed = false;
   try {
