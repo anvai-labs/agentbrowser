@@ -1,9 +1,9 @@
 # T3: deterministic regressions and reports
 
 Status: active; bound reports, navigation reset, offline CLI evaluation, internal native
-JUnit projection, the fixed application-owned recipe and private report links are
-implemented. Live-recipe JUnit qualification is the current candidate. Repository:
-agentbrowser. Depends on: T2.
+JUnit projection, the fixed application-owned recipe, private report links and live
+recipe JUnit qualification are implemented. Standalone-copy and measured-cost closure
+evidence is the current candidate. Repository: agentbrowser. Depends on: T2.
 Inputs: core, qa mode, contracts, grounding, quality-ci.
 
 ## Reuse and scope
@@ -96,12 +96,32 @@ PR #229 merged the
 develop `7c452b1`: a
 bounded evaluation file plus sibling digest manifest after recipe lifecycle settlement.
 It introduces no public CLI/protocol artifact API, HTML renderer, dependency, runner or
-CI job. The current [live-JUnit candidate](../design/t3-live-junit.md) runs the same
-three recipe invocations under Node's native reporter with case-bound names and the same
-process owner. The original three finalized-result probes remain a separate qualification;
-neither slice repeats the browser matrix. General artifact APIs, any justified HTML
-adapter and impact selection remain. T3 is not complete; portable setup and a general
-installed harness are not implied.
+CI job. PR #230 then merged [live JUnit qualification](../design/t3-live-junit.md) at
+develop `9b80675`. It runs the same three recipe invocations under Node's native reporter
+with case-bound names and the same process owner. The original three finalized-result
+probes remain a separate qualification; neither slice repeats the browser matrix.
+
+The current closure candidate stages the documented `application-outcome.mjs` and
+`report-artifacts.mjs` pair in a private temporary directory and runs those same three
+cases from an unrelated working directory. It must preserve the 0/1/1 Node exits,
+canonical evaluations, independent oracles, session/fixture cleanup and digest-linked
+JUnit results. This tests the two-file, builtins-only distribution seam against the
+existing preconfigured service. It does not provide general application provisioning,
+a plugin loader or a public runner.
+
+The candidate also records one explicitly scoped local sample: live-recipe elapsed
+time and maximum config, evaluation, manifest and JUnit bytes. Its CLI/version/discovery,
+outcome, evaluation and Node-test counts come from the fixed qualified call paths and
+validated result cardinality; they are not operating-system process telemetry and
+exclude browser descendants and executable internals. Zero model/MCP calls applies to
+this regression matrix, not the full package gate. Node 24.21.0 remains the default
+qualification baseline and Node 22 the supported compatibility floor. Candidate results,
+including any fresh Node 22 check, remain pending until executed and recorded.
+
+General artifact APIs, any justified HTML adapter and automatic impact selection remain.
+A single sample establishes scope and a baseline; it cannot support percentiles or a
+speedup claim. T3 is not complete until this candidate and a separate closure review pass;
+portable service setup and a general installed harness are not implied.
 
 ## Focused local loop
 

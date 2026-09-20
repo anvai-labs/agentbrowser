@@ -216,6 +216,9 @@ test('buffered evaluation records bounded byte costs without publishing private 
   assert.deepEqual(result.cases.map((entry) => entry.passing), [true, false]);
   assert.equal(result.cliEvaluationCalls, 2);
   assert.equal(result.cliEvaluationDiscoveryCalls, 1);
+  assert.equal(result.discoveryBytes, Buffer.byteLength(JSON.stringify(evaluationDiscovery())));
+  assert.equal(result.maxReportBytes, Math.max(...bundles.map((entry) => Buffer.byteLength(JSON.stringify(entry.bundle.report)))));
+  assert.ok(Number.isInteger(result.elapsedMs) && result.elapsedMs >= 0);
   assert.equal(
     result.maxBundleBytes,
     Math.max(...bundles.map((entry) => Buffer.byteLength(JSON.stringify(entry.bundle))))

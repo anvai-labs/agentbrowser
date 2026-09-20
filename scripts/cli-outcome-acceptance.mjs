@@ -42,6 +42,7 @@ export async function evaluateBufferedTestCaseBundles(
   { runner = runAgentCli } = {}
 ) {
   await settlement;
+  const started = performance.now();
   assert.equal(bundles.length, expectedCount, 'Every case must stage before evaluation');
   const discoveryResult = await runner(
     [...cli, '--json', 'describe', 'test', 'evaluate', '--schema'],
@@ -119,6 +120,9 @@ export async function evaluateBufferedTestCaseBundles(
     evaluationSchemas: schemas,
     maxBundleBytes,
     maxBundleOverheadBytes,
+    maxReportBytes: Math.max(...staged.map((entry) => entry.reportBytes)),
+    discoveryBytes: Buffer.byteLength(discoveryResult.stdout),
+    elapsedMs: Math.round(performance.now() - started),
   };
 }
 
@@ -127,6 +131,7 @@ export async function checkCliApplicationOutcome(
   options,
   { withManagedChild, apiRequest, waitFor }
 ) {
+  const started = performance.now();
   const { modules, expectedVersion, cli, directory, env } = options;
   // Keep the audited dependency-closure requirement even though verdict ownership
   // now stays behind the compiled CLI boundary.
@@ -138,6 +143,8 @@ export async function checkCliApplicationOutcome(
   const injectedSetupFailure = new Error('INJECTED_SETUP_FAILURE');
   const injectedCleanupFailure = new Error('INJECTED_CLEANUP_FAILURE');
   let applicationRecipe;
+  let matrixElapsedMs;
+  let matrixCliLaunches = 0;
   const settlement = withManagedChild(
     [
       process.execPath,
@@ -152,6 +159,7 @@ export async function checkCliApplicationOutcome(
       const ready = await proc.message();
       assert.equal(ready.kind, 'ready');
       assert.deepEqual(ready.modules, modules, 'CLI host must use the audited extracted package');
+      const matrixStarted = performance.now();
       const request = (path, args = {}) =>
         proc.guard(apiRequest(ready.baseUrl, path, { key, signal: proc.signal, ...args }));
       const invoke = async (args, token, payload, expectedExitCode = 0) => {
@@ -167,6 +175,7 @@ export async function checkCliApplicationOutcome(
               ...(payload !== undefined ? { stdin: JSON.stringify(payload) } : {}),
               expectedExitCode,
               onSpawn(value) {
+                matrixCliLaunches++;
                 child = value;
                 proc.signal.addEventListener('abort', abort, { once: true });
                 if (proc.signal.aborted) abort();
@@ -552,6 +561,7 @@ export async function checkCliApplicationOutcome(
         assert.equal(fixtures.size, 0);
         assert.equal(closedFixtures.size, cases.length);
       }
+      matrixElapsedMs = Math.round(performance.now() - matrixStarted);
       applicationRecipe = await qualifyApplicationRecipe({
         proc, cli, directory, env, key, baseUrl: ready.baseUrl,
         fixture: ready.fixture, expectedVersion,
@@ -574,6 +584,17 @@ export async function checkCliApplicationOutcome(
     status: 'pass',
     ...evaluated,
     applicationRecipe,
+    measurements: {
+      sampleCount: 1,
+      // Coordinator is inclusive of host startup/shutdown, matrix, recipe and evaluator.
+      coordinatorElapsedMs: Math.round(performance.now() - started),
+      matrixElapsedMs,
+      evaluatorElapsedMs: evaluated.elapsedMs,
+      matrixCliLaunches,
+      matrixCliLaunchesBasis: 'observed onSpawn callbacks; excludes executable internals',
+      modelContextBytes: 0,
+      modelContextBasis: 'deterministic matrix has no model invocation; discovery/config bytes are separate',
+    },
     cliDiscoveryCalls: 2,
     modelCalls: 0,
     mcpCalls: 0,
