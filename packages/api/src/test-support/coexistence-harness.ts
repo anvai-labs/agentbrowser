@@ -18,7 +18,11 @@ export async function openHarness(options: {
   baseUrl: string;
   sessionId: string;
   token: string;
+  requestTimeoutMs?: number;
 }): Promise<Harness> {
+  const requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
+  if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 60_000)
+    throw new Error('Harness requestTimeoutMs must be an integer from 1 through 60000');
   let nextId = 0;
   if (options.transport === 'in-process') {
     const server = buildMcpServer({
@@ -129,7 +133,7 @@ export async function openHarness(options: {
         const timer = setTimeout(() => {
           fail(new Error(`Harness timeout: ${method}`));
           signal('SIGTERM');
-        }, 10_000);
+        }, requestTimeoutMs);
         pending.set(id, { resolve, reject, timer });
         child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
       });

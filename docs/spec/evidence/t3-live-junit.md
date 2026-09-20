@@ -1,6 +1,8 @@
 # T3 live recipe JUnit qualification
 
-Status: implemented candidate based on develop `7c452b1` (private report links, #229).
+Status: merged through PR #230 at develop `9b80675`, based on private report links #229.
+This is the historical slice record; see [T3 completion](t3-standalone-qualification.md)
+for current qualification, delivery and remaining scope.
 Design: [live native JUnit](../design/t3-live-junit.md).
 Usage: [application-owned example](../../../examples/node-test/README.md#native-junit-output).
 

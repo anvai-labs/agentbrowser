@@ -20,7 +20,7 @@ For delegated sessions, supply `X-AgentBrowser-Operation-Id` (MCP `operationId`)
 
 The CLI drives the same contract: `agentbrowser autofill <sessionId> <pageId> '@payload.json' [--policy '<json>']` prints the per-field receipts (values and redacted excerpts omitted; `--json` includes them).
 
-Each receipt has `field` (zero-based payload index), `match`, `resolvedRef` when resolved, `blockIdentity` when captured, `status`, and `verified`. Successful actions also carry `actionId`. `actual` is a redacted excerpt of at most 512 characters, with `actualTruncated`; verification compares the full private native value before redaction or truncation. Statuses are `verified`, `unverified` (explicit `verify: "none"`), `failed`, `uncertain`, `skipped`, and `not_attempted`. HTTP 200 means a report is available: callers must inspect `ok` and each receipt. A partial controlled batch is recorded conservatively as failed or outcome-unknown, never wholly completed.
+Each receipt has `field` (zero-based payload index), `match`, `resolvedRef` when resolved, `blockIdentity` when captured, `status`, and `verified`. `actionId` is optional in the schema and is not currently populated by the bulk orchestrator; do not rely on it for per-field reconciliation. `actual` is a redacted native-value excerpt of at most 512 characters, with `actualTruncated`. Native verification compares the full private value; custom strategies compare committed selection evidence. A successfully selected custom control can have an empty search input and therefore an empty `actual`. Statuses are `verified`, `unverified` (explicit `verify: "none"`), `failed`, `uncertain`, `skipped`, and `not_attempted`. HTTP 200 means a report is available: callers must inspect `ok` and each receipt. A partial controlled batch is recorded conservatively as failed or outcome-unknown, never wholly completed.
 
 Fill values may use existing `vault://` references: all are resolved privately before browser I/O, and the resolved values are used for comparison. Select option values remain literal. Missing or oversized resolved values reject the complete request before writes.
 
@@ -34,7 +34,7 @@ The HTML artifact captures whole-page markup through the existing authorized art
 - A block selects the nearest fieldset by unique `id`, exact direct-legend `label`, or both. All observed block identities must agree; a label unique among only the matching fields is insufficient. No `first` or ordinal fallback is accepted.
 - The Playwright adapter captures node and fieldset identities in a private document-scoped WeakMap. Reordering preserves identity; replacement, navigation, changed identity attributes or movement into another fieldset causes refusal. Identity evidence is checked again immediately before action dispatch. DOM identity alone cannot prove business identity when an application recycles a node without changing its observable identity.
 - Fresh observations precede every field. Truncated/degraded observations cannot establish uniqueness. Hidden or disabled observed controls are skipped with a receipt; the service does not guess whether a hidden field is a honeypot.
-- Writes are serial and happen at most once per field. `onVerifyFail: "retry"` retries observation only. Uncertain dispatch stops the suffix regardless of skip policy. There is no rollback or automatic compensation.
+- Writes are serial. Native fields use one write; custom strategies use a bounded sequence of click/type/click actions. Verification never replays those actions. `onVerifyFail: "retry"` retries observation only. Uncertain dispatch stops the suffix regardless of skip policy. There is no rollback or automatic compensation.
 - Payloads contain 1–50 fields; values/options are at most 8192 characters. Internal observations allow 2000 elements and 1 MiB, then refuse truncation. These are acceptance bounds after capture, not bounds on intermediate browser-to-host native-value transfer. `maxReobserve` is 0–5 extra reads; `settleMs` is 0–2000. Defaults are 3 and 250 ms.
 - `timeoutMs` is a **cooperative admission budget**, default and maximum 240000 ms. Once exceeded, no new actions, observations or artifact captures start. An already-dispatched engine call must drain before ownership is released. A blocked renderer evaluation can therefore outlive this budget; this is not a hard wall-clock deadline. SDK bulk requests allow a 30-second transport margin and never retry automatically.
 - Human takeover revokes remaining actions and response delivery through the existing authority guards. The task does not race a timer against a writer and release the session while that writer is still running.
@@ -48,13 +48,22 @@ The internal strategy registry is trusted server code; request payloads cannot r
 | Native text/email/tel/url/search/number input and textarea | Delivered | One native fill, settled property read, final form recheck |
 | Native single select | Delivered | Select by option value, settled selected value, final form recheck |
 | Password, file input, native multi-select | Refused | Need separate privacy/upload/selection contracts |
-| React-select single-select (typeahead filter) | Delivered | Click-open, per-char typeText filter, fresh-observe exact match click, settled committed-chip recheck |
-| Chip multi-select | Delivered | Click-open, typeText filter, click matching chip option, settled committed-chip recheck |
+| React Select-style single-select (typeahead filter) | Named strategy; bounded markup qualification | Click-open, per-char typeText filter, fresh-observe option click; immediate and final checks require the committed single-value label |
+| React Select-style chip multi-select | Named strategy; add-only membership qualification | Click-open, typeText filter, option click; immediate and final checks require the requested label in complete bounded membership evidence |
 | Active-descendant combobox (keyboard-commit) | Refused | Highlight/focus does not prove committed selection; needs aria-activedescendant readback contract |
 | Hidden/disabled observed control | Skip with report | No write |
 | Adapter without identity/value evidence | Refused before writing that field | No silent browser-engine switch |
 
 The browser-independent orchestrator depends only on observation/action/artifact ports. The current identity/value evidence implementation is qualified on the Playwright adapter. Other engines need equivalent conformance tests before advertising this capability. A native text input used as a custom autocomplete is refused when the observable role/ARIA metadata identifies it as such.
+
+Custom commitment capture recognizes `.select__value-container` with
+`.select__single-value` or `.select__multi-value__label` children. Chip evidence is
+limited to 32 labels, 512 characters per label and 16,384 serialized characters;
+incomplete membership cannot verify a selection. Search input or menu text alone is
+not commitment. This is a named markup contract, not qualification of every React
+Select version or arbitrary chip widget. Removal, replacement and rollback remain
+unsupported. Option matching retains the existing first exact/prefix candidate;
+popup-scoped ambiguity handling and bounded async option polling remain follow-ups.
 
 ## Co-design decisions and next qualification
 
@@ -67,4 +76,4 @@ The browser-independent orchestrator depends only on observation/action/artifact
 
 Local qualification includes repeated labels, fieldset reorder, moved/replaced nodes, native select verification, post-write normalization, cross-field invalidation, redaction collisions, human takeover, bounded display values and duplicate-operation refusal. A real Chromium fixture is driven through one actual stdio MCP call.
 
-Live acceptance remains: fill and verify CrowdStrike R29506 and Coinbase Core Automation in fewer than four minutes each with zero per-field agent calls. This requires the authorized target sessions/URLs and approved profile/field mapping, plus qualification of the widgets those live forms actually use. The service performs no explicit submit/click/Enter action; page input/change handlers may independently commit effects.
+Live acceptance remains: fill and verify CrowdStrike R29506 and Coinbase Core Automation in fewer than four minutes each with zero per-field agent calls. This requires the authorized target sessions/URLs and approved profile/field mapping, plus qualification of the widgets those live forms actually use. Autofill does not intentionally submit the form; custom strategies do click controls and options, and page handlers may independently commit effects.

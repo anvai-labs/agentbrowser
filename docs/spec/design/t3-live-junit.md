@@ -1,8 +1,10 @@
 # T3: native JUnit for the application-owned live recipe
 
-Status: implemented candidate after private report links (#229, develop `7c452b1`).
+Status: merged through PR #230 at develop `9b80675`, after private report links (#229).
+Later [T3 completion](../evidence/t3-standalone-qualification.md) records the current
+delivery status; qualification statements below retain slice scope.
 See [local qualification](../evidence/t3-live-junit.md).
-Load only for this reporting slice. T3 remains active.
+Load only for this reporting slice. At its delivery, T3 remained active.
 
 ## Gap and decision
 

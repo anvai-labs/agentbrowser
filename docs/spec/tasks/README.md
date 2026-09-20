@@ -19,7 +19,7 @@ declared files and budgets without contacting a service.
 | [T0](t0-contract-catalog.md) | Complete | Released discovery/catalog foundation | None |
 | [T1](t1-context-profiles.md) | Active | Local loader, fixed profiles and run cursor delivered; installed-harness consumption remains | T0 |
 | [T2](t2-shared-execution.md) | Complete | 1.9.0 includes shared execution, evidence permission and controlled G4 CLI/application qualification through #208; production/G6 and durability retain separate gates | T0 |
-| [T3](t3-qa-regressions.md) | Active | Foundation plus #225 offline evaluation, #226 native JUnit projection, #227 application-owned recipe, #229 private report links and #230 live JUnit merged; standalone-copy and measured-cost closure is the current candidate | T2 |
+| [T3](t3-qa-regressions.md) | Complete | First application-owned CLI regression workflow, private JUnit evidence, standalone-copy and measured-cost qualification delivered through #231; not yet released | T2 |
 | [T4](t4-application-parity.md) | Active | REST/SDK/CLI public interface shipped in 1.8.20; the 1.9.0 foundation includes delegated permission composition; independent UI/API parity, production-evidence and durability gates remain | T2 |
 | [T5](t5-durable-recovery.md) | Not started | Optional single-owner durable recovery | T2 |
 | [T6](t6-widget-strategies.md) | Active | React-select and chip-multiselect shipped in 1.8.19; mapping and broader qualification remain | T2 |
@@ -42,10 +42,16 @@ navigation-reset observations. T3's
 [application-owned CLI recipe](../design/t3-application-recipe.md) are merged through
 PR #227; PR #228 supplies the Node 24 qualification baseline, PR #229 adds private
 example-local report links, and PR #230 qualifies live native JUnit. The current
-closure candidate executes the documented two-file recipe copy from an unrelated
-working directory and records a scoped focused/full cost baseline. Broader provisioning,
-HTML without a consumer and automatic CI selection remain outside this candidate.
-Preserve those owners while continuing T3.
+closure delivered in #231 executes the documented two-file recipe copy from an unrelated
+working directory and records a scoped focused/full cost baseline. See the
+[completion evidence](../evidence/t3-standalone-qualification.md). Broader provisioning,
+HTML without a consumer and automatic CI selection remain separate follow-ups.
+
+Continue the concrete [research repair packets](../../research/2026-09-browser-agents/experiments.md):
+T6 widget commitment/coverage first (Q0), then the existing ApplicationAuthority callback
+guard (Q0a), before reusable mappings or observation experiments. Keep research outside
+default task context. T0, T2 and T3 are complete: 3 of 10 milestones, not an effort-weighted
+30% estimate. The remaining tasks include active work and the recurring T9 release gate.
 
 ## Common execution protocol
 

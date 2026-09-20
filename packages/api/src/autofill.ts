@@ -23,6 +23,8 @@ interface StrategyScope {
   act(request: ServiceActRequest): Promise<unknown>;
   /** Fresh, complete observation (guarded, non-degraded). */
   observe(): Promise<PageElement[]>;
+  /** Re-resolve the original selector and identity after a prior step changed refs. */
+  resolveRef(elements: PageElement[], match: AutofillMatch, identity: string): string;
   /** Bounded settle between strategy steps. */
   settle(ms: number): Promise<void>;
 }
@@ -31,6 +33,8 @@ interface WidgetStrategy {
   name: 'native-input' | 'native-select' | 'react-select' | 'chip-multiselect';
   supports(element: PageElement, field: AutofillRequest['fields'][number]): boolean;
   action(field: AutofillRequest['fields'][number], ref: string): ServiceActRequest;
+  /** Strategy-owned proof that the requested value reached committed widget state. */
+  isCommitted(element: PageElement, expected: string): boolean;
   /**
    * Multi-step commit for widget classes whose selection cannot be expressed
    * as one wire action (react-select menus need open → filter → fresh option
@@ -40,8 +44,37 @@ interface WidgetStrategy {
   run?(
     field: AutofillRequest['fields'][number],
     ref: string,
+    identity: string,
     scope: StrategyScope
   ): Promise<{ expected: string }>;
+}
+
+const nativeValueCommitted = (element: PageElement, expected: string) => element.value === expected;
+
+const singleValueCommitted = (element: PageElement, expected: string) =>
+  element.attributes?.['autofill-committed'] === expected;
+
+const MAX_COMMITTED_MEMBERS = 32;
+const MAX_COMMITTED_MEMBER_CHARS = 512;
+const MAX_COMMITTED_MEMBERS_JSON_CHARS = 16_384;
+
+function committedMember(element: PageElement, expected: string): boolean {
+  if (element.attributes?.['autofill-committed-members-complete'] !== 'true') return false;
+  const encoded = element.attributes['autofill-committed-members'];
+  if (encoded === undefined || encoded.length > MAX_COMMITTED_MEMBERS_JSON_CHARS) return false;
+  try {
+    const members: unknown = JSON.parse(encoded);
+    return (
+      Array.isArray(members) &&
+      members.length <= MAX_COMMITTED_MEMBERS &&
+      members.every(
+        (member) => typeof member === 'string' && member.length <= MAX_COMMITTED_MEMBER_CHARS
+      ) &&
+      members.includes(expected)
+    );
+  } catch {
+    return false;
+  }
 }
 
 // Trusted code owns the registry. No page-provided scripts or unqualified keyboard fallback.
@@ -58,6 +91,7 @@ const strategies: readonly WidgetStrategy[] = [
       !e.attributes?.['aria-autocomplete'] &&
       e.role !== 'combobox',
     action: (f, ref) => ({ action: 'fill', target: { ref }, value: f.value, remap: false }),
+    isCommitted: nativeValueCommitted,
   },
   {
     name: 'native-select',
@@ -69,12 +103,13 @@ const strategies: readonly WidgetStrategy[] = [
       values: [f.option?.value ?? ''],
       remap: false,
     }),
+    isCommitted: nativeValueCommitted,
   },
   {
     // React-Select single-select (combobox with typeahead filter). The commit
     // path requires real per-char keystrokes to populate the option list, then
-    // a click on the exact filtered option — fill/Enter alone do not commit
-    // on Greenhouse-class portals. Verified live.
+    // a click on the exact filtered option. The commitment predicate supports
+    // known React Select-style single-value markup; query text is never proof.
     name: 'react-select',
     supports: (e, f) =>
       f.option !== undefined &&
@@ -82,15 +117,18 @@ const strategies: readonly WidgetStrategy[] = [
       !!e.attributes?.['aria-autocomplete'] &&
       e.attributes?.tag === 'input',
     action: (f, ref) => ({ action: 'click', target: { ref }, remap: false }),
-    run: async (field, ref, scope) => {
+    isCommitted: singleValueCommitted,
+    run: async (field, ref, identity, scope) => {
       const label = field.option?.value ?? '';
       if (!label)
         throw new AutofillFailure('INVALID_REQUEST', 'react-select requires option.value');
       await scope.act({ action: 'click', target: { ref }, remap: false });
       await scope.settle(2000);
-      await scope.act({ action: 'typeText', target: { ref }, value: label, delay: 35 });
+      const inputRef = scope.resolveRef(await scope.observe(), field.match, identity);
+      await scope.act({ action: 'typeText', target: { ref: inputRef }, value: label, delay: 35 });
       await scope.settle(2500);
       const options = await scope.observe();
+      scope.resolveRef(options, field.match, identity);
       const exact = options.find((e) => e.role === 'option' && (e.name ?? '').trim() === label);
       const partial = options.find(
         (e) =>
@@ -108,22 +146,24 @@ const strategies: readonly WidgetStrategy[] = [
     },
   },
   {
-    // Chip multi-select (combobox whose committed values render as chips with
-    // "press delete to clear"). Commits by typing the filter text and clicking
-    // the matching chip option; removal uses targeted press Delete on the chip.
+    // Add-only React Select-style multi-value control. A click commits only
+    // when a complete, bounded membership capture contains the requested label.
     name: 'chip-multiselect',
     supports: (e, f) =>
       f.option !== undefined && e.role === 'combobox' && !!e.attributes?.['aria-autocomplete'],
     action: (f, ref) => ({ action: 'click', target: { ref }, remap: false }),
-    run: async (field, ref, scope) => {
+    isCommitted: committedMember,
+    run: async (field, ref, identity, scope) => {
       const label = field.option?.value ?? '';
       if (!label)
         throw new AutofillFailure('INVALID_REQUEST', 'chip-multiselect requires option.value');
       await scope.act({ action: 'click', target: { ref }, remap: false });
       await scope.settle(2000);
-      await scope.act({ action: 'typeText', target: { ref }, value: label, delay: 35 });
+      const inputRef = scope.resolveRef(await scope.observe(), field.match, identity);
+      await scope.act({ action: 'typeText', target: { ref: inputRef }, value: label, delay: 35 });
       await scope.settle(2500);
       const options = await scope.observe();
+      scope.resolveRef(options, field.match, identity);
       const exact = options.find(
         (e) => e.role === 'option' && (e.name ?? '').trim().toLowerCase() === label.toLowerCase()
       );
@@ -223,6 +263,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
   }
   const blocks = new Map<string, string>();
   const identities = new Map<number, string>();
+  const selectedStrategies = new Map<number, WidgetStrategy>();
   const display = (receipt: AutofillReceipt, value: string | undefined) => {
     const redacted = value === undefined ? undefined : (ports.redact?.(value) ?? value);
     receipt.actual = redacted?.slice(0, 512);
@@ -299,6 +340,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
           'No qualified widget strategy or node identity evidence; no write dispatched'
         );
       identities.set(index, identity);
+      selectedStrategies.set(index, strategy);
       guard();
       let effect: unknown;
       if (strategy.run) {
@@ -317,12 +359,21 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
             guard();
             return observe();
           },
+          resolveRef: (elements, match, expectedIdentity) => {
+            const fresh = resolve(elements, match, blocks);
+            if (
+              fresh.attributes?.['autofill-node'] !== expectedIdentity ||
+              fresh.attributes?.['autofill-block'] !== blockIdentity
+            )
+              throw new AutofillFailure('STALE_TARGET', 'Widget changed between strategy steps');
+            return fresh.ref;
+          },
           settle: async (ms) => {
             await new Promise((r) => setTimeout(r, ms));
             guard();
           },
         };
-        const outcome = await strategy.run(field, element.ref, scope);
+        const outcome = await strategy.run(field, element.ref, identity, scope);
         execution.state = 'completed';
         if (outcome.expected !== undefined) expectedValues[index] = outcome.expected;
       } else {
@@ -349,7 +400,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
         receipt.status = 'unverified';
         continue;
       }
-      const expected = expectedValues[index];
+      const expected = expectedValues[index] as string;
       for (let attempt = 0; ; attempt++) {
         await new Promise((r) => setTimeout(r, policy.settleMs));
         const fresh = await observe();
@@ -363,8 +414,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
         if (resolve(fresh, field.match, blocks).attributes?.['autofill-node'] !== identity)
           throw new AutofillFailure('STALE_TARGET', 'Field identity changed after dispatch');
         display(receipt, same.value);
-        const committed = same.attributes?.['autofill-committed'];
-        if (same.value === expected || (committed !== undefined && committed === expected)) {
+        if (strategy.isCommitted(same, expected)) {
           receipt.verified = true;
           receipt.status = 'verified';
           break;
@@ -418,7 +468,8 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
               'Written control changed before final verification'
             );
           display(receipt, same.value);
-          if (same.value !== expectedValues[receipt.field]) {
+          const strategy = selectedStrategies.get(receipt.field);
+          if (!strategy?.isCommitted(same, expectedValues[receipt.field] as string)) {
             receipt.verified = false;
             receipt.status = 'failed';
             receipt.error = {

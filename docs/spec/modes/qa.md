@@ -1,6 +1,8 @@
 # Mode: web development and regression QA
 
-Status: primitives exist; user-facing TestRun orchestration is proposed. Core applies.
+Status: bounded application-owned CLI regression, offline evaluation, native JUnit and
+private report links are qualified on develop through T3. General provisioning and
+public TestRun orchestration remain deferred. Core applies.
 
 ## Job and data
 
