@@ -5,6 +5,14 @@ session owned. Written 2026-09-19 by the session that executed the
 [foundation-reuse handoff](claude-foundation-reuse.md). The original session
 can take over from `develop` at `13f1073`.
 
+## Takeover recheck
+
+The receiving session verified current develop `4601e77` after this document merged.
+[Rechecked identities, acceptance and remaining work](../spec/evidence/foundation-handback-recheck.md)
+supersede the original status observations below: navigation reset already shipped
+through PR #214, and the helper module alone is not an acceptance entrypoint. The
+alignment PRs remain merged; the recheck records finite residual contract-guard gaps.
+
 ## What was done
 
 Cross-validated T0–T3 per the handoff (installed binaries, service, source,

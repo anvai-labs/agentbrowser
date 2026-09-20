@@ -1,7 +1,6 @@
 # T3: deterministic regressions and reports
 
-Status: active; first internal foundation delivered, navigation-reset slice under
-qualification. Repository: agentbrowser. Depends on: T2.
+Status: active; bound-report foundation and navigation-reset slice delivered. Repository: agentbrowser. Depends on: T2.
 Inputs: core, qa mode, contracts, grounding, quality-ci.
 
 ## Reuse and scope
@@ -53,15 +52,26 @@ The original extracted-package candidate passed all eight groups under Node v22.
 `35459717523` then passed all eight required checks at develop commit `4dd96e9`.
 Adversarial review `133085aa` was clean.
 
-The next local candidate adds a thirteenth `navigation-reset` case. The QA CLI navigates
+PR #214 delivered the thirteenth `navigation-reset` case at develop `9e36292`. The QA CLI navigates
 the same page from the earlier `pass` fixture to a fresh target, snapshots bounded
 current state, rejects the old ref with `STALE_TARGET`, then passes and replays the
 fresh bound outcome. See the
 [navigation-reset evidence](../evidence/t3-navigation-reset.md). All eight candidate
-package acceptance groups pass on Node 22.23.2; exact-head CI and merge remain pending.
+package acceptance groups passed on Node 22.23.2. PR run `35461246329` and merge
+run `35461465463` each passed all eight checks. The handback recheck at `4601e77`
+also passed all eight groups with the complete 13-case matrix.
 
 This is still an internal foundation, not T3 completion. A reusable product-facing
 integration/export, report adapters and the later slices below remain pending.
+
+## Next binary integration
+
+Implement the [offline CLI evaluation design](../design/t3-cli-evaluation.md) before
+adding an execution runner. It projects the existing bound contract through the
+installed binary while conventional tests retain setup, fixture observation and cleanup
+ownership. The design is not implemented yet; it adds no service/fixture registry.
+Use the [handback recheck](../evidence/foundation-handback-recheck.md) to avoid repeating
+merged work and to retain the finite contract-guard follow-ups.
 
 ## Completion / stop
 

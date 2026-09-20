@@ -1,11 +1,12 @@
-# T3 navigation reset: local candidate
+# T3 navigation reset: delivered qualification
 
-Status: focused and full extracted-package acceptance pass locally. Exact-head CI
-and merge remain pending. This is not release evidence; T3 remains active.
+Status: delivered through PR #214 at `9e36292`; PR run `35461246329` and exact merge
+run `35461465463` each passed all eight checks. T3 remains active. The historical local
+artifact below is not release evidence.
 
 ## Qualified behavior
 
-The candidate adds one `navigation-reset` case to the delivered 12-case bound-report
+The delivered slice adds one `navigation-reset` case to the delivered 12-case bound-report
 matrix. On one existing session and page, operator setup first loads the still-live
 `pass` fixture and captures its current revision and button ref. The delegated QA
 process then uses the compiled CLI to:

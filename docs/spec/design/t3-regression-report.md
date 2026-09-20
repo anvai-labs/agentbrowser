@@ -182,5 +182,5 @@ versions. Make no latency/memory claim without a baseline.
 
 ## Deferred
 
-Playwright/Vitest export, navigation reset, baseline artifacts, a public `test run`
-command and durable history remain separate slices.
+Navigation reset shipped in #214. Next: [offline CLI evaluation](t3-cli-evaluation.md).
+Execution runners and durable history remain deferred.

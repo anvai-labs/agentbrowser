@@ -5,6 +5,14 @@ T0–T3 through the existing binaries and common service; do not create another 
 browser controller, session authority, schema registry or execution framework.
 This is an on-demand handoff, not part of the default model context.
 
+## Latest takeover
+
+The foundation-alignment sequence is merged through PR #222. Use the
+[verified handback checkpoint](../spec/evidence/foundation-handback-recheck.md) before
+repeating any assignments below. Installed CLI/service now report 1.9.0; earlier
+1.8.20 installation observations in this original handoff are historical. Navigation
+reset is delivered; the next T3 slice has an [offline CLI design](../spec/design/t3-cli-evaluation.md).
+
 ## Verified baseline and limits
 
 Release **v1.9.0** is published from main `02f263f`; develop includes it through
