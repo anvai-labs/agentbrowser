@@ -161,6 +161,8 @@ service, then `agentbrowser describe act press` to load only one command's detai
 Execution uses the existing SDK/service: pass `--json`, quote shell arguments and
 inspect outcomes rather than relying on exit code alone. See the
 [CLI agent guide](docs/cli-agent-usage.md) for Bash/jq examples and reconciliation.
+The develop candidate adds offline `test evaluate` for caller-observed case reports;
+it reuses the bound test contract and needs no service or MCP connection.
 
 ## Development
 

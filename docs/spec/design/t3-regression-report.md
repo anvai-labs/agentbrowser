@@ -182,5 +182,5 @@ versions. Make no latency/memory claim without a baseline.
 
 ## Deferred
 
-Navigation reset shipped in #214. Next: [offline CLI evaluation](t3-cli-evaluation.md).
+Navigation reset shipped in #214; [offline CLI evaluation](t3-cli-evaluation.md) is now a candidate.
 Execution runners and durable history remain deferred.

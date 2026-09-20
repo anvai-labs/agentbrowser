@@ -35,9 +35,12 @@ import {
   PlanActionsSchema,
   PlanReportSchema,
   REF_PATTERN,
+  TestCaseEvaluationInputSchema,
+  TestCaseEvaluationReportSchema,
   UsageError,
   createOutcomeRunReportParser,
   createPlanReportParser,
+  evaluateTestCaseRun,
   formatErrorForUser,
   isAgentMode,
   isPassingOutcome,
@@ -1644,6 +1647,43 @@ export function buildCli(deps: CliDependencies): Cli {
             }
           )
         );
+
+      const test = program
+        .command('test')
+        .description('evaluate caller-observed test reports offline');
+      const evaluate = test
+        .command('evaluate')
+        .description(
+          'check a caller-observed case report; does not execute tests or fetch evidence'
+        )
+        .argument(
+          '<evaluationJson>',
+          'bounded evaluation bundle: inline JSON, @file, or - for stdin'
+        )
+        .addHelpText(
+          'after',
+          '\n--json emits a full, potentially sensitive report to stdout. Capture it privately. Exit 0: passed; exit 1: failed report or invalid input. --operation-id is unused.'
+        )
+        .action(async (raw: string) => {
+          // Offline: do not use action(), which reads credentials and constructs a client.
+          try {
+            const result = evaluateTestCaseRun(
+              await readCommandJson(evaluate, raw, 'evaluationJson')
+            );
+            const output = program.opts().json
+              ? JSON.stringify(result, null, 2)
+              : `${result.descriptor.id}: ${result.verdict}`;
+            exitCode = result.verdict === 'passed' ? 0 : 1;
+            deps.out(output);
+          } catch {
+            exitCode = 1;
+            deps.err(formatError(new UsageError('Invalid test case evaluation.')));
+          }
+        });
+      advertiseWireSchema(evaluate, {
+        input: TestCaseEvaluationInputSchema,
+        output: TestCaseEvaluationReportSchema,
+      });
 
       // Project the existing command tree, never a second manually maintained catalog.
       // This handler deliberately avoids the service-client action wrapper.

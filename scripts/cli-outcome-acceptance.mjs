@@ -1,8 +1,12 @@
 /** Real installed CLI -> packaged service -> controlled UI handler -> scoped receipt. */
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { runExecutable } from './release-smoke.mjs';
+import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
+import {
+  runExecutable,
+  validateCliTestEvaluationDiscovery,
+} from './release-smoke.mjs';
 
 /** Agent processes inherit runtime essentials, never the operator/server environment. */
 export function runAgentCli(command, { env, token, ...options }) {
@@ -61,19 +65,101 @@ function counterAssertion(context) {
   };
 }
 
+/** Evaluate only after execution ownership has fully settled; return only a complete batch. */
+export async function evaluateBufferedTestCaseBundles(
+  { settlement = Promise.resolve(), bundles, expectedCount = bundles.length, cli, directory, env, expectedVersion },
+  { runner = runAgentCli } = {}
+) {
+  await settlement;
+  assert.equal(bundles.length, expectedCount, 'Every case must stage before evaluation');
+  const discoveryResult = await runner(
+    [...cli, '--json', 'describe', 'test', 'evaluate', '--schema'],
+    { cwd: directory, env }
+  );
+  if (discoveryResult.stderr !== '') throw new Error('Evaluator discovery emitted diagnostics');
+  let discovery;
+  try {
+    discovery = JSON.parse(discoveryResult.stdout);
+  } catch {
+    throw new Error('CLI test evaluator discovery returned invalid JSON');
+  }
+  const schemas = validateCliTestEvaluationDiscovery(discovery, expectedVersion);
+  const staged = [];
+  let maxBundleBytes = 0;
+  let maxBundleOverheadBytes = 0;
+  for (const entry of bundles) {
+    // Measure the complete caller-observed bundle before applying its protocol budget.
+    const serialized = JSON.stringify(entry.bundle);
+    const bundleBytes = Buffer.byteLength(serialized);
+    const reportBytes = Buffer.byteLength(JSON.stringify(entry.bundle.report));
+    const bundleOverheadBytes = bundleBytes - reportBytes;
+    maxBundleBytes = Math.max(maxBundleBytes, bundleBytes);
+    maxBundleOverheadBytes = Math.max(maxBundleOverheadBytes, bundleOverheadBytes);
+    assert.ok(bundleBytes <= 64 * 1024, 'Test evaluation bundle exceeded the protocol limit');
+    const expectedExitCode = entry.expectedVerdict === 'passed' ? 0 : 1;
+    let result;
+    try {
+      result = await runner([...cli, '--json', 'test', 'evaluate', '-'], {
+        cwd: directory,
+        env,
+        stdin: serialized,
+        expectedExitCode,
+      });
+    } catch {
+      throw new Error(`${entry.name}: CLI test evaluator failed`);
+    }
+    if (result.code !== expectedExitCode)
+      throw new Error(`${entry.name}: CLI test evaluator returned an unexpected exit code`);
+    if (result.stderr !== '') throw new Error(`${entry.name}: evaluator emitted diagnostics`);
+    let evaluation;
+    try {
+      evaluation = JSON.parse(result.stdout);
+    } catch {
+      throw new Error(`${entry.name}: evaluator returned invalid JSON`);
+    }
+    const expected = {
+      schemaVersion: 1,
+      provenance: 'caller_observed',
+      verdict: entry.expectedVerdict,
+      descriptor: entry.bundle.descriptor,
+      report: entry.bundle.report,
+    };
+    if (!isDeepStrictEqual(evaluation, expected))
+      throw new Error(`${entry.name}: evaluator returned a noncanonical report`);
+    staged.push({
+      name: entry.name,
+      passing: evaluation.verdict === 'passed',
+      evaluation: {
+        schemaVersion: evaluation.schemaVersion,
+        provenance: evaluation.provenance,
+        verdict: evaluation.verdict,
+      },
+      report: evaluation.report,
+      reportBytes,
+      bundleBytes,
+      bundleOverheadBytes,
+      ...entry.metadata,
+    });
+  }
+  return {
+    cases: staged,
+    cliEvaluationCalls: staged.length,
+    cliEvaluationDiscoveryCalls: 1,
+    evaluationSchemas: schemas,
+    maxBundleBytes,
+    maxBundleOverheadBytes,
+  };
+}
+
 // Inject the existing lifecycle/HTTP helpers to avoid a circular entrypoint import.
 export async function checkCliApplicationOutcome(
   options,
   { withManagedChild, apiRequest, waitFor }
 ) {
   const { modules, expectedVersion, cli, directory, env } = options;
+  // Keep the audited dependency-closure requirement even though verdict ownership
+  // now stays behind the compiled CLI boundary.
   assert.ok(modules.control && modules.protocol, 'Audited packaged outcome modules are required');
-  const { createTestCaseRunContract } = await import(pathToFileURL(modules.protocol));
-  assert.equal(
-    typeof createTestCaseRunContract,
-    'function',
-    'Packaged regression contract is required'
-  );
   const descriptor = {
     id: 'counter.ui-add',
     version: '1',
@@ -87,11 +173,11 @@ export async function checkCliApplicationOutcome(
     assertions: [{ id: 'save', required: true }],
   };
   const key = randomBytes(24).toString('hex');
-  const results = [];
+  const bufferedBundles = [];
   const eventIds = new Set();
   const injectedSetupFailure = new Error('INJECTED_SETUP_FAILURE');
   const injectedCleanupFailure = new Error('INJECTED_CLEANUP_FAILURE');
-  await withManagedChild(
+  const settlement = withManagedChild(
     [
       process.execPath,
       childScript,
@@ -449,36 +535,34 @@ export async function checkCliApplicationOutcome(
             if (error !== injectedCleanupFailure) caseError ??= error;
           }
           if (caseError) throw caseError;
-          const contract = createTestCaseRunContract(descriptor, invocations);
-          const report = contract.parse({
+          const report = {
             case: { id: descriptor.id, version: descriptor.version },
             environment: observedEnvironment,
             setup,
             assertions: [assertion],
             cleanup,
-          });
-          const passing = contract.isPassing(report);
-          assert.equal(
-            passing,
-            ['pass', 'pass-repeat', 'navigation-reset', 'lost-response'].includes(name),
-            `${name}: bound verdict`
-          );
+          };
+          const expectedVerdict =
+            ['pass', 'pass-repeat', 'navigation-reset', 'lost-response'].includes(name)
+              ? 'passed'
+              : 'failed';
           if (name === 'cleanup-failure')
             assert.equal(report.assertions[0].report.outcome.verification.evidenceRefIds.length, 1);
-          results.push({
+          bufferedBundles.push({
             name,
-            passing,
-            report,
-            reportBytes: Buffer.byteLength(JSON.stringify(report)),
-            ...(navigationReset ? { navigationReset } : {}),
-            ...(execution ? { execution, verification, replay } : {}),
-            cliAssertionCalls: invocations.length,
-            cliReplayCalls: invocations.length,
-            oracle: {
-              actions: oracle.actions,
-              claims: oracle.claims,
-              reads: oracle.reads,
-              shortcuts: oracle.shortcuts,
+            expectedVerdict,
+            bundle: { schemaVersion: 1, descriptor, invocations, report },
+            metadata: {
+              ...(navigationReset ? { navigationReset } : {}),
+              ...(execution ? { execution, verification, replay } : {}),
+              cliAssertionCalls: invocations.length,
+              cliReplayCalls: invocations.length,
+              oracle: {
+                actions: oracle.actions,
+                claims: oracle.claims,
+                reads: oracle.reads,
+                shortcuts: oracle.shortcuts,
+              },
             },
           });
         }
@@ -509,10 +593,20 @@ export async function checkCliApplicationOutcome(
       }
     }
   );
+  const evaluated = await evaluateBufferedTestCaseBundles({
+    settlement,
+    bundles: bufferedBundles,
+    expectedCount: cases.length,
+    cli,
+    directory,
+    env,
+    expectedVersion,
+  });
+  assert.equal(evaluated.cases.length, cases.length, 'Every staged case must be evaluated');
   return {
     check: 'packaged-cli-application-outcome',
     status: 'pass',
-    cases: results,
+    ...evaluated,
     cliDiscoveryCalls: 2,
     modelCalls: 0,
     mcpCalls: 0,

@@ -10,7 +10,7 @@ import { createServer as createTcpServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { checkCli, checkMcp, runExecutable } from './release-smoke.mjs';
+import { checkCli, checkCliTestEvaluation, checkMcp, runExecutable } from './release-smoke.mjs';
 import { checkPackagedCoexistence } from './packaged-coexistence.mjs';
 import { validateArtifact, validatePdf } from './artifact-validation.mjs';
 export { validateArtifact } from './artifact-validation.mjs';
@@ -523,7 +523,23 @@ export async function checkPackagedServer(options) {
   assert.ok(options.installBrowser || process.env.PLAYWRIGHT_BROWSERS_PATH, 'Set PLAYWRIGHT_BROWSERS_PATH to an existing cache or use --install-browser');
   const key = randomBytes(24).toString('hex');
   const baseEnv = cleanEnv(key);
-  const cli = { command: options.cli, resolvedExecutable: await realpath(options.cli[0]), ...await checkCli(options.cli, { expectedVersion: options.expectedVersion, env: baseEnv }) };
+  const cliSmoke = await checkCli(options.cli, {
+    expectedVersion: options.expectedVersion,
+    env: baseEnv,
+  });
+  const testEvaluation =
+    options.profile === 'baseline'
+      ? undefined
+      : await checkCliTestEvaluation(options.cli, {
+          expectedVersion: options.expectedVersion,
+          env: baseEnv,
+        });
+  const cli = {
+    command: options.cli,
+    resolvedExecutable: await realpath(options.cli[0]),
+    ...cliSmoke,
+    ...(testEvaluation ? { testEvaluation } : {}),
+  };
   const mcp = { command: options.mcp, resolvedExecutable: await realpath(options.mcp[0]), ...await checkMcp(options.mcp, { expectedVersion: options.expectedVersion, env: baseEnv }) };
   const directory = await mkdtemp(join(tmpdir(), 'agentbrowser-package-acceptance-'));
   const report = [];

@@ -107,6 +107,36 @@ export const TestCaseRunReportSchema = Type.Object(
 );
 export type TestCaseRunReport = Static<typeof TestCaseRunReportSchema>;
 
+export const TestCaseEvaluationInputSchema = Type.Object(
+  {
+    schemaVersion: Type.Literal(1),
+    descriptor: TestCaseDescriptorSchema,
+    invocations: Type.Array(AssertionInvocationSchema, { maxItems: 16 }),
+    report: TestCaseRunReportSchema,
+  },
+  { ...strict, $id: 'urn:agentbrowser:test-case-evaluation-input:v1' }
+);
+export type TestCaseEvaluationInput = Omit<
+  Static<typeof TestCaseEvaluationInputSchema>,
+  'descriptor' | 'invocations' | 'report'
+> & {
+  descriptor: TestCaseDescriptor;
+  invocations: readonly AssertionInvocation[];
+  report: TestCaseRunReport;
+};
+
+export const TestCaseEvaluationReportSchema = Type.Object(
+  {
+    schemaVersion: Type.Literal(1),
+    provenance: Type.Literal('caller_observed'),
+    verdict: Type.Union([Type.Literal('passed'), Type.Literal('failed')]),
+    descriptor: TestCaseDescriptorSchema,
+    report: TestCaseRunReportSchema,
+  },
+  { ...strict, $id: 'urn:agentbrowser:test-case-evaluation-report:v1' }
+);
+export type TestCaseEvaluationReport = Static<typeof TestCaseEvaluationReportSchema>;
+
 export interface TestCaseRunContract {
   parse(input: unknown): TestCaseRunReport;
   isPassing(input: unknown): boolean;
@@ -126,6 +156,10 @@ function invalidContract(): never {
 
 function invalidReport(): never {
   throw new Error(`Invalid test case run report. ${INTERACTION_GUIDANCE.uncertainWrite}`);
+}
+
+function invalidEvaluation(): never {
+  throw new Error('Invalid test case evaluation.');
 }
 
 function sameEnvironment(left: TestCaseEnvironment, right: TestCaseEnvironment): boolean {
@@ -283,4 +317,35 @@ export function createTestCaseRunContract(
   };
 
   return Object.freeze({ parse, isPassing });
+}
+
+/** Evaluate one caller-observed case through the existing bound TestCase truth owner. */
+export function evaluateTestCaseRun(input: unknown): TestCaseEvaluationReport {
+  try {
+    const prepared = parseExecutionReport(
+      TestCaseEvaluationInputSchema,
+      input,
+      'test case evaluation input',
+      undefined,
+      VERIFICATION_SNAPSHOT_LIMITS
+    ) as TestCaseEvaluationInput;
+    const contract = createTestCaseRunContract(prepared.descriptor, prepared.invocations);
+    const report = contract.parse(prepared.report);
+    const output: TestCaseEvaluationReport = {
+      schemaVersion: 1,
+      provenance: 'caller_observed',
+      verdict: contract.isPassing(report) ? 'passed' : 'failed',
+      descriptor: prepared.descriptor,
+      report,
+    };
+    return parseExecutionReport(
+      TestCaseEvaluationReportSchema,
+      output,
+      'test case evaluation report',
+      undefined,
+      VERIFICATION_SNAPSHOT_LIMITS
+    );
+  } catch {
+    return invalidEvaluation();
+  }
 }

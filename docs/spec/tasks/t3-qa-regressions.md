@@ -1,6 +1,6 @@
 # T3: deterministic regressions and reports
 
-Status: active; bound-report foundation and navigation-reset slice delivered. Repository: agentbrowser. Depends on: T2.
+Status: active; bound-report, navigation reset and offline CLI evaluation implemented. Repository: agentbrowser. Depends on: T2.
 Inputs: core, qa mode, contracts, grounding, quality-ci.
 
 ## Reuse and scope
@@ -64,14 +64,18 @@ also passed all eight groups with the complete 13-case matrix.
 This is still an internal foundation, not T3 completion. A reusable product-facing
 integration/export, report adapters and the later slices below remain pending.
 
-## Next binary integration
+## Offline binary integration
 
-Implement the [offline CLI evaluation design](../design/t3-cli-evaluation.md) before
-adding an execution runner. It projects the existing bound contract through the
-installed binary while conventional tests retain setup, fixture observation and cleanup
-ownership. The design is not implemented yet; it adds no service/fixture registry.
-Use the [handback recheck](../evidence/foundation-handback-recheck.md) to avoid repeating
-merged work and to retain the finite contract-guard follow-ups.
+The [offline CLI evaluation design](../design/t3-cli-evaluation.md) is implemented
+through `test evaluate`. It projects the existing bound contract through the compiled
+binary while conventional tests retain setup, fixture observation and cleanup ownership.
+All 13 cases retain their expected verdicts after outer cleanup; candidate gates require
+the command/schema. See [qualification and limits](../evidence/t3-cli-evaluation.md).
+This adds no service/fixture registry and is not published in 1.9.0.
+
+Next is conventional-runner/report qualification against a preconfigured deployment,
+then report adapters and impact selection. T3 is not complete; portable end-to-end
+fixture setup and installed harness qualification are not implied.
 
 ## Completion / stop
 

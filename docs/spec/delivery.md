@@ -25,7 +25,7 @@ current user scope and the [task protocol](tasks/README.md).
 | Shared outcomes | T2 is complete; 1.9.0 includes REST/SDK/CLI outcome, correlation, admitted receipt drain, permission composition and controlled G4 CLI/service qualification | Qualify production UI-caused evidence and G6 under T4; durable recovery under T5 |
 | Bulk forms | Named react-select and chip-multiselect strategies released in 1.8.19 | Broader widgets, reusable mappings and cross-engine commitment evidence |
 | Application parity | First T4 public-interface slice released in 1.8.20 by PR #201: application bind, discovery, execute and receipt operations over REST, SDK and CLI | Qualify the scoped receipt predicate in a production fixture, binding UX, independent UI/API parity and T5 durable restart receipts |
-| QA and durable runs | T3 active: bound-report foundation and 13-case navigation qualification merged; T5 not started | Offline binary evaluation is designed next, then reusable integration/report qualification; durable recovery stays under T5 |
+| QA and durable runs | T3 active: 13-case foundation and offline CLI evaluation implemented; T5 not started | Conventional-runner/report qualification next; durable recovery stays under T5 |
 | Audit, appsec and bounty | Mode contracts and profiles exist; no scanner/product vertical | Scope enforcement plus T3, and T4 for application parity |
 | MCP | Existing generated catalog remains 13 unbound/12 delegated in QA; outcome and application operations have no MCP tools | Add only if measured harness demand justifies another optional projection |
 
@@ -52,9 +52,9 @@ a gate for each later release. T7 security work additionally requires independen
 qualified scope enforcement. Durable workflows cannot be advertised until T5 passes.
 
 The [handback recheck](evidence/foundation-handback-recheck.md) confirms the merged
-alignment baseline and finite guard follow-ups. Continue with T3's
-[offline binary evaluation design](design/t3-cli-evaluation.md), then conventional
-integration/report qualification; order T4/T5 by their acceptance and demand.
+alignment baseline and resolved guard follow-ups. T3's [offline binary evaluation](evidence/t3-cli-evaluation.md)
+now has compiled qualification; continue conventional integration/report qualification,
+and order T4/T5 by their acceptance and demand.
 T6 addresses concrete blocked widgets. T7 follows actual audit/security demand, not
 a speculative full scanner roadmap. T8/T9 accompany delivery. Each task may be split
 into reviewable sub-PRs using its declared slices; avoid one giant implementation PR.

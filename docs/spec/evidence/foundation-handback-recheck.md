@@ -99,7 +99,8 @@ schema spreads rejected; no new evidence justifies them here.
    Do not widen delegated download permissions.
 3. Implement the reviewed [offline CLI evaluation design](../design/t3-cli-evaluation.md)
    as the next T3 binary integration, then qualify a conventional-runner/report recipe.
-   This document delivers the design only; `test evaluate` is not implemented yet.
+   The later [CLI qualification](t3-cli-evaluation.md) implements that design in the
+   develop candidate; published 1.9.0 remains unchanged.
 4. Keep T8 installed harness work separate per repository, T5 recovery conditional,
    and T7's evidence/scope gates closed. T9 remains active and recurring. Main/release
    promotion needs fresh candidate evidence and the applicable authorization.

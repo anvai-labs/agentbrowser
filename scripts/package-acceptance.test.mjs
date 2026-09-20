@@ -49,6 +49,213 @@ test('agent CLI spawn receives only its delegated key and explicit runtime envir
   );
 });
 
+const evaluationBundle = (name, verdict) => {
+  const descriptor = {
+    id: `case.${name}`,
+    version: '1',
+    testedSeam: 'ui',
+    environment: {
+      productVersion: '1.9.0',
+      cliVersion: '1.9.0',
+      engine: { name: 'fixture', version: '1' },
+      fixture: { id: 'fixture', version: '1' },
+    },
+    assertions: [{ id: 'save', required: true }],
+  };
+  const report = {
+    case: { id: descriptor.id, version: descriptor.version },
+    environment: descriptor.environment,
+    setup: verdict === 'passed' ? 'completed' : 'failed',
+    assertions: [{ id: 'save', status: 'skipped', reasonCode: 'PRECONDITION_UNAVAILABLE' }],
+    cleanup: 'complete',
+  };
+  return {
+    name,
+    expectedVerdict: verdict,
+    bundle: { schemaVersion: 1, descriptor, invocations: [], report },
+    metadata: { oracle: { actions: 0, claims: 0, reads: 0, shortcuts: 0 } },
+  };
+};
+
+const evaluationDiscovery = (version = '1.9.0') => ({
+  productVersion: version,
+  command: {
+    path: ['test', 'evaluate'],
+    schemas: {
+      input: { $id: 'urn:agentbrowser:test-case-evaluation-input:v1' },
+      output: { $id: 'urn:agentbrowser:test-case-evaluation-report:v1' },
+    },
+  },
+});
+
+test('buffered evaluation publishes no partial result when evaluator N fails', async () => {
+  const { evaluateBufferedTestCaseBundles } = await import('./cli-outcome-acceptance.mjs');
+  const bundles = [evaluationBundle('one', 'passed'), evaluationBundle('two', 'failed')];
+  let evaluations = 0;
+  let published;
+  const runner = async (command, options) => {
+    assert.equal(Object.hasOwn(options, 'token'), false, 'Offline evaluation must receive no token');
+    if (command.includes('describe')) {
+      return { stdout: JSON.stringify(evaluationDiscovery()), stderr: '', code: 0 };
+    }
+    evaluations++;
+    if (evaluations === 2) throw new Error('PRIVATE-EVALUATOR-FAILURE');
+    const input = JSON.parse(options.stdin);
+    return {
+      stdout: JSON.stringify({
+        schemaVersion: 1,
+        provenance: 'caller_observed',
+        verdict: 'passed',
+        descriptor: input.descriptor,
+        report: input.report,
+      }),
+      stderr: '',
+      code: 0,
+    };
+  };
+  let failure;
+  await assert.rejects(
+    evaluateBufferedTestCaseBundles(
+      { bundles, cli: ['agentbrowser'], directory: '.', env: {}, expectedVersion: '1.9.0' },
+      { runner }
+    ).then((result) => {
+      published = result;
+    }),
+    (error) => {
+      failure = error;
+      return true;
+    }
+  );
+  assert.equal(evaluations, 2);
+  assert.equal(published, undefined);
+  assert.match(failure.message, /two: CLI test evaluator failed/);
+  assert.doesNotMatch(failure.stack, /PRIVATE/);
+});
+
+test('noncanonical evaluator output cannot leak caller reports through diagnostics', async () => {
+  const { evaluateBufferedTestCaseBundles } = await import('./cli-outcome-acceptance.mjs');
+  const bundles = [evaluationBundle('private-case', 'passed')];
+  bundles[0].bundle.invocations.push({
+    id: 'save',
+    operationId: 'private-op',
+    request: { private: 'PRIVATE-CALLER-INPUT' },
+  });
+  let failure;
+  await assert.rejects(
+    evaluateBufferedTestCaseBundles(
+      { bundles, cli: ['agentbrowser'], directory: '.', env: {}, expectedVersion: '1.9.0' },
+      {
+        runner: async (command) =>
+          command.includes('describe')
+            ? { stdout: JSON.stringify(evaluationDiscovery()), stderr: '', code: 0 }
+            : {
+                stdout: JSON.stringify({ private: 'PRIVATE-EVALUATOR-OUTPUT' }),
+                stderr: '',
+                code: 0,
+              },
+      }
+    ),
+    (error) => {
+      failure = error;
+      return true;
+    }
+  );
+  assert.match(failure.message, /noncanonical report/);
+  assert.doesNotMatch(failure.stack, /PRIVATE/);
+});
+
+test('buffered evaluation records bounded byte costs without publishing private requests', async () => {
+  const { evaluateBufferedTestCaseBundles } = await import('./cli-outcome-acceptance.mjs');
+  const bundles = [evaluationBundle('one', 'passed'), evaluationBundle('two', 'failed')];
+  bundles[0].bundle.invocations.push({
+    id: 'save',
+    operationId: 'private-op',
+    request: { private: 'PRIVATE-EVALUATOR-INPUT' },
+  });
+  const exitCodes = [];
+  const runner = async (command, options) => {
+    assert.equal(Object.hasOwn(options, 'token'), false, 'Offline evaluation must receive no token');
+    if (command.includes('describe')) {
+      return { stdout: JSON.stringify(evaluationDiscovery()), stderr: '', code: 0 };
+    }
+    exitCodes.push(options.expectedExitCode);
+    const input = JSON.parse(options.stdin);
+    const verdict = options.expectedExitCode === 0 ? 'passed' : 'failed';
+    return {
+      stdout: JSON.stringify({
+        schemaVersion: 1,
+        provenance: 'caller_observed',
+        verdict,
+        descriptor: input.descriptor,
+        report: input.report,
+      }),
+      stderr: '',
+      code: options.expectedExitCode,
+    };
+  };
+  let settled = false;
+  const settlement = Promise.resolve().then(() => {
+    settled = true;
+  });
+  const guardedRunner = async (...args) => {
+    assert.equal(settled, true, 'Evaluator ran before outer settlement');
+    return runner(...args);
+  };
+  const result = await evaluateBufferedTestCaseBundles(
+    {
+      settlement,
+      bundles,
+      cli: ['agentbrowser'],
+      directory: '.',
+      env: {},
+      expectedVersion: '1.9.0',
+    },
+    { runner: guardedRunner }
+  );
+  assert.deepEqual(exitCodes, [0, 1]);
+  assert.deepEqual(result.cases.map((entry) => entry.passing), [true, false]);
+  assert.equal(result.cliEvaluationCalls, 2);
+  assert.equal(result.cliEvaluationDiscoveryCalls, 1);
+  assert.equal(
+    result.maxBundleBytes,
+    Math.max(...bundles.map((entry) => Buffer.byteLength(JSON.stringify(entry.bundle))))
+  );
+  assert.ok(result.maxBundleOverheadBytes > 0);
+  assert.ok(!JSON.stringify(result).includes('PRIVATE-EVALUATOR-INPUT'));
+});
+
+test('outer finalizer failure after workflow settlement causes zero evaluator calls', async () => {
+  const { evaluateBufferedTestCaseBundles } = await import('./cli-outcome-acceptance.mjs');
+  let workflowSettled = false;
+  let evaluatorCalls = 0;
+  const settlement = Promise.resolve().then(() => {
+    workflowSettled = true;
+    throw new Error('INJECTED_OUTER_FINALIZER_FAILURE');
+  });
+  await assert.rejects(
+    evaluateBufferedTestCaseBundles(
+      {
+        settlement,
+        bundles: [],
+        expectedCount: 0,
+        cli: ['agentbrowser'],
+        directory: '.',
+        env: {},
+        expectedVersion: '1.9.0',
+      },
+      {
+        runner: async () => {
+          evaluatorCalls++;
+          throw new Error('Evaluator must not run');
+        },
+      }
+    ),
+    /INJECTED_OUTER_FINALIZER_FAILURE/
+  );
+  assert.equal(workflowSettled, true);
+  assert.equal(evaluatorCalls, 0);
+});
+
 test('artifact validation rejects empty, truncated and mismatched captures', () => {
   const capture = (bytes) => ({ metadata: { sizeBytes: bytes.length }, contentBase64: bytes.toString('base64') });
   assert.throws(() => validateArtifact(capture(Buffer.alloc(0)), 'png'), /empty/);
