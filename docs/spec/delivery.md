@@ -13,7 +13,7 @@ current user scope and the [task protocol](tasks/README.md).
 | Native bulk forms | 1.8.19 native, react-select and chip-multiselect strategies, scoped identities and readback | Broader widget/cross-engine and transfer/deadline qualification |
 | Application-only path | Typed authority plus bounded authenticated REST/SDK/CLI surface released in 1.8.20 | Production receipt-predicate qualification and binding UX, independent UI/API parity and durable receipt recovery |
 | Agent surfaces | CLI and SDK are first-class HTTP clients; stdio MCP remains optional with 13 unbound/12 delegated tools | Generated profiles, typed results and qualified context reduction |
-| QA | Browser primitives and strong internal fixtures | Reusable user-facing regression definition/reporting |
+| QA | Bound reports, offline CLI evaluation, native JUnit qualification and a fixed application-owned recipe on develop | General reusable regression integration, artifact API/HTML only if justified, and impact selection |
 | Security | Policy and known engine limitations | Scoped external scanner adapters after enforcement qualification |
 | Memory | Ephemeral bounded control state; artifact store | Optional journal and explicit mode-scoped context lifecycle |
 
@@ -25,7 +25,7 @@ current user scope and the [task protocol](tasks/README.md).
 | Shared outcomes | T2 is complete; 1.9.0 includes REST/SDK/CLI outcome, correlation, admitted receipt drain, permission composition and controlled G4 CLI/service qualification | Qualify production UI-caused evidence and G6 under T4; durable recovery under T5 |
 | Bulk forms | Named react-select and chip-multiselect strategies released in 1.8.19 | Broader widgets, reusable mappings and cross-engine commitment evidence |
 | Application parity | First T4 public-interface slice released in 1.8.20 by PR #201: application bind, discovery, execute and receipt operations over REST, SDK and CLI | Qualify the scoped receipt predicate in a production fixture, binding UX, independent UI/API parity and T5 durable restart receipts |
-| QA and durable runs | T3 active: 13-case foundation and offline CLI evaluation implemented; T5 not started | Native JUnit probes implemented; external runner qualification remains; durable recovery stays under T5 |
+| QA and durable runs | T3 active: 13-case foundation plus PR #225 offline evaluation, #226 native JUnit and #227 application-owned recipe merged; #228 moved qualification to Node 24 | Example-local private report links are the current candidate; no general artifact API/HTML claim; durable recovery stays under T5 |
 | Audit, appsec and bounty | Mode contracts and profiles exist; no scanner/product vertical | Scope enforcement plus T3, and T4 for application parity |
 | MCP | Existing generated catalog remains 13 unbound/12 delegated in QA; outcome and application operations have no MCP tools | Add only if measured harness demand justifies another optional projection |
 
@@ -52,10 +52,12 @@ a gate for each later release. T7 security work additionally requires independen
 qualified scope enforcement. Durable workflows cannot be advertised until T5 passes.
 
 The [handback recheck](evidence/foundation-handback-recheck.md) confirms the merged
-alignment baseline and resolved guard follow-ups. T3's [offline binary evaluation](evidence/t3-cli-evaluation.md)
-now has compiled qualification; the [native JUnit slice](design/t3-node-test-qualification.md)
-qualifies internal reporting without another browser run. External runner integration
-remains separate; order T4/T5 by their acceptance and demand.
+alignment baseline and resolved guard follow-ups. T3's
+[offline binary evaluation](evidence/t3-cli-evaluation.md),
+[native JUnit slice](design/t3-node-test-qualification.md) and
+[application-owned recipe](design/t3-application-recipe.md) are merged. The current
+[report-link slice](design/t3-report-artifacts.md) remains example-local; public report
+APIs and HTML remain separate. Order T4/T5 by their acceptance and demand.
 T6 addresses concrete blocked widgets. T7 follows actual audit/security demand, not
 a speculative full scanner roadmap. T8/T9 accompany delivery. Each task may be split
 into reviewable sub-PRs using its declared slices; avoid one giant implementation PR.

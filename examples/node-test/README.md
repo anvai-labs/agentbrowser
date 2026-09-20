@@ -10,12 +10,15 @@ This is a concrete example for the repository's controlled counter deployment. I
 not a general website runner. A stock service does not register `fixture-counter` or
 `fixture.ui-commit`; it must reject this recipe. Application owners adapt the fixed
 setup and oracle code to their own registered adapter/verifier. See the
-[design and trust boundary](../../docs/spec/design/t3-application-recipe.md).
+[design and trust boundary](../../docs/spec/design/t3-application-recipe.md) and the
+[private report-link design](../../docs/spec/design/t3-report-artifacts.md).
 
 ## Requirements
 
 - Node 22 or newer and a CLI build that advertises `test evaluate`.
   Published v1.9.0 predates that command; use a qualified develop candidate.
+- Local copies of both `application-outcome.mjs` and `report-artifacts.mjs` in the
+  same directory. The recipe intentionally has no package or workspace import.
 - A preconfigured, authenticated AgentBrowser service exposing the fixed counter
   adapter and UI receipt verifier. The owner keeps this service alive for the test.
 - One exclusive fresh counter resource with `/state` initially
@@ -53,10 +56,27 @@ With the operator key already in the environment, run:
 node examples/node-test/application-outcome.mjs /absolute/private/directory/config.json
 ```
 
+When moving the recipe outside this checkout, copy both modules and keep them together:
+
+```sh
+cp examples/node-test/application-outcome.mjs examples/node-test/report-artifacts.mjs /private/recipe/
+node /private/recipe/application-outcome.mjs /absolute/private/directory/config.json
+```
+
 The direct Node entry emits native test results. Exit zero requires a passed canonical
-case **and** an independently observed application commit. The private evaluation file
-preserves the canonical verdict; never treat the file alone as proof that the Node
-oracle assertion passed. The output path must not exist beforehand.
+case **and** an independently observed application commit. It writes the private
+evaluation at `reportPath` and a sibling `<reportPath>.manifest.json` only after the
+recipe lifecycle settles. Both names must be unused and their parent directory must be
+private and exclusively owned by the caller.
+
+The manifest records a relative encoded evaluation filename, JSON media type, exact
+byte length, SHA-256 and the separately observed `oracleMatches` boolean. Node diagnostics
+print only the fixed label and digest, never the local path. `readRecipeArtifacts`
+reads the two owner-derived paths and verifies their bounded bytes and metadata. It
+does not prove authenticity, freshness or who produced them; anyone able to replace
+both files can replace both values. The independent oracle and Node exit remain
+separate requirements, so neither a digest nor the evaluation file alone proves the
+application outcome.
 
 The two fault controls use their own fresh deployment resources:
 
@@ -78,8 +98,12 @@ terminates the active CLI, escalating if needed and waiting for it to close. A h
 kill, uncertain session creation or service failure still needs external reclamation;
 this example does not implement durable recovery. No uncertain UI write is retried.
 The deployment owner closes the application fixture and service even when the test
-fails. Fixture identity is an owner observation, not remote attestation.
+fails. Fixture identity is an owner observation, not remote attestation. A handled
+abort after publication removes only files created by that invocation; hard-kill and
+hostile parent-directory recovery remain outside this example.
 
 The existing package gate exercises all three cases against the same composed service
-used by its 13-case matrix. This adds no browser matrix or CI job. HTML export, general
-artifact-link conventions and arbitrary application provisioning remain separate work.
+used by its 13-case matrix. This adds no browser matrix or CI job. The package parent
+validates the artifact pair, the independent fixture oracle and session cleanup, then
+removes both private files. HTML export, a general public artifact API and arbitrary
+application provisioning remain separate work.

@@ -1,6 +1,8 @@
 # T3: deterministic regressions and reports
 
-Status: active; bound-report, navigation reset and offline CLI evaluation implemented. Repository: agentbrowser. Depends on: T2.
+Status: active; bound reports, navigation reset, offline CLI evaluation, native JUnit
+qualification and the fixed application-owned recipe are implemented. Repository:
+agentbrowser. Depends on: T2.
 Inputs: core, qa mode, contracts, grounding, quality-ci.
 
 ## Reuse and scope
@@ -35,9 +37,9 @@ Do not add scanner dependencies or cross-browser jobs for unrelated changes.
 ## Current implementation state
 
 The foundation merged through PR #212 and adds one protocol-owned bound TestCase
-contract to existing packaged CLI/application acceptance. It adds no public CLI command, endpoint, SDK or
-MCP projection, dependency or CI job. At least one assertion must be required, so an
-all-optional or all-skipped case cannot pass.
+contract to existing packaged CLI/application acceptance. It added no public CLI
+command, endpoint, SDK or MCP projection, dependency or CI job. At least one assertion
+must be required, so an all-optional or all-skipped case cannot pass.
 
 The original controlled matrix had 12 cases: two fixed runs produce distinct application
 events; lost response passes once; historical, ignored, failed action, stale application state,
@@ -61,32 +63,38 @@ package acceptance groups passed on Node 22.23.2. PR run `35461246329` and merge
 run `35461465463` each passed all eight checks. The handback recheck at `4601e77`
 also passed all eight groups with the complete 13-case matrix.
 
-This is still an internal foundation, not T3 completion. A reusable product-facing
-integration/export, report adapters and the later slices below remain pending.
+This foundation did not complete T3. Later merged slices now expose offline evaluation
+and one fixed external recipe, while general integration and later slices remain.
 
 ## Offline binary integration
 
-The [offline CLI evaluation design](../design/t3-cli-evaluation.md) is implemented
-through `test evaluate`. It projects the existing bound contract through the compiled
-binary while conventional tests retain setup, fixture observation and cleanup ownership.
-All 13 cases retain their expected verdicts after outer cleanup; candidate gates require
-the command/schema. See [qualification and limits](../evidence/t3-cli-evaluation.md).
-This adds no service/fixture registry and is not published in 1.9.0.
+PR #225 merged the [offline CLI evaluation design](../design/t3-cli-evaluation.md)
+through `test evaluate` at develop `ba31a09`. It projects the existing bound contract
+through the compiled binary while conventional tests retain setup, fixture observation
+and cleanup ownership. All 13 cases retain their expected verdicts after outer cleanup.
+See [qualification and limits](../evidence/t3-cli-evaluation.md). This adds no
+service/fixture registry and is not published in 1.9.0.
 
-The candidate also qualifies [native Node/JUnit reporting](../design/t3-node-test-qualification.md)
-from fresh, finalized results without repeating the browser matrix. Its deliberately
-failing report probes preserve the broken-flow and cleanup-failure verdicts. This is
-internal report qualification, not framework-owned live execution or a public exporter.
-See [local tests and delivery boundaries](../evidence/t3-node-test-qualification.md).
+PR #226 merged [native Node/JUnit reporting](../design/t3-node-test-qualification.md)
+at develop `0762554` from fresh, finalized results without repeating the browser
+matrix. Its deliberately failing probes preserve broken-flow and cleanup-failure
+verdicts. This is internal report qualification, not a public exporter. See
+[tests and delivery boundaries](../evidence/t3-node-test-qualification.md).
 
-The next slice supplies an [application-owned Node recipe](../design/t3-application-recipe.md)
-using the installed CLI against a preconfigured counter deployment. It shares assertion,
-descriptor and credential-isolation helpers with existing acceptance. Three live controls
-qualify a commit, ignored action and failed primary cleanup in the same composed host;
-the existing 13-case counts remain distinct. See the [usage example](../../../examples/node-test/README.md).
-This slice is locally qualified; it does not provision arbitrary applications.
+PR #227 merged an [application-owned Node recipe](../design/t3-application-recipe.md)
+at develop `b5484df`. It uses the installed CLI against a preconfigured counter
+deployment and shares assertion, descriptor and credential-isolation helpers with
+existing acceptance. Three live controls qualify a commit, ignored action and failed
+primary cleanup in the same composed host; the existing 13-case counts remain distinct.
+See the [usage example](../../../examples/node-test/README.md). It does not provision
+arbitrary applications. PR #228 then merged the Node 24 qualification baseline at
+develop `a437c48` while retaining Node 22 as the published minimum.
 
-Still required: artifact-link conventions, any justified HTML adapter and impact selection.
+The current candidate adds the
+[example-local private report-link convention](../design/t3-report-artifacts.md): a
+bounded evaluation file plus sibling digest manifest after recipe lifecycle settlement.
+It introduces no public CLI/protocol artifact API, HTML renderer, dependency, runner or
+CI job. General artifact APIs, any justified HTML adapter and impact selection remain.
 T3 is not complete; portable setup and installed harness qualification are not implied.
 
 ## Completion / stop

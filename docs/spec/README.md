@@ -2,9 +2,10 @@
 
 Status: active product architecture and implementation contract. A capability is
 delivered only when its task evidence records a merged and qualified implementation.
-Functional baseline: AgentBrowser `de95a3ba2a99c675c0039e9cbb001d43172a9851`
-(1.9.0 release candidate); Victor was last inspected at
-`c8a0950fed49914bb2877feeb65f5ab32cc47b97`. Reviewed 2026-09-19 UTC.
+Published baseline: AgentBrowser 1.9.0 at
+`02f263f3764b41f923553c69c11dff69c819fae5`. Current develop baseline:
+`a437c48` after PR #228; Victor was last inspected at
+`c8a0950fed49914bb2877feeb65f5ab32cc47b97`. Reviewed 2026-09-20 UTC.
 
 Build a shared execution and verification service for people and agents. A mode
 selects a small policy and capability profile; it does not create another runner,
@@ -58,11 +59,11 @@ consumption remains T8 work.
 T2 is complete. AgentBrowser 1.9.0 includes the configurable REST/SDK/CLI outcome run,
 shared receipt correlation, admission/drain and evidence-permission foundations, and
 the controlled G4 CLI qualification delivered through PR #208. T3 is active with
-the delivered bound-report/navigation foundation and candidate offline CLI evaluation;
-[native JUnit probes](design/t3-node-test-qualification.md) advance internal reporting.
-An [application-owned installed-CLI recipe](design/t3-application-recipe.md) is locally
-qualified against the fixed counter deployment; arbitrary application setup remains. Production evidence sources, G6 and durable
-recovery remain explicitly unqualified. See the
+the bound-report/navigation foundation, offline CLI evaluator from PR #225, native
+JUnit qualification from PR #226 and the application-owned installed-CLI recipe from
+PR #227. PR #228 moved default qualification and release builds to Node 24 LTS while
+retaining the Node 22 minimum. Arbitrary application setup remains. Production
+evidence sources, G6 and durable recovery remain explicitly unqualified. See the
 [foundation qualification](evidence/t2-foundation-qualification.md) for the acceptance
 mapping and delivery record.
 See the
@@ -77,11 +78,12 @@ See the
 [application permission](evidence/t2-application-evidence-permission.md) and
 [installed CLI application outcome](evidence/t2-cli-application-outcome.md) evidence.
 
-The T3 candidate reuses that CLI/service path for a 13-case deterministic matrix.
-Offline `test evaluate` and SDK barrel exports compose the same bound contract; no
-REST/MCP tool, dependency or CI job is added. It remains active and does not unlock
-T7 or T3-dependent T8 qualification. See the [T3 packet](tasks/t3-qa-regressions.md)
-and [CLI qualification](evidence/t3-cli-evaluation.md). Published 1.9.0 lacks this command.
+T3 reuses that CLI/service path for a 13-case deterministic matrix. Offline `test
+evaluate`, native JUnit failure probes and the fixed application-owned recipe are
+merged on develop; published 1.9.0 predates them. The current
+[private report-link design](design/t3-report-artifacts.md) adds an example-local
+evaluation/manifest pair without a public artifact API, HTML renderer, dependency or
+CI job. T3 remains active and does not unlock T7 or T3-dependent T8 qualification.
 
 T4 has one public-interface slice delivered in 1.8.20 by PR #201: bounded,
 authenticated application discovery, execution and receipt lookup now use the shared

@@ -1,6 +1,6 @@
 /** Qualify the standalone Node recipe against the already-running composed host. */
 import assert from 'node:assert/strict';
-import { readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -8,6 +8,7 @@ import {
   createCliEnvironment,
   readJson,
 } from '../examples/node-test/application-outcome.mjs';
+import { cleanupRecipeFiles, readRecipeArtifacts } from '../examples/node-test/report-artifacts.mjs';
 import { runExecutable } from './release-smoke.mjs';
 
 const recipeScript = fileURLToPath(
@@ -114,18 +115,6 @@ export function validateApplicationRecipeResult({
   };
 }
 
-async function readPrivateReport(path) {
-  const metadata = await stat(path);
-  assert.ok(metadata.isFile(), 'Application recipe report is not a file');
-  assert.ok(
-    metadata.size > 0 && metadata.size <= 64 * 1024,
-    'Application recipe report is invalid'
-  );
-  if (process.platform !== 'win32')
-    assert.equal(metadata.mode & 0o077, 0, 'Application recipe report is not private');
-  return JSON.parse(await readFile(path, 'utf8'));
-}
-
 export async function runNodeRecipe({ configPath, env, expectedExitCode, proc }) {
   let child;
   let escalation;
@@ -221,7 +210,11 @@ export async function qualifyApplicationRecipe({
         !`${processResult.stdout}${processResult.stderr}`.includes(key),
         'Application recipe exposed its operator credential'
       );
-      const evaluation = await readPrivateReport(reportPath);
+      const { evaluation, manifest } = await readRecipeArtifacts(reportPath);
+      assert.equal(manifest.oracleMatches, true, 'Application recipe oracle mismatch');
+      const diagnostic = `Private evaluation artifact: sha256:${manifest.evaluation.sha256}`;
+      assert.ok(processResult.stdout.includes(diagnostic), 'Missing recipe artifact link');
+      assert.ok(!`${processResult.stdout}${processResult.stderr}`.includes(reportPath), 'Recipe exposed report path');
       const oracle = await proc.rpc('oracle', { name: definition.resource });
       const result = validateApplicationRecipeResult({
         name: definition.name,
@@ -239,14 +232,17 @@ export async function qualifyApplicationRecipe({
         `${baseUrl}/v1/sessions/${encodeURIComponent(oracle.claimSessionId)}/application`,
         { operatorKey: key, statuses: [404], signal: proc.signal }
       );
-      staged.push({ ...result, sessionCleanup: 'verified' });
+      const { href: _href, ...artifact } = manifest.evaluation;
+      staged.push({ ...result, sessionCleanup: 'verified', artifact });
     } finally {
-      await rm(configPath, { force: true });
-      await rm(reportPath, { force: true });
-      if (url !== undefined) {
-        await proc.rpc('closeFixture', { name: definition.resource });
-        const closed = await proc.rpc('fixtureState', { name: definition.resource });
-        assert.equal(closed.closed, true, 'Application recipe fixture remained open');
+      try {
+        await cleanupRecipeFiles([configPath, reportPath, `${reportPath}.manifest.json`]);
+      } finally {
+        if (url !== undefined) {
+          await proc.rpc('closeFixture', { name: definition.resource });
+          const closed = await proc.rpc('fixtureState', { name: definition.resource });
+          assert.equal(closed.closed, true, 'Application recipe fixture remained open');
+        }
       }
     }
   }
