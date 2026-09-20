@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { buildServer } from '../packages/api/dist/server.js';
 import { FakeEngine } from '../packages/testkit/dist/index.js';
 import { checkCatalogDocument } from './mcp-catalog-docs.mjs';
-import { checkMcpContracts } from './release-smoke.mjs';
+import { checkCli, checkCliTestEvaluation, checkMcpContracts } from './release-smoke.mjs';
 import { checkSpecContext } from './spec-context.mjs';
 
 const root = new URL('../', import.meta.url);
@@ -18,9 +18,17 @@ try {
   assert.equal(response.json().version, version, 'Built API product version');
 } finally { await server.close(); }
 
-const cli = execFileSync(process.execPath, [fileURLToPath(new URL('packages/cli/dist/bin.js', root)), '--version'], { encoding: 'utf8', timeout: 10_000 });
-assert.equal(cli.trim(), version, 'Built CLI product version');
-const discovery = JSON.parse(execFileSync(process.execPath, [fileURLToPath(new URL('packages/cli/dist/bin.js', root)), 'describe', 'act', 'press'], { encoding: 'utf8', timeout: 10_000 }));
+const cliCommand = [
+  process.execPath,
+  fileURLToPath(new URL('packages/cli/dist/bin.js', root)),
+];
+const cliContracts = await checkCli(cliCommand, {
+  expectedVersion: version,
+  timeoutMs: 10_000,
+});
+await checkCliTestEvaluation(cliCommand, { expectedVersion: version, timeoutMs: 10_000 });
+assert.equal(cliContracts.version, version, 'Built CLI product version');
+const discovery = JSON.parse(execFileSync(cliCommand[0], [...cliCommand.slice(1), 'describe', 'act', 'press'], { encoding: 'utf8', timeout: 10_000 }));
 assert.equal(discovery.schemaVersion, 1, 'Built CLI discovery contract version');
 assert.equal(discovery.productVersion, version, 'Built CLI discovery product version');
 assert.equal(discovery.scope, 'cli-command-definitions', 'Discovery must not claim live capability qualification');

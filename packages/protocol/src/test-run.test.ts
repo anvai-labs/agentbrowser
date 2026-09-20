@@ -4,9 +4,12 @@ import {
   type AssertionInvocation,
   type TestCaseDescriptor,
   TestCaseDescriptorSchema,
+  TestCaseEvaluationInputSchema,
+  TestCaseEvaluationReportSchema,
   type TestCaseRunReport,
   TestCaseRunReportSchema,
   createTestCaseRunContract,
+  evaluateTestCaseRun,
 } from './test-run.js';
 
 const request = (): OutcomeRunRequest => ({
@@ -69,6 +72,13 @@ const report = (
   setup: 'completed',
   assertions,
   cleanup: 'complete',
+});
+
+const evaluation = () => ({
+  schemaVersion: 1 as const,
+  descriptor: descriptor(),
+  invocations: [invocation()],
+  report: report(),
 });
 
 describe('bound test case run contract', () => {
@@ -386,5 +396,170 @@ describe('bound test case run contract', () => {
       report: { outcome: { verification: { evidenceRefIds: ['fixture-event-1'] } } },
     });
     expect(contract.isPassing(input)).toBe(false);
+  });
+});
+
+describe('offline test case evaluation', () => {
+  it('defines strict versioned schemas and returns a caller-observed bound projection', () => {
+    expect(TestCaseEvaluationInputSchema.$id).toBe(
+      'urn:agentbrowser:test-case-evaluation-input:v1'
+    );
+    expect(TestCaseEvaluationReportSchema.$id).toBe(
+      'urn:agentbrowser:test-case-evaluation-report:v1'
+    );
+
+    const input = evaluation();
+    const result = evaluateTestCaseRun(input);
+    expect(result).toEqual({
+      schemaVersion: 1,
+      provenance: 'caller_observed',
+      verdict: 'passed',
+      descriptor: input.descriptor,
+      report: input.report,
+    });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE-BUSINESS-ID');
+    expect(result).not.toHaveProperty('invocations');
+
+    input.descriptor.id = 'PRIVATE-MUTATION';
+    input.report.environment.fixture.version = 'PRIVATE-MUTATION';
+    expect(result.descriptor.id).toBe('counter-regression');
+    expect(result.report.environment.fixture.version).toBe('1.0.0');
+  });
+
+  it('uses the existing contract as the sole truth for skips, outcomes and lifecycle', () => {
+    const requiredSkip = evaluation();
+    requiredSkip.invocations = [];
+    requiredSkip.report.assertions = [
+      { id: 'commit', status: 'skipped', reasonCode: 'PRECONDITION_UNAVAILABLE' },
+    ];
+    expect(evaluateTestCaseRun(requiredSkip).verdict).toBe('failed');
+
+    const unknown = evaluation();
+    unknown.report.assertions = [
+      {
+        ...completed(),
+        report: outcome({
+          verification: {
+            status: 'unknown',
+            verifier: { id: 'fixture-commit', version: '1.0.0' },
+            requiredLayer: 'G4',
+            evidenceRefIds: [],
+          },
+        }),
+      },
+    ];
+    expect(evaluateTestCaseRun(unknown).verdict).toBe('failed');
+
+    for (const lifecycle of [
+      { setup: 'failed' as const },
+      { setup: 'unknown' as const },
+      { cleanup: 'failed' as const },
+      { cleanup: 'unknown' as const },
+    ]) {
+      const input = evaluation();
+      Object.assign(input.report, lifecycle);
+      expect(evaluateTestCaseRun(input).verdict).toBe('failed');
+    }
+
+    const optional = evaluation();
+    optional.descriptor.assertions.push({ id: 'visual', required: false });
+    optional.report.assertions.push({
+      id: 'visual',
+      status: 'skipped',
+      reasonCode: 'CAPABILITY_UNAVAILABLE',
+    });
+    expect(evaluateTestCaseRun(optional).verdict).toBe('passed');
+  });
+
+  it('rejects altered binding identities through the request-relative contract', () => {
+    const altered = [
+      (input: ReturnType<typeof evaluation>) => {
+        input.report.case.version = '2.0.0';
+      },
+      (input: ReturnType<typeof evaluation>) => {
+        input.report.environment.fixture.version = '2.0.0';
+      },
+      (input: ReturnType<typeof evaluation>) => {
+        const assertion = input.report.assertions[0];
+        if (assertion?.status === 'completed') assertion.operationId = 'another-operation';
+      },
+      (input: ReturnType<typeof evaluation>) => {
+        const assertion = input.report.assertions[0];
+        if (assertion?.status === 'completed') {
+          assertion.report.outcome.testedSeam = 'application';
+        }
+      },
+      (input: ReturnType<typeof evaluation>) => {
+        const first = input.invocations[0];
+        if (first === undefined) throw new Error('fixture invocation missing');
+        first.request.verification.verifier.id = 'another-verifier';
+      },
+      (input: ReturnType<typeof evaluation>) => {
+        const first = input.invocations[0];
+        if (first === undefined) throw new Error('fixture invocation missing');
+        first.request.verification.verifier.version = '2.0.0';
+      },
+      (input: ReturnType<typeof evaluation>) => {
+        const first = input.invocations[0];
+        if (first === undefined) throw new Error('fixture invocation missing');
+        first.request.actions.push({ action: 'click', target: { ref: 'e1_0' } });
+      },
+    ];
+    for (const mutate of altered) {
+      const input = evaluation();
+      mutate(input);
+      expect(() => evaluateTestCaseRun(input)).toThrow('Invalid test case evaluation');
+    }
+  });
+
+  it('rejects malformed, accessor-backed, cyclic and aggregate-oversized input privately', () => {
+    let reads = 0;
+    const accessor = Object.defineProperty(evaluation(), 'report', {
+      enumerable: true,
+      get: () => {
+        reads++;
+        return report();
+      },
+    });
+    const cyclic = evaluation() as ReturnType<typeof evaluation> & { cycle?: unknown };
+    cyclic.cycle = cyclic;
+    const oversized = evaluation();
+    const first = oversized.invocations[0];
+    if (first === undefined) throw new Error('fixture invocation missing');
+    first.request.verification.input = { private: 'x'.repeat(34_000) };
+    const assertion = oversized.report.assertions[0];
+    if (assertion?.status !== 'completed') throw new Error('fixture result missing');
+    const step = assertion.report.plan.results[0];
+    if (step === undefined) throw new Error('fixture plan result missing');
+    step.result = { diagnostic: `PRIVATE-AGGREGATE-${'y'.repeat(34_000)}` };
+    // Each component is valid in its existing owner; only the combined envelope is oversized.
+    expect(
+      createTestCaseRunContract(oversized.descriptor, oversized.invocations).isPassing(
+        oversized.report
+      )
+    ).toBe(true);
+    const malformed = { ...evaluation(), privateField: 'PRIVATE-UNKNOWN' };
+
+    for (const input of [accessor, cyclic, oversized, malformed]) {
+      try {
+        evaluateTestCaseRun(input);
+        throw new Error('expected evaluation rejection');
+      } catch (error) {
+        expect(String(error)).toContain('Invalid test case evaluation');
+        expect(String(error)).not.toContain('PRIVATE');
+      }
+    }
+    expect(reads).toBe(0);
+  });
+
+  it('retains failure evidence while omitting invocation inputs', () => {
+    const input = evaluation();
+    input.report.cleanup = 'failed';
+    const result = evaluateTestCaseRun(input);
+    expect(result.verdict).toBe('failed');
+    expect(result.report.assertions[0]).toMatchObject({
+      report: { outcome: { verification: { evidenceRefIds: ['fixture-event-1'] } } },
+    });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE-BUSINESS-ID');
   });
 });

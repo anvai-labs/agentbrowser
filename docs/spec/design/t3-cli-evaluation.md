@@ -1,7 +1,7 @@
 # T3 next slice: offline CLI evaluation and conventional test integration
 
-Status: design for implementation, not a delivered command. Baseline: develop
-`4601e77` after PR #222, with the 13-case foundation delivered by #212/#214.
+Status: implemented in the develop candidate; not published in 1.9.0. Design baseline:
+`4601e77`, with the 13-case foundation delivered by #212/#214.
 Load this file only for this T3 slice. T3 remains active; its completion gates do not change.
 
 ## Problem and decision
@@ -177,7 +177,7 @@ escape content and never inline active page HTML or private requests.
 6. **Delivery:** focused local gates, exact-head adversarial review, one ready PR through
    existing required checks, normal merge verification, accurate develop/release status.
 
-Steps 1–4 form the first PR-sized implementation; step 5 is the next integration/report
-slice. No production runtime change is made by this design document. A public execution
+Steps 1–4 are implemented; see [qualification](../evidence/t3-cli-evaluation.md).
+Step 5 is the next integration/report slice. A public execution
 runner, fixture/plugin configuration, scheduling, parallelism, durable history and public
 npm publication remain deferred until evidence justifies their added ownership.

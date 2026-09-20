@@ -11,7 +11,9 @@ The foundation-alignment sequence is merged through PR #222. Use the
 [verified handback checkpoint](../spec/evidence/foundation-handback-recheck.md) before
 repeating any assignments below. Installed CLI/service now report 1.9.0; earlier
 1.8.20 installation observations in this original handoff are historical. Navigation
-reset is delivered; the next T3 slice has an [offline CLI design](../spec/design/t3-cli-evaluation.md).
+reset is delivered. The develop candidate now implements [offline CLI evaluation](../spec/evidence/t3-cli-evaluation.md):
+reuse `test evaluate` after discovering its schema, without copying case verdict logic.
+Published 1.9.0 lacks this command; conventional-runner qualification remains separate.
 
 ## Verified baseline and limits
 
@@ -25,7 +27,7 @@ A package version alone does not identify this post-release candidate.
 | T0 | Released CLI offline `describe`, canonical bulk schemas, bounded JSON reader, SDK/service execution and MCP bulk result validation | Discover the actual installed command and schema; offline metadata does not prove live capability or permission. |
 | T1 | Local selective spec loader, shared mode registry, service-enforced grants, fixed MCP profiles and non-secret run cursor | Loader is checkout tooling, not a new installed CLI command. Installed Claude/Codex/Victor cursor consumption and context retirement remain T8; T1 overall remains active. |
 | T2 | Released CLI/SDK/REST `outcome`, bound verification, application permissions and receipt correlation | Configure a trusted verifier, source and explicit policy for each application. No production receipt source is registered by default; G4 fixture evidence is not G6 independence or durable recovery. |
-| T3 | Develop protocol `createTestCaseRunContract` and 12-case packaged acceptance using the existing CLI `outcome` | Not in the published 1.9.0 protocol. No `agentbrowser test run`, public runner, JUnit/HTML exporter or MCP outcome tool. T3 remains active. |
+| T3 | Develop `createTestCaseRunContract`, offline CLI `test evaluate` and 13-case packaged acceptance through `outcome`/evaluation | Candidate evaluator is absent from published 1.9.0. No `agentbrowser test run`, public runner, JUnit/HTML exporter or MCP outcome tool. T3 remains active. |
 
 Local cross-check during this handoff:
 

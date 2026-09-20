@@ -3,7 +3,8 @@
 Status: AgentBrowser 1.9.0 includes offline `describe`, bounded JSON input,
 plan/autofill result validation and receipt-correlated `outcome`. Its installed
 CLI/service qualification covers a controlled G4 fixture; it does not qualify a
-production evidence source, G6 independence or durable recovery.
+production evidence source, G6 independence or durable recovery. The develop candidate
+also provides offline `test evaluate`; it is absent from published 1.9.0.
 
 The CLI is a thin SDK client to the shared AgentBrowser service. It owns no browser
 session state or alternate executor. Use ordinary Bash/shell tools to inspect JSON;
@@ -34,7 +35,8 @@ request that child's path to expand it.
 `scope: "cli-command-definitions"` means installed CLI syntax, **not** live backend
 capabilities or granted permissions. This is metadata, not a complete action JSON
 schema by default. `describe autofill --schema`, `describe plan --schema`,
-`describe outcome --schema`, and `describe application execute --schema` include
+`describe outcome --schema`, `describe application execute --schema`, and candidate
+`describe test evaluate --schema` include
 canonical input and output schemas (plan input is an array, matching its CLI
 payload); other commands currently return `schemas: null` with that flag.
 Schemas are emitted only on request, with nested constraints intact. Protocol semantic
@@ -175,3 +177,41 @@ projection; other MCP result contracts remain to be qualified.
 For cross-version integration and common-helper reuse, use the on-demand
 [Claude foundation handoff](agent-handoffs/claude-foundation-reuse.md). It separates
 published capabilities, installed binaries and the T3 candidate.
+
+## Evaluate a completed case offline (develop candidate)
+
+```sh
+agentbrowser describe test evaluate --schema
+agentbrowser test evaluate --help
+# evaluation.json is captured by your trusted test coordinator, after cleanup.
+umask 077
+report_dir="$(mktemp -d)"
+evaluation_status=0
+agentbrowser --json test evaluate - <evaluation.json >"$report_dir/evaluation.json" || evaluation_status=$?
+# Keep the directory private; do not print or upload its full report by default.
+exit "$evaluation_status"
+```
+
+No service, browser, API key or MCP connection is needed for evaluation. Executing the
+underlying UI actions still requires the existing service and authorized coordinator.
+Inline JSON and `@file` also work; stdin avoids private payloads in shell arguments.
+`--operation-id` has no effect on this offline operation.
+
+The strict input is `{schemaVersion:1, descriptor, invocations, report}`; discover its
+full schema only when needed. The entire parsed JSON snapshot must fit the existing
+64 KiB verification budget (with depth/node limits), within the CLI reader's 1 MiB
+transport cap. The coordinator captures expected requests before dispatch, observes
+actual fixture/service/CLI versions independently, and completes owned cleanup before
+evaluation. It must not copy expected pins into observed environment fields.
+
+A valid passing case exits 0. A valid failed case exits 1 with a complete JSON report;
+invalid input exits 1 with no stdout and a generic stderr diagnostic. Human output is
+only the case ID and verdict. The JSON report includes `provenance: "caller_observed"`
+and omits invocation requests, but its diagnostic strings/evidence references may still
+be sensitive. Preserve the exit status even when collecting a failure artifact.
+
+This checks consistency against supplied expectations. It does not execute a test,
+fetch or authenticate evidence, or prove that its caller performed the work. A fabricated
+passing bundle is not regression evidence. Setup/finalizer failures in the conventional
+runner must fail the whole run even if an earlier case passed. Portable deployment setup,
+conventional-runner qualification and JUnit/HTML adapters remain later T3 work.
