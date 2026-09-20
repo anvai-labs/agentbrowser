@@ -36,6 +36,10 @@ test('copied recipe loads with only its documented companion from an unrelated c
     const sentinel = new Error('exercise failure');
     await assert.rejects(withStandaloneRecipe(directory, async () => { throw sentinel; }), (error) => error === sentinel);
     assert.deepEqual(await readdir(directory), []);
+    await assert.rejects(withStandaloneRecipe(directory, async () => { throw sentinel; }, {
+      remove: async (path, options) => { await rm(path, options); throw new Error('PRIVATE_CLEANUP_PATH'); },
+    }), { message: 'Standalone recipe execution and cleanup failed' });
+    assert.deepEqual(await readdir(directory), []);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -449,7 +453,9 @@ test('private report artifacts bind exact bytes and retain an independent oracle
     });
     assert.ok(!JSON.stringify(manifest).includes('PRIVATE_REPORT'));
     assert.ok(!JSON.stringify(manifest).includes(directory));
-    assert.deepEqual(await readRecipeArtifacts(path), { evaluation, manifest });
+    const manifestBytes = (await readFile(`${path}.manifest.json`)).length;
+    const observed = await readRecipeArtifacts(path);
+    assert.deepEqual(observed, { evaluation, manifest, manifestBytes });
     if (process.platform !== 'win32') {
       assert.equal((await stat(path)).mode & 0o077, 0);
       assert.equal((await stat(`${path}.manifest.json`)).mode & 0o077, 0);

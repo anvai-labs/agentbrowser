@@ -1,6 +1,6 @@
 /** Qualify the standalone Node recipe against the already-running composed host. */
 import assert from 'node:assert/strict';
-import { copyFile, chmod, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -19,8 +19,11 @@ const recipeScript = fileURLToPath(
 );
 
 /** Exercise exactly the documented two-file copy; own and remove all staging. */
-export async function withStandaloneRecipe(directory, exercise) {
-  const root = await mkdtemp(join(directory, 'standalone-recipe-'));
+export async function withStandaloneRecipe(directory, exercise, { remove = rm } = {}) {
+  let root;
+  try { root = await mkdtemp(join(directory, 'standalone-recipe-')); }
+  catch { throw new Error('Standalone recipe staging failed'); }
+  let failed = false;
   try {
     const source = join(root, 'source');
     const cwd = join(root, 'unrelated-cwd');
@@ -34,9 +37,12 @@ export async function withStandaloneRecipe(directory, exercise) {
       }
     } catch { throw new Error('Standalone recipe staging failed'); }
     return await exercise({ script: join(source, 'application-outcome.mjs'), cwd });
+  } catch (error) {
+    failed = true;
+    throw error;
   } finally {
-    try { await rm(root, { recursive: true, force: true }); }
-    catch { throw new Error('Standalone recipe cleanup failed'); }
+    try { await remove(root, { recursive: true, force: true }); }
+    catch { throw new Error(failed ? 'Standalone recipe execution and cleanup failed' : 'Standalone recipe cleanup failed'); }
   }
 }
 const cases = Object.freeze([
@@ -258,7 +264,7 @@ export async function qualifyApplicationRecipe({
           !`${processResult.stdout}${processResult.stderr}`.includes(key),
           'Application recipe exposed its operator credential'
         );
-        const { evaluation, manifest } = await readRecipeArtifacts(reportPath);
+        const { evaluation, manifest, manifestBytes } = await readRecipeArtifacts(reportPath);
         assert.equal(manifest.oracleMatches, true, 'Application recipe oracle mismatch');
         const nativeReport = validateApplicationRecipeNativeReport({
           name: definition.name, stdout: processResult.stdout, stderr: processResult.stderr,
@@ -288,7 +294,7 @@ export async function qualifyApplicationRecipe({
           ...result, sessionCleanup: 'verified', artifact,
           nativeReport,
           configBytes: Buffer.byteLength(serializedConfig),
-          manifestBytes: (await stat(`${reportPath}.manifest.json`)).size,
+          manifestBytes,
         });
       } finally {
         try {

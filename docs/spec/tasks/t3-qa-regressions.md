@@ -21,8 +21,10 @@ acceptance; public runners, generic callbacks and report adapters remain deferre
 
 1. Fixture-backed TestCase with explicit UI seam, setup, assertions and cleanup.
 2. Deterministic replay and reusable test export/integration with no LLM at run time.
-3. JUnit/HTML report adapters and failure-linked evidence, reusing common renderers.
-4. Local impact selection inside existing jobs; any CI gate change is reviewed with T9.
+3. At least one qualified conventional report plus failure-linked private evidence,
+   reusing common renderers. JUnit is delivered; add HTML only for a concrete consumer.
+4. Measure an explicit local focused loop against the full gate and fail to full when
+   impact is uncertain. Any automatic CI selector or gate change belongs to T9.
 
 ## TDD and acceptance
 
@@ -134,15 +136,17 @@ node scripts/check-doc-links.mjs
 node --test scripts/spec-context.test.mjs
 ```
 
-The name filter is an explicit local optimization, not a new selector or evidence that
-unselected tests are unaffected. Run full package acceptance when the changed ownership
-or dependency reach is unknown, and keep normal hooks and required CI authoritative.
-Measure recurring local cost and misses before adding an impact selector. HTML remains
-deferred until a concrete consumer justifies its security and rendering ownership.
+The name filter is an explicit local selection, not evidence that unselected tests are
+unaffected. Run full package acceptance when the changed ownership or dependency reach
+is unknown, and keep normal hooks and required CI authoritative. The closure packet
+records one scoped focused/full baseline; it does not justify an automatic selector.
+Any future CI filtering must stay always-reporting and is owned by T9. HTML remains
+conditional on a concrete consumer that justifies its security and rendering ownership.
 
 ## Completion / stop
 
-Close R04 QA aspects and establish the product's first marketable workflow. Preserve
-failure evidence and independent oracle results. Reject automatic assertion rewriting
-or green-by-skipping behavior. Only completed T3 may unlock T7 audit and T8 full-run
-qualification; this first foundation does not.
+Close R04 QA aspects and establish the first qualified application-owned regression
+workflow seam. Preserve failure evidence and independent oracle results. Reject
+automatic assertion rewriting or green-by-skipping behavior. Product-market validation
+and willingness to pay remain separate from technical qualification. Only completed T3
+may unlock T7 audit and T8 full-run qualification; this first foundation does not.

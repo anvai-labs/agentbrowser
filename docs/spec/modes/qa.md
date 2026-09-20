@@ -28,8 +28,12 @@ a visual baseline. Use semantic/test identities and explicit business versions.
 
 An intentional fixture bug fails, its fix passes, and a falsely successful UI or agent
 narrative cannot pass the independent oracle. Include stale refs, delayed server
-rejection and required-assertion skips. Export JUnit/HTML through shared report adapters.
-Measure one selected test bundle and one qualified browser; no scanner or other mode
-dependencies in the default QA installation. Load only the current failure's evidence.
+rejection and required-assertion skips. Qualify at least one conventional report through
+shared adapters and link it to private failure evidence; JUnit is the initial format.
+Add HTML only when a concrete consumer justifies its privacy and rendering ownership.
+Measure one selected test bundle and one qualified browser. Use explicit focused local
+selection with fail-to-full when impact is uncertain; an automatic CI selector requires
+separate T9 evidence. No scanner or other mode dependencies belong in the default QA
+installation. Load only the current failure's evidence.
 
 Primary implementation packet: T3; prerequisites T0/T2. Transport qualification T8.
