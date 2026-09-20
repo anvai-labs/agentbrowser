@@ -133,6 +133,16 @@ Terminal outcomes (lowercase states in code; close carries a reason):
 
 ## Implementation Notes
 
+### CLI file handoff (1.9.1 candidate)
+
+The [cookie-file spec](../spec/design/cli-cookie-file-handoff.md) applies explicit
+persistence at the client boundary: local file import maps to the existing `cookies`
+session-create field, and `session cookies --output` writes an owner-only JSON export.
+No service-side file path, automatic cookie saving, storage-state restore or new session
+store is introduced. Imported credentials must still be verified against the destination.
+The older `persistence` request examples below describe the original design, not a shipped
+request field; the current wire contract is `SessionRequestSchema`.
+
 ### Session creation
 
 ```json

@@ -310,7 +310,7 @@ describe('AgentBrowser CLI', () => {
   describe('session commands', () => {
     it('documents the ten-minute default while preserving explicit idle overrides', async () => {
       expect(await run('session', 'create', '--help')).toBe(0);
-      expect(out.join('\n')).toContain('600000 = 10 min');
+      expect(out.join('\n').replace(/\s+/g, ' ')).toContain('600000 = 10 min');
       expect(out.join('\n')).not.toContain('120000 = 2 min');
       expect(deps.createClient).not.toHaveBeenCalled();
     });
@@ -1575,8 +1575,8 @@ describe('AgentBrowser CLI', () => {
       }
       // ...and extract's selector payloads carry their reviewed exemption.
       expect(byPath.get('extract')).toMatchObject({ advertised: false, exempt: true });
-      // Commands without JSON input carry neither marker.
-      expect(byPath.get('session create')).toMatchObject({ advertised: false, exempt: false });
+      // Session cookie JSON uses the canonical cookie subshape under a reviewed exemption.
+      expect(byPath.get('session create')).toMatchObject({ advertised: false, exempt: true });
     });
 
     it('routes extract selector JSON through the bounded reader', async () => {

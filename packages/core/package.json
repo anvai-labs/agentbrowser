@@ -1,6 +1,6 @@
 {
   "name": "@agentbrowser/core",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "private": true,
   "description": "Core session management, action execution, and observation normalization",
   "main": "./dist/index.js",

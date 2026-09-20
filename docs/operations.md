@@ -239,6 +239,32 @@ validation with 400 `cookies[0]/domain: Required`. Convert by hand:
 `GET /v1/sessions/{id}/cookies` exports — always re-seed from an export
 rather than hand-building.
 
+From 1.9.1, the CLI can read a local credential file without putting its contents
+in shell arguments. Use an existing private directory and a fresh export filename:
+
+```sh
+agentbrowser session create --tenant local --no-headless --cookies-file /private/path/cookies.json
+agentbrowser session create --tenant local --cookies-file /private/path/cookies.txt --cookies-format netscape
+agentbrowser session create --tenant local --cookies-file /private/path/cookies.tsv --cookies-format chrome-devtools-tsv
+agentbrowser session cookies SESSION_ID --output /private/path/cookies-export.json
+```
+
+JSON is the default and uses the canonical cookie array. Netscape input has seven
+tab-separated columns and supports the `#HttpOnly_` prefix. Chrome DevTools TSV is
+headerless with exactly twelve columns: Name, Value, Domain, Path, Expires/Max-Age,
+Size, HttpOnly, Secure, SameSite, Partition Key, Cross Site Ancestor and Priority.
+Select the format explicitly; different browser export layouts are refused.
+
+File imports are bounded to 1 MiB and 1000 cookies; expired entries, malformed scope,
+duplicates and unknown attributes are refused before creating a session. Partitioned
+entries are refused unless `--cookies-skip-unsupported` explicitly omits the whole
+entry, reporting only the omitted count. The flag does not permit malformed entries.
+Do not combine `--cookies-file` with inline `--cookies`. Export creates a new file
+with mode 0600, refuses existing paths and symlinks, and prints only `{count,path}`.
+Without `--output`, the existing export command prints cookie values to stdout.
+Importing cookies does not guarantee login; verify the authenticated page afterward.
+See the [format and refusal contract](spec/design/cli-cookie-file-handoff.md).
+
 Two engine-side behaviors worth knowing: an empty `cookies: []` is
 silently skipped (so exporting before the site has set anything yields
 nothing to seed), and `__Host-`-prefixed cookies are automatically
