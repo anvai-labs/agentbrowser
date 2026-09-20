@@ -25,7 +25,10 @@ The initial four tests failed before the example module existed. Later adversari
 review and focused falsifiers caught lost cancellation between spawn and listener
 registration, empty-stdin EPIPE, endpoint origin changes caused by URL resolution, and
 session cleanup registration after engine validation. Those paths now have regression
-coverage. A real child-process test sends SIGTERM to the Node recipe while its CLI
+coverage. Qualification on Node 24.21.0 also exposed duplicate SIGTERM dispatch
+from the abort and guard-failure paths; a delayed guard rejection reproduced the
+orphan on Node 22. The wrapper now requests termination only once, and the regression
+passes on both runtimes before merge. A real child-process test sends SIGTERM to the Node recipe while its CLI
 ignores SIGTERM, verifies escalation/drain, and rejects report publication.
 
 The local live run preserved all 13 existing cases and qualified the three additional

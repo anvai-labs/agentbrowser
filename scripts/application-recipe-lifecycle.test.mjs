@@ -68,6 +68,8 @@ setInterval(()=>{},1000);\n`,
       async guard() {
         await waitForFile(pidPath);
         controller.abort(guardFailure);
+        // Let Node handle the abort signal before the independent guard rejection.
+        await new Promise((resolve) => setTimeout(resolve, 50));
         throw guardFailure;
       },
     };
@@ -96,6 +98,14 @@ setInterval(()=>{},1000);\n`,
     await assert.rejects(stat(reportPath), { code: 'ENOENT' });
   } finally {
     controller.abort();
+    try {
+      const pids = JSON.parse(await readFile(pidPath, 'utf8'));
+      for (const pid of [pids.pid, pids.parent]) {
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {}
+      }
+    } catch {}
     await rm(directory, { recursive: true, force: true });
   }
 });

@@ -129,8 +129,11 @@ async function readPrivateReport(path) {
 export async function runNodeRecipe({ configPath, env, expectedExitCode, proc }) {
   let child;
   let escalation;
+  let terminationRequested = false;
   const abort = () => {
-    if (!child || child.exitCode !== null || child.signalCode !== null) return;
+    if (terminationRequested || !child || child.exitCode !== null || child.signalCode !== null)
+      return;
+    terminationRequested = true;
     child.kill('SIGTERM');
     escalation ??= setTimeout(() => {
       if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
