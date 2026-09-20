@@ -38,8 +38,9 @@ The alignment sequence through #222 is merged. Follow the
 [verified handback](../evidence/foundation-handback-recheck.md), not stale open-PR or
 navigation-reset observations. T3's next slice is the
 [offline CLI evaluation design](../design/t3-cli-evaluation.md); implementation and
-conventional-runner/report qualification remain. Resolve finite SDK-guard and download
-contract follow-ups within existing owners, without another foundation program.
+conventional-runner/report qualification remain. SDK-derived client slices and compiler
+fault probes now cover the guard gaps; download discovery documents ID-preferred
+collection. Preserve those existing owners while continuing T3.
 
 ## Common execution protocol
 

@@ -1,13 +1,9 @@
 /**
- * Type-level contract checks (ADR-015) for the MCP server's structural SDK
- * mirror — same pattern as packages/cli/src/contracts.ts.
- *
- * These live in a COMPILED source file deliberately: test files are excluded
- * from tsconfig and vitest does not type-check. `pnpm -r type-check` enforces
- * these — if the real SDK client and McpClient drift apart, this file stops
- * compiling. Direction is one-way: the real client satisfies the mirror.
+ * Production assignment check. Member names/signatures are derived from the SDK
+ * in McpClient; partial test stand-ins may still omit optional families.
+ * scripts/sdk-client-contract.test.mjs proves renamed methods and narrowed
+ * inputs fail at these real consumers, rather than relying on method variance.
  */
-
 import type { AgentBrowserClient } from '@agentbrowser/sdk-typescript';
 import type { McpClient } from './mcp-server.js';
 

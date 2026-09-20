@@ -1044,8 +1044,9 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           operationId: 'collectDownloadedFile',
           summary: 'Collect the browser-session download of one file as a stored artifact',
           description:
-            'Finalizes the session download of `filename` (already fetched under the same ' +
-            'allowDownloads / egress / maxDownloadBytes rules as the download endpoint) ' +
+            'Collects by download ID (preferred), or by unique filename. Ambiguous filenames fail. ' +
+            'The selected download was already fetched under the same ' +
+            'allowDownloads / egress / maxDownloadBytes rules as the download endpoint and is stored ' +
             'into an artifact whose bytes are retrievable via the artifact endpoint.',
           tags: ['artifacts'],
           parameters: [
@@ -1055,7 +1056,8 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               name: 'filename',
               in: 'path',
               required: true,
-              description: 'Download filename as reported by the session download.',
+              description:
+                'Download ID (preferred) or unique filename; ambiguous filenames fail. The wire parameter name remains filename.',
               schema: { type: 'string' },
             },
           ],

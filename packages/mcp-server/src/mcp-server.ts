@@ -16,7 +16,6 @@ import {
   DELIVERED_ACTION_TYPES,
   INTERACTION_GUIDANCE,
   PlanActionsSchema,
-  type PlanReport,
   PlanReportSchema,
   UsageError,
   WireActionEnvelopeSchema,
@@ -30,88 +29,42 @@ import {
 } from '@agentbrowser/protocol';
 import type { AgentCapability, AgentMode } from '@agentbrowser/protocol';
 import type {
-  ActionRequest,
-  ActionResult,
-  ArtifactRef,
+  AgentBrowserClient,
   ClientOptions,
   ExportedCookie,
   ExtractRequest,
-  ExtractResult,
   MutationOptions,
   NavigationRequest,
-  NavigationResponse,
   ObservationRequest,
-  ObservationResponse,
-  PageResponse,
-  PageSnapshot,
-  PdfRequest,
   ScreenshotRequest,
   SessionRequest,
-  SessionResponse,
 } from '@agentbrowser/sdk-typescript';
 import { DELIVERED_EXTRACT_FORMATS, REF_PATTERN } from '@agentbrowser/sdk-typescript';
 
 export type { ClientOptions, ExportedCookie };
 
-/** The slice of the SDK the MCP server depends on. */
+/** SDK-owned signatures; optional families still permit partial test stand-ins. */
 export interface McpClient {
-  sessions: {
-    autofill?(
-      sessionId: string,
-      pageId: string,
-      request: import('@agentbrowser/protocol').AutofillRequest,
-      options?: MutationOptions
-    ): Promise<import('@agentbrowser/protocol').AutofillReport>;
-    control?(sessionId: string): Promise<import('@agentbrowser/protocol').ControlView>;
-    listPages?(sessionId: string): Promise<PageResponse[]>;
-    operation?(
-      sessionId: string,
-      operationId: string
-    ): Promise<import('@agentbrowser/protocol').OperationRecord>;
-    create(request: SessionRequest): Promise<SessionResponse>;
-    close(sessionId: string): Promise<void>;
-    /** TD-BROWSER-6: scoped cookie export for the credential handoff loop. */
-    cookies(sessionId: string): Promise<ExportedCookie[]>;
-    plan(
-      sessionId: string,
-      pageId: string,
-      actions: Array<Record<string, unknown>>,
-      options?: MutationOptions
-    ): Promise<PlanReport>;
-    /** TD-BROWSER-8: self-contained snapshot payload for one-shot LLM reasoning. */
-    snapshot(sessionId: string, pageId: string): Promise<PageSnapshot>;
-    createPage(sessionId: string): Promise<PageResponse>;
-    navigate(
-      sessionId: string,
-      pageId: string,
-      request: NavigationRequest,
-      options?: MutationOptions
-    ): Promise<NavigationResponse>;
-    observe(
-      sessionId: string,
-      pageId: string,
-      request: ObservationRequest
-    ): Promise<ObservationResponse>;
-    executeAction(
-      sessionId: string,
-      pageId: string,
-      request: ActionRequest,
-      options?: MutationOptions
-    ): Promise<ActionResult>;
-    screenshot(sessionId: string, pageId: string, request: ScreenshotRequest): Promise<ArtifactRef>;
-    extract(sessionId: string, pageId: string, request: ExtractRequest): Promise<ExtractResult>;
-    pdf(sessionId: string, pageId: string, request: PdfRequest): Promise<ArtifactRef>;
-    /** A3 evidence: the page's current HTML (inline base64 under the service budget). */
-    html(
-      sessionId: string,
-      pageId: string
-    ): Promise<ArtifactRef & { inline?: { contentBase64: string; byteSize?: number } }>;
-    /** Fetch a stored artifact; `contentBase64` present when the service returns bytes. */
-    artifact(
-      sessionId: string,
-      artifactId: string
-    ): Promise<{ metadata: ArtifactRef; contentBase64?: string }>;
-  };
+  sessions: Pick<
+    AgentBrowserClient['sessions'],
+    | 'create'
+    | 'close'
+    | 'cookies'
+    | 'plan'
+    | 'snapshot'
+    | 'createPage'
+    | 'navigate'
+    | 'observe'
+    | 'executeAction'
+    | 'screenshot'
+    | 'extract'
+    | 'pdf'
+    | 'html'
+    | 'artifact'
+  > &
+    Partial<
+      Pick<AgentBrowserClient['sessions'], 'autofill' | 'control' | 'listPages' | 'operation'>
+    >;
 }
 
 export interface McpDependencies {

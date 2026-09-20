@@ -56,3 +56,12 @@ The 1.9.0 candidate's tag ancestry and delivery are verified; a reusable ancestr
 gate, least-privilege publication review and measured runner-use improvements remain
 open. T9 stays active because every candidate needs fresh review, exact-head CI,
 promotion and publication evidence.
+
+## Next checkpoint
+
+Continue reviewed, green slices into develop; the foundation documentation and guard
+fixes do not require a separate release. Reassess a release after T3's offline CLI
+integration passes the compiled 13-case matrix. This is a checkpoint, not a promise
+that all T3 reporting or portable deployment work is complete. Installed 1.9.0 remains
+the released baseline until a separately qualified candidate completes the existing
+main/tag/artifact/tap ladder. Do not bump versions or tag each develop commit.

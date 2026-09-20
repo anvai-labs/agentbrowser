@@ -142,8 +142,12 @@ removes.
 - Land as small, reviewable PRs, one primitive at a time; start with B1
   (`ActionEffect` rename) and B8 (`'page navigated'`) because they are pure
   renames with the widest confusion-to-effort ratio.
-- Add a contract test that imports each surface's request types and structurally
-  asserts assignability to the protocol type, so future SDK drift (B2) fails CI.
+- CLI/MCP client slices now derive signatures with SDK `Pick`/`Partial<Pick>`;
+  optional stand-ins do not duplicate the production method contracts. The compiled
+  assignment checks remain, but method-style assignability alone is insufficient.
+  `scripts/sdk-client-contract.test.mjs` compiles actual consumers against in-memory
+  SDK faults: renamed optional members and narrowed create inputs must fail. The
+  unmodified baseline must compile. These probes run in the existing Type Check job.
 - Keep `protocol`'s runtime additions tree-shakeable and free of any engine or
   Playwright dependency; verify with the existing neutrality grep.
 - `parseRef`/`REF_PATTERN` must remain byte-for-byte the grammar in ADR-004;

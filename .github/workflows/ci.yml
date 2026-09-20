@@ -43,8 +43,10 @@ jobs:
       - name: Build workspace dependencies
         run: pnpm -r build
 
-      - name: Type check all packages
-        run: pnpm -r type-check
+      - name: Type check all packages and SDK consumer fault probes
+        run: |
+          pnpm -r type-check
+          node --test scripts/sdk-client-contract.test.mjs
 
       - name: Verify built product versions
         run: pnpm release:artifacts

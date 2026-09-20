@@ -9,28 +9,18 @@
 import { writeFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import type {
-  ActionRequest,
-  ActionResult,
-  AgentMode,
-  ApplicationDiscovery,
-  ApplicationOperationResult,
+  AgentBrowserClient,
   ArtifactRef,
-  AutofillReport,
   AutofillRequest,
   ClientOptions,
+  ExtractRequest,
   NavigationRequest,
-  NavigationResponse,
   ObservationRequest,
   ObservationResponse,
-  OutcomeRunReport,
   OutcomeRunRequest,
-  PageResponse,
-  PageSnapshot,
   PdfRequest,
-  PlanReport,
   ScreenshotRequest,
   SessionRequest,
-  SessionResponse,
 } from '@agentbrowser/sdk-typescript';
 import {
   AGENT_MODE_IDS,
@@ -61,108 +51,52 @@ import { Command, type Option } from 'commander';
 import { type JsonInputStream, createJsonArgumentReader } from './json-input.js';
 import { PRODUCT_VERSION } from './product-version.js';
 
-/**
- * The slice of the SDK the CLI depends on. Declared structurally so tests can
- * supply a stand-in without constructing a real client.
- */
-export interface CliClient {
-  sessions: {
-    control?(sessionId: string): Promise<unknown>;
-    takeover?(sessionId: string): Promise<unknown>;
-    prepareResume?(sessionId: string): Promise<unknown>;
-    delegate?(sessionId: string, epoch: number, mode?: AgentMode): Promise<unknown>;
-    operation?(sessionId: string, operationId: string): Promise<unknown>;
-    applicationBind?(
-      sessionId: string,
-      binding: { adapter: string; resource: string }
-    ): Promise<{ adapter: string; resource: string }>;
-    applicationUnbind?(sessionId: string): Promise<{ unbound: true }>;
-    applicationDiscover?(sessionId: string): Promise<ApplicationDiscovery | null>;
-    applicationExecute?(
-      sessionId: string,
-      request: {
-        operation: string;
-        input: unknown;
-        operationId?: string;
-        expectedVersion?: number;
-      }
-    ): Promise<ApplicationOperationResult>;
-    applicationReceipt?(sessionId: string, operationId: string): Promise<unknown>;
-    create(request: SessionRequest): Promise<SessionResponse>;
-    list(): Promise<SessionResponse[]>;
-    close(sessionId: string): Promise<void>;
-    cookies(
-      sessionId: string
-    ): Promise<Array<{ name: string; value: string; domain: string; path: string }>>;
-    trace(sessionId: string): Promise<ArtifactRef>;
-    html(
-      sessionId: string,
-      pageId: string
-    ): Promise<ArtifactRef & { inline?: { contentBase64: string; byteSize?: number } }>;
-    artifact(
-      sessionId: string,
-      artifactId: string
-    ): Promise<{ metadata: ArtifactRef; contentBase64?: string }>;
-    events(sessionId: string, type?: string): Promise<Array<Record<string, unknown>>>;
-    createPage(sessionId: string, request?: { url: string }): Promise<PageResponse>;
-    navigate(
-      sessionId: string,
-      pageId: string,
-      request: NavigationRequest
-    ): Promise<NavigationResponse>;
-    observe(
-      sessionId: string,
-      pageId: string,
-      request: ObservationRequest
-    ): Promise<ObservationResponse>;
-    executeAction(sessionId: string, pageId: string, request: ActionRequest): Promise<ActionResult>;
-    screenshot(sessionId: string, pageId: string, request: ScreenshotRequest): Promise<ArtifactRef>;
-    extract(
-      sessionId: string,
-      pageId: string,
-      request: { format: string; schema?: Record<string, unknown> }
-    ): Promise<{
-      data?: unknown;
-      evidence?: unknown[];
-      warnings?: string[];
-      modelUsed?: string;
-    }>;
-    plan(
-      sessionId: string,
-      pageId: string,
-      actions: Array<Record<string, unknown>>
-    ): Promise<PlanReport>;
-    outcome(
-      sessionId: string,
-      pageId: string,
-      request: OutcomeRunRequest
-    ): Promise<OutcomeRunReport>;
-    snapshot(
-      sessionId: string,
-      pageId: string,
-      bounds?: { maxElements?: number; maxBytes?: number }
-    ): Promise<PageSnapshot>;
-    get(sessionId: string): Promise<SessionResponse>;
-    listPages(sessionId: string): Promise<PageResponse[]>;
-    getPage(sessionId: string, pageId: string): Promise<PageResponse>;
-    closePage(sessionId: string, pageId: string): Promise<void>;
-    autofill(sessionId: string, pageId: string, request: AutofillRequest): Promise<AutofillReport>;
-    pdf(sessionId: string, pageId: string, request: PdfRequest): Promise<ArtifactRef>;
-    download(
-      sessionId: string,
-      pageId: string,
-      request: { url: string; filename?: string }
-    ): Promise<ArtifactRef>;
-    collectDownload(sessionId: string, pageId: string, filename: string): Promise<ArtifactRef>;
-  };
-  health?(): Promise<{ status: string; version?: string; uptime?: number; timestamp?: string }>;
-  healthLive?(): Promise<{ status: string; timestamp?: string }>;
-  healthReady?(): Promise<{
-    status: string;
-    engine?: string;
-    version?: string;
-    capabilities?: unknown;
-  }>;
+/** SDK-owned signatures; optional families still permit partial test stand-ins. */
+export interface CliClient
+  extends Partial<Pick<AgentBrowserClient, 'health' | 'healthLive' | 'healthReady'>> {
+  sessions: Pick<
+    AgentBrowserClient['sessions'],
+    | 'create'
+    | 'list'
+    | 'close'
+    | 'cookies'
+    | 'trace'
+    | 'html'
+    | 'artifact'
+    | 'events'
+    | 'createPage'
+    | 'navigate'
+    | 'observe'
+    | 'executeAction'
+    | 'screenshot'
+    | 'extract'
+    | 'plan'
+    | 'outcome'
+    | 'snapshot'
+    | 'get'
+    | 'listPages'
+    | 'getPage'
+    | 'closePage'
+    | 'autofill'
+    | 'pdf'
+    | 'download'
+    | 'collectDownload'
+  > &
+    Partial<
+      Pick<
+        AgentBrowserClient['sessions'],
+        | 'control'
+        | 'takeover'
+        | 'prepareResume'
+        | 'delegate'
+        | 'operation'
+        | 'applicationBind'
+        | 'applicationUnbind'
+        | 'applicationDiscover'
+        | 'applicationExecute'
+        | 'applicationReceipt'
+      >
+    >;
 }
 
 export interface CliDependencies {
@@ -1367,16 +1301,16 @@ export function buildCli(deps: CliDependencies): Cli {
                   '--schema'
                 )) as Record<string, unknown>;
               }
-              let recordsValue: Record<string, unknown> | undefined;
+              let recordsValue: ExtractRequest['records'];
               if (options.records !== undefined) {
                 recordsValue = (await readCommandJson(
                   extract,
                   options.records,
                   '--records'
-                )) as Record<string, unknown>;
+                )) as ExtractRequest['records'];
               }
               const result = (await ctx.client.sessions.extract(sessionId, pageId, {
-                format: (options.format ?? 'text') as never,
+                format: (options.format ?? 'text') as ExtractRequest['format'],
                 ...(schemaValue !== undefined ? { schema: schemaValue } : {}),
                 ...(recordsValue !== undefined ? { records: recordsValue } : {}),
               })) as unknown;
@@ -1675,10 +1609,13 @@ export function buildCli(deps: CliDependencies): Cli {
         );
       download
         .command('collect')
-        .description('collect an intercepted download by filename')
+        .description('collect an intercepted download by ID (preferred) or unique filename')
         .argument('<sessionId>')
         .argument('<pageId>')
-        .argument('<filename>')
+        .argument(
+          '<downloadIdOrFilename>',
+          'download ID (preferred) or unique filename; ambiguous filenames fail'
+        )
         .option('--out <file>', 'save the collected artifact bytes to a file')
         .action(
           action(
@@ -1686,13 +1623,13 @@ export function buildCli(deps: CliDependencies): Cli {
               ctx,
               sessionId: string,
               pageId: string,
-              filename: string,
+              downloadIdOrFilename: string,
               options: { out?: string }
             ) => {
               const artifact = await ctx.client.sessions.collectDownload(
                 sessionId,
                 pageId,
-                filename
+                downloadIdOrFilename
               );
               ctx.emit(artifact, () => [
                 `Download ${artifact.artifactId}`,

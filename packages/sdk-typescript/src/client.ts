@@ -773,12 +773,16 @@ export class SessionsClient {
   }
 
   /**
-   * Collect an intercepted download by filename (as reported by the page's
-   * download events) and return its artifact reference.
+   * Collect an intercepted download by ID (preferred) or unique filename.
+   * IDs come from download events; ambiguous filenames fail. Returns the stored artifact.
    */
-  async collectDownload(sessionId: string, pageId: string, filename: string): Promise<ArtifactRef> {
+  async collectDownload(
+    sessionId: string,
+    pageId: string,
+    downloadIdOrFilename: string
+  ): Promise<ArtifactRef> {
     return this.http.requestJson(
-      `/v1/sessions/${sessionId}/pages/${pageId}/downloads/${encodeURIComponent(filename)}`,
+      `/v1/sessions/${sessionId}/pages/${pageId}/downloads/${encodeURIComponent(downloadIdOrFilename)}`,
       { method: 'POST' }
     );
   }
