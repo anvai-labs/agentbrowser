@@ -1369,6 +1369,8 @@ describe('AgentBrowser CLI', () => {
       });
       expect(await run('download', 'collect', 'ses_1', 'pg_1', 'f.zip')).toBe(0);
       expect(sessions.collectDownload).toHaveBeenCalledWith('ses_1', 'pg_1', 'f.zip');
+      expect(await run('download', 'collect', 'ses_1', 'pg_1', 'dl_capture_1')).toBe(0);
+      expect(sessions.collectDownload).toHaveBeenLastCalledWith('ses_1', 'pg_1', 'dl_capture_1');
     });
 
     it('observe forwards --since-revision', async () => {

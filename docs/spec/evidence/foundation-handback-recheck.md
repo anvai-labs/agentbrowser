@@ -63,6 +63,18 @@ and narrowing `create` to require an extra input field. The merged type assertio
 useful intent documentation, but not proof that all renamed/narrowed signatures fail.
 Treat these as finite follow-ups, not a reversal of the merged alignment work or T0/T2.
 
+### Follow-up implementation
+
+The next slice derives CLI/MCP client signatures from the SDK with `Pick`/`Partial<Pick>`.
+`scripts/sdk-client-contract.test.mjs` compiles real consumers against in-memory SDK
+faults: renamed optional methods and narrowed create inputs now fail, while the baseline
+compiles. It runs in the existing Type Check job. This resolves the two compiler findings
+above; their `4601e77` observations remain the historical failing-first evidence.
+CLI discovery/help, SDK parameter documentation and generated OpenAPI now describe
+ID-preferred collection and unique-filename fallback. The wire path and delegated
+permissions are unchanged; the existing real-browser duplicate-filename/ID test
+remains the runtime oracle.
+
 Two additional review questions should be tested before broadening claims:
 
 - Route snapshots expose capability but infer admission/safety from path lists. Add a
@@ -83,8 +95,8 @@ schema spreads rejected; no new evidence justifies them here.
 
 1. Preserve the landed definition-local CLI/route metadata, protocol constant, schema
    sync and `applicationReceiptOutcomeOptions` helpers. No alternate registrations.
-2. Resolve the finite compiler/download documentation follow-ups with their own failing
-   probes. Do not widen delegated download permissions as a side effect of documentation.
+2. Preserve the compiler fault probes and ID-preferred download descriptions above.
+   Do not widen delegated download permissions.
 3. Implement the reviewed [offline CLI evaluation design](../design/t3-cli-evaluation.md)
    as the next T3 binary integration, then qualify a conventional-runner/report recipe.
    This document delivers the design only; `test evaluate` is not implemented yet.

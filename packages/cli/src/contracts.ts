@@ -1,19 +1,9 @@
 /**
- * Type-level contract checks (ADR-015), closing the long-open recommendation
- * for the CLI's structural SDK mirror.
- *
- * These live in a COMPILED source file deliberately: test files are excluded
- * from tsconfig and vitest does not type-check, so assertions there would
- * never run in CI. `pnpm -r type-check` enforces these — if the real SDK
- * client and the CLI's structural slice drift apart (a renamed method, a
- * changed signature, a widened return), this file stops compiling.
- *
- * Direction is one-way: the REAL client must satisfy the CLI's mirror. The
- * mirror deliberately marks newer families optional so tests can supply
- * partial stand-ins; asserting the reverse would demand the mirror carry
- * every SDK member and defeat that purpose.
+ * Production assignment check. Member names/signatures are derived from the SDK
+ * in CliClient; partial test stand-ins may still omit optional families.
+ * scripts/sdk-client-contract.test.mjs proves renamed methods and narrowed
+ * inputs fail at these real consumers, rather than relying on method variance.
  */
-
 import type { AgentBrowserClient } from '@agentbrowser/sdk-typescript';
 import type { CliClient } from './cli.js';
 
