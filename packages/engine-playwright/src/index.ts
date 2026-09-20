@@ -116,6 +116,7 @@ interface FormEvidenceNode {
   getAttribute(name: string): string | null;
   closest(selector: string): FormEvidenceNode | null;
   querySelector(selector: string): { textContent: string | null } | null;
+  querySelectorAll(selector: string): ArrayLike<{ textContent: string | null }>;
 }
 interface FormIdentityState {
   nodes: WeakMap<object, string>;
@@ -152,12 +153,31 @@ function captureFormEvidence(
   }
   if (node.tagName === 'INPUT') attributes.type = node.type ?? 'text';
   if (node.tagName === 'SELECT' && node.multiple) attributes.multiple = 'true';
-  // React-Select committed value: the single-value chip is a sibling inside
-  // the value container. Capturing it lets the autofill verification compare
-  // the committed selection for comboboxes whose a11y value stays empty.
-  if (node.tagName === 'INPUT' && node.closest('.select__value-container')) {
-    const chip = node.closest('.select__value-container')?.querySelector('.select__single-value');
-    if (chip?.textContent) attributes['autofill-committed'] = chip.textContent.trim().slice(0, 512);
+  // Known React-Select markup keeps the committed selection outside the input,
+  // whose value only contains transient query text. Capture bounded committed
+  // labels; absence or incomplete capture can never be treated as a commit.
+  const valueContainer = node.tagName === 'INPUT' ? node.closest('.select__value-container') : null;
+  if (valueContainer) {
+    const single = valueContainer.querySelector('.select__single-value')?.textContent?.trim();
+    if (single && single.length <= 512) attributes['autofill-committed'] = single;
+
+    const candidates = valueContainer.querySelectorAll('.select__multi-value__label');
+    let complete = candidates.length <= 32;
+    const members: string[] = [];
+    if (complete) {
+      for (let index = 0; index < candidates.length; index++) {
+        const label = candidates[index]?.textContent?.trim() ?? '';
+        if (label.length > 512) {
+          complete = false;
+          break;
+        }
+        members.push(label);
+      }
+    }
+    const encoded = complete ? JSON.stringify(members) : '';
+    if (encoded.length > 16_384) complete = false;
+    attributes['autofill-committed-members-complete'] = String(complete);
+    if (complete) attributes['autofill-committed-members'] = encoded;
   }
   // Credentials never become additional observation evidence.
   const readable =

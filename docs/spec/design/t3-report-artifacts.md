@@ -1,8 +1,11 @@
 # T3: private report artifact links
 
-Status: implemented candidate following PR #227 and the Node 24 baseline (#228).
+Status: merged through PR #229 at develop `7c452b1`, following PR #227 and the Node 24
+baseline (#228). Later [T3 completion](../evidence/t3-standalone-qualification.md)
+records the current delivery status; qualification statements below retain slice scope.
 See [qualification and delivery boundary](../evidence/t3-report-artifacts.md).
-Load only for this artifact slice; [T3](../tasks/t3-qa-regressions.md) remains active.
+Load only for this artifact slice; [T3](../tasks/t3-qa-regressions.md) remained active
+at its delivery.
 
 ## Decision and ownership
 

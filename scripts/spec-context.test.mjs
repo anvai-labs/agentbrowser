@@ -245,3 +245,17 @@ test('completed T2 unlocks actual QA task context without loading unrelated mode
   assert.ok(!ids.includes('mode-appsec'));
   assert.ok(context.serializedBytes <= 64 * 1024);
 });
+
+test('completed T3 unlocks audit context while production application-security stays gated', async () => {
+  const context = await loadSpecContext({ mode: 'audit', task: 't7' });
+  const ids = context.modules.map(({ id }) => id);
+  assert.ok(ids.includes('task-t7'));
+  assert.ok(ids.includes('mode-audit'));
+  assert.ok(!ids.includes('task-t3'));
+  assert.ok(!ids.includes('mode-forms'));
+  assert.ok(!ids.includes('mode-appsec'));
+  assert.ok(context.serializedBytes <= 64 * 1024);
+  for (const mode of ['appsec', 'bounty']) {
+    await assert.rejects(loadSpecContext({ mode, task: 't7' }), /t4/);
+  }
+});

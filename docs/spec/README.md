@@ -58,10 +58,11 @@ non-secret run cursor and inline operator mode selection. See the
 consumption remains T8 work.
 T2 is complete. AgentBrowser 1.9.0 includes the configurable REST/SDK/CLI outcome run,
 shared receipt correlation, admission/drain and evidence-permission foundations, and
-the controlled G4 CLI qualification delivered through PR #208. T3 is active with
+the controlled G4 CLI qualification delivered through PR #208. T3 is complete on develop with
 the bound-report/navigation foundation, offline CLI evaluator from PR #225, native
 JUnit qualification from PR #226 and the application-owned installed-CLI recipe from
-PR #227. PR #228 moved default qualification and release builds to Node 24 LTS while
+PR #227, report links/live JUnit from #229–230, and standalone/cost qualification from
+#231. PR #228 moved default qualification and release builds to Node 24 LTS while
 retaining the Node 22 minimum. Arbitrary application setup remains. Production
 evidence sources, G6 and durable recovery remain explicitly unqualified. See the
 [foundation qualification](evidence/t2-foundation-qualification.md) for the acceptance
@@ -83,7 +84,8 @@ evaluate`, native JUnit failure probes and the fixed application-owned recipe ar
 merged on develop; published 1.9.0 predates them. The current
 [private report-link design](design/t3-report-artifacts.md) adds an example-local
 evaluation/manifest pair without a public artifact API, HTML renderer, dependency or
-CI job. T3 remains active and does not unlock T7 or T3-dependent T8 qualification.
+CI job. The [T3 completion record](evidence/t3-standalone-qualification.md) unlocks T7
+audit context; appsec/bounty still require T4 and T8 profile/full-run work requires T1.
 
 T4 has one public-interface slice delivered in 1.8.20 by PR #201: bounded,
 authenticated application discovery, execution and receipt lookup now use the shared
@@ -98,8 +100,8 @@ application-operation projection. See the
 
 T6 is partially delivered in 1.8.19: the existing autofill orchestrator now has named
 `react-select` and `chip-multiselect` strategies. Broader widget qualification,
-reusable mapping and cross-engine acceptance remain open. T3 has an active internal
-foundation but no delivered product vertical; T5 and T7 have none. T8 still needs
+reusable mapping and cross-engine acceptance remain open. T3 delivers the first bounded
+application-owned QA workflow; T5 and T7 remain unimplemented. T8 still needs
 installed-harness qualification. T9 is a
 recurring release gate rather than a one-time feature.
 

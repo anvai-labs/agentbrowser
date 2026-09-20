@@ -1,9 +1,10 @@
 # T3: deterministic regressions and reports
 
-Status: active; bound reports, navigation reset, offline CLI evaluation, internal native
+Status: complete on develop; bound reports, navigation reset, offline CLI evaluation, native
 JUnit projection, the fixed application-owned recipe, private report links and live
-recipe JUnit qualification are implemented. Standalone-copy and measured-cost closure
-evidence is the current candidate. Repository: agentbrowser. Depends on: T2.
+recipe JUnit qualification, standalone-copy and measured-cost closure are delivered
+through PR #231. See the [completion evidence](../evidence/t3-standalone-qualification.md).
+Published 1.9.0 predates these T3 increments. Repository: agentbrowser. Depends on: T2.
 Inputs: core, qa mode, contracts, grounding, quality-ci.
 
 ## Reuse and scope
@@ -103,26 +104,28 @@ develop `9b80675`. It runs the same three recipe invocations under Node's native
 with case-bound names and the same process owner. The original three finalized-result
 probes remain a separate qualification; neither slice repeats the browser matrix.
 
-The current closure candidate stages the documented `application-outcome.mjs` and
+PR #231 stages the documented `application-outcome.mjs` and
 `report-artifacts.mjs` pair in a private temporary directory and runs those same three
-cases from an unrelated working directory. It must preserve the 0/1/1 Node exits,
+cases from an unrelated working directory. It preserves the 0/1/1 Node exits,
 canonical evaluations, independent oracles, session/fixture cleanup and digest-linked
 JUnit results. This tests the two-file, builtins-only distribution seam against the
 existing preconfigured service. It does not provide general application provisioning,
 a plugin loader or a public runner.
 
-The candidate also records one explicitly scoped local sample: live-recipe elapsed
+The delivered qualification also records one explicitly scoped local sample: live-recipe elapsed
 time and maximum config, evaluation, manifest and JUnit bytes. Its CLI/version/discovery,
 outcome, evaluation and Node-test counts come from the fixed qualified call paths and
 validated result cardinality; they are not operating-system process telemetry and
 exclude browser descendants and executable internals. Zero model/MCP calls applies to
 this regression matrix, not the full package gate. Node 24.21.0 remains the default
-qualification baseline and Node 22 the supported compatibility floor. Candidate results,
-including any fresh Node 22 check, remain pending until executed and recorded.
+qualification baseline and Node 22 the supported compatibility floor. Final focused
+checks pass 62 tests on Node 24.21.0 and 43 on Node 22.23.2; the clean extracted package
+passes eight acceptance groups on Node 24.21.0. PR and post-merge CI each pass eight
+checks. Exact identities and measurement scope are in the completion evidence.
 
 General artifact APIs, any justified HTML adapter and automatic impact selection remain.
 A single sample establishes scope and a baseline; it cannot support percentiles or a
-speedup claim. T3 is not complete until this candidate and a separate closure review pass;
+speedup claim. Independent review and verified delivery close the bounded T3 task;
 portable service setup and a general installed harness are not implied.
 
 ## Focused local loop
@@ -149,4 +152,5 @@ Close R04 QA aspects and establish the first qualified application-owned regress
 workflow seam. Preserve failure evidence and independent oracle results. Reject
 automatic assertion rewriting or green-by-skipping behavior. Product-market validation
 and willingness to pay remain separate from technical qualification. Only completed T3
-may unlock T7 audit and T8 full-run qualification; this first foundation does not.
+unlocks T7 audit context. T4 still gates application-security work; T8 profile/full-run
+qualification also requires T1. These gates do not authorize testing external targets.
