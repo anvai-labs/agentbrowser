@@ -59,8 +59,9 @@ T2 is complete. AgentBrowser 1.9.0 includes the configurable REST/SDK/CLI outcom
 shared receipt correlation, admission/drain and evidence-permission foundations, and
 the controlled G4 CLI qualification delivered through PR #208. T3 is active with
 the delivered bound-report/navigation foundation and candidate offline CLI evaluation;
-[native JUnit probes](design/t3-node-test-qualification.md) advance internal reporting;
-external runner qualification remains. Production evidence sources, G6 and durable
+[native JUnit probes](design/t3-node-test-qualification.md) advance internal reporting.
+An [application-owned installed-CLI recipe](design/t3-application-recipe.md) is locally
+qualified against the fixed counter deployment; arbitrary application setup remains. Production evidence sources, G6 and durable
 recovery remain explicitly unqualified. See the
 [foundation qualification](evidence/t2-foundation-qualification.md) for the acceptance
 mapping and delivery record.

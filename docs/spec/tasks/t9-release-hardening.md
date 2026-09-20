@@ -65,3 +65,19 @@ integration passes the compiled 13-case matrix. This is a checkpoint, not a prom
 that all T3 reporting or portable deployment work is complete. Installed 1.9.0 remains
 the released baseline until a separately qualified candidate completes the existing
 main/tag/artifact/tap ladder. Do not bump versions or tag each develop commit.
+
+## Next runtime checkpoint
+
+Before the next release, migrate the default qualification/build runtime to Node 24
+LTS. Node 22 was the existing baseline, not a new long-term choice. As of 2026-09-20,
+Node 22 support ends 2027-04-30 and Node 24 support ends 2028-04-30; Node 26 does not
+enter LTS until 2026-10-28. Recheck the [upstream schedule](https://github.com/nodejs/Release/blob/main/schedule.json)
+when executing this task. Use an explicit LTS version rather than a floating latest.
+
+Audit CI and release setup-node versions, packaging scripts, development guidance and
+both container stages. The Playwright runtime image owns its bundled Node version;
+changing only the Docker build stage does not qualify runtime migration. Reuse existing
+jobs, qualify the real compiled clients and extracted server, and run a bounded local
+Node 22 compatibility check before retaining the current minimum engine declaration.
+Update the type-library floor only when supported APIs require it. Do not expand the
+CI version matrix or force a release merely to merge this baseline into develop.
