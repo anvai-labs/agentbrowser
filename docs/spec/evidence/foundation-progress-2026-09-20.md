@@ -1,7 +1,7 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
 Rechecked published 1.9.1 at `310e01d43982824caac2c63ed8d98355e17efdce`
-and develop `8d92da894c9680c3199e541b33d4b74949fe30b9` (PR #237).
+and develop `098d5ba46fc04ea216fbb5384cab7b600b07df51` (PR #238).
 The [release ladder](release-1.9.1.md) includes Bun CLI/MCP artifacts,
 Node 24 service qualification, Homebrew and develop back-sync. Existing browser
 sessions were preserved; an upgraded installed binary does not prove every running
@@ -21,7 +21,7 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T3 QA regression | Complete, released | 100% | Broader provisioning and demand-backed report adapters are follow-ups |
 | T4 application operations/parity | Active | ~40% | Independent UI/API oracle, binding UX, production evidence; callback repair merged #236 |
 | T5 durable recovery | Not started | 0% | Design, journal/recovery and process-loss qualification |
-| T6 forms/operations | Active | ~40% | Mapping integration and full job workflow qualification; popup ownership/readiness merged #237 |
+| T6 forms/operations | Active | ~40% | Full-payload consent, candidate identity/eligibility and live workflow qualification; mapping merged #238; checked-upload/draft slice under review |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
 | T8 installed harnesses | Not qualified | 0% | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |
 | T9 release hardening | Recurring | 100% of 1.9.1 checkpoint | Repeat per later release |
@@ -69,9 +69,15 @@ evidence into the next checkpoint. Release later when a usable slice is qualifie
 
 ## Current bounded increment
 
-PR #236 and #237 each passed eight PR and eight post-merge checks with independent
-review. The [mapping foundation](../design/t6-form-mapping.md) now adds local
-preparation plus server preflight in the existing executor; its
-[evidence](t6-form-mapping.md) records the candidate's tests and remaining limits.
-Do not treat preparation as application completion or increase the overall milestone
-count: T6 remains active, and the coarse partial estimates above remain conservative.
+PR #236, #237 and #238 each passed eight PR and eight post-merge checks with independent
+review. Mapping #238 merged at the baseline above, with candidate
+`8d1eb6442fe267aad5dd6df75c5e71f93f7c0021`, PR run `35558005447` and post-merge
+run `35558255402`. The [mapping evidence](t6-form-mapping.md) remains scoped to
+preparation and server preflight in the existing executor.
+
+The [checked-upload/draft slice](../design/t6-verified-upload-draft.md) now adds
+one shared file-integrity helper and a synthetic compiled-CLI draft fixture; see
+[local evidence](t6-verified-upload-draft.md). It corrects the earlier assumption
+that action approval binds a complete application payload. Final submission stays
+denied in this qualification. Do not count a draft as an accepted application or
+increase the completed milestone count: T6 remains active and estimates stay conservative.

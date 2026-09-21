@@ -5,3 +5,5 @@
 // Re-export all types and interfaces
 export * from './types.js';
 export * from './errors.js';
+
+export * from './verified-upload.js';

@@ -1326,8 +1326,8 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             result: {
               description:
                 'Evidence payload, present only for actions that produce one. ' +
-                'upload reports the attached files: {success, files:[{name,size}], inputFiles?:[names]} ' +
-                '(files from the validated local paths, inputFiles read back from the live input).',
+                'upload reports the attached files: {success, files:[{name,size,sha256?}], inputFiles?:[names]} ' +
+                '(checked uploads report the digest of the bytes supplied; legacy metadata comes from validated service-host paths; inputFiles is read from the live input).',
             },
           },
         },

@@ -31,8 +31,12 @@ import type {
   ScreenshotRequest,
 } from '@agentbrowser/engine';
 import type { RequestPolicy } from '@agentbrowser/engine';
-import { EngineError, normalizeEngineError } from '@agentbrowser/engine';
-import { DELIVERED_ACTION_TYPES, DELIVERED_OBSERVATION_MODES } from '@agentbrowser/protocol';
+import { EngineError, normalizeEngineError, readVerifiedUpload } from '@agentbrowser/engine';
+import {
+  DELIVERED_ACTION_TYPES,
+  DELIVERED_OBSERVATION_MODES,
+  validateUploadIntegrity,
+} from '@agentbrowser/protocol';
 import {
   type Browser,
   type BrowserContext,
@@ -2292,6 +2296,8 @@ class PlaywrightPage implements EnginePage {
   }
 
   private async performAction(action: EngineAction): Promise<ActionEffect> {
+    const integrityError = validateUploadIntegrity(action);
+    if (integrityError) throw new EngineError('INVALID_REQUEST', integrityError);
     // Upload skips the visibility gate: file inputs are hidden by design and
     // a targeted upload addresses an observed ref whose handle was bound
     // regardless of visibility.
@@ -2451,19 +2457,29 @@ class PlaywrightPage implements EnginePage {
         if (paths.length === 0) {
           throw new EngineError('INVALID_REQUEST', 'upload requires at least one path');
         }
-        const { stat } = await import('node:fs/promises');
-        const { basename } = await import('node:path');
-        const files: Array<{ name: string; size: number }> = [];
-        for (const p of paths) {
-          try {
-            const s = await stat(p);
-            if (!s.isFile()) {
-              throw new EngineError('INVALID_REQUEST', `Not a regular file: ${p}`);
+        const files: Array<{ name: string; size: number; sha256?: string }> = [];
+        let upload: string[] | Awaited<ReturnType<typeof readVerifiedUpload>> = paths;
+        if (action.sha256 !== undefined) {
+          upload = await readVerifiedUpload(
+            paths[0] as string,
+            action.sha256 as string,
+            action.mimeType as string | undefined
+          );
+          files.push({ name: upload.name, size: upload.buffer.length, sha256: upload.sha256 });
+        } else {
+          const { stat } = await import('node:fs/promises');
+          const { basename } = await import('node:path');
+          for (const p of paths) {
+            try {
+              const s = await stat(p);
+              if (!s.isFile()) {
+                throw new EngineError('INVALID_REQUEST', `Not a regular file: ${p}`);
+              }
+              files.push({ name: basename(p), size: s.size });
+            } catch (error) {
+              if (error instanceof EngineError) throw error;
+              throw new EngineError('INVALID_REQUEST', `File not found: ${p}`);
             }
-            files.push({ name: basename(p), size: s.size });
-          } catch (error) {
-            if (error instanceof EngineError) throw error;
-            throw new EngineError('INVALID_REQUEST', `File not found: ${p}`);
           }
         }
         // Browser-verified evidence, read BEFORE bumpRevision - releaseRefs
@@ -2479,7 +2495,7 @@ class PlaywrightPage implements EnginePage {
           // Only the visibility pre-check is skipped for this action.
           await this.resolve(action.target as EngineTarget);
           const handle = this.locatorFor((action.target as EngineTarget).ref);
-          await handle.setInputFiles(paths);
+          await handle.setInputFiles(upload);
           inputFiles = await handle
             .evaluate((el) => {
               const input = el as unknown as {
@@ -2514,7 +2530,7 @@ class PlaywrightPage implements EnginePage {
               }
             );
           }
-          await locator.setInputFiles(paths);
+          await locator.setInputFiles(upload);
           inputFiles = await locator
             .evaluate((el) => {
               const input = el as unknown as {

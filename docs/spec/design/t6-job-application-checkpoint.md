@@ -42,7 +42,9 @@ installed CLI is the first-class client; it does not own retries or truth.
   form resolution, writes and verification.
 - `plan`/`act` covers checkbox, date, upload and navigation under existing semantics.
 - the operation ledger/status lookup reconciles writes; uncertainty never permits replay.
-- existing approval policy binds submit to the exact reviewed side effect.
+- existing approval policy binds an action to its target/page/revision/URL/fingerprint
+  and action parameters. It does not bind the complete form, PDF and job payload;
+  that additional consent contract remains a prerequisite for automated submission.
 
 Do not add a workflow executor, generic DSL, site-specific service endpoint, server job
 store, alternate receipt ledger or portal SDK. A small private caller-side checkpoint may
@@ -163,8 +165,10 @@ For each candidate:
    call for each qualified page stage: zero per-field agent round trips for that stage.
 5. Resolve manual fields explicitly. Recheck all required receipts and page/application
    evidence. A successful field report is never a submitted application.
-6. Revalidate listing identity and the exact payload digest. Obtain the existing approval
-   for the final submit effect and dispatch it once with a unique operation ID.
+6. Revalidate listing identity and the exact payload digest. A future payload-bound
+   consent gate must cover all answers and the PDF; existing action approval alone
+   is insufficient. Until that gate is qualified, stop at a draft or explicitly
+   reviewed manual submission. Once qualified, dispatch at most once with a unique operation ID.
 7. Require confirmation/receipt tied to the job. On loss or uncertainty, query operation
    status and current portal state; never click submit again because confirmation is absent.
 

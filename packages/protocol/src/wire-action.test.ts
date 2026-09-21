@@ -1,8 +1,42 @@
 import { describe, expect, it } from 'vitest';
-import { validatePlanStep } from './validators.js';
+import { validateAction, validatePlanStep } from './validators.js';
 import { decodeWireAction, validateWireAction } from './wire-action.js';
 
 describe('wire action contract', () => {
+  it('preserves checked upload metadata across wire decoding', () => {
+    const fields = {
+      paths: ['/tmp/resume.pdf'],
+      sha256: 'a'.repeat(64),
+      mimeType: 'application/pdf',
+    };
+    expect(decodeWireAction({ action: 'upload', ...fields })).toEqual({
+      ok: true,
+      value: { type: 'upload', ...fields },
+    });
+  });
+  it.each([
+    { paths: ['/tmp/a.pdf'], sha256: 'A'.repeat(64) },
+    { paths: ['/tmp/a.pdf'], sha256: 'a'.repeat(63) },
+    { paths: ['/tmp/a.pdf'], sha256: `${'a'.repeat(64)}\n` },
+    { paths: ['/tmp/a.pdf'], sha256: 'a'.repeat(64), mimeType: 'application/pdf\n' },
+    { paths: ['/tmp/a.pdf'], sha256: 1 },
+    { paths: ['/tmp/a.pdf', '/tmp/b.pdf'], sha256: 'a'.repeat(64) },
+    { paths: ['/tmp/a.pdf'], mimeType: 'application/pdf' },
+    { paths: ['/tmp/a.pdf'], sha256: 'a'.repeat(64), mimeType: 'text/plain\r\nx: y' },
+    { paths: ['/tmp/a.pdf'], sha256: 'a'.repeat(64), mimeType: `text/${'a'.repeat(128)}` },
+  ])('rejects invalid upload integrity fields at every protocol entry: %j', (fields) => {
+    expect(validatePlanStep({ action: 'upload', ...fields }).ok).toBe(false);
+    expect(decodeWireAction({ action: 'upload', ...fields }).ok).toBe(false);
+    expect(validateAction({ type: 'upload', ...fields }).ok).toBe(false);
+  });
+  it.each([{ sha256: 'a'.repeat(64) }, { mimeType: 'application/pdf' }])(
+    'does not silently ignore integrity metadata on other actions: %j',
+    (fields) => {
+      expect(validatePlanStep({ action: 'reload', ...fields }).ok).toBe(false);
+      expect(decodeWireAction({ action: 'reload', ...fields }).ok).toBe(false);
+      expect(validateAction({ type: 'reload', ...fields }).ok).toBe(false);
+    }
+  );
   it.each([
     { action: 'reload' },
     { action: 'press', key: 'Enter' },
