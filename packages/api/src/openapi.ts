@@ -1039,6 +1039,43 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         },
       },
 
+      '/v1/sessions/{sessionId}/pages/{pageId}/downloads/{filename}': {
+        post: {
+          operationId: 'collectDownloadedFile',
+          summary: 'Collect the browser-session download of one file as a stored artifact',
+          description:
+            'Collects by download ID (preferred), or by unique filename. Ambiguous filenames fail. ' +
+            'The selected download was already fetched under the same ' +
+            'allowDownloads / egress / maxDownloadBytes rules as the download endpoint and is stored ' +
+            'into an artifact whose bytes are retrievable via the artifact endpoint.',
+          tags: ['artifacts'],
+          parameters: [
+            sessionIdParam,
+            pageIdParam,
+            {
+              name: 'filename',
+              in: 'path',
+              required: true,
+              description:
+                'Download ID (preferred) or unique filename; ambiguous filenames fail. The wire parameter name remains filename.',
+              schema: { type: 'string' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'The stored artifact metadata.',
+              content: json(ref('ArtifactRef')),
+            },
+            '400': INVALID_REQUEST,
+            '403': errorResponse(
+              'Downloads are disabled for this session, or the target was denied by policy.'
+            ),
+            '404': NOT_FOUND,
+            '500': INTERNAL,
+          },
+        },
+      },
+
       '/v1/sessions/{sessionId}/artifacts/{artifactId}': {
         get: {
           operationId: 'getArtifact',

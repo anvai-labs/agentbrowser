@@ -23,7 +23,7 @@ The first service start bootstraps Chromium into
 need no Node runtime. Without Homebrew, use the
 `agentbrowser-cli-<target>` and `agentbrowser-mcp-<target>` client assets for
 macOS, Linux or Windows. Service archives are published for macOS and Linux as
-`agentbrowser-server-<target>.tar.gz`; they require Node 22 and separately
+`agentbrowser-server-<target>.tar.gz`; they require Node 22 or newer and separately
 provisioned Chromium (plus its platform libraries on Linux). See the
 [operations guide](docs/operations.md#release-assets) for deployment details.
 
@@ -104,8 +104,8 @@ rejects explicit `headless: true` for them loudly
 
 ## Architecture
 
-TypeScript control plane (Node 22, pnpm workspace) over an engine-neutral
-protocol:
+TypeScript control plane (Node 24.21.0 qualification/build baseline, pnpm
+workspace) over an engine-neutral protocol:
 
 ```
 packages/
@@ -161,11 +161,13 @@ service, then `agentbrowser describe act press` to load only one command's detai
 Execution uses the existing SDK/service: pass `--json`, quote shell arguments and
 inspect outcomes rather than relying on exit code alone. See the
 [CLI agent guide](docs/cli-agent-usage.md) for Bash/jq examples and reconciliation.
+The develop candidate adds offline `test evaluate` for caller-observed case reports;
+it reuses the bound test contract and needs no service or MCP connection.
 
 ## Development
 
 ```bash
-pnpm install          # Node 22, pnpm 9.15
+pnpm install          # Node 24.21.0, pnpm 9.15
 pnpm -r build && pnpm -r type-check
 pnpm -r test          # unit + contract; Safari tests self-gate on macOS
 pnpm -r lint          # Biome

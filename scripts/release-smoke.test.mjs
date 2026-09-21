@@ -5,7 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { checkCli, checkMcp, EXPECTED_TOOLS, runExecutable } from './release-smoke.mjs';
+import {
+  checkCli,
+  checkCliTestEvaluation,
+  checkMcp,
+  EXPECTED_TOOLS,
+  runExecutable,
+} from './release-smoke.mjs';
 
 const command = (source) => [process.execPath, '--input-type=module', '-e', source, '--'];
 const options = { expectedVersion: '1.2.3', timeoutMs: 3000 };
@@ -234,7 +240,21 @@ test('executable runner closes stdin and kills a child that hangs after EOF', as
 });
 
 test('public smoke commands accept explicit versions and propagate failure exit codes', async () => {
-  const cli = command("console.log(process.argv.includes('--version')?'1.2.3':'agentbrowser session act plan autofill pdf download health');");
+  const evaluator = {
+    productVersion: '1.2.3',
+    command: {
+      path: ['test', 'evaluate'],
+      schemas: {
+        input: { $id: 'urn:agentbrowser:test-case-evaluation-input:v1' },
+        output: { $id: 'urn:agentbrowser:test-case-evaluation-report:v1' },
+      },
+    },
+  };
+  const cli = command(`
+    if (process.argv.includes('--version')) console.log('1.2.3');
+    else if (process.argv.includes('describe')) console.log(${JSON.stringify(JSON.stringify(evaluator))});
+    else console.log('agentbrowser session act plan autofill pdf download health test');
+  `);
   for (const [kind, executable] of [['cli', cli], ['mcp-server', mcp()]]) {
     const wrapper = fileURLToPath(new URL(`../packages/${kind}/scripts/smoke.mjs`, import.meta.url));
     const base = [process.execPath, wrapper];
@@ -245,12 +265,50 @@ test('public smoke commands accept explicit versions and propagate failure exit 
   }
 });
 
-test('CLI requires both exact version and command help', async () => {
-  const cli = (version, help) => command(`console.log(process.argv.includes('--version') ? ${JSON.stringify(version)} : ${JSON.stringify(help)});`);
-  const fullHelp = 'agentbrowser session act plan autofill pdf download health';
-  assert.equal((await checkCli(cli('1.2.3', fullHelp), options)).version, '1.2.3');
+test('CLI requires exact version, command help and the offline evaluator schema', async () => {
+  const discovery = (version = '1.2.3', input = true, output = true) => ({
+    productVersion: version,
+    command: {
+      path: ['test', 'evaluate'],
+      schemas: {
+        ...(input ? { input: { $id: 'urn:agentbrowser:test-case-evaluation-input:v1' } } : {}),
+        ...(output ? { output: { $id: 'urn:agentbrowser:test-case-evaluation-report:v1' } } : {}),
+      },
+    },
+  });
+  const cli = (version, help, described = discovery()) => command(`
+    if (process.argv.includes('--version')) console.log(${JSON.stringify(version)});
+    else if (process.argv.includes('describe')) {
+      ${described === null ? 'process.exitCode = 1;' : `console.log(${JSON.stringify(JSON.stringify(described))});`}
+    } else console.log(${JSON.stringify(help)});
+  `);
+  const fullHelp = 'agentbrowser session act plan autofill pdf download health test';
+  const accepted = await checkCli(cli('1.2.3', fullHelp), options);
+  assert.equal(accepted.version, '1.2.3');
+  const evaluator = await checkCliTestEvaluation(cli('1.2.3', fullHelp), options);
+  assert.equal(evaluator.inputSchemaId, 'urn:agentbrowser:test-case-evaluation-input:v1');
   await assert.rejects(checkCli(cli('1.2.4', fullHelp), options), /version/);
   await assert.rejects(checkCli(cli('1.2.3', 'wrong program'), options), /help/);
+  await assert.rejects(checkCliTestEvaluation(cli('1.2.3', fullHelp, null), options), /discovery/);
+  await assert.rejects(
+    checkCliTestEvaluation(cli('1.2.3', fullHelp, discovery('1.2.4')), options),
+    /version/
+  );
+  await assert.rejects(
+    checkCliTestEvaluation(cli('1.2.3', fullHelp, discovery('1.2.3', false)), options),
+    /schema/
+  );
+  await assert.rejects(
+    checkCliTestEvaluation(cli('1.2.3', fullHelp, discovery('1.2.3', true, false)), options),
+    /schema/
+  );
+  assert.equal(
+    (await checkCli(
+      cli('1.2.3', 'agentbrowser session act plan autofill pdf download health', null),
+      options
+    )).version,
+    '1.2.3'
+  );
 });
 
 test('version evidence clears the runtime MCP version override', async () => {

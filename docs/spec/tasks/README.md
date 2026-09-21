@@ -1,7 +1,7 @@
 # Agent implementation task packets
 
 Status: implementation activated by the user's subsequent foundation-first instruction.
-The table separates the AgentBrowser 1.9.0 release candidate from subsequent work.
+The table separates the published AgentBrowser 1.9.0 foundation from subsequent work.
 Reading this task list alone does not
 authorize implementation or publication; follow the current user-authorized scope.
 
@@ -19,7 +19,7 @@ declared files and budgets without contacting a service.
 | [T0](t0-contract-catalog.md) | Complete | Released discovery/catalog foundation | None |
 | [T1](t1-context-profiles.md) | Active | Local loader, fixed profiles and run cursor delivered; installed-harness consumption remains | T0 |
 | [T2](t2-shared-execution.md) | Complete | 1.9.0 includes shared execution, evidence permission and controlled G4 CLI/application qualification through #208; production/G6 and durability retain separate gates | T0 |
-| [T3](t3-qa-regressions.md) | Not started; dependency-ready | Deterministic user-facing regression and reports; T2 gate satisfied | T2 |
+| [T3](t3-qa-regressions.md) | Complete | First application-owned CLI regression workflow, private JUnit evidence, standalone-copy and measured-cost qualification delivered through #231; not yet released | T2 |
 | [T4](t4-application-parity.md) | Active | REST/SDK/CLI public interface shipped in 1.8.20; the 1.9.0 foundation includes delegated permission composition; independent UI/API parity, production-evidence and durability gates remain | T2 |
 | [T5](t5-durable-recovery.md) | Not started | Optional single-owner durable recovery | T2 |
 | [T6](t6-widget-strategies.md) | Active | React-select and chip-multiselect shipped in 1.8.19; mapping and broader qualification remain | T2 |
@@ -31,6 +31,27 @@ T7 has additional scope-enforcement and customer-demand gates. T8 transport repa
 may start immediately after T0; do not wait for T3 to fix a known correlation hazard.
 T9 is both an early hardening task and a recurring release gate. Tasks share code and
 acceptance infrastructure; they are not instructions to create ten packages/services.
+
+## Current continuation
+
+The alignment sequence through #222 is merged. Follow the
+[verified handback](../evidence/foundation-handback-recheck.md), not stale open-PR or
+navigation-reset observations. T3's
+[offline CLI evaluation](../evidence/t3-cli-evaluation.md),
+[native JUnit probes](../design/t3-node-test-qualification.md) and
+[application-owned CLI recipe](../design/t3-application-recipe.md) are merged through
+PR #227; PR #228 supplies the Node 24 qualification baseline, PR #229 adds private
+example-local report links, and PR #230 qualifies live native JUnit. The current
+closure delivered in #231 executes the documented two-file recipe copy from an unrelated
+working directory and records a scoped focused/full cost baseline. See the
+[completion evidence](../evidence/t3-standalone-qualification.md). Broader provisioning,
+HTML without a consumer and automatic CI selection remain separate follow-ups.
+
+Continue the concrete [research repair packets](../../research/2026-09-browser-agents/experiments.md):
+T6 widget commitment/coverage first (Q0), then the existing ApplicationAuthority callback
+guard (Q0a), before reusable mappings or observation experiments. Keep research outside
+default task context. T0, T2 and T3 are complete: 3 of 10 milestones, not an effort-weighted
+30% estimate. The remaining tasks include active work and the recurring T9 release gate.
 
 ## Common execution protocol
 

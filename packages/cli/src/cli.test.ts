@@ -8,7 +8,7 @@
 import { Readable } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildCli } from './cli';
-import type { CliDependencies } from './cli';
+import type { CliClient, CliDependencies } from './cli';
 import { PRODUCT_VERSION } from './product-version.js';
 
 describe('AgentBrowser CLI', () => {
@@ -99,6 +99,42 @@ describe('AgentBrowser CLI', () => {
       expect(await run('describe', 'act', 'not-a-command')).toBe(1);
       expect(out).toEqual([]);
       expect(err.join('\n')).toContain('Unknown command path');
+      expect(deps.createClient).not.toHaveBeenCalled();
+    });
+
+    it('projects canonical schemas for the application execute JSON-input command', async () => {
+      expect(await run('describe', 'application', 'execute', '--schema')).toBe(0);
+      const schemas = lastJson().command.schemas;
+      expect(schemas).not.toBeNull();
+      // The input schema is the protocol's execute request: operation plus
+      // input, optional write identities, additional properties refused.
+      expect(schemas.input).toMatchObject({
+        type: 'object',
+        additionalProperties: false,
+        required: ['operation', 'input'],
+        properties: {
+          operation: { type: 'string' },
+          input: {},
+          operationId: { type: 'string' },
+          expectedVersion: { type: 'integer' },
+        },
+      });
+      // The output schema is the operation-result union: admitted result,
+      // rejection, or a replay carrying the recorded operation record.
+      expect(Array.isArray(schemas.output.anyOf)).toBe(true);
+      const replay = schemas.output.anyOf.find(
+        (variant: { properties?: { replay?: unknown } }) => variant.properties?.replay
+      );
+      expect(replay.properties.operation).toMatchObject({ type: 'object' });
+      expect(deps.createClient).not.toHaveBeenCalled();
+    });
+
+    it('keeps schema projection null for application commands without qualified contracts', async () => {
+      for (const leaf of ['bind', 'unbind', 'discover', 'receipt']) {
+        out = [];
+        expect(await run('describe', 'application', leaf, '--schema')).toBe(0);
+        expect(lastJson().command.schemas).toBeNull();
+      }
       expect(deps.createClient).not.toHaveBeenCalled();
     });
 
@@ -274,7 +310,7 @@ describe('AgentBrowser CLI', () => {
   describe('session commands', () => {
     it('documents the ten-minute default while preserving explicit idle overrides', async () => {
       expect(await run('session', 'create', '--help')).toBe(0);
-      expect(out.join('\n')).toContain('600000 = 10 min');
+      expect(out.join('\n').replace(/\s+/g, ' ')).toContain('600000 = 10 min');
       expect(out.join('\n')).not.toContain('120000 = 2 min');
       expect(deps.createClient).not.toHaveBeenCalled();
     });
@@ -1333,6 +1369,8 @@ describe('AgentBrowser CLI', () => {
       });
       expect(await run('download', 'collect', 'ses_1', 'pg_1', 'f.zip')).toBe(0);
       expect(sessions.collectDownload).toHaveBeenCalledWith('ses_1', 'pg_1', 'f.zip');
+      expect(await run('download', 'collect', 'ses_1', 'pg_1', 'dl_capture_1')).toBe(0);
+      expect(sessions.collectDownload).toHaveBeenLastCalledWith('ses_1', 'pg_1', 'dl_capture_1');
     });
 
     it('observe forwards --since-revision', async () => {
@@ -1495,6 +1533,79 @@ describe('AgentBrowser CLI', () => {
       expect(await run('application', 'unbind', 'ses_1')).toBe(0);
       expect(sessions.applicationUnbind).toHaveBeenCalledWith('ses_1');
       expect(out).toEqual(['Application binding removed']);
+    });
+  });
+
+  describe('wire-contract declarations (T0 drift gate)', () => {
+    it('the gate refuses a JSON-input command with neither advertisement nor exemption', async () => {
+      const { Command } = await import('commander');
+      const { requireWireContract } = await import('./cli');
+      type WireContract = import('./cli').WireContract;
+      const contracts = new Map<Command, WireContract>();
+      const command = new Command('future-json-command');
+      expect(() => requireWireContract(command, contracts, new Map(), '--payload')).toThrow(
+        'declares no wire contract'
+      );
+      contracts.set(command, { input: { type: 'object' }, output: { type: 'object' } });
+      expect(() => requireWireContract(command, contracts, new Map(), '--payload')).not.toThrow();
+      const exempt = new Command('exempt-json-command');
+      const exemptions = new Map([[exempt, 'reviewed reason']]);
+      expect(() => requireWireContract(exempt, contracts, exemptions, '--payload')).not.toThrow();
+    });
+
+    it('the audit snapshot is frozen against caller mutation', async () => {
+      const cli = buildCli(deps);
+      expect(await cli.run(['describe'])).toBe(0);
+      const audit = cli.jsonContractAudit();
+      expect(() => {
+        (audit as unknown as { push: unknown }).push({} as never);
+      }).toThrow();
+      expect(Object.isFrozen(audit)).toBe(true);
+    });
+
+    it('audits the command tree: JSON-input commands advertise or are exempt', async () => {
+      // The audit is a snapshot of THIS instance's most recent run.
+      const cli = buildCli(deps);
+      expect(await cli.run(['describe'])).toBe(0);
+      const audit = cli.jsonContractAudit();
+      const byPath = new Map(audit.map((entry) => [entry.path.join(' '), entry]));
+      // The bounded-reader consumers advertise their canonical contracts...
+      for (const path of ['plan', 'outcome', 'autofill', 'application execute']) {
+        expect(byPath.get(path)).toMatchObject({ advertised: true, exempt: false });
+      }
+      // ...and extract's selector payloads carry their reviewed exemption.
+      expect(byPath.get('extract')).toMatchObject({ advertised: false, exempt: true });
+      // Session cookie JSON uses the canonical cookie subshape under a reviewed exemption.
+      expect(byPath.get('session create')).toMatchObject({ advertised: false, exempt: true });
+    });
+
+    it('routes extract selector JSON through the bounded reader', async () => {
+      sessions.extract = vi.fn().mockResolvedValue({ data: { ok: true } });
+      expect(await run('extract', 'ses_1', 'pg_1', '--schema', '{bad json')).toBe(1);
+      expect(err.join('\n')).toContain('--schema must be valid JSON.');
+      expect(sessions.extract).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('structural SDK mirror', () => {
+    it('the real SDK client satisfies the CliClient slice (ADR-015)', async () => {
+      // Compile-time enforcement lives in src/contracts.ts via
+      // `pnpm -r type-check` (vitest does not type-check). This companion
+      // constructs the real client as the mirror so the wiring stays honest
+      // at runtime too.
+      const { AgentBrowserClient } = await import('@agentbrowser/sdk-typescript');
+      const real: CliClient = new AgentBrowserClient({ baseUrl: 'http://127.0.0.1:1' });
+      for (const member of [
+        'get',
+        'create',
+        'autofill',
+        'plan',
+        'outcome',
+        'applicationBind',
+        'applicationExecute',
+      ] as const) {
+        expect(typeof real.sessions[member]).toBe('function');
+      }
     });
   });
 });

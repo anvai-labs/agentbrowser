@@ -9,29 +9,23 @@
 import { writeFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import type {
-  ActionRequest,
-  ActionResult,
-  AgentMode,
+  AgentBrowserClient,
   ArtifactRef,
-  AutofillReport,
   AutofillRequest,
   ClientOptions,
+  ExtractRequest,
   NavigationRequest,
-  NavigationResponse,
   ObservationRequest,
   ObservationResponse,
-  OutcomeRunReport,
   OutcomeRunRequest,
-  PageResponse,
-  PageSnapshot,
   PdfRequest,
-  PlanReport,
   ScreenshotRequest,
   SessionRequest,
-  SessionResponse,
 } from '@agentbrowser/sdk-typescript';
 import {
   AGENT_MODE_IDS,
+  ApplicationExecuteRequestSchema,
+  ApplicationOperationResultSchema,
   AutofillReportSchema,
   AutofillRequestSchema,
   DELIVERED_EXTRACT_FORMATS,
@@ -41,9 +35,12 @@ import {
   PlanActionsSchema,
   PlanReportSchema,
   REF_PATTERN,
+  TestCaseEvaluationInputSchema,
+  TestCaseEvaluationReportSchema,
   UsageError,
   createOutcomeRunReportParser,
   createPlanReportParser,
+  evaluateTestCaseRun,
   formatErrorForUser,
   isAgentMode,
   isPassingOutcome,
@@ -54,119 +51,56 @@ import {
   validateWireAction,
 } from '@agentbrowser/sdk-typescript';
 import { Command, type Option } from 'commander';
+import { assertCookieRequestSize, readCookieFile, writeCookieFile } from './cookie-file.js';
 import { type JsonInputStream, createJsonArgumentReader } from './json-input.js';
 import { PRODUCT_VERSION } from './product-version.js';
 
-/**
- * The slice of the SDK the CLI depends on. Declared structurally so tests can
- * supply a stand-in without constructing a real client.
- */
-export interface CliClient {
-  sessions: {
-    control?(sessionId: string): Promise<unknown>;
-    takeover?(sessionId: string): Promise<unknown>;
-    prepareResume?(sessionId: string): Promise<unknown>;
-    delegate?(sessionId: string, epoch: number, mode?: AgentMode): Promise<unknown>;
-    operation?(sessionId: string, operationId: string): Promise<unknown>;
-    applicationBind?(
-      sessionId: string,
-      binding: { adapter: string; resource: string }
-    ): Promise<{ adapter: string; resource: string }>;
-    applicationUnbind?(sessionId: string): Promise<{ unbound: true }>;
-    applicationDiscover?(sessionId: string): Promise<{
-      adapter: string;
-      resource: string;
-      operations: Array<{ name: string; mode: 'read' | 'write' }>;
-    } | null>;
-    applicationExecute?(
-      sessionId: string,
-      request: {
-        operation: string;
-        input: unknown;
-        operationId?: string;
-        expectedVersion?: number;
-      }
-    ): Promise<
-      | { status: 'read' | 'committed'; value: unknown }
-      | { status: 'rejected'; reason: string }
-      | { replay: true; operation: unknown }
+/** SDK-owned signatures; optional families still permit partial test stand-ins. */
+export interface CliClient
+  extends Partial<Pick<AgentBrowserClient, 'health' | 'healthLive' | 'healthReady'>> {
+  sessions: Pick<
+    AgentBrowserClient['sessions'],
+    | 'create'
+    | 'list'
+    | 'close'
+    | 'cookies'
+    | 'trace'
+    | 'html'
+    | 'artifact'
+    | 'events'
+    | 'createPage'
+    | 'navigate'
+    | 'observe'
+    | 'executeAction'
+    | 'screenshot'
+    | 'extract'
+    | 'plan'
+    | 'outcome'
+    | 'snapshot'
+    | 'get'
+    | 'listPages'
+    | 'getPage'
+    | 'closePage'
+    | 'autofill'
+    | 'pdf'
+    | 'download'
+    | 'collectDownload'
+  > &
+    Partial<
+      Pick<
+        AgentBrowserClient['sessions'],
+        | 'control'
+        | 'takeover'
+        | 'prepareResume'
+        | 'delegate'
+        | 'operation'
+        | 'applicationBind'
+        | 'applicationUnbind'
+        | 'applicationDiscover'
+        | 'applicationExecute'
+        | 'applicationReceipt'
+      >
     >;
-    applicationReceipt?(sessionId: string, operationId: string): Promise<unknown>;
-    create(request: SessionRequest): Promise<SessionResponse>;
-    list(): Promise<SessionResponse[]>;
-    close(sessionId: string): Promise<void>;
-    cookies(
-      sessionId: string
-    ): Promise<Array<{ name: string; value: string; domain: string; path: string }>>;
-    trace(sessionId: string): Promise<ArtifactRef>;
-    html(
-      sessionId: string,
-      pageId: string
-    ): Promise<ArtifactRef & { inline?: { contentBase64: string; byteSize?: number } }>;
-    artifact(
-      sessionId: string,
-      artifactId: string
-    ): Promise<{ metadata: ArtifactRef; contentBase64?: string }>;
-    events(sessionId: string, type?: string): Promise<Array<Record<string, unknown>>>;
-    createPage(sessionId: string, request?: { url: string }): Promise<PageResponse>;
-    navigate(
-      sessionId: string,
-      pageId: string,
-      request: NavigationRequest
-    ): Promise<NavigationResponse>;
-    observe(
-      sessionId: string,
-      pageId: string,
-      request: ObservationRequest
-    ): Promise<ObservationResponse>;
-    executeAction(sessionId: string, pageId: string, request: ActionRequest): Promise<ActionResult>;
-    screenshot(sessionId: string, pageId: string, request: ScreenshotRequest): Promise<ArtifactRef>;
-    extract(
-      sessionId: string,
-      pageId: string,
-      request: { format: string; schema?: Record<string, unknown> }
-    ): Promise<{
-      data?: unknown;
-      evidence?: unknown[];
-      warnings?: string[];
-      modelUsed?: string;
-    }>;
-    plan(
-      sessionId: string,
-      pageId: string,
-      actions: Array<Record<string, unknown>>
-    ): Promise<PlanReport>;
-    outcome(
-      sessionId: string,
-      pageId: string,
-      request: OutcomeRunRequest
-    ): Promise<OutcomeRunReport>;
-    snapshot(
-      sessionId: string,
-      pageId: string,
-      bounds?: { maxElements?: number; maxBytes?: number }
-    ): Promise<PageSnapshot>;
-    get(sessionId: string): Promise<SessionResponse>;
-    listPages(sessionId: string): Promise<PageResponse[]>;
-    getPage(sessionId: string, pageId: string): Promise<PageResponse>;
-    closePage(sessionId: string, pageId: string): Promise<void>;
-    autofill(sessionId: string, pageId: string, request: AutofillRequest): Promise<AutofillReport>;
-    pdf(sessionId: string, pageId: string, request: PdfRequest): Promise<ArtifactRef>;
-    download(
-      sessionId: string,
-      pageId: string,
-      request: { url: string; filename?: string }
-    ): Promise<ArtifactRef>;
-    collectDownload(sessionId: string, pageId: string, filename: string): Promise<ArtifactRef>;
-  };
-  health?(): Promise<{ status: string; version?: string; uptime?: number; timestamp?: string }>;
-  healthLive?(): Promise<{ status: string; timestamp?: string }>;
-  healthReady?(): Promise<{
-    status: string;
-    engine?: string;
-    version?: string;
-    capabilities?: unknown;
-  }>;
 }
 
 export interface CliDependencies {
@@ -179,16 +113,74 @@ export interface CliDependencies {
 export interface Cli {
   /** Run with user-style argv (no node/script prefix). Resolves to an exit code. */
   run(argv: string[]): Promise<number>;
+  /**
+   * Offline audit of wire-contract declarations across the command tree
+   * (T0 drift gate). `advertised` commands project canonical schemas through
+   * `describe --schema`; `exempt` commands carry a reviewed reason. The
+   * snapshot is frozen: a caller mutating it cannot corrupt later audits.
+   */
+  jsonContractAudit(): ReadonlyArray<{
+    readonly path: readonly string[];
+    readonly advertised: boolean;
+    readonly exempt: boolean;
+  }>;
+}
+
+/** Canonical request/response schemas projected through describe --schema. */
+export interface WireContract {
+  input: object;
+  output: object;
+}
+
+/**
+ * The T0 runtime gate: a JSON-input command must either advertise its
+ * canonical schemas (advertiseWireSchema) or carry a reviewed exemption.
+ * Exported pure so the refusal branch is directly testable.
+ */
+export function requireWireContract(
+  command: Command,
+  wireContracts: Map<Command, WireContract>,
+  exemptions: Map<Command, string>,
+  label: string
+): void {
+  if (!wireContracts.has(command) && !exemptions.has(command))
+    throw new UsageError(
+      `${label}: this command accepts JSON input but declares no wire contract. Advertise its canonical schemas (advertiseWireSchema) or record an exemption so describe --schema stays complete.`
+    );
 }
 
 const DEFAULT_BASE_URL = 'http://localhost:5709';
 
 export function buildCli(deps: CliDependencies): Cli {
+  // The command tree is built per run(); the audit it produces is captured
+  // here so jsonContractAudit() can serve the most recent run's snapshot.
+  let lastContractAudit: Cli['jsonContractAudit'] extends () => infer R ? R : never = Object.freeze(
+    []
+  );
   return {
     async run(argv: string[]): Promise<number> {
       let exitCode = 0;
 
       const readJsonArgument = createJsonArgumentReader(deps.stdin ? { stdin: deps.stdin } : {});
+
+      // Wire-contract metadata declared at command definition (T0 contract
+      // catalog, slice 4): a JSON-input command must advertise the canonical
+      // request/response schemas its payload maps to, and the describe
+      // --schema projection reads exactly this map. Enforcement is at
+      // runtime, in readCommandJson: a JSON-input command without an
+      // advertised contract (or a recorded exemption) fails loudly instead
+      // of silently projecting schemas: null - the drift class the
+      // application-execute omission demonstrated.
+      const wireContracts = new Map<Command, WireContract>();
+      const wireContractExemptions = new Map<Command, string>();
+      const advertiseWireSchema = (command: Command, contract: WireContract): Command => {
+        wireContracts.set(command, contract);
+        return command;
+      };
+      const readCommandJson = async (command: Command, raw: string, label: string) => {
+        requireWireContract(command, wireContracts, wireContractExemptions, label);
+        return readJsonArgument(raw, label);
+      };
       const program = new Command();
       program
         .name('agentbrowser')
@@ -307,7 +299,7 @@ export function buildCli(deps: CliDependencies): Cli {
           })
         );
 
-      session
+      const sessionCreate = session
         .command('create')
         .description('create a new session')
         .requiredOption('--tenant <id>', 'tenant identifier')
@@ -329,6 +321,18 @@ export function buildCli(deps: CliDependencies): Cli {
         .option(
           '--cookies <json>',
           'seed cookies as inline JSON (the credential-handoff loop: pair with `session cookies` to export first)'
+        )
+        .option(
+          '--cookies-file <path>',
+          'seed cookies from a regular UTF-8 file (at most 1 MiB and 1000 cookies)'
+        )
+        .option(
+          '--cookies-format <format>',
+          'cookie file format: json (default), netscape or chrome-devtools-tsv; requires --cookies-file'
+        )
+        .option(
+          '--cookies-skip-unsupported',
+          'omit whole unsupported partitioned cookies with counts; requires --cookies-file'
         )
         .option(
           '--allow-downloads',
@@ -382,7 +386,30 @@ export function buildCli(deps: CliDependencies): Cli {
             if (options.snapshotTimeout) {
               request.snapshotTimeoutMs = Number.parseInt(String(options.snapshotTimeout), 10);
             }
-            if (options.cookies) {
+            if (options.cookies !== undefined && options.cookiesFile !== undefined)
+              throw new UsageError('Use only one of --cookies or --cookies-file.');
+            if (
+              options.cookiesFile === undefined &&
+              (options.cookiesFormat !== undefined || options.cookiesSkipUnsupported)
+            )
+              throw new UsageError('Cookie format and omission flags require --cookies-file.');
+            if (options.cookiesFile !== undefined) {
+              requireWireContract(
+                sessionCreate,
+                wireContracts,
+                wireContractExemptions,
+                'cookie input'
+              );
+              const imported = await readCookieFile(
+                String(options.cookiesFile),
+                options.cookiesFormat === undefined ? undefined : String(options.cookiesFormat),
+                Boolean(options.cookiesSkipUnsupported)
+              );
+              request.cookies = imported.cookies;
+              if (imported.skipped)
+                deps.err(`Omitted ${imported.skipped} unsupported partitioned cookie(s).`);
+            }
+            if (options.cookies !== undefined) {
               try {
                 request.cookies = JSON.parse(String(options.cookies)) as NonNullable<
                   SessionRequest['cookies']
@@ -420,7 +447,14 @@ export function buildCli(deps: CliDependencies): Cli {
               request.policy = policy as unknown as NonNullable<SessionRequest['policy']>;
             }
 
-            const created = await ctx.client.sessions.create(request);
+            if (options.cookiesFile !== undefined) assertCookieRequestSize(request);
+            const created = await ctx.client.sessions.create(request).catch((error) => {
+              if (options.cookiesFile !== undefined)
+                throw new UsageError(
+                  'Cookie-seeded session creation failed; no credential details are displayed.'
+                );
+              throw error;
+            });
 
             ctx.emit(created, () => [
               `Session ${created.sessionId}`,
@@ -429,6 +463,12 @@ export function buildCli(deps: CliDependencies): Cli {
             ]);
           })
         );
+
+      // Cookie JSON maps to SessionRequestSchema.cookies; there is no canonical full CLI command schema.
+      wireContractExemptions.set(
+        sessionCreate,
+        'Cookie subshape validated by canonical validateSessionRequest; local file options are not wire fields.'
+      );
 
       session
         .command('list')
@@ -466,9 +506,22 @@ export function buildCli(deps: CliDependencies): Cli {
         .command('cookies')
         .description("export a session's cookies (re-seed future sessions via create --cookies)")
         .argument('<sessionId>')
+        .option(
+          '--output <path>',
+          'export JSON to a new private file (0600), never overwrite; print counts/path only'
+        )
         .action(
-          action(async (ctx, sessionId: string) => {
-            const cookies = await ctx.client.sessions.cookies(sessionId);
+          action(async (ctx, sessionId: string, options: { output?: string }) => {
+            const cookies = await ctx.client.sessions.cookies(sessionId).catch((error) => {
+              if (options.output !== undefined)
+                throw new UsageError('Cookie export failed; no credential details are displayed.');
+              throw error;
+            });
+            if (options.output !== undefined) {
+              const receipt = await writeCookieFile(options.output, cookies);
+              ctx.emit(receipt, () => [`Exported ${receipt.count} cookie(s) to ${receipt.path}`]);
+              return;
+            }
             ctx.emit(cookies, () => [
               JSON.stringify(cookies),
               `(${cookies.length} cookie${cookies.length === 1 ? '' : 's'} — re-seed with: session create --cookies '${JSON.stringify(cookies)}')`,
@@ -563,7 +616,7 @@ export function buildCli(deps: CliDependencies): Cli {
             });
           })
         );
-      application
+      const applicationExecute = application
         .command('execute <sessionId> <operation> [inputJson]')
         .description(
           'dispatch one application operation (input defaults to null). The global ' +
@@ -586,7 +639,7 @@ export function buildCli(deps: CliDependencies): Cli {
               const input =
                 inputJson === undefined
                   ? null
-                  : await readJsonArgument(inputJson, 'operation input');
+                  : await readCommandJson(applicationExecute, inputJson, 'operation input');
               let expectedVersion: number | undefined;
               if (options.expectedVersion !== undefined) {
                 expectedVersion = Number(options.expectedVersion);
@@ -609,6 +662,10 @@ export function buildCli(deps: CliDependencies): Cli {
             }
           )
         );
+      advertiseWireSchema(applicationExecute, {
+        input: ApplicationExecuteRequestSchema,
+        output: ApplicationOperationResultSchema,
+      });
       application
         .command('receipt <sessionId> <operationId>')
         .description('read one application receipt by operation ID (null when absent)')
@@ -904,7 +961,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .argument('<stepsJson>', 'JSON array of plan steps: inline, @file, or - for stdin')
         .action(
           action(async (ctx, sessionId: string, pageId: string, stepsJson: string) => {
-            const steps = parsePlanSteps(await readJsonArgument(stepsJson, 'plan steps'));
+            const steps = parsePlanSteps(await readCommandJson(plan, stepsJson, 'plan steps'));
             const parseResponse = createPlanReportParser(steps);
             const result = parseResponse(await ctx.client.sessions.plan(sessionId, pageId, steps));
             if (!result.ok) exitCode = 1;
@@ -919,6 +976,8 @@ export function buildCli(deps: CliDependencies): Cli {
           })
         );
 
+      advertiseWireSchema(plan, { input: PlanActionsSchema, output: PlanReportSchema });
+
       const outcome = program
         .command('outcome')
         .description(
@@ -932,7 +991,7 @@ export function buildCli(deps: CliDependencies): Cli {
             let request: OutcomeRunRequest;
             try {
               request = parseOutcomeRunRequest(
-                await readJsonArgument(requestJson, 'outcome request')
+                await readCommandJson(outcome, requestJson, 'outcome request')
               );
             } catch (error) {
               throw new UsageError((error as Error).message);
@@ -949,6 +1008,11 @@ export function buildCli(deps: CliDependencies): Cli {
             ]);
           })
         );
+
+      advertiseWireSchema(outcome, {
+        input: OutcomeRunRequestSchema,
+        output: OutcomeRunReportSchema,
+      });
 
       // ---- act -------------------------------------------------------------
       const act = program.command('act').description(INTERACTION_GUIDANCE.action);
@@ -1272,7 +1336,7 @@ export function buildCli(deps: CliDependencies): Cli {
         );
 
       // ---- extract ----------------------------------------------------------
-      program
+      const extract = program
         .command('extract')
         .description('extract deterministic structured data from a page')
         .argument('<sessionId>')
@@ -1296,22 +1360,22 @@ export function buildCli(deps: CliDependencies): Cli {
             ) => {
               let schemaValue: Record<string, unknown> | undefined;
               if (options.schema !== undefined) {
-                try {
-                  schemaValue = JSON.parse(options.schema) as Record<string, unknown>;
-                } catch {
-                  throw new UsageError('--schema must be valid inline JSON.');
-                }
+                schemaValue = (await readCommandJson(
+                  extract,
+                  options.schema,
+                  '--schema'
+                )) as Record<string, unknown>;
               }
-              let recordsValue: Record<string, unknown> | undefined;
+              let recordsValue: ExtractRequest['records'];
               if (options.records !== undefined) {
-                try {
-                  recordsValue = JSON.parse(options.records) as Record<string, unknown>;
-                } catch {
-                  throw new UsageError('--records must be valid inline JSON.');
-                }
+                recordsValue = (await readCommandJson(
+                  extract,
+                  options.records,
+                  '--records'
+                )) as ExtractRequest['records'];
               }
               const result = (await ctx.client.sessions.extract(sessionId, pageId, {
-                format: (options.format ?? 'text') as never,
+                format: (options.format ?? 'text') as ExtractRequest['format'],
                 ...(schemaValue !== undefined ? { schema: schemaValue } : {}),
                 ...(recordsValue !== undefined ? { records: recordsValue } : {}),
               })) as unknown;
@@ -1321,6 +1385,14 @@ export function buildCli(deps: CliDependencies): Cli {
             }
           )
         );
+      // Reviewed exemption: --schema/--records are extraction selector
+      // directives, not a qualified wire contract (no protocol schema exists
+      // for them; a T0/T2 migration would introduce one). The bounded reader
+      // still applies; only the schema advertisement is exempt.
+      wireContractExemptions.set(
+        extract,
+        'selector payloads are extraction directives, not a qualified wire contract'
+      );
 
       // ---- screenshot ------------------------------------------------------
       program
@@ -1517,13 +1589,13 @@ export function buildCli(deps: CliDependencies): Cli {
               if (requestJson === '-' && options.policy === '-') {
                 throw new UsageError('Stdin can be used only once per command.');
               }
-              const request = await readJsonArgument(requestJson, 'autofill request');
+              const request = await readCommandJson(autofill, requestJson, 'autofill request');
               if (typeof request !== 'object' || request === null || Array.isArray(request)) {
                 throw new UsageError('Autofill request must be an object.');
               }
               if (options.policy !== undefined) {
                 Object.assign(request, {
-                  policy: await readJsonArgument(options.policy, '--policy'),
+                  policy: await readCommandJson(autofill, options.policy, '--policy'),
                 });
               }
               let parsed: AutofillRequest;
@@ -1558,6 +1630,11 @@ export function buildCli(deps: CliDependencies): Cli {
             }
           )
         );
+
+      advertiseWireSchema(autofill, {
+        input: AutofillRequestSchema,
+        output: AutofillReportSchema,
+      });
 
       const download = program
         .command('download')
@@ -1597,10 +1674,13 @@ export function buildCli(deps: CliDependencies): Cli {
         );
       download
         .command('collect')
-        .description('collect an intercepted download by filename')
+        .description('collect an intercepted download by ID (preferred) or unique filename')
         .argument('<sessionId>')
         .argument('<pageId>')
-        .argument('<filename>')
+        .argument(
+          '<downloadIdOrFilename>',
+          'download ID (preferred) or unique filename; ambiguous filenames fail'
+        )
         .option('--out <file>', 'save the collected artifact bytes to a file')
         .action(
           action(
@@ -1608,13 +1688,13 @@ export function buildCli(deps: CliDependencies): Cli {
               ctx,
               sessionId: string,
               pageId: string,
-              filename: string,
+              downloadIdOrFilename: string,
               options: { out?: string }
             ) => {
               const artifact = await ctx.client.sessions.collectDownload(
                 sessionId,
                 pageId,
-                filename
+                downloadIdOrFilename
               );
               ctx.emit(artifact, () => [
                 `Download ${artifact.artifactId}`,
@@ -1629,6 +1709,43 @@ export function buildCli(deps: CliDependencies): Cli {
             }
           )
         );
+
+      const test = program
+        .command('test')
+        .description('evaluate caller-observed test reports offline');
+      const evaluate = test
+        .command('evaluate')
+        .description(
+          'check a caller-observed case report; does not execute tests or fetch evidence'
+        )
+        .argument(
+          '<evaluationJson>',
+          'bounded evaluation bundle: inline JSON, @file, or - for stdin'
+        )
+        .addHelpText(
+          'after',
+          '\n--json emits a full, potentially sensitive report to stdout. Capture it privately. Exit 0: passed; exit 1: failed report or invalid input. --operation-id is unused.'
+        )
+        .action(async (raw: string) => {
+          // Offline: do not use action(), which reads credentials and constructs a client.
+          try {
+            const result = evaluateTestCaseRun(
+              await readCommandJson(evaluate, raw, 'evaluationJson')
+            );
+            const output = program.opts().json
+              ? JSON.stringify(result, null, 2)
+              : `${result.descriptor.id}: ${result.verdict}`;
+            exitCode = result.verdict === 'passed' ? 0 : 1;
+            deps.out(output);
+          } catch {
+            exitCode = 1;
+            deps.err(formatError(new UsageError('Invalid test case evaluation.')));
+          }
+        });
+      advertiseWireSchema(evaluate, {
+        input: TestCaseEvaluationInputSchema,
+        output: TestCaseEvaluationReportSchema,
+      });
 
       // Project the existing command tree, never a second manually maintained catalog.
       // This handler deliberately avoids the service-client action wrapper.
@@ -1666,20 +1783,10 @@ export function buildCli(deps: CliDependencies): Cli {
                   path,
                   ...(options.schema
                     ? {
-                        schemas:
-                          selected === autofill
-                            ? {
-                                input: AutofillRequestSchema,
-                                output: AutofillReportSchema,
-                              }
-                            : selected === plan
-                              ? { input: PlanActionsSchema, output: PlanReportSchema }
-                              : selected === outcome
-                                ? {
-                                    input: OutcomeRunRequestSchema,
-                                    output: OutcomeRunReportSchema,
-                                  }
-                                : null,
+                        // T0: wire contracts are declared at command
+                        // definition (advertiseWireSchema) and projected
+                        // here; there is no per-command hand list.
+                        schemas: wireContracts.get(selected) ?? null,
                       }
                     : {}),
                   usage: selected.createHelp().commandUsage(selected),
@@ -1716,7 +1823,30 @@ export function buildCli(deps: CliDependencies): Cli {
         return code === 0 ? 0 : 1;
       }
 
+      const contractAudit: Array<{
+        readonly path: readonly string[];
+        readonly advertised: boolean;
+        readonly exempt: boolean;
+      }> = [];
+      const walkTree = (command: Command, path: string[]) => {
+        for (const child of command.commands) {
+          const childPath = [...path, child.name()];
+          contractAudit.push(
+            Object.freeze({
+              path: Object.freeze(childPath),
+              advertised: wireContracts.has(child),
+              exempt: wireContractExemptions.has(child),
+            })
+          );
+          walkTree(child, childPath);
+        }
+      };
+      walkTree(program, []);
+      lastContractAudit = Object.freeze(contractAudit);
       return exitCode;
+    },
+    jsonContractAudit() {
+      return lastContractAudit;
     },
   };
 }

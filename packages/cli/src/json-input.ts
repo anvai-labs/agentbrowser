@@ -8,8 +8,13 @@ export const JSON_INPUT_TIMEOUT_MS = 30_000;
 export type JsonInputStream = Readable & { isTTY?: boolean };
 
 /** One reader per invocation: preserve @file/inline/- syntax and single stdin ownership. */
-export function createJsonArgumentReader(
-  options: { stdin?: JsonInputStream; maxBytes?: number; timeoutMs?: number } = {}
+export function createTextArgumentReader(
+  options: {
+    stdin?: JsonInputStream;
+    maxBytes?: number;
+    timeoutMs?: number;
+    noFollow?: boolean;
+  } = {}
 ) {
   const maxBytes = options.maxBytes ?? MAX_JSON_INPUT_BYTES;
   const timeoutMs = options.timeoutMs ?? JSON_INPUT_TIMEOUT_MS;
@@ -50,7 +55,7 @@ export function createJsonArgumentReader(
       stream.once('close', onError);
     });
 
-  return async (raw: string, label: string): Promise<unknown> => {
+  return async (raw: string, label: string): Promise<string> => {
     let bytes: Buffer;
     if (raw === '-') {
       if (stdinUsed) throw new UsageError('Stdin can be used only once per command.');
@@ -62,7 +67,10 @@ export function createJsonArgumentReader(
     } else if (raw.startsWith('@')) {
       try {
         // O_NONBLOCK prevents waiting on a FIFO before it can be rejected by fstat.
-        const file = await open(raw.slice(1), constants.O_RDONLY | constants.O_NONBLOCK);
+        const file = await open(
+          raw.slice(1),
+          constants.O_RDONLY | constants.O_NONBLOCK | (options.noFollow ? constants.O_NOFOLLOW : 0)
+        );
         try {
           const stat = await file.stat();
           if (!stat.isFile()) throw new UsageError('JSON input must be a regular file.');
@@ -85,6 +93,17 @@ export function createJsonArgumentReader(
     } catch {
       throw new UsageError(`${label} must be valid UTF-8.`);
     }
+    return text;
+  };
+}
+
+/** JSON syntax remains shared across all existing command arguments. */
+export function createJsonArgumentReader(
+  options: { stdin?: JsonInputStream; maxBytes?: number; timeoutMs?: number } = {}
+) {
+  const readText = createTextArgumentReader(options);
+  return async (raw: string, label: string): Promise<unknown> => {
+    const text = await readText(raw, label);
     try {
       return JSON.parse(text);
     } catch {

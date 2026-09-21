@@ -1,6 +1,7 @@
 # Mode: scoped bulk forms and applications
 
-Status: native bulk autofill exists; reusable mappings and custom strategies are proposed.
+Status: native bulk autofill and named custom strategies exist; reusable mappings and
+broader widget qualification remain open.
 Core applies.
 
 ## Job and data
@@ -11,10 +12,13 @@ references. A resume is one possible private profile, never general agent memory
 
 ## Existing selection rules
 
-Use `browser_autofill` for qualified native text fields/textareas and single selects.
-Use explicit bounded plans/actions only for supported work requiring them. Current
-custom combobox/chip/password/file/multi-select cases are refused by native autofill;
-do not invent a strategy or retry on another backend to claim coverage.
+Use the existing bulk autofill surface for qualified native text fields/textareas and
+single selects; CLI/REST/SDK and optional MCP share the same service loop. Named
+`react-select` and `chip-multiselect` strategies need their qualified evidence; select
+the intended strategy explicitly rather than relying on inference from combobox markup.
+The native strategies refuse custom widgets, passwords, file inputs and
+native multi-selects. Do not infer arbitrary combobox support or retry on another
+backend to claim coverage. See [T6](../tasks/t6-widget-strategies.md) for current limits.
 
 Repeated labels require unique stable block identity; no cross-block ordinal fallback.
 Read retries do not repeat field writes. Inspect each receipt and final verification;

@@ -16,6 +16,29 @@ export const EXPECTED_DELEGATED_TOOLS = Object.freeze([
   'browser_session', 'browser_operation',
 ]);
 
+export const TEST_EVALUATION_INPUT_SCHEMA_ID =
+  'urn:agentbrowser:test-case-evaluation-input:v1';
+export const TEST_EVALUATION_REPORT_SCHEMA_ID =
+  'urn:agentbrowser:test-case-evaluation-report:v1';
+
+export function validateCliTestEvaluationDiscovery(discovery, expectedVersion) {
+  assert.equal(discovery?.productVersion, expectedVersion, 'CLI test evaluator version mismatch');
+  assert.deepEqual(discovery?.command?.path, ['test', 'evaluate'], 'CLI test evaluator is missing');
+  const inputSchemaId = discovery.command?.schemas?.input?.$id;
+  const outputSchemaId = discovery.command?.schemas?.output?.$id;
+  assert.equal(
+    inputSchemaId,
+    TEST_EVALUATION_INPUT_SCHEMA_ID,
+    'CLI test evaluator input schema mismatch'
+  );
+  assert.equal(
+    outputSchemaId,
+    TEST_EVALUATION_REPORT_SCHEMA_ID,
+    'CLI test evaluator output schema mismatch'
+  );
+  return { inputSchemaId, outputSchemaId };
+}
+
 /** Preserve binary/Node commands and allow testing older installed releases. */
 export async function runSmokeCommand(kind, argv, manifest) {
   const args = [...argv];
@@ -153,10 +176,38 @@ export async function checkCli(command, options) {
   const version = (await runExecutable([...command, '--version'], options)).stdout.trim();
   assert.equal(version, options.expectedVersion, 'CLI version mismatch');
   const help = (await runExecutable([...command, '--help'], options)).stdout;
-  for (const token of ['agentbrowser', 'session', 'act', 'plan', 'autofill', 'pdf', 'download', 'health']) {
+  for (const token of [
+    'agentbrowser',
+    'session',
+    'act',
+    'plan',
+    'autofill',
+    'pdf',
+    'download',
+    'health',
+  ]) {
     assert.ok(help.includes(token), `CLI help is missing ${token}`);
   }
   return { version };
+}
+
+/** Require the source-candidate-only offline evaluator without weakening legacy smoke. */
+export async function checkCliTestEvaluation(command, options) {
+  assert.ok(options.expectedVersion, 'Expected release version is required');
+  let discovery;
+  try {
+    discovery = JSON.parse(
+      (
+        await runExecutable(
+          [...command, '--json', 'describe', 'test', 'evaluate', '--schema'],
+          options
+        )
+      ).stdout
+    );
+  } catch {
+    throw new Error('CLI test evaluator discovery failed');
+  }
+  return validateCliTestEvaluationDiscovery(discovery, options.expectedVersion);
 }
 
 export async function checkMcp(command, options) {

@@ -43,6 +43,27 @@ import {
   type ServiceSessionRequest,
 } from './service.js';
 
+/** One registered HTTP route, recorded for the contract-completeness gates. */
+export interface RegisteredRoute {
+  method: string;
+  url: string;
+  capability: AgentCapability | undefined;
+}
+
+declare module 'fastify' {
+  interface FastifyContextConfig {
+    /** Delegated-grant capability this route requires (see the `on` helper). */
+    capability?: AgentCapability;
+  }
+  interface FastifyInstance {
+    /**
+     * Every route registered on this server (auto-generated HEAD duplicates
+     * filtered). Collected for the openapi completeness gates; read-only.
+     */
+    readonly registeredRoutes: RegisteredRoute[];
+  }
+}
+
 export interface ServerOptions {
   /** Operator-owned rules. Client-supplied session policy can only restrict these. */
   approvalPolicy?: import('@agentbrowser/core').ActionRiskPolicyOptions;
@@ -96,47 +117,6 @@ export interface ServerOptions {
 /** SHA-256 hex digest. */
 function sha256Hex(value: string): string {
   return createHash('sha256').update(value).digest('hex');
-}
-
-const delegatedRoutes: readonly {
-  method: string;
-  path: RegExp;
-  capability: AgentCapability;
-}[] = [
-  {
-    method: 'GET',
-    path: /^(|\/control|\/operations\/:operationId)$/,
-    capability: 'session.control',
-  },
-  {
-    method: 'GET',
-    path: /^\/pages(?:|\/:pageId|\/:pageId\/snapshot)$/,
-    capability: 'page.observe',
-  },
-  { method: 'GET', path: /^\/artifacts\/:artifactId$/, capability: 'page.capture' },
-  { method: 'POST', path: /^\/pages$/, capability: 'session.manage' },
-  { method: 'POST', path: /^\/pages\/:pageId\/navigate$/, capability: 'page.navigate' },
-  { method: 'POST', path: /^\/pages\/:pageId\/observe$/, capability: 'page.observe' },
-  { method: 'POST', path: /^\/pages\/:pageId\/(act|plan|outcomes)$/, capability: 'page.interact' },
-  { method: 'POST', path: /^\/pages\/:pageId\/autofill$/, capability: 'page.form' },
-  {
-    method: 'GET',
-    path: /^\/application(?:\/receipts\/:operationId)?$/,
-    capability: 'application.discover',
-  },
-  { method: 'POST', path: /^\/application\/execute$/, capability: 'application.execute' },
-  { method: 'POST', path: /^\/pages\/:pageId\/extract$/, capability: 'page.extract' },
-  {
-    method: 'POST',
-    path: /^\/pages\/:pageId\/(screenshot|pdf|html)$/,
-    capability: 'page.capture',
-  },
-  { method: 'DELETE', path: /^\/pages\/:pageId$/, capability: 'session.manage' },
-];
-
-function delegatedRouteCapability(method: string, suffix: string): AgentCapability | undefined {
-  return delegatedRoutes.find((route) => route.method === method && route.path.test(suffix))
-    ?.capability;
 }
 
 /**
@@ -225,6 +205,29 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   const fastify = Fastify({
     logger: false, // Disable logging for cleaner test output
   });
+
+  // Contract-completeness collector (the MCP generated-catalog pattern
+  // applied to the REST surface): record every route so openapi.test.ts can
+  // enforce that implemented ⇔ documented bidirectionally. Must be added
+  // BEFORE any fastify.register call - child-plugin routes are only seen by
+  // an onRoute hook registered at the root beforehand.
+  const registeredRoutes: RegisteredRoute[] = [];
+  fastify.addHook('onRoute', (routeOptions) => {
+    const methods = Array.isArray(routeOptions.method)
+      ? routeOptions.method
+      : [routeOptions.method];
+    for (const method of methods) {
+      // Fastify auto-generates HEAD duplicates for GET routes; they carry no
+      // contract of their own.
+      if (method === 'HEAD') continue;
+      registeredRoutes.push({
+        method,
+        url: routeOptions.url,
+        capability: routeOptions.config?.capability,
+      });
+    }
+  });
+  fastify.decorate('registeredRoutes', registeredRoutes);
 
   // Fastify's default JSON parser rejects any request whose payload is
   // empty while content-type is application/json (FST_ERR_CTP_EMPTY_JSON_BODY),
@@ -417,8 +420,19 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     }
   });
 
+  /**
+   * Per-route authority metadata, declared at registration (see `on`):
+   * `capability` gates delegated grants; `admission: 'self'` marks routes
+   * that admit themselves (control, operations and the application surface,
+   * which opens its own scoped admissions - an envelope ticket would nest a
+   * second begin() and always report the session busy); `safe: true` marks
+   * observation-class POSTs that need no operation identity.
+   */
   const route =
-    (handler: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>) =>
+    (
+      handler: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>,
+      meta: { admission?: 'self'; safe?: boolean } = {}
+    ) =>
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
         const { sessionId } = request.params as { sessionId?: string };
@@ -433,22 +447,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           (principal.actor === 'agent' && principal.sessionId !== sessionId)
         )
           throw new ServiceError('FORBIDDEN', 'Session authority does not match');
-        const template = request.routeOptions.url ?? '';
-        if (
-          template.includes('/control') ||
-          template.includes('/operations/') ||
-          // Application routes admit themselves through the ApplicationAuthority
-          // (bind is an operator configure; execute/receipt open their own
-          // scoped admissions carrying the body's operation identity). An
-          // envelope ticket here would nest a second begin() and always
-          // report the session busy.
-          template.includes('/application') ||
-          (request.method === 'DELETE' && template === '/v1/sessions/:sessionId')
-        )
-          return await handler(request, reply);
+        if (meta.admission === 'self') return await handler(request, reply);
         const mutation =
-          request.method === 'DELETE' ||
-          (request.method === 'POST' && !/\/(observe|extract|screenshot|pdf|html)$/.test(template));
+          request.method === 'DELETE' || (request.method === 'POST' && meta.safe !== true);
         const id = request.headers['x-agentbrowser-operation-id'];
         if (mutation && (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(id)))
           throw new ServiceError(
@@ -595,11 +596,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             return reply.code(401).send({
               error: { code: 'UNAUTHORIZED', message: 'Session expired', retryable: false },
             });
-          const template = request.routeOptions.url ?? '';
-          const suffix = template.replace('/v1/sessions/:sessionId', '');
           const sameSession =
             (request.params as { sessionId?: string }).sessionId === agent.sessionId;
-          const capability = delegatedRouteCapability(request.method, suffix);
+          const capability = request.routeOptions.config?.capability;
           if (!sameSession || !capability || !agentModeAllows(agent.mode, capability))
             return reply.code(403).send({
               error: {
@@ -652,103 +651,124 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         return true;
       };
 
+      /**
+       * One definition site per route: the handler wrapper (route) and the
+       * delegated capability ride the same registration. The capability is
+       * exposed through fastify route config so the delegated-token hook
+       * reads it; routes registered without one are simply not reachable by
+       * delegated grants (403), exactly as the previous capability table
+       * produced.
+       */
+      const on = (
+        method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+        url: string,
+        handler: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>,
+        meta: { capability?: AgentCapability; admission?: 'self'; safe?: boolean } = {}
+      ) =>
+        v1.route({
+          method,
+          url,
+          ...(meta.capability !== undefined ? { config: { capability: meta.capability } } : {}),
+          handler: route(handler, meta),
+        });
+
       // Session management endpoints
-      v1.post(
-        '/sessions',
-        route(async (request, reply) => {
-          const body = request.body;
-          if (!requireBody(reply, body)) {
-            return reply;
-          }
+      on('POST', '/sessions', async (request, reply) => {
+        const body = request.body;
+        if (!requireBody(reply, body)) {
+          return reply;
+        }
 
-          if (body.controlMode === 'delegated' && principals.get(request)?.actor !== 'operator')
-            throw new ServiceError(
-              'FORBIDDEN',
-              'Controlled sessions require authenticated operator credentials'
-            );
-          const authenticatedTenant = tenantOf(request);
-          if (authenticatedTenant !== undefined) {
-            // With keys configured, the key's tenant wins; a mismatching body
-            // tenant is a cross-tenant attempt.
-            const bodyTenant = (body as Record<string, unknown>).tenantId;
-            if (bodyTenant !== undefined && bodyTenant !== authenticatedTenant) {
-              return reply.status(403).send({
-                error: {
-                  code: 'FORBIDDEN',
-                  message: `API key belongs to tenant ${authenticatedTenant}.`,
-                  retryable: false,
-                },
-              });
-            }
-            (body as Record<string, unknown>).tenantId = authenticatedTenant;
-          } else if (typeof (body as Record<string, unknown>).tenantId !== 'string') {
-            return reply.status(400).send({
-              error: { code: 'INVALID_REQUEST', message: 'tenantId is required', retryable: false },
-            });
-          }
-
-          // ADR-015 B4: schema validation (compiled from the protocol's
-          // SessionRequestSchema) replaces the hand-rolled checks; the
-          // nested `policy` object maps onto the service's flat fields at
-          // this boundary (flat fields keep working - validation passes
-          // them through untouched, and explicit nested policy wins).
-          const validated = validateSessionRequest(body);
-          if (!validated.ok) {
-            const details = validated.issues
-              .map((issue) => `${issue.path || '(root)'}: ${issue.message}`)
-              .join('; ');
-            return reply.status(400).send({
+        if (body.controlMode === 'delegated' && principals.get(request)?.actor !== 'operator')
+          throw new ServiceError(
+            'FORBIDDEN',
+            'Controlled sessions require authenticated operator credentials'
+          );
+        const authenticatedTenant = tenantOf(request);
+        if (authenticatedTenant !== undefined) {
+          // With keys configured, the key's tenant wins; a mismatching body
+          // tenant is a cross-tenant attempt.
+          const bodyTenant = (body as Record<string, unknown>).tenantId;
+          if (bodyTenant !== undefined && bodyTenant !== authenticatedTenant) {
+            return reply.status(403).send({
               error: {
-                code: 'INVALID_REQUEST',
-                message: `Invalid session request: ${details}`,
+                code: 'FORBIDDEN',
+                message: `API key belongs to tenant ${authenticatedTenant}.`,
                 retryable: false,
               },
             });
           }
-          const { cookies, ...validatedRequest } = validated.value;
-          const policy = (body as { policy?: SessionPolicy }).policy;
-          const createRequest: ServiceSessionRequest = { ...validatedRequest };
-          if (policy?.approval !== undefined) createRequest.approval = policy.approval;
-          // Structurally identical wire shapes; the protocol type's stricter
-          // optionals (no | undefined) need explicit casts under
-          // exactOptionalPropertyTypes - hence assignments, not spreads.
-          if (cookies !== undefined) {
-            createRequest.cookies = cookies as NonNullable<ServiceSessionRequest['cookies']>;
-          }
-          if (policy?.allowedHosts !== undefined) {
-            createRequest.allowedHosts = policy.allowedHosts;
-          }
-          if (policy?.blockedHosts !== undefined) {
-            createRequest.blockedHosts = policy.blockedHosts;
-          }
-          if (policy?.allowDownloads !== undefined) {
-            createRequest.allowDownloads = policy.allowDownloads;
-          }
-          if (policy?.maxDownloadBytes !== undefined) {
-            createRequest.maxDownloadBytes = policy.maxDownloadBytes;
-          }
-          if (policy?.allowServiceWorkers !== undefined) {
-            createRequest.allowServiceWorkers = policy.allowServiceWorkers;
-          }
-          const session = await service.createSession(createRequest as never);
-          return reply.status(201).send(session);
-        })
-      );
+          (body as Record<string, unknown>).tenantId = authenticatedTenant;
+        } else if (typeof (body as Record<string, unknown>).tenantId !== 'string') {
+          return reply.status(400).send({
+            error: { code: 'INVALID_REQUEST', message: 'tenantId is required', retryable: false },
+          });
+        }
 
-      v1.get(
+        // ADR-015 B4: schema validation (compiled from the protocol's
+        // SessionRequestSchema) replaces the hand-rolled checks; the
+        // nested `policy` object maps onto the service's flat fields at
+        // this boundary (flat fields keep working - validation passes
+        // them through untouched, and explicit nested policy wins).
+        const validated = validateSessionRequest(body);
+        if (!validated.ok) {
+          const details = validated.issues
+            .map((issue) => `${issue.path || '(root)'}: ${issue.message}`)
+            .join('; ');
+          return reply.status(400).send({
+            error: {
+              code: 'INVALID_REQUEST',
+              message: `Invalid session request: ${details}`,
+              retryable: false,
+            },
+          });
+        }
+        const { cookies, ...validatedRequest } = validated.value;
+        const policy = (body as { policy?: SessionPolicy }).policy;
+        const createRequest: ServiceSessionRequest = { ...validatedRequest };
+        if (policy?.approval !== undefined) createRequest.approval = policy.approval;
+        // Structurally identical wire shapes; the protocol type's stricter
+        // optionals (no | undefined) need explicit casts under
+        // exactOptionalPropertyTypes - hence assignments, not spreads.
+        if (cookies !== undefined) {
+          createRequest.cookies = cookies as NonNullable<ServiceSessionRequest['cookies']>;
+        }
+        if (policy?.allowedHosts !== undefined) {
+          createRequest.allowedHosts = policy.allowedHosts;
+        }
+        if (policy?.blockedHosts !== undefined) {
+          createRequest.blockedHosts = policy.blockedHosts;
+        }
+        if (policy?.allowDownloads !== undefined) {
+          createRequest.allowDownloads = policy.allowDownloads;
+        }
+        if (policy?.maxDownloadBytes !== undefined) {
+          createRequest.maxDownloadBytes = policy.maxDownloadBytes;
+        }
+        if (policy?.allowServiceWorkers !== undefined) {
+          createRequest.allowServiceWorkers = policy.allowServiceWorkers;
+        }
+        const session = await service.createSession(createRequest as never);
+        return reply.status(201).send(session);
+      });
+
+      on(
+        'GET',
         '/sessions/:sessionId/control',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
           const control = service.authority.get(sessionId);
           if (!control) throw new ServiceError('NOT_FOUND', 'Session is not controlled');
           return reply.send(service.authority.status(sessionId));
-        })
+        },
+        { capability: 'session.control', admission: 'self' }
       );
       for (const action of ['takeover', 'prepare-resume', 'delegate'] as const) {
-        v1.post(
+        on(
+          'POST',
           `/sessions/:sessionId/control/${action}`,
-          route(async (request, reply) => {
+          async (request, reply) => {
             const { sessionId } = params(request, 'sessionId');
             const principal = principals.get(request);
             if (
@@ -791,12 +811,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
                 throw error;
               });
             return reply.send(result);
-          })
+          },
+          { admission: 'self' }
         );
       }
-      v1.get(
+      on(
+        'GET',
         '/sessions/:sessionId/operations/:operationId',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId, operationId } = params(request, 'sessionId', 'operationId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
           const operation = service.authority.get(sessionId)?.operation(operationId);
@@ -805,7 +827,8 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           if (principal?.actor === 'agent' && operation.epoch !== principal.epoch)
             throw new ServiceError('FORBIDDEN', 'Operation belongs to another control generation');
           return reply.send(operation);
-        })
+        },
+        { capability: 'session.control', admission: 'self' }
       );
 
       // Application surface (shared-infra slice 2). Binding is operator-only
@@ -813,9 +836,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       // open to operators (ownership-checked) and to delegated grants whose
       // mode carries the application capabilities. Every route self-admits
       // through the ApplicationAuthority - see the route() envelope note.
-      v1.put(
+      on(
+        'PUT',
         '/sessions/:sessionId/application',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
           const principal = principals.get(request);
           if (
@@ -825,11 +849,13 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             throw new ServiceError('FORBIDDEN', 'Operator authority is required');
           if (!requireBody(reply, request.body)) return reply;
           return reply.send(service.applicationBind(sessionId, principal, request.body));
-        })
+        },
+        { admission: 'self' }
       );
-      v1.delete(
+      on(
+        'DELETE',
         '/sessions/:sessionId/application',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
           const principal = principals.get(request);
           if (
@@ -838,36 +864,43 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           )
             throw new ServiceError('FORBIDDEN', 'Operator authority is required');
           return reply.send(service.applicationUnbind(sessionId, principal));
-        })
+        },
+        { admission: 'self' }
       );
-      v1.get(
+      on(
+        'GET',
         '/sessions/:sessionId/application',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
           const principal = principals.get(request) ?? { actor: 'operator' as const, tenant: '' };
           return reply.send(await service.applicationDiscover(sessionId, principal));
-        })
+        },
+        { capability: 'application.discover', admission: 'self' }
       );
-      v1.post(
+      on(
+        'POST',
         '/sessions/:sessionId/application/execute',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
           if (!requireBody(reply, request.body)) return reply;
           const principal = principals.get(request) ?? { actor: 'operator' as const, tenant: '' };
           return reply.send(await service.applicationExecute(sessionId, principal, request.body));
-        })
+        },
+        { capability: 'application.execute', admission: 'self' }
       );
-      v1.get(
+      on(
+        'GET',
         '/sessions/:sessionId/application/receipts/:operationId',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId, operationId } = params(request, 'sessionId', 'operationId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
           const principal = principals.get(request) ?? { actor: 'operator' as const, tenant: '' };
           const receipt = await service.applicationReceipt(sessionId, principal, operationId);
           return reply.send(receipt ?? null);
-        })
+        },
+        { capability: 'application.discover', admission: 'self' }
       );
 
       // Session event stream: WebSocket upgrade, JSON per frame.
@@ -899,16 +932,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         });
       });
 
-      v1.get(
-        '/sessions',
-        route(async (request, reply) => {
-          return reply.send({ sessions: service.listSessions(tenantOf(request)) });
-        })
-      );
+      on('GET', '/sessions', async (request, reply) => {
+        return reply.send({ sessions: service.listSessions(tenantOf(request)) });
+      });
 
-      v1.get(
+      on(
+        'GET',
         '/sessions/:sessionId',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
@@ -926,62 +957,57 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           }
 
           return reply.send(session);
-        })
+        },
+        { capability: 'session.control' }
       );
 
-      v1.get(
-        '/sessions/:sessionId/cookies',
-        route(async (request, reply) => {
-          const { sessionId } = params(request, 'sessionId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-            return reply;
-          }
-          return reply.send({ cookies: await service.getSessionCookies(sessionId) });
-        })
-      );
+      on('GET', '/sessions/:sessionId/cookies', async (request, reply) => {
+        const { sessionId } = params(request, 'sessionId');
+        if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+          return reply;
+        }
+        return reply.send({ cookies: await service.getSessionCookies(sessionId) });
+      });
 
       // A3 evidence: the session's recent event ledger (console replay).
-      v1.get(
-        '/sessions/:sessionId/events/replay',
-        route(async (request, reply) => {
-          const { sessionId } = params(request, 'sessionId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-            return reply;
-          }
-          // request.* events live in their own ledger (network summary,
-          // spec 5.1); getSessionEvents routes the filter accordingly.
-          const typeFilter = (request.query as { type?: string } | null)?.type;
-          return reply.send({ events: service.getSessionEvents(sessionId, typeFilter) });
-        })
-      );
+      on('GET', '/sessions/:sessionId/events/replay', async (request, reply) => {
+        const { sessionId } = params(request, 'sessionId');
+        if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+          return reply;
+        }
+        // request.* events live in their own ledger (network summary,
+        // spec 5.1); getSessionEvents routes the filter accordingly.
+        const typeFilter = (request.query as { type?: string } | null)?.type;
+        return reply.send({ events: service.getSessionEvents(sessionId, typeFilter) });
+      });
 
       // A3 evidence: export the session's completed spans as an artifact.
-      v1.post(
-        '/sessions/:sessionId/trace',
-        route(async (request, reply) => {
-          const { sessionId } = params(request, 'sessionId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-            return reply;
-          }
-          return reply.status(201).send(await service.exportTrace(sessionId));
-        })
-      );
+      on('POST', '/sessions/:sessionId/trace', async (request, reply) => {
+        const { sessionId } = params(request, 'sessionId');
+        if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+          return reply;
+        }
+        return reply.status(201).send(await service.exportTrace(sessionId));
+      });
 
       // A3 evidence: capture the page's current HTML as an artifact.
-      v1.post(
+      on(
+        'POST',
         '/sessions/:sessionId/pages/:pageId/html',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
           return reply.status(201).send(await service.exportHtml(sessionId, pageId));
-        })
+        },
+        { capability: 'page.capture', safe: true }
       );
 
-      v1.get(
+      on(
+        'GET',
         '/sessions/:sessionId/pages/:pageId/snapshot',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
@@ -998,12 +1024,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               ...(maxBytes !== undefined ? { maxBytes } : {}),
             })
           );
-        })
+        },
+        { capability: 'page.observe' }
       );
 
-      v1.post(
+      on(
+        'POST',
         '/sessions/:sessionId/pages/:pageId/plan',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
@@ -1028,12 +1056,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             reply,
             await service.executePlan(sessionId, pageId, actions as unknown as ServiceActRequest[])
           );
-        })
+        },
+        { capability: 'page.interact' }
       );
 
-      v1.post(
+      on(
+        'POST',
         '/sessions/:sessionId/pages/:pageId/outcomes',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
           if (!requireBody(reply, request.body)) return reply;
@@ -1042,36 +1072,42 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             reply,
             await service.executeOutcome(sessionId, pageId, request.body)
           );
-        })
+        },
+        { capability: 'page.interact' }
       );
 
-      v1.delete(
+      on(
+        'DELETE',
         '/sessions/:sessionId',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
           await service.closeSession(sessionId);
           return reply.send({ sessionId, status: 'closed' });
-        })
+        },
+        { admission: 'self' }
       );
 
       // Page management endpoints
-      v1.get(
+      on(
+        'GET',
         '/sessions/:sessionId/pages',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
           return reply.send({ pages: await service.listPages(sessionId) });
-        })
+        },
+        { capability: 'page.observe' }
       );
 
-      v1.post(
+      on(
+        'POST',
         '/sessions/:sessionId/pages',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
@@ -1088,12 +1124,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           }
           const page = await service.createPage(sessionId, url !== undefined ? { url } : undefined);
           return reply.status(201).send(page);
-        })
+        },
+        { capability: 'session.manage' }
       );
 
-      v1.get(
+      on(
+        'GET',
         '/sessions/:sessionId/pages/:pageId',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
@@ -1111,25 +1149,29 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           }
 
           return reply.send(page);
-        })
+        },
+        { capability: 'page.observe' }
       );
 
-      v1.delete(
+      on(
+        'DELETE',
         '/sessions/:sessionId/pages/:pageId',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
           await service.closePage(sessionId, pageId);
           return reply.send({ pageId, status: 'closed' });
-        })
+        },
+        { capability: 'session.manage' }
       );
 
       // Navigation endpoint
-      v1.post(
+      on(
+        'POST',
         '/sessions/:sessionId/pages/:pageId/navigate',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
@@ -1158,13 +1200,15 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               : {}),
           });
           return reply.send(result);
-        })
+        },
+        { capability: 'page.navigate' }
       );
 
       // Observation endpoint
-      v1.post(
+      on(
+        'POST',
         '/sessions/:sessionId/pages/:pageId/observe',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
@@ -1175,23 +1219,27 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             (request.body ?? {}) as never
           );
           return reply.send(observation);
-        })
+        },
+        { capability: 'page.observe', safe: true }
       );
 
-      v1.post(
+      on(
+        'POST',
         '/sessions/:sessionId/pages/:pageId/autofill',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
           const report = await service.autofill(sessionId, pageId, request.body);
           return sendExecutionResult(request, reply, report);
-        })
+        },
+        { capability: 'page.form' }
       );
 
       // Action execution endpoint
-      v1.post(
+      on(
+        'POST',
         '/sessions/:sessionId/pages/:pageId/act',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
@@ -1221,45 +1269,44 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             });
           }
           return sendExecutionResult(request, reply, result);
-        })
+        },
+        { capability: 'page.interact' }
       );
 
       // Download endpoint: policy-gated artifact capture
-      v1.post(
-        '/sessions/:sessionId/pages/:pageId/download',
-        route(async (request, reply) => {
-          const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-            return reply;
-          }
-          const body = request.body;
-          if (!requireBody(reply, body)) {
-            return reply;
-          }
+      on('POST', '/sessions/:sessionId/pages/:pageId/download', async (request, reply) => {
+        const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
+        if (!requireOwnership(reply, sessionId, tenantOf(request))) {
+          return reply;
+        }
+        const body = request.body;
+        if (!requireBody(reply, body)) {
+          return reply;
+        }
 
-          const { url, filename } = body as { url?: string; filename?: string };
-          if (typeof url !== 'string' || url.length === 0) {
-            return reply.status(400).send({
-              error: {
-                code: 'INVALID_REQUEST',
-                message: 'url is required and must be a string',
-                retryable: false,
-              },
-            });
-          }
-
-          const artifact = await service.download(sessionId, pageId, {
-            url,
-            ...(filename !== undefined ? { filename } : {}),
+        const { url, filename } = body as { url?: string; filename?: string };
+        if (typeof url !== 'string' || url.length === 0) {
+          return reply.status(400).send({
+            error: {
+              code: 'INVALID_REQUEST',
+              message: 'url is required and must be a string',
+              retryable: false,
+            },
           });
-          return reply.send(artifact);
-        })
-      );
+        }
+
+        const artifact = await service.download(sessionId, pageId, {
+          url,
+          ...(filename !== undefined ? { filename } : {}),
+        });
+        return reply.send(artifact);
+      });
 
       // Artifact retrieval, scoped to the owning session
-      v1.get(
+      on(
+        'GET',
         '/sessions/:sessionId/artifacts/:artifactId',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId, artifactId } = params(request, 'sessionId', 'artifactId');
           // Access granted by session ownership OR a short-lived signed
           // token minted when the artifact was created (spec 13.1).
@@ -1285,13 +1332,15 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             metadata: stored.metadata,
             contentBase64: Buffer.from(stored.bytes).toString('base64'),
           });
-        })
+        },
+        { capability: 'page.capture' }
       );
 
       // Collect an intercepted in-page download (spec 10)
-      v1.post(
+      on(
+        'POST',
         '/sessions/:sessionId/pages/:pageId/downloads/:filename',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId, pageId, filename } = params(
             request,
             'sessionId',
@@ -1304,13 +1353,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
           const artifact = await service.collectDownload(sessionId, pageId, filename);
           return reply.send(artifact);
-        })
+        }
       );
 
       // PDF capture endpoint
-      v1.post(
+      on(
+        'POST',
         '/sessions/:sessionId/pages/:pageId/pdf',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
@@ -1331,13 +1381,15 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               : {}),
           });
           return reply.send(artifact);
-        })
+        },
+        { capability: 'page.capture', safe: true }
       );
 
       // Extraction endpoint (spec 12): deterministic extractors with evidence
-      v1.post(
+      on(
+        'POST',
         '/sessions/:sessionId/pages/:pageId/extract',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
@@ -1371,13 +1423,15 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             ...(records !== undefined ? { records } : {}),
           });
           return reply.send(result);
-        })
+        },
+        { capability: 'page.extract', safe: true }
       );
 
       // Screenshot endpoint
-      v1.post(
+      on(
+        'POST',
         '/sessions/:sessionId/pages/:pageId/screenshot',
-        route(async (request, reply) => {
+        async (request, reply) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
@@ -1414,7 +1468,8 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             ...(body.maskSensitive !== undefined ? { maskSensitive: body.maskSensitive } : {}),
           });
           return reply.send(artifact);
-        })
+        },
+        { capability: 'page.capture', safe: true }
       );
     },
     { prefix: '/v1' }

@@ -19,7 +19,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version-file: '.tool-versions'
 
       # The root product version owns every manifest and generated runtime stamp.
       - name: Verify tag and first-party versions
@@ -73,7 +73,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version-file: '.tool-versions'
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -159,7 +159,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version-file: '.tool-versions'
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -236,7 +236,7 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version-file: '.tool-versions'
           registry-url: 'https://registry.npmjs.org'
       - name: Build (package + its workspace dependencies)
         run: pnpm install --frozen-lockfile && pnpm --filter @anvailabs/agentbrowser-mcp... build
@@ -336,8 +336,8 @@ jobs:
           ## AgentBrowser ${{ github.ref_name }}
 
           AgentBrowser ships a first-class CLI, a service and an optional MCP
-          adapter. Point either client at a reachable AgentBrowser service via
-          `AGENTBROWSER_BASE_URL` (default `http://localhost:5709`). The MCP
+          adapter. Point the CLI at a reachable service with `--base-url`, or set
+          `AGENTBROWSER_BASE_URL` for MCP (default `http://localhost:5709`). The MCP
           executable is only the stdio adapter, not the service.
           See the [versioned changelog](https://github.com/anvai-labs/agentbrowser/blob/${{ github.ref_name }}/CHANGELOG.md)
           for included capabilities and qualification limits.
@@ -352,7 +352,7 @@ jobs:
 
           ```sh
           tar -xzf agentbrowser-server-<target>.tar.gz && ./server/agentbrowser-server
-          # needs Node 22 plus a compatible Chromium already installed under
+          # needs Node 22 or newer plus a compatible Chromium already installed under
           # PLAYWRIGHT_BROWSERS_PATH; the archive launcher does not download it.
           # Linux hosts must also provide Chromium's platform libraries.
           ```
@@ -379,7 +379,7 @@ jobs:
           artifact and required the full 13-tool unbound catalog and the exact release version
           in `serverInfo`.
 
-          Server acceptance uses Node 22 on native Linux x64/ARM and Darwin ARM.
+          Server acceptance uses Node 24.21.0 on native Linux x64/ARM and Darwin ARM.
           The Darwin x64 tarball is exercised on ARM Node with Rosetta x64 clients;
           this is not native Intel server-runtime proof. Windows has executable
           acceptance only: no Windows server tarball is shipped.

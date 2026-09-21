@@ -40,9 +40,55 @@ branches and use the reviewed final commit identity for each merge.
 
 ## Current implementation state
 
-Main/develop PR promotion, required checks, admin enforcement and force-push/deletion
-blocks are in use. The published baseline is 1.8.20; the owner selected 1.9.0
-for the completed T2 foundation. Its promotion and publication require fresh
-evidence in the [release tracker](../../release-milestones.md). Tag ancestry,
-least-privilege publication and measured runner-use improvements remain open. T9 stays
-active because every candidate needs fresh review, exact-head CI and promotion evidence.
+Main is protected with required checks, admin enforcement and force-push/deletion
+blocks. Develop is currently unprotected, so each develop merge additionally requires
+an explicit operational review and all eight required checks on the exact candidate;
+do not infer equivalent branch enforcement. The published baseline is **1.9.0** at exact
+main/tag commit `02f263f3764b41f923553c69c11dff69c819fae5`. Promotion PR 210, all eight main
+checks and all twelve release jobs passed; published asset, checksum, npm and
+package acceptance completed. Main was synchronized back to develop by PR 211
+at `4dbd48921346057431468e8d1185c936283f5881`, with all eight post-merge checks,
+and Homebrew PR 57 completed with all three post-merge checks. Exact links and
+qualification limits are recorded in the [release tracker](../../release-milestones.md).
+
+T3 is complete on develop through PR 231 at merge `cc4d72e0deecde9896896f1f20ebcbca5f3f80ad`;
+its final PR and post-merge runs each passed all eight checks. The bounded T6 widget
+commitment repair then merged through PR 232 at `d510a56d5d69e0cc9afe17dc56d27a0a11987cff`;
+its PR run `35539291664` and post-merge run `35539537406` each passed all eight jobs.
+Neither develop checkpoint creates a new release.
+The 1.9.0 candidate's tag ancestry and delivery are verified; a reusable ancestry
+gate, least-privilege publication review and measured runner-use improvements remain
+open. T9 stays active because every candidate needs fresh review, exact-head CI,
+promotion and publication evidence.
+
+## Next checkpoint
+
+The owner selected **1.9.1** on 2026-09-20 as a checkpoint of integrated T3 regression
+qualification, foundation alignment, Node 24 baseline and Q0 widget commitment fixes,
+and explicitly added [CLI cookie-file handoff](../design/cli-cookie-file-handoff.md).
+The cookie slice requires failing-first parser/CLI tests and a real compiled-CLI import,
+authenticated fixture, private export and re-import round trip through the packaged service.
+Reuse existing jobs and acceptance hosts; no new runtime dependency or CI job is needed.
+
+The broader [job-application workflow](../design/t6-job-application-checkpoint.md),
+Q0a custom-adapter callback hardening, popup ownership/readiness, production verifier
+configuration, durable recovery and installed third-party harness qualification remain
+deferred. Do not represent these as completed or supported by cookie import.
+
+Installed 1.9.0 remains the released baseline. Prepare the version bump on the release
+candidate. Do not tag or publish until the specific capabilities pass their design gates,
+independent review, exact-head and post-merge CI and protected-main promotion. Then
+verify the published artifacts and complete the existing tap delivery ladder.
+
+## Runtime checkpoint
+
+The merged Node 24 baseline pins local development, existing CI and release jobs,
+and the container build stage to Node 24.21.0. The immutable Playwright 1.62.1 runtime
+image supplies Node 24 and the existing Docker smoke now rejects a different runtime
+major. This changes no job graph or release version. Exact source and image inspection
+are recorded in the [Node 24 baseline evidence](../evidence/node24-baseline.md).
+
+Node 22 remains the published minimum and type-library floor. Before merging, run a
+bounded Node 22 compatibility check plus the existing Node 24 build, compiled-client,
+extracted-server and Docker acceptance paths. Exact-head CI and post-merge evidence
+remain required; this baseline alone does not qualify or trigger a release.

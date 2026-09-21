@@ -9,12 +9,10 @@ const modules = await resolvePackagedModules(process.argv[2], process.argv[3], {
   expectedCommit: process.argv[4],
   allowDirty: process.argv[5] === 'allow-dirty',
 });
-const { buildServer } = await import(pathToFileURL(modules.api));
+const { applicationReceiptOutcomeOptions, buildServer } = await import(pathToFileURL(modules.api));
 const { PlaywrightChromiumEngine } = await import(pathToFileURL(modules.engine));
 const { NetworkPolicy } = await import(pathToFileURL(modules.policy));
-const { TrustedEvidenceSourceRegistry, TrustedVerifierRegistry, defineVerifier } = await import(
-  pathToFileURL(modules.control)
-);
+const { TrustedVerifierRegistry, defineVerifier } = await import(pathToFileURL(modules.control));
 
 const TENANT = 'cli-outcome';
 const ADAPTER = 'fixture-counter';
@@ -24,12 +22,21 @@ const VERIFIER = 'fixture.ui-commit';
 const VERSION = '1';
 const CASES = new Set([
   'pass',
+  'pass-repeat',
+  'navigation-reset',
   'lost-response',
   'historical',
   'ignored',
+  'api-shortcut',
+  'required-skip',
+  'partial-setup',
+  'cleanup-failure',
   'failed-action',
   'stale',
   'wrong-resource',
+  'recipe-pass',
+  'recipe-broken',
+  'recipe-cleanup-failure',
 ]);
 const fixtures = new Map();
 
@@ -64,6 +71,21 @@ function counterCommand(value) {
   return Object.freeze({
     operationId: command.operationId,
     expectedVersion: command.expectedVersion,
+    amount: command.amount,
+  });
+}
+
+function scopedCounterCommand(value, scope) {
+  const command = counterCommand(value);
+  if (
+    typeof scope.operationId !== 'string' ||
+    (scope.resource !== 'historical' && scope.operationId === command.operationId) ||
+    scope.expectedVersion !== command.expectedVersion
+  )
+    throw new Error('INVALID_COUNTER_COMMAND');
+  return counterCommand({
+    operationId: scope.operationId,
+    expectedVersion: scope.expectedVersion,
     amount: command.amount,
   });
 }
@@ -115,6 +137,44 @@ function requireFixture(name) {
   return fixture;
 }
 
+function requireOpenFixture(name) {
+  const fixture = requireFixture(name);
+  if (fixture.closed) throw new Error('CLI outcome fixture is closed');
+  return fixture;
+}
+
+function stateOfFixture(name) {
+  const fixture = requireFixture(name);
+  const receipt = fixture.issued
+    ? (fixture.app.intentReceipt(fixture.issued.scope, fixture.issued.command.operationId) ?? null)
+    : null;
+  const genericReceipt = fixture.issued
+    ? (fixture.app.oracle.receipt(fixture.issued.command.operationId) ?? null)
+    : null;
+  return {
+    url: fixture.url,
+    closed: fixture.closed,
+    reserved: fixture.issued !== undefined,
+    snapshot: fixture.app.oracle.snapshot(),
+    receipt,
+    genericReceipt,
+    claims: fixture.claims,
+    claimSessionId: fixture.claimScope?.sessionId ?? null,
+    reads: fixture.reads,
+    actions: fixture.actions,
+    shortcuts: fixture.shortcuts,
+  };
+}
+
+async function closeFixture(name) {
+  const fixture = requireFixture(name);
+  if (!fixture.closed) {
+    await fixture.app.close();
+    fixture.closed = true;
+  }
+  return { closed: true };
+}
+
 const verifierRegistry = new TrustedVerifierRegistry([
   defineVerifier({
     descriptor: {
@@ -148,87 +208,131 @@ const verifierRegistry = new TrustedVerifierRegistry([
 
 const applicationAdapter = {
   id: ADAPTER,
-  authorize: ({ tenant, resource }) => tenant === TENANT && fixtures.has(resource),
+  authorize: ({ tenant, resource }) =>
+    tenant === TENANT && fixtures.has(resource) && !fixtures.get(resource).closed,
   operations: {
     reserve: {
       mode: 'read',
       prepare(input) {
         exactObject(input, [], 'INVALID_RESERVE_INPUT');
         return async (scope) => {
-          const fixture = requireFixture(scope.resource);
+          const fixture = requireOpenFixture(scope.resource);
           const issued = fixture.app.reserveIntent(intentScope(scope), 2);
           fixture.issued = issued;
-          if (scope.resource === 'historical') fixture.app.oracle.execute(issued.command);
           return { status: 'read', value: issued };
+        };
+      },
+    },
+    shortcut: {
+      mode: 'write',
+      prepare(input) {
+        const command = counterCommand(input);
+        return async (scope) => {
+          const fixture = requireOpenFixture(scope.resource);
+          const scoped = scopedCounterCommand(command, scope);
+          if (fixture.app.oracle.snapshot().version !== scoped.expectedVersion)
+            return { status: 'rejected', reason: 'stale business version' };
+          const receipt = fixture.app.oracle.execute(scoped);
+          fixture.shortcuts++;
+          return { status: 'committed', value: receipt };
         };
       },
     },
   },
   async receipt(scope, operationId) {
-    const fixture = requireFixture(scope.resource);
+    const fixture = requireOpenFixture(scope.resource);
     fixture.reads++;
+    if (operationId !== fixture.issued?.command.operationId)
+      return fixture.app.oracle.receipt(operationId);
     return fixture.app.intentReceipt(intentScope(scope), operationId);
   },
 };
 
 const apiKey = process.env.AGENTBROWSER_API_KEY;
 assert.ok(apiKey, 'AGENTBROWSER_API_KEY is required');
+const engine = new PlaywrightChromiumEngine();
+const createEngineSession = engine.createSession;
+engine.createSession = async function (...args) {
+  const session = await Reflect.apply(createEngineSession, this, args);
+  const createPage = session.newPage;
+  session.newPage = async function (...pageArgs) {
+    const page = await Reflect.apply(createPage, this, pageArgs);
+    const act = page.act;
+    page.act = function (...actionArgs) {
+      const url = page.getCachedUrl?.();
+      if (url) {
+        try {
+          const origin = new URL(url).origin;
+          for (const fixture of fixtures.values()) {
+            if (!fixture.closed && origin === fixture.url) {
+              fixture.actions++;
+              break;
+            }
+          }
+        } catch {
+          // Tracking is diagnostic only; the engine remains the action authority.
+        }
+      }
+      return Reflect.apply(act, this, actionArgs);
+    };
+    return page;
+  };
+  return session;
+};
 const server = await buildServer({
-  engine: new PlaywrightChromiumEngine(),
+  engine,
   networkPolicy: new NetworkPolicy({
     blockLoopback: false,
     blockPrivateIPs: true,
     blockMetadata: true,
   }),
   apiKeys: new Map([[createHash('sha256').update(apiKey).digest('hex'), TENANT]]),
-  verifierRegistry,
-  applicationAdapters: [applicationAdapter],
-  evidenceSourceRegistryProvider: (sources) =>
-    new TrustedEvidenceSourceRegistry([
-      sources.applicationReceipt({
-        descriptor: { id: SOURCE, capability: CAPABILITY },
-        authorize(request) {
-          const { identity, source, verifier, correlationId } = request;
-          if (
-            source.id !== SOURCE ||
-            source.capability !== CAPABILITY ||
-            source.authorization !== 'required' ||
-            source.correlation !== 'required' ||
-            verifier.id !== VERIFIER ||
-            verifier.version !== VERSION ||
-            identity.admission.actor !== 'agent' ||
-            identity.admission.mode !== 'qa' ||
-            identity.admission.tenant !== TENANT ||
-            identity.adapter !== ADAPTER
-          )
-            return undefined;
-          const fixture = fixtures.get(identity.resource);
-          if (!fixture) return undefined;
-          const command = counterCommand(verifier.input);
-          if (correlationId !== command.operationId) return undefined;
-          fixture.app.claimIntent(
-            {
-              tenant: identity.admission.tenant,
-              resource: identity.resource,
-              sessionId: identity.sessionId,
-              sessionIncarnation: identity.sessionIncarnation,
-            },
-            correlationId,
-            command
-          );
-          fixture.claims++;
-          if (identity.resource === 'stale') {
-            fixture.app.oracle.execute({
-              operationId: 'stale-other-writer',
-              expectedVersion: 0,
-              amount: 1,
-            });
-          }
-          return { generation: 0, currentGeneration: () => 0 };
+  ...applicationReceiptOutcomeOptions({
+    adapters: [applicationAdapter],
+    verifierRegistry,
+    verifier: { id: VERIFIER, version: VERSION },
+    authorize(request) {
+      const { identity, source, verifier, correlationId } = request;
+      if (
+        source.id !== SOURCE ||
+        source.capability !== CAPABILITY ||
+        source.authorization !== 'required' ||
+        source.correlation !== 'required' ||
+        verifier.id !== VERIFIER ||
+        verifier.version !== VERSION ||
+        identity.admission.actor !== 'agent' ||
+        identity.admission.mode !== 'qa' ||
+        identity.admission.tenant !== TENANT ||
+        identity.adapter !== ADAPTER
+      )
+        return undefined;
+      const fixture = fixtures.get(identity.resource);
+      if (!fixture || fixture.closed) return undefined;
+      const command = counterCommand(verifier.input);
+      if (correlationId !== command.operationId) return undefined;
+      fixture.app.claimIntent(
+        {
+          tenant: identity.admission.tenant,
+          resource: identity.resource,
+          sessionId: identity.sessionId,
+          sessionIncarnation: identity.sessionIncarnation,
         },
-        evidenceRefs: (receipt) => [`fixture-ui-event-${receipt.eventId}`],
-      }),
-    ]),
+        correlationId,
+        command
+      );
+      fixture.claimScope = Object.freeze({ ...identity });
+      fixture.claims++;
+      if (identity.resource === 'stale') {
+        fixture.app.oracle.execute({
+          operationId: 'stale-other-writer',
+          expectedVersion: 0,
+          amount: 1,
+        });
+      }
+      return { generation: 0, currentGeneration: () => 0 };
+    },
+    evidenceRefs: (receipt) => [`fixture-ui-event-${receipt.eventId}`],
+  }),
 });
 const baseUrl = await server.listen({ port: 0, host: '127.0.0.1' });
 
@@ -237,7 +341,7 @@ function shutdown() {
   shuttingDown ??= (async () => {
     const settled = await Promise.allSettled([
       server.close(),
-      ...[...fixtures.values()].map((fixture) => fixture.app.close()),
+      ...[...fixtures.keys()].map((name) => closeFixture(name)),
     ]);
     const rejected = settled.find((entry) => entry.status === 'rejected');
     if (rejected) throw rejected.reason;
@@ -275,23 +379,29 @@ process.on('message', ({ id, method, params }) => {
         assert.ok(CASES.has(name), 'Unknown CLI outcome fixture case');
         assert.ok(!fixtures.has(name), 'CLI outcome fixture already exists');
         const app = await startVersionedApp({
-          ...(name === 'ignored' ? { ignoreUiClicks: true } : {}),
+          ...(name === 'ignored' || name === 'api-shortcut' || name === 'recipe-broken'
+            ? { ignoreUiClicks: true }
+            : {}),
           ...(name === 'lost-response' ? { loseFirstResponse: true } : {}),
         });
-        fixtures.set(name, { app, issued: undefined, claims: 0, reads: 0 });
+        fixtures.set(name, {
+          app,
+          url: app.url,
+          closed: false,
+          issued: undefined,
+          claims: 0,
+          claimScope: undefined,
+          reads: 0,
+          actions: 0,
+          shortcuts: 0,
+        });
         result = { url: app.url };
+      } else if (method === 'closeFixture') {
+        result = await closeFixture(params?.name);
+      } else if (method === 'fixtureState') {
+        result = stateOfFixture(params?.name);
       } else if (method === 'oracle') {
-        const fixture = requireFixture(params?.name);
-        const receipt = fixture.issued
-          ? (fixture.app.intentReceipt(fixture.issued.scope, fixture.issued.command.operationId) ??
-            null)
-          : null;
-        result = {
-          snapshot: fixture.app.oracle.snapshot(),
-          receipt,
-          claims: fixture.claims,
-          reads: fixture.reads,
-        };
+        result = stateOfFixture(params?.name);
       } else {
         throw new Error('Unknown CLI outcome child method');
       }
@@ -302,4 +412,4 @@ process.on('message', ({ id, method, params }) => {
   });
 });
 
-reply({ kind: 'ready', baseUrl, modules });
+reply({ kind: 'ready', baseUrl, modules, fixture: { id: ADAPTER, version: VERSION } });

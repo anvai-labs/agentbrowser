@@ -12,6 +12,7 @@ export * from './validators.js';
 export * from './contracts.js';
 export * from './errors.js';
 export * from './wire-action.js';
+export * from './wire-paths.js';
 
 export * from './control.js';
 export * from './application.js';
@@ -20,3 +21,4 @@ export * from './interaction-guidance.js';
 export * from './plan.js';
 export * from './mode-profile.js';
 export * from './outcome.js';
+export * from './test-run.js';

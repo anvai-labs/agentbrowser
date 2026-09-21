@@ -5,6 +5,45 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [1.9.1] - 2026-09-20
+
+### Added
+
+- CLI cookie-file handoff: `session create --cookies-file <path>` accepts canonical
+  JSON, Netscape cookie files or explicitly selected Chrome DevTools TSV. Local
+  normalization reuses the session cookie contract and bounded input reader.
+  `session cookies <id> --output <path>` creates a private, exclusive JSON export
+  and prints only a count/path receipt. Inline `--cookies` remains compatible.
+- Completed the bounded T3 regression vertical: shared report contracts, navigation
+  reset, CLI `test evaluate`, Node test integration, JUnit/HTML reports, artifact
+  links and packaged live qualification (#212, #214, #223, #225–#227, #229–#231).
+
+### Fixed
+
+- Bulk-form verification now checks committed widget state and revalidates the
+  original node and block before acting; transient display text cannot stand in
+  for a committed value (#232).
+- Foundation alignment removes duplicated command/route declarations and pins
+  OpenAPI, SDK/CLI/MCP contracts, mode catalogs and verifier composition to their
+  shared owners (#213, #215–#221, #224).
+- Local development, CI, release packaging and container builds use Node 24.21.0.
+  Node 22 remains the supported minimum (#228).
+
+### Qualification and limits
+
+- Cookie files are bounded to 1 MiB and 1000 entries. Malformed, expired, ambiguous
+  or unsupported input is refused before session creation. Partitioned cookies
+  require explicit whole-entry omission; partition semantics are not supported.
+  Existing files and symlink output paths cannot be overwritten. The existing
+  packaged acceptance harness exercises all three imports, authenticated navigation,
+  private export/re-import and refusal controls with synthetic credentials.
+- T3 and widget checks qualify controlled fixtures. Full job applications, popup
+  ownership, broader widget coverage, production verification/G6, durable recovery
+  (T5) and installed external-harness qualification (T8) remain open. No new service
+  endpoint, runtime dependency, MCP tool or CI job is introduced by cookie handoff.
+  See the [cookie contract](docs/spec/design/cli-cookie-file-handoff.md) and
+  [future job checkpoint](docs/spec/design/t6-job-application-checkpoint.md).
+
 ## [1.9.0] - 2026-09-19
 
 ### Added
