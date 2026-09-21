@@ -1,7 +1,7 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
 Rechecked published 1.9.1 at `310e01d43982824caac2c63ed8d98355e17efdce`
-and develop `57124750321aa5b12b7e268f5689adb5b967f70b` (PR #246).
+and develop `9a87b49ec3a2cfb477ab2261b1535cc88abf73c2` (PR #247).
 The [release ladder](release-1.9.1.md) includes Bun CLI/MCP artifacts,
 Node 24 service qualification, Homebrew and develop back-sync. Existing browser
 sessions were preserved; an upgraded installed binary does not prove every running
@@ -21,7 +21,7 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T3 QA regression | Complete, released | 100% | Broader provisioning and demand-backed report adapters are follow-ups |
 | T4 application operations/parity | Active | ~40% | Independent UI/API oracle, binding UX, production evidence; callback repair merged #236 |
 | T5 durable recovery | Not started | 0% | Design, journal/recovery and process-loss qualification |
-| T6 forms/operations | Active | ~40% | Public full-payload consent, candidate identity/eligibility and live qualification; native form witness #246 merged; internal evidence-review lifecycle under qualification |
+| T6 forms/operations | Active | ~40% | Public full-payload consent, candidate identity/eligibility and live qualification; internal evidence review #247 merged; configured public inspection/decision under qualification |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
 | T8 installed harnesses | Not qualified | 0% | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |
 | T9 release hardening | Recurring | 100% of 1.9.1 checkpoint | Repeat per later release |
@@ -142,3 +142,14 @@ hooks passed 2,618 tests with 24 existing skips. The next
 [internal evidence review](../design/t6-evidence-review-binding.md) reuses the existing
 ApprovalGate and scoped evidence owners. Its [qualification](t6-evidence-review-binding.md)
 keeps public disclosure policy and atomic submission as explicit follow-ups.
+
+
+Internal evidence review merged as #247 at `9a87b49`, preserving reviewed head
+`4bf116b` and tree `14d3582`. PR run `35640744315` and post-merge run `35641304408`
+each passed all eight jobs without reruns; independent review returned SHIP. Normal
+hooks passed 2,664 tests with 24 existing skips. The next
+[public inspection/decision slice](../design/t6-public-evidence-review.md) shares
+existing routes, SDK and CLI with a trusted deployment source resolver; see
+[qualification](t6-public-evidence-review.md). C3 atomic submission, production
+sources and live qualification remain open. Milestone count remains 3/9; T4/T6
+estimates stay conservative and published 1.9.1 is unchanged.

@@ -66,6 +66,8 @@ declare module 'fastify' {
 }
 
 export interface ServerOptions {
+  /** Trusted embedding source selection for private evidence-backed approval records. */
+  evidenceReviewProvider?: import('./service.js').ServiceDependencies['evidenceReviewProvider'];
   /** Operator-owned rules. Client-supplied session policy can only restrict these. */
   approvalPolicy?: import('@agentbrowser/core').ActionRiskPolicyOptions;
   /** Trusted embedding only; session host rules can restrict but never weaken these rules. */
@@ -304,6 +306,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     });
   const service = new AgentBrowserService({
     engine,
+    ...(options.evidenceReviewProvider !== undefined
+      ? { evidenceReviewProvider: options.evidenceReviewProvider }
+      : {}),
     ...(options.networkPolicy ? { networkPolicy: options.networkPolicy } : {}),
     ...((options.approvalPolicy ?? process.env.AGENTBROWSER_APPROVAL_POLICY) !== undefined
       ? {

@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { type PreparedEvidenceReview, TrustedEvidenceSourceRegistry } from '@agentbrowser/control';
 import { canonicalJson } from '@agentbrowser/core';
 import type { EnginePage } from '@agentbrowser/engine';
@@ -10,7 +12,14 @@ import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
 import { NetworkPolicy } from '@agentbrowser/policy';
 import type { Page } from 'playwright';
 import { expect, it, vi } from 'vitest';
-import { AgentBrowserService, type ServiceOutcomeEvidenceContext } from './service.js';
+import { runAgentCli } from '../../../scripts/cli-outcome-acceptance.mjs';
+import { AgentBrowserClient } from '../../sdk-typescript/src/client.js';
+import { buildServer } from './server.js';
+import {
+  AgentBrowserService,
+  type ServiceDependencies,
+  type ServiceOutcomeEvidenceContext,
+} from './service.js';
 import { createDraftWitnessCollector } from './test-support/application-draft-evidence.js';
 import { startDraftFixture } from './test-support/application-draft-http.js';
 import { createApplicationDraft } from './test-support/application-draft.js';
@@ -42,7 +51,15 @@ async function fixture(
   const permissionOwnerId = randomUUID();
   let permitted = true;
   const verifier = { id: 'synthetic-draft-witness', version: 'v1', input: {} };
-  const service = new AgentBrowserService({
+  let resolveReview: ServiceDependencies['evidenceReviewProvider'];
+  const resolutions = vi.fn((request: Parameters<NonNullable<typeof resolveReview>>[0]) =>
+    resolveReview?.(request)
+  );
+  const server = await buildServer({
+    apiKeys: new Map(
+      ['owner', 'other'].map((key) => [createHash('sha256').update(key).digest('hex'), key])
+    ),
+    evidenceReviewProvider: resolutions,
     engine,
     networkPolicy: new NetworkPolicy({ blockLoopback: false, blockPrivateIPs: false }),
     applicationAdapters: [draft.adapter],
@@ -73,17 +90,39 @@ async function fixture(
     },
   });
   const close = async () => {
-    await service.shutdown();
+    await server.close();
     await http.close();
     await rm(directory, { recursive: true, force: true });
   };
   try {
-    const { sessionId } = await service.createSession({
-      tenantId: 'owner',
-      controlMode: 'delegated',
-      headless: true,
-      ...(options.review ? { approval: { review: 'operator' as const } } : {}),
-    });
+    // Capture the server-owned service only in this test; production has no raw-service hook.
+    let captured: AgentBrowserService | undefined;
+    const original = AgentBrowserService.prototype.createSession;
+    const capture = vi
+      .spyOn(AgentBrowserService.prototype, 'createSession')
+      .mockImplementation(function (this: AgentBrowserService, request) {
+        captured = this;
+        return original.call(this, request);
+      });
+    let sessionId: string;
+    try {
+      const created = await server.inject({
+        method: 'POST',
+        url: '/v1/sessions',
+        headers: { authorization: 'Bearer owner' },
+        payload: {
+          controlMode: 'delegated',
+          headless: true,
+          ...(options.review ? { policy: { approval: { review: 'operator' } } } : {}),
+        },
+      });
+      expect(created.statusCode).toBe(201);
+      sessionId = created.json().sessionId;
+    } finally {
+      capture.mockRestore();
+    }
+    assert(captured);
+    const service = captured;
     permittedSession = sessionId;
     const operator = { actor: 'operator' as const, tenant: 'owner' };
     const run = async <T>(callback: () => Promise<T>): Promise<T> => {
@@ -188,29 +227,45 @@ async function fixture(
         expect(service.authority.didDispatchInScope(sessionId)).toBe(false);
         return result;
       });
+    const composition = () => {
+      const { collector, application, page } = prepareCollector();
+      return {
+        action: {
+          intent: 'draft',
+          destination: expectedApplication.destination,
+          job: expectedApplication.job,
+        },
+        source: {
+          ownerId: permissionOwnerId,
+          contract: { id: 'synthetic-native-draft', version: '1' },
+          permission: {
+            generation: permissionGeneration,
+            currentGeneration: () => permissionGeneration,
+          },
+          assertAuthorized() {
+            application.assertAuthorized();
+            page.assertAuthority();
+          },
+          collect: collector,
+        },
+      };
+    };
+    resolveReview = (request) => {
+      if (
+        request.identity.tenant !== 'owner' ||
+        request.identity.sessionId !== sessionId ||
+        request.identity.sessionIncarnation !== expectedPage.sessionIncarnation ||
+        request.identity.pageId !== pageId ||
+        request.source.ownerId !== permissionOwnerId ||
+        request.source.contract.id !== 'synthetic-native-draft' ||
+        request.source.contract.version !== '1'
+      )
+        return undefined;
+      return composition();
+    };
     const review = <T>(callback: (prepared: PreparedEvidenceReview) => Promise<T>) =>
       run(async () => {
-        const { collector, application, page } = prepareCollector();
-        const prepared = service.prepareEvidenceReviewInScope(sessionId, pageId, {
-          action: {
-            intent: 'draft',
-            destination: expectedApplication.destination,
-            job: expectedApplication.job,
-          },
-          source: {
-            ownerId: permissionOwnerId,
-            contract: { id: 'synthetic-native-draft', version: '1' },
-            permission: {
-              generation: permissionGeneration,
-              currentGeneration: () => permissionGeneration,
-            },
-            assertAuthorized() {
-              application.assertAuthorized();
-              page.assertAuthority();
-            },
-            collect: collector,
-          },
-        });
+        const prepared = service.prepareEvidenceReviewInScope(sessionId, pageId, composition());
         const result = await callback(prepared);
         expect(service.authority.didDispatchInScope(sessionId)).toBe(false);
         return result;
@@ -218,6 +273,10 @@ async function fixture(
     return {
       draft,
       http,
+      server,
+      sessionId,
+      resolutions,
+      dispatch: vi.spyOn(raw, 'act'),
       service,
       backing,
       collect,
@@ -235,6 +294,131 @@ async function fixture(
     throw error;
   }
 }
+
+it('inspects and decides qualified draft evidence through REST, SDK and compiled CLI without dispatch', async () => {
+  const f = await fixture({ review: true });
+  const signal = new AbortController().signal;
+  const headers = { authorization: 'Bearer owner' };
+  try {
+    const token = await f.review((review) => review.generate(signal));
+    const path = `/v1/sessions/${f.sessionId}/approvals/${token.tokenId}`;
+    const get = () => f.server.inject({ method: 'GET', url: path, headers });
+    const inspected = await get();
+    expect(inspected.statusCode).toBe(200);
+    expect(inspected.headers['cache-control']).toBe('no-store');
+    expect(inspected.json()).toEqual(token);
+    await f.server.listen({ host: '127.0.0.1', port: 0 });
+    const baseUrl = `http://127.0.0.1:${(f.server.server.address() as AddressInfo).port}`;
+    const client = new AgentBrowserClient({ baseUrl, apiKey: 'owner' });
+    expect(await client.sessions.approval(f.sessionId, token.tokenId)).toEqual(token);
+    const cli = fileURLToPath(new URL('../../cli/dist/bin.js', import.meta.url));
+    const invoke = (args: string[]) =>
+      runAgentCli([process.execPath, cli, '--base-url', baseUrl, ...args], {
+        env: process.env,
+        token: 'owner',
+      });
+    const text = await invoke(['session', 'approval', f.sessionId, token.tokenId]);
+    expect(text.stdout.trim()).toBe(`${token.tokenId}: pending`);
+    expect(text.stderr).toBe('');
+    const json = await invoke(['--json', 'session', 'approval', f.sessionId, token.tokenId]);
+    expect(JSON.parse(json.stdout)).toEqual(token);
+    const approved = await invoke([
+      '--json',
+      '--operation-id',
+      'public-evidence-approve',
+      'session',
+      'approval-decide',
+      f.sessionId,
+      token.tokenId,
+      '--decision',
+      'approve',
+    ]);
+    expect(JSON.parse(approved.stdout)).toMatchObject({
+      tokenId: token.tokenId,
+      status: 'approved',
+      action: token.action,
+    });
+    expect((await client.sessions.approval(f.sessionId, token.tokenId)).status).toBe('approved');
+    f.setPermission(false);
+    expect((await get()).statusCode).toBe(404);
+    const replay = await f.server.inject({
+      method: 'POST',
+      url: path,
+      headers: { ...headers, 'x-agentbrowser-operation-id': 'public-evidence-approve' },
+      payload: { decision: 'approve' },
+    });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json()).toMatchObject({ replay: true });
+    expect(replay.body).not.toContain('Synthetic Person');
+    expect(replay.json()).not.toHaveProperty('action');
+    expect(replay.json()).not.toHaveProperty('witness');
+    f.setPermission(true);
+    expect((await get()).statusCode).toBe(404);
+    expect(await f.review((review) => review.consume(token.tokenId, signal))).toBe(false);
+    const fresh = await f.review((review) => review.generate(signal));
+    expect(
+      (await client.sessions.decideApproval(f.sessionId, fresh.tokenId, 'approve')).status
+    ).toBe('approved');
+    await f.backing.locator('#referral').fill('Updated after review');
+    await expect.poll(f.diagnostics).toMatchObject({ pending: 0, failed: false });
+    expect(await f.review((review) => review.consume(fresh.tokenId, signal))).toBe(false);
+    expect(f.dispatch).not.toHaveBeenCalled();
+    expect(f.http.submissionAttempts()).toBe(0);
+  } finally {
+    await f.close();
+  }
+}, 30000);
+
+it('refuses foreign and delegated evidence review before invoking the trusted resolver', async () => {
+  const f = await fixture({ review: true });
+  try {
+    const token = await f.review((review) => review.generate(new AbortController().signal));
+    const path = `/v1/sessions/${f.sessionId}`;
+    const url = `${path}/approvals/${token.tokenId}`;
+    for (const method of ['GET', 'POST'] as const) {
+      const foreign = await f.server.inject({
+        method,
+        url,
+        headers: {
+          authorization: 'Bearer other',
+          'x-agentbrowser-operation-id': `foreign-${method}`,
+        },
+        ...(method === 'POST' ? { payload: { decision: 'approve' } } : {}),
+      });
+      expect(foreign.statusCode).toBe(403);
+    }
+    const owner = { authorization: 'Bearer owner' };
+    const review = await f.server.inject({
+      method: 'POST',
+      url: `${path}/control/prepare-resume`,
+      headers: owner,
+    });
+    const grant = await f.server.inject({
+      method: 'POST',
+      url: `${path}/control/delegate`,
+      headers: owner,
+      payload: { epoch: review.json().epoch, mode: 'forms' },
+    });
+    expect(grant.statusCode).toBe(200);
+    for (const method of ['GET', 'POST'] as const) {
+      const denied = await f.server.inject({
+        method,
+        url,
+        headers: {
+          authorization: `Bearer ${grant.json().token}`,
+          'x-agentbrowser-operation-id': `delegated-${method}`,
+        },
+        ...(method === 'POST' ? { payload: { decision: 'approve' } } : {}),
+      });
+      expect(denied.statusCode).toBe(403);
+    }
+    expect(f.resolutions).not.toHaveBeenCalled();
+    expect(f.dispatch).not.toHaveBeenCalled();
+    expect(f.http.submissionAttempts()).toBe(0);
+  } finally {
+    await f.close();
+  }
+}, 30000);
 
 it('reviews and consumes the complete real draft witness across operator admissions without submission', async () => {
   const f = await fixture({ review: true });

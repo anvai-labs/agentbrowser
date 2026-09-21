@@ -314,7 +314,7 @@ export function buildCli(deps: CliDependencies): Cli {
       const approvalRead = session
         .command('approval <sessionId> <tokenId>')
         .description(
-          'read operator approval status; --json includes private action data: use a private output destination'
+          'read operator approval status; --json includes private action/evidence data when configured: use a private output destination'
         )
         .action(
           action(async (ctx, sessionId: string, tokenId: string) => {
@@ -333,7 +333,7 @@ export function buildCli(deps: CliDependencies): Cli {
       const approvalDecide = session
         .command('approval-decide <sessionId> <tokenId>')
         .description(
-          'approve or deny the reviewed action; --json includes private action data, not full-form or file-content consent'
+          'approve or deny the stored review; qualified evidence requires service configuration; does not submit'
         )
         .requiredOption('--decision <decision>', 'approve or deny')
         .action(

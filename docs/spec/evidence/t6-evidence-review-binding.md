@@ -48,8 +48,9 @@ consumption recollects and compares. An abandoned/revoked generation can leave a
 inaccessible token until existing expiry/cleanup; it cannot dispatch or restore consent.
 Gate success alone is not an execution permit or an atomic application commit.
 
-Existing public inspection/decision refuses reserved records until source selection
-and disclosure policy are designed and qualified there. This does not add a CLI/MCP
+At the C2c boundary, public inspection/decision refuses reserved records. The later
+[C2d slice](t6-public-evidence-review.md) qualifies configured source selection and
+private disclosure through those existing surfaces. This does not add a CLI/MCP
 command or claim a usable live-portal consent flow. C3 atomic app-owned dispatch and
 independent acceptance remain pending; T5 owns process-loss recovery. Published
 1.9.1 is unchanged and finite milestone completion remains 3/9.
