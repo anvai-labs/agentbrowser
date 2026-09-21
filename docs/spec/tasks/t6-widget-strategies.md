@@ -72,8 +72,8 @@ not close complete-payload consent or live application acceptance.
 
 The [reviewed-payload consent sequence](../design/t6-reviewed-payload-consent.md)
 starts with C0 token ownership and atomic service consumption. It reuses the existing
-bounded canonical serializer and ApprovalGate; C1 operator approval, C2 live payload
-witnesses and C3 qualified submission remain design/tasks, not delivered capabilities.
+bounded canonical serializer and ApprovalGate; C1a operator action approval is delivered in #242; C2 live payload
+consent and C3 qualified submission remain pending.
 See the [C0 evidence](../evidence/t6-approval-consumption.md). Legacy token echo is
 action confirmation, not proof of independent review or complete-form consent.
 
@@ -82,7 +82,12 @@ extends the existing control/authority owners before adding operator-approval su
 It addresses same-epoch review invalidation and configuration cleanup; no approval
 CLI/API or live-submit capability follows from this internal context projection.
 
-The authority foundation merged in #241. The next [C1a implementation](../design/t6-operator-approval.md)
+The authority foundation merged in #241. The [C1a implementation](../design/t6-operator-approval.md)
 adds explicit operator action approval through the existing REST/SDK/CLI owners,
 including token inspection, approve/deny and ordinary action consumption. This is
 operator-only action consent, not full-payload consent or live-submit qualification.
+
+C1a merged in #242. The [C2a draft oracle](../design/t6-draft-oracle.md) qualifies
+a test-only versioned application contract and independent UI/API parity, including
+server-received attachment bytes. [Evidence](../evidence/t6-draft-oracle.md) separates
+this candidate from C2b service-collected witness binding and C3 accepted submission.

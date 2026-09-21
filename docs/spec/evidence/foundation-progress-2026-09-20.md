@@ -1,7 +1,7 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
 Rechecked published 1.9.1 at `310e01d43982824caac2c63ed8d98355e17efdce`
-and develop `a57b1433241530329a8a2f6f83966bd484c6c263` (PR #241).
+and develop `d5cef8cb004864cc9bb9a4e031c6b610d4018807` (PR #242).
 The [release ladder](release-1.9.1.md) includes Bun CLI/MCP artifacts,
 Node 24 service qualification, Homebrew and develop back-sync. Existing browser
 sessions were preserved; an upgraded installed binary does not prove every running
@@ -21,7 +21,7 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T3 QA regression | Complete, released | 100% | Broader provisioning and demand-backed report adapters are follow-ups |
 | T4 application operations/parity | Active | ~40% | Independent UI/API oracle, binding UX, production evidence; callback repair merged #236 |
 | T5 durable recovery | Not started | 0% | Design, journal/recovery and process-loss qualification |
-| T6 forms/operations | Active | ~40% | Full-payload consent, candidate identity/eligibility and live qualification; C1 authority foundation #241 merged, explicit operator action approval candidate implemented |
+| T6 forms/operations | Active | ~40% | Full-payload consent, candidate identity/eligibility and live qualification; operator action approval #242 merged; C2a draft-oracle candidate qualified locally |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
 | T8 installed harnesses | Not qualified | 0% | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |
 | T9 release hardening | Recurring | 100% of 1.9.1 checkpoint | Repeat per later release |
@@ -97,9 +97,17 @@ tree. PR run `35565250458` and post-merge run `35565613386` each passed all eigh
 jobs without reruns; independent review returned SHIP. The next
 [C1 foundation](../design/t6-review-authority-binding.md) adds a control-review
 version and authority-owned review binding, with captured-owner configuration cleanup.
-It merged as #241 at the current baseline, with PR run `35567615627` and post-merge
+It merged as #241 at `a57b143`, with PR run `35567615627` and post-merge
 run `35567910796` each passing all eight jobs. That foundation alone adds no approval
-surface. The [C1a candidate](../design/t6-operator-approval.md) now implements explicit
+surface. The [C1a implementation](../design/t6-operator-approval.md) now implements explicit
 operator action decisions through REST/SDK/CLI, sharing the token owner, authority
 and operation ledger. Complete payload consent and qualified submission remain pending;
 milestone count and conservative estimates are unchanged.
+
+C1a merged in #242 at `d5cef8c`, preserving reviewed head `8118754` and tree
+`69818b4`. PR run `35570814721` and post-merge run `35571215331` passed all eight
+jobs; independent review returned SHIP. The next [C2a draft oracle](../design/t6-draft-oracle.md)
+qualifies a named application-owned draft and received attachment bytes through the
+existing UI and application interfaces; see [evidence](t6-draft-oracle.md). This is
+a test-only candidate, not full-payload consent. C2b witness binding and C3 submission
+remain pending, and the milestone count/estimates remain unchanged.
