@@ -43,7 +43,7 @@ branches and use the reviewed final commit identity for each merge.
 Main is protected with required checks, admin enforcement and force-push/deletion
 blocks. Develop is currently unprotected, so each develop merge additionally requires
 an explicit operational review and all eight required checks on the exact candidate;
-do not infer equivalent branch enforcement. The published baseline is **1.9.0** at exact
+do not infer equivalent branch enforcement. The previous **1.9.0** checkpoint used exact
 main/tag commit `02f263f3764b41f923553c69c11dff69c819fae5`. Promotion PR 210, all eight main
 checks and all twelve release jobs passed; published asset, checksum, npm and
 package acceptance completed. Main was synchronized back to develop by PR 211
@@ -55,30 +55,35 @@ T3 is complete on develop through PR 231 at merge `cc4d72e0deecde9896896f1f20ebc
 its final PR and post-merge runs each passed all eight checks. The bounded T6 widget
 commitment repair then merged through PR 232 at `d510a56d5d69e0cc9afe17dc56d27a0a11987cff`;
 its PR run `35539291664` and post-merge run `35539537406` each passed all eight jobs.
-Neither develop checkpoint creates a new release.
-The 1.9.0 candidate's tag ancestry and delivery are verified; a reusable ancestry
+Both are now included in **1.9.1**, along with CLI cookie-file handoff from PR 233.
+Promotion PR 234 and all eight main checks passed at
+`310e01d43982824caac2c63ed8d98355e17efdce`; the tag matches this commit and all twelve
+release jobs passed. Published artifacts and the local Homebrew upgrade passed
+acceptance. See the [1.9.1 delivery evidence](../evidence/release-1.9.1.md).
+The 1.9.1 candidate's tag ancestry and delivery are verified; a reusable ancestry
 gate, least-privilege publication review and measured runner-use improvements remain
 open. T9 stays active because every candidate needs fresh review, exact-head CI,
 promotion and publication evidence.
 
-## Next checkpoint
+## Delivered checkpoint and remaining work
 
 The owner selected **1.9.1** on 2026-09-20 as a checkpoint of integrated T3 regression
 qualification, foundation alignment, Node 24 baseline and Q0 widget commitment fixes,
 and explicitly added [CLI cookie-file handoff](../design/cli-cookie-file-handoff.md).
-The cookie slice requires failing-first parser/CLI tests and a real compiled-CLI import,
-authenticated fixture, private export and re-import round trip through the packaged service.
-Reuse existing jobs and acceptance hosts; no new runtime dependency or CI job is needed.
+The cookie slice passed failing-first parser/CLI tests and real compiled-CLI import,
+authenticated fixture, private export and re-import checks through the packaged and
+installed service. It reuses existing jobs and acceptance hosts with no new runtime
+dependency or CI job.
 
 The broader [job-application workflow](../design/t6-job-application-checkpoint.md),
 Q0a custom-adapter callback hardening, popup ownership/readiness, production verifier
 configuration, durable recovery and installed third-party harness qualification remain
 deferred. Do not represent these as completed or supported by cookie import.
 
-Installed 1.9.0 remains the released baseline. Prepare the version bump on the release
-candidate. Do not tag or publish until the specific capabilities pass their design gates,
-independent review, exact-head and post-merge CI and protected-main promotion. Then
-verify the published artifacts and complete the existing tap delivery ladder.
+The published and locally installed baseline is **1.9.1**. Existing running services
+were preserved rather than restarted during qualification. Every later candidate still
+requires its own design gates, review, exact-head/post-merge CI, protected-main promotion,
+artifact verification and tap delivery.
 
 ## Runtime checkpoint
 

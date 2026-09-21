@@ -120,7 +120,7 @@ returns the service's cookies for a seeded session.
 
 ## Implementation record
 
-### 1.9.1 CLI file-handoff extension (candidate)
+### 1.9.1 CLI file-handoff extension (released)
 
 The [bounded file-handoff design](../spec/design/cli-cookie-file-handoff.md) closes the
 remaining shell UX gap: `session create --cookies-file` reads a local credential file
