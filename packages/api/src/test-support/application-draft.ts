@@ -6,6 +6,11 @@ import {
   defineApplicationOperation,
 } from '@agentbrowser/control';
 import { ControlError, canonicalJson } from '@agentbrowser/core';
+import {
+  CONTROL_OPERATION_ID,
+  VERIFICATION_SNAPSHOT_LIMITS,
+  snapshotJsonData,
+} from '@agentbrowser/protocol';
 
 /** Common fixture limit leaves room for canonical base64 inside the existing JSON envelope. */
 export const DRAFT_UPLOAD_MAX_BYTES = 32 * 1024;
@@ -32,6 +37,17 @@ export interface DraftSnapshot {
   complete: boolean;
   missing: string[];
 }
+/** App-owned test acceptance, independent of service execution results. No private file bytes. */
+export interface DraftAcceptance {
+  contract: { id: 'synthetic-application-acceptance'; version: 1 };
+  submissionId: string;
+  operationId: string;
+  tenant: string;
+  resource: string;
+  intent: 'submit';
+  accepted: DraftSnapshot;
+  committedVersion: number;
+}
 type Patch = Partial<Omit<DraftFields, 'source'>>;
 type Upload = { name: string; type: string; bytes: Uint8Array };
 
@@ -40,7 +56,9 @@ function invalid(): never {
 }
 function jsonObject(input: unknown): Record<string, unknown> {
   try {
-    const value: unknown = JSON.parse(canonicalJson(input));
+    const value: unknown = JSON.parse(
+      canonicalJson(snapshotJsonData(input, VERIFICATION_SNAPSHOT_LIMITS))
+    );
     if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid();
     return value as Record<string, unknown>;
   } catch {
@@ -184,6 +202,9 @@ export function createApplicationDraft(options: {
     source: 'direct',
   };
   let attachment: DraftSnapshot['attachment'] = null;
+  let attachmentBytes: Uint8Array | null = null;
+  let acceptance: { command: string; value: DraftAcceptance; bytes: Uint8Array } | undefined;
+  let submissions = 0;
   const read = (): DraftSnapshot => {
     const missing: string[] = [];
     for (const key of ['fullName', 'currentCompany', 'previousCompany', 'preference'] as const)
@@ -206,6 +227,7 @@ export function createApplicationDraft(options: {
     };
   };
   const checkVersion = (expectedVersion: unknown) => {
+    if (acceptance) throw new Error('DRAFT_SUBMITTED');
     if (!Number.isSafeInteger(expectedVersion) || Number(expectedVersion) < 0) invalid();
     if (expectedVersion !== version) throw new Error('VERSION_CONFLICT');
     if (version === Number.MAX_SAFE_INTEGER) invalid();
@@ -220,6 +242,7 @@ export function createApplicationDraft(options: {
   const upload = (expectedVersion: number, input: unknown): DraftSnapshot => {
     const file = parseUpload(input);
     checkVersion(expectedVersion);
+    attachmentBytes = file.bytes;
     attachment = {
       id: randomUUID(),
       name: file.name,
@@ -233,15 +256,68 @@ export function createApplicationDraft(options: {
   const remove = (expectedVersion: number): DraftSnapshot => {
     checkVersion(expectedVersion);
     attachment = null;
+    attachmentBytes = null;
     version++;
     return read();
   };
+  const receipt = (operationId: string): DraftAcceptance | null => {
+    if (typeof operationId !== 'string' || !CONTROL_OPERATION_ID.test(operationId)) invalid();
+    return acceptance?.value.operationId === operationId ? structuredClone(acceptance.value) : null;
+  };
+  // Direct test-owner seam only. It is deliberately absent from the public adapter/HTTP app.
+  const submit = (expectedVersion: number, input: unknown): DraftAcceptance => {
+    const command = jsonObject(input);
+    exactKeys(command, ['operationId', 'intent', 'expected']);
+    if (
+      command.intent !== 'submit' ||
+      typeof command.operationId !== 'string' ||
+      !CONTROL_OPERATION_ID.test(command.operationId) ||
+      !Number.isSafeInteger(expectedVersion) ||
+      expectedVersion < 0
+    )
+      invalid();
+    let fingerprint: string;
+    try {
+      fingerprint = canonicalJson({ expectedVersion, command });
+    } catch {
+      return invalid();
+    }
+    // A valid retry uses its original version; it must not become a second submission.
+    if (acceptance) {
+      if (command.operationId !== acceptance.value.operationId)
+        throw new Error('ALREADY_SUBMITTED');
+      if (fingerprint !== acceptance.command) throw new Error('OPERATION_CONFLICT');
+      return structuredClone(acceptance.value);
+    }
+    checkVersion(expectedVersion);
+    const current = read();
+    if (!current.complete || !attachmentBytes) throw new Error('DRAFT_INCOMPLETE');
+    if (canonicalJson(command.expected) !== canonicalJson(current))
+      throw new Error('PAYLOAD_MISMATCH');
+    const value: DraftAcceptance = {
+      contract: { id: 'synthetic-application-acceptance', version: 1 },
+      submissionId: randomUUID(),
+      operationId: command.operationId,
+      tenant,
+      resource,
+      intent: 'submit',
+      accepted: current,
+      committedVersion: version + 1,
+    };
+    // All input inspection is finished: no await or caller callback inside this commit.
+    acceptance = { command: fingerprint, value, bytes: attachmentBytes };
+    attachmentBytes = null;
+    version++;
+    submissions++;
+    return structuredClone(value);
+  };
+  const permitted = (scope: ApplicationScope) =>
+    !scope.signal.aborted && scope.tenant === tenant && scope.resource === resource;
   const commit = (
     scope: ApplicationScope,
     effect: () => DraftSnapshot
   ): ApplicationResult<DraftSnapshot> => {
-    if (scope.signal.aborted || scope.tenant !== tenant || scope.resource !== resource)
-      return { status: 'rejected', reason: 'INVALID_SCOPE' };
+    if (!permitted(scope)) return { status: 'rejected', reason: 'INVALID_SCOPE' };
     try {
       return { status: 'committed', value: effect() };
     } catch (error) {
@@ -258,7 +334,7 @@ export function createApplicationDraft(options: {
         mode: 'read',
         parse: empty,
         execute: async (_input, scope) =>
-          scope.signal.aborted || scope.tenant !== tenant || scope.resource !== resource
+          !permitted(scope)
             ? { status: 'rejected', reason: 'INVALID_SCOPE' }
             : { status: 'read', value: read() },
       }),
@@ -281,7 +357,17 @@ export function createApplicationDraft(options: {
           commit(scope, () => remove(scope.expectedVersion as number)),
       }),
     },
-    receipt: async () => null,
+    receipt: async (scope, operationId) => (permitted(scope) ? receipt(operationId) : null),
   };
-  return { read, update, upload, remove, adapter };
+  return {
+    read,
+    update,
+    upload,
+    remove,
+    adapter,
+    submit,
+    receipt,
+    submissionCount: () => submissions,
+    acceptedAttachment: () => (acceptance ? Buffer.from(acceptance.bytes) : null),
+  };
 }

@@ -117,6 +117,10 @@ keeps the default service fail-closed.
 
 ## C3 — dispatch and independent outcome (design)
 
+The [modular C3 design](t6-atomic-submission.md) starts with C3a, an atomic
+application-owner acceptance oracle, before shared consent enforcement (C3b) and
+public end-to-end submission/independent outcomes (C3c). See its explicit stop gates.
+
 Revalidate the approved envelope immediately before dispatch under the existing session
 authority and consume consent atomically. Use one operation ID and existing uncertainty
 reconciliation; response loss is never permission to click submit again. A server-side

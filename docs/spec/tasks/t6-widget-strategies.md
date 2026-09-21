@@ -112,3 +112,10 @@ trusted embedding supplies current source selection. It retains default refusal,
 private JSON/status-only text, current permission checks and internal drift detection.
 See [qualification](../evidence/t6-public-evidence-review.md). Public creation,
 atomic submission/acceptance and live ATS qualification remain open.
+
+
+C2d merged #248. The [C3 sequence](../design/t6-atomic-submission.md) starts with an
+atomic synthetic application acceptance oracle inside the existing draft owner; see
+[evidence](../evidence/t6-atomic-submission.md). Public submit remains unavailable.
+Mandatory shared consent enforcement and public acceptance qualification follow under
+separate design gates; this oracle alone does not complete T6.

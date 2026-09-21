@@ -52,7 +52,9 @@ Use existing application bind/discover/execute/read surfaces with injected trust
 adapter configuration. The adapter authorizes tenant/resource and exposes draft
 mutations and a read operation; it exposes no submit operation. Existing operation
 identity/replay applies to application writes. The fixture's raw upload transport
-collects bounded bytes before calling the owner. Submission routes refuse; the owner has no submitted state or submit mutation.
+collects bounded bytes before calling the owner. Submission routes refuse. At the C2a boundary the owner has no submitted state;
+the later [C3a oracle](t6-atomic-submission.md) adds direct test-only atomic acceptance
+while keeping both public submission paths unavailable.
 Count attempted submission requests to prove the refusal path ran. No live portal sessions are used.
 
 ## Failing-first delivery
