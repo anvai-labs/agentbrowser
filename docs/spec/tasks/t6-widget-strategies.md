@@ -42,7 +42,7 @@ second bulk orchestrator. This is a bounded T6 slice, not completion of T6: reus
 mapping, removal/rollback semantics, broader async/recycled-option coverage and
 cross-engine actual-surface qualification remain open.
 
-The [Q0 commitment repair](../evidence/t6-widget-commitment.md) is the current candidate.
+The [Q0 commitment repair](../evidence/t6-widget-commitment.md) shipped in 1.9.1 through PR #232.
 It restores four dormant tests, shares each strategy's commitment predicate between
 immediate/final verification, captures bounded known-markup chip membership, and
 reuses scoped resolution to reacquire refs between custom strategy actions. A real
