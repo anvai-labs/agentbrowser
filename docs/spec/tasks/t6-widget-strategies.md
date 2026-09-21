@@ -60,7 +60,12 @@ ownership and focus; native field semantics and commitment predicates stay share
 See the [qualification evidence](../evidence/t6-owned-popup-readiness.md); no arbitrary ATS coverage,
 rollback or reusable mapping claim follows.
 
-The next [mapping foundation](../design/t6-form-mapping.md) adds a pure protocol join,
+The [mapping foundation](../design/t6-form-mapping.md), merged in PR #238, adds a pure protocol join,
 offline CLI preparation and exact-URL/all-field preflight inside the same executor.
 See [evidence](../evidence/t6-form-mapping.md). This is one fully present stage;
 conditional stages, business/job identity and live workflow qualification remain open.
+
+The next [verified upload and draft slice](../design/t6-verified-upload-draft.md)
+reuses the upload action and a shared bounded file reader, then qualifies a synthetic
+CLI draft with an independent browser-file digest and final submit denied. It does
+not close complete-payload consent or live application acceptance.

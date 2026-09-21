@@ -24,3 +24,4 @@ export * from './outcome.js';
 export * from './test-run.js';
 
 export * from './form-mapping.js';
+export * from './upload.js';

@@ -183,6 +183,9 @@ export interface ServiceActRequest {
   /** Native-field comparison after one fill; no write replay. */
   expectValue?: string | undefined;
   values?: string[] | undefined;
+  paths?: string[] | undefined;
+  sha256?: string | undefined;
+  mimeType?: string | undefined;
   deltaX?: number | undefined;
   deltaY?: number | undefined;
   key?: string | undefined;

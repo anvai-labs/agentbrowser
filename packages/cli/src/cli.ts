@@ -1080,7 +1080,17 @@ export function buildCli(deps: CliDependencies): Cli {
 
       act
         .command('upload')
-        .description('attach local file(s) to a file input (ref optional when the page has one)')
+        .description(
+          'attach service-host file(s) to a file input (ref optional when the page has one)'
+        )
+        .option(
+          '--sha256 <digest>',
+          'verify and upload the same bytes: one regular file, at most 16 MiB, lowercase SHA-256'
+        )
+        .option(
+          '--mime-type <type>',
+          'MIME metadata for checked upload; requires --sha256 (default application/octet-stream)'
+        )
         .argument('<sessionId>')
         .argument('<pageId>')
         .argument(
@@ -1089,7 +1099,7 @@ export function buildCli(deps: CliDependencies): Cli {
         )
         .argument(
           '[paths...]',
-          "absolute local file path(s); they replace the input's current files"
+          "absolute service-host file path(s); they replace the input's current files"
         )
         .action(
           action(
@@ -1098,7 +1108,8 @@ export function buildCli(deps: CliDependencies): Cli {
               sessionId: string,
               pageId: string,
               refArg: string | undefined,
-              pathsArg: string[]
+              pathsArg: string[],
+              options: { sha256?: string; mimeType?: string }
             ) => {
               // commander fills the optional [ref] before the variadic paths,
               // so untargeted invocations parse their first path into the ref
@@ -1119,6 +1130,8 @@ export function buildCli(deps: CliDependencies): Cli {
                 action: 'upload',
                 ...(ref ? { target: refTarget(ref) } : {}),
                 paths,
+                ...(options.sha256 !== undefined ? { sha256: options.sha256 } : {}),
+                ...(options.mimeType !== undefined ? { mimeType: options.mimeType } : {}),
               });
             }
           )

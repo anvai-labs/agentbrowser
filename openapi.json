@@ -3129,6 +3129,17 @@
                       "type": "string"
                     }
                   },
+                  "sha256": {
+                    "pattern": "^[a-f0-9]{64}$",
+                    "description": "Opt-in integrity check of exactly one service-host regular file, at most 16 MiB; the verified bytes are uploaded.",
+                    "type": "string"
+                  },
+                  "mimeType": {
+                    "pattern": "^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$",
+                    "maxLength": 127,
+                    "description": "Upload metadata only; requires sha256. Defaults to application/octet-stream; does not validate content type.",
+                    "type": "string"
+                  },
                   "deltaX": {
                     "type": "number"
                   },
@@ -6704,6 +6715,17 @@
               "type": "string"
             }
           },
+          "sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "Opt-in integrity check of exactly one service-host regular file, at most 16 MiB; the verified bytes are uploaded.",
+            "type": "string"
+          },
+          "mimeType": {
+            "pattern": "^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$",
+            "maxLength": 127,
+            "description": "Upload metadata only; requires sha256. Defaults to application/octet-stream; does not validate content type.",
+            "type": "string"
+          },
           "deltaX": {
             "type": "number"
           },
@@ -7119,6 +7141,17 @@
                     "minLength": 1,
                     "type": "string"
                   }
+                },
+                "sha256": {
+                  "pattern": "^[a-f0-9]{64}$",
+                  "description": "Opt-in integrity check of exactly one service-host regular file, at most 16 MiB; the verified bytes are uploaded.",
+                  "type": "string"
+                },
+                "mimeType": {
+                  "pattern": "^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$",
+                  "maxLength": 127,
+                  "description": "Upload metadata only; requires sha256. Defaults to application/octet-stream; does not validate content type.",
+                  "type": "string"
                 },
                 "deltaX": {
                   "type": "number"
@@ -8432,7 +8465,7 @@
             "$ref": "#/components/schemas/PageState"
           },
           "result": {
-            "description": "Evidence payload, present only for actions that produce one. upload reports the attached files: {success, files:[{name,size}], inputFiles?:[names]} (files from the validated local paths, inputFiles read back from the live input)."
+            "description": "Evidence payload, present only for actions that produce one. upload reports the attached files: {success, files:[{name,size,sha256?}], inputFiles?:[names]} (checked uploads report the digest of the bytes supplied; legacy metadata comes from validated service-host paths; inputFiles is read from the live input)."
           }
         }
       }

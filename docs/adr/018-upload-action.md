@@ -86,9 +86,9 @@ every surface derives from the one `DELIVERED_ACTION_TYPES` tuple):
 - **Risk classification is unchanged.** `upload` is an ordinary action to
   the approval policy: operators who want a gate add an
   `{action: 'upload'}` rule. It is not auto-classified as
-  transaction/destructive — attaching a file is not by itself an
-  external side effect (the submit that sends it usually is, and is gated
-  as such).
+  transaction/destructive. A page may transmit files as soon as its file-input
+  event fires, so attachment can itself disclose data; do not assume final submit
+  is the first external effect. Configure approval before attaching sensitive files.
 
 ## Consequences
 
@@ -130,3 +130,18 @@ page could only refuse.
   hidden input and fails closed — callers re-observe with the token instead.
   The engine binds targeted uploads to the held element handle, so ordinal
   drift can only cause a refusal, never a mis-attachment.
+
+## Amendment: opt-in byte integrity
+
+The [verified upload design](../spec/design/t6-verified-upload-draft.md) extends
+the same action with `sha256` and optional `mimeType`. With a digest, exactly one
+service-host regular file is read through a bounded shared engine helper (16 MiB),
+hashed and supplied to Playwright as the same detached buffer. Symlinks, special
+files, instability and mismatches fail before setting input files. Successful
+checked receipts add the computed `sha256`; legacy multi-file paths remain unchanged.
+
+MIME metadata defaults to `application/octet-stream` and does not validate content.
+The digest proves supplied-byte identity, not applicant truth, whole-form approval
+or downstream acceptance. Existing action policy runs first; submit approval still
+does not bind the complete form and attached payload. Synthetic draft qualification
+keeps final submission denied.

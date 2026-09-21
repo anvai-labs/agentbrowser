@@ -84,6 +84,12 @@ describe('AgentBrowser CLI', () => {
       expect(lastJson().command.arguments).toContainEqual(
         expect.objectContaining({ name: 'paths', required: false, variadic: true })
       );
+      expect(lastJson().command.options).toContainEqual(
+        expect.objectContaining({ flags: '--sha256 <digest>', valueRequired: true })
+      );
+      expect(lastJson().command.options).toContainEqual(
+        expect.objectContaining({ flags: '--mime-type <type>', valueRequired: true })
+      );
       expect(deps.createClient).not.toHaveBeenCalled();
     });
 
@@ -667,6 +673,37 @@ describe('AgentBrowser CLI', () => {
         action: 'upload',
         paths: ['/tmp/a.pdf', '/tmp/b.pdf'],
       });
+    });
+
+    it('upload: forwards the expected digest and explicit MIME metadata', async () => {
+      expect(
+        await run(
+          'act',
+          'upload',
+          'ses_1',
+          'pg_1',
+          '/tmp/resume.pdf',
+          '--sha256',
+          'a'.repeat(64),
+          '--mime-type',
+          'application/pdf'
+        )
+      ).toBe(0);
+      expect(sessions.executeAction).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        action: 'upload',
+        paths: ['/tmp/resume.pdf'],
+        sha256: 'a'.repeat(64),
+        mimeType: 'application/pdf',
+      });
+    });
+
+    it.each([
+      ['/tmp/a.pdf', '--sha256', 'invalid'],
+      ['/tmp/a.pdf', '/tmp/b.pdf', '--sha256', 'a'.repeat(64)],
+      ['/tmp/a.pdf', '--mime-type', 'application/pdf'],
+    ])('upload: rejects invalid checked input before the service: %j', async (...args) => {
+      expect(await run('act', 'upload', 'ses_1', 'pg_1', ...args)).toBe(1);
+      expect(sessions.executeAction).not.toHaveBeenCalled();
     });
 
     it('upload: refuses with a usage error when no path is given', async () => {

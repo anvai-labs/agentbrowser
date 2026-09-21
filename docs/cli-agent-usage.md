@@ -1,10 +1,11 @@
 # AgentBrowser from shell-based agents
 
-Status: AgentBrowser 1.9.0 includes offline `describe`, bounded JSON input,
+Status: AgentBrowser 1.9.1 includes offline `describe`, bounded JSON input,
 plan/autofill result validation and receipt-correlated `outcome`. Its installed
 CLI/service qualification covers a controlled G4 fixture; it does not qualify a
-production evidence source, G6 independence or durable recovery. The develop candidate
-also provides offline `test evaluate`; it is absent from published 1.9.0.
+production evidence source, G6 independence or durable recovery. Offline `test
+evaluate` is included in 1.9.1. Develop adds reusable `form prepare`; the checked
+upload flags below belong to the next develop slice and are not in published 1.9.1.
 
 The CLI is a thin SDK client to the shared AgentBrowser service. It owns no browser
 session state or alternate executor. Use ordinary Bash/shell tools to inspect JSON;
@@ -35,7 +36,7 @@ request that child's path to expand it.
 `scope: "cli-command-definitions"` means installed CLI syntax, **not** live backend
 capabilities or granted permissions. This is metadata, not a complete action JSON
 schema by default. `describe autofill --schema`, `describe plan --schema`,
-`describe outcome --schema`, `describe application execute --schema`, and candidate
+`describe outcome --schema`, `describe application execute --schema`, and
 `describe test evaluate --schema` include
 canonical input and output schemas (plan input is an array, matching its CLI
 payload); other commands currently return `schemas: null` with that flag.
@@ -104,7 +105,34 @@ output: use `--json` for structured results; raw HTML is sensitive even in JSON 
 | Qualified native scoped bulk forms | CLI `autofill`, SDK/REST autofill or MCP `browser_autofill` |
 | Plan plus independently registered outcome verifier | CLI `outcome` or SDK/REST outcome; MCP has no outcome tool |
 | Uncertain delegated mutation | CLI `session operation`; delegated MCP `browser_operation` |
-| Repeatable TestRun / durable workflow | Planned; do not infer availability from the design spec |
+| Offline finalized regression evaluation | CLI `test evaluate`; setup, observations and cleanup stay application-owned |
+| Durable workflow recovery | Planned; operation records do not survive a service restart |
+
+## Attach the bytes you reviewed (develop slice)
+
+The existing upload command accepts an optional digest; no MCP tool or separate
+file-transfer service is required:
+
+```sh
+agentbrowser describe act upload
+agentbrowser describe plan --schema
+agentbrowser --json --operation-id "$operation_id" act upload \
+  "$session_id" "$page_id" /service-host/resume.pdf \
+  --sha256 "$reviewed_sha256" --mime-type application/pdf
+```
+
+The absolute path is on the **service host**, even when the CLI runs remotely.
+With `--sha256`, exactly one regular file of at most 16 MiB is read, checked and
+uploaded as the same bytes; symlinks and mismatches refuse. MIME is caller-supplied
+metadata (default `application/octet-stream`), not document validation. Without
+these flags, legacy multiple-file uploads retain their behavior. Discover a ref
+with `observe --include fileInputs` when more than one file input is present.
+
+A page may send a file immediately on attachment; apply the operator's upload
+approval policy before disclosing sensitive data. A matching upload digest does
+not establish complete-form consent or application acceptance. The current
+synthetic draft qualification denies final submit; see the
+[bounded design](spec/design/t6-verified-upload-draft.md).
 
 ## Submit bulk JSON without putting private values in argv
 

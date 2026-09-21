@@ -463,6 +463,10 @@ export interface UploadAction extends Action {
   type: 'upload';
   target?: ElementTarget;
   paths: string[];
+  /** Single-file, bounded integrity check; the engine uploads the bytes it hashes. */
+  sha256?: string;
+  /** Metadata only, requires sha256; default application/octet-stream. */
+  mimeType?: string;
 }
 
 /**

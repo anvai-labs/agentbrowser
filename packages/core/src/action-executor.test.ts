@@ -704,5 +704,45 @@ describe('ActionExecutor', () => {
       expect(mockEnginePage.resolve).not.toHaveBeenCalled();
       expect(result.newRevision).toBe(mockObservation.revision);
     });
+
+    it.each([
+      { type: 'upload', paths: ['/tmp/a.pdf'], sha256: 'bad' },
+      { type: 'upload', paths: ['/tmp/a.pdf', '/tmp/b.pdf'], sha256: 'a'.repeat(64) },
+      { type: 'upload', paths: ['/tmp/a.pdf'], mimeType: 'application/pdf' },
+      { type: 'reload', sha256: 'a'.repeat(64) },
+    ])('rejects direct caller integrity errors before policy or engine I/O: %j', async (action) => {
+      const beforeAction = vi.fn();
+      const result = await executor.execute(req(action as ActionRequest['action']), {
+        enginePage: mockEnginePage,
+        observation: mockObservation,
+        beforeAction,
+      });
+      expect(result.error?.code).toBe('INVALID_REQUEST');
+      expect(result.newRevision).toBe(mockObservation.revision);
+      expect(beforeAction).not.toHaveBeenCalled();
+      expect(mockEnginePage.resolve).not.toHaveBeenCalled();
+      expect(mockEnginePage.act).not.toHaveBeenCalled();
+    });
+
+    it('forwards upload integrity unchanged after policy admission', async () => {
+      const action = {
+        type: 'upload' as const,
+        paths: ['/tmp/resume.pdf'],
+        sha256: 'a'.repeat(64),
+        mimeType: 'application/pdf',
+      };
+      const beforeAction = vi.fn();
+      vi.mocked(mockEnginePage.act).mockImplementation(async () => {
+        expect(beforeAction).toHaveBeenCalledOnce();
+        return effect();
+      });
+      const result = await executor.execute(req(action), {
+        enginePage: mockEnginePage,
+        observation: mockObservation,
+        beforeAction,
+      });
+      expect(result.error).toBeUndefined();
+      expect(mockEnginePage.act).toHaveBeenCalledWith(action);
+    });
   });
 });
