@@ -67,3 +67,7 @@ independent UI/API oracle for synthetic drafts, with separate path outcomes and 
 broken-UI negative control. It shares T6 test support rather than creating a second
 application execution path. Production evidence, operator-binding UX and remaining
 qualification gates above still prevent marking T4 complete.
+
+C2a merged in #243. The [prepared-read foundation](../design/t6-scoped-application-read.md)
+shares receipt-reader authority/lifetime ownership without treating draft reads as
+outcome receipts. It adds no public surface or production evidence qualification.

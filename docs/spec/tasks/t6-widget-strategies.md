@@ -91,3 +91,8 @@ C1a merged in #242. The [C2a draft oracle](../design/t6-draft-oracle.md) qualifi
 a test-only versioned application contract and independent UI/API parity, including
 server-received attachment bytes. [Evidence](../evidence/t6-draft-oracle.md) separates
 this candidate from C2b service-collected witness binding and C3 accepted submission.
+
+C2a merged in #243. The [C2b scoped-read foundation](../design/t6-scoped-application-read.md)
+reuses captured application/admission ownership to collect bounded read data without
+nested execution. Source qualification, page correlation and consent binding remain
+separate gates; [evidence](../evidence/t6-scoped-application-read.md) records this limit.

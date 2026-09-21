@@ -1,7 +1,7 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
 Rechecked published 1.9.1 at `310e01d43982824caac2c63ed8d98355e17efdce`
-and develop `d5cef8cb004864cc9bb9a4e031c6b610d4018807` (PR #242).
+and develop `7f2e5338b937469ebc910218a84661b71b0b3393` (PR #243).
 The [release ladder](release-1.9.1.md) includes Bun CLI/MCP artifacts,
 Node 24 service qualification, Homebrew and develop back-sync. Existing browser
 sessions were preserved; an upgraded installed binary does not prove every running
@@ -21,7 +21,7 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T3 QA regression | Complete, released | 100% | Broader provisioning and demand-backed report adapters are follow-ups |
 | T4 application operations/parity | Active | ~40% | Independent UI/API oracle, binding UX, production evidence; callback repair merged #236 |
 | T5 durable recovery | Not started | 0% | Design, journal/recovery and process-loss qualification |
-| T6 forms/operations | Active | ~40% | Full-payload consent, candidate identity/eligibility and live qualification; operator action approval #242 merged; C2a draft-oracle candidate qualified locally |
+| T6 forms/operations | Active | ~40% | Full-payload consent, candidate identity/eligibility and live qualification; operator action approval #242 merged; C2a draft oracle #243 merged; C2b scoped-read foundation in progress |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
 | T8 installed harnesses | Not qualified | 0% | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |
 | T9 release hardening | Recurring | 100% of 1.9.1 checkpoint | Repeat per later release |
@@ -111,3 +111,10 @@ qualifies a named application-owned draft and received attachment bytes through 
 existing UI and application interfaces; see [evidence](t6-draft-oracle.md). This is
 a test-only candidate, not full-payload consent. C2b witness binding and C3 submission
 remain pending, and the milestone count/estimates remain unchanged.
+
+C2a merged in #243 at `7f2e533`, retaining reviewed tree `27c3c96`. PR run
+`35573168247` and post-merge run `35573557138` each passed all eight jobs; exact-head
+independent review returned SHIP. The [C2b read foundation](../design/t6-scoped-application-read.md)
+adds authorized in-admission application reads before witness binding; see
+[evidence](t6-scoped-application-read.md). This does not complete full-payload consent
+or T4/T6; milestone counts and conservative estimates stay unchanged.
