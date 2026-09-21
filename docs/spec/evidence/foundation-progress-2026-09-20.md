@@ -1,7 +1,7 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
 Rechecked published 1.9.1 at `310e01d43982824caac2c63ed8d98355e17efdce`
-and develop `422fb62524ffe6dd5d29d10bdd3a8ace9e9ecac6` (PR #245).
+and develop `57124750321aa5b12b7e268f5689adb5b967f70b` (PR #246).
 The [release ladder](release-1.9.1.md) includes Bun CLI/MCP artifacts,
 Node 24 service qualification, Homebrew and develop back-sync. Existing browser
 sessions were preserved; an upgraded installed binary does not prove every running
@@ -21,7 +21,7 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T3 QA regression | Complete, released | 100% | Broader provisioning and demand-backed report adapters are follow-ups |
 | T4 application operations/parity | Active | ~40% | Independent UI/API oracle, binding UX, production evidence; callback repair merged #236 |
 | T5 durable recovery | Not started | 0% | Design, journal/recovery and process-loss qualification |
-| T6 forms/operations | Active | ~40% | Full-payload consent, candidate identity/eligibility and live qualification; source composition and named data validation #245 merged; native form witness under qualification |
+| T6 forms/operations | Active | ~40% | Public full-payload consent, candidate identity/eligibility and live qualification; native form witness #246 merged; internal evidence-review lifecycle under qualification |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
 | T8 installed harnesses | Not qualified | 0% | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |
 | T9 release hardening | Recurring | 100% of 1.9.1 checkpoint | Repeat per later release |
@@ -134,3 +134,11 @@ each passed all eight jobs; independent review returned SHIP. The
 engine read seam and service admission, then correlates a synthetic draft with actual
 native controls and file bytes. Its [qualification evidence](t6-native-form-witness.md)
 does not claim full-payload consent, atomic submission or live portal readiness.
+
+Native form evidence merged as #246 at `5712475`, preserving reviewed head
+`5a18308` and tree `377060e`. PR run `35633182816` and post-merge run `35635284786`
+each passed all eight jobs without reruns; independent review returned SHIP. Local
+hooks passed 2,618 tests with 24 existing skips. The next
+[internal evidence review](../design/t6-evidence-review-binding.md) reuses the existing
+ApprovalGate and scoped evidence owners. Its [qualification](t6-evidence-review-binding.md)
+keeps public disclosure policy and atomic submission as explicit follow-ups.

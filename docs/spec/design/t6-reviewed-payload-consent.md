@@ -5,8 +5,11 @@ action approval merged #242; C2–C3 remain incomplete. The [C2a draft oracle](t
 merged #243 as test-only qualification, before service-collected witness binding.
 The [C2b read foundation](t6-scoped-application-read.md) supplies scoped authorized data;
 the [read-source composition](t6-application-read-evidence.md) adds required source
-authorization and test-only named data validation. Page correlation and consent
-binding remain pending.
+authorization and test-only named data validation. The
+[native witness](t6-native-form-witness.md), merged #246, qualifies cooperative
+draft/page correlation. The [C2c internal review binding](t6-evidence-review-binding.md)
+connects that evidence to the existing reviewed lifecycle without dispatch. Public
+evidence-review integration and qualified submission remain pending.
 Base: develop `f12ac89` after [checked upload/draft](t6-verified-upload-draft.md),
 PR #239. Load with forms/T6 only. Published 1.9.1 remains unchanged.
 

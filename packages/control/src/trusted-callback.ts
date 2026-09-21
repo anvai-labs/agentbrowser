@@ -27,7 +27,13 @@ export function snapshotAuthorizationInput(input: unknown): unknown {
   return deeplyFreezeSnapshot(snapshotJsonData(input, VERIFICATION_SNAPSHOT_LIMITS));
 }
 
-export function evidencePermissionGuard(permission: unknown): () => void {
+export interface PreparedEvidencePermission {
+  readonly generation: number;
+  assertAuthorized(): void;
+}
+
+/** Capture one immutable permission generation and permanently latch any revocation. */
+export function prepareEvidencePermission(permission: unknown): PreparedEvidencePermission {
   if (!permission || Object.getPrototypeOf(permission) !== Object.prototype)
     throw new Error('Evidence authorization unavailable');
   const own = Object.getOwnPropertyDescriptors(permission);
@@ -42,7 +48,7 @@ export function evidencePermissionGuard(permission: unknown): () => void {
     typeof callback !== 'function'
   )
     throw new Error('Evidence authorization unavailable');
-  const currentGeneration = callback.bind(permission) as () => number;
+  const currentGeneration = () => Reflect.apply(callback, permission, []) as number;
   let revoked = false;
   const assertAuthorized = () => {
     try {
@@ -53,5 +59,9 @@ export function evidencePermissionGuard(permission: unknown): () => void {
     }
   };
   assertAuthorized();
-  return assertAuthorized;
+  return Object.freeze({ generation, assertAuthorized });
+}
+
+export function evidencePermissionGuard(permission: unknown): () => void {
+  return prepareEvidencePermission(permission).assertAuthorized;
 }
