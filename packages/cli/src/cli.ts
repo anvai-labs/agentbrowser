@@ -32,6 +32,8 @@ import {
   FormMappingSchema,
   FormValuesSchema,
   INTERACTION_GUIDANCE,
+  OperatorApprovalDecisionSchema,
+  OperatorApprovalViewSchema,
   OutcomeRunReportSchema,
   OutcomeRunRequestSchema,
   PlanActionsSchema,
@@ -49,8 +51,10 @@ import {
   materializeAutofillMapping,
   parseAutofillReport,
   parseAutofillRequest,
+  parseOperatorApprovalView,
   parseOutcomeRunRequest,
   parsePlanSteps,
+  validateOperatorApprovalDecision,
   validateWireAction,
 } from '@agentbrowser/sdk-typescript';
 import { Command, type Option } from 'commander';
@@ -97,6 +101,8 @@ export interface CliClient
         | 'prepareResume'
         | 'delegate'
         | 'operation'
+        | 'approval'
+        | 'decideApproval'
         | 'applicationBind'
         | 'applicationUnbind'
         | 'applicationDiscover'
@@ -217,6 +223,9 @@ export function buildCli(deps: CliDependencies): Cli {
                 : {}),
             }),
             json: Boolean(globals.json),
+            ...(act.opts().approvalToken
+              ? { approvalToken: String(act.opts().approvalToken) }
+              : {}),
             ...(globals.operationId ? { operationId: globals.operationId as string } : {}),
             out: deps.out,
             emit: (value: unknown, render: () => string[]) => {
@@ -302,11 +311,57 @@ export function buildCli(deps: CliDependencies): Cli {
           })
         );
 
+      const approvalRead = session
+        .command('approval <sessionId> <tokenId>')
+        .description(
+          'read operator approval status; --json includes private action data: use a private output destination'
+        )
+        .action(
+          action(async (ctx, sessionId: string, tokenId: string) => {
+            if (!ctx.client.sessions.approval)
+              throw new UsageError('Client does not support operator approval');
+            const view = parseOperatorApprovalView(
+              await ctx.client.sessions.approval(sessionId, tokenId)
+            );
+            ctx.emit(view, () => [`${view.tokenId}: ${view.status}`]);
+          })
+        );
+      advertiseWireSchema(approvalRead, {
+        input: { type: 'object', properties: {}, additionalProperties: false },
+        output: OperatorApprovalViewSchema,
+      });
+      const approvalDecide = session
+        .command('approval-decide <sessionId> <tokenId>')
+        .description(
+          'approve or deny the reviewed action; --json includes private action data, not full-form or file-content consent'
+        )
+        .requiredOption('--decision <decision>', 'approve or deny')
+        .action(
+          action(async (ctx, sessionId: string, tokenId: string, options: { decision: string }) => {
+            const checked = validateOperatorApprovalDecision({ decision: options.decision });
+            if (!checked.ok) throw new UsageError('Approval decision must be approve or deny');
+            if (!ctx.client.sessions.decideApproval)
+              throw new UsageError('Client does not support operator approval');
+            const view = parseOperatorApprovalView(
+              await ctx.client.sessions.decideApproval(sessionId, tokenId, checked.value.decision)
+            );
+            ctx.emit(view, () => [`${view.tokenId}: ${view.status}`]);
+          })
+        );
+      advertiseWireSchema(approvalDecide, {
+        input: OperatorApprovalDecisionSchema,
+        output: OperatorApprovalViewSchema,
+      });
+
       const sessionCreate = session
         .command('create')
         .description('create a new session')
         .requiredOption('--tenant <id>', 'tenant identifier')
         .option('--delegated', 'require explicit human review and revocable agent authority')
+        .option(
+          '--reviewed-approval',
+          'require independent operator approval of challenged actions; requires --delegated'
+        )
         .option('--engine <name>', 'engine to use')
         .option('--headless', 'run headless (the server default; explicit)')
         .option(
@@ -361,6 +416,8 @@ export function buildCli(deps: CliDependencies): Cli {
         .action(
           action(async (ctx, options: Record<string, string | boolean | undefined>) => {
             const request: SessionRequest = { tenantId: String(options.tenant) };
+            if (options.reviewedApproval && !options.delegated)
+              throw new UsageError('--reviewed-approval requires --delegated');
             if (options.delegated) request.controlMode = 'delegated';
 
             if (options.engine) {
@@ -425,6 +482,7 @@ export function buildCli(deps: CliDependencies): Cli {
             // (the server maps them onto the session); any combination is
             // restrict-only over the SSRF base.
             const policy: Record<string, unknown> = {};
+            if (options.reviewedApproval) policy.approval = { review: 'operator' };
             if (options.allowDownloads !== undefined) {
               policy.allowDownloads = Boolean(options.allowDownloads);
             }
@@ -1018,7 +1076,13 @@ export function buildCli(deps: CliDependencies): Cli {
       });
 
       // ---- act -------------------------------------------------------------
-      const act = program.command('act').description(INTERACTION_GUIDANCE.action);
+      const act = program
+        .command('act')
+        .description(INTERACTION_GUIDANCE.action)
+        .option(
+          '--approval-token <token>',
+          'consume a previously approved action token; does not grant approval'
+        );
 
       act
         .command('click')
@@ -1913,6 +1977,7 @@ export function buildCli(deps: CliDependencies): Cli {
 interface CommandContext {
   client: CliClient;
   json: boolean;
+  approvalToken?: string;
   /** The global reconciliation operation ID; the application execute write identity. */
   operationId?: string;
   out(line: string): void;
@@ -1942,7 +2007,11 @@ async function runAction(
   pageId: string,
   input: unknown
 ): Promise<void> {
-  const validated = validateWireAction(input);
+  const validated = validateWireAction(
+    ctx.approvalToken && input && typeof input === 'object'
+      ? { ...input, approvalToken: ctx.approvalToken }
+      : input
+  );
   if (!validated.ok)
     throw new UsageError(
       `Invalid action: ${validated.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; ')}`
@@ -2048,6 +2117,24 @@ function renderObservation(observation: ObservationResponse): string[] {
 }
 
 function formatError(error: unknown): string {
+  if (error instanceof Error) {
+    const approval = error as Error & {
+      code?: string;
+      details?: { tokenId?: unknown; review?: unknown };
+    };
+    const tokenId = approval.details?.tokenId;
+    if (
+      approval.code === 'APPROVAL_REQUIRED' &&
+      typeof tokenId === 'string' &&
+      /^[A-Za-z0-9_-]{1,128}$/.test(tokenId)
+    ) {
+      const guidance =
+        approval.details?.review === 'operator'
+          ? 'Inspect with session approval, then decide with session approval-decide.'
+          : 'For legacy confirmation, review the action and repeat it with act --approval-token.';
+      return `${formatErrorForUser(error)}\nApproval token: ${tokenId}\n${guidance}`;
+    }
+  }
   return formatErrorForUser(
     error,
     'The element ref is stale. Run observe again to get fresh refs at the current revision, then act on the new ref. Do not retry the old one.'

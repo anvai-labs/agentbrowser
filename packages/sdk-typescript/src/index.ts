@@ -53,3 +53,11 @@ export {
   materializeAutofillMapping,
 } from '@agentbrowser/protocol';
 export type { FormMapping, FormValues } from '@agentbrowser/protocol';
+
+export {
+  OperatorApprovalDecisionSchema,
+  OperatorApprovalViewSchema,
+  parseOperatorApprovalView,
+  validateOperatorApprovalDecision,
+} from '@agentbrowser/protocol';
+export type { OperatorApprovalView, OperatorApprovalDecision } from '@agentbrowser/protocol';

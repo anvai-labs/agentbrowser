@@ -16,6 +16,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildServer } from './server.js';
 
 const EXPECTED: Array<['GET' | 'POST' | 'PUT' | 'DELETE', string, AgentCapability | null]> = [
+  ['GET', '/v1/sessions/:sessionId/approvals/:tokenId', null],
+  ['POST', '/v1/sessions/:sessionId/approvals/:tokenId', null],
   ['POST', '/v1/sessions/:sessionId/application/execute', 'application.execute'],
   ['GET', '/v1/sessions/:sessionId/application/receipts/:operationId', 'application.discover'],
   ['DELETE', '/v1/sessions/:sessionId/application', null],

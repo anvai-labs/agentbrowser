@@ -31,6 +31,39 @@ page, revision, resolved target fingerprint and action parameters. This protocol
 records caller confirmation; it does not independently authenticate a human.
 Stale targets must be reobserved and require new confirmation.
 
+For explicit operator decisions, create an authenticated controlled session with
+`policy.approval.review: "operator"` (CLI: `session create --delegated --reviewed-approval`).
+This changes actions requiring approval; allowed actions remain allowed and policy
+denials still win. Pending-token echo cannot authorize a reviewed action. The
+operator must stay in human control for inspection, decision and execution.
+
+After an action reports `APPROVAL_REQUIRED`, use its token ID:
+
+```bash
+agentbrowser --json session approval "$SESSION" "$TOKEN"
+agentbrowser --operation-id decision-1 session approval-decide "$SESSION" "$TOKEN" --decision approve
+agentbrowser --operation-id execution-1 act --approval-token "$TOKEN" click "$SESSION" "$PAGE" "$REF"
+```
+
+`--json` inspection contains private action parameters; text output shows only
+token/status. Inspect before deciding. Use `--decision deny` to refuse a pending
+challenge or revoke an approved one. Used/denied/expired tokens cannot reapprove.
+Takeover, configuration changes and handoff invalidate old authority context;
+page/action drift is rechecked on execution. Inspection reports stored lifecycle
+state, not a guarantee that the page still matches or execution will succeed.
+
+Decision and execution use distinct operation IDs. After response loss, inspect
+`session operation` and current approval state; do not replay an uncertain action
+with a fresh ID. SDK replay reports `OPERATION_RECORDED`. Records are bounded and
+ephemeral; missing or stale records convey no permission.
+
+Vault references and actions containing registered secret data refuse reviewed
+approval. The review covers an action, not complete form answers, file bytes or
+the resulting network payload. This does not qualify application submission.
+Operator API keys confer operator authority even when held by software; keep them
+outside delegated harnesses. MCP is not required. See the
+[C1 design](spec/design/t6-operator-approval.md) for the bounded contract.
+
 ## Installation
 
 ### Release version consistency

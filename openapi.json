@@ -468,6 +468,201 @@
         }
       }
     },
+    "/v1/sessions/{sessionId}/approvals/{tokenId}": {
+      "get": {
+        "operationId": "getOperatorApproval",
+        "summary": "Read a private operator action review",
+        "tags": [
+          "sessions"
+        ],
+        "description": "Requires an authenticated owning operator. Private action projection only; not full-form or file-content consent. Responses are not cached.",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tokenId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Private approval state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorApprovalView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owning operator required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session admission refused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "decideOperatorApproval",
+        "summary": "Approve or deny a reviewed action",
+        "tags": [
+          "sessions"
+        ],
+        "description": "Requires an authenticated owning operator and ordinary controlled-session admission. Repeated operation identities return the recorded outcome without repeating the decision.",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tokenId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-AgentBrowser-Operation-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperatorApprovalDecision"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Private approval state, or recorded operation replay.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/OperatorApprovalView"
+                    },
+                    {
+                      "$ref": "#/components/schemas/OperationReplay"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was malformed or failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owning operator required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session admission or approval transition refused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/sessions/{sessionId}/application": {
       "get": {
         "operationId": "discoverApplication",
@@ -4792,6 +4987,87 @@
           }
         ]
       },
+      "OperatorApprovalDecision": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "decision"
+        ],
+        "properties": {
+          "decision": {
+            "anyOf": [
+              {
+                "const": "approve",
+                "type": "string"
+              },
+              {
+                "const": "deny",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      },
+      "OperatorApprovalView": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tokenId",
+          "status",
+          "createdAt",
+          "expiresAt",
+          "action"
+        ],
+        "properties": {
+          "tokenId": {
+            "minLength": 1,
+            "maxLength": 128,
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "pending",
+                "type": "string"
+              },
+              {
+                "const": "approved",
+                "type": "string"
+              },
+              {
+                "const": "denied",
+                "type": "string"
+              },
+              {
+                "const": "used",
+                "type": "string"
+              },
+              {
+                "const": "expired",
+                "type": "string"
+              }
+            ]
+          },
+          "createdAt": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "expiresAt": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "approvedAt": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "action": {
+            "type": "object",
+            "patternProperties": {
+              "^(.*)$": {}
+            }
+          }
+        }
+      },
       "OperationRecord": {
         "additionalProperties": false,
         "type": "object",
@@ -5571,6 +5847,10 @@
               "approval": {
                 "type": "object",
                 "properties": {
+                  "review": {
+                    "const": "operator",
+                    "type": "string"
+                  },
                   "transactions": {
                     "anyOf": [
                       {

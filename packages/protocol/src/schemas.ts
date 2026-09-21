@@ -81,6 +81,7 @@ export const EngineTypeSchema = Type.Union([
 ]);
 
 export const ApprovalPolicySchema = Type.Object({
+  review: Type.Optional(Type.Literal('operator')),
   transactions: Type.Optional(
     Type.Union([Type.Literal('allow'), Type.Literal('deny'), Type.Literal('required')])
   ),
