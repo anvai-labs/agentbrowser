@@ -77,6 +77,14 @@ export type ApplicationOperationResult = Static<typeof ApplicationOperationResul
 
 const binding = TypeCompiler.Compile(ApplicationBindingSchema);
 const execute = TypeCompiler.Compile(ApplicationExecuteRequestSchema);
+const operationDescriptors = TypeCompiler.Compile(ApplicationDiscoverySchema.properties.operations);
+
+/** Validate trusted registration against exactly the catalog that public clients accept. */
+export function validateApplicationOperationDescriptors(
+  body: unknown
+): Validated<ApplicationOperationDescriptor[]> {
+  return collect(operationDescriptors, body) as Validated<ApplicationOperationDescriptor[]>;
+}
 
 /** Validate an operator bind body. */
 export function validateApplicationBinding(body: unknown): Validated<ApplicationBinding> {

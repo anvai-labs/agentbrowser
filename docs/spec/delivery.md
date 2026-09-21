@@ -13,7 +13,7 @@ current user scope and the [task protocol](tasks/README.md).
 | Native bulk forms | 1.8.19 native, react-select and chip-multiselect strategies, scoped identities and readback | Broader widget/cross-engine and transfer/deadline qualification |
 | Application-only path | Typed authority plus bounded authenticated REST/SDK/CLI surface released in 1.8.20 | Production receipt-predicate qualification and binding UX, independent UI/API parity and durable receipt recovery |
 | Agent surfaces | CLI and SDK are first-class HTTP clients; stdio MCP remains optional with 13 unbound/12 delegated tools | Generated profiles, typed results and qualified context reduction |
-| QA | T3 complete on develop through #231: application-owned CLI recipe, native JUnit/private evidence and standalone/cost qualification | General provisioning, artifact API/HTML only if justified, and T9 automatic impact selection |
+| QA | T3 complete through #231, released in 1.9.1: application-owned CLI recipe, native JUnit/private evidence and standalone/cost qualification | General provisioning, artifact API/HTML only if justified, and T9 automatic impact selection |
 | Security | Policy and known engine limitations | Scoped external scanner adapters after enforcement qualification |
 | Memory | Ephemeral bounded control state; artifact store | Optional journal and explicit mode-scoped context lifecycle |
 
@@ -58,8 +58,13 @@ alignment baseline and resolved guard follow-ups. T3's
 [application-owned recipe](design/t3-application-recipe.md), private report links and
 live JUnit are merged. The [T3 completion checkpoint](evidence/t3-standalone-qualification.md)
 adds standalone/cost evidence through #231; public report APIs, justified HTML and
-general provisioning remain separate. Next repair T6 widget commitment/coverage and
-the existing T4 application authorization callback guard before expanding mappings.
+general provisioning remain separate. Version 1.9.1 includes this checkpoint,
+Q0 committed-widget verification and CLI cookie-file input; its release and Homebrew
+ladder is [qualified](evidence/release-1.9.1.md). Next harden the existing T4 application
+[callback contract](design/t4-application-callback-contracts.md), then qualify T6 popup
+ownership/async readiness before expanding mappings. The
+[progress checkpoint](evidence/foundation-progress-2026-09-20.md) distinguishes partial
+implementation from completed acceptance.
 Order remaining T4/T5 work by acceptance and demand. T7 follows actual audit/security demand, not
 a speculative full scanner roadmap. T8/T9 accompany delivery. Each task may be split
 into reviewable sub-PRs using its declared slices; avoid one giant implementation PR.

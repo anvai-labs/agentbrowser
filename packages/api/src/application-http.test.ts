@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { ApplicationScope } from '@agentbrowser/control';
+import type { ApplicationAdapter, ApplicationScope } from '@agentbrowser/control';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { expect, it } from 'vitest';
 import { buildServer } from './server.js';
@@ -14,15 +14,17 @@ import { buildServer } from './server.js';
  * expectedVersion) is an admitted rejection, and a replayed operation ID
  * returns the recorded operation without re-executing.
  */
-const buildApplicationServer = async () => {
+const buildApplicationServer = async (
+  authorize: ApplicationAdapter['authorize'] = ({ tenant, resource }) =>
+    tenant === 'owner' && resource === 'account'
+) => {
   const state = { total: 0 };
   const receipts = new Map<string, { operationId: string; total: number }>();
   const receiptKey = (scope: ApplicationScope, id = scope.operationId) =>
     `${scope.tenant}\0${scope.resource}\0${scope.sessionIncarnation}\0${id}`;
   const adapter = {
     id: 'owned-counter',
-    authorize: ({ tenant, resource }: { tenant: string; resource: string }) =>
-      tenant === 'owner' && resource === 'account',
+    authorize,
     operations: {
       add: {
         mode: 'write' as const,
@@ -392,6 +394,53 @@ it('unbinds as the operator and leaves the surface inert', async () => {
     });
     expect(executed.statusCode).toBe(403);
     expect(state.total).toBe(0);
+  } finally {
+    await server.close();
+  }
+});
+
+it('denies malformed application policy over HTTP without effects or private diagnostics', async () => {
+  let allowed = true;
+  const { server, state } = await buildApplicationServer(
+    () => (allowed ? true : Promise.reject(new Error('PRIVATE-AUTHORIZATION'))) as boolean
+  );
+  try {
+    const { path, token } = await bindAndDelegate(server);
+    allowed = false;
+    const payload = { operation: 'add', input: 1, operationId: 'denied-1', expectedVersion: 0 };
+    for (const request of [
+      { method: 'GET' as const, url: `${path}/application`, headers: agentHeaders(token) },
+      {
+        method: 'POST' as const,
+        url: `${path}/application/execute`,
+        headers: agentHeaders(token),
+        payload,
+      },
+      {
+        method: 'GET' as const,
+        url: `${path}/application/receipts/denied-1`,
+        headers: operatorHeaders,
+      },
+    ]) {
+      const response = await server.inject(request);
+      expect(response.statusCode).toBe(403);
+      expect(response.json()).toMatchObject({ error: { code: 'CONTROL_REQUIRED' } });
+      expect(response.body).not.toContain('PRIVATE-AUTHORIZATION');
+    }
+    allowed = true;
+    const replay = await server.inject({
+      method: 'POST',
+      url: `${path}/application/execute`,
+      headers: agentHeaders(token),
+      payload,
+    });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json()).toMatchObject({
+      replay: true,
+      operation: { status: 'failed', dispatched: false },
+    });
+    expect(state.total).toBe(0);
+    await new Promise<void>((resolve) => setImmediate(resolve));
   } finally {
     await server.close();
   }
