@@ -122,9 +122,12 @@ PR #232 delivered Q0 commitment. The subsequent
 qualification; it does not qualify arbitrary real ATS widgets. A mapping cannot
 advertise a widget before its concrete strategy/evidence contract passes.
 
-Add one bounded descriptor in the protocol owner after red tests. Reuse `AutofillMatch`,
-strategy names and current limits. Pin origin, mapping version, stable blocks, required
-labels and capabilities. Applicability runs on a fresh complete observation before any
+The [mapping foundation](t6-form-mapping.md) implements a bounded descriptor and private
+join, offline CLI preparation and server preflight for one exact-URL, fully present stage.
+It reuses `AutofillMatch`,
+strategy names and current limits. Mapping version, stable blocks and explicit strategies
+remain data; they grant no authority. Origin/path patterns and conditional stage support
+remain separate follow-ups. Applicability runs on a fresh complete observation before any
 write; missing, ambiguous, truncated, unsupported or drifted evidence blocks the stage.
 
 Native text/select controls and newly qualified widgets go through one `autofill` call

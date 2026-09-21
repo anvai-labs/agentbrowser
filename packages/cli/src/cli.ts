@@ -29,6 +29,8 @@ import {
   AutofillReportSchema,
   AutofillRequestSchema,
   DELIVERED_EXTRACT_FORMATS,
+  FormMappingSchema,
+  FormValuesSchema,
   INTERACTION_GUIDANCE,
   OutcomeRunReportSchema,
   OutcomeRunRequestSchema,
@@ -44,6 +46,7 @@ import {
   formatErrorForUser,
   isAgentMode,
   isPassingOutcome,
+  materializeAutofillMapping,
   parseAutofillReport,
   parseAutofillRequest,
   parseOutcomeRunRequest,
@@ -1568,10 +1571,53 @@ export function buildCli(deps: CliDependencies): Cli {
           })
         );
 
+      const form = program.command('form').description('prepare reusable form mappings offline');
+      const prepareForm = form
+        .command('prepare')
+        .description(
+          'materialize a mapping and private values into one autofill JSON payload, offline. Each input accepts inline JSON, @file, or - for stdin; at most 1 MiB per input and stdin EOF within 30 seconds. Output contains private values: pipe it directly to autofill or capture it in a private file.'
+        )
+        .argument('<mappingJson>', 'reusable mapping JSON: inline, @file, or -')
+        .argument('<valuesJson>', 'private values JSON: inline, @file, or -')
+        .addHelpText(
+          'after',
+          '\nEmits the prepared payload as JSON in every output mode. Preparation does not contact the service, inspect a page, or verify a form. Mapping URLs and labels must be safe to share; do not place private data or access tokens in them. Use stdin for at most one input. --operation-id is unused.'
+        )
+        .action(async (mappingJson: string, valuesJson: string) => {
+          // Offline: action() would construct a client and read credentials.
+          try {
+            if (mappingJson === '-' && valuesJson === '-') {
+              throw new UsageError('Stdin can be used only once per command.');
+            }
+            const mapping = await readCommandJson(prepareForm, mappingJson, 'form mapping');
+            const values = await readCommandJson(prepareForm, valuesJson, 'form values');
+            let prepared: AutofillRequest;
+            try {
+              prepared = materializeAutofillMapping(mapping, values);
+            } catch (error) {
+              // The canonical materializer owns static, value-free diagnostics.
+              throw new UsageError((error as Error).message);
+            }
+            deps.out(JSON.stringify(prepared));
+          } catch (error) {
+            exitCode = 1;
+            deps.err(formatError(error));
+          }
+        });
+      advertiseWireSchema(prepareForm, {
+        input: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['mapping', 'values'],
+          properties: { mapping: FormMappingSchema, values: FormValuesSchema },
+        },
+        output: AutofillRequestSchema,
+      });
+
       const autofill = program
         .command('autofill')
         .description(
-          'bulk-fill form fields from one structured payload (inline JSON, @file, or - for stdin). At most 1 MiB per input; stdin EOF within 30 seconds. The server resolves, fills, and verifies each field serially and returns per-field receipts. A failed report exits 1; inspect receipts for verification.'
+          'bulk-fill form fields from one structured payload (inline JSON, @file, or - for stdin). At most 1 MiB per input; stdin EOF within 30 seconds. The server resolves, fills, and verifies each field serially and returns per-field receipts. Optional scope.url preflights and pins a complete stage; use form prepare for reusable mappings. A failed report exits 1; inspect receipts for verification.'
         )
         .argument('<sessionId>')
         .argument('<pageId>')

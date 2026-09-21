@@ -51,10 +51,16 @@ incomplete-membership negative controls. This is synthetic markup qualification,
 not broad library/version or live-site acceptance. T6 remains active.
 
 
-The next bounded [owned-popup/readiness slice](../design/t6-owned-popup-readiness.md)
-extends engine evidence and one shared typeahead helper for both custom strategies.
+The [owned-popup/readiness slice](../design/t6-owned-popup-readiness.md)
+merged through PR #237 with eight PR and eight post-merge checks green. It extends
+engine evidence and one shared typeahead helper for both custom strategies.
 It removes page-wide/prefix selection, requires a unique exact option in the owned
 listbox, and retries observations without replaying writes. Engine dispatch rechecks
 ownership and focus; native field semantics and commitment predicates stay shared.
 See the [qualification evidence](../evidence/t6-owned-popup-readiness.md); no arbitrary ATS coverage,
 rollback or reusable mapping claim follows.
+
+The next [mapping foundation](../design/t6-form-mapping.md) adds a pure protocol join,
+offline CLI preparation and exact-URL/all-field preflight inside the same executor.
+See [evidence](../evidence/t6-form-mapping.md). This is one fully present stage;
+conditional stages, business/job identity and live workflow qualification remain open.
