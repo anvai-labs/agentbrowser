@@ -3462,12 +3462,11 @@ export class AgentBrowserService {
     };
 
     if (request.approvalToken !== undefined) {
-      const valid = await this.approvalGate.validateApprovalToken(
+      const consumed = await this.approvalGate.consumeApprovalToken(
         request.approvalToken,
         approvalRequest
       );
-      if (valid) {
-        await this.approvalGate.useApprovalToken(request.approvalToken);
+      if (consumed) {
         if (span) {
           this.tracer?.addEvent(span, 'approval.granted', { effect: risk, ref });
         }

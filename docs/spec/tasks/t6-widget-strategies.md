@@ -65,7 +65,14 @@ offline CLI preparation and exact-URL/all-field preflight inside the same execut
 See [evidence](../evidence/t6-form-mapping.md). This is one fully present stage;
 conditional stages, business/job identity and live workflow qualification remain open.
 
-The next [verified upload and draft slice](../design/t6-verified-upload-draft.md)
+The [verified upload and draft slice](../design/t6-verified-upload-draft.md), merged in PR #239,
 reuses the upload action and a shared bounded file reader, then qualifies a synthetic
 CLI draft with an independent browser-file digest and final submit denied. It does
 not close complete-payload consent or live application acceptance.
+
+The [reviewed-payload consent sequence](../design/t6-reviewed-payload-consent.md)
+starts with C0 token ownership and atomic service consumption. It reuses the existing
+bounded canonical serializer and ApprovalGate; C1 operator approval, C2 live payload
+witnesses and C3 qualified submission remain design/tasks, not delivered capabilities.
+See the [C0 evidence](../evidence/t6-approval-consumption.md). Legacy token echo is
+action confirmation, not proof of independent review or complete-form consent.

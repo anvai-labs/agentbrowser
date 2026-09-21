@@ -5,6 +5,12 @@
 **Superseded by:** N/A
 **Related:** [Human handoff](../human-handoff.md) - the operating loop that uses approval tokens for human-in-the-loop steps
 
+**Current boundary:** the delivered flow below is caller confirmation: a pending
+token returned to the caller can be echoed for that action. There is no separate
+operator-approved state, and a submit click does not bind the complete form/PDF/job
+payload. See the [reviewed-payload consent sequence](../spec/design/t6-reviewed-payload-consent.md)
+for the missing gates; do not treat token possession as proof of human review.
+
 ## Context
 
 Agents executing actions on websites can cause irreversible changes:
@@ -86,6 +92,22 @@ POST /v1/sessions/{id}/actions
 - **Auditable**: All approvals logged
 
 ## Consequences
+
+### Foundation amendment: ownership and consumption
+
+Token generation and queries return detached snapshots. The service now calls one
+atomic `consumeApprovalToken` operation, which checks current pending state, session,
+action fingerprint and expiry before burning the token without yielding. A validation
+probe does not reserve permission. The legacy trusted-owner burn also refuses expired
+tokens. Shutdown prevents suspended generation from recreating tokens.
+
+Approval fingerprints reuse the bounded canonical JSON serializer shared with
+application authority (now owned by core, with the control import retained). Direct
+callers must supply finite JSON data within its 64 KiB/4,096-node/depth-16 bounds;
+getters, undefined values and oversized data refuse with sanitized errors. Proxy
+inspection is not sandboxed, so all input inspection precedes final token-state checks.
+The ordinary wire confirmation flow remains compatible. This adds no operator grant
+or whole-payload consent claim and no persistent token migration.
 
 ### Positive
 - **Safety**: Humans must approve risky actions
