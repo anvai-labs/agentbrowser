@@ -91,4 +91,50 @@ describe('session control', () => {
     expect(() => control.delegate(review.epoch)).toThrow(/review/i);
     expect(control.view().state).toBe('HUMAN_ACTIVE');
   });
+
+  it('surfaces the in-flight operation in the view while one is active', () => {
+    const control = new SessionControl();
+    // No active operation: the view carries no operation record.
+    expect(control.view()).toMatchObject({ state: 'HUMAN_ACTIVE', epoch: 0, busy: false });
+    expect(control.view().operation).toBeUndefined();
+
+    const ticket = control.begin({
+      actor: 'operator',
+      operationId: 'op-1',
+      fingerprint: 'digest',
+    });
+    if ('replay' in ticket) throw new Error('unexpected replay');
+
+    const view = control.view();
+    expect(view.busy).toBe(true);
+    expect(view.operation).toEqual({
+      operationId: 'op-1',
+      epoch: 0,
+      status: 'in_flight',
+      dispatched: false,
+    });
+
+    control.dispatched(ticket);
+    expect(control.view().operation).toMatchObject({ dispatched: true });
+
+    control.finish(ticket, 'completed');
+    expect(control.view().operation).toBeUndefined();
+    expect(control.view().busy).toBe(false);
+  });
+
+  it('rejects an operation ID without a matching shape or fingerprint', () => {
+    const control = new SessionControl();
+
+    // Not matching CONTROL_OPERATION_ID's [A-Za-z0-9_-] charset.
+    expect(() => control.begin({ actor: 'operator', operationId: 'bad id!' })).toThrow(
+      'A valid operation ID and fingerprint are required'
+    );
+    // A well-formed ID without a fingerprint is equally unusable: replay
+    // detection cannot bind it to a specific write.
+    expect(() => control.begin({ actor: 'operator', operationId: 'op-1' })).toThrow(
+      'A valid operation ID and fingerprint are required'
+    );
+    // Neither attempt may have started an operation.
+    expect(control.view().busy).toBe(false);
+  });
 });

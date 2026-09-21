@@ -130,5 +130,20 @@ describe('MetricsRegistry', () => {
       expect(rendered).toContain('op_ms_count 100');
       expect(rendered).toContain('op_ms_sum 5050');
     });
+
+    it('renders zero quantiles from an empty window while keeping count and sum exact', () => {
+      // A zero-capacity sample window retains nothing: every quantile ranks
+      // over an empty sample list, which must render as 0 rather than NaN,
+      // while _count and _sum remain exact all-time totals.
+      const metrics = new MetricsRegistry({ maxSamplesPerSummary: 0 });
+      metrics.observe('op_ms', 42);
+
+      const rendered = metrics.render();
+      expect(rendered).toContain('op_ms{quantile="0.5"} 0');
+      expect(rendered).toContain('op_ms{quantile="0.95"} 0');
+      expect(rendered).toContain('op_ms{quantile="0.99"} 0');
+      expect(rendered).toContain('op_ms_count 1');
+      expect(rendered).toContain('op_ms_sum 42');
+    });
   });
 });
