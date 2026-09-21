@@ -96,3 +96,8 @@ C2a merged in #243. The [C2b scoped-read foundation](../design/t6-scoped-applica
 reuses captured application/admission ownership to collect bounded read data without
 nested execution. Source qualification, page correlation and consent binding remain
 separate gates; [evidence](../evidence/t6-scoped-application-read.md) records this limit.
+
+Prepared reads merged #244. Next, [authorized read sources and named draft data
+validation](../design/t6-application-read-evidence.md) reuse the existing registry
+and service-owned authority. Follow with trusted page/document correlation and
+stable app/UI collection before extending consent. Data shape is not a page witness.
