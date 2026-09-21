@@ -7,3 +7,5 @@ export * from './types.js';
 export * from './errors.js';
 
 export * from './verified-upload.js';
+
+export * from './native-form-evidence.js';
