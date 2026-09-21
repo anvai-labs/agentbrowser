@@ -46,6 +46,11 @@ installed CLI is the first-class client; it does not own retries or truth.
   and action parameters. It does not bind the complete form, PDF and job payload;
   that additional consent contract remains a prerequisite for automated submission.
 
+The [reviewed-payload consent sequence](t6-reviewed-payload-consent.md) separates
+token ownership/atomic consumption (C0) from future operator approval (C1), live
+payload witness (C2) and qualified submission/outcome (C3). Existing pending-token
+echo is a caller confirmation mechanism, not an independent human approval grant.
+
 Do not add a workflow executor, generic DSL, site-specific service endpoint, server job
 store, alternate receipt ledger or portal SDK. A small private caller-side checkpoint may
 compose existing commands. It contains references, hashes, classifications and operation
