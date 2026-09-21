@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { TrustedEvidenceSourceRegistry } from '@agentbrowser/control';
+import { type PreparedEvidenceReview, TrustedEvidenceSourceRegistry } from '@agentbrowser/control';
 import { canonicalJson } from '@agentbrowser/core';
 import type { EnginePage } from '@agentbrowser/engine';
 import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
@@ -15,7 +16,7 @@ import { startDraftFixture } from './test-support/application-draft-http.js';
 import { createApplicationDraft } from './test-support/application-draft.js';
 
 async function fixture(
-  options: { brokenUi?: boolean; beforeUploadCommit?: () => Promise<void> } = {}
+  options: { brokenUi?: boolean; beforeUploadCommit?: () => Promise<void>; review?: boolean } = {}
 ) {
   const draft = createApplicationDraft({ id: 'live-witness' });
   if (options.brokenUi) draft.update(0, { fullName: 'Old committed name' });
@@ -37,6 +38,9 @@ async function fixture(
   });
   let registry: TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext> | undefined;
   let permittedSession = '';
+  let permissionGeneration = 1;
+  const permissionOwnerId = randomUUID();
+  let permitted = true;
   const verifier = { id: 'synthetic-draft-witness', version: 'v1', input: {} };
   const service = new AgentBrowserService({
     engine,
@@ -49,6 +53,7 @@ async function fixture(
           request: { operation: 'read', input: {} },
           authorize(request) {
             if (
+              !permitted ||
               request.identity.sessionId !== permittedSession ||
               request.identity.adapter !== draft.adapter.id ||
               request.identity.resource !== 'live-witness' ||
@@ -57,7 +62,10 @@ async function fixture(
               canonicalJson(request.verifier) !== canonicalJson(verifier)
             )
               return undefined;
-            return { generation: 1, currentGeneration: () => 1 };
+            return {
+              generation: permissionGeneration,
+              currentGeneration: () => permissionGeneration,
+            };
           },
         }),
       ]);
@@ -74,6 +82,7 @@ async function fixture(
       tenantId: 'owner',
       controlMode: 'delegated',
       headless: true,
+      ...(options.review ? { approval: { review: 'operator' as const } } : {}),
     });
     permittedSession = sessionId;
     const operator = { actor: 'operator' as const, tenant: 'owner' };
@@ -144,33 +153,65 @@ async function fixture(
     await expect.poll(diagnostics).toMatchObject({ pending: 0, failed: false });
     assert(registry);
     const sources = registry;
+    const prepareCollector = (afterFirstNative?: () => void) => {
+      const signal = new AbortController().signal;
+      const application = sources.prepareRead(
+        'draft',
+        'application.draft',
+        { sessionId, pageId, signal },
+        'witness-check',
+        verifier
+      );
+      assert(application);
+      const page = service.prepareNativeFormReadInScope(sessionId, pageId);
+      const reader = afterFirstNative
+        ? {
+            ...page,
+            read: vi.fn(page.read).mockImplementationOnce(async (...args) => {
+              const value = await page.read(...args);
+              afterFirstNative();
+              return value;
+            }),
+          }
+        : page;
+      const collector = createDraftWitnessCollector({
+        application,
+        page: reader,
+        expected: { page: expectedPage, application: expectedApplication },
+      });
+      return { collector, application, page };
+    };
     const collect = (afterFirstNative?: () => void) =>
       run(async () => {
-        const signal = new AbortController().signal;
-        const application = sources.prepareRead(
-          'draft',
-          'application.draft',
-          { sessionId, pageId, signal },
-          'witness-check',
-          verifier
-        );
-        assert(application);
-        const page = service.prepareNativeFormReadInScope(sessionId, pageId);
-        const reader = afterFirstNative
-          ? {
-              ...page,
-              read: vi.fn(page.read).mockImplementationOnce(async (...args) => {
-                const value = await page.read(...args);
-                afterFirstNative();
-                return value;
-              }),
-            }
-          : page;
-        const result = await createDraftWitnessCollector({
-          application,
-          page: reader,
-          expected: { page: expectedPage, application: expectedApplication },
-        })(signal);
+        const { collector } = prepareCollector(afterFirstNative);
+        const result = await collector(new AbortController().signal);
+        expect(service.authority.didDispatchInScope(sessionId)).toBe(false);
+        return result;
+      });
+    const review = <T>(callback: (prepared: PreparedEvidenceReview) => Promise<T>) =>
+      run(async () => {
+        const { collector, application, page } = prepareCollector();
+        const prepared = service.prepareEvidenceReviewInScope(sessionId, pageId, {
+          action: {
+            intent: 'draft',
+            destination: expectedApplication.destination,
+            job: expectedApplication.job,
+          },
+          source: {
+            ownerId: permissionOwnerId,
+            contract: { id: 'synthetic-native-draft', version: '1' },
+            permission: {
+              generation: permissionGeneration,
+              currentGeneration: () => permissionGeneration,
+            },
+            assertAuthorized() {
+              application.assertAuthorized();
+              page.assertAuthority();
+            },
+            collect: collector,
+          },
+        });
+        const result = await callback(prepared);
         expect(service.authority.didDispatchInScope(sessionId)).toBe(false);
         return result;
       });
@@ -180,6 +221,11 @@ async function fixture(
       service,
       backing,
       collect,
+      review,
+      setPermission(allowed: boolean) {
+        permitted = allowed;
+        permissionGeneration++;
+      },
       diagnostics,
       close,
       upload: () => act('fileinput', 'upload'),
@@ -189,6 +235,78 @@ async function fixture(
     throw error;
   }
 }
+
+it('reviews and consumes the complete real draft witness across operator admissions without submission', async () => {
+  const f = await fixture({ review: true });
+  const signal = new AbortController().signal;
+  try {
+    const token = await f.review((review) => review.generate(signal));
+    expect(token.action.parameters).toMatchObject({ witness: { application: f.draft.read() } });
+    expect((await f.review((review) => review.get(token.tokenId, signal)))?.status).toBe('pending');
+    expect(
+      (await f.review((review) => review.decide(token.tokenId, 'approve', signal)))?.status
+    ).toBe('approved');
+    expect(await f.review((review) => review.consume(token.tokenId, signal))).toBe(true);
+    expect(await f.review((review) => review.consume(token.tokenId, signal))).toBe(false);
+    expect(f.http.submissionAttempts()).toBe(0);
+  } finally {
+    await f.close();
+  }
+}, 30000);
+
+it('refuses old consent after both app and UI commit a new answer, and refuses uncommitted file replacement', async () => {
+  const f = await fixture({ review: true });
+  const signal = new AbortController().signal;
+  try {
+    const token = await f.review((review) => review.generate(signal));
+    await f.review((review) => review.decide(token.tokenId, 'approve', signal));
+    await f.backing.locator('#referral').fill('New independently committed answer');
+    await expect.poll(f.diagnostics).toMatchObject({ pending: 0, failed: false });
+    await expect(f.collect()).resolves.toBeDefined();
+    expect(await f.review((review) => review.consume(token.tokenId, signal))).toBe(false);
+    const replacement = await f.review((review) => review.generate(signal));
+    await f.review((review) => review.decide(replacement.tokenId, 'approve', signal));
+    await f.backing.locator('#resume').evaluate((node) => {
+      const input = node as HTMLInputElement;
+      const original = input.files?.[0];
+      if (!original) throw new Error('Fixture file');
+      const files = new DataTransfer();
+      files.items.add(
+        new File(['replaced bytes'], original.name, {
+          type: original.type,
+          lastModified: original.lastModified,
+        })
+      );
+      input.files = files.files;
+    });
+    await expect(
+      f.review((review) => review.consume(replacement.tokenId, signal))
+    ).rejects.toThrow();
+    expect(f.http.submissionAttempts()).toBe(0);
+  } finally {
+    await f.close();
+  }
+}, 30000);
+
+it('requires current draft-source permission to disclose evidence and rejects revoke/regrant resurrection', async () => {
+  const f = await fixture({ review: true });
+  const signal = new AbortController().signal;
+  try {
+    const token = await f.review((review) => review.generate(signal));
+    await f.review((review) => review.decide(token.tokenId, 'approve', signal));
+    f.setPermission(false);
+    await expect(f.review((review) => review.get(token.tokenId, signal))).rejects.toThrow();
+    f.setPermission(true);
+    expect(await f.review((review) => review.get(token.tokenId, signal))).toBeUndefined();
+    expect(
+      await f.review((review) => review.decide(token.tokenId, 'approve', signal))
+    ).toBeUndefined();
+    expect(await f.review((review) => review.consume(token.tokenId, signal))).toBe(false);
+    expect(f.http.submissionAttempts()).toBe(0);
+  } finally {
+    await f.close();
+  }
+}, 30000);
 
 it('collects a private complete witness from the same application and actual service-filled browser form', async () => {
   const f = await fixture();

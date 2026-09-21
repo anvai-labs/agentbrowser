@@ -18,10 +18,14 @@ import {
   ApplicationAuthority,
   type ApplicationReadEvidenceSourceOptions,
   type ApplicationReceiptEvidenceSourceOptions,
+  type EvidenceReviewSource,
+  NATIVE_FORM_REVIEW_TYPE,
+  type PreparedEvidenceReview,
   TrustedEvidenceSourceRegistry,
   type TrustedVerifierRegistry,
   defineApplicationReadEvidenceSource,
   defineApplicationReceiptEvidenceSource,
+  prepareEvidenceReview,
   runVerifiedOutcome,
 } from '@agentbrowser/control';
 import {
@@ -81,10 +85,12 @@ import {
   DELIVERED_WAIT_TYPES,
   type DeliveredExtractFormat,
   REF_PATTERN,
+  VERIFICATION_SNAPSHOT_LIMITS,
   createOutcomeRunReportParser,
   decodeWireAction,
   parseOutcomeRunRequest,
   parseRef,
+  snapshotJsonData,
   validateApplicationBinding,
   validateApplicationExecute,
 } from '@agentbrowser/protocol';
@@ -1770,6 +1776,41 @@ export class AgentBrowserService {
         });
       },
     });
+  }
+
+  /** Internal native-form qualification; consuming this review never dispatches an action. */
+  prepareEvidenceReviewInScope(
+    sessionId: string,
+    pageId: string,
+    options: { action: Record<string, unknown>; source: EvidenceReviewSource }
+  ): PreparedEvidenceReview {
+    try {
+      const context = this.reviewContext(sessionId);
+      const contextKey = canonicalJson(context);
+      const action = JSON.parse(
+        canonicalJson(snapshotJsonData(options.action, VERIFICATION_SNAPSHOT_LIMITS))
+      ) as Record<string, unknown>;
+      // Reuse the existing page/admission owner, without performing another native read.
+      const page = this.prepareNativeFormReadInScope(sessionId, pageId);
+      const assertAuthority = () => {
+        page.assertAuthority();
+        if (canonicalJson(this.reviewContext(sessionId)) !== contextKey)
+          throw new ServiceError('CONTROL_REVOKED', 'Review authority changed.');
+      };
+      return prepareEvidenceReview({
+        gate: this.approvalGate,
+        context,
+        pageId,
+        action,
+        source: options.source,
+        assertAuthority,
+        assertDisclosureSafe: (value) => this.assertReviewDisclosureSafe(value),
+        trackRead: (read) => this.authority.trackReadInScope(sessionId, read),
+        lifecycleSignal: this.authority.signal(sessionId),
+      });
+    } catch {
+      throw new ServiceError('INVALID_REQUEST', 'Evidence review unavailable');
+    }
   }
 
   // ------------------------------------------------------------------
@@ -3573,7 +3614,10 @@ export class AgentBrowserService {
     const context = this.reviewContext(sessionId);
     const result = await this.approvalGate.getReviewedApproval(tokenId, context);
     this.authority.assert(sessionId);
-    if (!result) throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
+    // Internal evidence records require source-specific permission on every disclosure.
+    // Public integration is intentionally unavailable until that policy is qualified.
+    if (!result || result.action.type === NATIVE_FORM_REVIEW_TYPE)
+      throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
     this.assertReviewDisclosureSafe(result);
     return result;
   }
