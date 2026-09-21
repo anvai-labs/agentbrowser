@@ -1,6 +1,23 @@
 # Release milestones and acceptance gates
 
-## Current checkpoint: 1.9.0 delivered; T3 started (2026-09-19)
+## Current checkpoint: 1.9.1 candidate (2026-09-20)
+
+Published baseline remains **1.9.0**. T3 completed on develop through
+[PR 231](https://github.com/anvai-labs/agentbrowser/pull/231), followed by the bounded
+T6 widget commitment repair in [PR 232](https://github.com/anvai-labs/agentbrowser/pull/232)
+at `d510a56d5d69e0cc9afe17dc56d27a0a11987cff`; its eight
+[post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/35539537406)
+passed. The owner selected an earlier **1.9.1** delivery checkpoint for these changes,
+foundation alignment, the Node 24 baseline and CLI cookie-file handoff. Cookie-file
+qualification, final review, develop/main PRs, publication and tap delivery remain
+candidate gates until their exact evidence is recorded. A local version bump is not
+a release. See the [changelog](../CHANGELOG.md) and [T9](spec/tasks/t9-release-hardening.md).
+
+The [full job-application checkpoint](spec/design/t6-job-application-checkpoint.md)
+remains later work. This release does not close production verification/G6, durable
+recovery, popup ownership or installed external-harness qualification.
+
+## Delivered checkpoint: 1.9.0 (2026-09-19)
 
 **1.9.0** delivers the completed T2 shared foundation. Promotion
 [PR 210](https://github.com/anvai-labs/agentbrowser/pull/210) merged to main as
@@ -29,8 +46,8 @@ T3 began from that synchronized baseline. Its first bounded report foundation
 `4dd96e9749f363ce8b78cdacccacfd4b87bf9b0b`; all eight
 [PR checks](https://github.com/anvai-labs/agentbrowser/actions/runs/35459535641)
 and all eight [post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/35459717523)
-passed. T3 is not complete: reusable regression integration, broader QA reporting
-and later task slices retain their gates. The subsequent
+passed. T3 was incomplete at that checkpoint; its later completion is recorded above.
+The subsequent
 [navigation-reset qualification](spec/evidence/t3-navigation-reset.md) is tracked separately. Production evidence/G6, durable recovery and
 independent UI/API parity also remain open. The repeatable release sequence
 below remains applicable; earlier checkpoint statuses are historical.

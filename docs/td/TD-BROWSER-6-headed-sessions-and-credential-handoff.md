@@ -120,6 +120,19 @@ returns the service's cookies for a seeded session.
 
 ## Implementation record
 
+### 1.9.1 CLI file-handoff extension (candidate)
+
+The [bounded file-handoff design](../spec/design/cli-cookie-file-handoff.md) closes the
+remaining shell UX gap: `session create --cookies-file` reads a local credential file
+without putting its values in argv; `session cookies --output` exports privately with
+exclusive creation. Canonical JSON, Netscape and explicit Chrome DevTools TSV adapters
+normalize into the existing cookie contract. Unsupported partitioned cookies refuse by
+default rather than losing scope. This adds no remote filesystem endpoint or session
+store and does not prove the destination accepted the session. Qualification uses
+synthetic local fixtures; real credentials never enter tests or release evidence.
+
+### Original headed/export delivery
+
 - Engine: dedicated headed browsers + ownership + (existing) `cookies()`.
 - Core: `SessionCoordinator.cookies(sessionId)`.
 - API: `GET /v1/sessions/{sessionId}/cookies` + openapi.

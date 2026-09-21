@@ -51,6 +51,7 @@ import {
   validateWireAction,
 } from '@agentbrowser/sdk-typescript';
 import { Command, type Option } from 'commander';
+import { assertCookieRequestSize, readCookieFile, writeCookieFile } from './cookie-file.js';
 import { type JsonInputStream, createJsonArgumentReader } from './json-input.js';
 import { PRODUCT_VERSION } from './product-version.js';
 
@@ -298,7 +299,7 @@ export function buildCli(deps: CliDependencies): Cli {
           })
         );
 
-      session
+      const sessionCreate = session
         .command('create')
         .description('create a new session')
         .requiredOption('--tenant <id>', 'tenant identifier')
@@ -320,6 +321,18 @@ export function buildCli(deps: CliDependencies): Cli {
         .option(
           '--cookies <json>',
           'seed cookies as inline JSON (the credential-handoff loop: pair with `session cookies` to export first)'
+        )
+        .option(
+          '--cookies-file <path>',
+          'seed cookies from a regular UTF-8 file (at most 1 MiB and 1000 cookies)'
+        )
+        .option(
+          '--cookies-format <format>',
+          'cookie file format: json (default), netscape or chrome-devtools-tsv; requires --cookies-file'
+        )
+        .option(
+          '--cookies-skip-unsupported',
+          'omit whole unsupported partitioned cookies with counts; requires --cookies-file'
         )
         .option(
           '--allow-downloads',
@@ -373,7 +386,30 @@ export function buildCli(deps: CliDependencies): Cli {
             if (options.snapshotTimeout) {
               request.snapshotTimeoutMs = Number.parseInt(String(options.snapshotTimeout), 10);
             }
-            if (options.cookies) {
+            if (options.cookies !== undefined && options.cookiesFile !== undefined)
+              throw new UsageError('Use only one of --cookies or --cookies-file.');
+            if (
+              options.cookiesFile === undefined &&
+              (options.cookiesFormat !== undefined || options.cookiesSkipUnsupported)
+            )
+              throw new UsageError('Cookie format and omission flags require --cookies-file.');
+            if (options.cookiesFile !== undefined) {
+              requireWireContract(
+                sessionCreate,
+                wireContracts,
+                wireContractExemptions,
+                'cookie input'
+              );
+              const imported = await readCookieFile(
+                String(options.cookiesFile),
+                options.cookiesFormat === undefined ? undefined : String(options.cookiesFormat),
+                Boolean(options.cookiesSkipUnsupported)
+              );
+              request.cookies = imported.cookies;
+              if (imported.skipped)
+                deps.err(`Omitted ${imported.skipped} unsupported partitioned cookie(s).`);
+            }
+            if (options.cookies !== undefined) {
               try {
                 request.cookies = JSON.parse(String(options.cookies)) as NonNullable<
                   SessionRequest['cookies']
@@ -411,7 +447,14 @@ export function buildCli(deps: CliDependencies): Cli {
               request.policy = policy as unknown as NonNullable<SessionRequest['policy']>;
             }
 
-            const created = await ctx.client.sessions.create(request);
+            if (options.cookiesFile !== undefined) assertCookieRequestSize(request);
+            const created = await ctx.client.sessions.create(request).catch((error) => {
+              if (options.cookiesFile !== undefined)
+                throw new UsageError(
+                  'Cookie-seeded session creation failed; no credential details are displayed.'
+                );
+              throw error;
+            });
 
             ctx.emit(created, () => [
               `Session ${created.sessionId}`,
@@ -420,6 +463,12 @@ export function buildCli(deps: CliDependencies): Cli {
             ]);
           })
         );
+
+      // Cookie JSON maps to SessionRequestSchema.cookies; there is no canonical full CLI command schema.
+      wireContractExemptions.set(
+        sessionCreate,
+        'Cookie subshape validated by canonical validateSessionRequest; local file options are not wire fields.'
+      );
 
       session
         .command('list')
@@ -457,9 +506,22 @@ export function buildCli(deps: CliDependencies): Cli {
         .command('cookies')
         .description("export a session's cookies (re-seed future sessions via create --cookies)")
         .argument('<sessionId>')
+        .option(
+          '--output <path>',
+          'export JSON to a new private file (0600), never overwrite; print counts/path only'
+        )
         .action(
-          action(async (ctx, sessionId: string) => {
-            const cookies = await ctx.client.sessions.cookies(sessionId);
+          action(async (ctx, sessionId: string, options: { output?: string }) => {
+            const cookies = await ctx.client.sessions.cookies(sessionId).catch((error) => {
+              if (options.output !== undefined)
+                throw new UsageError('Cookie export failed; no credential details are displayed.');
+              throw error;
+            });
+            if (options.output !== undefined) {
+              const receipt = await writeCookieFile(options.output, cookies);
+              ctx.emit(receipt, () => [`Exported ${receipt.count} cookie(s) to ${receipt.path}`]);
+              return;
+            }
             ctx.emit(cookies, () => [
               JSON.stringify(cookies),
               `(${cookies.length} cookie${cookies.length === 1 ? '' : 's'} — re-seed with: session create --cookies '${JSON.stringify(cookies)}')`,

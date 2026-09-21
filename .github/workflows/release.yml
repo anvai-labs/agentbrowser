@@ -336,8 +336,8 @@ jobs:
           ## AgentBrowser ${{ github.ref_name }}
 
           AgentBrowser ships a first-class CLI, a service and an optional MCP
-          adapter. Point either client at a reachable AgentBrowser service via
-          `AGENTBROWSER_BASE_URL` (default `http://localhost:5709`). The MCP
+          adapter. Point the CLI at a reachable service with `--base-url`, or set
+          `AGENTBROWSER_BASE_URL` for MCP (default `http://localhost:5709`). The MCP
           executable is only the stdio adapter, not the service.
           See the [versioned changelog](https://github.com/anvai-labs/agentbrowser/blob/${{ github.ref_name }}/CHANGELOG.md)
           for included capabilities and qualification limits.

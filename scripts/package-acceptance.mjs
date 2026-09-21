@@ -297,10 +297,15 @@ async function fixtures(directory) {
   const sockets = new Set();
   const stalled = new Set();
   const payload = Buffer.from('AgentBrowser packaged HTTP and TLS acceptance\n');
+  const cookieSecret = randomBytes(24).toString('hex');
   const effects = [];
   let contacts = 0;
   const handler = (request, response) => {
-    if (request.url === '/coexistence-effect' && request.method === 'POST') {
+    if (request.url === '/cookie-protected') {
+      const authenticated = (request.headers.cookie ?? '').split(';').some((entry) => entry.trim() === `acceptance_session=${cookieSecret}`);
+      response.writeHead(authenticated ? 200 : 401, { 'content-type': 'text/html' });
+      response.end(`<!doctype html><title>${authenticated ? 'Cookie authenticated' : 'Cookie required'}</title>`);
+    } else if (request.url === '/coexistence-effect' && request.method === 'POST') {
       let body = '';
       request.on('data', (chunk) => {
         body += chunk;
@@ -337,7 +342,7 @@ async function fixtures(directory) {
     });
     const http = `http://127.0.0.1:${await listen(servers[0])}`;
     const https = `https://127.0.0.1:${await listen(servers[1])}`;
-    return { http, https, certPath, payload, stalled, effects, get contacts() { return contacts; }, close };
+    return { http, https, certPath, payload, stalled, effects, directory, cookieSecret, get contacts() { return contacts; }, close };
   } catch (error) { await close(); throw error; }
 }
 
@@ -506,6 +511,63 @@ async function workflow(baseUrl, key, fixture, process, options, report) {
     report.push({ check: 'CLI-action-and-MCP-live-workflow', status: 'pass' });
     await close(page.sessionId);
     if (options.profile === 'candidate') {
+      // Reuse this extracted service and HTTP fixture: credentials stay in files,
+      // every browser operation is driven through the actual compiled CLI.
+      const cookieCli = async (args, expectedExitCode = 0) => {
+        const result = await surface((settings) => runExecutable([
+          ...options.cli, '--base-url', baseUrl, '--json', ...args,
+        ], settings), { env: cliEnv, expectedExitCode });
+        assert.ok(!result.stdout.includes(fixture.cookieSecret) && !result.stderr.includes(fixture.cookieSecret), 'Cookie CLI exposed a credential');
+        return expectedExitCode === 0 ? JSON.parse(result.stdout) : result;
+      };
+      const cookieSession = async (args) => {
+        const created = await cookieCli(['session', 'create', '--tenant', 'release-smoke', ...args]);
+        sessions.add(created.sessionId);
+        return created.sessionId;
+      };
+      const cookiePage = async (id, expectedTitle) => {
+        const created = await cookieCli(['page', 'create', id, '--url', `${fixture.http}/cookie-protected`]);
+        const observed = await cookieCli(['snapshot', id, created.pageId]);
+        assert.equal(observed.title, expectedTitle, 'Cookie file did not establish the expected authenticated state');
+      };
+      const unauthenticated = await cookieSession([]);
+      await cookiePage(unauthenticated, 'Cookie required');
+      await close(unauthenticated);
+      const cookie = { name: 'acceptance_session', value: fixture.cookieSecret, domain: '127.0.0.1', path: '/', httpOnly: true, secure: false, expires: -1 };
+      const formats = [
+        ['json', JSON.stringify([cookie])],
+        ['netscape', `# Netscape HTTP Cookie File\n#HttpOnly_127.0.0.1\tFALSE\t/\tFALSE\t0\tacceptance_session\t${fixture.cookieSecret}\n`],
+        ['chrome-devtools-tsv', ['acceptance_session', fixture.cookieSecret, '127.0.0.1', '/', 'Session', '66', '✓', '', '', '', '', 'Medium'].join('\t')],
+      ];
+      for (const [format, text] of formats) {
+        const inputPath = join(fixture.directory, `cookie-input-${format}.txt`);
+        await writeFile(inputPath, text, { mode: 0o600 });
+        const id = await cookieSession(['--cookies-file', inputPath, '--cookies-format', format]);
+        await cookiePage(id, 'Cookie authenticated');
+        if (format === 'json') {
+          const outputPath = join(fixture.directory, 'cookie-export.json');
+          const receipt = await cookieCli(['session', 'cookies', id, '--output', outputPath]);
+          assert.equal(receipt.path, outputPath);
+          const bytes = await readFile(outputPath);
+          const exported = JSON.parse(bytes.toString('utf8'));
+          assert.equal(receipt.count, exported.length);
+          assert.ok(exported.some((entry) => entry.name === cookie.name && entry.value === cookie.value && entry.domain === cookie.domain && entry.path === cookie.path && entry.httpOnly === true), 'Export did not preserve cookie identity and HttpOnly');
+          assert.equal((await stat(outputPath)).mode & 0o777, 0o600, 'Cookie export is not owner-only');
+          await cookieCli(['session', 'cookies', id, '--output', outputPath], 1);
+          assert.ok(bytes.equals(await readFile(outputPath)), 'Refused export overwrote an existing credential file');
+          const restored = await cookieSession(['--cookies-file', outputPath]);
+          await cookiePage(restored, 'Cookie authenticated');
+          await close(restored);
+        }
+        await close(id);
+      }
+      const invalidPath = join(fixture.directory, 'cookie-partitioned.json');
+      await writeFile(invalidPath, JSON.stringify([{ ...cookie, partitionKey: 'https://example.invalid' }]), { mode: 0o600 });
+      const before = (await request('/v1/sessions')).sessions.map((entry) => entry.sessionId).sort();
+      await cookieCli(['session', 'create', '--tenant', 'release-smoke', '--cookies-file', invalidPath], 1);
+      const after = (await request('/v1/sessions')).sessions.map((entry) => entry.sessionId).sort();
+      assert.deepEqual(after, before, 'Refused cookie file created a browser session');
+      report.push({ check: 'packaged-cli-cookie-file-handoff', status: 'pass', formats: formats.map(([format]) => format), authenticatedSessions: 4, denialControls: ['missing-cookie', 'partitioned-input', 'existing-output'], privateExport: true });
       await checkPackagedCoexistence({ request, surface, process, fixture, options, env: cliEnv, sessions, close, key });
       report.push({ check: 'packaged-delegated-operator-MCP-coexistence', status: 'pass' });
     }
