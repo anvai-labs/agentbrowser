@@ -29,6 +29,17 @@ complete T4. The 1.9.0 foundation adds explicit delegated predicate permission o
 authority-owned identity via the shared evidence registry; see
 [permission qualification](../evidence/t2-application-evidence-permission.md).
 
+## Current bounded repair
+
+Q0a hardens trusted adapter callbacks before expanding application integrations.
+The [callback contract design](../design/t4-application-callback-contracts.md) reuses
+ApplicationAuthority, synchronousResult and protocol descriptor validation: require
+literal synchronous authorization, preserve checked scope across reentrant callbacks,
+and snapshot operation declarations without freezing caller-owned policy state.
+See the [local qualification](../evidence/t4-application-callback-contracts.md).
+This is deployment-configuration hardening, not completion of parity or evidence of a
+stock remote exploit. Keep the 1.9.1 release immutable; deliver this slice to develop.
+
 ## TDD and acceptance
 
 Test stale expected versions, resource/account rebinding, revoked grants, duplicate IDs,

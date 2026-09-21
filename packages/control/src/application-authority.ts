@@ -1,12 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { ControlError, type SessionControl } from '@agentbrowser/core';
-import { CONTROL_OPERATION_ID } from '@agentbrowser/protocol';
+import {
+  CONTROL_OPERATION_ID,
+  validateApplicationOperationDescriptors,
+} from '@agentbrowser/protocol';
 import { canonicalJson } from './canonical-json.js';
 import {
   type SessionAdmission,
   SessionAuthority,
   type SessionPrincipal,
 } from './session-authority.js';
+import { synchronousResult } from './trusted-callback.js';
 
 export interface ApplicationScope {
   readonly sessionId: string;
@@ -50,11 +54,14 @@ export function defineApplicationOperation<Input, Output>(operation: {
   parse(input: unknown): Input;
   execute(input: Input, scope: ApplicationScope): Promise<ApplicationResult<Output>>;
 }): ApplicationOperation {
+  const mode = operation.mode;
+  const parse = operation.parse.bind(operation);
+  const execute = operation.execute.bind(operation);
   return Object.freeze({
-    mode: operation.mode,
+    mode,
     prepare(input: unknown) {
-      const parsed = operation.parse(input);
-      return (scope: ApplicationScope) => operation.execute(parsed, scope);
+      const parsed = parse(input);
+      return (scope: ApplicationScope) => execute(parsed, scope);
     },
   });
 }
@@ -77,6 +84,19 @@ export interface ApplicationRequest {
 }
 type Binding = ApplicationBinding & { generation: string; tenant: string };
 
+/** All application policy boundaries share strict synchronous, non-disclosing denial. */
+function assertApplicationAuthorized(
+  adapter: ApplicationAdapter,
+  scope: { tenant: string; resource: string }
+): void {
+  try {
+    if (synchronousResult(adapter.authorize(scope)) === true) return;
+  } catch {
+    // Callback exceptions and malformed results are policy denial, never private diagnostics.
+  }
+  throw new ControlError('CONTROL_REQUIRED', 'Application scope is not permitted');
+}
+
 /** Opt-in trusted adapters. This port owns no browser, planner, network client or database. */
 export class ApplicationAuthority {
   private readonly adapters = new Map<string, ApplicationAdapter>();
@@ -87,14 +107,46 @@ export class ApplicationAuthority {
     adapters: readonly ApplicationAdapter[] = []
   ) {
     for (const adapter of adapters) {
-      if (!CONTROL_OPERATION_ID.test(adapter.id) || this.adapters.has(adapter.id))
+      try {
+        const id = adapter.id;
+        const authorize = adapter.authorize;
+        const receipt = adapter.receipt;
+        const declared = adapter.operations;
+        if (
+          typeof id !== 'string' ||
+          !CONTROL_OPERATION_ID.test(id) ||
+          this.adapters.has(id) ||
+          typeof authorize !== 'function' ||
+          typeof receipt !== 'function' ||
+          !declared ||
+          typeof declared !== 'object' ||
+          Array.isArray(declared)
+        )
+          throw new Error();
+        const operations = Object.entries(declared).map(([name, operation]) => {
+          const mode = operation.mode;
+          const prepare = operation.prepare;
+          if (typeof prepare !== 'function') throw new Error();
+          return [name, Object.freeze({ mode, prepare: prepare.bind(operation) })] as const;
+        });
+        if (
+          !validateApplicationOperationDescriptors(
+            operations.map(([name, operation]) => ({ name, mode: operation.mode }))
+          ).ok
+        )
+          throw new Error();
+        this.adapters.set(
+          id,
+          Object.freeze({
+            id,
+            authorize: authorize.bind(adapter),
+            receipt: receipt.bind(adapter),
+            operations: Object.freeze(Object.fromEntries(operations)),
+          })
+        );
+      } catch {
         throw new ControlError('INVALID_REQUEST', 'Invalid or duplicate application adapter');
-      this.adapters.set(adapter.id, {
-        id: adapter.id,
-        authorize: adapter.authorize.bind(adapter),
-        receipt: adapter.receipt.bind(adapter),
-        operations: Object.freeze({ ...adapter.operations }),
-      });
+      }
     }
   }
 
@@ -106,21 +158,43 @@ export class ApplicationAuthority {
   }
 
   bind(sessionId: string, principal: SessionPrincipal, requested: ApplicationBinding): void {
-    this.authority.configure(sessionId, principal, () => {
-      const adapter = this.adapters.get(requested.adapter);
+    if (principal.actor !== 'operator')
+      throw new ControlError('CONTROL_REQUIRED', 'Operator authority does not match');
+    const requestedTenant = principal.tenant;
+    const owner: SessionPrincipal = {
+      actor: 'operator',
+      ...(requestedTenant !== undefined ? { tenant: requestedTenant } : {}),
+    };
+    const adapterId = requested.adapter;
+    const resource = requested.resource;
+    this.authority.configure(sessionId, owner, () => {
+      const adapter = this.adapters.get(adapterId);
+      const tenant = owner.tenant;
       if (
         !adapter ||
-        !principal.tenant ||
-        !CONTROL_OPERATION_ID.test(requested.resource) ||
-        !adapter.authorize({ tenant: principal.tenant, resource: requested.resource })
+        !tenant ||
+        typeof resource !== 'string' ||
+        !CONTROL_OPERATION_ID.test(resource)
       )
         throw new ControlError('CONTROL_REQUIRED', 'Application binding is not permitted');
       const control = this.authority.get(sessionId);
       if (!control) throw new ControlError('CONTROL_REVOKED', 'Session was removed');
+      const epoch = control.view().epoch;
+      const previous = this.bindings.get(control);
+      assertApplicationAuthorized(adapter, Object.freeze({ tenant, resource }));
+      const view = control.view();
+      if (
+        this.authority.get(sessionId) !== control ||
+        view.epoch !== epoch ||
+        view.busy ||
+        (view.state !== 'HUMAN_ACTIVE' && view.state !== 'RESUME_REVIEW') ||
+        this.bindings.get(control) !== previous
+      )
+        throw new ControlError('CONTROL_REVOKED', 'Application binding authority changed');
       this.bindings.set(control, {
         adapter: adapter.id,
-        resource: requested.resource,
-        tenant: principal.tenant,
+        resource,
+        tenant,
         generation: randomUUID(),
       });
     });
@@ -131,8 +205,8 @@ export class ApplicationAuthority {
       const binding = this.binding(sessionId, false);
       if (!binding) return null;
       const adapter = this.adapter(binding.adapter);
-      if (!adapter.authorize(this.scope(sessionId, binding)))
-        throw new ControlError('CONTROL_REQUIRED', 'Application scope was revoked');
+      assertApplicationAuthorized(adapter, this.scope(sessionId, binding));
+      this.authority.assert(sessionId);
       return {
         adapter: binding.adapter,
         resource: binding.resource,
@@ -190,9 +264,12 @@ export class ApplicationAuthority {
       write && request.operationId && fingerprint ? { id: request.operationId, fingerprint } : {},
       async () => {
         const scope = this.scope(sessionId, binding, request);
-        if (!adapter.authorize(scope))
-          throw new ControlError('CONTROL_REQUIRED', 'Application scope was revoked');
-        const execute = operation.prepare(input);
+        assertApplicationAuthorized(adapter, scope);
+        this.authority.assert(sessionId);
+        const execute = synchronousResult(operation.prepare(input));
+        if (typeof execute !== 'function')
+          throw new ControlError('INVALID_REQUEST', 'Invalid application preparation');
+        assertApplicationAuthorized(adapter, scope);
         this.authority.assert(sessionId, write);
         const result = await execute(scope);
         rejected = result.status === 'rejected';
@@ -238,8 +315,7 @@ export class ApplicationAuthority {
             throw new ControlError('CONTROL_REQUIRED', 'Application scope was revoked');
         };
         checkAdmission();
-        if (!adapter.authorize(scope))
-          throw new ControlError('CONTROL_REQUIRED', 'Application scope was revoked');
+        assertApplicationAuthorized(adapter, scope);
         // Trusted callbacks can synchronously replace authority, bindings, or cancel the read.
         checkAdmission();
       } catch (error) {
