@@ -113,15 +113,113 @@ interface FormEvidenceNode {
   type?: string;
   multiple?: boolean;
   value?: string;
+  ownerDocument: FormEvidenceDocument;
+  getBoundingClientRect(): { width: number; height: number };
   getAttribute(name: string): string | null;
+  matches(selector: string): boolean;
   closest(selector: string): FormEvidenceNode | null;
   querySelector(selector: string): { textContent: string | null } | null;
   querySelectorAll(selector: string): ArrayLike<{ textContent: string | null }>;
+}
+interface FormEvidenceDocument {
+  activeElement: FormEvidenceNode | null;
+  querySelectorAll(selector: string): ArrayLike<FormEvidenceNode>;
+  defaultView: { getComputedStyle(node: FormEvidenceNode): { visibility: string } } | null;
+}
+interface FormPopupEvidence {
+  state: 'ready' | 'pending' | 'invalid';
+  popup?: FormEvidenceNode;
+  owner?: FormEvidenceNode;
 }
 interface FormIdentityState {
   nodes: WeakMap<object, string>;
   next: number;
   document: string;
+  popups?: WeakMap<object, FormPopupEvidence>;
+}
+
+/** One bounded ownership index per observation; refreshed again before dispatch. */
+function refreshFormPopupEvidence(state: FormIdentityState): void {
+  const doc = (globalThis as unknown as { document: FormEvidenceDocument }).document;
+  const nodes = doc.querySelectorAll('[id], [role="combobox"], [role="listbox"]');
+  const evidence = new WeakMap<object, FormPopupEvidence>();
+  state.popups = evidence;
+  // If the index cannot be complete, omitted evidence is invalid, never a guess.
+  if (nodes.length > 10_000) return;
+  const ids = new Map<string, FormEvidenceNode[]>();
+  const controls: FormEvidenceNode[] = [];
+  const popups: FormEvidenceNode[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i];
+    if (!node) continue;
+    if (node.id) {
+      const matches = ids.get(node.id) ?? [];
+      matches.push(node);
+      ids.set(node.id, matches);
+    }
+    const role = node.getAttribute('role');
+    if (role === 'combobox' && node.tagName !== 'SELECT') controls.push(node);
+    if (role === 'listbox') popups.push(node);
+  }
+  const owners = new Map<FormEvidenceNode, Set<FormEvidenceNode>>();
+  const candidates = new Map<FormEvidenceNode, FormEvidenceNode>();
+  for (const control of controls) {
+    const controlsValue = control.getAttribute('aria-controls') ?? '';
+    const ownsValue = control.getAttribute('aria-owns') ?? '';
+    if (controlsValue.length + ownsValue.length > 1024) {
+      state.popups = new WeakMap();
+      return;
+    }
+    const references = [
+      ...new Set(`${controlsValue} ${ownsValue}`.trim().split(/\s+/).filter(Boolean)),
+    ];
+    if (references.length > 32) {
+      state.popups = new WeakMap();
+      return;
+    }
+    let invalid = false;
+    let missing = references.length === 0;
+    const resolved = new Set<FormEvidenceNode>();
+    for (const reference of references) {
+      const matches = ids.get(reference) ?? [];
+      if (matches.length === 0) missing = true;
+      else if (matches.length !== 1 || matches[0]?.getAttribute('role') !== 'listbox')
+        invalid = true;
+      // Record every declared owner, even an ambiguous one, so another control
+      // cannot claim a popup simply because its competitor has invalid markup.
+      for (const popup of matches) {
+        if (popup.getAttribute('role') !== 'listbox') continue;
+        const declaredOwners = owners.get(popup) ?? new Set<FormEvidenceNode>();
+        declaredOwners.add(control);
+        owners.set(popup, declaredOwners);
+        resolved.add(popup);
+      }
+    }
+    if (invalid || resolved.size > 1 || (missing && references.length > 1)) {
+      evidence.set(control, { state: 'invalid' });
+    } else if (missing) evidence.set(control, { state: 'pending' });
+    else {
+      const popup = [...resolved][0];
+      if (popup) candidates.set(control, popup);
+      else evidence.set(control, { state: 'invalid' });
+    }
+  }
+  for (const popup of popups) evidence.set(popup, { state: 'invalid' });
+  for (const [owner, popup] of candidates) {
+    if (owners.get(popup)?.size !== 1) {
+      evidence.set(owner, { state: 'invalid' });
+      continue;
+    }
+    const box = popup.getBoundingClientRect();
+    const visibility = doc.defaultView?.getComputedStyle(popup).visibility;
+    const visible =
+      box.width > 0 && box.height > 0 && visibility !== 'hidden' && visibility !== 'collapse';
+    const entry: FormPopupEvidence = visible
+      ? { state: 'ready', popup, owner }
+      : { state: 'pending' };
+    evidence.set(owner, entry);
+    evidence.set(popup, entry);
+  }
 }
 function captureFormEvidence(
   node: FormEvidenceNode,
@@ -135,24 +233,55 @@ function captureFormEvidence(
     }
     return id;
   };
-  const block = node.closest('fieldset');
-  const attributes: Record<string, string> = {
-    tag: node.tagName.toLowerCase(),
-    'autofill-node': token(node),
-    'autofill-block': block ? token(block) : '',
+  const identity = (element: FormEvidenceNode): Record<string, string> => {
+    const block = element.closest('fieldset');
+    const attributes: Record<string, string> = {
+      tag: element.tagName.toLowerCase(),
+      'autofill-node': token(element),
+      'autofill-block': block ? token(block) : '',
+    };
+    for (const name of ['id', 'data-automation-id', 'aria-autocomplete']) {
+      const value = element.getAttribute(name);
+      if (value !== null) attributes[name] = value.slice(0, 512);
+    }
+    if (block) {
+      attributes['fieldset-id'] = block.id.slice(0, 512);
+      attributes['fieldset-label'] = (block.querySelector(':scope > legend')?.textContent ?? '')
+        .trim()
+        .slice(0, 512);
+    }
+    return attributes;
   };
-  for (const name of ['id', 'data-automation-id', 'aria-autocomplete']) {
-    const value = node.getAttribute(name);
-    if (value !== null) attributes[name] = value.slice(0, 512);
-  }
-  if (block) {
-    attributes['fieldset-id'] = block.id.slice(0, 512);
-    attributes['fieldset-label'] = (block.querySelector(':scope > legend')?.textContent ?? '')
-      .trim()
-      .slice(0, 512);
-  }
+  const attributes = identity(node);
   if (node.tagName === 'INPUT') attributes.type = node.type ?? 'text';
   if (node.tagName === 'SELECT' && node.multiple) attributes.multiple = 'true';
+  const role = node.getAttribute('role');
+  if (role === 'combobox' && node.tagName !== 'SELECT') {
+    const popup = state.popups?.get(node);
+    attributes['autofill-popup-state'] = popup?.state ?? 'invalid';
+    attributes['autofill-focused'] = String(node.ownerDocument.activeElement === node);
+    if (popup?.popup) attributes['autofill-popup'] = token(popup.popup);
+  } else if (role === 'option' && node.tagName !== 'OPTION') {
+    const parent = node.closest('[role="listbox"]');
+    const popup = parent ? state.popups?.get(parent) : undefined;
+    attributes['autofill-popup-state'] = popup?.state ?? 'invalid';
+    if (popup?.popup && popup.owner) {
+      attributes['autofill-popup'] = token(popup.popup);
+      attributes['autofill-owner'] = token(popup.owner);
+      attributes['autofill-owner-context'] = JSON.stringify(identity(popup.owner));
+      attributes['autofill-owner-focused'] = String(
+        node.ownerDocument.activeElement === popup.owner
+      );
+      const box = popup.owner.getBoundingClientRect();
+      const visibility = node.ownerDocument.defaultView?.getComputedStyle(popup.owner).visibility;
+      attributes['autofill-owner-visible'] = String(
+        box.width > 0 && box.height > 0 && visibility !== 'hidden' && visibility !== 'collapse'
+      );
+      attributes['autofill-owner-enabled'] = String(
+        !popup.owner.matches(':disabled') && popup.owner.getAttribute('aria-disabled') !== 'true'
+      );
+    }
+  }
   // Known React-Select markup keeps the committed selection outside the input,
   // whose value only contains transient query text. Capture bounded committed
   // labels; absence or incomplete capture can never be treated as a commit.
@@ -1500,6 +1629,8 @@ class PlaywrightPage implements EnginePage {
         );
       }
       const formState = this.formIdentityState;
+      if (request.include?.includes('formControls') && formState)
+        await this.page.evaluate(refreshFormPopupEvidence, formState);
       await Promise.all(
         boundElements.map(async ({ element, handle, locator }) => {
           element.visible = await handle.isVisible();
@@ -2174,6 +2305,8 @@ class PlaywrightPage implements EnginePage {
       if (binding?.formEvidence) {
         if (!this.formIdentityState)
           throw new EngineError('STALE_TARGET', 'Form document changed', false);
+        if ('autofill-popup-state' in binding.formEvidence)
+          await this.page.evaluate(refreshFormPopupEvidence, this.formIdentityState);
         const live = await binding.handle.evaluate(captureFormEvidence, this.formIdentityState);
         if (JSON.stringify(live.attributes) !== JSON.stringify(binding.formEvidence))
           throw new EngineError(

@@ -49,9 +49,10 @@ HTML without a consumer and automatic CI selection remain separate follow-ups.
 
 The 1.9.1 [release ladder](../evidence/release-1.9.1.md) is complete, including
 Homebrew acceptance and main-to-develop back-sync (#235). Q0 committed-widget
-verification shipped; the next bounded slice is the existing ApplicationAuthority
-[callback contract guard](../design/t4-application-callback-contracts.md) (Q0a).
-Then qualify popup ownership/async widget readiness before reusable mappings and
+verification shipped; the ApplicationAuthority
+[callback contract guard](../design/t4-application-callback-contracts.md) (Q0a) merged
+through #236 with eight PR and eight post-merge checks green. The current bounded T6
+[owned-popup/readiness slice](../design/t6-owned-popup-readiness.md) precedes reusable mappings and
 job-workflow dogfood. Independent UI/API parity remains T4 work. Keep research outside
 default task context and use the [progress checkpoint](../evidence/foundation-progress-2026-09-20.md)
 for estimates: T0, T2 and T3 are complete, or 3 of 9 finite milestones (33%). Including

@@ -60,9 +60,10 @@ live JUnit are merged. The [T3 completion checkpoint](evidence/t3-standalone-qua
 adds standalone/cost evidence through #231; public report APIs, justified HTML and
 general provisioning remain separate. Version 1.9.1 includes this checkpoint,
 Q0 committed-widget verification and CLI cookie-file input; its release and Homebrew
-ladder is [qualified](evidence/release-1.9.1.md). Next harden the existing T4 application
-[callback contract](design/t4-application-callback-contracts.md), then qualify T6 popup
-ownership/async readiness before expanding mappings. The
+ladder is [qualified](evidence/release-1.9.1.md). T4 application
+[callback hardening](design/t4-application-callback-contracts.md) merged through #236.
+The current [T6 owned-popup/readiness slice](design/t6-owned-popup-readiness.md)
+qualifies the next prerequisite before expanding mappings. The
 [progress checkpoint](evidence/foundation-progress-2026-09-20.md) distinguishes partial
 implementation from completed acceptance.
 Order remaining T4/T5 work by acceptance and demand. T7 follows actual audit/security demand, not

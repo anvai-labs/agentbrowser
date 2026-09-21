@@ -62,8 +62,25 @@ limited to 32 labels, 512 characters per label and 16,384 serialized characters;
 incomplete membership cannot verify a selection. Search input or menu text alone is
 not commitment. This is a named markup contract, not qualification of every React
 Select version or arbitrary chip widget. Removal, replacement and rollback remain
-unsupported. Option matching retains the existing first exact/prefix candidate;
-popup-scoped ambiguity handling and bounded async option polling remain follow-ups.
+unsupported. Custom option selection requires a unique visible exact label in the
+listbox owned by the intended combobox through unambiguous `aria-controls`/`aria-owns`
+evidence. Comparison trims surrounding whitespace but preserves case; there is no
+prefix or first-match fallback. Portaled lists may live outside the fieldset. Duplicate
+IDs/owners, duplicate exact options, lost focus and changed popup identity refuse the
+selection. The engine rechecks ownership immediately before dispatch; DOM checks and
+clicking are not atomic against hostile page scripts.
+
+After opening, focus must remain on the original control. The service types once,
+observes immediately and polls only pending popup/option readiness, using at most
+`maxReobserve` extra observations separated by `settleMs`. This readiness budget is
+separate from existing field-discovery/verification budgets and shares the same overall
+deadline. It never replays opening or typing. Missing or invalid engine popup-state
+metadata refuses the field before opening. A control without a current ARIA relation
+is pending: the strategy may open/type once into the uniquely matched, stable, focused
+control while waiting for a relation to appear. It cannot click an option until unique
+ownership is proven. Opening/typing may already have effects, so a later
+refusal is uncertain and stops the suffix. See the
+[owned-popup design](spec/design/t6-owned-popup-readiness.md) for the bounded contract.
 
 ## Co-design decisions and next qualification
 
