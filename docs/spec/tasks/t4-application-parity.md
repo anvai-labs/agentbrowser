@@ -61,3 +61,9 @@ a production evidence source and the remaining receipt-correlation acceptance. D
 service-restart claims depend on T5. If an external app cannot supply durable idempotency
 or receipts, advertise weaker observed outcomes and refuse automatic replay. No
 application-specific executor fork.
+
+The [C2a draft-oracle candidate](../design/t6-draft-oracle.md) adds a named
+independent UI/API oracle for synthetic drafts, with separate path outcomes and a
+broken-UI negative control. It shares T6 test support rather than creating a second
+application execution path. Production evidence, operator-binding UX and remaining
+qualification gates above still prevent marking T4 complete.
