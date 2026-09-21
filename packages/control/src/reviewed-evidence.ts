@@ -37,6 +37,15 @@ export interface PreparedEvidenceReview {
   consume(tokenId: string, signal: AbortSignal): Promise<boolean>;
 }
 
+/** Public-safe selector for resolving a stored native-form review through trusted config. */
+export interface EvidenceReviewSelector {
+  readonly pageId: string;
+  readonly source: Readonly<{
+    ownerId: string;
+    contract: Readonly<{ id: string; version: string }>;
+  }>;
+}
+
 export interface PrepareEvidenceReviewOptions {
   readonly gate: ApprovalGate;
   readonly context: ApprovalReviewBinding;
@@ -69,6 +78,48 @@ function dataProperties(value: unknown, keys: readonly string[]): Record<string,
   )
     throw unavailable();
   return Object.fromEntries(keys.map((key) => [key, own[key]?.value]));
+}
+
+/** Extract only non-private routing identity from a reserved reviewed action. */
+export function selectEvidenceReview(value: unknown): EvidenceReviewSelector | undefined {
+  try {
+    const action = dataProperties(value, ['type', 'pageId', 'parameters']);
+    if (
+      action.type !== NATIVE_FORM_REVIEW_TYPE ||
+      typeof action.pageId !== 'string' ||
+      action.pageId.length < 1 ||
+      action.pageId.length > 255
+    )
+      return undefined;
+    const parameters = dataProperties(action.parameters, ['action', 'source', 'witness']);
+    const source = dataProperties(parameters.source, [
+      'ownerId',
+      'contract',
+      'permissionGeneration',
+    ]);
+    const contract = dataProperties(source.contract, ['id', 'version']);
+    if (
+      typeof source.ownerId !== 'string' ||
+      !/^[!-~]{1,255}$/.test(source.ownerId) ||
+      typeof source.permissionGeneration !== 'number' ||
+      !Number.isSafeInteger(source.permissionGeneration) ||
+      source.permissionGeneration < 0 ||
+      typeof contract.id !== 'string' ||
+      !IDENTIFIER.test(contract.id) ||
+      typeof contract.version !== 'string' ||
+      !IDENTIFIER.test(contract.version)
+    )
+      return undefined;
+    return snapshot({
+      pageId: action.pageId,
+      source: {
+        ownerId: source.ownerId,
+        contract: { id: contract.id, version: contract.version },
+      },
+    });
+  } catch {
+    return undefined;
+  }
 }
 
 /**

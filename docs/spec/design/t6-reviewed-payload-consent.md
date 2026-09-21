@@ -8,8 +8,9 @@ the [read-source composition](t6-application-read-evidence.md) adds required sou
 authorization and test-only named data validation. The
 [native witness](t6-native-form-witness.md), merged #246, qualifies cooperative
 draft/page correlation. The [C2c internal review binding](t6-evidence-review-binding.md)
-connects that evidence to the existing reviewed lifecycle without dispatch. Public
-evidence-review integration and qualified submission remain pending.
+merged #247, connecting that evidence to the reviewed lifecycle without dispatch.
+[C2d public inspection/decision](t6-public-evidence-review.md) is the current
+qualification slice; public creation and qualified submission remain pending.
 Base: develop `f12ac89` after [checked upload/draft](t6-verified-upload-draft.md),
 PR #239. Load with forms/T6 only. Published 1.9.1 remains unchanged.
 
@@ -108,6 +109,11 @@ witness to review. Missing, ambiguous, truncated, stale or unsupported evidence 
 Specify hidden fields, repeated labels, file replacement, custom committed selections
 and manual-required controls explicitly. A successful earlier autofill receipt alone
 does not prove the current payload.
+
+The [C2d public review design](t6-public-evidence-review.md) connects host-created
+qualified records to existing REST/SDK/CLI inspection and decisions through trusted
+current source resolution. It adds no public create/consume/submit operation and
+keeps the default service fail-closed.
 
 ## C3 — dispatch and independent outcome (design)
 

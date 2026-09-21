@@ -5,7 +5,7 @@ plan/autofill result validation and receipt-correlated `outcome`. Its installed
 CLI/service qualification covers a controlled G4 fixture; it does not qualify a
 production evidence source, G6 independence or durable recovery. Offline `test
 evaluate` is included in 1.9.1. Develop adds reusable `form prepare`; the checked
-upload flags below belong to the next develop slice and are not in published 1.9.1.
+upload flags below are on develop and are not in published 1.9.1.
 
 The CLI is a thin SDK client to the shared AgentBrowser service. It owns no browser
 session state or alternate executor. Use ordinary Bash/shell tools to inspect JSON;
@@ -292,3 +292,25 @@ fetch or authenticate evidence, or prove that its caller performed the work. A f
 passing bundle is not regression evidence. Setup/finalizer failures in the conventional
 runner must fail the whole run even if an earlier case passed. Portable deployment setup,
 conventional-runner qualification and JUnit/HTML adapters remain later T3 work.
+
+## Qualified evidence reviews (develop)
+
+The existing `session approval <sessionId> <tokenId>` and `session approval-decide
+<sessionId> <tokenId> --decision approve|deny` commands also work for host-created
+qualified evidence records when a trusted embedding configures an
+`evidenceReviewProvider`. The stock service has no provider and refuses those
+records. This is deployment code, not an environment flag or caller-supplied source.
+The CLI remains a thin SDK/REST client; MCP is optional.
+
+Text output contains only token ID and status. `--json` includes private action and
+witness data: use a private output destination. Each inspection and new decision
+reauthorizes the source; revoked generations cannot be restored by regranting access.
+Operation-ID replay returns status only, so reread the approval to inspect private
+content under current permission. Inspect the stored snapshot before deciding.
+
+Approval records operator credential authority, not proof of a human's presence or
+unchanged live content. Public creation, consumption and submission are not exposed
+by this slice. A later internal consumption recollects evidence and refuses drift;
+atomic app-owned submission and independent acceptance remain separate gates. See the
+[public review design](spec/design/t6-public-evidence-review.md) and
+[qualification evidence](spec/evidence/t6-public-evidence-review.md).

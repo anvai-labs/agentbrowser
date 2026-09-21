@@ -101,3 +101,14 @@ Prepared reads merged #244. Next, [authorized read sources and named draft data
 validation](../design/t6-application-read-evidence.md) reuse the existing registry
 and service-owned authority. Follow with trusted page/document correlation and
 stable app/UI collection before extending consent. Data shape is not a page witness.
+
+Native form witnesses merged #246 and internal scoped evidence review merged #247.
+They reuse engine evidence, ApprovalGate and source permission ownership; see the
+[C2c evidence](../evidence/t6-evidence-review-binding.md).
+
+The [C2d public review slice](../design/t6-public-evidence-review.md) reuses existing
+REST/SDK/CLI inspection and decisions for host-created evidence records only when a
+trusted embedding supplies current source selection. It retains default refusal,
+private JSON/status-only text, current permission checks and internal drift detection.
+See [qualification](../evidence/t6-public-evidence-review.md). Public creation,
+atomic submission/acceptance and live ATS qualification remain open.
