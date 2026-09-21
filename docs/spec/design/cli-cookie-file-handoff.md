@@ -1,9 +1,9 @@
 # CLI cookie-file handoff
 
-Status: implementation and qualification in progress for 1.9.1; not yet released.
+Status: released and qualified in 1.9.1; see the [delivery evidence](../evidence/release-1.9.1.md).
 Load only for credential-handoff work. The existing
-session-create API and SDK already accept `SessionCookie[]`; the CLI currently accepts
-inline JSON with `--cookies`. This proposal adds local file input without another session
+session-create API and SDK accept `SessionCookie[]`; the CLI retains compatible
+inline JSON with `--cookies`. Local file input adds no new session
 owner, browser adapter, or credential store.
 
 ## Contract and reuse
@@ -51,7 +51,7 @@ races during cleanup. Existing files and symlink
 destinations are refused. Reject nonregular input using the shared bounded reader. Never stage
 credential files in the repository, tests, snapshots, telemetry or public CI artifacts.
 
-## Agent implementation tasks and acceptance
+## Implemented tasks and acceptance
 
 1. Audit existing bounded readers, local output helpers, protocol cookie schema, SDK
    create/export, and engine normalization. Document ownership; reuse before adding code.
