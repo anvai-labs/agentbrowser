@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PlaywrightChromiumEngine } from './index.js';
 
 /**
@@ -36,11 +36,35 @@ describe('browser family launch', () => {
 });
 
 /**
+ * Filesystem state for the branded-Chrome probe tests. The mocked
+ * node:fs/promises.access passes through by default (the webkit launch in
+ * this file needs the real filesystem) and only hides every path while a
+ * probe test runs — so the candidate assertions hold on any host, including
+ * CI runners that ship /usr/bin/google-chrome.
+ */
+const probeState = vi.hoisted(() => ({ hideAllPaths: false, probed: [] as string[] }));
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    access: async (path: Parameters<typeof actual.access>[0], ...rest: unknown[]) => {
+      if (probeState.hideAllPaths) {
+        probeState.probed.push(String(path));
+        throw Object.assign(new Error(`ENOENT: ${String(path)}`), { code: 'ENOENT' });
+      }
+      // The real signature takes (path, mode?); cast keeps the passthrough honest.
+      return (actual.access as (...a: unknown[]) => Promise<void>)(path, ...rest);
+    },
+  };
+});
+
+/**
  * ADR-016: with no explicit path and no preferBundled, headed launches probe
  * the platform's well-known branded-Chrome locations. The candidate list is
  * platform-derived, so each platform branch is exercised by reporting that
- * platform while probing. This host has no Chrome at any probed location, so
- * every branch must still fall back cleanly to the bundled binary.
+ * platform while probing. Every file is hidden during the probe, so each
+ * branch must fall back cleanly to the bundled binary.
  */
 describe('default branded-Chrome candidates per platform (ADR-016)', () => {
   type HeadedOptions = () => Promise<{ executablePath?: string }>;
@@ -50,25 +74,39 @@ describe('default branded-Chrome candidates per platform (ADR-016)', () => {
   ): Promise<{ executablePath?: string }> => {
     const original = Object.getOwnPropertyDescriptor(process, 'platform');
     Object.defineProperty(process, 'platform', { value: platform });
+    probeState.hideAllPaths = true;
+    probeState.probed = [];
     try {
       const engine = new PlaywrightChromiumEngine();
       return await (
         engine as unknown as { headedChromiumOptions(): Promise<{ executablePath?: string }> }
       ).headedChromiumOptions();
     } finally {
+      probeState.hideAllPaths = false;
       if (original) {
         Object.defineProperty(process, 'platform', original);
       }
     }
   };
 
-  it('probes the Windows Chrome install locations on win32', async () => {
+  it('probes the Windows Chrome install locations on win32 and falls back to bundled', async () => {
     const options = await headedOptionsOn('win32');
     expect(options.executablePath).toBeUndefined();
+    expect(probeState.probed).toContain(
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+    );
+    expect(probeState.probed).toContain(
+      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
+    );
   });
 
-  it('probes the Linux Chrome install locations on linux', async () => {
+  it('probes the Linux Chrome install locations on linux and falls back to bundled', async () => {
     const options = await headedOptionsOn('linux');
     expect(options.executablePath).toBeUndefined();
+    expect(probeState.probed).toEqual([
+      '/usr/bin/google-chrome',
+      '/usr/bin/google-chrome-stable',
+      '/opt/google/chrome/chrome',
+    ]);
   });
 });
