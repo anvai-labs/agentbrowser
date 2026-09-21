@@ -94,3 +94,65 @@ refusal is uncertain and stops the suffix. See the
 Local qualification includes repeated labels, fieldset reorder, moved/replaced nodes, native select verification, post-write normalization, cross-field invalidation, redaction collisions, human takeover, bounded display values and duplicate-operation refusal. A real Chromium fixture is driven through one actual stdio MCP call.
 
 Live acceptance remains: fill and verify CrowdStrike R29506 and Coinbase Core Automation in fewer than four minutes each with zero per-field agent calls. This requires the authorized target sessions/URLs and approved profile/field mapping, plus qualification of the widgets those live forms actually use. Autofill does not intentionally submit the form; custom strategies do click controls and options, and page handlers may independently commit effects.
+
+## Reusable mapping preparation (develop, after 1.9.1)
+
+Use `agentbrowser form prepare --help` and
+`agentbrowser describe form prepare --schema` for the offline mapping/private-value
+join. This command emits **private JSON**, not a report or proof of page applicability.
+It contacts no service. The existing autofill command remains the sole executor:
+
+```sh
+set -o pipefail
+agentbrowser form prepare @mapping.json @private-values.json |
+  agentbrowser --json --operation-id "$OPERATION_ID" autofill "$SESSION_ID" "$PAGE_ID" -
+```
+
+Use the existing token and unique operation-ID configuration required by the session.
+After a lost response, query operation status instead of rerunning the pipeline.
+Keep the values file and prepared output private; do not enable shell tracing or send
+output to shared logs. stdin may supply either preparation input, but not both.
+
+A minimal public mapping is:
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "employment",
+  "revision": "1",
+  "scope": { "url": "https://example.test/apply" },
+  "fields": [{
+    "match": { "label": "Company", "block": { "id": "current" } },
+    "strategy": "native-input",
+    "input": "value",
+    "valueKey": "company"
+  }]
+}
+```
+
+The separate values object is `{"company":"Example"}`. Keys must match the mapping
+exactly. Input kind is `value` for native-input and `option` for the three existing
+select strategies. All fields are required and verified exactly. The mapping cannot
+embed values, scripts, saved refs or a policy that skips failures. IDs/revisions are
+local provenance, not server authorization or a durable mapping registry.
+
+The materialized request carries optional `scope: {url}`. The service checks the
+exact canonical HTTP(S) URL, including query/fragment, and resolves every mapped field
+before private-reference resolution or writes. It rechecks all node/block identities,
+selectors and readiness on every observation. Reorder is allowed; replacement, drift,
+hidden/disabled controls, incomplete observations or unsupported widgets stop the stage.
+An uncertain write never replays. Initially conditional fields require a later stage.
+Existing requests without scope retain their previous behavior.
+
+The mapping budget is 128 KiB of string/key data, 2,000 nodes and depth 8; private values
+are limited to 50 keys, 8,192 UTF-16 units each and 512 KiB of string/key data. Prepared
+compact JSON plus its newline is limited to 1 MiB. Each CLI input also uses the existing
+1 MiB / 30-second EOF reader. Errors do not echo private values. These bounds do not
+make arbitrary in-process JavaScript proxies a security sandbox.
+
+Mapping URLs and labels must themselves be safe to share: never copy signed links,
+access tokens or applicant PII into them. Scope is a page constraint, not job/account
+identity, submission approval or atomic protection against hostile page scripts.
+This slice does not qualify arbitrary ATS sites, installed release binaries or recovery.
+See the [design](spec/design/t6-form-mapping.md) and
+[qualification evidence](spec/evidence/t6-form-mapping.md).

@@ -10,9 +10,9 @@ structured output contracts. An absent annotation is not a promise of read-only 
 Descriptions and annotations are hints, never authorization. Catalog presence does
 not prove a live backend, engine capability or current session grant.
 
-Catalog SHA-256 (complete descriptions and schemas): `7783bd285596051ea55fde551f794668998276e8db9fdf4fd1736bea9a85821b`
+Catalog SHA-256 (complete descriptions and schemas): `5a5f491b37ced65507786d235df1d2e2c6193d1df0572521df2feefddbf11107`
 
-## unbound/qa (13 tools; 25050 result bytes)
+## unbound/qa (13 tools; 25295 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -30,7 +30,7 @@ Catalog SHA-256 (complete descriptions and schemas): `7783bd285596051ea55fde551f
 | `browser_screenshot` | sessionId, pageId | text JSON | Capture a screenshot as optional evidence. |
 | `browser_snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## delegated/qa (12 tools; 22441 result bytes)
+## delegated/qa (12 tools; 22686 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -47,7 +47,7 @@ Catalog SHA-256 (complete descriptions and schemas): `7783bd285596051ea55fde551f
 | `browser_session` | none | text JSON | Inspect the delegated session control status and available pages. |
 | `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## unbound/operations (13 tools; 25050 result bytes)
+## unbound/operations (13 tools; 25295 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -65,7 +65,7 @@ Catalog SHA-256 (complete descriptions and schemas): `7783bd285596051ea55fde551f
 | `browser_screenshot` | sessionId, pageId | text JSON | Capture a screenshot as optional evidence. |
 | `browser_snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## delegated/operations (12 tools; 22441 result bytes)
+## delegated/operations (12 tools; 22686 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -115,7 +115,7 @@ Catalog SHA-256 (complete descriptions and schemas): `7783bd285596051ea55fde551f
 | `browser_session` | none | text JSON | Inspect the delegated session control status and available pages. |
 | `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## unbound/appsec (13 tools; 25050 result bytes)
+## unbound/appsec (13 tools; 25295 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -133,7 +133,7 @@ Catalog SHA-256 (complete descriptions and schemas): `7783bd285596051ea55fde551f
 | `browser_screenshot` | sessionId, pageId | text JSON | Capture a screenshot as optional evidence. |
 | `browser_snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## delegated/appsec (12 tools; 22441 result bytes)
+## delegated/appsec (12 tools; 22686 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -150,7 +150,7 @@ Catalog SHA-256 (complete descriptions and schemas): `7783bd285596051ea55fde551f
 | `browser_session` | none | text JSON | Inspect the delegated session control status and available pages. |
 | `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## unbound/bounty (13 tools; 25050 result bytes)
+## unbound/bounty (13 tools; 25295 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -168,7 +168,7 @@ Catalog SHA-256 (complete descriptions and schemas): `7783bd285596051ea55fde551f
 | `browser_screenshot` | sessionId, pageId | text JSON | Capture a screenshot as optional evidence. |
 | `browser_snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## delegated/bounty (12 tools; 22441 result bytes)
+## delegated/bounty (12 tools; 22686 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -185,7 +185,7 @@ Catalog SHA-256 (complete descriptions and schemas): `7783bd285596051ea55fde551f
 | `browser_session` | none | text JSON | Inspect the delegated session control status and available pages. |
 | `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## unbound/forms (13 tools; 25050 result bytes)
+## unbound/forms (13 tools; 25295 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -203,7 +203,7 @@ Catalog SHA-256 (complete descriptions and schemas): `7783bd285596051ea55fde551f
 | `browser_screenshot` | sessionId, pageId | text JSON | Capture a screenshot as optional evidence. |
 | `browser_snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## delegated/forms (12 tools; 22441 result bytes)
+## delegated/forms (12 tools; 22686 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |

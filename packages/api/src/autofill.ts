@@ -13,7 +13,12 @@ export interface AutofillPorts {
   assert(): void;
   redact?(value: string): string;
   resolveValue?(value: string): Promise<string>;
-  observe(): Promise<{ elements: PageElement[]; truncated?: boolean; degraded?: boolean }>;
+  observe(): Promise<{
+    elements: PageElement[];
+    url?: string;
+    truncated?: boolean;
+    degraded?: boolean;
+  }>;
   act(request: ServiceActRequest, onDispatch: () => void): Promise<unknown>;
   snapshot(): Promise<{ artifactId: string }>;
 }
@@ -260,17 +265,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
     ...request.policy,
   };
   const started = performance.now();
-  // Resolve the complete payload before browser I/O; dispatch retains the original
-  // reference so the existing action layer still performs its normal secret handling.
   const expectedValues: string[] = [];
-  for (const field of request.fields) {
-    const value =
-      field.value !== undefined
-        ? await (ports.resolveValue?.(field.value) ?? field.value)
-        : (field.option?.value ?? '');
-    if (value.length > 8192) throw new Error('Resolved autofill value exceeds 8192 characters');
-    expectedValues.push(value);
-  }
   const blocks = new Map<string, string>();
   const identities = new Map<number, string>();
   const selectedStrategies = new Map<number, WidgetStrategy>();
@@ -293,7 +288,17 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
         'Autofill deadline reached; remaining fields were not attempted'
       );
   };
+  const scopePins = new Map<number, { node: string; block: string | undefined }>();
+  let scopeValid = !request.scope;
+  let preflightFieldIndex = 0;
+  const strategyFor = (element: PageElement, field: AutofillRequest['fields'][number]) =>
+    strategies.find(
+      (s) =>
+        (field.strategy === undefined || field.strategy === s.name) && s.supports(element, field)
+    );
   const observe = async () => {
+    preflightFieldIndex = 0;
+    if (request.scope) scopeValid = false;
     guard();
     const view = await ports.observe();
     guard();
@@ -302,9 +307,76 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
         'OUTPUT_TRUNCATED',
         'Autofill requires complete, non-degraded observations'
       );
+    if (request.scope) {
+      if (view.url !== request.scope.url)
+        throw new AutofillFailure(
+          'FORM_SCOPE_MISMATCH',
+          'Page URL does not match the mapped stage'
+        );
+      const nodes = new Set<string>();
+      for (const [index, field] of request.fields.entries()) {
+        preflightFieldIndex = index;
+        const element = resolve(view.elements, field.match, blocks);
+        const node = element.attributes?.['autofill-node'];
+        const block = element.attributes?.['autofill-block'];
+        if (
+          !node ||
+          block === undefined ||
+          !element.visible ||
+          !element.enabled ||
+          !strategyFor(element, field)
+        )
+          throw new AutofillFailure(
+            'ENGINE_UNSUPPORTED',
+            'Mapped stage requires ready qualified controls and identity evidence'
+          );
+        if (nodes.has(node))
+          throw new AutofillFailure(
+            'TARGET_AMBIGUOUS',
+            'Mapped fields must identify distinct controls'
+          );
+        nodes.add(node);
+        const pin = scopePins.get(index);
+        if (pin && (pin.node !== node || pin.block !== block))
+          throw new AutofillFailure('STALE_TARGET', 'Mapped stage identity changed');
+        scopePins.set(index, { node, block });
+      }
+      scopeValid = true;
+    }
     return view.elements;
   };
-  for (const [index, field] of request.fields.entries()) {
+  let preflightFailed = false;
+  if (request.scope) {
+    try {
+      await observe();
+    } catch (error) {
+      ports.assert();
+      preflightFailed = true;
+      const receipt = receipts[preflightFieldIndex] as AutofillReceipt;
+      receipt.status = 'failed';
+      receipt.error =
+        error instanceof AutofillFailure
+          ? { code: error.code, message: error.message }
+          : {
+              code: 'ACTION_FAILED',
+              message: 'Mapped stage preflight failed; no write dispatched',
+            };
+    }
+  }
+  // Resolve the full private payload only after successful mapped preflight, before writes.
+  // Preserve references in actions for the existing secret handling owner.
+  if (!preflightFailed) {
+    for (const field of request.fields) {
+      guard();
+      const value =
+        field.value !== undefined
+          ? await (ports.resolveValue?.(field.value) ?? field.value)
+          : (field.option?.value ?? '');
+      if (value.length > 8192) throw new Error('Resolved autofill value exceeds 8192 characters');
+      expectedValues.push(value);
+    }
+  }
+  for (const [index, field] of (preflightFailed ? [] : request.fields).entries()) {
     const receipt = receipts[index] as AutofillReceipt;
     const execution: { state: 'not_started' | 'dispatched' | 'completed' } = {
       state: 'not_started',
@@ -340,10 +412,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
         };
         continue;
       }
-      const strategy = strategies.find(
-        (s) =>
-          (field.strategy === undefined || field.strategy === s.name) && s.supports(element, field)
-      );
+      const strategy = strategyFor(element, field);
       if (!identity || !strategy)
         throw new AutofillFailure(
           'ENGINE_UNSUPPORTED',
@@ -352,16 +421,22 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
       identities.set(index, identity);
       selectedStrategies.set(index, strategy);
       guard();
+      const dispatch = async (action: ServiceActRequest) => {
+        guard();
+        // A dispatched page handler can invalidate scope even if the adapter then throws.
+        // Only a subsequent complete observation can authorize raw artifact capture again.
+        if (request.scope) scopeValid = false;
+        return ports.act(action, () => {
+          if (execution.state === 'not_started') execution.state = 'dispatched';
+        });
+      };
       let effect: unknown;
       if (strategy.run) {
         // Multi-step strategy: each step dispatches through the same admission;
         // the scope keeps the loop inside this field's serial grant.
         const scope: StrategyScope = {
           act: async (request) => {
-            guard();
-            const effect = await ports.act(request, () => {
-              if (execution.state === 'not_started') execution.state = 'dispatched';
-            });
+            const effect = await dispatch(request);
             execution.state = 'dispatched';
             return effect;
           },
@@ -396,9 +471,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
         execution.state = 'completed';
         if (outcome.expected !== undefined) expectedValues[index] = outcome.expected;
       } else {
-        const effect = await ports.act(strategy.action(field, element.ref), () => {
-          if (execution.state === 'not_started') execution.state = 'dispatched';
-        });
+        const effect = await dispatch(strategy.action(field, element.ref));
         if (execution.state === 'not_started')
           throw new AutofillFailure(
             'ENGINE_UNSUPPORTED',
@@ -525,6 +598,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
   };
   try {
     guard();
+    if (!scopeValid) throw new AutofillFailure('FORM_SCOPE_MISMATCH', 'Mapped scope unavailable');
     const artifact = await ports.snapshot();
     report.snapshot = { ...artifact };
   } catch {

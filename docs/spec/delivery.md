@@ -23,7 +23,7 @@ current user scope and the [task protocol](tasks/README.md).
 | --- | --- | --- |
 | Discovery and profiles | T0 released; T1 local loader, profiles and run cursor released | Installed harness consumes and preserves profile/cursor semantics |
 | Shared outcomes | T2 is complete; 1.9.0 includes REST/SDK/CLI outcome, correlation, admitted receipt drain, permission composition and controlled G4 CLI/service qualification | Qualify production UI-caused evidence and G6 under T4; durable recovery under T5 |
-| Bulk forms | Named react-select and chip-multiselect strategies released in 1.8.19 | Broader widgets, reusable mappings and cross-engine commitment evidence |
+| Bulk forms | Named react-select and chip-multiselect strategies released in 1.8.19 | Bounded mapping/preflight now available on develop; multi-stage/live and cross-engine qualification remain |
 | Application parity | First T4 public-interface slice released in 1.8.20 by PR #201: application bind, discovery, execute and receipt operations over REST, SDK and CLI | Qualify the scoped receipt predicate in a production fixture, binding UX, independent UI/API parity and T5 durable restart receipts |
 | QA and durable runs | T3 complete through #231: 13-case foundation, offline CLI evaluation, native JUnit/private links and standalone application-owned recipe; Node 24 qualification with Node 22 compatibility | General provisioning and justified report adapters remain separate; durable recovery stays under T5 |
 | Audit, appsec and bounty | Mode contracts and profiles exist; no scanner/product vertical | T3 now permits audit task context; appsec/bounty still require T4 and qualified scope enforcement |
@@ -63,7 +63,8 @@ Q0 committed-widget verification and CLI cookie-file input; its release and Home
 ladder is [qualified](evidence/release-1.9.1.md). T4 application
 [callback hardening](design/t4-application-callback-contracts.md) merged through #236.
 The current [T6 owned-popup/readiness slice](design/t6-owned-popup-readiness.md)
-qualifies the next prerequisite before expanding mappings. The
+merged through #237. The next [mapping foundation](design/t6-form-mapping.md)
+adds offline private preparation and server stage preflight before live job qualification. The
 [progress checkpoint](evidence/foundation-progress-2026-09-20.md) distinguishes partial
 implementation from completed acceptance.
 Order remaining T4/T5 work by acceptance and demand. T7 follows actual audit/security demand, not

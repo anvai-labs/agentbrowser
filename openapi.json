@@ -1744,6 +1744,20 @@
                   "fields"
                 ],
                 "properties": {
+                  "scope": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "url"
+                    ],
+                    "properties": {
+                      "url": {
+                        "minLength": 1,
+                        "maxLength": 2048,
+                        "type": "string"
+                      }
+                    }
+                  },
                   "fields": {
                     "minItems": 1,
                     "maxItems": 50,

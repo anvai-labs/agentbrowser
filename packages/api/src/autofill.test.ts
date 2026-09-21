@@ -979,3 +979,171 @@ describe('multi-step widget strategies', () => {
     expect(f.act.mock.calls.map(([request]) => request.target?.ref)).toEqual(['owned', 'owned']);
   });
 });
+
+describe('mapped stage scope and preflight', () => {
+  const url = 'https://example.test/apply?id=123';
+  const request = () => ({
+    scope: { url },
+    fields: [
+      {
+        match: { label: 'Company name', block: { id: 'one' } },
+        value: 'First',
+        strategy: 'native-input',
+      },
+      {
+        match: { label: 'Company name', block: { id: 'two' } },
+        value: 'Second',
+        strategy: 'native-input',
+      },
+    ],
+    policy: { settleMs: 0, maxReobserve: 0 },
+  });
+  const scopedFixture = () => {
+    const f = fixture([field('a', 'one'), field('b', 'two')]);
+    const read = f.observe.getMockImplementation()!;
+    f.observe.mockImplementation(async () => ({ ...(await read()), url }));
+    return { ...f, resolveValue: vi.fn(async (value: string) => value) };
+  };
+  it('preflights repeated labels in separate blocks and runs the existing executor', async () => {
+    const f = scopedFixture();
+    const report = await runAutofill(request(), f);
+    expect(report.ok).toBe(true);
+    expect(f.dispatch).toHaveBeenCalledTimes(2);
+    expect(f.resolveValue).toHaveBeenCalledTimes(2);
+  });
+  it.each([
+    'wrong-url',
+    'missing-url',
+    'truncated',
+    'degraded',
+    'missing-later',
+    'ambiguous-later',
+    'hidden-later',
+    'unsupported-later',
+    'duplicate-target',
+  ])('refuses %s before any write or private reference resolution', async (kind) => {
+    const f = scopedFixture();
+    const input = request();
+    if (kind === 'wrong-url')
+      f.observe.mockResolvedValue({
+        elements: [field('a', 'one'), field('b', 'two')],
+        url: 'https://other.test/apply',
+      } as never);
+    if (kind === 'missing-url')
+      f.observe.mockResolvedValue({ elements: [field('a', 'one'), field('b', 'two')] });
+    if (kind === 'truncated' || kind === 'degraded')
+      f.observe.mockResolvedValue({
+        elements: [field('a', 'one'), field('b', 'two')],
+        url,
+        [kind]: true,
+      } as never);
+    if (kind === 'missing-later') f.replace([field('a', 'one')]);
+    if (kind === 'ambiguous-later')
+      f.replace([field('a', 'one'), field('b', 'two'), field('c', 'two')]);
+    if (kind === 'hidden-later')
+      f.replace([field('a', 'one'), { ...field('b', 'two'), visible: false }]);
+    if (kind === 'unsupported-later')
+      f.replace([
+        field('a', 'one'),
+        { ...field('b', 'two'), attributes: { ...field('b', 'two').attributes, type: 'password' } },
+      ]);
+    if (kind === 'duplicate-target') input.fields[1]!.match.block.id = 'one';
+    const report = await runAutofill(input, f);
+    expect(report.ok).toBe(false);
+    const fieldSpecific = [
+      'missing-later',
+      'ambiguous-later',
+      'hidden-later',
+      'unsupported-later',
+      'duplicate-target',
+    ].includes(kind);
+    expect(report.receipts.map((r) => r.status)).toEqual(
+      fieldSpecific ? ['not_attempted', 'failed'] : ['failed', 'not_attempted']
+    );
+    expect(report.receipts.every((r) => !r.verified)).toBe(true);
+    expect(f.act).not.toHaveBeenCalled();
+    expect(f.resolveValue).not.toHaveBeenCalled();
+    expect(f.snapshot).not.toHaveBeenCalled();
+  });
+  it.each([
+    'replacement',
+    'block-move',
+    'selector-drift',
+    'url-drift',
+    'hidden-later',
+    'disabled-later',
+  ])('stops after a first field changes the remaining mapped stage: %s', async (kind) => {
+    const f = scopedFixture();
+    f.act.mockImplementationOnce(async (_action, onDispatch) => {
+      onDispatch();
+      f.dispatch();
+      let next = field('b', 'two');
+      if (kind === 'hidden-later') next = { ...next, visible: false };
+      if (kind === 'disabled-later') next = { ...next, enabled: false };
+      if (kind === 'replacement') next = field('new', 'two');
+      if (kind === 'block-move') next = field('b', 'other');
+      if (kind === 'selector-drift') next = { ...next, name: 'Changed' };
+      f.replace([field('a', 'one', 'First'), next]);
+      if (kind === 'url-drift')
+        f.observe.mockResolvedValue({
+          elements: [field('a', 'one', 'First'), next],
+          url: `${url}4`,
+        } as never);
+    });
+    const report = await runAutofill(request(), f);
+    expect(f.dispatch).toHaveBeenCalledOnce();
+    expect(report.receipts.map((r) => r.status)).toEqual(['uncertain', 'not_attempted']);
+    expect(f.snapshot).not.toHaveBeenCalled();
+  });
+  it('rechecks scope after a private resolver changes the page, before writing', async () => {
+    const f = scopedFixture();
+    f.resolveValue.mockImplementationOnce(async (value) => {
+      f.replace([field('a', 'one'), field('replacement', 'two')]);
+      return value;
+    });
+    const report = await runAutofill(request(), f);
+    expect(report.ok).toBe(false);
+    expect(f.act).not.toHaveBeenCalled();
+  });
+});
+
+it('accepts scoped engine identity for a control outside any fieldset', async () => {
+  const f = fixture([field('a', '')]);
+  const read = f.observe.getMockImplementation()!;
+  const url = 'https://example.test/';
+  f.observe.mockImplementation(async () => ({ ...(await read()), url }));
+  const report = await runAutofill(
+    {
+      scope: { url },
+      fields: [{ match: { label: 'Company name' }, strategy: 'native-input', value: 'Top level' }],
+      policy: { settleMs: 0 },
+    },
+    f
+  );
+  expect(report.ok).toBe(true);
+  expect(f.dispatch).toHaveBeenCalledOnce();
+});
+it('never exports an artifact from stale scope after dispatch rejects before verification', async () => {
+  const f = fixture([field('a', 'one')]);
+  const url = 'https://example.test/';
+  f.observe.mockResolvedValue({ elements: [field('a', 'one')], url } as never);
+  f.act.mockImplementationOnce(async (_request, onDispatch) => {
+    onDispatch();
+    f.dispatch();
+    f.observe.mockResolvedValue({
+      elements: [field('a', 'one')],
+      url: 'https://other.test/',
+    } as never);
+    throw new Error('navigation after dispatch');
+  });
+  const report = await runAutofill(
+    {
+      scope: { url },
+      fields: [{ match: { label: 'Company name' }, strategy: 'native-input', value: 'x' }],
+    },
+    f
+  );
+  expect(report.receipts[0]?.status).toBe('uncertain');
+  expect(f.dispatch).toHaveBeenCalledOnce();
+  expect(f.snapshot).not.toHaveBeenCalled();
+});

@@ -1,14 +1,16 @@
 # Mode: scoped bulk forms and applications
 
-Status: native bulk autofill and named custom strategies exist; reusable mappings and
-broader widget qualification remain open.
+Status: native bulk autofill, named custom strategies and bounded exact-URL mapping
+preparation/guarded execution exist. Broader widget and live workflow qualification remain open.
 Core applies.
 
 ## Job and data
 
 Submit the structured field payload upfront; the service resolves, acts and verifies
-serially and returns one report. Load one versioned form mapping and scoped value/vault
-references. A resume is one possible private profile, never general agent memory.
+serially and returns one report. Use offline `form prepare` to join one versioned mapping with private values, then
+pipe its private output to existing `autofill`. Its exact-URL scope preflights all fields
+and pins stage identities; initially conditional fields require a separate stage.
+Load only that mapping and its scoped value/vault references. A resume is one possible private profile, never general agent memory.
 
 ## Existing selection rules
 

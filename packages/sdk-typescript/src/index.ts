@@ -46,3 +46,10 @@ export type {
   PlanReport,
   RunCursor,
 } from '@agentbrowser/protocol';
+
+export {
+  FormMappingSchema,
+  FormValuesSchema,
+  materializeAutofillMapping,
+} from '@agentbrowser/protocol';
+export type { FormMapping, FormValues } from '@agentbrowser/protocol';

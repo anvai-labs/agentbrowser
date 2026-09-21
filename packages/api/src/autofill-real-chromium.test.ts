@@ -17,8 +17,14 @@ it.each(transports)(
   async (transport) => {
     let submissions = 0;
     const selections: string[] = [];
+    const typed: string[] = [];
     const fixture = createServer((req, res) => {
       if (req.url === '/submit') submissions++;
+      if (req.url?.startsWith('/typed/')) {
+        typed.push(decodeURIComponent(req.url.slice('/typed/'.length)));
+        res.end('recorded');
+        return;
+      }
       if (req.url?.startsWith('/selected/')) {
         selections.push(decodeURIComponent(req.url.slice('/selected/'.length)));
         res.end('recorded');
@@ -46,6 +52,7 @@ it.each(transports)(
       <label for="duplicate-city">Duplicate City</label><div class="select__value-container"><input id="duplicate-city" role="combobox" aria-autocomplete="list"></div><div id="duplicate-city-menu"></div>
       <button>Submit</button></form>
       <script>
+        for (const id of ['past','present']) document.getElementById(id).addEventListener('input', () => fetch('/typed/' + id));
         document.querySelector('form').prepend(document.getElementById('foreign-menu'));
         const mountOption = (inputId, menuId, expected, commit) => {
           const input = document.getElementById(inputId);
@@ -175,13 +182,22 @@ it.each(transports)(
         );
         return { isError: result.code !== 0, content: [{ text: result.stdout || result.stderr }] };
       };
-      const args = {
+      let args = {
+        scope: { url: `http://127.0.0.1:${(fixture.address() as AddressInfo).port}/` },
         pageId,
         operationId: 'fill-once',
         fields: [
-          { match: { label: 'Company name', block: { id: 'old' } }, value: 'Previous employer' },
-          { match: { label: 'Company name', block: { id: 'current' } }, value: 'Current employer' },
-          { match: { label: 'Source' }, option: { value: 'board' } },
+          {
+            match: { label: 'Company name', block: { id: 'old' } },
+            strategy: 'native-input',
+            value: 'Previous employer',
+          },
+          {
+            match: { label: 'Company name', block: { id: 'current' } },
+            strategy: 'native-input',
+            value: 'Current employer',
+          },
+          { match: { label: 'Source' }, strategy: 'native-select', option: { value: 'board' } },
           {
             match: { role: 'combobox', label: 'Location (City)' },
             option: { value: 'Chicago' },
@@ -195,6 +211,72 @@ it.each(transports)(
         ],
         policy: { settleMs: 25 },
       };
+      const mapping = {
+        schemaVersion: 1,
+        id: 'fixture',
+        revision: '1',
+        scope: args.scope,
+        fields: args.fields.map((field, index) => ({
+          match: field.match,
+          strategy: field.strategy,
+          input: 'value' in field ? 'value' : 'option',
+          valueKey: `f${index}`,
+        })),
+      };
+      const values = Object.fromEntries(
+        args.fields.map((field, index) => [
+          `f${index}`,
+          'value' in field ? field.value : field.option.value,
+        ])
+      );
+      const prepared = await runAgentCli(
+        [
+          process.execPath,
+          fileURLToPath(new URL('../../cli/dist/bin.js', import.meta.url)),
+          'form',
+          'prepare',
+          JSON.stringify(mapping),
+          '-',
+        ],
+        { env: process.env, token: undefined, stdin: JSON.stringify(values) }
+      );
+      expect(prepared.code).toBe(0);
+      args = { ...args, ...JSON.parse(prepared.stdout), policy: { settleMs: 25 } };
+      for (const [operationId, scope, fields, code] of [
+        [
+          'wrong-mapping-url',
+          { url: `${args.scope.url}?wrong=1` },
+          args.fields,
+          'FORM_SCOPE_MISMATCH',
+        ],
+        [
+          'missing-mapped-field',
+          args.scope,
+          [
+            ...args.fields,
+            {
+              match: { label: 'Missing later field' },
+              strategy: 'native-input',
+              value: 'no effect',
+            },
+          ],
+          'TARGET_NOT_FOUND',
+        ],
+      ] as const) {
+        const denied = (await callAutofill({ ...args, operationId, scope, fields }, 1)) as {
+          content: Array<{ text: string }>;
+        };
+        expect(JSON.parse(denied.content[0]?.text ?? 'null')).toMatchObject({
+          ok: false,
+          receipts: fields.map((_, index) =>
+            index === (code === 'TARGET_NOT_FOUND' ? fields.length - 1 : 0)
+              ? { status: 'failed', error: { code } }
+              : { status: 'not_attempted' }
+          ),
+        });
+        expect(typed).toEqual([]);
+        expect(selections).toEqual([]);
+      }
       const response = (await callAutofill(args)) as {
         isError?: boolean;
         content: Array<{ text: string }>;
@@ -302,6 +384,7 @@ it.each(transports)(
         content: Array<{ text: string }>;
       };
       expect(JSON.stringify(duplicate)).toContain('OPERATION_RECORDED');
+      await expect.poll(() => typed).toEqual(['past', 'present']);
       expect(submissions).toBe(0);
     } finally {
       await bridge?.close();
