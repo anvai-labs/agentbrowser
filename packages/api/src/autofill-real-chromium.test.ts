@@ -1,21 +1,29 @@
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { fileURLToPath } from 'node:url';
 import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
 import { NetworkPolicy } from '@agentbrowser/policy';
 import { expect, it } from 'vitest';
+import { runAgentCli } from '../../../scripts/cli-outcome-acceptance.mjs';
 import { buildServer } from './server.js';
 import { openHarness } from './test-support/coexistence-harness.js';
 
-const transports: Array<'stdio' | 'victor'> = process.env.AGENTBROWSER_VICTOR_ROOT
-  ? ['stdio', 'victor']
-  : ['stdio'];
+const transports: Array<'cli' | 'stdio' | 'victor'> = process.env.AGENTBROWSER_VICTOR_ROOT
+  ? ['cli', 'stdio', 'victor']
+  : ['cli', 'stdio'];
 it.each(transports)(
-  'fills repeated blocks and known React Select-style markup through one real %s MCP call',
+  'fills repeated blocks and known React Select-style markup through one real %s bulk call',
   async (transport) => {
     let submissions = 0;
+    const selections: string[] = [];
     const fixture = createServer((req, res) => {
       if (req.url === '/submit') submissions++;
+      if (req.url?.startsWith('/selected/')) {
+        selections.push(decodeURIComponent(req.url.slice('/selected/'.length)));
+        res.end('recorded');
+        return;
+      }
       res.setHeader('content-type', 'text/html');
       res.end(`<!doctype html><form action="/submit">
       <fieldset id="old"><legend>Employment</legend><label>Company name<input id="past" oninput="document.querySelector('form').prepend(document.getElementById('current'))"></label></fieldset>
@@ -33,11 +41,17 @@ it.each(transports)(
       <label for="bounded-country">Bounded Country</label>
       <div class="select__value-container"><input id="bounded-country" role="combobox" aria-autocomplete="list"></div>
       <div id="bounded-country-menu"></div>
+      <label for="foreign">Other City</label><input id="foreign" role="combobox" aria-autocomplete="list" aria-controls="foreign-menu">
+      <div id="foreign-menu" role="listbox"><div role="option" onclick="fetch('/selected/foreign')">Chicago</div></div>
+      <label for="duplicate-city">Duplicate City</label><div class="select__value-container"><input id="duplicate-city" role="combobox" aria-autocomplete="list"></div><div id="duplicate-city-menu"></div>
       <button>Submit</button></form>
       <script>
+        document.querySelector('form').prepend(document.getElementById('foreign-menu'));
         const mountOption = (inputId, menuId, expected, commit) => {
           const input = document.getElementById(inputId);
           const menu = document.getElementById(menuId);
+          input.setAttribute('aria-controls', menuId);
+          menu.setAttribute('role', 'listbox');
           input.addEventListener('input', () => {
             menu.replaceChildren();
             if (input.value !== expected) return;
@@ -45,13 +59,20 @@ it.each(transports)(
             option.role = 'option';
             option.textContent = expected;
             option.addEventListener('click', () => {
+              fetch('/selected/' + encodeURIComponent(inputId));
               input.value = '';
               menu.replaceChildren();
               commit(input.parentElement, expected);
             });
+            if (inputId === 'duplicate-city') {
+              const duplicate = option.cloneNode(true);
+              duplicate.addEventListener('click', () => fetch('/selected/duplicate-city'));
+              menu.append(duplicate);
+            }
             menu.append(option);
           });
         };
+        mountOption('duplicate-city', 'duplicate-city-menu', 'Chicago', () => {});
         mountOption('city', 'city-menu', 'Chicago', (container, value) => {
           const committed = document.createElement('div');
           committed.className = 'select__single-value';
@@ -119,13 +140,41 @@ it.each(transports)(
         headers: ownerHeaders,
         payload: { epoch: review.json().epoch },
       });
-      bridge = await openHarness({
-        transport,
-        baseUrl: `http://127.0.0.1:${(server.server.address() as AddressInfo).port}`,
-        sessionId,
-        token: grant.json().token,
-        requestTimeoutMs: 30_000,
-      });
+      if (transport !== 'cli')
+        bridge = await openHarness({
+          transport,
+          baseUrl: `http://127.0.0.1:${(server.server.address() as AddressInfo).port}`,
+          sessionId,
+          token: grant.json().token,
+          requestTimeoutMs: 30_000,
+        });
+      const callAutofill = async (args: Record<string, unknown>, expectedExitCode = 0) => {
+        if (bridge)
+          return bridge.request('tools/call', { name: 'browser_autofill', arguments: args });
+        const { pageId: requestedPage, operationId, ...payload } = args;
+        const result = await runAgentCli(
+          [
+            process.execPath,
+            fileURLToPath(new URL('../../cli/dist/bin.js', import.meta.url)),
+            '--base-url',
+            `http://127.0.0.1:${(server.server.address() as AddressInfo).port}`,
+            '--json',
+            '--operation-id',
+            operationId,
+            'autofill',
+            sessionId,
+            requestedPage,
+            '-',
+          ],
+          {
+            env: process.env,
+            token: grant.json().token,
+            stdin: JSON.stringify(payload),
+            expectedExitCode,
+          }
+        );
+        return { isError: result.code !== 0, content: [{ text: result.stdout || result.stderr }] };
+      };
       const args = {
         pageId,
         operationId: 'fill-once',
@@ -146,10 +195,10 @@ it.each(transports)(
         ],
         policy: { settleMs: 25 },
       };
-      const response = (await bridge.request('tools/call', {
-        name: 'browser_autofill',
-        arguments: args,
-      })) as { isError?: boolean; content: Array<{ text: string }> };
+      const response = (await callAutofill(args)) as {
+        isError?: boolean;
+        content: Array<{ text: string }>;
+      };
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
       const reportText = response.content[0]?.text;
       if (!reportText) throw new Error('Autofill response did not include a report');
@@ -167,9 +216,8 @@ it.each(transports)(
       expect(report.snapshot.artifactId).toBeTruthy();
       expect(report.snapshot.inline).toBeUndefined();
       expect(report.elapsedMs).toBeLessThan(240000);
-      const queryOnlyResponse = (await bridge.request('tools/call', {
-        name: 'browser_autofill',
-        arguments: {
+      const queryOnlyResponse = (await callAutofill(
+        {
           pageId,
           operationId: 'query-only-does-not-commit',
           fields: [
@@ -181,7 +229,8 @@ it.each(transports)(
           ],
           policy: { settleMs: 25 },
         },
-      })) as { isError?: boolean; content: Array<{ text: string }> };
+        1
+      )) as { isError?: boolean; content: Array<{ text: string }> };
       expect(queryOnlyResponse.isError).toBe(true);
       expect(JSON.parse(queryOnlyResponse.content[0]?.text ?? 'null')).toMatchObject({
         ok: false,
@@ -194,9 +243,8 @@ it.each(transports)(
           },
         ],
       });
-      const incompleteChipResponse = (await bridge.request('tools/call', {
-        name: 'browser_autofill',
-        arguments: {
+      const incompleteChipResponse = (await callAutofill(
+        {
           pageId,
           operationId: 'incomplete-chip-evidence',
           fields: [
@@ -208,7 +256,8 @@ it.each(transports)(
           ],
           policy: { settleMs: 25 },
         },
-      })) as { isError?: boolean; content: Array<{ text: string }> };
+        1
+      )) as { isError?: boolean; content: Array<{ text: string }> };
       expect(incompleteChipResponse.isError).toBe(true);
       expect(JSON.parse(incompleteChipResponse.content[0]?.text ?? 'null')).toMatchObject({
         ok: false,
@@ -221,10 +270,37 @@ it.each(transports)(
           },
         ],
       });
-      const duplicate = (await bridge.request('tools/call', {
-        name: 'browser_autofill',
-        arguments: args,
-      })) as { isError?: boolean; content: Array<{ text: string }> };
+      const ambiguousResponse = (await callAutofill(
+        {
+          pageId,
+          operationId: 'duplicate-option-denial',
+          fields: [
+            {
+              match: { role: 'combobox', label: 'Duplicate City' },
+              option: { value: 'Chicago' },
+              strategy: 'react-select',
+            },
+            { match: { label: 'Company name', block: { id: 'old' } }, value: 'must not execute' },
+          ],
+          policy: { settleMs: 25 },
+        },
+        1
+      )) as { isError?: boolean; content: Array<{ text: string }> };
+      expect(ambiguousResponse.isError).toBe(true);
+      expect(JSON.parse(ambiguousResponse.content[0]?.text ?? 'null')).toMatchObject({
+        ok: false,
+        receipts: [
+          { status: 'uncertain', error: { code: 'TARGET_AMBIGUOUS' } },
+          { status: 'not_attempted' },
+        ],
+      });
+      await expect
+        .poll(() => selections)
+        .toEqual(['city', 'country', 'query-only', 'bounded-country']);
+      const duplicate = (await callAutofill(args, 1)) as {
+        isError?: boolean;
+        content: Array<{ text: string }>;
+      };
       expect(JSON.stringify(duplicate)).toContain('OPERATION_RECORDED');
       expect(submissions).toBe(0);
     } finally {

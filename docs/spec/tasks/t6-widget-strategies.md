@@ -49,3 +49,12 @@ reuses scoped resolution to reacquire refs between custom strategy actions. A re
 Chromium/stdio fixture retains one five-field bulk payload and adds query-only and
 incomplete-membership negative controls. This is synthetic markup qualification,
 not broad library/version or live-site acceptance. T6 remains active.
+
+
+The next bounded [owned-popup/readiness slice](../design/t6-owned-popup-readiness.md)
+extends engine evidence and one shared typeahead helper for both custom strategies.
+It removes page-wide/prefix selection, requires a unique exact option in the owned
+listbox, and retries observations without replaying writes. Engine dispatch rechecks
+ownership and focus; native field semantics and commitment predicates stay shared.
+See the [qualification evidence](../evidence/t6-owned-popup-readiness.md); no arbitrary ATS coverage,
+rollback or reusable mapping claim follows.

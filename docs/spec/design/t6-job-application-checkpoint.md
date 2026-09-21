@@ -117,8 +117,10 @@ browser fixture:
 3. poll readiness with the existing bounded read policy without replaying click/type;
 4. preserve focus ownership, node/block identity and suffix stopping through every step.
 
-PR #232 delivered Q0 commitment, while popup scope, duplicate ambiguity and async
-readiness remain open. A mapping cannot advertise a widget before its strategy passes.
+PR #232 delivered Q0 commitment. The subsequent
+[owned-popup/readiness slice](t6-owned-popup-readiness.md) implements the next bounded
+qualification; it does not qualify arbitrary real ATS widgets. A mapping cannot
+advertise a widget before its concrete strategy/evidence contract passes.
 
 Add one bounded descriptor in the protocol owner after red tests. Reuse `AutofillMatch`,
 strategy names and current limits. Pin origin, mapping version, stable blocks, required
