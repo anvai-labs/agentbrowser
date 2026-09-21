@@ -81,3 +81,8 @@ C0 merged in #240. The [C1 review-binding foundation](../design/t6-review-author
 extends the existing control/authority owners before adding operator-approval surfaces.
 It addresses same-epoch review invalidation and configuration cleanup; no approval
 CLI/API or live-submit capability follows from this internal context projection.
+
+The authority foundation merged in #241. The next [C1a implementation](../design/t6-operator-approval.md)
+adds explicit operator action approval through the existing REST/SDK/CLI owners,
+including token inspection, approve/deny and ordinary action consumption. This is
+operator-only action consent, not full-payload consent or live-submit qualification.

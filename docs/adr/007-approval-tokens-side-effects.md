@@ -109,6 +109,20 @@ inspection is not sandboxed, so all input inspection precedes final token-state 
 The ordinary wire confirmation flow remains compatible. This adds no operator grant
 or whole-payload consent claim and no persistent token migration.
 
+### C1a amendment: explicit operator action decisions
+
+Controlled sessions may select `policy.approval.review: "operator"`. Required actions
+then use a distinct pending/approved/denied/used/expired lifecycle in the same bounded
+ApprovalGate owner. Current operator authority in HUMAN_ACTIVE is required to inspect,
+decide and consume; legacy token echo cannot satisfy it. The service binds its immutable
+action projection to the authority review context. CLI/SDK/REST share the same service
+and operation ledger; MCP is optional. Denial can revoke approved but unconsumed consent.
+
+This establishes operator authority, not human presence or complete form/file/network
+payload consent. Vault-reference and registered-secret reviews refuse. See the
+[bounded C1a design](../spec/design/t6-operator-approval.md) and
+[operator usage](../operations.md#operator-approval-policy).
+
 ### Positive
 - **Safety**: Humans must approve risky actions
 - **Flexibility**: Safe actions proceed automatically

@@ -1,6 +1,11 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomBytes } from 'node:crypto';
-import { ControlError, type ControlTicket, SessionControl } from '@agentbrowser/core';
+import {
+  type ApprovalReviewBinding,
+  ControlError,
+  type ControlTicket,
+  SessionControl,
+} from '@agentbrowser/core';
 import type { EnginePage } from '@agentbrowser/engine';
 import {
   type AgentMode,
@@ -25,13 +30,7 @@ export type SessionAdmission =
   | Readonly<{ actor: 'operator'; tenant: string }>
   | Readonly<{ actor: 'agent'; tenant: string; mode: AgentMode }>;
 /** Internal review context only; possession conveys no authority or payload freshness. */
-export type SessionReviewBinding = Readonly<{
-  tenant: string;
-  sessionId: string;
-  sessionIncarnation: string;
-  epoch: number;
-  reviewVersion: string;
-}>;
+export type SessionReviewBinding = ApprovalReviewBinding;
 type Entry = {
   control: SessionControl;
   incarnation: string;

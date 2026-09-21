@@ -1,7 +1,7 @@
 # T6: reviewed payload consent, from shared owners to qualified submission
 
-Status: C0 merged #240; C1 review-binding foundation in progress. C1 approval
-surfaces and C2–C3 remain design/tasks, not advertised capabilities.
+Status: C0 merged #240; C1 review-binding foundation merged #241. C1a operator
+action approval is an implementation candidate; C2–C3 remain design/tasks.
 Base: develop `f12ac89` after [checked upload/draft](t6-verified-upload-draft.md),
 PR #239. Load with forms/T6 only. Published 1.9.1 remains unchanged.
 
@@ -9,9 +9,9 @@ PR #239. Load with forms/T6 only. Published 1.9.1 remains unchanged.
 
 A successful fill or attachment is not a submitted application. A digest supplied
 by the executing agent is not proof of live form contents or independent review.
-Current `ApprovalGate` tokens are confirmation challenges: the same caller can
-echo a pending token for the identical action. There is no separate approved state
-or operator grant. The service binds session/page/revision, live URL, target identity
+Legacy `ApprovalGate` tokens are confirmation challenges: the same caller can
+echo a pending token for the identical action. Legacy confirmation has no separate
+approved state or operator grant. The service binds session/page/revision, live URL, target identity
 and action parameters, but a submit click contains no full answers/PDF/job witness.
 
 Checked upload supplies the exact bytes it hashes; the page can transmit those
@@ -59,13 +59,18 @@ C0 preserves action-confirmation semantics. It adds no operator-approval endpoin
 payload evidence capability, permission or live-submit claim. Token fingerprints are
 process-local; no migration or persistent token compatibility is promised.
 
-## C1 — explicit operator approval (design next)
+## C1 — explicit operator action approval
 
 Start with the [authority-bound review foundation](t6-review-authority-binding.md).
 Epoch alone does not detect repeated human takeover or all configuration changes.
 The first operator-approval surface will stay in HUMAN_ACTIVE; delegation changes
 epoch and requires a separate qualified handoff design. No approval survives a
 handoff merely because the caller still possesses its token.
+
+The [C1a implementation](t6-operator-approval.md) adds the distinct reviewed lifecycle
+and REST/SDK/CLI projections for operator-only execution. Policy-required actions
+use it when selected at session creation; legacy confirmation remains separate.
+Delegated consumption and configured policy auto-approval are not implemented.
 
 Define a reviewed-consent mode with a separate challenge → approved → consumed
 transition. A delegated execution grant can request a challenge and inspect a bounded

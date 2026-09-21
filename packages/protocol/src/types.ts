@@ -113,6 +113,7 @@ export interface SessionPolicy {
  * Approval policy for actions
  */
 export interface ApprovalPolicy {
+  review?: 'operator';
   transactions?: 'allow' | 'deny' | 'required';
   externalMessages?: 'allow' | 'deny' | 'required';
 }

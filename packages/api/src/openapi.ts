@@ -30,6 +30,8 @@ import {
   ObservationRequestSchema,
   OperationRecordSchema,
   OperationReplaySchema,
+  OperatorApprovalDecisionSchema,
+  OperatorApprovalViewSchema,
   OutcomeRunReportSchema,
   OutcomeRunRequestSchema,
   PageElementSchema,
@@ -87,6 +89,60 @@ const controlResponses = (schema: string) => ({
   '404': NOT_FOUND,
   '409': errorResponse('Session busy or review revoked. Do not blindly repeat a write.'),
 });
+const approvalPaths = {
+  '/v1/sessions/{sessionId}/approvals/{tokenId}': {
+    get: {
+      operationId: 'getOperatorApproval',
+      summary: 'Read a private operator action review',
+      tags: ['sessions'],
+      description:
+        'Requires an authenticated owning operator. Private action projection only; not full-form or file-content consent. Responses are not cached.',
+      parameters: [
+        sessionIdParam,
+        { name: 'tokenId', in: 'path', required: true, schema: { type: 'string' } },
+      ],
+      responses: {
+        '200': {
+          description: 'Private approval state.',
+          content: json(ref('OperatorApprovalView')),
+        },
+        '401': errorResponse('Authentication required.'),
+        '403': errorResponse('Owning operator required.'),
+        '404': NOT_FOUND,
+        '409': errorResponse('Session admission refused.'),
+      },
+    },
+    post: {
+      operationId: 'decideOperatorApproval',
+      summary: 'Approve or deny a reviewed action',
+      tags: ['sessions'],
+      description:
+        'Requires an authenticated owning operator and ordinary controlled-session admission. Repeated operation identities return the recorded outcome without repeating the decision.',
+      parameters: [
+        sessionIdParam,
+        { name: 'tokenId', in: 'path', required: true, schema: { type: 'string' } },
+        {
+          name: 'X-AgentBrowser-Operation-Id',
+          in: 'header',
+          required: true,
+          schema: { type: 'string' },
+        },
+      ],
+      requestBody: { required: true, content: json(ref('OperatorApprovalDecision')) },
+      responses: {
+        '200': {
+          description: 'Private approval state, or recorded operation replay.',
+          content: json({ oneOf: [ref('OperatorApprovalView'), ref('OperationReplay')] }),
+        },
+        '400': INVALID_REQUEST,
+        '401': errorResponse('Authentication required.'),
+        '403': errorResponse('Owning operator required.'),
+        '404': NOT_FOUND,
+        '409': errorResponse('Session admission or approval transition refused.'),
+      },
+    },
+  },
+};
 const controlPaths = {
   '/v1/sessions/{sessionId}/control': {
     get: {
@@ -300,6 +356,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
     ],
     paths: {
       ...controlPaths,
+      ...approvalPaths,
       ...applicationPaths,
       '/openapi.json': {
         get: {
@@ -1260,6 +1317,8 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         ControlView: ControlViewSchema,
         ControlReview: ControlReviewSchema,
         ControlGrant: ControlGrantSchema,
+        OperatorApprovalDecision: OperatorApprovalDecisionSchema,
+        OperatorApprovalView: OperatorApprovalViewSchema,
         OperationRecord: OperationRecordSchema,
         OperationReplay: OperationReplaySchema,
         ApplicationBinding: ApplicationBindingSchema,

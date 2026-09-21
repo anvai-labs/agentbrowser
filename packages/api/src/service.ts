@@ -32,6 +32,7 @@ import {
   SessionCoordinator,
   SessionState,
   budgetObservation,
+  canonicalJson,
 } from '@agentbrowser/core';
 import type { ArtifactMetadata, SessionContext } from '@agentbrowser/core';
 import type { InMemoryTracer, Span } from '@agentbrowser/core';
@@ -1015,6 +1016,13 @@ export class AgentBrowserService {
 
   async createSession(input: ServiceSessionRequest): Promise<ServiceSessionView> {
     const request = { ...input, ...(input.approval ? { approval: { ...input.approval } } : {}) };
+    if (
+      request.approval?.review !== undefined &&
+      (request.approval.review !== 'operator' ||
+        request.controlMode !== 'delegated' ||
+        !request.tenantId)
+    )
+      throw new ServiceError('INVALID_REQUEST', 'Operator review requires a controlled session');
     // Validate tenant ID format (lightweight security)
     this.validateTenantId(request.tenantId);
 
@@ -2290,9 +2298,19 @@ export class AgentBrowserService {
   private async actWithDispatchObserver(
     sessionId: string,
     pageId: string,
-    request: ServiceActRequest,
+    input: ServiceActRequest,
     onDispatch?: () => void
   ): Promise<ServiceActResult | ServiceBatchActResult> {
+    // Reviewed consent and dispatch must share one detached request across all
+    // awaits, including nested target/values/paths. Legacy input semantics stay intact.
+    let request = input;
+    if (this.sessionApprovalPolicies.get(sessionId)?.review === 'operator') {
+      try {
+        request = JSON.parse(canonicalJson(input)) as ServiceActRequest;
+      } catch {
+        throw new ServiceError('INVALID_REQUEST', 'Reviewed actions require bounded JSON data');
+      }
+    }
     return this.traced('act', { sessionId, pageId, action: request.action }, async (span) => {
       const page = this.requirePage(sessionId, pageId);
       this.coordinator.updateActivity(sessionId);
@@ -3412,6 +3430,50 @@ export class AgentBrowserService {
   }
 
   /** Gate high-risk elements behind single-use approval tokens (ADR-007). */
+  private reviewContext(sessionId: string) {
+    if (this.sessionApprovalPolicies.get(sessionId)?.review !== 'operator')
+      throw new ServiceError('INVALID_REQUEST', 'Session does not use operator-reviewed approval');
+    return this.authority.reviewBindingInScope(sessionId);
+  }
+
+  /** Only call on bounded, detached owner data, never caller objects or callbacks. */
+  private assertReviewDisclosureSafe(value: unknown): void {
+    if (JSON.stringify(this.secretManager.redactUntrusted(value)) !== JSON.stringify(value))
+      throw new ServiceError(
+        'POLICY_DENIED',
+        'Operator review of registered secret data is not supported'
+      );
+  }
+
+  /** Private action projection; only admitted operators may inspect reviewed challenges. */
+  async getApproval(
+    sessionId: string,
+    tokenId: string
+  ): Promise<import('@agentbrowser/protocol').OperatorApprovalView> {
+    const context = this.reviewContext(sessionId);
+    const result = await this.approvalGate.getReviewedApproval(tokenId, context);
+    this.authority.assert(sessionId);
+    if (!result) throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
+    this.assertReviewDisclosureSafe(result);
+    return result;
+  }
+
+  async decideApproval(
+    sessionId: string,
+    tokenId: string,
+    decision: 'approve' | 'deny'
+  ): Promise<import('@agentbrowser/protocol').OperatorApprovalView> {
+    // A decision must not approve data that the operator cannot safely inspect.
+    await this.getApproval(sessionId, tokenId);
+    const context = this.reviewContext(sessionId);
+    const result = await this.approvalGate.decideReviewedApproval(tokenId, context, decision);
+    this.authority.assert(sessionId);
+    if (!result)
+      throw new ServiceError('NOT_FOUND', 'Current approval cannot accept that decision');
+    this.assertReviewDisclosureSafe(result);
+    return result;
+  }
+
   private async checkApproval(
     sessionId: string,
     pageId: string,
@@ -3460,6 +3522,46 @@ export class AgentBrowserService {
         ...(request.value !== undefined ? { value: request.value } : {}),
       },
     };
+
+    if (this.sessionApprovalPolicies.get(sessionId)?.review === 'operator') {
+      const context = this.reviewContext(sessionId);
+      // A mutable vault reference is not a value witness, and review must not expose
+      // vault plaintext. Qualify this separately before supporting reviewed secrets.
+      if (request.value !== undefined && this.secretManager.isReference(request.value))
+        throw new ServiceError(
+          'POLICY_DENIED',
+          'Operator-reviewed vault references are not supported'
+        );
+      const reviewedRequest = JSON.parse(canonicalJson(approvalRequest)) as typeof approvalRequest;
+      this.assertReviewDisclosureSafe(reviewedRequest);
+      if (
+        request.approvalToken !== undefined &&
+        (await this.approvalGate.consumeReviewedApproval(
+          request.approvalToken,
+          reviewedRequest,
+          context
+        ))
+      ) {
+        this.authority.assert(sessionId);
+        if (span)
+          this.tracer?.addEvent(span, 'approval.granted', {
+            effect: risk,
+            ref,
+            review: 'operator',
+          });
+        return;
+      }
+      const token = await this.approvalGate.generateReviewedApproval(reviewedRequest, context);
+      this.authority.assert(sessionId);
+      if (span)
+        this.tracer?.addEvent(span, 'approval.required', { effect: risk, ref, review: 'operator' });
+      throw new ServiceError(
+        'APPROVAL_REQUIRED',
+        'Action requires an explicit operator decision.',
+        false,
+        { tokenId: token.tokenId, effect: risk, ref, review: 'operator' }
+      );
+    }
 
     if (request.approvalToken !== undefined) {
       const consumed = await this.approvalGate.consumeApprovalToken(

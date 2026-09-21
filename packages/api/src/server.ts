@@ -22,6 +22,7 @@ import {
   agentModeAllows,
   isAgentMode,
   parsePlanSteps,
+  validateOperatorApprovalDecision,
   validateSessionRequest,
   validateWireAction,
   validateWireActionBatch,
@@ -830,6 +831,24 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         },
         { capability: 'session.control', admission: 'self' }
       );
+
+      on('GET', '/sessions/:sessionId/approvals/:tokenId', async (request, reply) => {
+        const { sessionId, tokenId } = params(request, 'sessionId', 'tokenId');
+        if (principals.get(request)?.actor !== 'operator')
+          throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+        if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
+        return reply.send(await service.getApproval(sessionId, tokenId));
+      });
+      on('POST', '/sessions/:sessionId/approvals/:tokenId', async (request, reply) => {
+        const { sessionId, tokenId } = params(request, 'sessionId', 'tokenId');
+        if (principals.get(request)?.actor !== 'operator')
+          throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+        if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
+        const checked = validateOperatorApprovalDecision(request.body);
+        if (!checked.ok)
+          throw new ServiceError('INVALID_REQUEST', 'Approval decision must be approve or deny');
+        return reply.send(await service.decideApproval(sessionId, tokenId, checked.value.decision));
+      });
 
       // Application surface (shared-infra slice 2). Binding is operator-only
       // while the human owns the session; discovery/execution/receipts are

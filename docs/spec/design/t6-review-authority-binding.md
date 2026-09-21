@@ -1,6 +1,6 @@
 # T6 C1 foundation: authority-bound review invalidation
 
-Status: implementation slice before C1 operator-approval surfaces. Base: PR #240,
+Status: merged as PR #241 before C1 operator-approval surfaces. Base: PR #240,
 develop `4b9b155`. Load with forms/T6 and the [consent sequence](t6-reviewed-payload-consent.md).
 See [validation evidence](../evidence/t6-review-authority-binding.md).
 
