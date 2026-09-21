@@ -76,3 +76,8 @@ bounded canonical serializer and ApprovalGate; C1 operator approval, C2 live pay
 witnesses and C3 qualified submission remain design/tasks, not delivered capabilities.
 See the [C0 evidence](../evidence/t6-approval-consumption.md). Legacy token echo is
 action confirmation, not proof of independent review or complete-form consent.
+
+C0 merged in #240. The [C1 review-binding foundation](../design/t6-review-authority-binding.md)
+extends the existing control/authority owners before adding operator-approval surfaces.
+It addresses same-epoch review invalidation and configuration cleanup; no approval
+CLI/API or live-submit capability follows from this internal context projection.

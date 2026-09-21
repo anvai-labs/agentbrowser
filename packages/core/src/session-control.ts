@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   CONTROL_OPERATION_ID,
   type ControlState,
@@ -32,6 +33,7 @@ export interface ControlTicket {
 export class SessionControl {
   private state: ControlState = 'HUMAN_ACTIVE';
   private epoch = 0;
+  private review = randomUUID();
   private active: ControlTicket | undefined;
   private readonly records = new Map<
     string,
@@ -66,8 +68,19 @@ export class SessionControl {
     return record ? { ...record } : undefined;
   }
 
+  /** Opaque control-review version, not permission or page/payload evidence. */
+  reviewVersion(): string {
+    return this.review;
+  }
+
+  /** Trusted owners invalidate review around configuration callbacks too. */
+  invalidateReview(): void {
+    this.review = randomUUID();
+  }
+
   takeover(): ControlView {
     if (this.state === 'STOPPED') return this.view();
+    this.invalidateReview();
     if (this.state !== 'PAUSE_REQUESTED' && this.state !== 'HUMAN_ACTIVE') this.epoch++;
     this.state = this.active ? 'PAUSE_REQUESTED' : 'HUMAN_ACTIVE';
     return this.view();
@@ -78,6 +91,7 @@ export class SessionControl {
       throw new ControlError('SESSION_BUSY', 'Session is busy draining an operation');
     if (this.state !== 'HUMAN_ACTIVE' && this.state !== 'RESUME_REVIEW')
       throw new ControlError('CONTROL_REQUIRED', 'Human takeover is required before review');
+    this.invalidateReview();
     this.epoch++;
     this.state = 'RESUME_REVIEW';
     return this.view();
@@ -87,6 +101,7 @@ export class SessionControl {
     if (this.active) throw new ControlError('SESSION_BUSY', 'Session is busy');
     if (this.state !== 'RESUME_REVIEW' || reviewEpoch !== this.epoch)
       throw new ControlError('CONTROL_REVOKED', 'A current human review is required');
+    this.invalidateReview();
     this.epoch++;
     this.state = 'AGENT_ACTIVE';
     return this.view();
@@ -133,6 +148,7 @@ export class SessionControl {
       throw new ControlError('QUOTA_EXCEEDED', 'Session operation budget exhausted');
     // A review describes the state before this write, even if dispatch fails.
     if (request.actor === 'operator' && request.operationId && this.state === 'RESUME_REVIEW') {
+      this.invalidateReview();
       this.epoch++;
       this.state = 'HUMAN_ACTIVE';
     }
@@ -187,6 +203,7 @@ export class SessionControl {
   }
 
   stop(): void {
+    this.invalidateReview();
     this.epoch++;
     this.state = 'STOPPED';
   }

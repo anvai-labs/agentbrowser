@@ -1,6 +1,7 @@
 # T6: reviewed payload consent, from shared owners to qualified submission
 
-Status: C0 implementation slice; C1–C3 are design/tasks, not advertised capabilities.
+Status: C0 merged #240; C1 review-binding foundation in progress. C1 approval
+surfaces and C2–C3 remain design/tasks, not advertised capabilities.
 Base: develop `f12ac89` after [checked upload/draft](t6-verified-upload-draft.md),
 PR #239. Load with forms/T6 only. Published 1.9.1 remains unchanged.
 
@@ -59,6 +60,12 @@ payload evidence capability, permission or live-submit claim. Token fingerprints
 process-local; no migration or persistent token compatibility is promised.
 
 ## C1 — explicit operator approval (design next)
+
+Start with the [authority-bound review foundation](t6-review-authority-binding.md).
+Epoch alone does not detect repeated human takeover or all configuration changes.
+The first operator-approval surface will stay in HUMAN_ACTIVE; delegation changes
+epoch and requires a separate qualified handoff design. No approval survives a
+handoff merely because the caller still possesses its token.
 
 Define a reviewed-consent mode with a separate challenge → approved → consumed
 transition. A delegated execution grant can request a challenge and inspect a bounded
