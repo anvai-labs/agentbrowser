@@ -16,9 +16,11 @@ import { SessionAuthority } from './session-authority.js';
 import {
   type ApplicationAdapter,
   ApplicationAuthority,
+  type ApplicationReadEvidenceSourceOptions,
   type ApplicationReceiptEvidenceSourceOptions,
   TrustedEvidenceSourceRegistry,
   type TrustedVerifierRegistry,
+  defineApplicationReadEvidenceSource,
   defineApplicationReceiptEvidenceSource,
   runVerifiedOutcome,
 } from '@agentbrowser/control';
@@ -329,6 +331,9 @@ export interface ServiceEvidenceSourceBuilder {
   applicationReceipt(
     config: ApplicationReceiptEvidenceSourceOptions
   ): ReturnType<typeof defineApplicationReceiptEvidenceSource<ServiceOutcomeEvidenceContext>>;
+  applicationRead(
+    config: ApplicationReadEvidenceSourceOptions
+  ): ReturnType<typeof defineApplicationReadEvidenceSource<ServiceOutcomeEvidenceContext>>;
 }
 
 interface PageContext {
@@ -443,6 +448,11 @@ export class AgentBrowserService {
       const sources: ServiceEvidenceSourceBuilder = Object.freeze({
         applicationReceipt: (config: ApplicationReceiptEvidenceSourceOptions) =>
           defineApplicationReceiptEvidenceSource<ServiceOutcomeEvidenceContext>(
+            applicationAuthority,
+            config
+          ),
+        applicationRead: (config: ApplicationReadEvidenceSourceOptions) =>
+          defineApplicationReadEvidenceSource<ServiceOutcomeEvidenceContext>(
             applicationAuthority,
             config
           ),

@@ -1,7 +1,7 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
 Rechecked published 1.9.1 at `310e01d43982824caac2c63ed8d98355e17efdce`
-and develop `7f2e5338b937469ebc910218a84661b71b0b3393` (PR #243).
+and develop `c8f896a5f4bd42ce780c0395d497f301226b050d` (PR #244).
 The [release ladder](release-1.9.1.md) includes Bun CLI/MCP artifacts,
 Node 24 service qualification, Homebrew and develop back-sync. Existing browser
 sessions were preserved; an upgraded installed binary does not prove every running
@@ -21,7 +21,7 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T3 QA regression | Complete, released | 100% | Broader provisioning and demand-backed report adapters are follow-ups |
 | T4 application operations/parity | Active | ~40% | Independent UI/API oracle, binding UX, production evidence; callback repair merged #236 |
 | T5 durable recovery | Not started | 0% | Design, journal/recovery and process-loss qualification |
-| T6 forms/operations | Active | ~40% | Full-payload consent, candidate identity/eligibility and live qualification; operator action approval #242 merged; C2a draft oracle #243 merged; C2b scoped-read foundation in progress |
+| T6 forms/operations | Active | ~40% | Full-payload consent, candidate identity/eligibility and live qualification; operator action approval #242, draft oracle #243 and scoped-read foundation #244 merged; source composition and named data validation in progress |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
 | T8 installed harnesses | Not qualified | 0% | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |
 | T9 release hardening | Recurring | 100% of 1.9.1 checkpoint | Repeat per later release |
@@ -118,3 +118,11 @@ independent review returned SHIP. The [C2b read foundation](../design/t6-scoped-
 adds authorized in-admission application reads before witness binding; see
 [evidence](t6-scoped-application-read.md). This does not complete full-payload consent
 or T4/T6; milestone counts and conservative estimates stay unchanged.
+
+C2b prepared reads merged in #244 at `c8f896a`, retaining reviewed tree `3aa6b0a`.
+PR run `35602853928` and post-merge run `35603408458` each passed all eight jobs.
+The next [read-source increment](../design/t6-application-read-evidence.md) reuses
+the evidence registry and service-owned authority, with a strict test-only named
+draft data validator. [Evidence](t6-application-read-evidence.md) keeps this distinct
+from page correlation, live payload witnesses and consent. No milestone is newly
+complete and published 1.9.1 is unchanged.
