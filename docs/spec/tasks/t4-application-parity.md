@@ -71,3 +71,9 @@ qualification gates above still prevent marking T4 complete.
 C2a merged in #243. The [prepared-read foundation](../design/t6-scoped-application-read.md)
 shares receipt-reader authority/lifetime ownership without treating draft reads as
 outcome receipts. It adds no public surface or production evidence qualification.
+
+
+The [C3a acceptance oracle](../design/t6-atomic-submission.md) extends the same test-only
+draft owner with atomic full-state comparison, terminal acceptance and an independently
+readable receipt. It registers no submit operation. See [evidence](../evidence/t6-atomic-submission.md);
+shared consent enforcement, production receipt qualification and operator UX remain open.
