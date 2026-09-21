@@ -9,6 +9,7 @@ import {
   type RunCursor,
   agentModeProfile,
 } from '@agentbrowser/protocol';
+import { synchronousResult } from './trusted-callback.js';
 
 export type SessionPrincipal =
   | { actor: 'operator'; tenant?: string }
@@ -23,6 +24,14 @@ export type SessionPrincipal =
 export type SessionAdmission =
   | Readonly<{ actor: 'operator'; tenant: string }>
   | Readonly<{ actor: 'agent'; tenant: string; mode: AgentMode }>;
+/** Internal review context only; possession conveys no authority or payload freshness. */
+export type SessionReviewBinding = Readonly<{
+  tenant: string;
+  sessionId: string;
+  sessionIncarnation: string;
+  epoch: number;
+  reviewVersion: string;
+}>;
 type Entry = {
   control: SessionControl;
   incarnation: string;
@@ -33,6 +42,7 @@ type Entry = {
   abortListener: () => void;
   expiresAt?: number;
   onExpire?: () => void;
+  configuring?: boolean;
 };
 type Scope = {
   sessionId: string;
@@ -377,18 +387,50 @@ export class SessionAuthority {
     return this.require(sessionId).incarnation;
   }
 
+  /** Capture only from a live operator scope, never from a caller-supplied actor label. */
+  reviewBindingInScope(sessionId: string): SessionReviewBinding {
+    this.assert(sessionId);
+    const scope = this.scope.getStore();
+    if (
+      !scope ||
+      scope.admission.actor !== 'operator' ||
+      scope.entry.configuring ||
+      scope.entry.control.view().state !== 'HUMAN_ACTIVE'
+    )
+      throw new ControlError('CONTROL_REQUIRED', 'Stable operator control is required for review');
+    return Object.freeze({
+      tenant: scope.admission.tenant,
+      sessionId,
+      sessionIncarnation: scope.entry.incarnation,
+      epoch: scope.ticket.epoch,
+      reviewVersion: scope.entry.control.reviewVersion(),
+    });
+  }
+
   /** Trusted composition changes require idle human control and invalidate review. */
   configure<T>(sessionId: string, principal: SessionPrincipal, change: () => T): T {
-    const entry = this.require(sessionId);
-    if (principal.actor !== 'operator' || principal.tenant !== entry.tenant)
+    const { entry, admission } = this.admit(sessionId, principal);
+    if (admission.actor !== 'operator')
       throw new ControlError('CONTROL_REQUIRED', 'Operator authority does not match');
     const view = entry.control.view();
     if (view.busy) throw new ControlError('SESSION_BUSY', 'Session is busy');
     if (view.state !== 'HUMAN_ACTIVE' && view.state !== 'RESUME_REVIEW')
       throw new ControlError('CONTROL_REQUIRED', 'Human takeover is required');
-    const result = change();
-    this.takeover(sessionId);
-    return result;
+    const configuring = entry.configuring ?? false;
+    entry.configuring = true;
+    entry.control.invalidateReview();
+    try {
+      const result = synchronousResult(change());
+      if (this.require(sessionId) !== entry)
+        throw new ControlError('CONTROL_REVOKED', 'Session owner changed during configuration');
+      return result;
+    } finally {
+      entry.configuring = configuring;
+      // A callback can throw after mutation, reenter or replace the textual session ID.
+      // Always invalidate/revoke the captured owner; never touch its replacement.
+      this.revoke(entry);
+      entry.control.takeover();
+    }
   }
 
   signal(sessionId: string): AbortSignal {

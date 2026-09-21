@@ -228,8 +228,22 @@ describe('trusted application configuration contracts', () => {
       try {
         expect(() => port.bind('session', operator, binding)).toThrow();
       } finally {
-        release.resolve();
-        await pending;
+        if (change === 'busy') {
+          expect(s.authority.status('session')).toMatchObject({
+            state: 'PAUSE_REQUESTED',
+            busy: true,
+          });
+          const refused = expect(pending).rejects.toMatchObject({ code: 'CONTROL_REVOKED' });
+          release.resolve();
+          await refused;
+          expect(s.authority.status('session')).toMatchObject({
+            state: 'HUMAN_ACTIVE',
+            busy: false,
+          });
+        } else {
+          release.resolve();
+          await pending;
+        }
       }
       const owner: SessionPrincipal =
         change === 'replacement' ? { actor: 'operator', tenant: 'replacement-owner' } : operator;
