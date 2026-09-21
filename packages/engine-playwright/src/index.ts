@@ -19,6 +19,8 @@ import type {
   EngineTarget,
   ExtractionRequest,
   ExtractionResult,
+  NativeFormControlEvidence,
+  NativeFormEvidence,
   NavigationRequest,
   NavigationResult,
   NewPageOptions,
@@ -31,7 +33,13 @@ import type {
   ScreenshotRequest,
 } from '@agentbrowser/engine';
 import type { RequestPolicy } from '@agentbrowser/engine';
-import { EngineError, normalizeEngineError, readVerifiedUpload } from '@agentbrowser/engine';
+import {
+  EngineError,
+  NATIVE_FORM_EVIDENCE_LIMITS,
+  normalizeEngineError,
+  parseNativeFormEvidence,
+  readVerifiedUpload,
+} from '@agentbrowser/engine';
 import {
   DELIVERED_ACTION_TYPES,
   DELIVERED_OBSERVATION_MODES,
@@ -139,7 +147,211 @@ interface FormIdentityState {
   nodes: WeakMap<object, string>;
   next: number;
   document: string;
+  root: object;
+  ownerDocument: object;
+  token(node: object): string;
   popups?: WeakMap<object, FormPopupEvidence>;
+}
+
+/** Browser-only structural views keep this engine free of DOM runtime/type dependencies. */
+interface NativeCaptureNode extends FormEvidenceNode {
+  name: string;
+  action: string;
+  method: string;
+  form: NativeCaptureNode | null;
+  disabled: boolean;
+  required: boolean;
+  checked: boolean;
+  indeterminate: boolean;
+  selectedIndex: number;
+  textContent: string | null;
+  shadowRoot: object | null;
+  isContentEditable: boolean;
+  options: ArrayLike<{ value: string; label: string; selected: boolean; disabled: boolean }>;
+  files: ArrayLike<NativeCaptureFile> | null;
+}
+interface NativeCaptureFile {
+  name: string;
+  type: string;
+  size: number;
+  lastModified: number;
+  arrayBuffer(): Promise<ArrayBuffer>;
+}
+interface NativeCaptureDocument {
+  documentElement: NativeCaptureNode;
+  URL: string;
+  createTreeWalker(
+    root: NativeCaptureNode,
+    whatToShow: number
+  ): {
+    nextNode(): NativeCaptureNode | null;
+  };
+  defaultView: {
+    getComputedStyle(node: NativeCaptureNode): { visibility: string };
+    crypto: { subtle: { digest(algorithm: string, bytes: ArrayBuffer): Promise<ArrayBuffer> } };
+  } | null;
+}
+
+/** Cooperative native pages only; opaque closed roots are outside this bounded contract. */
+async function captureNativeFormEvidence({
+  state,
+  limits,
+}: {
+  state: FormIdentityState;
+  limits: typeof NATIVE_FORM_EVIDENCE_LIMITS;
+}): Promise<NativeFormEvidence> {
+  const doc = (globalThis as unknown as { document: NativeCaptureDocument }).document;
+  const root = doc.documentElement;
+  const documentId = state.document;
+  const refuse = (): never => {
+    throw new Error('Native form evidence unavailable');
+  };
+  const bounded = (value: unknown, maximum: number = limits.identifier): string => {
+    if (typeof value !== 'string' || value.length > maximum) return refuse();
+    return value;
+  };
+  const inventory = () => {
+    if (
+      state.ownerDocument !== doc ||
+      state.root !== root ||
+      doc.documentElement !== root ||
+      state.document !== documentId
+    )
+      refuse();
+    const forms: NativeCaptureNode[] = [];
+    const nodes: NativeCaptureNode[] = [];
+    const ids = new Set<string>();
+    const walker = doc.createTreeWalker(root, 1 /* SHOW_ELEMENT */);
+    let node: NativeCaptureNode | null = root;
+    let visited = 0;
+    while (node) {
+      if (++visited > limits.treeElements) refuse();
+      const tag = node.tagName.toLowerCase();
+      if (
+        node.shadowRoot ||
+        node.isContentEditable ||
+        tag.includes('-') ||
+        ['iframe', 'frame', 'object', 'embed', 'output', 'meter', 'progress', 'optgroup'].includes(
+          tag
+        ) ||
+        node.getAttribute('role') !== null ||
+        node.getAttribute('shadowrootmode') !== null
+      )
+        refuse();
+      if (node.id) {
+        if (ids.has(node.id)) refuse();
+        ids.add(node.id);
+      }
+      if (tag === 'form') {
+        forms.push(node);
+        if (forms.length > 1) refuse();
+      }
+      if (['input', 'textarea', 'select', 'button'].includes(tag)) {
+        nodes.push(node);
+        if (nodes.length > limits.controls) refuse();
+      }
+      node = walker.nextNode();
+    }
+    const form = forms[0];
+    if (!form || nodes.length === 0) return refuse();
+    const files: NativeCaptureFile[] = [];
+    const controls = nodes.map((control): NativeFormControlEvidence => {
+      if (control.form !== form) return refuse();
+      const tag = control.tagName.toLowerCase() as NativeFormControlEvidence['tag'];
+      const type = bounded(control.type ?? tag);
+      if (tag === 'input' && !limits.inputTypes.includes(type)) refuse();
+      if (control.multiple || control.indeterminate) refuse();
+      const block = control.closest('fieldset');
+      const rect = control.getBoundingClientRect();
+      const visibility = doc.defaultView?.getComputedStyle(control).visibility;
+      const item: NativeFormControlEvidence = {
+        nodeId: state.token(control),
+        blockId: block ? state.token(block) : null,
+        id: bounded(control.id),
+        name: bounded(control.name),
+        tag,
+        type,
+        value: bounded(control.value, limits.value),
+        disabled: control.matches(':disabled'),
+        required: Boolean(control.required),
+        visible:
+          rect.width > 0 && rect.height > 0 && visibility !== 'hidden' && visibility !== 'collapse',
+      };
+      if (type === 'checkbox' || type === 'radio') item.checked = control.checked;
+      if (tag === 'select') {
+        if (control.options.length > limits.options) refuse();
+        item.selectedIndex = control.selectedIndex;
+        item.options = Array.from(control.options, (option) => ({
+          value: bounded(option.value, limits.value),
+          label: bounded(option.label),
+          selected: option.selected,
+          disabled: option.disabled,
+        }));
+      }
+      if (tag === 'button') item.text = bounded(control.textContent ?? '', limits.text);
+      if (type === 'file') {
+        if (!control.files || control.files.length > limits.files) return refuse();
+        item.files = Array.from(control.files, (file) => {
+          if (
+            !Number.isSafeInteger(file.size) ||
+            file.size < 0 ||
+            file.size > limits.fileBytes ||
+            !Number.isFinite(file.lastModified)
+          )
+            refuse();
+          files.push(file);
+          if (files.length > limits.files) refuse();
+          return {
+            name: bounded(file.name),
+            type: bounded(file.type, limits.mimeType),
+            size: file.size,
+            lastModified: file.lastModified,
+            sha256: '',
+          };
+        });
+      }
+      return item;
+    });
+    const evidence: NativeFormEvidence = {
+      url: bounded(doc.URL, limits.url),
+      documentId,
+      form: {
+        nodeId: state.token(form),
+        id: bounded(form.id),
+        name: bounded(form.name),
+        action: bounded(form.action, limits.url),
+        method: bounded(form.method),
+      },
+      controls,
+    };
+    const serialized = JSON.stringify(evidence);
+    if (new TextEncoder().encode(serialized).byteLength > limits.serializedBytes) refuse();
+    return { evidence, serialized, form, nodes, files };
+  };
+  const before = inventory();
+  const hashes: string[] = [];
+  for (const file of before.files) {
+    const bytes = await file.arrayBuffer();
+    if (bytes.byteLength !== file.size || bytes.byteLength > limits.fileBytes) refuse();
+    const digest = await doc.defaultView?.crypto.subtle.digest('SHA-256', bytes);
+    if (!digest) return refuse();
+    hashes.push(
+      Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+    );
+  }
+  const after = inventory();
+  if (
+    before.serialized !== after.serialized ||
+    before.form !== after.form ||
+    before.nodes.some((node, index) => node !== after.nodes[index]) ||
+    before.files.some((file, index) => file !== after.files[index])
+  )
+    refuse();
+  let index = 0;
+  for (const control of before.evidence.controls) {
+    for (const file of control.files ?? []) file.sha256 = hashes[index++] ?? refuse();
+  }
+  return before.evidence;
 }
 
 /** One bounded ownership index per observation; refreshed again before dispatch. */
@@ -229,14 +441,7 @@ function captureFormEvidence(
   node: FormEvidenceNode,
   state: FormIdentityState
 ): { attributes: Record<string, string>; value?: string } {
-  const token = (element: FormEvidenceNode) => {
-    let id = state.nodes.get(element);
-    if (!id) {
-      id = `${state.document}:${++state.next}`;
-      state.nodes.set(element, id);
-    }
-    return id;
-  };
+  const token = (element: FormEvidenceNode) => state.token(element);
   const identity = (element: FormEvidenceNode): Record<string, string> => {
     const block = element.closest('fieldset');
     const attributes: Record<string, string> = {
@@ -1236,8 +1441,11 @@ class PlaywrightSession implements EngineSession {
  */
 class PlaywrightPage implements EnginePage {
   private formIdentityState: JSHandle<FormIdentityState> | undefined;
+  private formIdentityInitialization: Promise<JSHandle<FormIdentityState>> | undefined;
+  private formIdentityGeneration = 0;
   private readonly onFrameNavigated = (frame: import('playwright').Frame) => {
     if (frame === this.page.mainFrame()) {
+      this.formIdentityGeneration++;
       void this.formIdentityState?.dispose().catch(() => {});
       this.formIdentityState = undefined;
     }
@@ -1401,6 +1609,82 @@ class PlaywrightPage implements EnginePage {
     this.eventWaiters = [];
     for (const wake of waiters) {
       wake();
+    }
+  }
+
+  /** One browser-owned identity map shared by observation and native capture. */
+  private async ensureFormIdentityState(): Promise<JSHandle<FormIdentityState>> {
+    if (!this.formIdentityState) {
+      if (!this.formIdentityInitialization) {
+        const generation = this.formIdentityGeneration;
+        const pending = this.page
+          .evaluateHandle((id): FormIdentityState => {
+            const doc = (globalThis as unknown as { document: NativeCaptureDocument }).document;
+            return {
+              nodes: new WeakMap(),
+              next: 0,
+              document: id,
+              root: doc.documentElement,
+              ownerDocument: doc,
+              token(node: object) {
+                let value = this.nodes.get(node);
+                if (!value) {
+                  value = `${this.document}:${++this.next}`;
+                  this.nodes.set(node, value);
+                }
+                return value;
+              },
+            };
+          }, randomUUID())
+          .then(async (state) => {
+            if (generation !== this.formIdentityGeneration) {
+              await state.dispose().catch(() => {});
+              throw new Error('Document changed');
+            }
+            this.formIdentityState = state;
+            return state;
+          });
+        this.formIdentityInitialization = pending;
+        void pending
+          .finally(() => {
+            if (this.formIdentityInitialization === pending)
+              this.formIdentityInitialization = undefined;
+          })
+          .catch(() => {});
+      }
+      await this.formIdentityInitialization;
+    }
+    const state = this.formIdentityState;
+    if (!state) throw new Error('Document changed');
+    await state.evaluate((state, id) => {
+      const doc = (globalThis as unknown as { document: NativeCaptureDocument }).document;
+      if (state.ownerDocument !== doc || state.root !== doc.documentElement) {
+        state.nodes = new WeakMap();
+        state.next = 0;
+        state.document = id;
+        state.root = doc.documentElement;
+        state.ownerDocument = doc;
+        state.popups = new WeakMap();
+      }
+    }, randomUUID());
+    return state;
+  }
+
+  async captureNativeForm(options?: { signal?: AbortSignal }): Promise<NativeFormEvidence> {
+    try {
+      if (options?.signal?.aborted) throw new Error();
+      const state = await this.ensureFormIdentityState();
+      if (options?.signal?.aborted) throw new Error();
+      const evidence = await this.page.evaluate(captureNativeFormEvidence, {
+        state,
+        limits: NATIVE_FORM_EVIDENCE_LIMITS,
+      });
+      if (options?.signal?.aborted) throw new Error();
+      const snapshot = parseNativeFormEvidence(evidence);
+      if (options?.signal?.aborted) throw new Error();
+      return snapshot;
+    } catch {
+      throw new EngineError('ENGINE_UNSUPPORTED', 'Native form evidence unavailable');
     }
   }
 
@@ -1626,13 +1910,9 @@ class PlaywrightPage implements EnginePage {
       // stays its own sequential sub-pass below (unchanged semantics: first
       // 50 links in document order that actually carry a non-empty href,
       // not the first 50 link-role elements - a fetch can come back empty).
-      if (request.include?.includes('formControls') && !this.formIdentityState) {
-        this.formIdentityState = await this.page.evaluateHandle(
-          (document) => ({ nodes: new WeakMap(), next: 0, document }),
-          randomUUID()
-        );
-      }
-      const formState = this.formIdentityState;
+      const formState = request.include?.includes('formControls')
+        ? await this.ensureFormIdentityState()
+        : this.formIdentityState;
       if (request.include?.includes('formControls') && formState)
         await this.page.evaluate(refreshFormPopupEvidence, formState);
       await Promise.all(

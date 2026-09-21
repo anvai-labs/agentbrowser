@@ -11,6 +11,55 @@ The CLI is a thin SDK client to the shared AgentBrowser service. It owns no brow
 session state or alternate executor. Use ordinary Bash/shell tools to inspect JSON;
 MCP is an alternative adapter to the same execution and authority boundaries.
 
+## Background service and harness setup
+
+The Homebrew formula installs the service and compiled CLI/MCP binaries together.
+Shell-capable harnesses can use the CLI directly; no MCP registration is needed:
+
+```sh
+brew services start anvai-labs/tap/agentbrowser
+agentbrowser --base-url http://127.0.0.1:5709 --json health
+agentbrowser --version
+```
+
+Compare both versions: upgrading the installed binary does not restart an older
+process. At an explicit session checkpoint, use `brew upgrade anvai-labs/tap/agentbrowser`
+and `brew services restart anvai-labs/tap/agentbrowser`, then check health again.
+Restarting interrupts service-owned browser sessions; preserve interactive logins.
+
+Suggested project instruction for Codex's `AGENTS.md` or Claude Code's `CLAUDE.md`:
+
+> Use AgentBrowser through its CLI and the existing service at http://127.0.0.1:5709.
+> Run `agentbrowser --base-url http://127.0.0.1:5709 --json ...`. Discover only the
+> needed command with `agentbrowser describe <command> --schema` and command help.
+> Reuse authorized sessions/pages, preserve interactive logins, prefer bulk autofill,
+> and inspect verification receipts. Reconcile uncertain mutations by operation ID.
+> Do not restart the service or submit applications without applicable authorization.
+
+For optional MCP, register the stable Homebrew adapter path (Apple Silicon):
+
+```sh
+codex mcp add agentbrowser \
+  --env AGENTBROWSER_BASE_URL=http://127.0.0.1:5709 \
+  -- /opt/homebrew/opt/agentbrowser/bin/agentbrowser-mcp
+
+claude mcp add --scope user \
+  --env AGENTBROWSER_BASE_URL=http://127.0.0.1:5709 \
+  --transport stdio agentbrowser \
+  -- /opt/homebrew/opt/agentbrowser/bin/agentbrowser-mcp
+```
+
+Update an existing named entry instead of duplicating it, or remove that registration
+in its existing scope before adding it again. Start a new harness session and inspect
+`/mcp`. On other Homebrew prefixes, substitute the installed adapter path. See the
+[Codex MCP configuration](https://developers.openai.com/codex/mcp) and
+[Claude Code MCP configuration](https://code.claude.com/docs/en/mcp).
+
+The adapter speaks stdio to the harness and REST to the service. Port 5709 is not
+an HTTP MCP endpoint. `AGENTBROWSER_BASE_URL` configures the adapter; the CLI uses
+`--base-url`. Both support `AGENTBROWSER_API_KEY` when service authentication is
+enabled. Keep credentials out of committed project instructions and configuration.
+
 ## Discover only the command you need
 
 ```sh

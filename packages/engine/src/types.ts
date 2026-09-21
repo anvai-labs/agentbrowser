@@ -397,11 +397,41 @@ export interface EngineSession {
 /**
  * Engine page interface
  */
+/** Bounded complete native main-document form inventory; private values, not page attestation. */
+export interface NativeFormEvidence {
+  url: string;
+  documentId: string;
+  form: { nodeId: string; id: string; name: string; action: string; method: string };
+  controls: NativeFormControlEvidence[];
+}
+
+export interface NativeFormControlEvidence {
+  nodeId: string;
+  blockId: string | null;
+  id: string;
+  name: string;
+  tag: 'input' | 'textarea' | 'select' | 'button';
+  type: string;
+  value: string;
+  disabled: boolean;
+  required: boolean;
+  visible: boolean;
+  checked?: boolean;
+  selectedIndex?: number;
+  options?: { value: string; label: string; selected: boolean; disabled: boolean }[];
+  files?: { name: string; type: string; size: number; lastModified: number; sha256: string }[];
+  /** Cooperative diagnostic text only, never authoritative commit evidence. */
+  text?: string;
+}
+
 export interface EnginePage {
   /**
    * Page ID
    */
   id: string;
+
+  /** Internal bounded native-form capture; unsupported/partial inventories refuse. */
+  captureNativeForm?(options?: { signal?: AbortSignal }): Promise<NativeFormEvidence>;
 
   /** Live document URL without creating an observation or changing refs. */
   getUrl?(): Promise<string>;

@@ -41,7 +41,13 @@ import type { InMemoryTracer, Span } from '@agentbrowser/core';
 import type { MetricsRegistry } from '@agentbrowser/core';
 import type { StructuredLogger } from '@agentbrowser/core';
 import { ActionRiskPolicy, type ActionRiskPolicyOptions } from '@agentbrowser/core';
-import type { BrowserEngine, EngineEvent, EnginePage } from '@agentbrowser/engine';
+import {
+  type BrowserEngine,
+  type EngineEvent,
+  type EnginePage,
+  type NativeFormEvidence,
+  parseNativeFormEvidence,
+} from '@agentbrowser/engine';
 import type { EngineSession, EngineSessionOptions, NormalizedCookie } from '@agentbrowser/engine';
 import type { RawPageState } from '@agentbrowser/engine';
 import type { RequestPolicy } from '@agentbrowser/engine';
@@ -334,6 +340,17 @@ export interface ServiceEvidenceSourceBuilder {
   applicationRead(
     config: ApplicationReadEvidenceSourceOptions
   ): ReturnType<typeof defineApplicationReadEvidenceSource<ServiceOutcomeEvidenceContext>>;
+}
+
+/** Admission-owned internal reader for a bounded native form witness. */
+export interface PreparedNativeFormRead {
+  readonly identity: Readonly<{
+    sessionId: string;
+    pageId: string;
+    sessionIncarnation: string;
+  }>;
+  assertAuthority(): void;
+  read(signal?: AbortSignal): Promise<NativeFormEvidence>;
 }
 
 interface PageContext {
@@ -1660,6 +1677,99 @@ export class AgentBrowserService {
     } catch {
       throw new ServiceError('INTERNAL', 'Invalid internal outcome report.');
     }
+  }
+
+  /**
+   * Prepare an admission-owned native-form read without exposing the page,
+   * engine callback or authority scope to its consumer. This is an internal
+   * composition seam; no public route grants it independently.
+   */
+  prepareNativeFormReadInScope(sessionId: string, pageId: string): PreparedNativeFormRead {
+    const session = this.requireSession(sessionId);
+    const page = this.requirePage(sessionId, pageId);
+    const enginePage = page.enginePage;
+    const guard = this.authority.outputGuard(sessionId);
+    const admission = this.authority.admissionInScope(sessionId);
+    const sessionIncarnation = this.authority.sessionIncarnation(sessionId);
+    const ownerSignal = this.authority.signal(sessionId);
+    let revoked: unknown;
+
+    const assertOwner = () => {
+      if (revoked !== undefined) throw revoked;
+      try {
+        guard();
+        if (this.authority.admissionInScope(sessionId) !== admission)
+          throw new ServiceError('CONTROL_REVOKED', 'Native form read admission changed.');
+        if (
+          this.authority.sessionIncarnation(sessionId) !== sessionIncarnation ||
+          this.coordinator.get(sessionId) !== session ||
+          this.pages.get(pageId) !== page ||
+          page.sessionId !== sessionId ||
+          page.enginePage !== enginePage ||
+          ownerSignal.aborted
+        )
+          throw new ServiceError('CONTROL_REVOKED', 'Native form read owner changed.');
+      } catch (error) {
+        revoked = error;
+        throw error;
+      }
+    };
+    const assertRead = (signal?: AbortSignal) => {
+      assertOwner();
+      if (signal?.aborted)
+        throw new ServiceError('CONTROL_REVOKED', 'Native form read was cancelled.');
+    };
+
+    let capture: EnginePage['captureNativeForm'];
+    try {
+      capture = enginePage.captureNativeForm;
+    } catch {
+      assertOwner();
+      throw new ServiceError('ENGINE_UNSUPPORTED', 'Native form evidence capture is unavailable.');
+    }
+    assertOwner();
+    if (typeof capture !== 'function')
+      throw new ServiceError('ENGINE_UNSUPPORTED', 'Native form evidence capture is unavailable.');
+    const captureNativeForm = capture;
+    const identity = Object.freeze({ sessionId, pageId, sessionIncarnation });
+
+    return Object.freeze({
+      identity,
+      assertAuthority: () => assertOwner(),
+      read: async (signal?: AbortSignal) => {
+        assertRead(signal);
+        const combinedSignal = signal ? AbortSignal.any([ownerSignal, signal]) : ownerSignal;
+        return await this.authority.trackReadInScope(sessionId, async () => {
+          assertRead(signal);
+          let captured: unknown;
+          try {
+            captured = await Reflect.apply(captureNativeForm, enginePage, [
+              { signal: combinedSignal },
+            ]);
+          } catch {
+            assertOwner();
+            if (signal?.aborted)
+              throw new ServiceError('CONTROL_REVOKED', 'Native form read was cancelled.');
+            throw new ServiceError('ENGINE_UNSUPPORTED', 'Native form evidence capture failed.');
+          }
+          assertRead(signal);
+          let detached: NativeFormEvidence;
+          try {
+            detached = parseNativeFormEvidence(captured);
+          } catch {
+            assertOwner();
+            if (signal?.aborted)
+              throw new ServiceError('CONTROL_REVOKED', 'Native form read was cancelled.');
+            throw new ServiceError(
+              'ENGINE_UNSUPPORTED',
+              'Native form evidence capture returned invalid data.'
+            );
+          }
+          assertRead(signal);
+          return detached;
+        });
+      },
+    });
   }
 
   // ------------------------------------------------------------------
