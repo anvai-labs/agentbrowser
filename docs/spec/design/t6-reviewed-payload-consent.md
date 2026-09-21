@@ -2,7 +2,9 @@
 
 Status: C0 merged #240; C1 review-binding foundation merged #241. C1a operator
 action approval merged #242; C2–C3 remain incomplete. The [C2a draft oracle](t6-draft-oracle.md)
-is a test-only qualification candidate, before service-collected witness binding.
+merged #243 as test-only qualification, before service-collected witness binding.
+The [C2b read foundation](t6-scoped-application-read.md) supplies scoped authorized data;
+source qualification and consent binding remain pending.
 Base: develop `f12ac89` after [checked upload/draft](t6-verified-upload-draft.md),
 PR #239. Load with forms/T6 only. Published 1.9.1 remains unchanged.
 

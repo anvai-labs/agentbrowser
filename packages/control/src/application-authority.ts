@@ -2,6 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { ControlError, type SessionControl } from '@agentbrowser/core';
 import {
   CONTROL_OPERATION_ID,
+  VERIFICATION_SNAPSHOT_LIMITS,
+  snapshotJsonData,
   validateApplicationOperationDescriptors,
 } from '@agentbrowser/protocol';
 import { canonicalJson } from './canonical-json.js';
@@ -32,6 +34,22 @@ export interface PreparedApplicationReceiptReader {
   }>;
   assertAuthority(): void;
   read(operationId: string, signal?: AbortSignal): Promise<unknown>;
+}
+
+/** Trusted application data composed inside one existing admission. */
+export interface PreparedApplicationRead {
+  readonly identity: PreparedApplicationReceiptReader['identity'] & Readonly<{ operation: string }>;
+  assertAuthority(): void;
+  read(signal?: AbortSignal): Promise<unknown>;
+}
+
+/**
+ * Descriptor inspection rejects symbols, hidden properties and extra array keys
+ * that canonicalJson intentionally does not serialize. Canonical serialization
+ * then enforces finite JSON and its existing exact 64 KiB output budget.
+ */
+function snapshotReadData(input: unknown): unknown {
+  return JSON.parse(canonicalJson(snapshotJsonData(input, VERIFICATION_SNAPSHOT_LIMITS)));
 }
 
 function assertReceiptId(operationId: string): void {
@@ -296,6 +314,101 @@ export class ApplicationAuthority {
 
   /** Capture and validate a receipt binding before a caller dispatches its existing executor. */
   prepareReceiptReadInScope(sessionId: string): PreparedApplicationReceiptReader {
+    const owner = this.captureReadInScope(sessionId);
+    return Object.freeze({
+      identity: owner.identity,
+      assertAuthority: () => owner.assertAuthority(),
+      read: async (operationId: string, signal?: AbortSignal) => {
+        assertReceiptId(operationId);
+        return owner.track((scope) => owner.adapter.receipt(scope, operationId), signal);
+      },
+    });
+  }
+
+  prepareReadInScope(
+    sessionId: string,
+    request: { operation: string; input: unknown }
+  ): PreparedApplicationRead {
+    // Capture the owner BEFORE inspecting any caller-controlled object or proxy.
+    const owner = this.captureReadInScope(sessionId);
+    let snapshot: unknown;
+    try {
+      snapshot = snapshotReadData(request);
+    } catch {
+      owner.assertAuthority();
+      throw new ControlError('INVALID_REQUEST', 'Invalid application read request');
+    }
+    owner.assertAuthority();
+    if (
+      !snapshot ||
+      typeof snapshot !== 'object' ||
+      Array.isArray(snapshot) ||
+      Object.keys(snapshot).length !== 2 ||
+      !Object.hasOwn(snapshot, 'operation') ||
+      !Object.hasOwn(snapshot, 'input')
+    )
+      throw new ControlError('INVALID_REQUEST', 'Invalid application read request');
+    const pinned = snapshot as { operation: unknown; input: unknown };
+    if (
+      typeof pinned.operation !== 'string' ||
+      !Object.hasOwn(owner.adapter.operations, pinned.operation)
+    )
+      throw new ControlError('INVALID_REQUEST', 'Invalid application read request');
+    const operation = owner.adapter.operations[pinned.operation];
+    if (!operation || operation.mode !== 'read')
+      throw new ControlError('INVALID_REQUEST', 'Invalid application read request');
+    const serialized = canonicalJson(pinned.input);
+    owner.assertAuthority();
+    return Object.freeze({
+      identity: Object.freeze({ ...owner.identity, operation: pinned.operation }),
+      assertAuthority: () => owner.assertAuthority(),
+      read: async (signal?: AbortSignal) => {
+        return owner.track(async (scope) => {
+          const check = () => owner.assertAuthority(scope);
+          let execute: ReturnType<ApplicationOperation['prepare']>;
+          try {
+            execute = synchronousResult(operation.prepare(JSON.parse(serialized)));
+          } catch {
+            check();
+            throw new ControlError('INVALID_REQUEST', 'Application read callback failed');
+          }
+          check();
+          if (typeof execute !== 'function')
+            throw new ControlError('INVALID_REQUEST', 'Application read callback failed');
+          let result: unknown;
+          try {
+            result = await execute(scope);
+          } catch {
+            check();
+            throw new ControlError('INVALID_REQUEST', 'Application read callback failed');
+          }
+          check();
+          let detached: unknown;
+          try {
+            detached = snapshotReadData(result);
+          } catch {
+            check();
+            throw new ControlError('INVALID_REQUEST', 'Invalid application read result');
+          }
+          check();
+          if (
+            !detached ||
+            typeof detached !== 'object' ||
+            Array.isArray(detached) ||
+            Object.keys(detached).length !== 2 ||
+            !Object.hasOwn(detached, 'status') ||
+            !Object.hasOwn(detached, 'value') ||
+            (detached as { status: unknown }).status !== 'read'
+          )
+            throw new ControlError('INVALID_REQUEST', 'Invalid application read result');
+          return (detached as { value: unknown }).value;
+        }, signal);
+      },
+    });
+  }
+
+  /** Shared admission, binding, authorization and drain owner for prepared reads. */
+  private captureReadInScope(sessionId: string) {
     const guard = this.authority.outputGuard(sessionId);
     const admission = this.authority.admissionInScope(sessionId);
     const binding = this.binding(sessionId);
@@ -325,7 +438,8 @@ export class ApplicationAuthority {
       }
     };
     checkAuthority();
-    return Object.freeze({
+    return {
+      adapter,
       identity: Object.freeze({
         admission,
         adapter: binding.adapter,
@@ -333,20 +447,22 @@ export class ApplicationAuthority {
         sessionId,
         sessionIncarnation: ownedScope.sessionIncarnation,
       }),
-      assertAuthority: () => checkAuthority(),
-      read: async (operationId: string, signal?: AbortSignal) => {
-        assertReceiptId(operationId);
+      assertAuthority: checkAuthority,
+      track: <T>(
+        callback: (scope: ApplicationScope) => Promise<T>,
+        signal?: AbortSignal
+      ): Promise<T> => {
         const scope = signal
           ? Object.freeze({ ...ownedScope, signal: AbortSignal.any([ownedScope.signal, signal]) })
           : ownedScope;
         return this.authority.trackReadInScope(sessionId, async () => {
           checkAuthority(scope);
-          const receipt = await adapter.receipt(scope, operationId);
+          const result = await callback(scope);
           checkAuthority(scope);
-          return receipt;
+          return result;
         });
       },
-    });
+    };
   }
 
   private scope(
