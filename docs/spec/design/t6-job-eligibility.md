@@ -1,8 +1,9 @@
 # T6/E0: bounded job eligibility with evidence and explicit unknowns
 
-Status: design only. This refines the decision contract in the
-[job-application checkpoint](t6-job-application-checkpoint.md); it does not implement
-screening or authorize any write. Load forms/T6 plus this packet only. No applicant
+Status: E0a/E0b implemented in the current candidate; E0c/E1 remain gated. See the
+[implementation contract](../../../examples/job-application/README.md) and
+[qualification evidence](../evidence/t6-job-eligibility.md). This refines the decision contract in the
+[job-application checkpoint](t6-job-application-checkpoint.md); it implements conditional screening only and does not authorize any write. Load forms/T6 plus this packet only. No applicant
 pay, employer history, source resume, cookies or real listing data belongs here.
 
 ## Ownership and footprint
@@ -153,3 +154,23 @@ and evidence injection attempts. Then normal hooks, exact-head adversarial revie
 one PR candidate under the owning repository's rules. No milestone is complete merely
 because this design or its pure evaluator exists. Production evidence uses the separate
 [T4/P0 packet](t4-production-evidence-composition.md); consent uses C3c unchanged.
+
+
+## E0a/E0b concrete record decisions
+
+The reference module uses JSDoc-checked closed version-1 records. Every policy category
+(employment, location, travel, benefit, role) must have criteria or be explicitly listed
+in `unconstrained`, exclusively; omission is invalid rather than vacuous eligibility.
+Compensation stays mandatory for configured policies. A role fact needs both listing and
+profile anchors; availability/role booleans are normalized assertions, not inferred claims.
+Travel is an integer percentage. Evidence is pinned to record subjects/revisions;
+history additionally names the current profile. Same source/job with conflicting employer
+or non-null requisition holds. A missing freshness policy is represented explicitly by null.
+
+Each criterion reports unknown when its required evidence, clock, freshness or listing
+identity is unqualified. The aggregate still preserves conservative hold precedence.
+The module consumes one candidate, not a batch; private publication/update metadata stays
+with retained source evidence, while the caller supplies the qualified observation time.
+It reuses the bounded protocol snapshot via a workspace-built import. Standalone packaging,
+source authentication, private resume/portal normalization and actual write integration
+remain E0c/E1 work. See the example README for exact fields and source-kind requirements.

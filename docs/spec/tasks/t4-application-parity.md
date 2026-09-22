@@ -92,11 +92,12 @@ REST/SDK/CLI review and consent, and named independent accepted-receipt verifica
 Production source configuration, binding UX and live portal coverage remain separate
 acceptance gates; historical C3a/C3b restrictions above describe those earlier slices.
 
-## Next bounded packet: P0 trusted composition
+## P0 trusted composition and remaining production gates
 
-The [P0 design](../design/t4-production-evidence-composition.md) identifies a concrete
-embedding gap: production providers cannot obtain the captured native reader without
-private service access. P0a passes that existing admission-scoped handle as a second
-trusted provider argument; P0b qualifies composition without a prototype spy. Neither
-adds an executor or registry. P0c/P1 require an actual application owner and qualified
-production contract. Design only; start with failing-first lifetime/privacy regressions.
+The [P0 design](../design/t4-production-evidence-composition.md) is implemented for
+P0a/P0b and merged as #259 at `836cc65`, preserving reviewed tree `57b9c54`.
+The provider receives the existing admission-scoped native reader, and the public
+Chromium qualification no longer needs private service capture. Both PR and post-merge
+CI passed all eight checks without reruns; see [evidence](../evidence/t4-production-evidence-composition.md).
+P0c/P1 still require an actual application owner and qualified production contract;
+operator-binding UX and production UI/API/receipt qualification keep T4 active.

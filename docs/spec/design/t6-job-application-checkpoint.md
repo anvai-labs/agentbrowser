@@ -86,7 +86,8 @@ fresh evidence. Never continue from a saved DOM ref or infer success from the ch
 The [E0 eligibility contract](t6-job-eligibility.md) owns normalized private records,
 compensation/benefit semantics, identity/freshness and exact eligible/hold/reject
 precedence. Read it only for screening work; do not load it for generic autofill.
-It remains design-only. No caller-supplied eligibility result grants permission.
+E0a/E0b are implemented in the current application-owned candidate. No
+caller-supplied eligibility result grants permission.
 
 Its pure application-owned predicate can be implemented independently of production
 adapter selection. Ranked matches and salary ranges that merely reach a target remain
@@ -207,8 +208,8 @@ capabilities it changes, not completion of all T6, T5 or T8:
 2. Q0a (#236), popup/readiness (#237), mapping (#238), and synthetic reviewed
    submission (#257) are merged. Preserve their qualified scope and adversarial
    regressions; do not repeat those implementations.
-3. Follow P0a/P0b for the missing trusted native-read embedding seam and E0a/E0b
-   for evidence-based eligibility. Production composition, private integration and
+3. P0a/P0b merged #259; preserve the trusted native-read embedding seam. E0a/E0b
+   implement conditional eligibility in the current candidate. Production composition, private integration and
    live portal qualification keep the explicit gates in their packets.
 4. Pass focused red/green tests, existing autofill/plan/upload/approval/operation suites,
    API/CLI type and contract checks, actual headed positive/negative controls, installed
