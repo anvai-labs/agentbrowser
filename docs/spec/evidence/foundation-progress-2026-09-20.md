@@ -1,7 +1,7 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
 Rechecked published 1.9.1 at `310e01d43982824caac2c63ed8d98355e17efdce`
-and develop `5421d07100508e9c430f951e678a0a41731a3825` (PR #261; alignment
+and develop `0afe7de5f71c5e89eb4b60867d9965b46163fcab` (PR #262; alignment
 rechecked 2026-09-22). C3c incorporates the merged #256 error-containment repair.
 The [release ladder](release-1.9.1.md) includes Bun CLI/MCP artifacts,
 Node 24 service qualification, Homebrew and develop back-sync. Existing browser
@@ -20,7 +20,7 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T1 context/profiles | Active | ~80% | Installed harness consumption/qualification with T8 |
 | T2 shared execution/verification | Complete, released | 100% | Production evidence belongs to T4; restart durability to T5 |
 | T3 QA regression | Complete, released | 100% | Broader provisioning and demand-backed report adapters are follow-ups |
-| T4 application operations/parity | Active | ~40% | Production UI/API oracle, binding UX and evidence; synthetic parity qualified; callback repair merged #236 |
+| T4 application operations/parity | Active | ~40% | Production UI/API oracle and evidence; U0/U1 operator UX merged; synthetic parity qualified; callback repair merged #236 |
 | T5 durable recovery | Not started | 0% | Design, journal/recovery and process-loss qualification |
 | T6 forms/operations | Active | ~40% | Production sources, candidate/job eligibility and live qualification; C3c public synthetic workflow merged #257 |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
@@ -248,6 +248,13 @@ The [U0 operator binding delivery](../design/t4-operator-application-binding.md)
 reuses the existing panel, application routes and authority with shared stale-request
 fencing. It merged in #261 with 8/8 PR and post-merge CI, clean independent review and
 reviewed-tree preservation. It covers bounded binding/discovery UX; the next
-[U1 reconciliation candidate](../design/t4-operator-reconciliation.md) adds read-only
+[U1 reconciliation delivery](../design/t4-operator-reconciliation.md) adds read-only
 status/receipt observations. Neither qualifies a production application. T4/T6 estimates remain conservative at ~40%; no additional
 finite milestone is complete. Published 1.9.1 and existing browser sessions are unchanged.
+
+
+U1 merged in #262 with clean exact-head independent review and 8/8 PR and post-merge
+CI; see [evidence](t4-operator-reconciliation.md). The next [N0 document-read
+repair](../design/t6-document-read.md) removes avoidable interactive binding from
+extraction/export after actual headed public capture timed out. E0c private integration
+and E1 live draft qualification remain open; no whole milestone or release changes.

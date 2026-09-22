@@ -1,6 +1,6 @@
 # T4 operator reconciliation — U1
 
-Status: implemented candidate on develop `5421d07` (#261). See
+Status: merged to develop in #262 at `0afe7de`. See
 [qualification evidence](../evidence/t4-operator-reconciliation.md).
 
 ## Owners and finite scope

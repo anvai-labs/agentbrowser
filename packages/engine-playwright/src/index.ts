@@ -1688,6 +1688,13 @@ class PlaywrightPage implements EnginePage {
     }
   }
 
+  async readDocument(): Promise<Pick<RawPageState, 'url' | 'title' | 'content'>> {
+    // These native reads retain HTML serialization and error behavior without
+    // rebuilding ref bindings. They do not claim an atomic document snapshot.
+    const [content, title] = await Promise.all([this.page.content(), this.page.title()]);
+    return { url: this.page.url(), title, content };
+  }
+
   async getUrl(): Promise<string> {
     if (this.page.isClosed()) throw new EngineError('PAGE_NOT_FOUND', 'Page is closed');
     return this.page.url();

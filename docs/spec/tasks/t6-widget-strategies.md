@@ -144,3 +144,14 @@ or default-mode payload. Private integration and
 headed live draft qualification remain E0c/E1 gates. Reuse the separate
 [P0 deployment seam](../design/t4-production-evidence-composition.md); do not duplicate
 the service or promote an eligibility decision into consent. P0a/P0b merged in #259; E0c/E1 and P0c/P1 remain separate integration gates.
+
+
+## N0 prerequisite found during live integration
+
+The [document-read repair](../design/t6-document-read.md) adds one optional engine
+port and a shared service source reader after public careers-index extraction timed
+out on merged develop. Pure extraction and HTML export avoid interactive reference
+construction; forms and unsupported engines retain observation. No second browser
+stack, extractor, authority or default context payload is added. See
+[qualification](../evidence/t6-document-read.md). E0c/E1 still require their own
+private policy, current source evidence and complete live workflow qualification.

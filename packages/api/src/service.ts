@@ -1314,6 +1314,39 @@ export class AgentBrowserService {
     );
   }
 
+  /** Shared document source selection and crash recovery for extraction/export. */
+  private async readPageSource(
+    sessionId: string,
+    pageId: string,
+    operation: 'extract' | 'exportHtml',
+    needsElements = false
+  ): Promise<RawPageState> {
+    const page = this.requirePage(sessionId, pageId);
+    this.coordinator.updateActivity(sessionId);
+    try {
+      const readDocument = needsElements ? undefined : page.enginePage.readDocument;
+      if (readDocument) {
+        const document = await readDocument.call(page.enginePage);
+        return { ...document, status: 'interactive', elements: [] };
+      }
+      return await page.enginePage.observe({});
+    } catch (error) {
+      if (this.isCrash(error)) {
+        const errorDetail = this.secretManager.redact(
+          error instanceof Error ? error.message : String(error)
+        );
+        await this.recoverFromCrash(sessionId, `${operation}: engine crashed`, errorDetail);
+        throw new ServiceError(
+          'ENGINE_CRASHED',
+          'The browser engine crashed; the session has been terminated.',
+          false,
+          { sessionId, errorDetail }
+        );
+      }
+      throw error;
+    }
+  }
+
   /**
    * A3 evidence: capture the page's current HTML as an artifact. Raw HTML
    * is NOT secret-scrubbed - typed-in form values ride it verbatim - so
@@ -1322,26 +1355,7 @@ export class AgentBrowserService {
    */
   async exportHtml(sessionId: string, pageId: string): Promise<ArtifactMetadata> {
     return this.traced('html.export', { sessionId, pageId }, async () => {
-      const page = this.requirePage(sessionId, pageId);
-      this.coordinator.updateActivity(sessionId);
-      let raw: Awaited<ReturnType<EnginePage['observe']>>;
-      try {
-        raw = await page.enginePage.observe({});
-      } catch (error) {
-        if (this.isCrash(error)) {
-          const errorDetail = this.secretManager.redact(
-            error instanceof Error ? error.message : String(error)
-          );
-          await this.recoverFromCrash(sessionId, 'exportHtml: engine crashed', errorDetail);
-          throw new ServiceError(
-            'ENGINE_CRASHED',
-            'The browser engine crashed; the session has been terminated.',
-            false,
-            { sessionId, errorDetail }
-          );
-        }
-        throw error;
-      }
+      const raw = await this.readPageSource(sessionId, pageId, 'exportHtml');
       const html = raw.content ?? '';
       const metadata = this.putArtifact(
         sessionId,
@@ -3443,27 +3457,13 @@ export class AgentBrowserService {
     }
   ): Promise<import('@agentbrowser/engine').ExtractionResult> {
     return this.traced('extract', { sessionId, pageId, format: request.format }, async () => {
+      const raw = await this.readPageSource(
+        sessionId,
+        pageId,
+        'extract',
+        request.format === 'forms'
+      );
       const page = this.requirePage(sessionId, pageId);
-      this.coordinator.updateActivity(sessionId);
-
-      let raw: RawPageState;
-      try {
-        raw = await page.enginePage.observe({});
-      } catch (error) {
-        if (this.isCrash(error)) {
-          const errorDetail = this.secretManager.redact(
-            error instanceof Error ? error.message : String(error)
-          );
-          await this.recoverFromCrash(sessionId, 'extract: engine crashed', errorDetail);
-          throw new ServiceError(
-            'ENGINE_CRASHED',
-            'The browser engine crashed; the session has been terminated.',
-            false,
-            { sessionId, errorDetail }
-          );
-        }
-        throw error;
-      }
 
       // Evidence attests to the service's revision of the page.
       const sourced: RawPageState = {

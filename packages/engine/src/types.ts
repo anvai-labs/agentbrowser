@@ -433,6 +433,13 @@ export interface EnginePage {
   /** Internal bounded native-form capture; unsupported/partial inventories refuse. */
   captureNativeForm?(options?: { signal?: AbortSignal }): Promise<NativeFormEvidence>;
 
+  /**
+   * Document-only source for extraction/export; no interactive references are built
+   * or replaced. URL/title/HTML are best-effort reads, not an atomic document lease.
+   * Absence permits the legacy observe fallback; failures must not trigger fallback.
+   */
+  readDocument?(): Promise<Pick<RawPageState, 'url' | 'title' | 'content'>>;
+
   /** Live document URL without creating an observation or changing refs. */
   getUrl?(): Promise<string>;
 
