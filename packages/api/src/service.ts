@@ -1363,8 +1363,13 @@ export class AgentBrowserService {
     const engine = this.engines.get(name);
     if (engine === undefined) {
       const registered = ['auto', this.engine.name, ...this.engines.keys()].join(', ');
-      throw new Error(
-        `ENGINE_NOT_FOUND: no engine registered as "${name}". Registered: ${registered}`
+      // Service-authored diagnostics: thrown as a protocol error so the
+      // deliberate message survives (a plain Error would be normalized to
+      // withheld INTERNAL prose).
+      throw new ServiceError(
+        'TARGET_NOT_FOUND',
+        `ENGINE_NOT_FOUND: no engine registered as "${name}". Registered: ${registered}`,
+        false
       );
     }
     return engine;

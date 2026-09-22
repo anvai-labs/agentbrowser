@@ -214,36 +214,36 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   // fastify.register() mid-build splits the root context: handlers added
   // afterwards never see routes registered earlier, which leaked raw
   // handler-thrown error text on unauthenticated routes).
-  fastify.setErrorHandler((error: FastifyError, _request, reply) => {
-    // fastify's own logger is a noop under logger:false; the service logger
-    // is the real sink. Log code and status only — the raw message may hold
-    // unregistered (unredactable) caller input.
-    try {
-      options.logger?.error('http.framework_error', {
-        code: typeof error.code === 'string' ? error.code : 'UNKNOWN',
-        status: error.statusCode ?? 500,
-      });
-    } catch {
-      // Logging must not replace the safe response with a sink's private diagnostic.
-    }
-
+  fastify.setErrorHandler((error: FastifyError, request, reply) => {
     // An escaped protocol error serializes exactly as the route wrapper's
-    // fail() would: mapped status, protocol code, redacted message.
+    // fail() would — one shared serializer, not a hand-synced copy.
     if (error instanceof ControlError || error instanceof ServiceError) {
-      return reply.status(statusFor(error.code)).send({
-        error: {
-          code: error.code,
-          message: options.secretManager?.redact(error.message) ?? error.message,
-          retryable: error instanceof ServiceError ? error.retryable : false,
-          ...(error instanceof ServiceError && error.details !== undefined
-            ? { details: options.secretManager?.redact(error.details) ?? error.details }
-            : {}),
-        },
-      });
+      return fail(reply, error);
     }
 
     const fstError = typeof error.code === 'string' && error.code.startsWith('FST_ERR_');
     const status = error.statusCode ?? 500;
+
+    // fastify's own logger is a noop under logger:false; this is the only
+    // sink for framework-plane faults (route-plane failures are logged by
+    // fail(), whose wrapper catches them before this handler runs). 5xx
+    // only — client mistakes are normal traffic, not error-rate signal.
+    // Server-side sink: the message is redacted, never assumed client-safe.
+    if (status >= 500) {
+      try {
+        options.logger?.error('http.framework_error', {
+          code: fstError ? error.code : 'UNKNOWN',
+          status,
+          url: request.url,
+          method: request.method,
+          message:
+            options.secretManager?.redact(error instanceof Error ? error.message : String(error)) ??
+            'Unknown error',
+        });
+      } catch {
+        // Logging must not replace the safe response with a sink's private diagnostic.
+      }
+    }
 
     // Fastify's built-in 5xx are server faults: generic INTERNAL body —
     // never the raw internal text, never the client-fault code.
@@ -424,25 +424,53 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   });
 
   /** Translate a service failure into the protocol error envelope. */
+  /**
+   * Serialization-safe details: an unserializable details object must never
+   * crash reply serialization into fastify's default error body (which
+   * bypasses this envelope entirely).
+   */
+  const serialDetails = (details: unknown): unknown => {
+    try {
+      JSON.stringify(details);
+    } catch {
+      return undefined;
+    }
+    return options.secretManager?.redact(details) ?? details;
+  };
+
   const fail = (reply: FastifyReply, error: unknown) => {
     if (error instanceof ControlError || error instanceof ServiceError) {
+      const details =
+        error instanceof ServiceError && error.details !== undefined
+          ? serialDetails(error.details)
+          : undefined;
       return reply.status(statusFor(error.code)).send({
         error: {
           code: error.code,
           message: options.secretManager?.redact(error.message) ?? error.message,
           retryable: error instanceof ServiceError ? error.retryable : false,
-          ...(error instanceof ServiceError && error.details !== undefined
-            ? { details: options.secretManager?.redact(error.details) ?? error.details }
-            : {}),
+          ...(details !== undefined ? { details } : {}),
         },
       });
+    }
+    // Internal faults never echo error text to the client: redact() only
+    // substitutes registered values, so an unregistered message would land
+    // verbatim in the 500 body. The redacted diagnostic goes to the
+    // server-side sink instead.
+    try {
+      options.logger?.error('http.framework_error', {
+        status: 500,
+        message:
+          options.secretManager?.redact(error instanceof Error ? error.message : String(error)) ??
+          'Unknown error',
+      });
+    } catch {
+      // Logging must not replace the safe response with a sink's private diagnostic.
     }
     return reply.status(500).send({
       error: {
         code: 'INTERNAL',
-        message:
-          options.secretManager?.redact(error instanceof Error ? error.message : 'Unknown error') ??
-          (error instanceof Error ? error.message : 'Unknown error'),
+        message: 'An unexpected error occurred',
         retryable: false,
       },
     });
@@ -619,11 +647,13 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       }
       const capabilities = await engine.capabilities();
       return { status: 'ready', engine: engine.name, version: engine.version, capabilities };
-    } catch (error) {
+    } catch {
+      // Unauthenticated infra route: state only, never the engine's raw
+      // error text (driver paths, topology, stack-adjacent detail).
       return reply.status(503).send({
         error: {
           code: 'ENGINE_CRASHED',
-          message: `Engine is not responding: ${error instanceof Error ? error.message : String(error)}`,
+          message: 'Engine is not responding',
           retryable: true,
         },
       });

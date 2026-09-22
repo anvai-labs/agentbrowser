@@ -718,15 +718,20 @@ describe('AgentBrowserService edge branches', () => {
     });
   });
 
-  describe('non-crash engine failures rethrow unchanged', () => {
+  describe('non-crash engine failures rethrow as typed internal faults', () => {
+    // The typed failure propagates with its code and retryable flag; the
+    // raw internal text is withheld at the engine boundary (INTERNAL prose
+    // only) so unregistered diagnostics never reach clients.
     it('propagates a plain observation failure through html export and extraction', async () => {
       const { service, sessionId, pageId, fakePage } = await harness();
       (fakePage as { observe: () => Promise<unknown> }).observe = async () => {
         throw new Error('plain observe boom');
       };
-      await expect(service.exportHtml(sessionId, pageId)).rejects.toThrow('plain observe boom');
+      await expect(service.exportHtml(sessionId, pageId)).rejects.toThrow(
+        'An unexpected engine error occurred'
+      );
       await expect(service.extract(sessionId, pageId, { format: 'text' })).rejects.toThrow(
-        'plain observe boom'
+        'An unexpected engine error occurred'
       );
       // Neither path treated it as a crash: the session survives.
       expect(service.getSession(sessionId)).toBeDefined();
@@ -738,7 +743,9 @@ describe('AgentBrowserService edge branches', () => {
       (fakePage as { pdf: () => Promise<unknown> }).pdf = async () => {
         throw new Error('plain pdf boom');
       };
-      await expect(service.pdf(sessionId, pageId, {})).rejects.toThrow('plain pdf boom');
+      await expect(service.pdf(sessionId, pageId, {})).rejects.toThrow(
+        'An unexpected engine error occurred'
+      );
       expect(service.getSession(sessionId)).toBeDefined();
       await service.shutdown();
     });
@@ -749,7 +756,7 @@ describe('AgentBrowserService edge branches', () => {
         throw new Error('plain screenshot boom');
       };
       await expect(service.screenshot(sessionId, pageId, {})).rejects.toThrow(
-        'plain screenshot boom'
+        'An unexpected engine error occurred'
       );
       expect(service.getSession(sessionId)).toBeDefined();
       await service.shutdown();

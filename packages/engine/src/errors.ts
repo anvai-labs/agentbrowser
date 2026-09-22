@@ -58,7 +58,17 @@ export function normalizeEngineError(error: unknown, operation = 'act'): ApiErro
   }
   return {
     code,
-    message: message === 'SESSION_NOT_FOUND' ? 'Session does not exist.' : message,
+    // INTERNAL is a server fault: the raw message (driver paths, topology,
+    // stack-adjacent detail) is classification input only and must not reach
+    // clients, where redact() cannot scrub unregistered values. Navigation
+    // is the exception: net::ERR transport diagnostics are the payload an
+    // agent needs to decide what to do next.
+    message:
+      message === 'SESSION_NOT_FOUND'
+        ? 'Session does not exist.'
+        : code === ErrorCode.INTERNAL && operation !== 'navigate'
+          ? 'An unexpected engine error occurred'
+          : message,
     retryable: typeof candidate.retryable === 'boolean' ? candidate.retryable : false,
     ...(candidate.details !== null &&
     typeof candidate.details === 'object' &&
