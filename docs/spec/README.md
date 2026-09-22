@@ -4,9 +4,9 @@ Status: active product architecture and implementation contract. A capability is
 delivered only when its task evidence records a merged and qualified implementation.
 Published baseline: AgentBrowser 1.9.1 at
 `310e01d43982824caac2c63ed8d98355e17efdce`. Rechecked develop baseline:
-`9c82a490f96fd578fd0dad403503717fb6fb9831` after PR #251, retaining the C3a
-atomic test-owner oracle from #249. Local Victor was last inspected at `68502d82d`
-(not installed-harness qualification). Develop alignment reviewed 2026-09-21.
+`d53829e6c06e26b977bdd0396e61094282b4081c` after PR #257, retaining #255 and
+the #256 error-containment repair. Local Victor was last inspected at `68502d82d`
+(not installed-harness qualification). Develop alignment reviewed 2026-09-22.
 See the [release evidence](evidence/release-1.9.1.md) and
 [progress checkpoint](evidence/foundation-progress-2026-09-20.md).
 
@@ -67,7 +67,8 @@ JUnit qualification from PR #226 and the application-owned installed-CLI recipe 
 PR #227, report links/live JUnit from #229–230, and standalone/cost qualification from
 #231. PR #228 moved default qualification and release builds to Node 24 LTS while
 retaining the Node 22 minimum. Arbitrary application setup remains. Production
-evidence sources, G6 and durable recovery remain explicitly unqualified. See the
+evidence sources, production G6 and durable recovery remain unqualified; #257 supplies
+only synthetic G6 accepted-receipt qualification. See the
 [foundation qualification](evidence/t2-foundation-qualification.md) for the acceptance
 mapping and delivery record.
 See the
@@ -94,20 +95,27 @@ T4 has one public-interface slice delivered in 1.8.20 by PR #201: bounded,
 authenticated application discovery, execution and receipt lookup now use the shared
 `ApplicationAuthority` through REST, the TypeScript SDK and a first-class CLI command
 group. This is not the complete application-parity vertical. The 1.9.0 foundation
-adds delegated receipt-permission composition; operator-binding UX, an independent
-UI/API parity oracle, production application evidence and durable restart receipts
-remain open. MCP is optional and has no
+adds delegated receipt-permission composition. Synthetic UI/API draft parity and
+public reviewed submission are qualified on develop; operator-binding UX, production
+application evidence and durable restart receipts remain open. MCP is optional and has no
 application-operation projection. See the
 [application authority guide](../application-operation-authority.md) and
 [T4 packet](tasks/t4-application-parity.md).
 
 T6 is partially delivered in 1.8.19: the existing autofill orchestrator now has named
-`react-select` and `chip-multiselect` strategies. Broader widget qualification,
-reusable mapping and cross-engine acceptance remain open. Version 1.9.1 additionally
+`react-select` and `chip-multiselect` strategies. Develop adds bounded reusable mapping,
+checked uploads, native/app witnesses and public reviewed submission through #257.
+Broader widget, production workflow and cross-engine acceptance remain open. Version 1.9.1 additionally
 ships Q0 committed-widget verification and CLI cookie-file input. T3 delivers the first bounded
 application-owned QA workflow; T5 and T7 remain unimplemented. T8 still needs
 installed-harness qualification. T9 is a
 recurring release gate rather than a one-time feature.
+
+The next design packets are [P0 trusted evidence composition](design/t4-production-evidence-composition.md)
+and [E0 job eligibility](design/t6-job-eligibility.md). They extend the existing
+[job checkpoint](design/t6-job-application-checkpoint.md), with explicit agent tasks,
+failing-first acceptance and production/live stop gates. They are design-only and
+linked on demand; neither is automatically loaded into core or unrelated modes.
 
 ## Modes
 

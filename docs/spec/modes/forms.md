@@ -4,6 +4,11 @@ Status: native bulk autofill, named custom strategies and bounded exact-URL mapp
 preparation/guarded execution exist. Broader widget and live workflow qualification remain open.
 Core applies.
 
+Develop #257 qualifies a synthetic complete-payload public review/approval/execution
+workflow. Production sources and live portal acceptance remain unqualified. Job-specific
+[eligibility](../design/t6-job-eligibility.md) is an explicit design packet, never
+automatically loaded with generic form controls or treated as submission permission.
+
 ## Job and data
 
 Submit the structured field payload upfront; the service resolves, acts and verifies

@@ -1,8 +1,8 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
 Rechecked published 1.9.1 at `310e01d43982824caac2c63ed8d98355e17efdce`
-and develop `5bdb89f760556e6828307cacb25070f4e87931a8` (PR #256; alignment
-rechecked 2026-09-22). The C3c candidate incorporates the merged error-containment repair.
+and develop `d53829e6c06e26b977bdd0396e61094282b4081c` (PR #257; alignment
+rechecked 2026-09-22). C3c incorporates the merged #256 error-containment repair.
 The [release ladder](release-1.9.1.md) includes Bun CLI/MCP artifacts,
 Node 24 service qualification, Homebrew and develop back-sync. Existing browser
 sessions were preserved; an upgraded installed binary does not prove every running
@@ -20,9 +20,9 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T1 context/profiles | Active | ~80% | Installed harness consumption/qualification with T8 |
 | T2 shared execution/verification | Complete, released | 100% | Production evidence belongs to T4; restart durability to T5 |
 | T3 QA regression | Complete, released | 100% | Broader provisioning and demand-backed report adapters are follow-ups |
-| T4 application operations/parity | Active | ~40% | Independent UI/API oracle, binding UX, production evidence; callback repair merged #236 |
+| T4 application operations/parity | Active | ~40% | Production UI/API oracle, binding UX and evidence; synthetic parity qualified; callback repair merged #236 |
 | T5 durable recovery | Not started | 0% | Design, journal/recovery and process-loss qualification |
-| T6 forms/operations | Active | ~40% | Production sources, candidate/job eligibility and live qualification; C3c public synthetic workflow locally qualified |
+| T6 forms/operations | Active | ~40% | Production sources, candidate/job eligibility and live qualification; C3c public synthetic workflow merged #257 |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
 | T8 installed harnesses | Not qualified | 0% | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |
 | T9 release hardening | Recurring | 100% of 1.9.1 checkpoint | Repeat per later release |
@@ -209,10 +209,35 @@ post-merge `35696315271` each passed all eight jobs without reruns. Normal hooks
 exact-head independent SHIP review passed.
 
 The [C3c design](../design/t6-public-application-review.md) is implemented and
-[locally qualified](t6-public-application-review.md): public review creation and
+[qualified](t6-public-application-review.md): public review creation and
 consent forwarding, separate operator admissions, named independent accepted-receipt
 verification, uncertain-return reconciliation and public visible/hidden/file drift
-refusal. It reuses shared authority, evidence and CLI infrastructure. Final delivery
-still requires the normal reviewed PR and post-merge checks. T4/T6 estimates remain
+refusal. It reuses shared authority, evidence and CLI infrastructure. PR #257 merged
+as `d53829e`, retaining reviewed head `e31df5b` and tree `9c80b4a`. PR run
+`35700286133` and post-merge `35700787754` each passed all eight jobs without reruns.
+Both normal hooks passed 3,329 tests with 24 existing skips; exact-head review was SHIP.
+T4/T6 estimates remain
 conservative: production source configuration, eligibility and live portal coverage
 are separate work, and no whole milestone is newly complete.
+
+## Next design checkpoint
+
+[P0 trusted evidence composition](../design/t4-production-evidence-composition.md)
+closes the unsupported private-service access used by the synthetic witness fixture.
+It reuses the captured admission-owned native reader in the existing trusted provider
+callback. P0a/P0b are the next shared-foundation implementation packets; production
+registration and a real application qualifier remain separate gates.
+
+[E0 job eligibility](../design/t6-job-eligibility.md) refines the existing job checkpoint
+into application-owned normalized facts and a pure eligible/hold/reject predicate.
+Its data/schema stays out of the default browser protocol and context. E0a/E0b can be
+implemented independently; private integration and live headed qualification need
+their named inputs and current evidence. This checkpoint writes designs/tasks only;
+no new runtime capability or increase in milestone completion is claimed.
+
+Independent design review returned SHIP after clarifying native-reader lifetime versus
+witness/app guards, private identifier/digest handling, and unconfigured policy versus
+malformed input. All 82 existing context selections and 692 relative documentation links
+passed. Default forms/application views still load only core plus their mode (8,880 and
+8,215 serialized UTF-8 bytes respectively); detailed designs remain opt-in. These are
+context-byte measurements, not token/RSS savings or implemented runtime limits.

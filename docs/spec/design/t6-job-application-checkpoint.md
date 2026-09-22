@@ -44,11 +44,14 @@ installed CLI is the first-class client; it does not own retries or truth.
 - the operation ledger/status lookup reconciles writes; uncertainty never permits replay.
 - existing approval policy binds an action to its target/page/revision/URL/fingerprint
   and action parameters. It does not bind the complete form, PDF and job payload;
-  that additional consent contract remains a prerequisite for automated submission.
+  C3c adds a separate qualified complete-payload contract for one synthetic adapter.
+  Production witness/receipt qualification remains a prerequisite for live submission.
 
 The [reviewed-payload consent sequence](t6-reviewed-payload-consent.md) separates
-token ownership/atomic consumption (C0) from future operator approval (C1), live
-payload witness (C2) and qualified submission/outcome (C3). Existing pending-token
+token ownership/atomic consumption (C0), delivered operator approval (C1), native/app
+witness (C2), and the synthetic public submission/outcome qualification (C3c, #257).
+The [production composition design](t4-production-evidence-composition.md) closes the
+next embedding seam before any live adapter claim. Existing pending-token
 echo is a caller confirmation mechanism, not an independent human approval grant.
 
 Do not add a workflow executor, generic DSL, site-specific service endpoint, server job
@@ -80,39 +83,14 @@ fresh evidence. Never continue from a saved DOM ref or infer success from the ch
 
 ## Candidate record and deterministic decision
 
-Normalize each listing into a bounded record before ranking or filling:
+The [E0 eligibility contract](t6-job-eligibility.md) owns normalized private records,
+compensation/benefit semantics, identity/freshness and exact eligible/hold/reject
+precedence. Read it only for screening work; do not load it for generic autofill.
+It remains design-only. No caller-supplied eligibility result grants permission.
 
-| Field | Rule |
-| --- | --- |
-| Source/identity | Portal, observed URL/time, source job ID, employer requisition ID and canonical job ID |
-| Job | Exact employer/title, employment type and normalized comparison keys |
-| Place/travel | Observed location/remote/relocation terms and travel maximum; omission is unknown |
-| Pay | Range, currency, period and explicit base/bonus/equity/total classification |
-| Benefits | Explicit observed benefits or unknown; missing text is not “no benefits” |
-| Fit/evidence | Evidence-linked agreed role fit and bounded source references; raw HTML remains private |
-
-Deduplicate first by source plus source job ID. Cross-source duplicates use employer
-requisition ID when available; otherwise hold a normalized employer/title/location match
-for review rather than silently merging. A previously submitted canonical job ID is never
-eligible again.
-
-The decision is exactly one of:
-
-- `eligible`: every mandatory listing fact is observed, the compensation rule is
-  configured and satisfied, and no disqualifier exists;
-- `hold`: potentially suitable but a mandatory fact, threshold, source classification,
-  identity, benefit, travel or location interpretation is unknown or ambiguous;
-- `reject`: an observed fact violates a mandatory rule, such as non-full-time work,
-  travel above the configured limit, explicitly absent required benefits, disallowed compensation after
-  the threshold is set, or an exact duplicate already submitted.
-
-Ranking happens only inside `eligible` or `hold`; it cannot turn `hold` into `eligible`.
-Eligibility is suitability evidence, not submit approval. A separate reviewed-payload
-gate binds the exact answers and PDF before any final effect. The compensation profile
-must state how a range is compared with the threshold; never substitute its midpoint or
-compare total compensation with a base-pay floor.
-Record rule version/evidence for every decision. Refresh before preparation and submit;
-closed, changed or identity-drifted listings return to `hold`.
+Its pure application-owned predicate can be implemented independently of production
+adapter selection. Ranked matches and salary ranges that merely reach a target remain
+investigation candidates until all mandatory evidence and policy gates pass.
 
 ## Mapping and widget prerequisites
 
@@ -150,8 +128,10 @@ authorization or demographic answers. An unanswerable mandatory question means `
 
 PDF generation stays private; AgentBrowser does not become a renderer. Verify the final
 regular file's type, size, parseability, non-sensitive structure and SHA-256. Bind payload
-digest, PDF digest and canonical job ID; recompute before upload. Public evidence contains
-only opaque IDs/hashes/status. File-input success does not prove application acceptance.
+digest, PDF digest and canonical job ID; recompute before upload. Public evidence uses
+only synthetic or explicitly publication-approved identifiers/digests/status. Real
+payload/PDF/job correlations remain private even when hashed or opaque. File-input
+success does not prove application acceptance.
 
 ## Headed workflow and human seams
 
@@ -170,10 +150,11 @@ For each candidate:
    call for each qualified page stage: zero per-field agent round trips for that stage.
 5. Resolve manual fields explicitly. Recheck all required receipts and page/application
    evidence. A successful field report is never a submitted application.
-6. Revalidate listing identity and the exact payload digest. A future payload-bound
-   consent gate must cover all answers and the PDF; existing action approval alone
-   is insufficient. Until that gate is qualified, stop at a draft or explicitly
-   reviewed manual submission. Once qualified, dispatch at most once with a unique operation ID.
+6. Revalidate listing identity and the exact payload digest. C3c binds a complete
+   synthetic payload; live use still needs the named app/portal witness and receipt
+   qualification. Action approval alone is insufficient. Until those gates pass,
+   stop at a draft or explicitly reviewed manual submission. Qualified dispatch
+   uses the existing executor and one operation ID.
 7. Require confirmation/receipt tied to the job. On loss or uncertainty, query operation
    status and current portal state; never click submit again because confirmation is absent.
 
@@ -223,18 +204,19 @@ capabilities it changes, not completion of all T6, T5 or T8:
 
 1. PR #232/Q0 is already merged at `d510a56`; its PR and post-merge runs each passed all
    eight required CI jobs. Preserve those exact identities in release evidence.
-2. Finish the deferred Q0a trusted application-authorization callback hardening if it
-   is included in the candidate; require fail-closed red tests, independent review and
-   exact-head/post-merge CI.
-3. Deliver and qualify popup ownership, exact-option ambiguity and bounded readiness,
-   then the minimal mapping/private-profile join and workflow composition described here.
+2. Q0a (#236), popup/readiness (#237), mapping (#238), and synthetic reviewed
+   submission (#257) are merged. Preserve their qualified scope and adversarial
+   regressions; do not repeat those implementations.
+3. Follow P0a/P0b for the missing trusted native-read embedding seam and E0a/E0b
+   for evidence-based eligibility. Production composition, private integration and
+   live portal qualification keep the explicit gates in their packets.
 4. Pass focused red/green tests, existing autofill/plan/upload/approval/operation suites,
    API/CLI type and contract checks, actual headed positive/negative controls, installed
    candidate CLI/service acceptance and one reviewed real-job draft flow.
 5. Build a clean versioned candidate only after scope is frozen. Run normal hooks, independent
    adversarial review, all eight PR checks and all eight develop post-merge checks.
-6. Main is protected; develop is currently unprotected. Require an explicit operational
-   review plus exact-head eight-check green evidence before every develop merge. Promote
+6. Recheck current branch rules before promotion. Require independent operational
+   review plus exact-head required-check green evidence before every develop merge. Promote
    through the protected main PR and existing release/tag/artifact/tap ladder without
    bypassing checks. Version bump, tag and publication are separate authorized actions.
 

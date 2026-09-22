@@ -1,7 +1,9 @@
 # Mode: browser-free application operations and parity
 
-Status: typed in-process application authority exists; public REST/MCP and durable
-qualification are proposed. Core applies.
+Status: typed application authority and public REST/SDK/CLI operations are delivered.
+Develop #257 adds public reviewed consent and synthetic independent receipt qualification.
+Production sources, durable recovery and application MCP tools remain separate gates.
+Core applies.
 
 ## Job and data
 
@@ -33,3 +35,7 @@ Use the same fixture business predicate for UI/API tests but different execution
 Keep one application operation port, not separate QA and operations implementations.
 
 Primary packet: T4, with T5 for durable service recovery and T8 for public harness parity.
+
+Next design: [P0 trusted evidence composition](../design/t4-production-evidence-composition.md).
+Load it explicitly for deployment integration; a public route alone does not configure
+an application adapter or evidence provider in the stock service.

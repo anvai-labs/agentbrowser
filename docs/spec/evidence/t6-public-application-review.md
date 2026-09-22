@@ -1,7 +1,7 @@
 # C3c public application review and independent acceptance
 
 Scope: the [approved design](../design/t6-public-application-review.md), built on
-C3b (#254) and security repair #256 (`5bdb89f`). This is a develop candidate;
+C3b (#254) and security repair #256 (`5bdb89f`). Merged as PR #257 at `d53829e`;
 published 1.9.1 and installed browser sessions are unchanged.
 
 ## Delivered contract
@@ -52,7 +52,8 @@ The complete 13-test fixture passed before expanding the refusal matrix; the thr
 expanded public refusal cases then passed. Those cases change a committed visible
 answer, a hidden native value, or file bytes while retaining file metadata. Each
 records failed/not-dispatched execution, zero accepted submissions and zero external
-HTTP attempts. Normal hook suites cover the final combined fixture.
+HTTP attempts. Both normal hook suites passed the final combined 15-test fixture,
+with 3,329 tests passing and 24 existing skips across the workspace.
 
 Success proves exactly one acceptance and the original received file bytes. The
 same permission owner supports two independently reconstructed planned operation
@@ -61,6 +62,13 @@ fail the named verifier. Replays return recorded status without another effect.
 A lost execution response remains execution/verification unknown. A separate fresh
 authorized receipt read passes the same verifier without rewriting that original
 unknown result or redispatching.
+
+Delivery: reviewed head `e31df5b4b38b9378cb93d9f6d5c9843a58e54fae`, tree
+`9c80b4a75f419de18da2c69f365c1d70740127b9`, retained by merge
+`d53829e6c06e26b977bdd0396e61094282b4081c`. Independent exact-head SHIP review;
+PR run `35700286133` and post-merge run `35700787754` passed all eight checks
+without reruns. P0's next embedding design does not retroactively claim this synthetic
+fixture is deployable production configuration.
 
 ## Remaining gates
 

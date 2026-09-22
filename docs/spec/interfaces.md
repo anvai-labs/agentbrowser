@@ -1,7 +1,8 @@
 # Interfaces, harness integration and human experience
 
-Status: fixed mode profiles and CLI discovery are delivered; remote MCP and public
-application tools remain implementation tasks. Reuse existing adapters and SDK.
+Status: fixed profiles, CLI discovery and public REST/SDK/CLI application operations
+are delivered. Develop #257 adds public reviewed application consent. Application MCP
+tools and broader remote MCP qualification remain separate work. Reuse existing adapters.
 
 ## One operation contract, several projections
 
@@ -31,8 +32,8 @@ preconditions, side effects and result limitations. Workflow recipes load on dem
 | Reconcile a delegated write | Existing operation-status surface |
 | Execute a plan with a registered verifier | Current REST/SDK/CLI `outcome`; configured evidence sources only; MCP intentionally absent |
 | Inspect raw markup | Explicit `browser_html` or authorized artifact read; sensitive data |
-| Run a repeatable test | Future TestRun adapter over shared operations |
-| Execute an application operation | Existing in-process typed port; public adapter pending |
+| Run a repeatable test | Existing bounded T3 CLI evaluation and application-owned Node recipe |
+| Execute an application operation | Existing typed port through REST/SDK/CLI; protected operations consume reviewed consent |
 
 The CLI is a first-class service client. A local browser deployment needs the service,
 one qualified engine and the CLI installation; a remote deployment needs only the CLI

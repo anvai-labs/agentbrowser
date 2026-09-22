@@ -91,3 +91,12 @@ passed independent review and is implemented in the current candidate. Its
 REST/SDK/CLI review and consent, and named independent accepted-receipt verification.
 Production source configuration, binding UX and live portal coverage remain separate
 acceptance gates; historical C3a/C3b restrictions above describe those earlier slices.
+
+## Next bounded packet: P0 trusted composition
+
+The [P0 design](../design/t4-production-evidence-composition.md) identifies a concrete
+embedding gap: production providers cannot obtain the captured native reader without
+private service access. P0a passes that existing admission-scoped handle as a second
+trusted provider argument; P0b qualifies composition without a prototype spy. Neither
+adds an executor or registry. P0c/P1 require an actual application owner and qualified
+production contract. Design only; start with failing-first lifetime/privacy regressions.

@@ -133,3 +133,13 @@ passed independent review and is implemented in the current candidate. Its
 REST/SDK/CLI review and consent, and named independent accepted-receipt verification.
 Production sources, candidate/job eligibility and live portal coverage remain separate
 acceptance gates; historical C3a/C3b restrictions above describe those earlier slices.
+
+## Next bounded packets: eligibility and deployment
+
+The [E0 eligibility design](../design/t6-job-eligibility.md) owns job-specific normalized
+facts, deterministic eligible/hold/reject decisions and freshness/duplicate rules.
+E0a/E0b can proceed in an application-owned module without production adapter access;
+they add no shared protocol schema or default-mode payload. Private integration and
+headed live draft qualification remain E0c/E1 gates. Reuse the separate
+[P0 deployment seam](../design/t4-production-evidence-composition.md); do not duplicate
+the service or promote an eligibility decision into consent. Both packets are design-only.
