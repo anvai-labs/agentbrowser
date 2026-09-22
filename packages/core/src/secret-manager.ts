@@ -76,7 +76,12 @@ export class SecretManager {
   /** Resolve a reference to its secret value, for use at execution time only. */
   async resolve(reference: string): Promise<string> {
     if (!this.isReference(reference)) {
-      throw new SecretError('INVALID_REFERENCE', `Not a secret reference: ${reference}`);
+      // Never echo the rejected input: callers paste real credentials here by
+      // mistake, and an unregistered value cannot be redacted downstream.
+      throw new SecretError(
+        'INVALID_REFERENCE',
+        'Not a secret reference: values must start with vault:// (input withheld)'
+      );
     }
     const value = this.secrets.get(reference);
     if (value === undefined) {
