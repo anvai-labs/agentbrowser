@@ -555,13 +555,11 @@ describe('server edge branches', () => {
   });
 
   describe('internal failure envelope', () => {
-    it.fails('escapes root-route handler failures into the custom INTERNAL envelope', async () => {
-      // Known defect, expected to fail until fixed: buildServer awaits
-      // fastify.register() mid-build before setErrorHandler runs, so routes
-      // registered earlier keep fastify's default serializer and an
-      // unauthenticated /metrics failure leaks the raw internal error text.
-      // When the scoping is fixed, this expectation passes and should be
-      // promoted to a plain it() — and the leak-tolerant pin removed.
+    it('escapes root-route handler failures into the custom INTERNAL envelope', async () => {
+      // The error handler is registered before any awaited plugin, so it
+      // governs routes registered earlier too: an unauthenticated /metrics
+      // failure returns the generic INTERNAL envelope, never the raw
+      // internal error text.
       const explodingMetrics = {
         render: () => {
           throw new Error('metrics exploded');
@@ -629,13 +627,10 @@ describe('server edge branches', () => {
       }
     });
 
-    it.fails('serves /v1 parser errors with the protocol envelope too', async () => {
-      // Known defect, expected to fail until fixed: the custom handler is
-      // registered on the root context after the /v1 plugin, so /v1
-      // parser-stage errors fall through to fastify's default serializer
-      // instead of the documented { error: { code, ... } } envelope — an
-      // error-contract inconsistency between the two route planes. When
-      // the scoping is fixed, promote this to a plain it().
+    it('serves /v1 parser errors with the protocol envelope too', async () => {
+      // Both route planes share one error contract: parser-stage errors on
+      // /v1 go through the same { error: { code, ... } } envelope as root
+      // routes.
       const server = await buildServer({ engine: new FakeEngine() });
       try {
         const malformed = await server.inject({
