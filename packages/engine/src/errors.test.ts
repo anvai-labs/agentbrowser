@@ -49,19 +49,40 @@ describe('adapter error normalization: prose classification', () => {
       retryable: false,
     });
     expect(normalizeEngineError(undefined).code).toBe('INTERNAL');
-    expect(normalizeEngineError(new Error('topology /internal/preview-7 unreachable'))).toMatchObject(
-      {
-        code: 'INTERNAL',
-        message: 'An unexpected engine error occurred',
-      }
-    );
-    // Navigation is the exception: net::ERR transport diagnostics are the
-    // payload an agent needs to decide what to do next.
     expect(
-      normalizeEngineError(new Error('net::ERR_CONNECTION_REFUSED at http://dead.example/'), 'navigate')
+      normalizeEngineError(new Error('topology /internal/preview-7 unreachable'))
     ).toMatchObject({
       code: 'INTERNAL',
-      message: 'net::ERR_CONNECTION_REFUSED at http://dead.example/',
+      message: 'An unexpected engine error occurred',
+    });
+    // Navigation exposes only the transport code, never URLs or surrounding prose.
+    expect(
+      normalizeEngineError(
+        new Error('net::ERR_CONNECTION_REFUSED at http://dead.example/'),
+        'navigate'
+      )
+    ).toMatchObject({
+      code: 'INTERNAL',
+      message: 'net::ERR_CONNECTION_REFUSED',
+    });
+  });
+
+  it.each([
+    ['PRIVATE_TOPOLOGY_DIAGNOSTIC', 'An unexpected engine error occurred'],
+    [
+      'page.goto: net::ERR_NAME_NOT_RESOLVED at https://user:PRIVATE_PASSWORD@host/?token=PRIVATE_QUERY',
+      'net::ERR_NAME_NOT_RESOLVED',
+    ],
+    ['net::ERR_bad_PRIVATE_PROSE', 'An unexpected engine error occurred'],
+    ['net::ERR_PRIVATE_CREDENTIAL', 'An unexpected engine error occurred'],
+    ['net::ERR_CONNECTION_REFUSED_PRIVATE_SUFFIX', 'An unexpected engine error occurred'],
+    ['privatenet::ERR_CONNECTION_REFUSED', 'An unexpected engine error occurred'],
+    [`net::ERR_${'A'.repeat(81)}`, 'An unexpected engine error occurred'],
+  ])('bounds navigation INTERNAL diagnostics: %s', (message, expected) => {
+    expect(normalizeEngineError(new Error(message), 'navigate')).toEqual({
+      code: 'INTERNAL',
+      message: expected,
+      retryable: false,
     });
   });
 

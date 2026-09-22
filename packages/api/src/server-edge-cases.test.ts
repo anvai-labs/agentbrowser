@@ -761,19 +761,13 @@ describe('server edge branches', () => {
       }
     });
 
-    it('emits a redacted framework_error log for 5xx only, never for client faults', async () => {
+    it('logs only fixed fault metadata for 5xx, withholding unregistered diagnostics and URLs', async () => {
       const secretManager = new SecretManager({ 'vault://p': 'swordfish' });
       const errors: Array<Record<string, unknown>> = [];
-      const logger = {
-        info: vi.fn(),
-        warn: vi.fn(),
-        error: vi.fn((_message: string, fields: Record<string, unknown>) => {
-          errors.push(fields);
-        }),
-      } as unknown as StructuredLogger;
+      const logger = new StructuredLogger({ sink: (line) => errors.push(JSON.parse(line)) });
       const explodingMetrics = {
         render: () => {
-          const failure = new Error('metrics detonated token=swordfish');
+          const failure = new Error('PRIVATE_UNREGISTERED_DIAGNOSTIC token=swordfish');
           throw failure;
         },
       } as never;
@@ -784,13 +778,21 @@ describe('server edge branches', () => {
         logger,
       });
       try {
-        const crashed = await server.inject({ method: 'GET', url: '/metrics' });
+        const crashed = await server.inject({
+          method: 'GET',
+          url: '/metrics?credential=PRIVATE_QUERY_CREDENTIAL',
+        });
         expect(crashed.statusCode).toBe(500);
         expect(errors).toHaveLength(1);
-        expect(errors[0]).toMatchObject({ status: 500, url: '/metrics', method: 'GET' });
-        // Server-side sink: redacted, but present enough to debug from.
-        expect(String(errors[0]?.message)).toContain('***');
-        expect(String(errors[0]?.message)).not.toContain('swordfish');
+        expect(errors[0]).toEqual({
+          level: 'error',
+          message: 'http.framework_error',
+          timestamp: expect.any(String),
+          code: 'INTERNAL',
+          status: 500,
+        });
+        expect(JSON.stringify(errors)).not.toContain('PRIVATE_');
+        expect(JSON.stringify(errors)).not.toContain('swordfish');
 
         const badRequest = await server.inject({
           method: 'POST',
@@ -801,6 +803,71 @@ describe('server edge branches', () => {
         expect(badRequest.statusCode).toBe(400);
         // Client faults stay out of the error-rate signal entirely.
         expect(errors).toHaveLength(1);
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('detaches error details once before reply serialization and redacts their resulting data', async () => {
+      const secretManager = new SecretManager({ 'vault://p': 'swordfish' });
+      const toJSON = vi.fn(() => {
+        if (toJSON.mock.calls.length > 1) throw new Error('PRIVATE_SECOND_SERIALIZATION');
+        return { diagnostic: 'swordfish' };
+      });
+      const server = await buildServer({
+        engine: new FakeEngine(),
+        secretManager,
+        metrics: {
+          render() {
+            throw new ServiceError('ENGINE_CRASHED', 'Engine unavailable', false, { toJSON });
+          },
+        } as never,
+      });
+      try {
+        const response = await server.inject({ method: 'GET', url: '/metrics' });
+        expect(response.statusCode).toBe(500);
+        expect(response.json()).toEqual({
+          error: {
+            code: 'ENGINE_CRASHED',
+            message: 'Engine unavailable',
+            retryable: false,
+            details: { diagnostic: '***' },
+          },
+        });
+        expect(toJSON).toHaveBeenCalledOnce();
+        expect(response.body).not.toContain('PRIVATE_');
+        expect(response.body).not.toContain('swordfish');
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('omits error details when their redaction fails without leaking the callback diagnostic', async () => {
+      const secretManager = new SecretManager();
+      const redact = secretManager.redact.bind(secretManager);
+      vi.spyOn(secretManager, 'redact').mockImplementation((value) => {
+        if (value && typeof value === 'object' && 'privateDetails' in value)
+          throw new Error('PRIVATE_REDACTION_DIAGNOSTIC');
+        return redact(value);
+      });
+      const server = await buildServer({
+        engine: new FakeEngine(),
+        secretManager,
+        metrics: {
+          render() {
+            throw new ServiceError('ENGINE_CRASHED', 'Engine unavailable', false, {
+              privateDetails: true,
+            });
+          },
+        } as never,
+      });
+      try {
+        const response = await server.inject({ method: 'GET', url: '/metrics' });
+        expect(response.statusCode).toBe(500);
+        expect(response.json()).toEqual({
+          error: { code: 'ENGINE_CRASHED', message: 'Engine unavailable', retryable: false },
+        });
+        expect(response.body).not.toContain('PRIVATE_REDACTION_DIAGNOSTIC');
       } finally {
         await server.close();
       }
@@ -857,6 +924,46 @@ describe('server edge branches', () => {
         });
         expect(response.body).not.toContain('detonated');
         expect(response.body).not.toContain('preview-7');
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('withholds raw route-wrapper failures from a real logger sink', async () => {
+      const secretManager = new SecretManager();
+      const redact = secretManager.redact.bind(secretManager);
+      vi.spyOn(secretManager, 'redact').mockImplementation((value) => {
+        if (value === 'An unexpected engine error occurred')
+          throw new Error('PRIVATE_ROUTE_CALLBACK_DIAGNOSTIC');
+        return redact(value);
+      });
+      const lines: string[] = [];
+      const engine = new FakeEngine();
+      vi.spyOn(engine, 'createSession').mockRejectedValue(new Error('PRIVATE_ENGINE_DIAGNOSTIC'));
+      const server = await buildServer({
+        engine,
+        secretManager,
+        logger: new StructuredLogger({ sink: (line) => lines.push(line) }),
+      });
+      try {
+        const response = await server.inject({
+          method: 'POST',
+          url: '/v1/sessions',
+          payload: { tenantId: 't1' },
+        });
+        expect(response.statusCode).toBe(500);
+        expect(response.json()).toEqual({
+          error: { code: 'INTERNAL', message: 'An unexpected error occurred', retryable: false },
+        });
+        expect(lines).toHaveLength(1);
+        expect(JSON.parse(lines[0] ?? '{}')).toEqual({
+          level: 'error',
+          message: 'http.framework_error',
+          timestamp: expect.any(String),
+          code: 'INTERNAL',
+          status: 500,
+        });
+        expect(lines.join('\n')).not.toContain('PRIVATE_');
       } finally {
         await server.close();
       }

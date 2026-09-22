@@ -214,7 +214,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   // fastify.register() mid-build splits the root context: handlers added
   // afterwards never see routes registered earlier, which leaked raw
   // handler-thrown error text on unauthenticated routes).
-  fastify.setErrorHandler((error: FastifyError, request, reply) => {
+  fastify.setErrorHandler((error: FastifyError, _request, reply) => {
     // An escaped protocol error serializes exactly as the route wrapper's
     // fail() would — one shared serializer, not a hand-synced copy.
     if (error instanceof ControlError || error instanceof ServiceError) {
@@ -228,17 +228,13 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     // sink for framework-plane faults (route-plane failures are logged by
     // fail(), whose wrapper catches them before this handler runs). 5xx
     // only — client mistakes are normal traffic, not error-rate signal.
-    // Server-side sink: the message is redacted, never assumed client-safe.
+    // Unregistered diagnostics and request URLs can contain credentials, so
+    // the sink receives only a fixed code and numeric status.
     if (status >= 500) {
       try {
         options.logger?.error('http.framework_error', {
-          code: fstError ? error.code : 'UNKNOWN',
-          status,
-          url: request.url,
-          method: request.method,
-          message:
-            options.secretManager?.redact(error instanceof Error ? error.message : String(error)) ??
-            'Unknown error',
+          code: 'INTERNAL',
+          status: typeof status === 'number' && Number.isInteger(status) ? status : 500,
         });
       } catch {
         // Logging must not replace the safe response with a sink's private diagnostic.
@@ -423,19 +419,20 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     await service.shutdown();
   });
 
-  /** Translate a service failure into the protocol error envelope. */
   /**
-   * Serialization-safe details: an unserializable details object must never
-   * crash reply serialization into fastify's default error body (which
-   * bypasses this envelope entirely).
+   * Invoke caller serialization once, then redact detached data. Contain both
+   * phases and detach the result so reply serialization invokes no callbacks.
    */
   const serialDetails = (details: unknown): unknown => {
     try {
-      JSON.stringify(details);
+      const serialized = JSON.stringify(details);
+      if (serialized === undefined) return undefined;
+      const detached: unknown = JSON.parse(serialized);
+      const safe = options.secretManager?.redact(detached) ?? detached;
+      return JSON.parse(JSON.stringify(safe));
     } catch {
       return undefined;
     }
-    return options.secretManager?.redact(details) ?? details;
   };
 
   const fail = (reply: FastifyReply, error: unknown) => {
@@ -454,15 +451,12 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       });
     }
     // Internal faults never echo error text to the client: redact() only
-    // substitutes registered values, so an unregistered message would land
-    // verbatim in the 500 body. The redacted diagnostic goes to the
-    // server-side sink instead.
+    // substitutes registered values. Keep unregistered text out of both
+    // the client response and the server-side sink.
     try {
       options.logger?.error('http.framework_error', {
+        code: 'INTERNAL',
         status: 500,
-        message:
-          options.secretManager?.redact(error instanceof Error ? error.message : String(error)) ??
-          'Unknown error',
       });
     } catch {
       // Logging must not replace the safe response with a sink's private diagnostic.
