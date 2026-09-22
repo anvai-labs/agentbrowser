@@ -101,3 +101,13 @@ Chromium qualification no longer needs private service capture. Both PR and post
 CI passed all eight checks without reruns; see [evidence](../evidence/t4-production-evidence-composition.md).
 P0c/P1 still require an actual application owner and qualified production contract;
 operator-binding UX and production UI/API/receipt qualification keep T4 active.
+
+
+## U0 operator binding candidate
+
+The [U0 panel design](../design/t4-operator-application-binding.md) is implemented
+in the existing `/operator` document using existing binding/discovery routes and
+shared UI request handling. It adds no execution path or backend surface. See
+[qualification](../evidence/t4-operator-application-binding.md). Receipt reconciliation
+UX (U1) and actual production source/UI/API qualification (P0c/P1) remain open;
+this bounded binding UI does not complete T4.

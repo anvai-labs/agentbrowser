@@ -138,7 +138,7 @@ acceptance gates; historical C3a/C3b restrictions above describe those earlier s
 
 The [E0 eligibility design](../design/t6-job-eligibility.md) owns job-specific normalized
 facts, deterministic eligible/hold/reject decisions and freshness/duplicate rules.
-E0a/E0b are implemented in the current application-owned candidate; see
+E0a/E0b merged in #260 as an application-owned module; see
 [qualification](../evidence/t6-job-eligibility.md). They add no shared protocol schema
 or default-mode payload. Private integration and
 headed live draft qualification remain E0c/E1 gates. Reuse the separate

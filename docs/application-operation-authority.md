@@ -2,7 +2,8 @@
 
 Status: typed in-process port, application-only lifecycle and REST/SDK/CLI surface are
 implemented. AgentBrowser 1.9.0 includes scoped delegated receipt permission and
-controlled G4 qualification; MCP tools, operator binding UI, production/G6 evidence
+controlled G4 qualification. The current develop candidate adds bounded operator
+binding/discovery UI (U0); receipt reconciliation UI, MCP tools, production/G6 evidence
 and durable application receipts remain pending.
 Transport, reconnection and durable recovery are specified in the
 [shared infrastructure design](shared-session-infrastructure.md).
@@ -212,3 +213,22 @@ zero effects; duplicate operation IDs replay without re-execution; a stale
 business version is an admitted rejection, not an error; receipts remain
 operator-readable after the grant that produced them is revoked; and one
 admitted principal at a time holds for application calls too.
+
+
+## Operator binding panel (U0 candidate)
+
+Open `/operator`, connect with an operator key, and attach a controlled session.
+Under idle human control, enter the adapter and resource IDs supplied by the service
+owner, then choose **Bind application**. The panel reads the existing discovery
+route and displays the resource and operation descriptors, including `operator-submit`.
+There is no adapter catalog or production adapter configured by this panel. A binding
+is not verified account ownership or complete-payload consent.
+
+Bind/unbind clears the local page review and token display and requires a fresh
+review before delegation. Forget credentials works during requests and clears tab
+state; it cannot undo a request already sent to the service. Refused or lost binding
+responses are not automatically retried. Unavailable discovery is distinguished from
+confirmed absence of a binding. Receipt lookup/reconciliation UI remains a follow-up;
+use the existing authorized CLI/API receipt surface where qualified. See the
+[design](spec/design/t4-operator-application-binding.md) and
+[evidence](spec/evidence/t4-operator-application-binding.md).
