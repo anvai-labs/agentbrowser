@@ -313,10 +313,7 @@ export function createApplicationDraft(options: {
   };
   const permitted = (scope: ApplicationScope) =>
     !scope.signal.aborted && scope.tenant === tenant && scope.resource === resource;
-  const commit = (
-    scope: ApplicationScope,
-    effect: () => DraftSnapshot
-  ): ApplicationResult<DraftSnapshot> => {
+  const commit = <T>(scope: ApplicationScope, effect: () => T): ApplicationResult<T> => {
     if (!permitted(scope)) return { status: 'rejected', reason: 'INVALID_SCOPE' };
     try {
       return { status: 'committed', value: effect() };
@@ -359,12 +356,28 @@ export function createApplicationDraft(options: {
     },
     receipt: async (scope, operationId) => (permitted(scope) ? receipt(operationId) : null),
   };
+  // C3b tests opt into this protected operation; the default adapter and HTTP fixture never submit.
+  const submissionOperation = defineApplicationOperation({
+    mode: 'write',
+    review: 'operator-submit',
+    parse(input: unknown) {
+      const command = jsonObject(input);
+      exactKeys(command, ['intent', 'expected']);
+      if (command.intent !== 'submit') invalid();
+      return command;
+    },
+    execute: async (command, scope) =>
+      commit(scope, () =>
+        submit(scope.expectedVersion as number, { ...command, operationId: scope.operationId })
+      ),
+  });
   return {
     read,
     update,
     upload,
     remove,
     adapter,
+    submissionOperation,
     submit,
     receipt,
     submissionCount: () => submissions,

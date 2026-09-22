@@ -5,7 +5,12 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type PreparedEvidenceReview, TrustedEvidenceSourceRegistry } from '@agentbrowser/control';
+import {
+  type ApplicationAuthority,
+  type ApplicationRequest,
+  type PreparedEvidenceReview,
+  TrustedEvidenceSourceRegistry,
+} from '@agentbrowser/control';
 import { canonicalJson } from '@agentbrowser/core';
 import type { EnginePage } from '@agentbrowser/engine';
 import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
@@ -25,7 +30,12 @@ import { startDraftFixture } from './test-support/application-draft-http.js';
 import { createApplicationDraft } from './test-support/application-draft.js';
 
 async function fixture(
-  options: { brokenUi?: boolean; beforeUploadCommit?: () => Promise<void>; review?: boolean } = {}
+  options: {
+    brokenUi?: boolean;
+    beforeUploadCommit?: () => Promise<void>;
+    review?: boolean;
+    submit?: boolean;
+  } = {}
 ) {
   const draft = createApplicationDraft({ id: 'live-witness' });
   if (options.brokenUi) draft.update(0, { fullName: 'Old committed name' });
@@ -62,7 +72,14 @@ async function fixture(
     evidenceReviewProvider: resolutions,
     engine,
     networkPolicy: new NetworkPolicy({ blockLoopback: false, blockPrivateIPs: false }),
-    applicationAdapters: [draft.adapter],
+    applicationAdapters: [
+      options.submit
+        ? {
+            ...draft.adapter,
+            operations: { ...draft.adapter.operations, submit: draft.submissionOperation },
+          }
+        : draft.adapter,
+    ],
     evidenceSourceRegistryProvider(builder) {
       registry = new TrustedEvidenceSourceRegistry([
         builder.applicationRead({
@@ -227,10 +244,11 @@ async function fixture(
         expect(service.authority.didDispatchInScope(sessionId)).toBe(false);
         return result;
       });
+    let submissionAction: Record<string, unknown> | undefined;
     const composition = () => {
       const { collector, application, page } = prepareCollector();
       return {
-        action: {
+        action: submissionAction ?? {
           intent: 'draft',
           destination: expectedApplication.destination,
           job: expectedApplication.job,
@@ -270,6 +288,31 @@ async function fixture(
         expect(service.authority.didDispatchInScope(sessionId)).toBe(false);
         return result;
       });
+    // Successful C3b integration is internal; the public wire surface remains gated.
+    const applicationAuthority = (
+      service as unknown as { applicationAuthority: ApplicationAuthority }
+    ).applicationAuthority;
+    const generateSubmission = () =>
+      run(async () => {
+        const expected = draft.read();
+        const request: ApplicationRequest = {
+          operation: 'submit',
+          operationId: 'reviewed-submit',
+          expectedVersion: expected.version,
+          input: { intent: 'submit', expected },
+        };
+        const prepared = service.prepareApplicationSubmissionReviewInScope(
+          sessionId,
+          pageId,
+          request,
+          composition().source
+        );
+        const token = await prepared.generate(new AbortController().signal);
+        submissionAction = structuredClone(
+          (token.action.parameters as { action: Record<string, unknown> }).action
+        );
+        return { request, token };
+      });
     return {
       draft,
       http,
@@ -281,6 +324,10 @@ async function fixture(
       backing,
       collect,
       review,
+      run,
+      generateSubmission,
+      executeSubmission: (request: ApplicationRequest, tokenId: string) =>
+        applicationAuthority.execute(sessionId, operator, { ...request, approvalToken: tokenId }),
       setPermission(allowed: boolean) {
         permitted = allowed;
         permissionGeneration++;
@@ -611,3 +658,36 @@ it('refuses pending uploads and failed commits while independent owner data is c
     await f.close();
   }
 }, 30000);
+
+it.each([false, true])(
+  'enforces consent against qualified native/app evidence (edit after review: %s)',
+  async (edit) => {
+    const f = await fixture({ review: true, submit: true });
+    try {
+      const { request, token } = await f.generateSubmission();
+      await f.run(() => f.service.decideApproval(f.sessionId, token.tokenId, 'approve'));
+      if (edit) {
+        await f.backing.locator('[data-automation-id="fullName"]').fill('Changed after review');
+        await expect.poll(f.diagnostics).toMatchObject({ pending: 0, failed: false });
+        await expect(f.executeSubmission(request, token.tokenId)).rejects.toBeDefined();
+        expect(f.draft.submissionCount()).toBe(0);
+      } else {
+        expect(await f.executeSubmission(request, token.tokenId)).toMatchObject({
+          status: 'committed',
+        });
+        expect(f.draft.submissionCount()).toBe(1);
+        expect(f.draft.acceptedAttachment()).toEqual(Buffer.from('original bytes'));
+        expect(f.draft.receipt('reviewed-submit')).toMatchObject({
+          intent: 'submit',
+          accepted: { fields: { fullName: 'Synthetic Person' } },
+        });
+        expect(await f.executeSubmission(request, token.tokenId)).toMatchObject({ replay: true });
+        expect(f.draft.submissionCount()).toBe(1);
+      }
+      expect(f.http.submissionAttempts()).toBe(0);
+    } finally {
+      await f.close();
+    }
+  },
+  30000
+);

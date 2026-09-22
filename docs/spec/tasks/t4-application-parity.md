@@ -77,3 +77,10 @@ The [C3a acceptance oracle](../design/t6-atomic-submission.md) extends the same 
 draft owner with atomic full-state comparison, terminal acceptance and an independently
 readable receipt. It registers no submit operation. See [evidence](../evidence/t6-atomic-submission.md);
 shared consent enforcement, production receipt qualification and operator UX remain open.
+
+
+The [C3b internal dispatch guard](../design/t6-mandatory-application-consent.md)
+now binds reviewed evidence to the actual app operation, version, input and binding;
+see [qualification](../evidence/t6-mandatory-application-consent.md). Public creation,
+CLI/REST execution projection and independent T2 acceptance qualification remain C3c.
+No production or live portal submission is enabled by this internal increment.

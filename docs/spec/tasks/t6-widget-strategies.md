@@ -119,3 +119,10 @@ atomic synthetic application acceptance oracle inside the existing draft owner; 
 [evidence](../evidence/t6-atomic-submission.md). Public submit remains unavailable.
 Mandatory shared consent enforcement and public acceptance qualification follow under
 separate design gates; this oracle alone does not complete T6.
+
+
+The [C3b internal dispatch guard](../design/t6-mandatory-application-consent.md)
+now binds reviewed evidence to the actual app operation, version, input and binding;
+see [qualification](../evidence/t6-mandatory-application-consent.md). Public creation,
+CLI/REST execution projection and independent T2 acceptance qualification remain C3c.
+No production or live portal submission is enabled by this internal increment.

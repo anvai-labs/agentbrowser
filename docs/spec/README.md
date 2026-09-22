@@ -4,7 +4,7 @@ Status: active product architecture and implementation contract. A capability is
 delivered only when its task evidence records a merged and qualified implementation.
 Published baseline: AgentBrowser 1.9.1 at
 `310e01d43982824caac2c63ed8d98355e17efdce`. Rechecked develop baseline:
-`803f078857235fc45a405b733b0d71a6a2504663` after PR #250, retaining the C3a
+`9c82a490f96fd578fd0dad403503717fb6fb9831` after PR #251, retaining the C3a
 atomic test-owner oracle from #249. Local Victor was last inspected at `68502d82d`
 (not installed-harness qualification). Develop alignment reviewed 2026-09-21.
 See the [release evidence](evidence/release-1.9.1.md) and
@@ -152,3 +152,10 @@ without weakening them. Requirements in modes reference shared contracts instead
 of copying them. Update this index/manifest only when a module's responsibility or
 load boundary changes. Update source-derived capability documentation with its
 implementation; never maintain parallel handwritten protocol schema catalogs.
+
+
+The [C3b consent design](design/t6-mandatory-application-consent.md) adds an internal
+mandatory guard for declared submission operations using the same application
+authority and approval/evidence owners. [Qualification](evidence/t6-mandatory-application-consent.md)
+includes synthetic browser/app acceptance and drift refusal; public submission and
+live ATS readiness remain gated on C3c and production evidence.
