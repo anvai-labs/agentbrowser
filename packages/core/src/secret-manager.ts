@@ -80,12 +80,17 @@ export class SecretManager {
       // mistake, and an unregistered value cannot be redacted downstream.
       throw new SecretError(
         'INVALID_REFERENCE',
-        'Not a secret reference: values must start with vault:// (input withheld)'
+        `Not a secret reference: values must start with ${REFERENCE_PREFIX} (input withheld)`
       );
     }
     const value = this.secrets.get(reference);
     if (value === undefined) {
-      throw new SecretError('SECRET_NOT_FOUND', `No secret registered for ${reference}`);
+      // Same withholding rule: the reference body is arbitrary caller text
+      // and may itself be a pasted credential.
+      throw new SecretError(
+        'SECRET_NOT_FOUND',
+        `No secret registered for that reference (input withheld)`
+      );
     }
     return value;
   }

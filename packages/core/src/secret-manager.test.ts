@@ -41,8 +41,13 @@ describe('SecretManager', () => {
       } catch (error) {
         expect(error).toBeInstanceOf(SecretError);
         expect((error as SecretError).code).toBe('SECRET_NOT_FOUND');
-        // The reference is an identifier, not a secret, so it may appear.
-        expect((error as SecretError).message).toContain('vault://tenant/login/missing');
+        // Reference bodies are arbitrary caller text until registered, so
+        // the message withholds the input entirely — same rule as
+        // INVALID_REFERENCE — and the surface errors and traces inherit.
+        expect((error as SecretError).message).toBe(
+          'No secret registered for that reference (input withheld)'
+        );
+        expect((error as SecretError).message).not.toContain('vault://tenant/login/missing');
       }
     });
 

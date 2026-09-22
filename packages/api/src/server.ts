@@ -215,25 +215,53 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   // afterwards never see routes registered earlier, which leaked raw
   // handler-thrown error text on unauthenticated routes).
   fastify.setErrorHandler((error: FastifyError, _request, reply) => {
-    fastify.log.error(error);
+    // fastify's own logger is a noop under logger:false; the service logger
+    // is the real sink. Log code and status only — the raw message may hold
+    // unregistered (unredactable) caller input.
+    options.logger?.error('http.framework_error', {
+      code: typeof error.code === 'string' ? error.code : 'UNKNOWN',
+      status: error.statusCode ?? 500,
+    });
 
-    // Don't convert Fastify's built-in errors - let them pass with their original status
-    if (error.code?.startsWith('FST_ERR_')) {
-      return reply.status(error.statusCode || 500).send({
+    // An escaped protocol error serializes exactly as the route wrapper's
+    // fail() would: mapped status, protocol code, redacted message.
+    if (error instanceof ControlError || error instanceof ServiceError) {
+      return reply.status(statusFor(error.code)).send({
         error: {
-          code: error.statusCode === 404 ? 'NOT_FOUND' : 'INVALID_REQUEST',
-          message: error.message || 'Request failed',
+          code: error.code,
+          message: options.secretManager?.redact(error.message) ?? error.message,
+          retryable: error instanceof ServiceError ? error.retryable : false,
+          ...(error instanceof ServiceError && error.details !== undefined
+            ? { details: options.secretManager?.redact(error.details) ?? error.details }
+            : {}),
+        },
+      });
+    }
+
+    const fstError = typeof error.code === 'string' && error.code.startsWith('FST_ERR_');
+    const status = error.statusCode ?? 500;
+
+    // Fastify's built-in 5xx are server faults: generic INTERNAL body —
+    // never the raw internal text, never the client-fault code.
+    if (fstError && status >= 500) {
+      return reply.status(status).send({
+        error: {
+          code: 'INTERNAL',
+          message: 'An unexpected error occurred',
           retryable: false,
         },
       });
     }
 
-    // For 4xx client errors, return the original status code with INVALID_REQUEST
-    if (error.statusCode && error.statusCode >= 400 && error.statusCode < 500) {
-      return reply.status(error.statusCode).send({
+    // Built-in and 4xx-classified client errors keep their original status
+    // with a redacted request-diagnostic message.
+    if (fstError || (status >= 400 && status < 500)) {
+      return reply.status(status).send({
         error: {
-          code: 'INVALID_REQUEST',
-          message: error.message || 'Invalid request',
+          code: status === 404 ? 'NOT_FOUND' : 'INVALID_REQUEST',
+          message:
+            options.secretManager?.redact(error.message || 'Request failed') ??
+            (error.message || 'Request failed'),
           retryable: false,
         },
       });

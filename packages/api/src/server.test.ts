@@ -865,8 +865,9 @@ describe('AgentBrowser REST API', () => {
 
       expect(response.status).toBe(400);
 
-      // Fastify's own JSON parse error (pre-handler) returns a plain
-      // "Bad Request" body; our envelope covers post-parse failures.
+      // Fastify's own JSON parse error (pre-handler) is intercepted by the
+      // root error handler too: same { error: { code } } envelope as
+      // post-parse failures.
       expect(response.headers.get('content-type')).toContain('application/json');
     });
 
