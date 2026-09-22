@@ -86,6 +86,7 @@ describe('SessionCoordinator', () => {
       await vi.advanceTimersByTimeAsync(30);
       expect(context.signal.aborted).toBe(true);
       expect(context.signal.reason).toMatchObject({ code: 'SESSION_EXPIRED' });
+      expect(context.metadata.state).toBe(SessionState.EXPIRED);
     } finally {
       await owner.shutdown();
       vi.useRealTimers();
@@ -118,10 +119,12 @@ describe('SessionCoordinator', () => {
         }
         expect(context.signal.aborted).toBe(true);
         expect(close).toHaveBeenCalledTimes(1);
+        expect(context.metadata.state).toBe(context.state);
       } finally {
         finish();
         await completion;
         await owner.shutdown();
+        expect(context.metadata.state).toBe(context.state);
       }
     }
   );
@@ -334,6 +337,8 @@ describe('SessionCoordinator', () => {
 
       // Should be ACTIVE
       expect(session?.state).toBe(SessionState.ACTIVE);
+      expect(session?.metadata.state).toBe(SessionState.ACTIVE);
+      expect(coordinator.getAllSessions()[0]?.state).toBe(SessionState.ACTIVE);
     });
 
     it('should remain ACTIVE on subsequent activities', async () => {
@@ -389,6 +394,17 @@ describe('SessionCoordinator', () => {
 
       expect((engineSession as MockEngineSession).closed).toBe(true);
       expect((engineSession as MockEngineSession).closeReason).toBe('test');
+    });
+
+    it('keeps metadata synchronized when engine close fails', async () => {
+      const created = await coordinator.create({ engine: 'mock-engine' }, mockEngine);
+      const context = coordinator.get(created.sessionId);
+      if (!context) throw new Error('Missing session context');
+      vi.spyOn(context.engineSession, 'close').mockRejectedValueOnce(new Error('close failed'));
+      await expect(coordinator.close(created.sessionId)).rejects.toThrow('close failed');
+      expect(context.state).toBe(SessionState.ENGINE_CRASHED);
+      expect(context.metadata.state).toBe(SessionState.ENGINE_CRASHED);
+      expect(coordinator.getAllSessions()[0]?.state).toBe(SessionState.ENGINE_CRASHED);
     });
 
     it('should throw for non-existent session', async () => {

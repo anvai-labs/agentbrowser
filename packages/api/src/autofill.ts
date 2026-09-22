@@ -430,13 +430,14 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
           if (execution.state === 'not_started') execution.state = 'dispatched';
         });
       };
+      // A multi-step receipt identifies its final action, never an earlier setup step.
       let effect: unknown;
       if (strategy.run) {
         // Multi-step strategy: each step dispatches through the same admission;
         // the scope keeps the loop inside this field's serial grant.
         const scope: StrategyScope = {
           act: async (request) => {
-            const effect = await dispatch(request);
+            effect = await dispatch(request);
             execution.state = 'dispatched';
             return effect;
           },
@@ -471,7 +472,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
         execution.state = 'completed';
         if (outcome.expected !== undefined) expectedValues[index] = outcome.expected;
       } else {
-        const effect = await dispatch(strategy.action(field, element.ref));
+        effect = await dispatch(strategy.action(field, element.ref));
         if (execution.state === 'not_started')
           throw new AutofillFailure(
             'ENGINE_UNSUPPORTED',

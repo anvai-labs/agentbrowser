@@ -6,7 +6,7 @@
  * factory as cli.test.ts — no process, no server.
  */
 
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -522,6 +522,34 @@ describe('AgentBrowser CLI remaining command surface', () => {
       expect(await run('download', 'collect', 'ses_1', 'pg_1', 'dl_capture_1')).toBe(0);
       expect(sessions.collectDownload).toHaveBeenCalledWith('ses_1', 'pg_1', 'dl_capture_1');
       expect(out).toEqual(['Download dl_1', '  bytes: 64']);
+    });
+
+    it.each(['parent', 'child'])(
+      'collect saves artifact bytes with %s-position --out',
+      async (position) => {
+        const file = tempFile('collected.zip');
+        const args =
+          position === 'parent'
+            ? ['download', '--out', file, 'collect', 'ses_1', 'pg_1', 'dl_capture_1']
+            : ['download', 'collect', 'ses_1', 'pg_1', 'dl_capture_1', '--out', file];
+        expect(await run(...args)).toBe(0);
+        expect(sessions.collectDownload).toHaveBeenCalledWith('ses_1', 'pg_1', 'dl_capture_1');
+        expect(sessions.download).not.toHaveBeenCalled();
+        expect(sessions.artifact).toHaveBeenCalledWith('ses_1', 'dl_1');
+        expect(readFileSync(file, 'utf8')).toBe('<html>stored bytes</html>');
+        expect(out.join('\n')).toContain(`Saved dl_1 to ${file}`);
+      }
+    );
+
+    it('collect with --out fails without writing when artifact bytes are unavailable', async () => {
+      const file = tempFile('missing.zip');
+      sessions.artifact.mockResolvedValueOnce({ metadata: { artifactId: 'dl_1' } });
+      expect(await run('download', 'collect', 'ses_1', 'pg_1', 'dl_capture_1', '--out', file)).toBe(
+        1
+      );
+      expect(err.join(' ')).toContain('dl_1 has no inline content');
+      expect(existsSync(file)).toBe(false);
+      expect(out.join('\n')).not.toContain('Saved dl_1');
     });
 
     it('saving an expired screenshot artifact fails without writing a file', async () => {

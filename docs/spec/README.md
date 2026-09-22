@@ -4,8 +4,9 @@ Status: active product architecture and implementation contract. A capability is
 delivered only when its task evidence records a merged and qualified implementation.
 Published baseline: AgentBrowser 1.9.1 at
 `310e01d43982824caac2c63ed8d98355e17efdce`. Rechecked develop baseline:
-`e69317ac8521228e84c189f69608dd3144e234f5` after PR #235; local Victor checkout
-was inspected at `68502d82d` (not installed-harness qualification). Reviewed 2026-09-20.
+`803f078857235fc45a405b733b0d71a6a2504663` after PR #250, retaining the C3a
+atomic test-owner oracle from #249. Local Victor was last inspected at `68502d82d`
+(not installed-harness qualification). Develop alignment reviewed 2026-09-21.
 See the [release evidence](evidence/release-1.9.1.md) and
 [progress checkpoint](evidence/foundation-progress-2026-09-20.md).
 

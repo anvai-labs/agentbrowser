@@ -1814,6 +1814,8 @@ export function buildCli(deps: CliDependencies): Cli {
               downloadIdOrFilename: string,
               options: { out?: string }
             ) => {
+              // Commander may parse this shared option on the parent download command.
+              const output = options.out ?? download.opts().out;
               const artifact = await ctx.client.sessions.collectDownload(
                 sessionId,
                 pageId,
@@ -1823,8 +1825,8 @@ export function buildCli(deps: CliDependencies): Cli {
                 `Download ${artifact.artifactId}`,
                 `  bytes: ${artifact.sizeBytes}`,
               ]);
-              if (options.out) {
-                const saved = await saveArtifactBytes(ctx, sessionId, artifact, options.out);
+              if (output) {
+                const saved = await saveArtifactBytes(ctx, sessionId, artifact, output);
                 ctx.emit({ saved: saved.path, sizeBytes: saved.sizeBytes }, () => [
                   `Saved ${artifact.artifactId} to ${saved.path} (${saved.sizeBytes} bytes)`,
                 ]);

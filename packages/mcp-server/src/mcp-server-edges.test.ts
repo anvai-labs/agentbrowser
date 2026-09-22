@@ -268,6 +268,30 @@ describe('AgentBrowser MCP server edge branches', () => {
     });
   });
 
+  describe('JSON-RPC invalid roots', () => {
+    it.each(['null', '[]', '[{}]', '42', 'true', '"text"'])(
+      'returns invalid-request for %s without rejecting or dispatching',
+      async (line) => {
+        const response = await server.handle(line);
+        expect(response).not.toBeNull();
+        expect(JSON.parse(response ?? '{}')).toEqual({
+          jsonrpc: '2.0',
+          id: null,
+          error: { code: -32600, message: 'Invalid request' },
+        });
+        for (const method of Object.values(sessions)) expect(method).not.toHaveBeenCalled();
+        expect(JSON.parse((await request('after-invalid', 'ping')) ?? '{}').result).toEqual({});
+      }
+    );
+
+    it('preserves parse errors and valid notifications', async () => {
+      expect(JSON.parse((await server.handle('{broken')) ?? '{}').error.code).toBe(-32700);
+      expect(
+        await server.handle('{"jsonrpc":"2.0","method":"notifications/initialized"}')
+      ).toBeNull();
+    });
+  });
+
   describe('JSON-RPC internal error path', () => {
     it('maps an internal serialization failure to a -32603 error response', async () => {
       const hostile = buildMcpServer({

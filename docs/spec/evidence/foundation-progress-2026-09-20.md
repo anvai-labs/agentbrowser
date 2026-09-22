@@ -1,7 +1,8 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
 Rechecked published 1.9.1 at `310e01d43982824caac2c63ed8d98355e17efdce`
-and develop `c9682804cb798a6ba4ece5fa154c7cf05ce8244b` (PR #248).
+and develop `803f078857235fc45a405b733b0d71a6a2504663` (PR #250; alignment
+rechecked 2026-09-21).
 The [release ladder](release-1.9.1.md) includes Bun CLI/MCP artifacts,
 Node 24 service qualification, Homebrew and develop back-sync. Existing browser
 sessions were preserved; an upgraded installed binary does not prove every running
@@ -21,7 +22,7 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T3 QA regression | Complete, released | 100% | Broader provisioning and demand-backed report adapters are follow-ups |
 | T4 application operations/parity | Active | ~40% | Independent UI/API oracle, binding UX, production evidence; callback repair merged #236 |
 | T5 durable recovery | Not started | 0% | Design, journal/recovery and process-loss qualification |
-| T6 forms/operations | Active | ~40% | Public full-payload consent, candidate identity/eligibility and live qualification; configured public review #248 merged; atomic test acceptance under qualification |
+| T6 forms/operations | Active | ~40% | Public full-payload consent, candidate identity/eligibility and live qualification; configured public review #248 and atomic test acceptance #249 merged; mandatory dispatch consent remains open |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
 | T8 installed harnesses | Not qualified | 0% | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |
 | T9 release hardening | Recurring | 100% of 1.9.1 checkpoint | Repeat per later release |
@@ -163,3 +164,22 @@ mandatory hooks passed 2,678 tests with 24 existing skips. The next
 before any submission operation can be exposed. Its [evidence](t6-atomic-submission.md)
 keeps mandatory service consent, public usability, production receipts and live
 qualification as explicit follow-ups. Estimates and published 1.9.1 remain unchanged.
+
+C3a merged as #249 at `0e86033`, retaining reviewed head `d949646` and tree
+`7b30fdf`. PR run `35656689816` and post-merge run `35657268277` passed all eight
+jobs; independent review returned SHIP. Both mandatory hooks passed 2,725 tests with
+24 existing skips. This qualifies the test owner's atomic acceptance only: no submit
+operation is publicly registered.
+
+Coverage expansion #250 merged at `803f078`; PR run `35673258833` and post-merge run
+`35674276640` passed all eight jobs. An ancestry check confirms #249 is retained;
+the diff from #249 contains tests and a development coverage dependency only. The PR
+reports line coverage of 91.67% versus 84.72% on its base. This is test coverage, not
+product completion, and was not remeasured during this alignment.
+
+The [coverage findings repair](foundation-coverage-findings.md) addresses five concrete
+validation, receipt, CLI and lifecycle defects before C3b. It adds no milestone or
+submission permission. Next: design and independently review mandatory consent inside
+ApplicationAuthority's existing dispatch path, then implement it with failing-first
+tests. C3c public usability/independent acceptance follows that gate. Published 1.9.1,
+the 3/9 completed milestone count and conservative estimates remain unchanged.
