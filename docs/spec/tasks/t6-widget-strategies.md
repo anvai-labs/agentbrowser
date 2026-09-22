@@ -138,8 +138,9 @@ acceptance gates; historical C3a/C3b restrictions above describe those earlier s
 
 The [E0 eligibility design](../design/t6-job-eligibility.md) owns job-specific normalized
 facts, deterministic eligible/hold/reject decisions and freshness/duplicate rules.
-E0a/E0b can proceed in an application-owned module without production adapter access;
-they add no shared protocol schema or default-mode payload. Private integration and
+E0a/E0b are implemented in the current application-owned candidate; see
+[qualification](../evidence/t6-job-eligibility.md). They add no shared protocol schema
+or default-mode payload. Private integration and
 headed live draft qualification remain E0c/E1 gates. Reuse the separate
 [P0 deployment seam](../design/t4-production-evidence-composition.md); do not duplicate
-the service or promote an eligibility decision into consent. Both packets are design-only.
+the service or promote an eligibility decision into consent. P0a/P0b merged in #259; E0c/E1 and P0c/P1 remain separate integration gates.

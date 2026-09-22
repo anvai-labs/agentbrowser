@@ -1,8 +1,7 @@
 # P0 trusted review-provider composition
 
 Scope: P0a/P0b from the [approved design](../design/t4-production-evidence-composition.md)
-in #258, based on develop `54daeaa`. This is an implementation candidate pending
-normal delivery gates; published 1.9.1 and installed sessions are unchanged.
+in #258, based on develop `54daeaa`. Merged #259 at `836cc65`; published 1.9.1 and installed sessions are unchanged.
 
 ## Shared owner and contract
 
@@ -48,5 +47,11 @@ test-only and are not registered by stock startup.
 
 P0c needs an actual application owner/interface; no fake production adapter is
 created from the synthetic fixture. P1 needs authorized live witness and receipt
-qualification. E0 eligibility is the next independent application-owned packet.
+qualification. E0 eligibility is implemented in a separate application-owned candidate.
 T4/T6 stay active at their conservative estimates; finite milestones remain 3/9.
+
+
+Delivery: reviewed head `f411a59`, tree `57b9c54`, merge `836cc65` with identical tree.
+Exact-head independent SHIP review; both normal hooks passed 3,336 tests with 24 skips.
+PR run `35717475065` and post-merge run `35718143796` each passed all eight checks
+without reruns. No release or running-session change was made by this checkpoint.
