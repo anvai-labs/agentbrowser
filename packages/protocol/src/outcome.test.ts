@@ -7,6 +7,7 @@ import {
   parseOutcomeProjection,
   parseOutcomeRunReport,
   parseOutcomeRunRequest,
+  parseTrustedVerifierDescriptor,
 } from './outcome.js';
 
 const passing = () => ({
@@ -436,5 +437,60 @@ describe('outcome run contracts', () => {
     } catch (error) {
       expect(String(error)).not.toContain('PRIVATE-REPORT');
     }
+  });
+});
+
+describe('trusted verifier descriptor', () => {
+  const descriptor = () => ({
+    id: 'receipt.equals',
+    version: '1.0.0',
+    inputSchemaId: 'expected',
+    evidenceSchemaId: 'receipt',
+    requiredCapability: 'receipt.predicate',
+    evidenceSource: 'receipt',
+    requiredLayer: 'G4',
+    budget: {
+      maxReads: 2,
+      timeoutMs: 100,
+      pollIntervalMs: 1,
+      cleanupTimeoutMs: 25,
+      maxEvidenceRefs: 1,
+    },
+    redaction: 'reference_only',
+    unsupported: [],
+    cleanup: 'not_needed',
+  });
+
+  it('parses a complete descriptor and detaches it from the caller input', () => {
+    const input = descriptor();
+    const parsed = parseTrustedVerifierDescriptor(input);
+
+    expect(parsed).toEqual(descriptor());
+    // Mutating the caller's object afterwards must not drift the parsed copy.
+    input.budget.maxReads = 99;
+    input.unsupported.push('PRIVATE-MUTATION');
+    expect(parsed.budget.maxReads).toBe(2);
+    expect(parsed.unsupported).toEqual([]);
+  });
+
+  it('rejects a descriptor claiming an impossible redaction mode', () => {
+    const invalid = { ...descriptor(), redaction: 'raw_values' };
+    expect(() => parseTrustedVerifierDescriptor(invalid)).toThrow(
+      'Invalid verifier descriptor report'
+    );
+  });
+
+  it('rejects a descriptor with an out-of-range verifier budget', () => {
+    const invalid = { ...descriptor(), budget: { ...descriptor().budget, maxEvidenceRefs: 33 } };
+    expect(() => parseTrustedVerifierDescriptor(invalid)).toThrow(
+      'Invalid verifier descriptor report'
+    );
+  });
+
+  it('rejects a descriptor with an unknown grounding layer', () => {
+    const invalid = { ...descriptor(), requiredLayer: 'G9' };
+    expect(() => parseTrustedVerifierDescriptor(invalid)).toThrow(
+      'Invalid verifier descriptor report'
+    );
   });
 });

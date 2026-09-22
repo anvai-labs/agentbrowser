@@ -37,3 +37,116 @@ describe('adapter error normalization', () => {
     });
   });
 });
+
+describe('adapter error normalization: prose classification', () => {
+  it('classifies a non-object thrown value as INTERNAL and keeps its string form', () => {
+    expect(normalizeEngineError('Session socket hung up')).toMatchObject({
+      code: 'INTERNAL',
+      message: 'Session socket hung up',
+      retryable: false,
+    });
+    expect(normalizeEngineError(undefined).code).toBe('INTERNAL');
+  });
+
+  it.each(['RESPONSE_TOO_LARGE', 'MAX_REDIRECTS', 'REDIRECT_LOOP'])(
+    'maps the legacy code %s onto POLICY_DENIED',
+    (legacyCode) => {
+      const error = Object.assign(new Error('redirect budget exhausted'), {
+        code: legacyCode,
+      });
+      expect(normalizeEngineError(error)).toMatchObject({
+        code: 'POLICY_DENIED',
+        message: 'redirect budget exhausted',
+      });
+    }
+  );
+
+  it('classifies transport-death prose as ENGINE_CRASHED', () => {
+    for (const message of [
+      'Target page closed',
+      'Browser has been closed',
+      'Browser disconnected unexpectedly',
+      'Context closed',
+    ]) {
+      expect(normalizeEngineError(new Error(message), 'act').code).toBe('ENGINE_CRASHED');
+    }
+  });
+
+  it('classifies quota prose as QUOTA_EXCEEDED', () => {
+    expect(normalizeEngineError(new Error('QUOTA_EXCEEDED: too many sessions')).code).toBe(
+      'QUOTA_EXCEEDED'
+    );
+  });
+
+  it('classifies the bare session-not-found sentinel and rewords it for callers', () => {
+    const normalized = normalizeEngineError(new Error('SESSION_NOT_FOUND'), 'act');
+    expect(normalized).toMatchObject({
+      code: 'SESSION_NOT_FOUND',
+      message: 'Session does not exist.',
+    });
+  });
+
+  it('classifies staleness prose as STALE_TARGET', () => {
+    for (const message of ['element is stale after navigation', 'fingerprint mismatch']) {
+      expect(normalizeEngineError(new Error(message), 'act').code).toBe('STALE_TARGET');
+    }
+  });
+
+  it('classifies ambiguous-target prose as TARGET_AMBIGUOUS', () => {
+    for (const message of ['multiple elements match the ref', 'resolver is ambiguous']) {
+      expect(normalizeEngineError(new Error(message), 'act').code).toBe('TARGET_AMBIGUOUS');
+    }
+  });
+
+  it('classifies missing-element prose as TARGET_NOT_FOUND', () => {
+    expect(normalizeEngineError(new Error('Element not found'), 'act').code).toBe(
+      'TARGET_NOT_FOUND'
+    );
+  });
+
+  it('classifies dialog prose as INVALID_REQUEST', () => {
+    expect(normalizeEngineError(new Error('No dialog is currently open'), 'act')).toMatchObject({
+      code: 'INVALID_REQUEST',
+    });
+  });
+
+  it('falls back to INTERNAL when nothing matches, even for an unknown string code', () => {
+    const error = Object.assign(new Error('nothing recognizable'), {
+      code: 'SOMETHING_CUSTOM',
+    });
+    expect(normalizeEngineError(error)).toMatchObject({
+      code: 'INTERNAL',
+      message: 'nothing recognizable',
+    });
+  });
+
+  it('honors a boolean retryable flag and drops malformed or absent details', () => {
+    const coded = (extras: Record<string, unknown>): Error => Object.assign(new Error('x'), extras);
+
+    expect(
+      normalizeEngineError(coded({ code: 'STALE_TARGET', retryable: true, details: { a: 1 } }))
+    ).toEqual({ code: 'STALE_TARGET', message: 'x', retryable: true, details: { a: 1 } });
+    expect(normalizeEngineError(coded({ code: 'STALE_TARGET', retryable: 'yes' }))).toEqual({
+      code: 'STALE_TARGET',
+      message: 'x',
+      retryable: false,
+    });
+    expect(
+      normalizeEngineError(coded({ code: 'STALE_TARGET', details: null })).details
+    ).toBeUndefined();
+    expect(
+      normalizeEngineError(coded({ code: 'STALE_TARGET', details: ['array'] })).details
+    ).toBeUndefined();
+    expect(
+      normalizeEngineError(coded({ code: 'STALE_TARGET', details: 'nope' })).details
+    ).toBeUndefined();
+  });
+});
+
+describe('engine package barrel', () => {
+  it('re-exports the error surface from the package index', async () => {
+    const barrel = await import('./index.js');
+    expect(barrel.EngineError).toBe(EngineError);
+    expect(barrel.normalizeEngineError).toBe(normalizeEngineError);
+  });
+});

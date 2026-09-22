@@ -1184,6 +1184,209 @@ describe('AgentBrowser SDK', () => {
       expect(result).toEqual(replayBody);
     });
   });
+
+  describe('remaining sessions methods', () => {
+    it('fetches an application receipt by encoded operation id', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ receipt: 'r1' }) });
+
+      const receipt = await client.sessions.applicationReceipt('ses_1', 'op/1');
+
+      expect(receipt).toEqual({ receipt: 'r1' });
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:5709/v1/sessions/ses_1/application/receipts/op%2F1',
+        expect.objectContaining({ method: 'GET' })
+      );
+    });
+
+    it('unwraps the pages envelope for listPages', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          pages: [
+            { pageId: 'pg_1', sessionId: 'ses_1', status: 'ready' },
+            { pageId: 'pg_2', sessionId: 'ses_1', status: 'ready' },
+          ],
+        }),
+      });
+
+      const pages = await client.sessions.listPages('ses_1');
+
+      expect(pages.map((page) => page.pageId)).toEqual(['pg_1', 'pg_2']);
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:5709/v1/sessions/ses_1/pages',
+        expect.objectContaining({ method: 'GET' })
+      );
+    });
+
+    it('unwraps the cookie export envelope for cookies', async () => {
+      const cookie = { name: 'sid', value: 'v', domain: 'example.com', path: '/' };
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ cookies: [cookie] }) });
+
+      const cookies = await client.sessions.cookies('ses_1');
+
+      expect(cookies).toEqual([cookie]);
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:5709/v1/sessions/ses_1/cookies',
+        expect.objectContaining({ method: 'GET' })
+      );
+    });
+
+    it('returns artifact metadata plus inline bytes when present', async () => {
+      const metadata = {
+        artifactId: 'a1',
+        type: 'screenshot',
+        contentType: 'image/png',
+        sizeBytes: 4,
+        url: '/u',
+      };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ metadata, contentBase64: 'AAAA' }),
+      });
+
+      const artifact = await client.sessions.artifact('ses_1', 'a1');
+
+      expect(artifact.metadata).toEqual(metadata);
+      expect(artifact.contentBase64).toBe('AAAA');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:5709/v1/sessions/ses_1/artifacts/a1',
+        expect.objectContaining({ method: 'GET' })
+      );
+    });
+
+    it('omits the contentBase64 key when the artifact carries no inline bytes', async () => {
+      const metadata = {
+        artifactId: 'a2',
+        type: 'pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 9,
+        url: '/u',
+      };
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ metadata }) });
+
+      const artifact = await client.sessions.artifact('ses_1', 'a2');
+
+      expect(artifact).toEqual({ metadata });
+      expect('contentBase64' in artifact).toBe(false);
+    });
+
+    it('appends observation bounds to the snapshot query', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ url: 'u', title: 't', revision: 1, mode: 'stable', fields: [] }),
+      });
+
+      const snapshot = await client.sessions.snapshot('ses_1', 'pg_1', {
+        maxElements: 10,
+        maxBytes: 2048,
+      });
+
+      expect(snapshot.mode).toBe('stable');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:5709/v1/sessions/ses_1/pages/pg_1/snapshot?maxElements=10&maxBytes=2048',
+        expect.objectContaining({ method: 'GET' })
+      );
+    });
+
+    it('requests a snapshot without a query string when no bounds are given', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ url: 'u', title: 't', revision: 1, mode: 'verified', fields: [] }),
+      });
+
+      const snapshot = await client.sessions.snapshot('ses_1', 'pg_1');
+
+      expect(snapshot.mode).toBe('verified');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:5709/v1/sessions/ses_1/pages/pg_1/snapshot',
+        expect.anything()
+      );
+    });
+
+    it('posts pdf options to the pdf route', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          artifactId: 'pdf_1',
+          type: 'pdf',
+          contentType: 'application/pdf',
+          sizeBytes: 9,
+          url: '/u',
+        }),
+      });
+
+      const artifact = await client.sessions.pdf('ses_1', 'pg_1', { landscape: true });
+
+      expect(artifact.artifactId).toBe('pdf_1');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:5709/v1/sessions/ses_1/pages/pg_1/pdf',
+        expect.objectContaining({ method: 'POST', body: JSON.stringify({ landscape: true }) })
+      );
+    });
+  });
+
+  describe('health probes and default headers', () => {
+    it('probes liveness and readiness endpoints', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'live' }) });
+      expect(await client.healthLive()).toEqual({ status: 'live' });
+      expect(mockFetch).toHaveBeenLastCalledWith(
+        'http://localhost:5709/health/live',
+        expect.anything()
+      );
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: 'ready', engine: 'playwright-chromium' }),
+      });
+      expect(await client.healthReady()).toEqual({
+        status: 'ready',
+        engine: 'playwright-chromium',
+      });
+      expect(mockFetch).toHaveBeenLastCalledWith(
+        'http://localhost:5709/health/ready',
+        expect.anything()
+      );
+    });
+
+    it('merges setHeaders mutations into every subsequent request', async () => {
+      client.setHeaders({ 'x-trace-id': 'trace-9' });
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'ok' }) });
+
+      await client.health();
+
+      const call = vi.mocked(fetch).mock.calls.at(-1)!;
+      expect(new Headers(call[1]?.headers as HeadersInit).get('x-trace-id')).toBe('trace-9');
+    });
+  });
+
+  describe('error-body shapes on the shared HTTP path', () => {
+    it('falls back to UNKNOWN_ERROR when an error response has no error envelope', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({ foo: 1 }) });
+
+      await expect(client.sessions.get('ses_1')).rejects.toMatchObject({
+        code: 'UNKNOWN_ERROR',
+        message: 'UNKNOWN_ERROR: Unknown error',
+        retryable: false,
+      });
+    });
+
+    it('derives the error from the HTTP status when the body is not JSON', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        statusText: 'Bad Gateway',
+        json: async () => {
+          throw new SyntaxError('Unexpected token < in JSON');
+        },
+      });
+
+      await expect(client.sessions.get('ses_1')).rejects.toMatchObject({
+        code: 'UNKNOWN_ERROR',
+        message: 'UNKNOWN_ERROR: HTTP 502: Bad Gateway',
+        retryable: false,
+      });
+    });
+  });
 });
 
 describe('SessionsClient.extract schema passthrough', () => {

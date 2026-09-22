@@ -90,6 +90,22 @@ describe('InMemoryTracer', () => {
     expect(exported).toContain('***');
   });
 
+  it('should scrub secret values out of span events too', () => {
+    const secretManager = new SecretManager({ 'vault://p': 'swordfish' });
+    const tracer = new InMemoryTracer({ secretManager });
+    const span = tracer.startSpan('act', { safe: 'attribute' });
+    tracer.addEvent(span, 'approval.denied', { reason: 'token=swordfish', attempt: 2 });
+
+    tracer.endSpan(span);
+
+    const [recorded] = tracer.completedSpans();
+    // The exported copy is scrubbed...
+    expect(recorded?.events[0]?.attributes).toEqual({ reason: 'token=***', attempt: 2 });
+    expect(JSON.stringify(recorded)).not.toContain('swordfish');
+    // ...while the live span the caller holds is left untouched.
+    expect(span.events[0]?.attributes).toEqual({ reason: 'token=swordfish', attempt: 2 });
+  });
+
   it('should bound the retained span buffer', () => {
     const tracer = new InMemoryTracer({ maxSpans: 3 });
     for (let i = 0; i < 5; i++) {

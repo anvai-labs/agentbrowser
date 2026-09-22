@@ -518,4 +518,69 @@ describe('ObservationNormalizer', () => {
       expect(observation.overlays).toBeUndefined();
     });
   });
+
+  describe('degraded observation pass-through', () => {
+    it('carries the whole-body ariaSnapshot fallback signal and its reason onto the observation', () => {
+      const rawState: RawPageState = {
+        url: 'https://example.com',
+        title: 'Budget exceeded',
+        status: 'complete',
+        content: '',
+        elements: [{ role: 'div', visible: true, enabled: true }],
+        degraded: true,
+        degradedReason: 'aria-snapshot-timeout',
+      };
+
+      const observation = normalizer.normalize(rawState, {
+        mode: 'interactive',
+        revision: 4,
+      });
+
+      // A caller must be able to detect the DOM-tag-only fallback instead of
+      // silently trusting name/value-less elements.
+      expect(observation.degraded).toBe(true);
+      expect(observation.degradedReason).toBe('aria-snapshot-timeout');
+    });
+
+    it('omits both degraded fields when the engine reported full semantics', () => {
+      const rawState: RawPageState = {
+        url: 'https://example.com',
+        title: 'Test Page',
+        status: 'interactive',
+        content: '',
+        elements: [{ role: 'button', visible: true, enabled: true }],
+      };
+
+      const observation = normalizer.normalize(rawState, {
+        mode: 'interactive',
+        revision: 4,
+      });
+
+      expect(observation.degraded).toBeUndefined();
+      expect(observation.degradedReason).toBeUndefined();
+    });
+  });
+
+  describe('risk classification pass-through', () => {
+    it('carries the engine element risk annotation onto the normalized element', () => {
+      const rawState: RawPageState = {
+        url: 'https://example.com',
+        title: 'Checkout',
+        status: 'interactive',
+        content: '',
+        elements: [
+          { role: 'button', name: 'Pay', visible: true, enabled: true, risk: 'transaction' },
+          { role: 'button', name: 'Back', visible: true, enabled: true },
+        ],
+      };
+
+      const observation = normalizer.normalize(rawState, {
+        mode: 'interactive',
+        revision: 2,
+      });
+
+      expect(observation.elements[0]?.risk).toBe('transaction');
+      expect(observation.elements[1]?.risk).toBeUndefined();
+    });
+  });
 });

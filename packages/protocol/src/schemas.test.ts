@@ -5,6 +5,7 @@
  * of schema validation for all protocol types.
  */
 
+import { Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import { describe, expect, it } from 'vitest';
 import { ErrorCode } from './errors';
@@ -22,6 +23,7 @@ import {
   SessionPolicySchema,
   SessionRequestSchema,
   ViewportSchema,
+  isValid,
   validate,
 } from './schemas';
 import { ActionSchema } from './schemas';
@@ -782,5 +784,28 @@ describe('validatePlanStep (compiled, Phase 3)', () => {
     if (result.ok) {
       expect(result.value.futureField).toBe(1);
     }
+  });
+});
+
+describe('validate/isValid failure containment', () => {
+  it('reports success:false with the thrown message for a malformed schema', () => {
+    // A schema object without a TypeBox kind is a caller bug: validate()
+    // must contain it as a failed validation, not crash the request path.
+    const result = validate({} as unknown as object, { any: 'value' });
+    expect(result.success).toBe(false);
+    expect(result.errors).toEqual(['Unknown type']);
+  });
+
+  it('returns false for a valid value against a real schema', () => {
+    const schema = Type.Object({ count: Type.Integer({ minimum: 1 }) });
+    expect(isValid(schema, { count: 1 })).toBe(true);
+    expect(isValid(schema, { count: 0 })).toBe(false);
+    expect(isValid(schema, { count: '1' })).toBe(false);
+    expect(isValid(schema, null)).toBe(false);
+  });
+
+  it('returns false (not a throw) when the schema itself is malformed', () => {
+    expect(isValid({} as unknown as object, { any: 'value' })).toBe(false);
+    expect(isValid(null as unknown as object, { any: 'value' })).toBe(false);
   });
 });

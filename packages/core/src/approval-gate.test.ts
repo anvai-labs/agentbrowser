@@ -210,6 +210,39 @@ describe('Approval Gates', () => {
       const valid = await gate.validateApprovalToken(token.tokenId, request2);
       expect(valid).toBe(false);
     });
+
+    it('should fingerprint arrays and nested objects order-independently', async () => {
+      // The same action with keys in a different order must produce the same
+      // fingerprint: validation canonicalizes recursively before hashing.
+      const request1 = {
+        sessionId: 'ses_01',
+        action: {
+          type: 'select',
+          parameters: { values: ['a', 'b'], zed: 1, alpha: 2 },
+        },
+      };
+      const request2 = {
+        sessionId: 'ses_01',
+        action: {
+          type: 'select',
+          parameters: { alpha: 2, zed: 1, values: ['a', 'b'] },
+        },
+      };
+
+      const token = await gate.generateApprovalToken(request1);
+
+      await expect(gate.validateApprovalToken(token.tokenId, request2)).resolves.toBe(true);
+
+      // Array order stays significant: a different order is a different action.
+      const request3 = {
+        sessionId: 'ses_01',
+        action: {
+          type: 'select',
+          parameters: { values: ['b', 'a'], zed: 1, alpha: 2 },
+        },
+      };
+      await expect(gate.validateApprovalToken(token.tokenId, request3)).resolves.toBe(false);
+    });
   });
 
   describe('token usage', () => {
@@ -352,6 +385,24 @@ describe('Approval Gates', () => {
 
       expect(lines.some((line) => line.includes('approval.cleanup-failed'))).toBe(true);
       expect(lines.some((line) => line.includes('cleanup exploded'))).toBe(true);
+
+      await loggedGate.shutdown();
+    });
+
+    it('stringifies non-Error cleanup failures for the logger', async () => {
+      const lines: string[] = [];
+      const logger = new StructuredLogger({ sink: (line) => lines.push(line) });
+      const loggedGate = new ApprovalGate({ cleanupIntervalMs: 30, logger });
+
+      (loggedGate as unknown as { runCleanup(): Promise<void> }).runCleanup = async () => {
+        throw 'cleanup failed without an error object';
+      };
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect(lines.some((line) => line.includes('cleanup failed without an error object'))).toBe(
+        true
+      );
 
       await loggedGate.shutdown();
     });
@@ -530,6 +581,140 @@ describe('Approval Gates', () => {
       for (const action of lowRiskActions) {
         const required = await gate.isApprovalRequired(action);
         expect(required).toBe(false);
+      }
+    });
+
+    it('should default to requiring approval for unknown action types (fail-safe)', async () => {
+      // Not in the low-risk set and matching no high-risk pattern: the
+      // default must be the safe direction - approval required.
+      const required = await gate.isApprovalRequired({ type: 'detonate_the_server' });
+      expect(required).toBe(true);
+    });
+  });
+
+  describe('expiry surfaces', () => {
+    it('should report an expired token as expired when fetched by ID', async () => {
+      const gateWithShortTtl = new ApprovalGate({ tokenTtlMs: 5 });
+      try {
+        const token = await gateWithShortTtl.generateApprovalToken({
+          sessionId: 'ses_01',
+          action: { type: 'click' },
+        });
+        expect(token.status).toBe('pending');
+
+        await new Promise((resolve) => setTimeout(resolve, 20));
+
+        const fetched = await gateWithShortTtl.getToken(token.tokenId);
+        expect(fetched?.status).toBe('expired');
+        expect(fetched?.expiresAt).toBeLessThan(Date.now());
+      } finally {
+        await gateWithShortTtl.shutdown();
+      }
+    });
+
+    it('should exclude expired tokens from session listings without mutating unknown IDs', async () => {
+      const gateWithShortTtl = new ApprovalGate({ tokenTtlMs: 5 });
+      try {
+        await gateWithShortTtl.generateApprovalToken({
+          sessionId: 'ses_01',
+          action: { type: 'click' },
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 20));
+
+        expect(await gateWithShortTtl.getSessionTokens('ses_01')).toEqual([]);
+      } finally {
+        await gateWithShortTtl.shutdown();
+      }
+    });
+  });
+
+  describe('configuration updates', () => {
+    it('should expose its active configuration and return a detached copy', async () => {
+      const configured = new ApprovalGate({ tokenTtlMs: 1234, maxTokens: 7 });
+      const config = configured.getConfig();
+
+      expect(config).toEqual({ tokenTtlMs: 1234, maxTokens: 7, cleanupIntervalMs: 60000 });
+
+      // Mutating the returned snapshot must not bleed into the gate.
+      (config as { tokenTtlMs: number }).tokenTtlMs = 999999;
+      expect(configured.getConfig().tokenTtlMs).toBe(1234);
+      await configured.shutdown();
+    });
+
+    it('should apply valid configuration updates', async () => {
+      const configured = new ApprovalGate({ tokenTtlMs: 1000, maxTokens: 5 });
+      try {
+        configured.updateConfig({ tokenTtlMs: 2000, maxTokens: 9 });
+
+        expect(configured.getConfig()).toEqual({
+          tokenTtlMs: 2000,
+          maxTokens: 9,
+          cleanupIntervalMs: 60000,
+        });
+
+        // New TTL takes effect for tokens minted after the update.
+        const before = Date.now();
+        const token = await configured.generateApprovalToken({
+          sessionId: 'ses_01',
+          action: { type: 'click' },
+        });
+        expect(token.expiresAt).toBeGreaterThanOrEqual(before + 2000);
+      } finally {
+        await configured.shutdown();
+      }
+    });
+
+    it('should reject a non-positive tokenTtlMs update', () => {
+      expect(() => gate.updateConfig({ tokenTtlMs: 0 })).toThrow('tokenTtlMs must be positive');
+      expect(() => gate.updateConfig({ tokenTtlMs: -5 })).toThrow('tokenTtlMs must be positive');
+      expect(() => gate.updateConfig({ tokenTtlMs: 1.5 })).toThrow('tokenTtlMs must be positive');
+      // A rejected update must not change the stored configuration.
+      expect(gate.getConfig().tokenTtlMs).toBe(300000);
+    });
+
+    it('should reject a non-positive maxTokens update', () => {
+      expect(() => gate.updateConfig({ maxTokens: 0 })).toThrow('maxTokens must be positive');
+      expect(() => gate.updateConfig({ maxTokens: -1 })).toThrow('maxTokens must be positive');
+      expect(() => gate.updateConfig({ maxTokens: 2.5 })).toThrow('maxTokens must be positive');
+      expect(gate.getConfig().maxTokens).toBe(1000);
+    });
+
+    it('should leave the cleanup interval untouched when the update omits it', async () => {
+      const configured = new ApprovalGate({ tokenTtlMs: 1000, cleanupIntervalMs: 5000 });
+      try {
+        configured.updateConfig({ maxTokens: 3 });
+
+        expect(configured.getConfig().cleanupIntervalMs).toBe(5000);
+        expect(configured.getConfig().maxTokens).toBe(3);
+      } finally {
+        await configured.shutdown();
+      }
+    });
+
+    it('should restart the cleanup timer with the new interval', async () => {
+      // The gate starts with a 1-hour cleanup interval; the update moves it to
+      // 50ms. Only a restarted timer can purge the used token in time.
+      const configured = new ApprovalGate({
+        tokenTtlMs: 60000,
+        maxTokens: 2,
+        cleanupIntervalMs: 3_600_000,
+      });
+      try {
+        const token = await configured.generateApprovalToken({
+          sessionId: 'ses_01',
+          action: { type: 'click' },
+        });
+        await configured.useApprovalToken(token.tokenId);
+
+        configured.updateConfig({ cleanupIntervalMs: 50 });
+        await new Promise((resolve) => setTimeout(resolve, 150));
+
+        // Used tokens are purged by cleanup regardless of ttl (see runCleanup).
+        expect(configured.getTokenCount()).toBe(0);
+        expect(await configured.getSessionTokens('ses_01')).toEqual([]);
+      } finally {
+        await configured.shutdown();
       }
     });
   });

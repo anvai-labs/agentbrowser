@@ -61,6 +61,24 @@ describe('SecretManager', () => {
       // not dereferenced again.
       await expect(manager.resolve('vault://a')).resolves.toBe('vault://b');
     });
+
+    it.fails('keeps the rejected input out of the INVALID_REFERENCE message', async () => {
+      // Known defect, expected to fail until fixed: resolve echoes the raw
+      // input into the error message, so a credential pasted where a
+      // reference belongs is emitted verbatim — and redact() can never
+      // scrub a value that was never registered. When the echo is removed,
+      // promote this to a plain it().
+      const manager = new SecretManager({});
+      const error: unknown = await manager.resolve('plain-text-password').then(
+        () => {
+          throw new Error('expected resolve to reject');
+        },
+        (e: unknown) => e
+      );
+      expect(error).toBeInstanceOf(SecretError);
+      expect((error as SecretError).code).toBe('INVALID_REFERENCE');
+      expect((error as SecretError).message).not.toContain('plain-text-password');
+    });
   });
 
   describe('redaction', () => {
@@ -122,6 +140,45 @@ describe('SecretManager', () => {
       const safe = manager.redact(new Error('auth failed for swordfish').message);
 
       expect(safe).not.toContain('swordfish');
+    });
+  });
+
+  describe('untrusted dictionary redaction (keys are untrusted too)', () => {
+    it('passes strings and keys through untouched when no secrets are registered', () => {
+      const manager = new SecretManager({});
+      const input = { plain: 'value', nested: { k: ['a', 1, null] } };
+
+      expect(manager.redactUntrusted(input)).toEqual(input);
+    });
+
+    it('redacts secret occurrences in both keys and values of page-supplied dictionaries', () => {
+      const manager = new SecretManager({ 'vault://p': 'swordfish' });
+
+      const safe = manager.redactUntrusted({
+        swordfish: 'leaks the swordfish',
+        note: 'key never redacted without the untrusted variant',
+        more: { 'contains swordfish': 1 },
+      });
+      const serialized = JSON.stringify(safe);
+
+      expect(serialized).not.toContain('swordfish');
+      expect(safe['***']).toBe('leaks the ***');
+      expect(safe.note).toBe('key never redacted without the untrusted variant');
+      expect((safe.more as Record<string, unknown>)['contains ***']).toBe(1);
+    });
+
+    it('keeps both values when redacted key names collide', () => {
+      const manager = new SecretManager({
+        'vault://a': 'x key',
+        'vault://b': 'key',
+      });
+
+      const safe = manager.redactUntrusted({ 'x key': 'v1', key: 'v2' });
+
+      // 'x key' -> '***' collides with 'key' -> '***'; the second is
+      // disambiguated instead of silently overwriting the first.
+      expect(Object.keys(safe)).toEqual(['***', '***#1']);
+      expect(Object.values(safe)).toEqual(['v1', 'v2']);
     });
   });
 

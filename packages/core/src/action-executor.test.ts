@@ -329,6 +329,32 @@ describe('ActionExecutor', () => {
       );
       expect(result.error).toBeUndefined();
     });
+
+    it('should propagate the engine remap hint onto the result', async () => {
+      (mockEnginePage.act as any).mockResolvedValue(
+        effect({ remap: { from: 'e1_0', to: 'e2_1' } })
+      );
+
+      const result = await executor.execute(req({ type: 'press', key: 'Enter' }), {
+        enginePage: mockEnginePage,
+        observation: mockObservation,
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.remap).toEqual({ from: 'e1_0', to: 'e2_1' });
+    });
+
+    it('should omit remap when the engine does not suggest one', async () => {
+      (mockEnginePage.act as any).mockResolvedValue(effect());
+
+      const result = await executor.execute(req({ type: 'press', key: 'Enter' }), {
+        enginePage: mockEnginePage,
+        observation: mockObservation,
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.remap).toBeUndefined();
+    });
   });
 
   describe('error handling', () => {
@@ -474,6 +500,31 @@ describe('ActionExecutor', () => {
         role: 'button',
         name: 'Cancel',
       });
+    });
+
+    it('should skip fingerprint verification when the ref is not in the observation', async () => {
+      // A revision-1 ref the engine resolves happily, but the caller's
+      // observation never contained it (e.g. minted from an engine-side
+      // include:["fileInputs"] pass). With nothing to compare against, the
+      // revision checks stand and the action proceeds.
+      (mockEnginePage.resolve as any).mockResolvedValue({
+        ref: 'e1_5',
+        fingerprint: 'fileinput_resume_visible_true_enabled_true',
+        role: 'fileinput',
+        visible: true,
+        enabled: true,
+      });
+      (mockEnginePage.act as any).mockResolvedValue(effect({ actionId: 'act_upload' }));
+
+      const result = await executor.execute(
+        req({ type: 'upload', target: { ref: 'e1_5' }, paths: ['/tmp/resume.pdf'] }),
+        { enginePage: mockEnginePage, observation: mockObservation }
+      );
+
+      expect(result.error).toBeUndefined();
+      expect(result.actionId).toBe('act_upload');
+      expect(result.targetFingerprint).toBe('fileinput_resume_visible_true_enabled_true');
+      expect(mockEnginePage.act).toHaveBeenCalled();
     });
   });
 
@@ -743,6 +794,67 @@ describe('ActionExecutor', () => {
       });
       expect(result.error).toBeUndefined();
       expect(mockEnginePage.act).toHaveBeenCalledWith(action);
+    });
+
+    it('should require a value for typeText', async () => {
+      const result = await executor.execute(req({ type: 'typeText' } as any), {
+        enginePage: mockEnginePage,
+        observation: mockObservation,
+      });
+
+      expect(result.error?.code).toBe('INVALID_REQUEST');
+      expect(result.error?.message).toContain('typeText action requires a value');
+      expect(mockEnginePage.resolve).not.toHaveBeenCalled();
+    });
+
+    it('should execute typeText with a value and count', async () => {
+      (mockEnginePage.act as any).mockResolvedValue(effect({ actionId: 'act_type' }));
+
+      const result = await executor.execute(
+        req({ type: 'typeText', value: 'hello', delay: 25 } as any),
+        { enginePage: mockEnginePage, observation: mockObservation }
+      );
+
+      expect(result.error).toBeUndefined();
+      expect(mockEnginePage.act).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'typeText', value: 'hello', delay: 25 })
+      );
+    });
+
+    it('should require a direction or delta for scroll', async () => {
+      const result = await executor.execute(req({ type: 'scroll' } as any), {
+        enginePage: mockEnginePage,
+        observation: mockObservation,
+      });
+
+      expect(result.error?.code).toBe('INVALID_REQUEST');
+      expect(result.error?.message).toBe('Scroll action requires a direction or a delta');
+      expect(mockEnginePage.act).not.toHaveBeenCalled();
+    });
+
+    it('should execute wait with a condition', async () => {
+      (mockEnginePage.act as any).mockResolvedValue(effect({ actionId: 'act_wait' }));
+
+      const result = await executor.execute(
+        req({ type: 'wait', condition: { until: 'load', timeoutMs: 1000 } } as any),
+        { enginePage: mockEnginePage, observation: mockObservation }
+      );
+
+      expect(result.error).toBeUndefined();
+      expect(mockEnginePage.act).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'wait', condition: { until: 'load', timeoutMs: 1000 } })
+      );
+    });
+
+    it('should require a condition with an until for wait', async () => {
+      const result = await executor.execute(req({ type: 'wait' } as any), {
+        enginePage: mockEnginePage,
+        observation: mockObservation,
+      });
+
+      expect(result.error?.code).toBe('INVALID_REQUEST');
+      expect(result.error?.message).toBe('Wait action requires a condition with an until');
+      expect(mockEnginePage.act).not.toHaveBeenCalled();
     });
   });
 });
