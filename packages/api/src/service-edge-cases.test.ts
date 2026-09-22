@@ -15,13 +15,14 @@ import {
   type ServiceSessionRequest,
 } from './service.js';
 
-/** Capture a ServiceError from a rejecting promise. */
+/** Capture a ServiceError from a rejecting promise; anything else is a bug. */
 async function capture(run: () => Promise<unknown>): Promise<ServiceError | undefined> {
   try {
     await run();
     return undefined;
   } catch (error) {
-    return error instanceof ServiceError ? error : undefined;
+    if (!(error instanceof ServiceError)) throw error;
+    return error;
   }
 }
 
@@ -51,6 +52,13 @@ function waitFor<T>(probe: () => T | undefined | Promise<T | undefined>): Promis
     if (value === undefined) throw new Error('condition not met yet');
     return value;
   });
+}
+
+/** Give the event pump ample spaced time to process (or drop) events before a must-NOT-happen assertion. */
+async function letPumpSettle(): Promise<void> {
+  for (let round = 0; round < 3; round += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 }
 
 /** Minimal shape of a testkit FakePage handle used for fault injection. */
@@ -150,7 +158,7 @@ describe('AgentBrowserService edge branches', () => {
       const { service, sessionId, fakePage } = await harness();
       fakePage.emitEvent('page.created');
       fakePage.emitEvent('page.created', { openerPageId: 7, pageId: null } as never);
-      await new Promise((resolve) => setTimeout(resolve, 30));
+      await letPumpSettle();
       expect((await service.listPages(sessionId)).map((p) => p.openerPageId)).toEqual([undefined]);
       await service.shutdown();
     });
@@ -161,7 +169,7 @@ describe('AgentBrowserService edge branches', () => {
         openerPageId: 'fake-page-does-not-exist',
         pageId: 'fake-page-999',
       });
-      await new Promise((resolve) => setTimeout(resolve, 30));
+      await letPumpSettle();
       expect(await service.listPages(sessionId)).toHaveLength(1);
       await service.shutdown();
     });
@@ -175,7 +183,7 @@ describe('AgentBrowserService edge branches', () => {
       });
       // Replay with the engine-side ids the event carries on a real engine.
       fakePage.emitEvent('page.created', { openerPageId: fakePage.id, pageId: popup.id });
-      await new Promise((resolve) => setTimeout(resolve, 30));
+      await letPumpSettle();
       const pages = await service.listPages(sessionId);
       expect(pages.filter((p) => p.openerPageId === pageId)).toHaveLength(1);
       expect(adopted.pageId).toBeTruthy();
@@ -207,7 +215,7 @@ describe('AgentBrowserService edge branches', () => {
           const created = service.getSessionEvents(sessionId, 'page.created');
           if (created.length < 21) throw new Error('event not replayed yet');
         });
-        await new Promise((resolve) => setTimeout(resolve, 30));
+        await letPumpSettle();
         const registered = (await service.listPages(sessionId)).map((p) => p.pageId);
         expect(registered.some((id) => id.endsWith(`_${overflow.id}`))).toBe(false);
       } finally {
@@ -225,7 +233,7 @@ describe('AgentBrowserService edge branches', () => {
         openerPageId: fakePage.id,
         pageId: 'fake-page-brand-new',
       });
-      await new Promise((resolve) => setTimeout(resolve, 30));
+      await letPumpSettle();
       expect(await service.listPages(sessionId)).toHaveLength(1);
       await service.shutdown();
     });
@@ -236,7 +244,7 @@ describe('AgentBrowserService edge branches', () => {
         openerPageId: fakePage.id,
         pageId: 'fake-page-ghost',
       });
-      await new Promise((resolve) => setTimeout(resolve, 30));
+      await letPumpSettle();
       expect(await service.listPages(sessionId)).toHaveLength(1);
       await service.shutdown();
     });

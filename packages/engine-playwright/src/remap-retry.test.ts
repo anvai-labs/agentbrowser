@@ -90,7 +90,14 @@ describe('remap retry and stale identity refusals', () => {
       });
 
       const actPromise = page.act({ type: 'click', target: { ref }, remap: true });
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      // Close while the heal is still in flight. The heal's re-observation
+      // of this 400-paragraph document takes far longer than this window on
+      // any host; settle-guard keeps a freak-fast host from closing after
+      // the act already resolved and misreading the result.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      if (await Promise.race([actPromise.then(() => true), Promise.resolve(false)])) {
+        throw new Error('act settled before the page close; the race window was lost');
+      }
       await page.close();
 
       const error: EngineError = await actPromise.catch((e: unknown) => e as EngineError);

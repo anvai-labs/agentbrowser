@@ -62,17 +62,22 @@ describe('SecretManager', () => {
       await expect(manager.resolve('vault://a')).resolves.toBe('vault://b');
     });
 
-    it('should reject a non-reference with INVALID_REFERENCE before any lookup', async () => {
+    it.fails('keeps the rejected input out of the INVALID_REFERENCE message', async () => {
+      // Known defect, expected to fail until fixed: resolve echoes the raw
+      // input into the error message, so a credential pasted where a
+      // reference belongs is emitted verbatim — and redact() can never
+      // scrub a value that was never registered. When the echo is removed,
+      // promote this to a plain it().
       const manager = new SecretManager({});
-
-      try {
-        await manager.resolve('plain-text-password');
-        fail('expected resolve to reject');
-      } catch (error) {
-        expect(error).toBeInstanceOf(SecretError);
-        expect((error as SecretError).code).toBe('INVALID_REFERENCE');
-        expect((error as SecretError).message).toContain('plain-text-password');
-      }
+      const error: unknown = await manager.resolve('plain-text-password').then(
+        () => {
+          throw new Error('expected resolve to reject');
+        },
+        (e: unknown) => e
+      );
+      expect(error).toBeInstanceOf(SecretError);
+      expect((error as SecretError).code).toBe('INVALID_REFERENCE');
+      expect((error as SecretError).message).not.toContain('plain-text-password');
     });
   });
 

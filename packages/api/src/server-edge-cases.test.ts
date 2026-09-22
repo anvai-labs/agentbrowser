@@ -555,10 +555,13 @@ describe('server edge branches', () => {
   });
 
   describe('internal failure envelope', () => {
-    it('documents that root-route handler failures bypass the custom envelope', async () => {
-      // Routes registered before setErrorHandler keep fastify's default
-      // error serializer for handler-thrown errors; the custom INTERNAL
-      // envelope in server.ts is only reached by parser-stage errors.
+    it.fails('escapes root-route handler failures into the custom INTERNAL envelope', async () => {
+      // Known defect, expected to fail until fixed: buildServer awaits
+      // fastify.register() mid-build before setErrorHandler runs, so routes
+      // registered earlier keep fastify's default serializer and an
+      // unauthenticated /metrics failure leaks the raw internal error text.
+      // When the scoping is fixed, this expectation passes and should be
+      // promoted to a plain it() — and the leak-tolerant pin removed.
       const explodingMetrics = {
         render: () => {
           throw new Error('metrics exploded');
@@ -571,10 +574,9 @@ describe('server edge branches', () => {
       try {
         const response = await server.inject({ method: 'GET', url: '/metrics' });
         expect(response.statusCode).toBe(500);
-        expect(response.json()).toMatchObject({
-          statusCode: 500,
-          error: 'Internal Server Error',
-          message: 'metrics exploded',
+        expect(response.json().error).toMatchObject({
+          code: 'INTERNAL',
+          retryable: false,
         });
       } finally {
         await server.close();
@@ -627,7 +629,13 @@ describe('server edge branches', () => {
       }
     });
 
-    it('serves /v1 parser errors with fastify defaults (handler not inherited)', async () => {
+    it.fails('serves /v1 parser errors with the protocol envelope too', async () => {
+      // Known defect, expected to fail until fixed: the custom handler is
+      // registered on the root context after the /v1 plugin, so /v1
+      // parser-stage errors fall through to fastify's default serializer
+      // instead of the documented { error: { code, ... } } envelope — an
+      // error-contract inconsistency between the two route planes. When
+      // the scoping is fixed, promote this to a plain it().
       const server = await buildServer({ engine: new FakeEngine() });
       try {
         const malformed = await server.inject({
@@ -637,9 +645,9 @@ describe('server edge branches', () => {
           payload: '{definitely not json',
         });
         expect(malformed.statusCode).toBe(400);
-        expect(malformed.json()).toMatchObject({
-          statusCode: 400,
-          error: 'Bad Request',
+        expect(malformed.json().error).toMatchObject({
+          code: 'INVALID_REQUEST',
+          retryable: false,
           message: 'Invalid JSON body',
         });
       } finally {
@@ -661,7 +669,7 @@ describe('server edge branches', () => {
         const address = server.server.address();
         expect(typeof address === 'object' && address ? address.port : -1).toBe(port);
       } finally {
-        if (original === undefined) process.env.PORT = undefined;
+        if (original === undefined) Reflect.deleteProperty(process.env, 'PORT');
         else process.env.PORT = original;
         await server?.close();
       }
@@ -672,7 +680,9 @@ describe('server edge branches', () => {
         return; // Default port already occupied in this environment.
       }
       const original = process.env.PORT;
-      process.env.PORT = undefined; // raw === undefined branch: envPort declines.
+      // Genuinely unset (assigning undefined would coerce to the string
+      // "undefined"): the raw === undefined branch is what envPort declines.
+      Reflect.deleteProperty(process.env, 'PORT');
       let server: RunningServer | undefined;
       try {
         server = await startServer({ engine: new FakeEngine(), host: '127.0.0.1' });
@@ -685,7 +695,7 @@ describe('server edge branches', () => {
         const address2 = server.server.address();
         expect(typeof address2 === 'object' && address2 ? address2.port : -1).toBe(5709);
       } finally {
-        if (original === undefined) process.env.PORT = undefined;
+        if (original === undefined) Reflect.deleteProperty(process.env, 'PORT');
         else process.env.PORT = original;
         await server?.close();
       }

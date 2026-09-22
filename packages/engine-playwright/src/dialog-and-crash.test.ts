@@ -7,6 +7,20 @@ function backingPage(page: EnginePage): Page {
   return (page as unknown as { backingPage(): Page }).backingPage();
 }
 
+/** Wait for an engine event to arrive instead of guessing with a fixed sleep. */
+async function waitForEvent(
+  events: EngineEvent[],
+  type: EngineEvent['type'],
+  timeoutMs = 5000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (events.some((event) => event.type === type)) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for a ${type} event`);
+}
+
 const PROMPT_PAGE =
   'data:text/html,<html><body>' +
   '<input id="out" aria-label="Out" readonly />' +
@@ -49,14 +63,14 @@ describe('held dialogs, crashes, and observation details (real Chromium)', () =>
       // The triggering click stalls while the dialog is held: fire without
       // awaiting, settle the dialog through the dialog action.
       const clickPromise = page.act({ type: 'click', target: { ref: ask.ref } }).catch(() => {});
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await waitForEvent(events, 'dialog.opened');
 
       const effect = await page.act({ type: 'dismissDialog' });
       expect(effect.result).toEqual({ dialog: 'dismissed' });
       expect(effect.newRevision).toBe(effect.oldRevision); // non-mutating
       await clickPromise;
 
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await waitForEvent(events, 'dialog.closed');
       // A dismissed prompt answers null: the page records the empty string.
       const out = (await page.observe({})).elements.find((el) => el.name === 'Out');
       expect(out?.value === '' || out?.value === undefined).toBe(true);
@@ -85,8 +99,7 @@ describe('held dialogs, crashes, and observation details (real Chromium)', () =>
       })().catch(() => {});
 
       const clickPromise = page.act({ type: 'click', target: { ref: hold.ref } }).catch(() => {});
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      expect(events.some((e) => e.type === 'dialog.opened')).toBe(true);
+      await waitForEvent(events, 'dialog.opened');
 
       await page.close();
       await clickPromise;

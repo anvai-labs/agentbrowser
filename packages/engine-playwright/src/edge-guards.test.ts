@@ -170,8 +170,28 @@ describe('action guards and capture caps (real Chromium)', () => {
       const many = Array.from({ length: 800 }, (_, i) => `<button>B${i}</button>`).join('');
       await page.navigate({ url: `data:text/html,${many}` });
 
-      const racing = page.observe({});
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      // Fire the observation and close the page only once it is verifiably
+      // still pending (inside the degraded DOM-tag scan), so the race does
+      // not depend on a guessed sleep on fast or slow hosts.
+      let racing: Promise<unknown> | undefined;
+      for (let attempt = 0; attempt < 5 && racing === undefined; attempt++) {
+        const candidate = page.observe({});
+        let settled = false;
+        candidate.then(
+          () => {
+            settled = true;
+          },
+          () => {
+            settled = true;
+          }
+        );
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        if (!settled) racing = candidate;
+        else await candidate.catch(() => {});
+      }
+      if (racing === undefined) {
+        throw new Error('observation never stayed pending; cannot race it against a page close');
+      }
       await page.close();
       await expect(racing).rejects.toThrow();
 

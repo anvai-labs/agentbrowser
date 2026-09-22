@@ -515,22 +515,24 @@ describe('FakeEngine package surface', () => {
     expect(typeof testkit.qualifyApplicationParity).toBe('function');
   });
 
-  it(
-    'refuses to qualify the non-browsing FakeEngine: the fixture is never fetched',
-    async () => {
-      const { qualifyApplicationParity } = await import('./application-parity.js');
-      const engine = new FakeEngine();
-      try {
-        // FakeEngine.navigate fabricates elements without fetching the URL, so
-        // the parity harness must fail closed at its state deadline, never
-        // pass, and still tear down its session and fixture server.
-        await expect(qualifyApplicationParity(engine)).rejects.toThrow(
-          /Application fixture did not reach expected state/
-        );
-      } finally {
-        await engine.close();
-      }
-    },
-    20000
-  );
+  it('refuses to qualify the non-browsing FakeEngine: the fixture is never fetched', async () => {
+    const { qualifyApplicationParity } = await import('./application-parity.js');
+    const engine = new FakeEngine();
+    vi.useFakeTimers();
+    try {
+      // FakeEngine.navigate fabricates elements without fetching the URL, so
+      // the parity harness must fail closed at its state deadline, never
+      // pass, and still tear down its session and fixture server. The poll
+      // loop and deadline run on the fake clock; real loopback I/O settles
+      // on its own microtasks.
+      const outcome = expect(qualifyApplicationParity(engine)).rejects.toThrow(
+        /Application fixture did not reach expected state/
+      );
+      await vi.runAllTimersAsync();
+      await outcome;
+    } finally {
+      vi.useRealTimers();
+      await engine.close();
+    }
+  });
 });

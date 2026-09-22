@@ -226,12 +226,13 @@ describe('autofill dispatch and policy corners', () => {
     });
   });
 
-  it('never records the adapter action id on single-action receipts (shadowed effect)', async () => {
-    // Known defect, pinned intentionally: autofill.ts declares an outer
-    // `let effect` for the actionId evidence check, but the single-action
-    // branch binds its own inner `const effect`, so the outer variable is
+  it.fails('records the adapter action id on single-action receipts', async () => {
+    // Known defect, expected to fail until fixed: autofill.ts declares an
+    // outer `let effect` for the actionId evidence check, but both branches
+    // bind their own shadowing `const effect`, so the outer variable is
     // never assigned and `receipt.actionId` stays unset even though the
-    // adapter reported one.
+    // adapter reported one. When the shadowing is fixed, this expectation
+    // passes and should be promoted to a plain it().
     const f = fixture([textbox('a', 'Company name')]);
     f.act.mockImplementation(
       async (request: { target?: { ref?: string }; value?: string }, onDispatch: () => void) => {
@@ -246,8 +247,7 @@ describe('autofill dispatch and policy corners', () => {
       policy: { settleMs: 0 },
     })) as Awaited<ReturnType<typeof runAutofill>>;
     expect(report.ok).toBe(true);
-    expect(report.receipts[0]).toMatchObject({ status: 'verified' });
-    expect(report.receipts[0]?.actionId).toBeUndefined();
+    expect(report.receipts[0]).toMatchObject({ status: 'verified', actionId: 'act_77' });
   });
 
   it('reports verify:none fields as unverified after dispatch', async () => {

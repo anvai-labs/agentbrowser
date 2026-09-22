@@ -74,6 +74,12 @@ describe('default branded-Chrome candidates per platform (ADR-016)', () => {
   ): Promise<{ executablePath?: string }> => {
     const original = Object.getOwnPropertyDescriptor(process, 'platform');
     Object.defineProperty(process, 'platform', { value: platform });
+    // The engine constructor consults these escape hatches before probing;
+    // ambient values from the developer's shell must not skew the assertions.
+    const chromePath = process.env.AGENTBROWSER_CHROME_PATH;
+    const preferBundled = process.env.AGENTBROWSER_PREFER_BUNDLED;
+    Reflect.deleteProperty(process.env, 'AGENTBROWSER_CHROME_PATH');
+    Reflect.deleteProperty(process.env, 'AGENTBROWSER_PREFER_BUNDLED');
     probeState.hideAllPaths = true;
     probeState.probed = [];
     try {
@@ -83,11 +89,23 @@ describe('default branded-Chrome candidates per platform (ADR-016)', () => {
       ).headedChromiumOptions();
     } finally {
       probeState.hideAllPaths = false;
+      if (chromePath !== undefined) process.env.AGENTBROWSER_CHROME_PATH = chromePath;
+      else Reflect.deleteProperty(process.env, 'AGENTBROWSER_CHROME_PATH');
+      if (preferBundled !== undefined) process.env.AGENTBROWSER_PREFER_BUNDLED = preferBundled;
+      else Reflect.deleteProperty(process.env, 'AGENTBROWSER_PREFER_BUNDLED');
       if (original) {
         Object.defineProperty(process, 'platform', original);
       }
     }
   };
+
+  it('probes the macOS Chrome install location on darwin and falls back to bundled', async () => {
+    const options = await headedOptionsOn('darwin');
+    expect(options.executablePath).toBeUndefined();
+    expect(probeState.probed).toEqual([
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    ]);
+  });
 
   it('probes the Windows Chrome install locations on win32 and falls back to bundled', async () => {
     const options = await headedOptionsOn('win32');

@@ -7,7 +7,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildMcpServer } from './mcp-server.js';
-import type { McpClient, McpDependencies } from './mcp-server.js';
+import type { McpClient, McpDependencies, McpServer } from './mcp-server.js';
 
 describe('AgentBrowser MCP server edge branches', () => {
   let sessions: Record<string, ReturnType<typeof vi.fn>>;
