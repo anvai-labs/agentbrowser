@@ -1,7 +1,7 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
 Rechecked published 1.9.1 at `310e01d43982824caac2c63ed8d98355e17efdce`
-and develop `803f078857235fc45a405b733b0d71a6a2504663` (PR #250; alignment
+and develop `9c82a490f96fd578fd0dad403503717fb6fb9831` (PR #251; alignment
 rechecked 2026-09-21).
 The [release ladder](release-1.9.1.md) includes Bun CLI/MCP artifacts,
 Node 24 service qualification, Homebrew and develop back-sync. Existing browser
@@ -183,3 +183,18 @@ submission permission. Next: design and independently review mandatory consent i
 ApplicationAuthority's existing dispatch path, then implement it with failing-first
 tests. C3c public usability/independent acceptance follows that gate. Published 1.9.1,
 the 3/9 completed milestone count and conservative estimates remain unchanged.
+
+
+Foundation repairs #251 merged at `9c82a49`, retaining reviewed head `00acd05`
+and tree `c1fc62a`. PR run `35679483754` and post-merge `35679835320` passed all eight
+jobs without reruns; independent review returned SHIP. Both mandatory hooks passed
+3,206 tests with 24 existing skips.
+
+The [C3b internal consent gate](../design/t6-mandatory-application-consent.md) now
+has [focused qualification](t6-mandatory-application-consent.md): authority-derived
+intended operations, mandatory protected dispatch, fresh evidence consumption and
+one synthetic native/app acceptance through the existing executor. The public
+application schemas still reject the internal approval credential. C3c public review
+creation, transport projection, CLI usability and named T2 acceptance qualification
+remain next; production sources and live ATS use remain gated. Do not count this
+internal increment as a finished T4/T6 milestone or a released feature.

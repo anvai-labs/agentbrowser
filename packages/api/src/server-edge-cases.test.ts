@@ -6,6 +6,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { StructuredLogger } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -555,6 +556,37 @@ describe('server edge branches', () => {
   });
 
   describe('internal failure envelope', () => {
+    it('preserves the safe error envelope when the logger sink throws', async () => {
+      const sink = vi.fn(() => {
+        throw new Error('PRIVATE_SINK_DIAGNOSTIC');
+      });
+      const server = await buildServer({
+        engine: new FakeEngine(),
+        logger: new StructuredLogger({ sink }),
+        metrics: {
+          render() {
+            throw new Error('PRIVATE_HANDLER_DIAGNOSTIC');
+          },
+        } as never,
+      });
+      try {
+        const response = await server.inject({ method: 'GET', url: '/metrics' });
+        expect(sink).toHaveBeenCalledOnce();
+        expect(response.statusCode).toBe(500);
+        expect(response.json()).toEqual({
+          error: {
+            code: 'INTERNAL',
+            message: 'An unexpected error occurred',
+            retryable: false,
+          },
+        });
+        expect(response.body).not.toContain('PRIVATE_SINK_DIAGNOSTIC');
+        expect(response.body).not.toContain('PRIVATE_HANDLER_DIAGNOSTIC');
+      } finally {
+        await server.close();
+      }
+    });
+
     it('escapes root-route handler failures into the custom INTERNAL envelope', async () => {
       // The error handler is registered before any awaited plugin, so it
       // governs routes registered earlier too: an unauthenticated /metrics

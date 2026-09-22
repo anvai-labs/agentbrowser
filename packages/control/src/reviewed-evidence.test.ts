@@ -451,3 +451,45 @@ describe('prepared evidence review', () => {
     expect(await f.prepared.consume(token.tokenId, signal)).toBe(true);
   });
 });
+
+it('rechecks the original evidence owner synchronously after consumption and latches revocation', async () => {
+  const f = fixture();
+  const signal = new AbortController().signal;
+  const token = await f.prepared.generate(signal);
+  await f.prepared.decide(token.tokenId, 'approve', signal);
+  expect(await f.prepared.consume(token.tokenId, signal)).toBe(true);
+  expect(() => f.prepared.assertCurrent(signal)).not.toThrow();
+  f.generation.value++;
+  expect(() => f.prepared.assertCurrent(signal)).toThrow('Evidence review unavailable');
+  f.generation.value--;
+  expect(() => f.prepared.assertCurrent(signal)).toThrow('Evidence review unavailable');
+});
+
+it('final evidence guard rejects cancellation without recollecting or consuming a token', () => {
+  const f = fixture();
+  const cancel = new AbortController();
+  cancel.abort();
+  expect(() => f.prepared.assertCurrent(cancel.signal)).toThrow('Evidence review unavailable');
+  expect(f.source.collect).not.toHaveBeenCalled();
+});
+
+it('checks permission again when the last source callback revokes its generation', () => {
+  const generation = { value: 7 };
+  let armed = false;
+  let checks = 0;
+  const f = fixture({
+    generation,
+    assertAuthorized() {
+      if (armed && ++checks === 2) generation.value++;
+    },
+  });
+  armed = true;
+  expect(() => f.prepared.assertCurrent(new AbortController().signal)).toThrow(
+    'Evidence review unavailable'
+  );
+  generation.value = 7;
+  armed = false;
+  expect(() => f.prepared.assertCurrent(new AbortController().signal)).toThrow(
+    'Evidence review unavailable'
+  );
+});

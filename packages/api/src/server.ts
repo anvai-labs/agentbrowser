@@ -218,10 +218,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     // fastify's own logger is a noop under logger:false; the service logger
     // is the real sink. Log code and status only — the raw message may hold
     // unregistered (unredactable) caller input.
-    options.logger?.error('http.framework_error', {
-      code: typeof error.code === 'string' ? error.code : 'UNKNOWN',
-      status: error.statusCode ?? 500,
-    });
+    try {
+      options.logger?.error('http.framework_error', {
+        code: typeof error.code === 'string' ? error.code : 'UNKNOWN',
+        status: error.statusCode ?? 500,
+      });
+    } catch {
+      // Logging must not replace the safe response with a sink's private diagnostic.
+    }
 
     // An escaped protocol error serializes exactly as the route wrapper's
     // fail() would: mapped status, protocol code, redacted message.
