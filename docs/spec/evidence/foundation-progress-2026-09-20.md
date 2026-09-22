@@ -1,7 +1,7 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
 Rechecked published 1.9.1 at `310e01d43982824caac2c63ed8d98355e17efdce`
-and develop `d53829e6c06e26b977bdd0396e61094282b4081c` (PR #257; alignment
+and develop `54daeaa525210d3af58efc0e1c97363e91830c58` (PR #258; alignment
 rechecked 2026-09-22). C3c incorporates the merged #256 error-containment repair.
 The [release ladder](release-1.9.1.md) includes Bun CLI/MCP artifacts,
 Node 24 service qualification, Homebrew and develop back-sync. Existing browser
@@ -225,15 +225,16 @@ are separate work, and no whole milestone is newly complete.
 [P0 trusted evidence composition](../design/t4-production-evidence-composition.md)
 closes the unsupported private-service access used by the synthetic witness fixture.
 It reuses the captured admission-owned native reader in the existing trusted provider
-callback. P0a/P0b are the next shared-foundation implementation packets; production
-registration and a real application qualifier remain separate gates.
+callback. P0a/P0b are implemented in the current candidate; see the
+[bounded qualification](t4-production-evidence-composition.md). Production registration
+(P0c) and a real application qualifier (P1) remain separate gates.
 
 [E0 job eligibility](../design/t6-job-eligibility.md) refines the existing job checkpoint
 into application-owned normalized facts and a pure eligible/hold/reject predicate.
 Its data/schema stays out of the default browser protocol and context. E0a/E0b can be
 implemented independently; private integration and live headed qualification need
-their named inputs and current evidence. This checkpoint writes designs/tasks only;
-no new runtime capability or increase in milestone completion is claimed.
+their named inputs and current evidence. E0 remains design-only; the P0 embedding
+seam does not increase whole-milestone completion or claim live application readiness.
 
 Independent design review returned SHIP after clarifying native-reader lifetime versus
 witness/app guards, private identifier/digest handling, and unconfigured policy versus

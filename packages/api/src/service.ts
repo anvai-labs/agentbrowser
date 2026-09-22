@@ -299,6 +299,11 @@ export interface ServiceEvidenceReviewRequest {
   }>;
 }
 
+/** Trusted host observation scoped to the current review admission, never client supplied. */
+export interface ServiceEvidenceReviewContext {
+  readonly nativeForm: PreparedNativeFormRead;
+}
+
 export interface ServiceDependencies {
   approvalPolicy?: ActionRiskPolicyOptions;
   engine: BrowserEngine;
@@ -355,9 +360,13 @@ export interface ServiceDependencies {
    * objects, so an externally built authority could never see them.
    */
   applicationAdapters?: readonly ApplicationAdapter[];
-  /** Trusted deployment composition for public inspection of reserved evidence reviews. */
+  /**
+   * Synchronous trusted deployment composition for public evidence reviews.
+   * The returned collector may use context.nativeForm within this admission only.
+   */
   evidenceReviewProvider?: (
-    request: ServiceEvidenceReviewRequest
+    request: ServiceEvidenceReviewRequest,
+    context: ServiceEvidenceReviewContext
   ) => { action: Record<string, unknown>; source: EvidenceReviewSource } | undefined;
 }
 
@@ -379,7 +388,7 @@ export interface ServiceEvidenceSourceBuilder {
   ): ReturnType<typeof defineApplicationReadEvidenceSource<ServiceOutcomeEvidenceContext>>;
 }
 
-/** Admission-owned internal reader for a bounded native form witness. */
+/** Admission-owned reader for a bounded native form witness. */
 export interface PreparedNativeFormRead {
   readonly identity: Readonly<{
     sessionId: string;
@@ -3827,7 +3836,10 @@ export class AgentBrowserService {
         ...(selector.application ? { application: selector.application } : {}),
       }) as ServiceEvidenceReviewRequest;
       assertPinned();
-      const configured = synchronousResult(Reflect.apply(provider, undefined, [request]));
+      const readContext: ServiceEvidenceReviewContext = Object.freeze({ nativeForm: page });
+      const configured = synchronousResult(
+        Reflect.apply(provider, undefined, [request, readContext])
+      );
       assertPinned();
       if (!configured || typeof configured !== 'object' || Array.isArray(configured))
         throw new Error('Unavailable provider result');

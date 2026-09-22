@@ -36,6 +36,6 @@ Keep one application operation port, not separate QA and operations implementati
 
 Primary packet: T4, with T5 for durable service recovery and T8 for public harness parity.
 
-Next design: [P0 trusted evidence composition](../design/t4-production-evidence-composition.md).
+Embedding packet: [P0 trusted evidence composition](../design/t4-production-evidence-composition.md).
 Load it explicitly for deployment integration; a public route alone does not configure
 an application adapter or evidence provider in the stock service.
