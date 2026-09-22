@@ -796,6 +796,10 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
         return error(null, -32700, 'Parse error');
       }
 
+      if (message === null || typeof message !== 'object' || Array.isArray(message)) {
+        return error(null, -32600, 'Invalid request');
+      }
+
       // Notifications carry no id and get no response.
       if (message.id === undefined || message.id === null) {
         return null;

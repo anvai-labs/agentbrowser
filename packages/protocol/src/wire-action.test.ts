@@ -135,6 +135,16 @@ describe('wire action contract', () => {
 describe('wire action batch envelope', () => {
   const step = { action: 'click', target: { ref: 'e1_0' } };
 
+  it.each([null, undefined, true, false, 42, 'steps', [], [step]])(
+    'rejects a non-object batch envelope without throwing: %j',
+    (body) => {
+      expect(validateWireActionBatch(body)).toEqual({
+        ok: false,
+        issues: [{ path: '', message: 'Batch envelope must be an object.' }],
+      });
+    }
+  );
+
   it('accepts a bounded batch of standalone steps with optional envelope fields', () => {
     const result = validateWireActionBatch({
       steps: [step, { action: 'reload' }, { action: 'wait', condition: { until: 'load' } }],

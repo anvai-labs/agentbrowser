@@ -226,13 +226,7 @@ describe('autofill dispatch and policy corners', () => {
     });
   });
 
-  it.fails('records the adapter action id on single-action receipts', async () => {
-    // Known defect, expected to fail until fixed: autofill.ts declares an
-    // outer `let effect` for the actionId evidence check, but both branches
-    // bind their own shadowing `const effect`, so the outer variable is
-    // never assigned and `receipt.actionId` stays unset even though the
-    // adapter reported one. When the shadowing is fixed, this expectation
-    // passes and should be promoted to a plain it().
+  it('records the adapter action id on single-action receipts', async () => {
     const f = fixture([textbox('a', 'Company name')]);
     f.act.mockImplementation(
       async (request: { target?: { ref?: string }; value?: string }, onDispatch: () => void) => {
@@ -285,6 +279,41 @@ describe('chip-multiselect strategy', () => {
     ],
     policy: { settleMs: 0 },
   };
+
+  it.each([true, false])(
+    'uses only the final widget action id (final action supplies id: %s)',
+    async (hasFinalId) => {
+      const f = fixture([combobox('c1', 'Team')]);
+      f.act.mockImplementation(
+        async (request: { action?: string; target?: { ref?: string } }, onDispatch: () => void) => {
+          onDispatch();
+          f.dispatch();
+          if (request.action === 'typeText') {
+            f.replace([combobox('c1', 'Team'), ownedChipOption('opt-1', 'c1', 'Alpha')]);
+          }
+          if (request.action === 'click' && request.target?.ref === 'opt-1') {
+            const control = combobox('c1', 'Team');
+            f.replace([
+              {
+                ...control,
+                attributes: {
+                  ...control.attributes,
+                  'autofill-committed-members-complete': 'true',
+                  'autofill-committed-members': '["Alpha"]',
+                },
+              },
+            ]);
+            return hasFinalId ? { actionId: 'act_commit' } : undefined;
+          }
+          return { actionId: 'act_setup' };
+        }
+      );
+      const report = await run(f, chipRequest);
+      expect(report.ok).toBe(true);
+      expect(f.act).toHaveBeenCalledTimes(3);
+      expect(report.receipts[0]?.actionId).toBe(hasFinalId ? 'act_commit' : undefined);
+    }
+  );
 
   it('fails when no option survives typeahead filtering', async () => {
     const f = fixture([combobox('c1', 'Team')]);
