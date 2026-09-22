@@ -445,3 +445,46 @@ it('denies malformed application policy over HTTP without effects or private dia
     await server.close();
   }
 });
+
+it('keeps public review creation operator-only and rejects execution headers before allocation', async () => {
+  const { server, state } = await buildApplicationServer();
+  const payload = {
+    pageId: 'unused-page',
+    source: { ownerId: 'configured-owner', contract: { id: 'draft', version: '1' } },
+    request: { operation: 'add', input: 1, operationId: 'future-write', expectedVersion: 0 },
+  };
+  try {
+    const { path, token } = await bindAndDelegate(server);
+    const delegated = await server.inject({
+      method: 'POST',
+      url: `${path}/application/reviews`,
+      headers: agentHeaders(token),
+      payload,
+    });
+    expect(delegated.statusCode).toBe(403);
+    const foreign = await server.inject({
+      method: 'POST',
+      url: `${path}/application/reviews`,
+      headers: { authorization: 'Bearer intruder' },
+      payload,
+    });
+    expect(foreign.statusCode).toBe(403);
+    const header = await server.inject({
+      method: 'POST',
+      url: `${path}/application/reviews`,
+      headers: { ...operatorHeaders, 'x-agentbrowser-operation-id': 'future-write' },
+      payload,
+    });
+    expect(header.statusCode).toBe(400);
+    expect(header.json().error.code).toBe('INVALID_REQUEST');
+    expect(header.headers['cache-control']).toBe('no-store');
+    const operation = await server.inject({
+      url: `${path}/operations/future-write`,
+      headers: operatorHeaders,
+    });
+    expect(operation.statusCode).toBe(404);
+    expect(state.total).toBe(0);
+  } finally {
+    await server.close();
+  }
+});

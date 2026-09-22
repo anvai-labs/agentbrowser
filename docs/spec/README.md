@@ -159,3 +159,8 @@ mandatory guard for declared submission operations using the same application
 authority and approval/evidence owners. [Qualification](evidence/t6-mandatory-application-consent.md)
 includes synthetic browser/app acceptance and drift refusal; public submission and
 live ATS readiness remain gated on C3c and production evidence.
+
+The [C3c public workflow design](design/t6-public-application-review.md) specifies
+operator create → inspect → approve → application execution through the first-class
+CLI and existing REST/SDK. Source hints never grant permission. Independent named
+receipt verification uses the application seam; process-loss recovery remains T5.

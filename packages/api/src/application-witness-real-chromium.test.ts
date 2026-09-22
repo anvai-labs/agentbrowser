@@ -6,10 +6,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  type ApplicationAuthority,
-  type ApplicationRequest,
+  type ApplicationReviewSelector,
   type PreparedEvidenceReview,
   TrustedEvidenceSourceRegistry,
+  TrustedVerifierRegistry,
+  defineEvidenceSource,
+  defineVerifier,
+  runVerifiedOutcome,
 } from '@agentbrowser/control';
 import { canonicalJson } from '@agentbrowser/core';
 import type { EnginePage } from '@agentbrowser/engine';
@@ -27,12 +30,131 @@ import {
 } from './service.js';
 import { createDraftWitnessCollector } from './test-support/application-draft-evidence.js';
 import { startDraftFixture } from './test-support/application-draft-http.js';
-import { createApplicationDraft } from './test-support/application-draft.js';
+import {
+  type DraftAcceptance,
+  type DraftSnapshot,
+  createApplicationDraft,
+} from './test-support/application-draft.js';
+
+const SUBMISSION_VERIFIER = Object.freeze({
+  id: 'synthetic.submission.accepted',
+  version: '1',
+});
+
+interface SubmissionExpectation {
+  operationId: string;
+  tenant: string;
+  resource: string;
+  accepted: DraftSnapshot;
+}
+
+function submissionExpectation(input: unknown): SubmissionExpectation {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error();
+  const value = input as Partial<SubmissionExpectation>;
+  if (
+    typeof value.operationId !== 'string' ||
+    typeof value.tenant !== 'string' ||
+    typeof value.resource !== 'string' ||
+    !value.accepted ||
+    typeof value.accepted !== 'object'
+  )
+    throw new Error();
+  return structuredClone(value as SubmissionExpectation);
+}
+
+function submissionReceipt(input: unknown): DraftAcceptance {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error();
+  return structuredClone(input as DraftAcceptance);
+}
+
+const acceptedSubmissionVerifier = defineVerifier({
+  descriptor: {
+    ...SUBMISSION_VERIFIER,
+    inputSchemaId: 'synthetic.submission.expectation',
+    evidenceSchemaId: 'synthetic.application.acceptance',
+    requiredCapability: 'synthetic.submission.receipt',
+    evidenceSource: 'synthetic.application.receipt',
+    requiredLayer: 'G6',
+    budget: {
+      maxReads: 1,
+      timeoutMs: 2_000,
+      pollIntervalMs: 1,
+      cleanupTimeoutMs: 100,
+      maxEvidenceRefs: 1,
+    },
+    redaction: 'reference_only',
+    unsupported: [],
+    cleanup: 'not_needed',
+  },
+  parseInput: submissionExpectation,
+  parseEvidence: submissionReceipt,
+  predicate: (expected, actual) =>
+    actual.contract.id === 'synthetic-application-acceptance' &&
+    actual.contract.version === 1 &&
+    typeof actual.submissionId === 'string' &&
+    actual.submissionId.length > 0 &&
+    actual.operationId === expected.operationId &&
+    actual.tenant === expected.tenant &&
+    actual.resource === expected.resource &&
+    actual.intent === 'submit' &&
+    actual.committedVersion === expected.accepted.version + 1 &&
+    canonicalJson(actual.accepted) === canonicalJson(expected.accepted),
+});
+
+interface ExternalReceiptContext {
+  client: AgentBrowserClient;
+  sessionId: string;
+  tenant: string;
+  permissionGeneration: number;
+}
+
+function externalSubmissionEvidence(expected: SubmissionExpectation) {
+  const verifierRegistry = new TrustedVerifierRegistry([acceptedSubmissionVerifier]);
+  const evidenceSources = new TrustedEvidenceSourceRegistry<ExternalReceiptContext>([
+    defineEvidenceSource({
+      descriptor: {
+        id: 'synthetic.application.receipt',
+        capability: 'synthetic.submission.receipt',
+        correlation: 'required',
+        authorization: 'required',
+      },
+      authorize(request) {
+        if (
+          request.context.tenant !== expected.tenant ||
+          request.correlationId !== expected.operationId ||
+          request.verifier.id !== SUBMISSION_VERIFIER.id ||
+          request.verifier.version !== SUBMISSION_VERIFIER.version ||
+          canonicalJson(request.verifier.input) !== canonicalJson(expected)
+        )
+          return undefined;
+        const generation = request.context.permissionGeneration;
+        return {
+          generation,
+          currentGeneration: () => request.context.permissionGeneration,
+        };
+      },
+      async read(context, _signal, operationId) {
+        if (!operationId) throw new Error('Missing operation identity');
+        const evidence = await context.client.sessions.applicationReceipt(
+          context.sessionId,
+          operationId
+        );
+        return {
+          status: 'ready' as const,
+          evidence,
+          evidenceRefIds: ['synthetic_application_receipt'],
+        };
+      },
+    }),
+  ]);
+  return { verifierRegistry, evidenceSources };
+}
 
 async function fixture(
   options: {
     brokenUi?: boolean;
     beforeUploadCommit?: () => Promise<void>;
+    loseSubmitReturn?: boolean;
     review?: boolean;
     submit?: boolean;
   } = {}
@@ -61,6 +183,20 @@ async function fixture(
   const permissionOwnerId = randomUUID();
   let permitted = true;
   const verifier = { id: 'synthetic-draft-witness', version: 'v1', input: {} };
+  const submissionOperation = options.loseSubmitReturn
+    ? {
+        mode: draft.submissionOperation.mode,
+        review: draft.submissionOperation.review,
+        prepare(input: unknown) {
+          const execute = draft.submissionOperation.prepare(input);
+          return async (scope: Parameters<typeof execute>[0]) => {
+            const result = await execute(scope);
+            if (result.status === 'committed') throw new Error('Synthetic response lost');
+            return result;
+          };
+        },
+      }
+    : draft.submissionOperation;
   let resolveReview: ServiceDependencies['evidenceReviewProvider'];
   const resolutions = vi.fn((request: Parameters<NonNullable<typeof resolveReview>>[0]) =>
     resolveReview?.(request)
@@ -76,7 +212,7 @@ async function fixture(
       options.submit
         ? {
             ...draft.adapter,
-            operations: { ...draft.adapter.operations, submit: draft.submissionOperation },
+            operations: { ...draft.adapter.operations, submit: submissionOperation },
           }
         : draft.adapter,
     ],
@@ -244,11 +380,10 @@ async function fixture(
         expect(service.authority.didDispatchInScope(sessionId)).toBe(false);
         return result;
       });
-    let submissionAction: Record<string, unknown> | undefined;
     const composition = () => {
       const { collector, application, page } = prepareCollector();
       return {
-        action: submissionAction ?? {
+        action: {
           intent: 'draft',
           destination: expectedApplication.destination,
           job: expectedApplication.job,
@@ -268,6 +403,23 @@ async function fixture(
         },
       };
     };
+    const sourceHint = Object.freeze({
+      ownerId: permissionOwnerId,
+      contract: Object.freeze({ id: 'synthetic-native-draft', version: '1' }),
+    });
+    const applicationReviewRequest = (operationId: string) => {
+      const expected = draft.read();
+      return {
+        pageId,
+        source: sourceHint,
+        request: {
+          operation: 'submit',
+          operationId,
+          expectedVersion: expected.version,
+          input: { intent: 'submit', expected },
+        },
+      };
+    };
     resolveReview = (request) => {
       if (
         request.identity.tenant !== 'owner' ||
@@ -279,7 +431,36 @@ async function fixture(
         request.source.contract.version !== '1'
       )
         return undefined;
-      return composition();
+      const selected = (
+        request as typeof request & { application?: Readonly<ApplicationReviewSelector> }
+      ).application;
+      if (!selected) return composition();
+      const current = draft.read();
+      if (
+        selected.adapter !== draft.adapter.id ||
+        selected.resource !== 'live-witness' ||
+        selected.operation !== 'submit' ||
+        selected.expectedVersion !== current.version
+      )
+        return undefined;
+      const configured = composition();
+      return {
+        source: configured.source,
+        action: {
+          type: 'application-submit',
+          intent: 'submit',
+          tenant: 'owner',
+          sessionId,
+          sessionIncarnation: expectedPage.sessionIncarnation,
+          adapter: selected.adapter,
+          resource: selected.resource,
+          bindingGeneration: selected.bindingGeneration,
+          operation: selected.operation,
+          operationId: selected.operationId,
+          expectedVersion: selected.expectedVersion,
+          input: { intent: 'submit', expected: current },
+        },
+      };
     };
     const review = <T>(callback: (prepared: PreparedEvidenceReview) => Promise<T>) =>
       run(async () => {
@@ -287,31 +468,6 @@ async function fixture(
         const result = await callback(prepared);
         expect(service.authority.didDispatchInScope(sessionId)).toBe(false);
         return result;
-      });
-    // Successful C3b integration is internal; the public wire surface remains gated.
-    const applicationAuthority = (
-      service as unknown as { applicationAuthority: ApplicationAuthority }
-    ).applicationAuthority;
-    const generateSubmission = () =>
-      run(async () => {
-        const expected = draft.read();
-        const request: ApplicationRequest = {
-          operation: 'submit',
-          operationId: 'reviewed-submit',
-          expectedVersion: expected.version,
-          input: { intent: 'submit', expected },
-        };
-        const prepared = service.prepareApplicationSubmissionReviewInScope(
-          sessionId,
-          pageId,
-          request,
-          composition().source
-        );
-        const token = await prepared.generate(new AbortController().signal);
-        submissionAction = structuredClone(
-          (token.action.parameters as { action: Record<string, unknown> }).action
-        );
-        return { request, token };
       });
     return {
       draft,
@@ -325,9 +481,8 @@ async function fixture(
       collect,
       review,
       run,
-      generateSubmission,
-      executeSubmission: (request: ApplicationRequest, tokenId: string) =>
-        applicationAuthority.execute(sessionId, operator, { ...request, approvalToken: tokenId }),
+      sourceHint,
+      applicationReviewRequest,
       setPermission(allowed: boolean) {
         permitted = allowed;
         permissionGeneration++;
@@ -341,6 +496,278 @@ async function fixture(
     throw error;
   }
 }
+
+async function publicApplicationSurface(f: Awaited<ReturnType<typeof fixture>>) {
+  await f.server.listen({ host: '127.0.0.1', port: 0 });
+  const baseUrl = `http://127.0.0.1:${(f.server.server.address() as AddressInfo).port}`;
+  const client = new AgentBrowserClient({ baseUrl, apiKey: 'owner' });
+  const cli = fileURLToPath(new URL('../../cli/dist/bin.js', import.meta.url));
+  const invoke = (
+    args: string[],
+    options: { operationId?: string; expectedExitCode?: number } = {}
+  ) =>
+    runAgentCli(
+      [
+        process.execPath,
+        cli,
+        '--base-url',
+        baseUrl,
+        '--json',
+        ...(options.operationId ? ['--operation-id', options.operationId] : []),
+        ...args,
+      ],
+      {
+        env: process.env,
+        token: 'owner',
+        ...(options.expectedExitCode !== undefined
+          ? { expectedExitCode: options.expectedExitCode }
+          : {}),
+      }
+    );
+  return { baseUrl, client, invoke };
+}
+
+function executeReviewedSubmission(
+  f: Awaited<ReturnType<typeof fixture>>,
+  invoke: Awaited<ReturnType<typeof publicApplicationSurface>>['invoke'],
+  body: ReturnType<typeof f.applicationReviewRequest>,
+  approvalToken: string
+) {
+  return invoke(
+    [
+      'application',
+      'execute',
+      f.sessionId,
+      body.request.operation,
+      JSON.stringify(body.request.input),
+      '--expected-version',
+      String(body.request.expectedVersion),
+      '--approval-token',
+      approvalToken,
+    ],
+    { operationId: body.request.operationId }
+  );
+}
+
+it('creates, inspects, approves and qualifies a protected application submission through the public CLI', async () => {
+  const f = await fixture({ review: true, submit: true });
+  try {
+    const { client, invoke } = await publicApplicationSurface(f);
+    const first = f.applicationReviewRequest('public-reviewed-submit');
+    const created = JSON.parse(
+      (await invoke(['application', 'review', f.sessionId, JSON.stringify(first)])).stdout
+    );
+    expect(created).toMatchObject({ status: 'pending' });
+    expect(
+      f.service.authority.get(f.sessionId)?.operation(first.request.operationId)
+    ).toBeUndefined();
+    expect(f.draft.submissionCount()).toBe(0);
+
+    // One real permission owner can independently reconstruct more than one planned operation.
+    const second = f.applicationReviewRequest('public-reviewed-submit-two');
+    const secondToken = await client.sessions.applicationReview(f.sessionId, second);
+    expect(secondToken).toMatchObject({ status: 'pending' });
+    expect(secondToken.tokenId).not.toBe(created.tokenId);
+    expect(
+      f.service.authority.get(f.sessionId)?.operation(second.request.operationId)
+    ).toBeUndefined();
+    expect(f.draft.submissionCount()).toBe(0);
+
+    const inspected = JSON.parse(
+      (await invoke(['session', 'approval', f.sessionId, created.tokenId])).stdout
+    );
+    expect(inspected).toEqual(created);
+    const approved = JSON.parse(
+      (
+        await invoke(
+          ['session', 'approval-decide', f.sessionId, created.tokenId, '--decision', 'approve'],
+          { operationId: 'approve-public-reviewed-submit' }
+        )
+      ).stdout
+    );
+    expect(approved).toMatchObject({ tokenId: created.tokenId, status: 'approved' });
+
+    const expected: SubmissionExpectation = {
+      operationId: first.request.operationId,
+      tenant: 'owner',
+      resource: 'live-witness',
+      accepted: first.request.input.expected,
+    };
+    const { verifierRegistry, evidenceSources } = externalSubmissionEvidence(expected);
+    const context: ExternalReceiptContext = {
+      client,
+      sessionId: f.sessionId,
+      tenant: 'owner',
+      permissionGeneration: 1,
+    };
+    const qualified = await runVerifiedOutcome({
+      verifierRegistry,
+      evidenceSources,
+      verifier: { ...SUBMISSION_VERIFIER, input: expected },
+      context,
+      evidenceCorrelationId: expected.operationId,
+      execute: async () =>
+        JSON.parse((await executeReviewedSubmission(f, invoke, first, created.tokenId)).stdout),
+      executionFailed: (result) =>
+        !result ||
+        typeof result !== 'object' ||
+        (result as { status?: unknown }).status !== 'committed',
+      assertAuthority: () => undefined,
+      didDispatch: () => f.draft.submissionCount() === 1,
+      testedSeam: 'application',
+    });
+    expect(qualified).toMatchObject({
+      outcome: {
+        availability: 'available',
+        execution: 'completed',
+        verification: {
+          status: 'passed',
+          requiredLayer: 'G6',
+          achievedLayer: 'G6',
+          evidenceRefIds: ['synthetic_application_receipt'],
+        },
+        testedSeam: 'application',
+      },
+      result: { status: 'committed' },
+    });
+    expect(f.draft.submissionCount()).toBe(1);
+    expect(f.draft.acceptedAttachment()).toEqual(Buffer.from('original bytes'));
+
+    const receipt = await client.sessions.applicationReceipt(f.sessionId, expected.operationId);
+    const acceptedAttachment = expected.accepted.attachment;
+    assert(acceptedAttachment);
+    for (const wrong of [
+      { ...expected, operationId: 'wrong-operation' },
+      { ...expected, accepted: { ...expected.accepted, incarnation: 'wrong-incarnation' } },
+      { ...expected, accepted: { ...expected.accepted, destination: 'https://wrong.test/' } },
+      {
+        ...expected,
+        accepted: {
+          ...expected.accepted,
+          attachment: { ...acceptedAttachment, sha256: '0'.repeat(64) },
+        },
+      },
+      { ...expected, accepted: { ...expected.accepted, version: expected.accepted.version + 1 } },
+    ])
+      expect(
+        verifierRegistry.evaluate(
+          SUBMISSION_VERIFIER.id,
+          SUBMISSION_VERIFIER.version,
+          wrong,
+          receipt,
+          ['synthetic_application_receipt']
+        )
+      ).toMatchObject({ status: 'failed', achievedLayer: 'G6' });
+
+    const replay = JSON.parse(
+      (await executeReviewedSubmission(f, invoke, first, created.tokenId)).stdout
+    );
+    expect(replay).toMatchObject({ replay: true, operation: { status: 'completed' } });
+    expect(f.draft.submissionCount()).toBe(1);
+    expect(secondToken.status).toBe('pending');
+    const applicationSelections = f.resolutions.mock.calls
+      .map(
+        ([request]) =>
+          (request as typeof request & { application?: ApplicationReviewSelector }).application
+      )
+      .filter((value): value is ApplicationReviewSelector => value !== undefined);
+    expect(new Set(applicationSelections.map((value) => value.operationId))).toEqual(
+      new Set([first.request.operationId, second.request.operationId])
+    );
+  } finally {
+    await f.close();
+  }
+}, 60_000);
+
+it('keeps a lost public execution unknown and records separate named receipt reconciliation', async () => {
+  const f = await fixture({ review: true, submit: true, loseSubmitReturn: true });
+  try {
+    const { client, invoke } = await publicApplicationSurface(f);
+    const body = f.applicationReviewRequest('public-lost-submit');
+    const token = JSON.parse(
+      (await invoke(['application', 'review', f.sessionId, JSON.stringify(body)])).stdout
+    );
+    await invoke(
+      ['session', 'approval-decide', f.sessionId, token.tokenId, '--decision', 'approve'],
+      { operationId: 'approve-public-lost-submit' }
+    );
+    const expected: SubmissionExpectation = {
+      operationId: body.request.operationId,
+      tenant: 'owner',
+      resource: 'live-witness',
+      accepted: body.request.input.expected,
+    };
+    const { verifierRegistry, evidenceSources } = externalSubmissionEvidence(expected);
+    const context: ExternalReceiptContext = {
+      client,
+      sessionId: f.sessionId,
+      tenant: 'owner',
+      permissionGeneration: 1,
+    };
+    const original = await runVerifiedOutcome({
+      verifierRegistry,
+      evidenceSources,
+      verifier: { ...SUBMISSION_VERIFIER, input: expected },
+      context,
+      evidenceCorrelationId: expected.operationId,
+      execute: () => executeReviewedSubmission(f, invoke, body, token.tokenId),
+      assertAuthority: () => undefined,
+      didDispatch: () => f.draft.submissionCount() === 1,
+      testedSeam: 'application',
+    });
+    expect(original).toEqual({
+      outcome: {
+        availability: 'available',
+        execution: 'unknown',
+        verification: {
+          status: 'unknown',
+          verifier: SUBMISSION_VERIFIER,
+          requiredLayer: 'G6',
+          evidenceRefIds: [],
+        },
+        cleanup: 'not_needed',
+        testedSeam: 'application',
+      },
+    });
+    expect(f.service.authority.get(f.sessionId)?.operation(expected.operationId)).toMatchObject({
+      status: 'outcome_unknown',
+      dispatched: true,
+    });
+    expect(f.draft.submissionCount()).toBe(1);
+
+    // This is a separate fresh observation. It does not rewrite the original unknown execution.
+    const read = await evidenceSources.read(
+      'synthetic.application.receipt',
+      'synthetic.submission.receipt',
+      context,
+      new AbortController().signal,
+      expected.operationId,
+      { ...SUBMISSION_VERIFIER, input: expected }
+    );
+    expect(read.status).toBe('ready');
+    assert(read.status === 'ready');
+    expect(
+      verifierRegistry.evaluate(
+        SUBMISSION_VERIFIER.id,
+        SUBMISSION_VERIFIER.version,
+        expected,
+        read.evidence,
+        read.evidenceRefIds
+      )
+    ).toMatchObject({ status: 'passed', achievedLayer: 'G6' });
+    expect(original.outcome.execution).toBe('unknown');
+    expect(original.outcome.verification.status).toBe('unknown');
+    expect(f.draft.acceptedAttachment()).toEqual(Buffer.from('original bytes'));
+
+    const replay = JSON.parse(
+      (await executeReviewedSubmission(f, invoke, body, token.tokenId)).stdout
+    );
+    expect(replay).toMatchObject({ replay: true, operation: { status: 'outcome_unknown' } });
+    expect(f.draft.submissionCount()).toBe(1);
+  } finally {
+    await f.close();
+  }
+}, 60_000);
 
 it('inspects and decides qualified draft evidence through REST, SDK and compiled CLI without dispatch', async () => {
   const f = await fixture({ review: true });
@@ -659,35 +1086,65 @@ it('refuses pending uploads and failed commits while independent owner data is c
   }
 }, 30000);
 
-it.each([false, true])(
-  'enforces consent against qualified native/app evidence (edit after review: %s)',
-  async (edit) => {
+it.each([
+  [
+    'visible committed answer',
+    async (f: Awaited<ReturnType<typeof fixture>>) => {
+      await f.backing.locator('[data-automation-id="fullName"]').fill('Changed after review');
+      await expect.poll(f.diagnostics).toMatchObject({ pending: 0, failed: false });
+    },
+  ],
+  [
+    'hidden native answer',
+    async (f: Awaited<ReturnType<typeof fixture>>) => {
+      await f.backing.locator('#source').evaluate((node) => {
+        (node as HTMLInputElement).value = 'changed after review';
+      });
+    },
+  ],
+  [
+    'same-metadata file bytes',
+    async (f: Awaited<ReturnType<typeof fixture>>) => {
+      await f.backing.locator('#resume').evaluate((node) => {
+        const input = node as HTMLInputElement;
+        const previous = input.files?.[0];
+        if (!previous) throw new Error('fixture file');
+        const replacement = new DataTransfer();
+        replacement.items.add(
+          new File(['replaced bytes'], previous.name, {
+            type: previous.type,
+            lastModified: previous.lastModified,
+          })
+        );
+        input.files = replacement.files;
+      });
+    },
+  ],
+])(
+  'refuses a public protected submission after review when %s drifts',
+  async (_name, mutate) => {
     const f = await fixture({ review: true, submit: true });
     try {
-      const { request, token } = await f.generateSubmission();
-      await f.run(() => f.service.decideApproval(f.sessionId, token.tokenId, 'approve'));
-      if (edit) {
-        await f.backing.locator('[data-automation-id="fullName"]').fill('Changed after review');
-        await expect.poll(f.diagnostics).toMatchObject({ pending: 0, failed: false });
-        await expect(f.executeSubmission(request, token.tokenId)).rejects.toBeDefined();
-        expect(f.draft.submissionCount()).toBe(0);
-      } else {
-        expect(await f.executeSubmission(request, token.tokenId)).toMatchObject({
-          status: 'committed',
-        });
-        expect(f.draft.submissionCount()).toBe(1);
-        expect(f.draft.acceptedAttachment()).toEqual(Buffer.from('original bytes'));
-        expect(f.draft.receipt('reviewed-submit')).toMatchObject({
-          intent: 'submit',
-          accepted: { fields: { fullName: 'Synthetic Person' } },
-        });
-        expect(await f.executeSubmission(request, token.tokenId)).toMatchObject({ replay: true });
-        expect(f.draft.submissionCount()).toBe(1);
-      }
+      const { invoke } = await publicApplicationSurface(f);
+      const body = f.applicationReviewRequest(`public-consent-drift-${randomUUID()}`);
+      const token = JSON.parse(
+        (await invoke(['application', 'review', f.sessionId, JSON.stringify(body)])).stdout
+      );
+      await invoke(
+        ['session', 'approval-decide', f.sessionId, token.tokenId, '--decision', 'approve'],
+        { operationId: `approve-public-consent-drift-${randomUUID()}` }
+      );
+
+      await mutate(f);
+      await expect(executeReviewedSubmission(f, invoke, body, token.tokenId)).rejects.toBeDefined();
+      expect(
+        f.service.authority.get(f.sessionId)?.operation(body.request.operationId)
+      ).toMatchObject({ status: 'failed', dispatched: false });
+      expect(f.draft.submissionCount()).toBe(0);
       expect(f.http.submissionAttempts()).toBe(0);
     } finally {
       await f.close();
     }
   },
-  30000
+  60_000
 );

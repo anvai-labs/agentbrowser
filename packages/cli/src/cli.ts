@@ -26,6 +26,7 @@ import {
   AGENT_MODE_IDS,
   ApplicationExecuteRequestSchema,
   ApplicationOperationResultSchema,
+  ApplicationReviewRequestSchema,
   AutofillReportSchema,
   AutofillRequestSchema,
   DELIVERED_EXTRACT_FORMATS,
@@ -54,6 +55,7 @@ import {
   parseOperatorApprovalView,
   parseOutcomeRunRequest,
   parsePlanSteps,
+  validateApplicationReview,
   validateOperatorApprovalDecision,
   validateWireAction,
 } from '@agentbrowser/sdk-typescript';
@@ -106,6 +108,7 @@ export interface CliClient
         | 'applicationBind'
         | 'applicationUnbind'
         | 'applicationDiscover'
+        | 'applicationReview'
         | 'applicationExecute'
         | 'applicationReceipt'
       >
@@ -671,12 +674,40 @@ export function buildCli(deps: CliDependencies): Cli {
               return [
                 `Adapter ${discovery.adapter} bound to ${discovery.resource}`,
                 ...discovery.operations.map(
-                  (operation) => `  ${operation.mode.padEnd(5)} ${operation.name}`
+                  (operation) =>
+                    `  ${operation.mode.padEnd(5)} ${operation.name}${operation.review ? ` (review: ${operation.review})` : ''}`
                 ),
               ];
             });
           })
         );
+      const applicationReview = application
+        .command('review <sessionId> <reviewJson>')
+        .description(
+          'create a pending operator review from inline JSON, @file or stdin (-); future operationId belongs in request. Creation is not idempotent; no automatic retry after a lost response. --json contains private reviewed data: use a private output destination'
+        )
+        .action(
+          action(async (ctx, sessionId: string, reviewJson: string) => {
+            if (ctx.operationId !== undefined)
+              throw new UsageError(
+                'Review creation refuses --operation-id; put the future operationId inside request.'
+              );
+            if (!ctx.client.sessions.applicationReview)
+              throw new UsageError('Client does not support application review');
+            const checked = validateApplicationReview(
+              await readCommandJson(applicationReview, reviewJson, 'application review')
+            );
+            if (!checked.ok) throw new UsageError('Invalid application review request');
+            const view = parseOperatorApprovalView(
+              await ctx.client.sessions.applicationReview(sessionId, checked.value)
+            );
+            ctx.emit(view, () => [`${view.tokenId}: ${view.status}`]);
+          })
+        );
+      advertiseWireSchema(applicationReview, {
+        input: ApplicationReviewRequestSchema,
+        output: OperatorApprovalViewSchema,
+      });
       const applicationExecute = application
         .command('execute <sessionId> <operation> [inputJson]')
         .description(
@@ -686,6 +717,10 @@ export function buildCli(deps: CliDependencies): Cli {
             'for read operations - reads refuse a write identity'
         )
         .option('--expected-version <n>', 'business version for optimistic writes')
+        .option(
+          '--approval-token <token>',
+          'consume existing operator consent for this exact operation; does not grant approval'
+        )
         .action(
           action(
             async (
@@ -693,7 +728,7 @@ export function buildCli(deps: CliDependencies): Cli {
               sessionId: string,
               operation: string,
               inputJson: string | undefined,
-              options: { expectedVersion?: string }
+              options: { expectedVersion?: string; approvalToken?: string }
             ) => {
               if (!ctx.client.sessions.applicationExecute)
                 throw new UsageError('Client does not support the application surface');
@@ -712,6 +747,9 @@ export function buildCli(deps: CliDependencies): Cli {
                 input,
                 ...(ctx.operationId !== undefined ? { operationId: ctx.operationId } : {}),
                 ...(expectedVersion !== undefined ? { expectedVersion } : {}),
+                ...(options.approvalToken !== undefined
+                  ? { approvalToken: options.approvalToken }
+                  : {}),
               });
               const lines =
                 'replay' in result

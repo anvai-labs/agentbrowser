@@ -1,8 +1,8 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
 Rechecked published 1.9.1 at `310e01d43982824caac2c63ed8d98355e17efdce`
-and develop `9c82a490f96fd578fd0dad403503717fb6fb9831` (PR #251; alignment
-rechecked 2026-09-21).
+and develop `5bdb89f760556e6828307cacb25070f4e87931a8` (PR #256; alignment
+rechecked 2026-09-22). The C3c candidate incorporates the merged error-containment repair.
 The [release ladder](release-1.9.1.md) includes Bun CLI/MCP artifacts,
 Node 24 service qualification, Homebrew and develop back-sync. Existing browser
 sessions were preserved; an upgraded installed binary does not prove every running
@@ -22,7 +22,7 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T3 QA regression | Complete, released | 100% | Broader provisioning and demand-backed report adapters are follow-ups |
 | T4 application operations/parity | Active | ~40% | Independent UI/API oracle, binding UX, production evidence; callback repair merged #236 |
 | T5 durable recovery | Not started | 0% | Design, journal/recovery and process-loss qualification |
-| T6 forms/operations | Active | ~40% | Public full-payload consent, candidate identity/eligibility and live qualification; configured public review #248 and atomic test acceptance #249 merged; mandatory dispatch consent remains open |
+| T6 forms/operations | Active | ~40% | Production sources, candidate/job eligibility and live qualification; C3c public synthetic workflow locally qualified |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
 | T8 installed harnesses | Not qualified | 0% | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |
 | T9 release hardening | Recurring | 100% of 1.9.1 checkpoint | Repeat per later release |
@@ -193,8 +193,26 @@ jobs without reruns; independent review returned SHIP. Both mandatory hooks pass
 The [C3b internal consent gate](../design/t6-mandatory-application-consent.md) now
 has [focused qualification](t6-mandatory-application-consent.md): authority-derived
 intended operations, mandatory protected dispatch, fresh evidence consumption and
-one synthetic native/app acceptance through the existing executor. The public
-application schemas still reject the internal approval credential. C3c public review
+one synthetic native/app acceptance through the existing executor. At that checkpoint,
+public application schemas rejected the internal approval credential. C3c public review
 creation, transport projection, CLI usability and named T2 acceptance qualification
-remain next; production sources and live ATS use remain gated. Do not count this
+follow below; production sources and live ATS use remain gated. Do not count this
 internal increment as a finished T4/T6 milestone or a released feature.
+
+C3b merged as #254 at `9eb43b5`; PR run `35686322253` and post-merge
+`35687160556` passed all eight jobs, with exact-head SHIP review. Error-containment
+#253 merged at `74bda24`; PR run `35688434370` and post-merge `35688774753`
+also passed all eight jobs. Parallel #255 merged at `2bdd535`; a later adversarial
+review reproduced serialization/logging/navigation leaks, fixed in #256 at `5bdb89f`.
+Reviewed head `fc5f601` and merge retain tree `293351e`; PR run `35695807804` and
+post-merge `35696315271` each passed all eight jobs without reruns. Normal hooks and
+exact-head independent SHIP review passed.
+
+The [C3c design](../design/t6-public-application-review.md) is implemented and
+[locally qualified](t6-public-application-review.md): public review creation and
+consent forwarding, separate operator admissions, named independent accepted-receipt
+verification, uncertain-return reconciliation and public visible/hidden/file drift
+refusal. It reuses shared authority, evidence and CLI infrastructure. Final delivery
+still requires the normal reviewed PR and post-merge checks. T4/T6 estimates remain
+conservative: production source configuration, eligibility and live portal coverage
+are separate work, and no whole milestone is newly complete.

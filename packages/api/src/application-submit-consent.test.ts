@@ -19,7 +19,14 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
-async function fixture(options: { provider?: boolean; reviewed?: boolean } = {}) {
+async function fixture(
+  options: {
+    provider?: boolean;
+    reviewed?: boolean;
+    publicProvider?: boolean;
+    maxTokens?: number;
+  } = {}
+) {
   const owner = createApplicationDraft({ id: 'consent' });
   owner.update(0, {
     fullName: 'Synthetic Person',
@@ -34,7 +41,7 @@ async function fixture(options: { provider?: boolean; reviewed?: boolean } = {})
     bytes: Buffer.from('actual bytes'),
   });
   const expected = owner.read();
-  const gate = new ApprovalGate();
+  const gate = new ApprovalGate(options.maxTokens ? { maxTokens: options.maxTokens } : {});
   const engine = new FakeEngine();
   let action: Record<string, unknown> = {};
   let generation = 1;
@@ -42,6 +49,7 @@ async function fixture(options: { provider?: boolean; reviewed?: boolean } = {})
   let generationCheck: (() => void) | undefined;
   let lostReturn = false;
   let afterConsume: (() => void) | undefined;
+  let onAuthorize: (() => void) | undefined;
   const consume = gate.consumeReviewedApproval.bind(gate);
   vi.spyOn(gate, 'consumeReviewedApproval').mockImplementation(async (...args) => {
     const result = await consume(...args);
@@ -76,15 +84,47 @@ async function fixture(options: { provider?: boolean; reviewed?: boolean } = {})
       };
     },
   };
-  const provider = vi.fn<NonNullable<ServiceDependencies['evidenceReviewProvider']>>(() => ({
-    action,
-    source: source(),
-  }));
+  const provider = vi.fn<NonNullable<ServiceDependencies['evidenceReviewProvider']>>((routing) => {
+    if (!options.publicProvider) return { action, source: source() };
+    const application = routing.application;
+    if (
+      !application ||
+      routing.identity.tenant !== 'owner' ||
+      application.adapter !== owner.adapter.id ||
+      application.resource !== 'consent' ||
+      application.operation !== 'submit' ||
+      routing.source.ownerId !== sourceId ||
+      routing.source.contract.id !== 'synthetic-submission' ||
+      routing.source.contract.version !== '1'
+    )
+      return undefined;
+    const current = owner.read();
+    return {
+      action: {
+        type: 'application-submit',
+        intent: 'submit',
+        tenant: routing.identity.tenant,
+        sessionId: routing.identity.sessionId,
+        sessionIncarnation: routing.identity.sessionIncarnation,
+        ...application,
+        expectedVersion: current.version,
+        input: { intent: 'submit', expected: current },
+      },
+      source: source(),
+    };
+  });
   const service = new AgentBrowserService({
     engine,
     approvalGate: gate,
     applicationAdapters: [
-      { ...owner.adapter, operations: { ...owner.adapter.operations, submit } },
+      {
+        ...owner.adapter,
+        authorize(scope) {
+          onAuthorize?.();
+          return owner.adapter.authorize(scope);
+        },
+        operations: { ...owner.adapter.operations, submit },
+      },
     ],
     ...(options.provider === false ? {} : { evidenceReviewProvider: provider }),
   });
@@ -106,7 +146,7 @@ async function fixture(options: { provider?: boolean; reviewed?: boolean } = {})
   raw.captureNativeForm = vi.fn(async () => {
     throw new Error('Unexpected native read');
   });
-  // Internal C3b qualification only: public schemas do not yet carry approvalToken.
+  // Retain direct authority coverage alongside the public service workflow below.
   const port = (service as unknown as { applicationAuthority: ApplicationAuthority })
     .applicationAuthority;
   const request: ApplicationRequest = {
@@ -178,6 +218,9 @@ async function fixture(options: { provider?: boolean; reviewed?: boolean } = {})
     },
     afterConsume(callback: () => void) {
       afterConsume = callback;
+    },
+    onAuthorize(callback: () => void) {
+      onAuthorize = callback;
     },
   };
 }
@@ -312,14 +355,14 @@ it('reconciles a lost acceptance response through the existing independent recei
   expect(f.owner.submissionCount()).toBe(1);
 });
 
-it('keeps public execute fail-closed and generation requires operator-review policy', async () => {
+it('keeps public execute fail-closed for invalid consent and requires operator-review policy', async () => {
   const f = await fixture();
   const token = await f.generate();
   await f.approve(token.tokenId);
   await expect(
     f.service.applicationExecute(f.sessionId, operator, {
       ...f.request,
-      approvalToken: token.tokenId,
+      approvalToken: '',
     })
   ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
   await expect(
@@ -417,4 +460,219 @@ it('pins the original page after the last permission callback before allowing di
     expect(() => consent.assertCurrent()).toThrow();
     expect(f.owner.submissionCount()).toBe(0);
   });
+});
+
+function reviewBody(f: Awaited<ReturnType<typeof fixture>>, operationId = 'public-submit') {
+  const source = f.source();
+  return {
+    pageId: f.pageId,
+    source: { ownerId: source.ownerId, contract: source.contract },
+    request: { ...f.request, operationId },
+  };
+}
+
+it('creates two pending public reviews under one source owner without reserving execution', async () => {
+  const f = await fixture({ publicProvider: true });
+  const body = reviewBody(f);
+  const first = await f.service.applicationReview(f.sessionId, operator, body);
+  const second = await f.service.applicationReview(f.sessionId, operator, body);
+  expect(first.status).toBe('pending');
+  expect(second.status).toBe('pending');
+  expect(first.tokenId).not.toBe(second.tokenId);
+  expect(f.service.authority.get(f.sessionId)?.operation('public-submit')).toBeUndefined();
+  expect(f.owner.submissionCount()).toBe(0);
+  const third = await f.service.applicationReview(
+    f.sessionId,
+    operator,
+    reviewBody(f, 'second-plan')
+  );
+  expect(third.status).toBe('pending');
+  expect(f.provider.mock.calls.map(([routing]) => routing.application?.operationId)).toEqual([
+    'public-submit',
+    'public-submit',
+    'second-plan',
+  ]);
+  for (const [routing] of f.provider.mock.calls) {
+    expect(Object.keys(routing)).toEqual(['identity', 'source', 'application']);
+    expect(routing.application).not.toHaveProperty('input');
+    expect(routing).not.toHaveProperty('witness');
+  }
+  await f.approve(first.tokenId);
+  expect(
+    await f.service.applicationExecute(f.sessionId, operator, {
+      ...body.request,
+      approvalToken: first.tokenId,
+    })
+  ).toMatchObject({ status: 'committed' });
+  expect(f.owner.submissionCount()).toBe(1);
+  expect(
+    await f.service.applicationExecute(f.sessionId, operator, {
+      ...body.request,
+      approvalToken: first.tokenId,
+    })
+  ).toMatchObject({ replay: true });
+  await expect(
+    f.service.applicationExecute(f.sessionId, operator, {
+      ...body.request,
+      approvalToken: second.tokenId,
+    })
+  ).rejects.toMatchObject({ code: 'OPERATION_CONFLICT' });
+});
+
+it.each(['source', 'operation', 'input', 'version', 'page', 'extra', 'token'] as const)(
+  'refuses public review with changed %s and no application effects',
+  async (change) => {
+    const f = await fixture({ publicProvider: true });
+    const body = reviewBody(f);
+    if (change === 'source') body.source.ownerId = 'foreign-owner';
+    if (change === 'operation') body.request.operation = 'read';
+    if (change === 'input') body.request.input = { PRIVATE: 'not the complete payload' };
+    if (change === 'version')
+      body.request.expectedVersion = (body.request.expectedVersion ?? 0) + 1;
+    if (change === 'page') body.pageId = 'foreign-page';
+    if (change === 'extra') Object.assign(body, { PRIVATE: true });
+    if (change === 'token') body.request.approvalToken = 'unapproved';
+    await expect(f.service.applicationReview(f.sessionId, operator, body)).rejects.toThrow();
+    expect(f.owner.submissionCount()).toBe(0);
+    expect(f.service.authority.get(f.sessionId)?.operation('public-submit')).toBeUndefined();
+  }
+);
+
+it('refuses public creation without configured source, review policy or current operator', async () => {
+  for (const options of [{ provider: false }, { reviewed: false }]) {
+    const f = await fixture({ ...options, publicProvider: true });
+    await expect(
+      f.service.applicationReview(f.sessionId, operator, reviewBody(f))
+    ).rejects.toThrow();
+    expect(f.owner.submissionCount()).toBe(0);
+  }
+  const f = await fixture({ publicProvider: true });
+  await expect(
+    f.service.applicationReview(f.sessionId, { ...operator, tenant: 'other' }, reviewBody(f))
+  ).rejects.toThrow();
+  expect(f.provider).not.toHaveBeenCalled();
+});
+
+it('rejects a provider that changes source identity and never allocates a token', async () => {
+  const f = await fixture({ publicProvider: true });
+  const resolve = f.provider.getMockImplementation();
+  assert(resolve);
+  f.provider.mockImplementation((routing) => {
+    const configured = resolve(routing);
+    assert(configured);
+    return { ...configured, source: { ...configured.source, ownerId: 'different-owner' } };
+  });
+  const allocate = vi.spyOn(f.gate, 'generateReviewedApproval');
+  await expect(f.service.applicationReview(f.sessionId, operator, reviewBody(f))).rejects.toThrow();
+  expect(allocate).not.toHaveBeenCalled();
+  expect(f.owner.submissionCount()).toBe(0);
+});
+
+it('rechecks the original application and page after provider reentry, including throwing callbacks', async () => {
+  for (const throws of [false, true]) {
+    const f = await fixture({ publicProvider: true });
+    const resolve = f.provider.getMockImplementation();
+    assert(resolve);
+    f.provider.mockImplementation((routing) => {
+      const result = resolve(routing);
+      const pages = (f.service as unknown as { pages: Map<string, unknown> }).pages;
+      pages.delete(f.pageId);
+      if (throws) throw new Error('PRIVATE provider details');
+      return result;
+    });
+    const allocate = vi.spyOn(f.gate, 'generateReviewedApproval');
+    await expect(
+      f.service.applicationReview(f.sessionId, operator, reviewBody(f))
+    ).rejects.not.toThrow('PRIVATE');
+    expect(allocate).not.toHaveBeenCalled();
+  }
+});
+
+it('holds public creation admission while a cancelled source read drains', async () => {
+  const f = await fixture({ publicProvider: true });
+  let started!: () => void;
+  let finish!: () => void;
+  const reading = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const drain = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  f.collect.mockImplementationOnce(async () => {
+    started();
+    await drain;
+    return { application: f.owner.read(), document: 'fixed-document' };
+  });
+  const creation = f.service.applicationReview(f.sessionId, operator, reviewBody(f));
+  const refused = expect(creation).rejects.toThrow();
+  await reading;
+  try {
+    f.service.authority.takeover(f.sessionId);
+    expect(f.service.authority.get(f.sessionId)?.view().busy).toBe(true);
+  } finally {
+    finish();
+  }
+  await refused;
+  expect(f.service.authority.get(f.sessionId)?.view().busy).toBe(false);
+  expect(f.owner.submissionCount()).toBe(0);
+  expect(f.service.authority.get(f.sessionId)?.operation('public-submit')).toBeUndefined();
+});
+
+it('bounds inaccessible pending reviews through the existing approval quota', async () => {
+  const f = await fixture({ publicProvider: true, maxTokens: 2 });
+  await f.service.applicationReview(f.sessionId, operator, reviewBody(f));
+  await f.service.applicationReview(f.sessionId, operator, reviewBody(f));
+  await expect(f.service.applicationReview(f.sessionId, operator, reviewBody(f))).rejects.toThrow();
+  expect(f.owner.submissionCount()).toBe(0);
+  expect(f.service.authority.get(f.sessionId)?.operation('public-submit')).toBeUndefined();
+});
+
+it('detaches the complete public request before application authorization callbacks', async () => {
+  const f = await fixture({ publicProvider: true });
+  const body = reviewBody(f);
+  const expectedSource = structuredClone(body.source);
+  f.onAuthorize(() => {
+    body.pageId = 'mutated-page';
+    body.source.ownerId = 'mutated-source';
+    body.request.operationId = 'mutated-operation';
+  });
+  const view = await f.service.applicationReview(f.sessionId, operator, body);
+  expect(view.status).toBe('pending');
+  expect(f.provider).toHaveBeenCalledWith(
+    expect.objectContaining({
+      identity: expect.objectContaining({ pageId: f.pageId }),
+      source: expectedSource,
+      application: expect.objectContaining({ operationId: 'public-submit' }),
+    })
+  );
+  expect(f.owner.submissionCount()).toBe(0);
+});
+
+it('refuses review disclosure when the final application callback revokes evidence permission', async () => {
+  const f = await fixture({ publicProvider: true });
+  let generated = false;
+  const composition = f.service as unknown as {
+    prepareBoundEvidenceReview: (
+      ...args: unknown[]
+    ) => import('@agentbrowser/control').PreparedEvidenceReview;
+  };
+  const prepare = composition.prepareBoundEvidenceReview.bind(f.service);
+  vi.spyOn(composition, 'prepareBoundEvidenceReview').mockImplementation((...args) => {
+    const prepared = prepare(...args);
+    return {
+      ...prepared,
+      async generate(signal) {
+        const result = await prepared.generate(signal);
+        generated = true;
+        return result;
+      },
+    };
+  });
+  f.onAuthorize(() => {
+    if (generated) f.revoke();
+  });
+  await expect(f.service.applicationReview(f.sessionId, operator, reviewBody(f))).rejects.toThrow();
+  expect(generated).toBe(true);
+  expect(f.owner.submissionCount()).toBe(0);
+  expect(f.service.authority.get(f.sessionId)?.operation('public-submit')).toBeUndefined();
 });

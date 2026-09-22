@@ -1607,7 +1607,13 @@ describe('AgentBrowser CLI', () => {
       const audit = cli.jsonContractAudit();
       const byPath = new Map(audit.map((entry) => [entry.path.join(' '), entry]));
       // The bounded-reader consumers advertise their canonical contracts...
-      for (const path of ['plan', 'outcome', 'autofill', 'application execute']) {
+      for (const path of [
+        'plan',
+        'outcome',
+        'autofill',
+        'application execute',
+        'application review',
+      ]) {
         expect(byPath.get(path)).toMatchObject({ advertised: true, exempt: false });
       }
       // ...and extract's selector payloads carry their reviewed exemption.

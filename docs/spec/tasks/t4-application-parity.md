@@ -84,3 +84,10 @@ now binds reviewed evidence to the actual app operation, version, input and bind
 see [qualification](../evidence/t6-mandatory-application-consent.md). Public creation,
 CLI/REST execution projection and independent T2 acceptance qualification remain C3c.
 No production or live portal submission is enabled by this internal increment.
+
+The [C3c public application review design](../design/t6-public-application-review.md)
+passed independent review and is implemented in the current candidate. Its
+[qualification](../evidence/t6-public-application-review.md) covers shared routing,
+REST/SDK/CLI review and consent, and named independent accepted-receipt verification.
+Production source configuration, binding UX and live portal coverage remain separate
+acceptance gates; historical C3a/C3b restrictions above describe those earlier slices.

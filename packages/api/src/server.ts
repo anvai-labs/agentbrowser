@@ -1011,6 +1011,25 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       );
       on(
         'POST',
+        '/sessions/:sessionId/application/reviews',
+        async (request, reply) => {
+          const { sessionId } = params(request, 'sessionId');
+          const principal = principals.get(request);
+          if (principal?.actor !== 'operator')
+            throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
+          if (request.headers['x-agentbrowser-operation-id'] !== undefined)
+            throw new ServiceError(
+              'INVALID_REQUEST',
+              'Review creation does not accept an execution operation header'
+            );
+          if (!requireBody(reply, request.body)) return reply;
+          return reply.send(await service.applicationReview(sessionId, principal, request.body));
+        },
+        { admission: 'self' }
+      );
+      on(
+        'POST',
         '/sessions/:sessionId/application/execute',
         async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
