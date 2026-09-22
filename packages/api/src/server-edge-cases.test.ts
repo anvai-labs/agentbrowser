@@ -6,11 +6,12 @@
  */
 
 import { createHash } from 'node:crypto';
-import { StructuredLogger } from '@agentbrowser/core';
+import { SecretManager, StructuredLogger } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildServer, startServer } from './server.js';
+import { ServiceError } from './service.js';
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 
@@ -202,8 +203,10 @@ describe('server edge branches', () => {
         expect(ready.json().error).toMatchObject({
           code: 'ENGINE_CRASHED',
           retryable: true,
+          message: 'Engine is not responding',
         });
-        expect(ready.json().error.message).toContain('engine dead');
+        // Unauthenticated infra route: state only, never the raw engine text.
+        expect(ready.body).not.toContain('engine dead');
       } finally {
         await server.close();
       }
@@ -644,7 +647,9 @@ describe('server edge branches', () => {
     // One error contract on both route planes: the handler is registered
     // before any awaited plugin, so root-route handler failures get the
     // INTERNAL envelope, /v1 parser errors the INVALID_REQUEST envelope,
-    // and fastify built-ins keep their original statuses.
+    // fastify built-ins keep their original statuses, and internal faults
+    // never echo error text — on /metrics via the framework handler and on
+    // /v1 via the route wrapper's fail().
     it('keeps fastify built-in error statuses for FST errors on root routes', async () => {
       const server = await buildServer({ engine: new FakeEngine() });
       try {
@@ -703,6 +708,155 @@ describe('server edge branches', () => {
           retryable: false,
           message: 'Invalid JSON body',
         });
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('serializes escaped protocol errors through the shared fail() mapping', async () => {
+      const explodingMetrics = {
+        render: () => {
+          throw new ServiceError('SESSION_BUSY', 'operation already in flight', true, {
+            attempt: 2,
+          });
+        },
+      } as never;
+      const server = await buildServer({
+        engine: new FakeEngine(),
+        metrics: explodingMetrics,
+      });
+      try {
+        const response = await server.inject({ method: 'GET', url: '/metrics' });
+        expect(response.statusCode).toBe(409);
+        expect(response.json().error).toMatchObject({
+          code: 'SESSION_BUSY',
+          retryable: true,
+          details: { attempt: 2 },
+        });
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('survives unserializable protocol-error details without abandoning the envelope', async () => {
+      const circular: Record<string, unknown> = {};
+      circular.self = circular;
+      const explodingMetrics = {
+        render: () => {
+          throw new ServiceError('ENGINE_CRASHED', 'driver gone', false, circular);
+        },
+      } as never;
+      const server = await buildServer({
+        engine: new FakeEngine(),
+        metrics: explodingMetrics,
+      });
+      try {
+        const response = await server.inject({ method: 'GET', url: '/metrics' });
+        expect(response.statusCode).toBe(500);
+        expect(response.json().error).toMatchObject({ code: 'ENGINE_CRASHED', retryable: false });
+        // The envelope must not collapse into fastify's default serializer.
+        expect(response.body).not.toContain('Converting circular');
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('emits a redacted framework_error log for 5xx only, never for client faults', async () => {
+      const secretManager = new SecretManager({ 'vault://p': 'swordfish' });
+      const errors: Array<Record<string, unknown>> = [];
+      const logger = {
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn((_message: string, fields: Record<string, unknown>) => {
+          errors.push(fields);
+        }),
+      } as unknown as StructuredLogger;
+      const explodingMetrics = {
+        render: () => {
+          const failure = new Error('metrics detonated token=swordfish');
+          throw failure;
+        },
+      } as never;
+      const server = await buildServer({
+        engine: new FakeEngine(),
+        metrics: explodingMetrics,
+        secretManager,
+        logger,
+      });
+      try {
+        const crashed = await server.inject({ method: 'GET', url: '/metrics' });
+        expect(crashed.statusCode).toBe(500);
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toMatchObject({ status: 500, url: '/metrics', method: 'GET' });
+        // Server-side sink: redacted, but present enough to debug from.
+        expect(String(errors[0]?.message)).toContain('***');
+        expect(String(errors[0]?.message)).not.toContain('swordfish');
+
+        const badRequest = await server.inject({
+          method: 'POST',
+          url: '/metrics',
+          headers: { 'content-type': 'application/json' },
+          payload: '{nope',
+        });
+        expect(badRequest.statusCode).toBe(400);
+        // Client faults stay out of the error-rate signal entirely.
+        expect(errors).toHaveLength(1);
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('redacts registered secrets from 4xx-classified error messages', async () => {
+      const secretManager = new SecretManager({ 'vault://p': 'swordfish' });
+      const explodingMetrics = {
+        render: () => {
+          const denied = new Error('auth failed for swordfish');
+          (denied as Error & { statusCode?: number }).statusCode = 403;
+          throw denied;
+        },
+      } as never;
+      const server = await buildServer({
+        engine: new FakeEngine(),
+        metrics: explodingMetrics,
+        secretManager,
+      });
+      try {
+        const response = await server.inject({ method: 'GET', url: '/metrics' });
+        expect(response.statusCode).toBe(403);
+        const body = JSON.stringify(response.json());
+        expect(body).toContain('***');
+        expect(body).not.toContain('swordfish');
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('gives /v1 internal faults the same fixed INTERNAL body as root routes', async () => {
+      const detonating = {
+        name: 'detonating-engine',
+        version: '0.0.0',
+        capabilities: async () => ({}),
+        createSession: async () => {
+          throw new Error('engine detonated: topology /internal/preview-7 unreachable');
+        },
+        close: async () => undefined,
+      } as unknown as BrowserEngine;
+      const server = await buildServer({ engine: detonating });
+      try {
+        const response = await server.inject({
+          method: 'POST',
+          url: '/v1/sessions',
+          headers: { 'content-type': 'application/json' },
+          payload: JSON.stringify({ tenantId: 't1' }),
+        });
+        expect(response.statusCode).toBe(500);
+        expect(response.json().error).toMatchObject({
+          code: 'INTERNAL',
+          message: 'An unexpected engine error occurred',
+          retryable: false,
+        });
+        expect(response.body).not.toContain('detonated');
+        expect(response.body).not.toContain('preview-7');
       } finally {
         await server.close();
       }

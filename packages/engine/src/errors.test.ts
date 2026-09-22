@@ -39,13 +39,30 @@ describe('adapter error normalization', () => {
 });
 
 describe('adapter error normalization: prose classification', () => {
-  it('classifies a non-object thrown value as INTERNAL and keeps its string form', () => {
+  it('classifies a non-object thrown value as INTERNAL and withholds its text', () => {
+    // INTERNAL is a server fault: the raw message (driver paths, topology,
+    // stack-adjacent detail) is classification input only and must not reach
+    // clients, where redact() cannot scrub unregistered values.
     expect(normalizeEngineError('Session socket hung up')).toMatchObject({
       code: 'INTERNAL',
-      message: 'Session socket hung up',
+      message: 'An unexpected engine error occurred',
       retryable: false,
     });
     expect(normalizeEngineError(undefined).code).toBe('INTERNAL');
+    expect(normalizeEngineError(new Error('topology /internal/preview-7 unreachable'))).toMatchObject(
+      {
+        code: 'INTERNAL',
+        message: 'An unexpected engine error occurred',
+      }
+    );
+    // Navigation is the exception: net::ERR transport diagnostics are the
+    // payload an agent needs to decide what to do next.
+    expect(
+      normalizeEngineError(new Error('net::ERR_CONNECTION_REFUSED at http://dead.example/'), 'navigate')
+    ).toMatchObject({
+      code: 'INTERNAL',
+      message: 'net::ERR_CONNECTION_REFUSED at http://dead.example/',
+    });
   });
 
   it.each(['RESPONSE_TOO_LARGE', 'MAX_REDIRECTS', 'REDIRECT_LOOP'])(
@@ -116,7 +133,7 @@ describe('adapter error normalization: prose classification', () => {
     });
     expect(normalizeEngineError(error)).toMatchObject({
       code: 'INTERNAL',
-      message: 'nothing recognizable',
+      message: 'An unexpected engine error occurred',
     });
   });
 
