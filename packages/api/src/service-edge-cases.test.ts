@@ -405,9 +405,15 @@ describe('AgentBrowserService edge branches', () => {
       (fakePage as { navigate: () => Promise<unknown> }).navigate = async () => {
         throw new Error('navigation boom');
       };
-      await expect(
+      const error = await capture(() =>
         service.navigate(sessionId, pageId, { url: 'https://example.com/next' })
-      ).rejects.toThrow('navigation boom');
+      );
+      expect(error).toMatchObject({
+        code: 'INTERNAL',
+        message: 'An unexpected engine error occurred',
+        retryable: false,
+      });
+      expect(error?.message).not.toContain('navigation boom');
       expect(service.getSession(sessionId)).toBeDefined();
       await service.shutdown();
     });
@@ -800,9 +806,15 @@ describe('AgentBrowserService edge branches', () => {
       };
       void fakePage;
       try {
-        await expect(
+        const error = await capture(() =>
           service.createPage(sessionId, { url: 'https://x.example.com/' })
-        ).rejects.toThrow('refused');
+        );
+        expect(error).toMatchObject({
+          code: 'INTERNAL',
+          message: 'An unexpected engine error occurred',
+          retryable: false,
+        });
+        expect(error?.message).not.toContain('refused');
         // The failed page was deregistered despite the refusing close.
         expect(await service.listPages(sessionId)).toHaveLength(1);
       } finally {
