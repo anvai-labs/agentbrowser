@@ -1,6 +1,9 @@
 # U1 operator reconciliation
 
-Candidate based on develop `5421d07` (#261); see the
+Merged in #262 at `0afe7de`, preserving reviewed head `1ac8959` and tree
+`05683cf`. PR run `35777166295` and post-merge run `35780628856` passed all
+eight checks without reruns. Independent exact-head review returned SHIP; normal
+commit and push hooks each passed 3,354 tests with 24 existing skips. See the
 [design](../design/t4-operator-reconciliation.md). One panel observation helper is
 extracted from the existing refresh flow and reused by lookup pre/post checks.
 The existing api/handle generation guards and protocol operation-ID pattern remain
@@ -29,7 +32,7 @@ The final panel suite passes all 18 cases (8 U0 plus 10 U1). Before the final
 late-error addition, the combined operator/coexistence/application/race selection
 passed 35 cases with 2 conditional Victor skips. TypeScript, Biome, all 82 spec
 context selections, 11 loader tests and 724 relative documentation links pass.
-Normal hooks and exact-head CI complete the delivery gate.
+Normal hooks and exact-head CI completed the delivery gate.
 
 ## Limits
 

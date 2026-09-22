@@ -109,11 +109,11 @@ The [U0 panel design](../design/t4-operator-application-binding.md) merged in #2
 in the existing `/operator` document using existing binding/discovery routes and
 shared UI request handling. It adds no execution path or backend surface. See
 [qualification](../evidence/t4-operator-application-binding.md). Receipt reconciliation
-UX (U1) and actual production source/UI/API qualification (P0c/P1) remain open;
+UX (U1) subsequently merged in #262; actual production source/UI/API qualification (P0c/P1) remains open;
 this bounded binding UI does not complete T4.
 
 
-The [U1 reconciliation candidate](../design/t4-operator-reconciliation.md) reuses
+The [U1 reconciliation delivery](../design/t4-operator-reconciliation.md) reuses
 existing operation/receipt GET routes and shared panel observation helpers. It keeps
 ledger status and current-binding receipts separate, clears stale private results,
 and adds no execution/retry action. See [evidence](../evidence/t4-operator-reconciliation.md).
