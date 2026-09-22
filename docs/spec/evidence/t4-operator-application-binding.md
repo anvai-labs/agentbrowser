@@ -1,6 +1,9 @@
 # U0 operator application binding
 
-Candidate based on develop `d4511ad` (#260). The
+Merged as #261 at `5421d07`, preserving head `811c9d2` and reviewed tree
+`d89ad776`. Independent exact-head review returned SHIP. PR run `35755516728`
+and post-merge run `35756180259` each passed all eight checks without reruns.
+Normal commit and push hooks each passed 3,344 tests with 24 existing skips. The
 [design](../design/t4-operator-application-binding.md) extends only the existing
 operator document and its api/handle/refresh owners. ApplicationAuthority, public
 binding/discovery routes, credentials, schema ownership and consent are unchanged.

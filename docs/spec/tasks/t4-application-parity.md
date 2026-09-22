@@ -103,11 +103,18 @@ P0c/P1 still require an actual application owner and qualified production contra
 operator-binding UX and production UI/API/receipt qualification keep T4 active.
 
 
-## U0 operator binding candidate
+## U0 operator binding and U1 reconciliation
 
-The [U0 panel design](../design/t4-operator-application-binding.md) is implemented
+The [U0 panel design](../design/t4-operator-application-binding.md) merged in #261
 in the existing `/operator` document using existing binding/discovery routes and
 shared UI request handling. It adds no execution path or backend surface. See
 [qualification](../evidence/t4-operator-application-binding.md). Receipt reconciliation
 UX (U1) and actual production source/UI/API qualification (P0c/P1) remain open;
 this bounded binding UI does not complete T4.
+
+
+The [U1 reconciliation candidate](../design/t4-operator-reconciliation.md) reuses
+existing operation/receipt GET routes and shared panel observation helpers. It keeps
+ledger status and current-binding receipts separate, clears stale private results,
+and adds no execution/retry action. See [evidence](../evidence/t4-operator-reconciliation.md).
+Production P0c/P1 remains open even after this operator UX slice.
