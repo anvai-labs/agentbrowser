@@ -209,6 +209,57 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     logger: false, // Disable logging for cleaner test output
   });
 
+  // Error handler — registered before any route or awaited plugin so it
+  // governs every encapsulation context in this build (an awaited
+  // fastify.register() mid-build splits the root context: handlers added
+  // afterwards never see routes registered earlier, which leaked raw
+  // handler-thrown error text on unauthenticated routes).
+  fastify.setErrorHandler((error: FastifyError, _request, reply) => {
+    fastify.log.error(error);
+
+    // Don't convert Fastify's built-in errors - let them pass with their original status
+    if (error.code?.startsWith('FST_ERR_')) {
+      return reply.status(error.statusCode || 500).send({
+        error: {
+          code: error.statusCode === 404 ? 'NOT_FOUND' : 'INVALID_REQUEST',
+          message: error.message || 'Request failed',
+          retryable: false,
+        },
+      });
+    }
+
+    // For 4xx client errors, return the original status code with INVALID_REQUEST
+    if (error.statusCode && error.statusCode >= 400 && error.statusCode < 500) {
+      return reply.status(error.statusCode).send({
+        error: {
+          code: 'INVALID_REQUEST',
+          message: error.message || 'Invalid request',
+          retryable: false,
+        },
+      });
+    }
+
+    // For all other errors, return 500 INTERNAL
+    return reply.status(500).send({
+      error: {
+        code: 'INTERNAL',
+        message: 'An unexpected error occurred',
+        retryable: false,
+      },
+    });
+  });
+
+  // 404 handler
+  fastify.setNotFoundHandler((_request, reply) => {
+    reply.status(404).send({
+      error: {
+        code: 'NOT_FOUND',
+        message: 'Resource not found',
+        retryable: false,
+      },
+    });
+  });
+
   // Contract-completeness collector (the MCP generated-catalog pattern
   // applied to the REST surface): record every route so openapi.test.ts can
   // enforce that implemented ⇔ documented bidirectionally. Must be added
@@ -1498,53 +1549,6 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     },
     { prefix: '/v1' }
   );
-
-  // Error handler
-  fastify.setErrorHandler((error: FastifyError, _request, reply) => {
-    fastify.log.error(error);
-
-    // Don't convert Fastify's built-in errors - let them pass with their original status
-    if (error.code?.startsWith('FST_ERR_')) {
-      return reply.status(error.statusCode || 500).send({
-        error: {
-          code: error.statusCode === 404 ? 'NOT_FOUND' : 'INVALID_REQUEST',
-          message: error.message || 'Request failed',
-          retryable: false,
-        },
-      });
-    }
-
-    // For 4xx client errors, return the original status code with INVALID_REQUEST
-    if (error.statusCode && error.statusCode >= 400 && error.statusCode < 500) {
-      return reply.status(error.statusCode).send({
-        error: {
-          code: 'INVALID_REQUEST',
-          message: error.message || 'Invalid request',
-          retryable: false,
-        },
-      });
-    }
-
-    // For all other errors, return 500 INTERNAL
-    return reply.status(500).send({
-      error: {
-        code: 'INTERNAL',
-        message: 'An unexpected error occurred',
-        retryable: false,
-      },
-    });
-  });
-
-  // 404 handler
-  fastify.setNotFoundHandler((_request, reply) => {
-    reply.status(404).send({
-      error: {
-        code: 'NOT_FOUND',
-        message: 'Resource not found',
-        retryable: false,
-      },
-    });
-  });
 
   return fastify;
 }
