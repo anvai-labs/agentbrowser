@@ -111,6 +111,8 @@ export interface PreparedApplicationOperationReview {
   readonly sessionId: string;
   readonly action: Readonly<Record<string, unknown>>;
   assertCurrent(): void;
+  /** Callback-free final admission, review-context and binding check. */
+  assertPinned(): void;
 }
 export interface PreparedApplicationConsent {
   consume(): Promise<boolean>;
@@ -241,7 +243,11 @@ export class ApplicationAuthority {
         });
         if (
           !validateApplicationOperationDescriptors(
-            operations.map(([name, operation]) => ({ name, mode: operation.mode }))
+            operations.map(([name, operation]) => ({
+              name,
+              mode: operation.mode,
+              ...(operation.review !== undefined ? { review: operation.review } : {}),
+            }))
           ).ok
         )
           throw new Error();
@@ -323,6 +329,7 @@ export class ApplicationAuthority {
         operations: Object.entries(adapter.operations).map(([name, op]) => ({
           name,
           mode: op.mode,
+          ...(op.review !== undefined ? { review: op.review } : {}),
         })),
       };
     });
@@ -398,7 +405,10 @@ export class ApplicationAuthority {
       throw new ControlError('INVALID_REQUEST', 'Invalid application review');
     }
     assertPinned();
-    return { review: Object.freeze({ sessionId, action, assertCurrent }), assertPinned };
+    return {
+      review: Object.freeze({ sessionId, action, assertCurrent, assertPinned }),
+      assertPinned,
+    };
   }
 
   /** Build an intended action inside an existing read admission without reserving an operation. */

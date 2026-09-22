@@ -17,6 +17,7 @@ import {
   ApplicationDiscoverySchema,
   ApplicationExecuteRequestSchema,
   ApplicationOperationResultSchema,
+  ApplicationReviewRequestSchema,
   ArtifactRefSchema,
   AutofillReportSchema,
   AutofillRequestSchema,
@@ -281,6 +282,29 @@ const applicationPaths = {
         '401': errorResponse('Credential is absent, expired, or revoked.'),
         '403': errorResponse('Operator authority is required.'),
         '404': NOT_FOUND,
+      },
+    },
+  },
+  '/v1/sessions/{sessionId}/application/reviews': {
+    post: {
+      operationId: 'applicationReview',
+      tags: ['sessions'],
+      summary: 'Operator: create a pending complete application review without executing it',
+      description:
+        'Requires trusted evidence configuration. Source selectors are lookup hints, not permission. ' +
+        'Creation allocates a pending expiring token and is not idempotent; a lost response may leave a pending token. ' +
+        'The future execution ID belongs in the body request. Execution operation headers are rejected. ' +
+        'The response contains private reviewed data; use a private output destination.',
+      parameters: [sessionIdParam],
+      requestBody: { required: true, content: json(ref('ApplicationReviewRequest')) },
+      responses: {
+        ...controlResponses('OperatorApprovalView'),
+        '200': {
+          description: 'Pending private operator review',
+          content: json(ref('OperatorApprovalView')),
+        },
+        '400': INVALID_REQUEST,
+        '500': INTERNAL,
       },
     },
   },
@@ -1324,6 +1348,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         ApplicationBinding: ApplicationBindingSchema,
         ApplicationDiscovery: ApplicationDiscoverySchema,
         ApplicationExecuteRequest: ApplicationExecuteRequestSchema,
+        ApplicationReviewRequest: ApplicationReviewRequestSchema,
         ApplicationOperationResult: ApplicationOperationResultSchema,
         ApiError: ApiErrorSchema,
         ApiErrorDetail: ApiErrorDetailSchema,

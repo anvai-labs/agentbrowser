@@ -60,6 +60,36 @@ function fixture(policy?: ApplicationConsentPolicy) {
 }
 const allowed = () => ({ consume: vi.fn(async () => true), assertCurrent: vi.fn(() => {}) });
 
+it('exposes a callback-free final pin that still rejects revoked and escaped admissions', async () => {
+  const f = fixture(() => allowed());
+  let review!: PreparedApplicationOperationReview;
+  await expect(
+    f.run(async () => {
+      review = f.port.prepareOperationReviewInScope('session', planned());
+      f.authorize.mockClear();
+      review.assertPinned();
+      expect(f.authorize).not.toHaveBeenCalled();
+      f.authority.takeover('session');
+      expect(() => review.assertPinned()).toThrow();
+    })
+  ).rejects.toMatchObject({ code: 'CONTROL_REVOKED' });
+  expect(() => review.assertPinned()).toThrow();
+});
+
+it('discovers only the captured review requirement and leaves ordinary descriptors unchanged', async () => {
+  const f = fixture(() => allowed());
+  Reflect.set(f.adapter.operations, 'submit', { mode: 'write', prepare: f.operation.prepare });
+  const discovery = await f.port.discover('session', operator);
+  expect(discovery).toMatchObject({
+    operations: [
+      { name: 'submit', mode: 'write', review: 'operator-submit' },
+      { name: 'ordinary', mode: 'write' },
+      { name: 'read', mode: 'read' },
+    ],
+  });
+  expect(discovery?.operations[1]).toEqual({ name: 'ordinary', mode: 'write' });
+});
+
 it('checks the final consent guard only after asynchronous consumption completes', async () => {
   let consumed = false;
   const guard = vi.fn(() => {

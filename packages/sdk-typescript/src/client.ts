@@ -6,6 +6,7 @@ import {
   parseAutofillReport,
   parseOperationReplay,
   parseOperatorApprovalView,
+  validateApplicationReview,
   validateOperatorApprovalDecision,
 } from '@agentbrowser/protocol';
 import type {
@@ -25,7 +26,9 @@ import type {
 import type {
   AgentMode,
   ApplicationDiscovery,
+  ApplicationExecuteRequest,
   ApplicationOperationResult,
+  ApplicationReviewRequest,
   AutofillReport,
   AutofillRequest,
   ControlView,
@@ -43,6 +46,7 @@ export type {
   ApplicationDiscovery,
   ApplicationExecuteRequest,
   ApplicationOperationResult,
+  ApplicationReviewRequest,
 } from '@agentbrowser/protocol';
 export interface MutationOptions {
   operationId?: string;
@@ -544,6 +548,19 @@ export class SessionsClient {
   async applicationDiscover(sessionId: string): Promise<ApplicationDiscovery | null> {
     return this.http.requestJson(`/v1/sessions/${sessionId}/application`);
   }
+  /** Allocate a pending operator review. A lost response is not automatically retried. */
+  async applicationReview(
+    sessionId: string,
+    request: ApplicationReviewRequest
+  ): Promise<OperatorApprovalView> {
+    const checked = validateApplicationReview(request);
+    if (!checked.ok)
+      throw new AgentBrowserError('INVALID_REQUEST', 'Invalid application review request', false);
+    return this.http.requestJson(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/application/reviews`,
+      { method: 'POST', body: checked.value, parseResponse: parseOperatorApprovalView }
+    );
+  }
   /**
    * Dispatch one application operation. Writes need operationId +
    * expectedVersion; a repeated operationId returns the recorded
@@ -552,12 +569,7 @@ export class SessionsClient {
    */
   async applicationExecute(
     sessionId: string,
-    request: {
-      operation: string;
-      input: unknown;
-      operationId?: string;
-      expectedVersion?: number;
-    }
+    request: ApplicationExecuteRequest
   ): Promise<ApplicationOperationResult> {
     return this.http.requestJson(`/v1/sessions/${sessionId}/application/execute`, {
       method: 'POST',

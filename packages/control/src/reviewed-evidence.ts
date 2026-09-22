@@ -4,7 +4,11 @@ import type {
   ApprovalReviewBinding,
 } from '@agentbrowser/core';
 import { canonicalJson } from '@agentbrowser/core';
-import { type OperatorApprovalView, parseOperatorApprovalView } from '@agentbrowser/protocol';
+import {
+  CONTROL_OPERATION_ID,
+  type OperatorApprovalView,
+  parseOperatorApprovalView,
+} from '@agentbrowser/protocol';
 import type { EvidencePermission } from './outcome-runner.js';
 import {
   prepareEvidencePermission,
@@ -42,10 +46,20 @@ export interface PreparedEvidenceReview {
 /** Public-safe selector for resolving a stored native-form review through trusted config. */
 export interface EvidenceReviewSelector {
   readonly pageId: string;
+  readonly application?: ApplicationReviewSelector;
   readonly source: Readonly<{
     ownerId: string;
     contract: Readonly<{ id: string; version: string }>;
   }>;
+}
+
+export interface ApplicationReviewSelector {
+  readonly adapter: string;
+  readonly resource: string;
+  readonly bindingGeneration: string;
+  readonly operation: string;
+  readonly operationId: string;
+  readonly expectedVersion: number;
 }
 
 export interface PrepareEvidenceReviewOptions {
@@ -76,10 +90,103 @@ function dataProperties(value: unknown, keys: readonly string[]): Record<string,
   if (
     Object.getPrototypeOf(value) !== Object.prototype ||
     Reflect.ownKeys(own).some((key) => typeof key !== 'string' || !keys.includes(key)) ||
-    keys.some((key) => !own[key] || !Object.hasOwn(own[key], 'value'))
+    keys.some((key) => !own[key]?.enumerable || !Object.hasOwn(own[key], 'value'))
   )
     throw unavailable();
   return Object.fromEntries(keys.map((key) => [key, own[key]?.value]));
+}
+
+/** Reserved application actions must be complete; they never fall back to generic routing. */
+export function selectApplicationReview(value: unknown): ApplicationReviewSelector | undefined {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const type = Object.getOwnPropertyDescriptor(value, 'type');
+    if (type && !Object.hasOwn(type, 'value')) throw unavailable();
+    if (type?.value !== 'application-submit') return undefined;
+    const action = dataProperties(snapshot(value), [
+      'type',
+      'intent',
+      'tenant',
+      'sessionId',
+      'sessionIncarnation',
+      'adapter',
+      'resource',
+      'bindingGeneration',
+      'operation',
+      'operationId',
+      'expectedVersion',
+      'input',
+    ]);
+    if (
+      action.type !== 'application-submit' ||
+      action.intent !== 'submit' ||
+      !['adapter', 'resource', 'operation', 'operationId'].every(
+        (key) => typeof action[key] === 'string' && CONTROL_OPERATION_ID.test(action[key])
+      ) ||
+      !['tenant', 'sessionId', 'sessionIncarnation', 'bindingGeneration'].every(
+        (key) =>
+          typeof action[key] === 'string' && action[key].length > 0 && action[key].length <= 255
+      ) ||
+      typeof action.expectedVersion !== 'number' ||
+      !Number.isSafeInteger(action.expectedVersion) ||
+      action.expectedVersion < 0
+    )
+      throw unavailable();
+    return snapshot({
+      adapter: action.adapter,
+      resource: action.resource,
+      bindingGeneration: action.bindingGeneration,
+      operation: action.operation,
+      operationId: action.operationId,
+      expectedVersion: action.expectedVersion,
+    }) as ApplicationReviewSelector;
+  } catch {
+    throw unavailable();
+  }
+}
+
+/** Capture the original source once; wrappers retain callback receivers and sticky permission. */
+export function captureEvidenceReviewSource(value: unknown): EvidenceReviewSource {
+  try {
+    const own = dataProperties(value, [
+      'ownerId',
+      'contract',
+      'permission',
+      'assertAuthorized',
+      'collect',
+    ]);
+    const contract = dataProperties(own.contract, ['id', 'version']);
+    const authorize = own.assertAuthorized;
+    const collect = own.collect;
+    if (
+      typeof own.ownerId !== 'string' ||
+      !/^[!-~]{1,255}$/.test(own.ownerId) ||
+      typeof contract.id !== 'string' ||
+      !IDENTIFIER.test(contract.id) ||
+      typeof contract.version !== 'string' ||
+      !IDENTIFIER.test(contract.version) ||
+      typeof authorize !== 'function' ||
+      typeof collect !== 'function'
+    )
+      throw unavailable();
+    const capturedContract = snapshot({ id: contract.id, version: contract.version });
+    const permission = prepareEvidencePermission(own.permission);
+    return Object.freeze({
+      ownerId: own.ownerId,
+      contract: capturedContract,
+      permission: Object.freeze({
+        generation: permission.generation,
+        currentGeneration() {
+          permission.assertAuthorized();
+          return permission.generation;
+        },
+      }),
+      assertAuthorized: () => Reflect.apply(authorize, value, []),
+      collect: (signal: AbortSignal) => Reflect.apply(collect, value, [signal]),
+    });
+  } catch {
+    throw unavailable();
+  }
 }
 
 /** Extract only non-private routing identity from a reserved reviewed action. */
@@ -94,6 +201,7 @@ export function selectEvidenceReview(value: unknown): EvidenceReviewSelector | u
     )
       return undefined;
     const parameters = dataProperties(action.parameters, ['action', 'source', 'witness']);
+    const application = selectApplicationReview(parameters.action);
     const source = dataProperties(parameters.source, [
       'ownerId',
       'contract',
@@ -114,6 +222,7 @@ export function selectEvidenceReview(value: unknown): EvidenceReviewSelector | u
       return undefined;
     return snapshot({
       pageId: action.pageId,
+      ...(application ? { application } : {}),
       source: {
         ownerId: source.ownerId,
         contract: { id: contract.id, version: contract.version },
@@ -137,7 +246,7 @@ export function prepareEvidenceReview(
     const contextInput = options.context;
     const pageId = options.pageId;
     const actionInput = options.action;
-    const source = options.source;
+    const sourceInput = options.source;
     const assertAuthorityCallback = options.assertAuthority;
     const assertDisclosureSafeCallback = options.assertDisclosureSafe;
     const trackReadCallback = options.trackRead;
@@ -147,16 +256,6 @@ export function prepareEvidenceReview(
     const decideReviewedApproval = gate.decideReviewedApproval;
     const consumeReviewedApproval = gate.consumeReviewedApproval;
 
-    const sourceOwn = dataProperties(source, [
-      'ownerId',
-      'contract',
-      'permission',
-      'assertAuthorized',
-      'collect',
-    ]);
-    const contractOwn = dataProperties(sourceOwn.contract, ['id', 'version']);
-    const assertSourceCallback = sourceOwn.assertAuthorized;
-    const collectCallback = sourceOwn.collect;
     if (
       !gate ||
       typeof generateReviewedApproval !== 'function' ||
@@ -166,17 +265,9 @@ export function prepareEvidenceReview(
       typeof assertAuthorityCallback !== 'function' ||
       typeof assertDisclosureSafeCallback !== 'function' ||
       typeof trackReadCallback !== 'function' ||
-      typeof assertSourceCallback !== 'function' ||
-      typeof collectCallback !== 'function' ||
-      typeof sourceOwn.ownerId !== 'string' ||
-      !/^[!-~]{1,255}$/.test(sourceOwn.ownerId) ||
       typeof pageId !== 'string' ||
       pageId.length < 1 ||
       pageId.length > 255 ||
-      typeof contractOwn.id !== 'string' ||
-      !IDENTIFIER.test(contractOwn.id) ||
-      typeof contractOwn.version !== 'string' ||
-      !IDENTIFIER.test(contractOwn.version) ||
       (lifecycleSignal !== undefined && !(lifecycleSignal instanceof AbortSignal))
     )
       throw unavailable();
@@ -184,11 +275,13 @@ export function prepareEvidenceReview(
     const context = snapshot(contextInput);
     const action = snapshot(actionInput);
     if (!action || typeof action !== 'object' || Array.isArray(action)) throw unavailable();
-    const contract = snapshot({ id: contractOwn.id, version: contractOwn.version });
-    const permission = prepareEvidencePermission(sourceOwn.permission);
+    const source = captureEvidenceReviewSource(sourceInput);
+    const assertSourceCallback = source.assertAuthorized;
+    const collectCallback = source.collect;
+    const permission = prepareEvidencePermission(source.permission);
     const sourceBinding = snapshot({
-      ownerId: sourceOwn.ownerId,
-      contract,
+      ownerId: source.ownerId,
+      contract: source.contract,
       permissionGeneration: permission.generation,
     });
     const actionFingerprint = canonicalJson(action);

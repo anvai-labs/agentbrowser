@@ -64,6 +64,45 @@ Operator API keys confer operator authority even when held by software; keep the
 outside delegated harnesses. MCP is not required. See the
 [C1 design](spec/design/t6-operator-approval.md) for the bounded contract.
 
+### Reviewed application submission (develop candidate)
+
+For a trusted application embedding, discovery can declare a write operation with
+`review: "operator-submit"`. Its complete-payload review uses the same approval
+owner and execution authority. The host must configure an application adapter and
+an evidence-review provider that independently reconstructs the intended action;
+the default service does not register a submit operation or a production ATS source.
+
+Create a controlled session with reviewed approval and retain operator control.
+Prepare a private `review.json` containing `pageId`, a host-supplied `source` hint
+(`ownerId` and `contract: {id, version}`), and `request` with the planned `operation`,
+complete `input`, future `operationId` and `expectedVersion`. Discover the exact
+wire shape with `agentbrowser describe application review --schema`.
+
+```bash
+agentbrowser application review "$SESSION" @review.json
+agentbrowser --json session approval "$SESSION" "$TOKEN"
+agentbrowser --operation-id decision-1 session approval-decide "$SESSION" "$TOKEN" --decision approve
+agentbrowser --operation-id submit-1 application execute "$SESSION" submit @input.json --expected-version 2 --approval-token "$TOKEN"
+agentbrowser --json application receipt "$SESSION" submit-1
+```
+
+Use the exact operation ID, version and input reviewed in `review.json`; `input.json`
+contains only that request's input. Review creation also accepts stdin (`-`) through
+the common bounded JSON reader. Text output contains token/status only; explicit
+JSON inspection contains private answers and attachment metadata. Creation does not
+approve, dispatch, or reserve the future execution ID. It rejects global
+`--operation-id` because allocation is not idempotent: a lost creation response may
+leave a pending token until expiry, and an explicit new review creates a new token.
+
+Inspection, decision and execution recheck current owners and evidence permission.
+Changed answers, hidden values or file identity refuse the old consent. Execution
+reuses the original operation ID for status-only replay. A lost execution response
+remains unknown; a fresh authorized receipt can supply separate reconciliation
+evidence without repeating the submission. The named accepted-receipt verifier is
+currently qualified in the synthetic fixture, not installed as a general ATS verifier.
+See the [C3c design](spec/design/t6-public-application-review.md) and
+[qualification evidence](spec/evidence/t6-public-application-review.md).
+
 ## Installation
 
 ### Release version consistency

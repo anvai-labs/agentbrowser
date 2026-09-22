@@ -19,6 +19,8 @@ import {
   type ApplicationReadEvidenceSourceOptions,
   type ApplicationReceiptEvidenceSourceOptions,
   type ApplicationRequest,
+  type ApplicationReviewSelector,
+  type EvidenceReviewSelector,
   type EvidenceReviewSource,
   NATIVE_FORM_REVIEW_TYPE,
   type PreparedApplicationConsent,
@@ -26,10 +28,12 @@ import {
   type PreparedEvidenceReview,
   TrustedEvidenceSourceRegistry,
   type TrustedVerifierRegistry,
+  captureEvidenceReviewSource,
   defineApplicationReadEvidenceSource,
   defineApplicationReceiptEvidenceSource,
   prepareEvidenceReview,
   runVerifiedOutcome,
+  selectApplicationReview,
   selectEvidenceReview,
   snapshotAuthorizationInput,
   synchronousResult,
@@ -77,6 +81,7 @@ import { NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
 import type {
   ArtifactRef,
   ObservationRequest,
+  OperatorApprovalView,
   OutcomeRunReport,
   OutcomeRunRequest,
   PageElement,
@@ -99,6 +104,7 @@ import {
   snapshotJsonData,
   validateApplicationBinding,
   validateApplicationExecute,
+  validateApplicationReview,
 } from '@agentbrowser/protocol';
 import { runAutofill } from './autofill.js';
 import {
@@ -280,6 +286,7 @@ export interface ServiceBatchActResult {
 
 /** Public-safe identity passed to trusted evidence-review composition. */
 export interface ServiceEvidenceReviewRequest {
+  readonly application?: ApplicationReviewSelector;
   readonly identity: Readonly<{
     tenant: string;
     sessionId: string;
@@ -1956,6 +1963,54 @@ export class AgentBrowserService {
     principal: SessionPrincipal
   ): Promise<Awaited<ReturnType<ApplicationAuthority['discover']>>> {
     return this.applicationAuthority.discover(sessionId, principal);
+  }
+
+  /** Allocate one pending review; no execution identity is reserved or dispatched. */
+  async applicationReview(
+    sessionId: string,
+    principal: SessionPrincipal,
+    input: unknown
+  ): Promise<OperatorApprovalView> {
+    if (principal.actor !== 'operator')
+      throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+    const validated = validateApplicationReview(input);
+    if (!validated.ok)
+      throw new ServiceError('INVALID_REQUEST', 'Invalid application review request');
+    const body = validated.value;
+    const result = await this.authority.run(sessionId, principal, {}, async () => {
+      const context = this.reviewContext(sessionId);
+      const originalPage = this.prepareNativeFormReadInScope(sessionId, body.pageId);
+      const intent = this.applicationAuthority.prepareOperationReviewInScope(
+        sessionId,
+        body.request
+      );
+      const assertIntent = () => {
+        intent.assertCurrent();
+        originalPage.assertAuthority();
+        this.assertReviewContext(sessionId, context);
+      };
+      assertIntent();
+      const application = selectApplicationReview(intent.action);
+      if (!application) throw new ServiceError('INVALID_REQUEST', 'Application review unavailable');
+      const { prepared, assertPinned } = this.prepareConfiguredEvidenceReview(
+        sessionId,
+        context,
+        { pageId: body.pageId, source: body.source, application },
+        intent.action,
+        assertIntent
+      );
+      const view = await prepared.generate(this.authority.signal(sessionId));
+      assertPinned();
+      // Application callbacks run before the final evidence generation check.
+      // Finish with captured-owner checks that cannot call host authorization again.
+      prepared.assertCurrent(this.authority.signal(sessionId));
+      intent.assertPinned();
+      originalPage.assertAuthority();
+      this.assertReviewContext(sessionId, context);
+      return view;
+    });
+    if ('replay' in result) throw new ServiceError('INTERNAL', 'Application review unavailable');
+    return result;
   }
 
   /** Dispatch one application operation. Writes require operation ID + expected version. */
@@ -3728,14 +3783,29 @@ export class AgentBrowserService {
     }
 
     const selector = selectEvidenceReview(current.action);
-    const provider = this.evidenceReviewProvider;
-    if (!selector || !provider)
-      throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
+    if (!selector) throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
+    return {
+      context,
+      current,
+      ...this.prepareConfiguredEvidenceReview(sessionId, context, selector, expectedAction),
+    };
+  }
 
+  /** One provider capture/composition path for creation and stored review resolution. */
+  private prepareConfiguredEvidenceReview(
+    sessionId: string,
+    context: ApprovalReviewBinding,
+    selector: EvidenceReviewSelector,
+    expectedAction?: Readonly<Record<string, unknown>>,
+    assertApplication?: () => void
+  ): { prepared: PreparedEvidenceReview; assertPinned: () => void } {
     let assertPinned: (() => void) | undefined;
     try {
+      const provider = this.evidenceReviewProvider;
+      if (!provider) throw new Error('Unavailable provider');
       const page = this.prepareNativeFormReadInScope(sessionId, selector.pageId);
       assertPinned = () => {
+        assertApplication?.();
         page.assertAuthority();
         this.assertReviewContext(sessionId, context);
       };
@@ -3745,7 +3815,7 @@ export class AgentBrowserService {
         page.identity.pageId !== selector.pageId ||
         page.identity.sessionIncarnation !== context.sessionIncarnation
       )
-        throw new ServiceError('CONTROL_REVOKED', 'Review page identity changed.');
+        throw new Error('Unavailable review page');
       const request = snapshotAuthorizationInput({
         identity: {
           tenant: context.tenant,
@@ -3754,6 +3824,7 @@ export class AgentBrowserService {
           pageId: selector.pageId,
         },
         source: selector.source,
+        ...(selector.application ? { application: selector.application } : {}),
       }) as ServiceEvidenceReviewRequest;
       assertPinned();
       const configured = synchronousResult(Reflect.apply(provider, undefined, [request]));
@@ -3766,36 +3837,37 @@ export class AgentBrowserService {
         Reflect.ownKeys(own).some((key) => key !== 'action' && key !== 'source') ||
         !own.action ||
         !Object.hasOwn(own.action, 'value') ||
+        !own.action.enumerable ||
         !own.source ||
-        !Object.hasOwn(own.source, 'value')
+        !Object.hasOwn(own.source, 'value') ||
+        !own.source.enumerable
       )
         throw new Error('Unavailable provider result');
       const action = snapshotAuthorizationInput(own.action.value);
-      canonicalJson(action);
       if (!action || typeof action !== 'object' || Array.isArray(action))
-        throw new Error('Unavailable provider result');
+        throw new Error('Unavailable provider action');
       if (expectedAction && canonicalJson(action) !== canonicalJson(expectedAction))
-        throw new Error('Approval does not match the intended application operation');
-      const source = own.source.value as EvidenceReviewSource;
+        throw new Error('Approval does not match intended application operation');
+      const source = captureEvidenceReviewSource(own.source.value);
       assertPinned();
-      const prepared = prepareEvidenceReview({
-        gate: this.approvalGate,
-        context,
-        pageId: selector.pageId,
-        action: action as Record<string, unknown>,
-        source,
-        assertAuthority: assertPinned,
-        assertDisclosureSafe: (value) => this.assertReviewDisclosureSafe(value),
-        trackRead: (read) => this.authority.trackReadInScope(sessionId, read),
-        lifecycleSignal: this.authority.signal(sessionId),
-      });
+      if (
+        canonicalJson({ ownerId: source.ownerId, contract: source.contract }) !==
+        canonicalJson(request.source)
+      )
+        throw new Error('Unavailable source identity');
+      const prepared = this.prepareBoundEvidenceReview(
+        sessionId,
+        selector.pageId,
+        { action: action as Record<string, unknown>, source },
+        assertPinned
+      );
       assertPinned();
-      return { context, current, prepared, assertPinned };
+      return { prepared, assertPinned };
     } catch {
       try {
         assertPinned?.();
       } catch {
-        // Preserve one static public absence result for stale or replaced owners.
+        /* Keep source and callback diagnostics private. */
       }
       throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
     }

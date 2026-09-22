@@ -10,6 +10,8 @@ export {
   INTERACTION_GUIDANCE,
   validateSessionRequest,
   ApplicationExecuteRequestSchema,
+  ApplicationReviewRequestSchema,
+  validateApplicationReview,
   ApplicationOperationResultSchema,
   AutofillRequestSchema,
   AutofillReportSchema,
