@@ -1,6 +1,6 @@
 # T4 operator application binding — U0
 
-Status: implemented candidate on develop `d4511ad` (#260); see
+Status: merged in #261 at develop `5421d07`; see
 [qualification evidence](../evidence/t4-operator-application-binding.md).
 
 ## Scope and owners

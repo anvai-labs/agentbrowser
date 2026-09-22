@@ -20,7 +20,7 @@ declared files and budgets without contacting a service.
 | [T1](t1-context-profiles.md) | Active | Local loader, fixed profiles and run cursor delivered; installed-harness consumption remains | T0 |
 | [T2](t2-shared-execution.md) | Complete | Shared execution/evidence shipped; develop #257 adds synthetic G6 acceptance, with production evidence and durability still gated | T0 |
 | [T3](t3-qa-regressions.md) | Complete | First application-owned CLI regression workflow, private JUnit evidence, standalone-copy and measured-cost qualification delivered through #231 and released in 1.9.1 | T2 |
-| [T4](t4-application-parity.md) | Active | REST/SDK/CLI shipped; synthetic UI/API parity and C3c public consent qualified; P0 trusted native-read composition merged #259; U0 binding UI candidate; receipt UX and production gates remain | T2 |
+| [T4](t4-application-parity.md) | Active | REST/SDK/CLI shipped; synthetic UI/API parity and C3c public consent qualified; P0 trusted native-read composition merged #259; U0 binding UI merged #261; U1 receipt UX candidate; production gates remain | T2 |
 | [T5](t5-durable-recovery.md) | Not started | Optional single-owner durable recovery | T2 |
 | [T6](t6-widget-strategies.md) | Active | Mapping, uploads, native/app witnesses and C3c synthetic submission qualified on develop; E0a/E0b eligibility implemented in candidate; private integration/live gates remain | T2 |
 | [T7](t7-audit-security.md) | Not started | Optional audit/security adapters and profiles | T3; T4 additionally for application-security parity |

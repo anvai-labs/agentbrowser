@@ -1,7 +1,7 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
 Rechecked published 1.9.1 at `310e01d43982824caac2c63ed8d98355e17efdce`
-and develop `d4511ad0b4af078c297da624e7c858672b55ed7e` (PR #260; alignment
+and develop `5421d07100508e9c430f951e678a0a41731a3825` (PR #261; alignment
 rechecked 2026-09-22). C3c incorporates the merged #256 error-containment repair.
 The [release ladder](release-1.9.1.md) includes Bun CLI/MCP artifacts,
 Node 24 service qualification, Homebrew and develop back-sync. Existing browser
@@ -244,8 +244,10 @@ passed. Default forms/application views still load only core plus their mode (8,
 context-byte measurements, not token/RSS savings or implemented runtime limits.
 
 
-The [U0 operator binding candidate](../design/t4-operator-application-binding.md)
+The [U0 operator binding delivery](../design/t4-operator-application-binding.md)
 reuses the existing panel, application routes and authority with shared stale-request
-fencing. It covers bounded binding/discovery UX, not receipt reconciliation UI or
-production qualification. T4/T6 estimates remain conservative at ~40%; no additional
+fencing. It merged in #261 with 8/8 PR and post-merge CI, clean independent review and
+reviewed-tree preservation. It covers bounded binding/discovery UX; the next
+[U1 reconciliation candidate](../design/t4-operator-reconciliation.md) adds read-only
+status/receipt observations. Neither qualifies a production application. T4/T6 estimates remain conservative at ~40%; no additional
 finite milestone is complete. Published 1.9.1 and existing browser sessions are unchanged.

@@ -23,10 +23,39 @@ async function withPanel(run: (f: Awaited<ReturnType<typeof openPanel>>) => Prom
 async function openPanel() {
   const draft = createApplicationDraft({ id: 'panel' });
   let allowed = true;
+  let loseResult = false;
+  const receipts = new Map<string, unknown>();
+  // Test-owner instrumentation: preserve the real draft effect even when delivery fails.
+  const update = draft.adapter.operations.update;
+  if (!update) throw new Error('Draft fixture update operation missing');
+  let commitGate: Promise<void> | undefined;
+  const recordedUpdate: typeof update = {
+    ...update,
+    prepare(input) {
+      const execute = update.prepare(input);
+      return async (scope) => {
+        const result = await execute(scope);
+        if (result.status === 'committed' && scope.operationId) {
+          receipts.set(scope.operationId, { operationId: scope.operationId, draft: draft.read() });
+          if (commitGate) await commitGate;
+          if (loseResult) {
+            loseResult = false;
+            throw new Error('fixture lost result');
+          }
+        }
+        return result;
+      };
+    },
+  };
   const adapter: ApplicationAdapter = {
     ...draft.adapter,
     authorize: (scope) => allowed && draft.adapter.authorize(scope),
-    operations: { ...draft.adapter.operations, submit: draft.submissionOperation },
+    operations: {
+      ...draft.adapter.operations,
+      update: recordedUpdate,
+      submit: draft.submissionOperation,
+    },
+    receipt: async (_scope, operationId) => receipts.get(operationId) ?? null,
   };
   const server = await buildServer({
     engine: new FakeEngine(),
@@ -74,6 +103,19 @@ async function openPanel() {
       connect,
       attach,
       bind,
+      holdNextResult: () => {
+        let release!: () => void;
+        commitGate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return () => {
+          commitGate = undefined;
+          release();
+        };
+      },
+      loseNextResult: () => {
+        loseResult = true;
+      },
       revoke: () => {
         allowed = false;
       },
@@ -88,7 +130,7 @@ async function idle(ui: Page) {
   await vi.waitFor(async () => expect(await ui.locator('#attach').isDisabled()).toBe(false));
 }
 // Delay one actual response, not an invented authority result. Other requests pass.
-async function delayResponse(ui: Page, pattern: string, method = 'GET') {
+async function delayResponse(ui: Page, pattern: string, method = 'GET', deny = false) {
   let release!: () => void;
   let captured!: () => void;
   let completed!: () => void;
@@ -108,7 +150,15 @@ async function delayResponse(ui: Page, pattern: string, method = 'GET') {
     const response = await route.fetch();
     captured();
     await gate;
-    await route.fulfill({ response });
+    await route.fulfill(
+      deny
+        ? {
+            response,
+            status: 403,
+            json: { error: { code: 'FORBIDDEN', message: 'Delayed denial' } },
+          }
+        : { response }
+    );
     completed();
   });
   return {
@@ -325,5 +375,229 @@ it('clears the previous binding immediately while attaching a slow session', asy
     } finally {
       await delayed.release();
     }
+  });
+}, 30000);
+
+async function seedOperation(f: Awaited<ReturnType<typeof openPanel>>, id: string, lost = false) {
+  await f.bind();
+  await idle(f.ui);
+  if (lost) f.loseNextResult();
+  const execute = f.owner.sessions.applicationExecute(f.sessionId, {
+    operation: 'update',
+    operationId: id,
+    expectedVersion: f.draft.read().version,
+    input: { fullName: 'Synthetic operator lookup' },
+  });
+  if (lost) await expect(execute).rejects.toThrow();
+  else await execute;
+  expect(f.draft.read().fields.fullName).toBe('Synthetic operator lookup');
+}
+async function lookup(ui: Page, kind: 'status' | 'receipt') {
+  await ui
+    .getByRole('button', {
+      name: kind === 'status' ? 'Look up status' : 'Look up application receipt',
+      exact: true,
+    })
+    .click();
+  await idle(ui);
+}
+
+for (const lost of [false, true])
+  it(`reconciles separate ${lost ? 'unknown' : 'completed'} ledger and present receipt observations without executing`, async () => {
+    await withPanel(async (f) => {
+      await seedOperation(f, 'lookup-write', lost);
+      const writes: string[] = [];
+      f.ui.on('request', (request) => {
+        if (request.method() !== 'GET') writes.push(request.url());
+      });
+      await f.ui.getByLabel('Operation ID', { exact: true }).fill('lookup-write');
+      await lookup(f.ui, 'status');
+      const status = lost ? 'outcome_unknown' : 'completed';
+      expect(await f.ui.locator('#operation-result').textContent()).toContain(status);
+      await lookup(f.ui, 'receipt');
+      expect(await f.ui.locator('#receipt-result').textContent()).toContain(
+        'Synthetic operator lookup'
+      );
+      expect(await f.ui.locator('#receipt-result').textContent()).toContain(f.adapter.id);
+      expect(await f.ui.locator('#operation-result').textContent()).toContain(status);
+      expect((await f.owner.sessions.operation(f.sessionId, 'lookup-write')).status).toBe(status);
+      expect(writes).toEqual([]);
+      await f.ui.locator('#forget').click();
+      expect(await f.ui.locator('#operation-result').textContent()).toBe('');
+      expect(await f.ui.locator('#receipt-result').textContent()).toBe('');
+      expect(await f.ui.locator('#operation-id').inputValue()).toBe('');
+    });
+  }, 30000);
+
+it('distinguishes missing ledger and null receipt, validates IDs, and renders receipt data as text', async () => {
+  await withPanel(async (f) => {
+    await f.bind();
+    await idle(f.ui);
+    await f.ui.getByLabel('Operation ID', { exact: true }).fill('missing');
+    await lookup(f.ui, 'status');
+    expect(await f.ui.locator('#operation-result').textContent()).toContain('not recorded');
+    await lookup(f.ui, 'receipt');
+    expect(await f.ui.locator('#receipt-result').textContent()).toContain('No receipt returned');
+    for (const id of ['', 'bad id', '../bad']) {
+      await f.ui.locator('#operation-id').fill(id);
+      expect(await f.ui.locator('#lookup-status').isDisabled()).toBe(true);
+      expect(await f.ui.locator('#lookup-receipt').isDisabled()).toBe(true);
+    }
+    await f.ui.locator('#operation-id').fill('x'.repeat(128));
+    expect(await f.ui.locator('#lookup-status').isDisabled()).toBe(false);
+    // Bypass HTML maxlength to exercise the shared protocol pattern too.
+    await f.ui.locator('#operation-id').evaluate((node) => {
+      (node as HTMLInputElement).value = 'x'.repeat(129);
+      node.dispatchEvent(new Event('input'));
+    });
+    expect(await f.ui.locator('#lookup-status').isDisabled()).toBe(true);
+    await f.ui.locator('#operation-id').fill('text-receipt');
+    await f.ui.route('**/application/receipts/*', (route) =>
+      route.fulfill({ json: '<img src=x onerror="window.injected=true">' })
+    );
+    await lookup(f.ui, 'receipt');
+    expect(await f.ui.locator('#receipt-result').textContent()).toContain('<img');
+    expect(await f.ui.locator('#receipt-result img').count()).toBe(0);
+    expect(await f.ui.evaluate(() => 'injected' in window)).toBe(false);
+  });
+}, 30000);
+
+for (const change of ['id', 'forget'] as const)
+  it(`discards a delayed receipt after ${change} changes`, async () => {
+    await withPanel(async (f) => {
+      await seedOperation(f, 'old-result');
+      await f.ui.locator('#operation-id').fill('old-result');
+      const delayed = await delayResponse(f.ui, '**/application/receipts/old-result');
+      await f.ui.locator('#lookup-receipt').click();
+      await delayed.ready;
+      if (change === 'id') await f.ui.locator('#operation-id').fill('new-result');
+      else await f.ui.locator('#forget').click();
+      await delayed.release();
+      await f.ui.evaluate(
+        () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      );
+      expect(await f.ui.locator('#receipt-result').textContent()).toBe('');
+      expect(await f.ui.locator('#operation-result').textContent()).toBe('');
+      expect(await f.ui.locator('#message').textContent()).not.toContain(
+        'Synthetic operator lookup'
+      );
+    });
+  }, 30000);
+
+it('looks up an active operation during busy control without enabling receipt reads', async () => {
+  await withPanel(async (f) => {
+    await f.bind();
+    await idle(f.ui);
+    const release = f.holdNextResult();
+    const executing = f.owner.sessions.applicationExecute(f.sessionId, {
+      operation: 'update',
+      operationId: 'active-write',
+      expectedVersion: 0,
+      input: { fullName: 'Active synthetic draft' },
+    });
+    try {
+      await vi.waitFor(
+        async () => expect(await f.ui.locator('#use-operation').isDisabled()).toBe(false),
+        { timeout: 6000 }
+      );
+      await f.ui.locator('#use-operation').focus();
+      await f.ui.keyboard.press('Enter');
+      expect(await f.ui.locator('#operation-id').inputValue()).toBe('active-write');
+      expect(await f.ui.locator('#lookup-receipt').isDisabled()).toBe(true);
+      await lookup(f.ui, 'status');
+      expect(await f.ui.locator('#operation-result').textContent()).toContain('in_flight');
+    } finally {
+      release();
+      await executing;
+    }
+  });
+}, 30000);
+
+it('discards receipt data when the server binding changes during lookup', async () => {
+  await withPanel(async (f) => {
+    await seedOperation(f, 'changed-binding');
+    await f.ui.locator('#operation-id').fill('changed-binding');
+    const delayed = await delayResponse(f.ui, '**/application/receipts/changed-binding');
+    await f.ui.locator('#lookup-receipt').click();
+    await delayed.ready;
+    await f.owner.sessions.applicationUnbind(f.sessionId);
+    await delayed.release();
+    await idle(f.ui);
+    expect(await f.ui.locator('#receipt-result').textContent()).toContain('Result discarded');
+    expect(await f.ui.locator('#receipt-result').textContent()).not.toContain(
+      'Synthetic operator lookup'
+    );
+    expect(await f.ui.locator('#lookup-receipt').isDisabled()).toBe(true);
+  });
+}, 30000);
+
+it('keeps denied receipt reads distinct from null and clears displayed data on revocation', async () => {
+  await withPanel(async (f) => {
+    await seedOperation(f, 'private-result');
+    await f.ui.locator('#operation-id').fill('private-result');
+    await lookup(f.ui, 'receipt');
+    expect(await f.ui.locator('#receipt-result').textContent()).toContain(
+      'Synthetic operator lookup'
+    );
+    // Public error-envelope projection negative control, with stable surrounding authority.
+    await f.ui.route('**/application/receipts/*', (route) =>
+      route.fulfill({
+        status: 403,
+        json: { error: { code: 'FORBIDDEN', message: 'Receipt read denied' } },
+      })
+    );
+    await lookup(f.ui, 'receipt');
+    expect(await f.ui.locator('#receipt-result').textContent()).toContain('FORBIDDEN');
+    expect(await f.ui.locator('#receipt-result').textContent()).not.toContain(
+      'No receipt returned'
+    );
+    f.revoke();
+    await vi.waitFor(
+      async () => expect(await f.ui.locator('#receipt-result').textContent()).toBe(''),
+      { timeout: 6000 }
+    );
+    expect(await f.ui.locator('#lookup-receipt').isDisabled()).toBe(true);
+    expect(await f.ui.locator('#lookup-status').isDisabled()).toBe(false);
+    await lookup(f.ui, 'status');
+    expect(await f.ui.locator('#operation-result').textContent()).toContain('completed');
+  });
+}, 30000);
+
+it('does not unlock a pending mutation when the operation input is edited', async () => {
+  await withPanel(async (f) => {
+    const delayed = await delayResponse(f.ui, '**/application', 'PUT');
+    await f.bind();
+    await delayed.ready;
+    expect(await f.ui.locator('#operation-id').isDisabled()).toBe(true);
+    await f.ui.locator('#operation-id').dispatchEvent('input');
+    expect(await f.ui.locator('#attach').isDisabled()).toBe(true);
+    await delayed.release();
+    await idle(f.ui);
+  });
+}, 30000);
+
+it('discards a late denied lookup without unlocking or replacing a newer pending lookup', async () => {
+  await withPanel(async (f) => {
+    await seedOperation(f, 'old-denied');
+    await f.ui.locator('#operation-id').fill('old-denied');
+    const old = await delayResponse(f.ui, '**/application/receipts/old-denied', 'GET', true);
+    await f.ui.locator('#lookup-receipt').click();
+    await old.ready;
+    await f.ui.locator('#operation-id').fill('new-missing');
+    const next = await delayResponse(f.ui, '**/application/receipts/new-missing');
+    await f.ui.locator('#lookup-receipt').click();
+    await next.ready;
+    await old.release();
+    await f.ui.evaluate(
+      () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    );
+    expect(await f.ui.locator('#attach').isDisabled()).toBe(true);
+    expect(await f.ui.locator('#receipt-result').textContent()).toBe('');
+    expect(await f.ui.locator('#message').textContent()).not.toContain('Delayed denial');
+    await next.release();
+    await idle(f.ui);
+    expect(await f.ui.locator('#receipt-result').textContent()).toContain('No receipt returned');
+    expect(await f.ui.locator('#receipt-result').textContent()).toContain('new-missing');
+    expect(await f.ui.locator('#receipt-result').textContent()).not.toContain('old-denied');
   });
 }, 30000);

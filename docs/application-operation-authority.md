@@ -2,8 +2,8 @@
 
 Status: typed in-process port, application-only lifecycle and REST/SDK/CLI surface are
 implemented. AgentBrowser 1.9.0 includes scoped delegated receipt permission and
-controlled G4 qualification. The current develop candidate adds bounded operator
-binding/discovery UI (U0); receipt reconciliation UI, MCP tools, production/G6 evidence
+controlled G4 qualification. Develop includes operator binding/discovery UI (U0, #261); the current candidate
+adds explicit-ID status/receipt reconciliation (U1). MCP tools, production/G6 evidence
 and durable application receipts remain pending.
 Transport, reconnection and durable recovery are specified in the
 [shared infrastructure design](shared-session-infrastructure.md).
@@ -215,7 +215,7 @@ operator-readable after the grant that produced them is revoked; and one
 admitted principal at a time holds for application calls too.
 
 
-## Operator binding panel (U0 candidate)
+## Operator binding panel (U0, merged #261)
 
 Open `/operator`, connect with an operator key, and attach a controlled session.
 Under idle human control, enter the adapter and resource IDs supplied by the service
@@ -228,7 +228,25 @@ Bind/unbind clears the local page review and token display and requires a fresh
 review before delegation. Forget credentials works during requests and clears tab
 state; it cannot undo a request already sent to the service. Refused or lost binding
 responses are not automatically retried. Unavailable discovery is distinguished from
-confirmed absence of a binding. Receipt lookup/reconciliation UI remains a follow-up;
-use the existing authorized CLI/API receipt surface where qualified. See the
+confirmed absence of a binding. Explicit-ID receipt reconciliation is available in the U1 candidate below;
+the existing authorized CLI/API receipt surfaces remain usable. See the
 [design](spec/design/t4-operator-application-binding.md) and
 [evidence](spec/evidence/t4-operator-application-binding.md).
+
+
+## Operation reconciliation panel (U1 candidate)
+
+Enter an operation ID, or choose **Use active operation ID** while an identified
+operation is running. **Look up status** reads the session ledger even under busy
+or agent control. **Look up application receipt** requires an available current
+binding and idle human control in this panel. Both use existing authenticated GET
+routes; neither executes or retries the operation.
+
+Results are separate observations. A completed ledger record does not verify business
+acceptance, and a receipt does not resolve an unknown ledger outcome automatically.
+Receipt lookup uses the current binding, which might differ from the operation's
+original binding. Missing records, null receipts and unavailable/denied reads remain
+distinct; none proves the absence of an effect. Reconcile uncertain outcomes with the
+application owner. Changing the ID or session, binding/control actions, observed
+context changes, or Forget clears private results. Results are not persisted or
+automatically polled. See the [U1 design](spec/design/t4-operator-reconciliation.md).

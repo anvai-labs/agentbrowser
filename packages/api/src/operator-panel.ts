@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto';
-import { AGENT_MODE_IDS, DEFAULT_AGENT_MODE, agentModeProfile } from '@agentbrowser/protocol';
+import {
+  AGENT_MODE_IDS,
+  CONTROL_OPERATION_ID,
+  DEFAULT_AGENT_MODE,
+  agentModeProfile,
+} from '@agentbrowser/protocol';
 
 const modeProfiles = JSON.stringify(
   Object.fromEntries(AGENT_MODE_IDS.map((mode) => [mode, agentModeProfile(mode).capabilities]))
@@ -15,8 +20,9 @@ const script = String.raw`
 (() => {
   const byId = id => document.getElementById(id);
   const modeProfiles = ${modeProfiles};
+  const operationIdPattern = new RegExp(${JSON.stringify(CONTROL_OPERATION_ID.source)});
   let key = '', session = '', state = null, review = null, pending = false;
-  let generation = 0, refreshing = null, application = undefined;
+  let generation = 0, refreshing = null, application = undefined, pendingLookup = false;
   const stale = new Error('Superseded operator request');
   const message = text => { byId('message').textContent = text; };
   const show = value => JSON.stringify(value, null, 2);
@@ -26,13 +32,19 @@ const script = String.raw`
   const assertCurrent = context => { if (!current(context)) throw stale; };
   const path = (context, suffix) => '/v1/sessions/' + encodeURIComponent(context.session) + suffix;
   const controlIdentity = value => show([value?.state, value?.epoch, value?.busy, value?.cursor]);
+  function clearResults() { byId('operation-result').textContent = ''; byId('receipt-result').textContent = ''; }
+  function acceptApplication(next) {
+    if (show(application) !== show(next)) clearResults();
+    application = next;
+  }
   function clearGrant() { byId('grant').value = ''; }
   function clearReview() { review = null; clearGrant(); byId('pages').textContent = ''; }
   function clearSession() {
-    session = ''; state = null; application = undefined; clearReview();
+    session = ''; state = null; application = undefined; clearReview(); clearResults(); byId('operation-id').value = '';
     byId('adapter').value = ''; byId('resource').value = '';
   }
   function acceptControl(next) {
+    if (controlIdentity(state) !== controlIdentity(next)) clearResults();
     if (review && (!humanIdle(next) || next.state !== 'RESUME_REVIEW' || next.epoch !== review.epoch)) clearReview();
     if (state && next.epoch !== state.epoch) clearGrant();
     state = next;
@@ -58,6 +70,11 @@ const script = String.raw`
     for (const id of ['adapter', 'resource', 'bind-application', 'unbind-application']) byId(id).disabled = !session || pending || !humanIdle(state);
     byId('application').textContent = application === undefined ? 'Application discovery unavailable. Attach an authorized session under idle human control.'
       : application === null ? 'No application bound.' : show(application);
+    const validId = operationIdPattern.test(byId('operation-id').value.trim());
+    byId('operation-id').disabled = pending && !pendingLookup;
+    byId('lookup-status').disabled = !session || !state || pending || !validId;
+    byId('lookup-receipt').disabled = !session || pending || !validId || !humanIdle(state) || !application;
+    byId('use-operation').disabled = pending || !state?.operation?.operationId;
     byId('guidance').textContent = state?.state === 'HUMAN_ACTIVE'
       ? 'Human control is active. Use the session’s browser window. Prepare a fresh review when ready to hand it to the agent.'
       : state?.state === 'PAUSE_REQUESTED' ? 'Waiting for browser work to settle. Do not interact yet; an action already dispatched may still complete.'
@@ -72,33 +89,35 @@ const script = String.raw`
     }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     const result = await response.json();
     assertCurrent(context);
-    if (!response.ok) throw new Error(result.error?.message || 'Request failed');
+    if (!response.ok) throw Object.assign(new Error(result.error?.message || 'Request failed'), { code: result.error?.code, status: response.status });
     return result;
   }
+  async function observeContext(context) {
+    const before = await api(context, path(context, '/control'));
+    let discovered;
+    if (!humanIdle(before)) return { control: before, application: discovered };
+    try { discovered = await api(context, path(context, '/application')); }
+    catch (error) { assertCurrent(context); /* Unavailable is distinct from unbound. */ }
+    const after = await api(context, path(context, '/control'));
+    if (controlIdentity(before) !== controlIdentity(after)) discovered = undefined;
+    return { control: after, application: discovered };
+  }
+  function acceptContext(next) { acceptControl(next.control); acceptApplication(next.application); }
+  const lookupIdentity = value => show([controlIdentity(value.control), value.application]);
   async function refresh() {
     if (!session || pending || refreshing === generation) return;
     const context = capture(); refreshing = context.generation;
-    try {
-      const before = await api(context, path(context, '/control'));
-      let discovered;
-      if (humanIdle(before)) {
-        try { discovered = await api(context, path(context, '/application')); }
-        catch (error) { assertCurrent(context); /* Unavailable is distinct from unbound. */ }
-        const after = await api(context, path(context, '/control'));
-        if (controlIdentity(before) !== controlIdentity(after)) discovered = undefined;
-        acceptControl(after);
-      } else acceptControl(before);
-      application = discovered; render();
-    } catch (error) {
-      if (current(context)) { state = null; application = undefined; clearReview(); message(error.message); render(); }
+    try { acceptContext(await observeContext(context)); render(); }
+    catch (error) {
+      if (current(context)) { state = null; application = undefined; clearReview(); clearResults(); message(error.message); render(); }
     } finally { if (refreshing === context.generation) refreshing = null; }
   }
-  function handle(id, fn) {
+  function handle(id, fn, lookup = false) {
     byId(id).addEventListener('click', async () => {
       if (pending) return;
-      generation++; const context = capture(); pending = true; message(''); render();
+      generation++; const context = capture(); pending = true; pendingLookup = lookup; if (!lookup) clearResults(); message(''); render();
       try { const result = fn(context); render(); await result; } catch (error) { if (current(context)) message(error.message); }
-      finally { if (current(context)) { pending = false; await refresh(); if (current(context)) render(); } }
+      finally { if (current(context)) { pending = false; pendingLookup = false; await refresh(); if (current(context)) render(); } }
     });
   }
   byId('connect').addEventListener('click', () => {
@@ -138,6 +157,46 @@ const script = String.raw`
   byId('forget').addEventListener('click', () => {
     generation++; pending = false; key = ''; byId('key').value = ''; clearSession(); byId('session').value = ''; message('Credentials forgotten. Requests already sent may still complete on the service.'); render();
   });
+  function changeOperation() {
+    // Only lookup input is editable during a pending lookup; never unlock a mutation.
+    if (pending && !pendingLookup) return;
+    generation++; pending = false; pendingLookup = false; clearResults(); message(''); render();
+  }
+  byId('operation-id').addEventListener('input', changeOperation);
+  byId('use-operation').addEventListener('click', () => {
+    if (pending || !state?.operation?.operationId) return;
+    byId('operation-id').value = state.operation.operationId; changeOperation();
+  });
+  for (const [id, target, suffix] of [
+    ['lookup-status', 'operation-result', '/operations/'],
+    ['lookup-receipt', 'receipt-result', '/application/receipts/']
+  ]) handle(id, async context => {
+    const operationId = byId('operation-id').value.trim();
+    byId(target).textContent = '';
+    try {
+      if (!operationIdPattern.test(operationId)) throw new Error('Enter a valid operation ID.');
+      const before = await observeContext(context); acceptContext(before);
+      if (id === 'lookup-receipt' && (!humanIdle(before.control) || !before.application)) throw new Error('Receipt lookup requires an available binding and idle human control.');
+      let value, failure;
+      try { value = await api(context, path(context, suffix + encodeURIComponent(operationId))); }
+      catch (error) { assertCurrent(context); failure = error; }
+      const after = await observeContext(context); acceptContext(after);
+      if (lookupIdentity(before) !== lookupIdentity(after)) throw new Error('Control or binding changed during lookup. Result discarded.');
+      const details = { operationId, sessionId: context.session, control: after.control,
+        currentBinding: after.application === undefined ? 'unavailable' : after.application === null ? null : { adapter: after.application.adapter, resource: after.application.resource } };
+      if (failure) {
+        if (id === 'lookup-status' && failure.code === 'NOT_FOUND' && failure.status === 404) byId(target).textContent = 'Operation not recorded. This does not prove that no effect occurred.\n' + show(details);
+        else throw failure;
+      } else {
+        const label = id === 'lookup-status' ? 'Ledger observation; not proof of business acceptance.'
+          : value === null ? 'No receipt returned. This does not prove that no effect occurred.'
+          : 'Application receipt observation under the current binding; not independently verified.';
+        byId(target).textContent = label + '\n' + show({ ...details, value });
+      }
+    } catch (error) {
+      if (current(context)) byId(target).textContent = 'Lookup unavailable. ' + (error.code ? error.code + ': ' : '') + error.message;
+    }
+  }, true);
   byId('clear-grant').addEventListener('click', clearGrant);
   byId('mode').addEventListener('change', renderMode);
   setInterval(refresh, 2000);
@@ -160,6 +219,11 @@ export const operatorHtml = `<!doctype html><html lang="en"><head><meta charset=
 <label for="resource">Application resource ID</label><input id="resource" autocomplete="off" maxlength="128">
 <button id="bind-application">Bind application</button><button id="unbind-application">Unbind application</button>
 <pre id="application" aria-live="polite"></pre><p>Operations marked operator-submit require separate complete-payload review. Discovery is a current observation; permissions can change.</p></fieldset>
+<fieldset><legend>Operation reconciliation</legend>
+<label for="operation-id">Operation ID</label><input id="operation-id" autocomplete="off" maxlength="128" aria-describedby="reconciliation-note">
+<button id="use-operation">Use active operation ID</button><button id="lookup-status">Look up status</button><button id="lookup-receipt">Look up application receipt</button>
+<p id="reconciliation-note">These are separate observations. A completed command does not prove business acceptance. Receipt lookup uses the current application binding, which may differ from the operation’s original binding. Missing data does not prove no effect. Reconcile uncertain outcomes with the application owner before any further action.</p>
+<h2>Operation ledger</h2><pre id="operation-result" aria-live="polite"></pre><h2>Application receipt</h2><pre id="receipt-result" aria-live="polite"></pre></fieldset>
 <fieldset><legend>Delegation decision</legend><label for="mode">Agent mode</label><select id="mode" aria-describedby="capabilities mode-context">${modeOptions}</select><p id="capabilities"></p><p id="mode-context">Selecting a mode and delegating creates a new binding and run cursor. Start a fresh harness context when previously seen data must be isolated.</p><button id="delegate">Delegate reviewed state</button></fieldset><button id="stop">Stop session</button>
 <p id="message" role="status"></p><h2>Page review — untrusted content</h2><pre id="pages"></pre>
 <label for="grant">Delegated token (copy into AGENTBROWSER_API_KEY for the harness)</label><input id="grant" type="password" readonly autocomplete="off"><button id="clear-grant">Clear token</button>
