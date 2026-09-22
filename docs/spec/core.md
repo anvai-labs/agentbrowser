@@ -67,9 +67,11 @@ Fixed mode profiles, a scoped run cursor and offline CLI discovery are delivered
 The configurable CLI/SDK/REST outcome runner and public application REST/SDK/CLI
 operations shipped in 1.8.20. AgentBrowser 1.9.0 includes business receipt correlation,
 receipt admission/drain, generic evidence permissions and controlled G4 application
-receipt qualification. Production evidence sources and G6 remain unqualified. General
-TestRun orchestration, durable recovery, application MCP tools and scanner adapters
-remain proposed. Do not call invented tools.
+receipt qualification. T3's bounded regression workflow shipped in 1.9.1. Develop
+through #257 adds public application review/consent and named synthetic G6 accepted-
+receipt qualification; production evidence sources and live ATS acceptance remain
+unqualified. Durable recovery, application MCP tools and scanner adapters remain
+proposed. Do not call invented tools.
 
 ## Context versus memory
 

@@ -18,11 +18,11 @@ declared files and budgets without contacting a service.
 | --- | --- | --- | --- |
 | [T0](t0-contract-catalog.md) | Complete | Released discovery/catalog foundation | None |
 | [T1](t1-context-profiles.md) | Active | Local loader, fixed profiles and run cursor delivered; installed-harness consumption remains | T0 |
-| [T2](t2-shared-execution.md) | Complete | 1.9.0 includes shared execution, evidence permission and controlled G4 CLI/application qualification through #208; production/G6 and durability retain separate gates | T0 |
+| [T2](t2-shared-execution.md) | Complete | Shared execution/evidence shipped; develop #257 adds synthetic G6 acceptance, with production evidence and durability still gated | T0 |
 | [T3](t3-qa-regressions.md) | Complete | First application-owned CLI regression workflow, private JUnit evidence, standalone-copy and measured-cost qualification delivered through #231 and released in 1.9.1 | T2 |
-| [T4](t4-application-parity.md) | Active | REST/SDK/CLI public interface shipped in 1.8.20; the 1.9.0 foundation includes delegated permission composition; independent UI/API parity, production-evidence and durability gates remain | T2 |
+| [T4](t4-application-parity.md) | Active | REST/SDK/CLI shipped; synthetic UI/API parity and C3c public consent qualified; P0 trusted native-read composition is the next design | T2 |
 | [T5](t5-durable-recovery.md) | Not started | Optional single-owner durable recovery | T2 |
-| [T6](t6-widget-strategies.md) | Active | React-select and chip-multiselect shipped in 1.8.19; 1.9.1 adds committed-widget verification; develop adds owned popups and bounded mapping/preflight; broader workflow qualification remains | T2 |
+| [T6](t6-widget-strategies.md) | Active | Mapping, uploads, native/app witnesses and C3c synthetic submission qualified on develop; E0 job eligibility is designed, production/live gates remain | T2 |
 | [T7](t7-audit-security.md) | Not started | Optional audit/security adapters and profiles | T3; T4 additionally for application-security parity |
 | [T8](t8-harness-qualification.md) | Not started | Transport risks documented; installed Victor/Codex/Claude qualification remains | T0; profile/full-run slices also require T1/T3 |
 | [T9](t9-release-hardening.md) | Recurring | Branch protection and release process exist; every changed slice still needs its own promotion evidence | T0; each release also requires its changed tasks' acceptance |
@@ -54,7 +54,10 @@ verification shipped; the ApplicationAuthority
 through #236 with eight PR and eight post-merge checks green. The bounded T6
 [owned-popup/readiness slice](../design/t6-owned-popup-readiness.md) merged through #237 with eight PR and eight post-merge checks green. The next
 [mapping foundation](../design/t6-form-mapping.md) reuses autofill for exact-URL stage
-preflight and offline private preparation; live job-workflow qualification remains. Independent UI/API parity remains T4 work. Keep research outside
+preflight and offline private preparation. Subsequent slices through #257 qualify
+synthetic UI/API parity and public reviewed submission. Live job-workflow and production
+evidence remain open. Next are P0a/P0b trusted native-read composition and E0a/E0b pure
+eligibility; their detailed designs are linked by T4/T6 and loaded only on demand. Keep research outside
 default task context and use the [progress checkpoint](../evidence/foundation-progress-2026-09-20.md)
 for estimates: T0, T2 and T3 are complete, or 3 of 9 finite milestones (33%). Including
 recurring T9 gives 3 of 10 original rows (30%); neither is an effort-weighted estimate.
