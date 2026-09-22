@@ -111,11 +111,13 @@ application-owned QA workflow; T5 and T7 remain unimplemented. T8 still needs
 installed-harness qualification. T9 is a
 recurring release gate rather than a one-time feature.
 
-The next design packets are [P0 trusted evidence composition](design/t4-production-evidence-composition.md)
-and [E0 job eligibility](design/t6-job-eligibility.md). They extend the existing
+The bounded packets [P0 trusted evidence composition](design/t4-production-evidence-composition.md)
+and [E0 job eligibility](design/t6-job-eligibility.md) extend the existing
 [job checkpoint](design/t6-job-application-checkpoint.md), with explicit agent tasks,
-failing-first acceptance and production/live stop gates. They are design-only and
-linked on demand; neither is automatically loaded into core or unrelated modes.
+failing-first acceptance and production/live stop gates. P0a/P0b merged in #259 and E0a/E0b in #260; production/private integration and live
+qualification remain open. The next [operator binding UI](design/t4-operator-application-binding.md)
+candidate reuses the existing panel and public routes. Detailed packets are linked
+on demand and are not automatically loaded into core or unrelated modes.
 
 ## Modes
 

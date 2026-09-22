@@ -21,6 +21,7 @@ for (const [pkg, files] of [
       'src/coexistence.test.ts',
       'src/coexistence-http.test.ts',
       'src/operator-panel.test.ts',
+      'src/operator-application-real-chromium.test.ts',
       'src/coexistence-real-chromium.test.ts',
       'src/firefox-deployment.test.ts',
       'src/fill-verification.test.ts',

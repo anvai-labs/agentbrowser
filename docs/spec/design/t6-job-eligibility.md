@@ -1,6 +1,6 @@
 # T6/E0: bounded job eligibility with evidence and explicit unknowns
 
-Status: E0a/E0b implemented in the current candidate; E0c/E1 remain gated. See the
+Status: E0a/E0b merged in #260 at `d4511ad`; E0c/E1 remain gated. See the
 [implementation contract](../../../examples/job-application/README.md) and
 [qualification evidence](../evidence/t6-job-eligibility.md). This refines the decision contract in the
 [job-application checkpoint](t6-job-application-checkpoint.md); it implements conditional screening only and does not authorize any write. Load forms/T6 plus this packet only. No applicant

@@ -1,7 +1,7 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
 Rechecked published 1.9.1 at `310e01d43982824caac2c63ed8d98355e17efdce`
-and develop `836cc65f8c6264971df5f2335bc7789aaf9b283e` (PR #259; alignment
+and develop `d4511ad0b4af078c297da624e7c858672b55ed7e` (PR #260; alignment
 rechecked 2026-09-22). C3c incorporates the merged #256 error-containment repair.
 The [release ladder](release-1.9.1.md) includes Bun CLI/MCP artifacts,
 Node 24 service qualification, Homebrew and develop back-sync. Existing browser
@@ -232,7 +232,7 @@ callback. P0a/P0b merged #259 at `836cc65`; see the
 [E0 job eligibility](../design/t6-job-eligibility.md) refines the existing job checkpoint
 into application-owned normalized facts and a pure eligible/hold/reject predicate.
 Its data/schema stays out of the default browser protocol and context. E0a/E0b are
-implemented in the current candidate ([evidence](t6-job-eligibility.md)); private integration and live headed qualification need
+merged in #260 ([evidence](t6-job-eligibility.md)); private integration and live headed qualification need
 their named inputs and current evidence. E0c/E1 remain gated; neither the E0 predicate nor the P0 embedding seam increases
 whole-milestone completion or claims live application readiness.
 
@@ -242,3 +242,10 @@ malformed input. All 82 existing context selections and 692 relative documentati
 passed. Default forms/application views still load only core plus their mode (8,880 and
 8,215 serialized UTF-8 bytes respectively); detailed designs remain opt-in. These are
 context-byte measurements, not token/RSS savings or implemented runtime limits.
+
+
+The [U0 operator binding candidate](../design/t4-operator-application-binding.md)
+reuses the existing panel, application routes and authority with shared stale-request
+fencing. It covers bounded binding/discovery UX, not receipt reconciliation UI or
+production qualification. T4/T6 estimates remain conservative at ~40%; no additional
+finite milestone is complete. Published 1.9.1 and existing browser sessions are unchanged.

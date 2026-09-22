@@ -1,6 +1,8 @@
 # E0a/E0b conditional job eligibility
 
-Implementation candidate based on develop `836cc65` (#259). The
+Merged as #260 at `d4511ad`, preserving reviewed head `723b05f` and tree
+`cad3a765`. PR run `35733597292` and post-merge run `35734458695` each passed
+all eight checks without reruns. Independent exact-head review returned SHIP. The
 [design](../design/t6-job-eligibility.md) is implemented by one
 [application-owned module](../../../examples/job-application/eligibility.mjs), with
 [exact input and packaging documentation](../../../examples/job-application/README.md).
