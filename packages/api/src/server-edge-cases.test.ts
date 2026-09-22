@@ -6,6 +6,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { StructuredLogger } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -555,6 +556,37 @@ describe('server edge branches', () => {
   });
 
   describe('internal failure envelope', () => {
+    it('preserves the safe error envelope when the logger sink throws', async () => {
+      const sink = vi.fn(() => {
+        throw new Error('PRIVATE_SINK_DIAGNOSTIC');
+      });
+      const server = await buildServer({
+        engine: new FakeEngine(),
+        logger: new StructuredLogger({ sink }),
+        metrics: {
+          render() {
+            throw new Error('PRIVATE_HANDLER_DIAGNOSTIC');
+          },
+        } as never,
+      });
+      try {
+        const response = await server.inject({ method: 'GET', url: '/metrics' });
+        expect(sink).toHaveBeenCalledOnce();
+        expect(response.statusCode).toBe(500);
+        expect(response.json()).toEqual({
+          error: {
+            code: 'INTERNAL',
+            message: 'An unexpected error occurred',
+            retryable: false,
+          },
+        });
+        expect(response.body).not.toContain('PRIVATE_SINK_DIAGNOSTIC');
+        expect(response.body).not.toContain('PRIVATE_HANDLER_DIAGNOSTIC');
+      } finally {
+        await server.close();
+      }
+    });
+
     it('escapes root-route handler failures into the custom INTERNAL envelope', async () => {
       // The error handler is registered before any awaited plugin, so it
       // governs routes registered earlier too: an unauthenticated /metrics
@@ -576,6 +608,32 @@ describe('server edge branches', () => {
           code: 'INTERNAL',
           retryable: false,
         });
+        // The generic envelope must not smuggle the internal message out.
+        expect(response.body).not.toContain('metrics exploded');
+      } finally {
+        await server.close();
+      }
+    });
+
+    it('survives handler failures whose error has a non-string code', async () => {
+      // A numeric-code convention (e.g. 11000) thrown through an injected
+      // component must not crash the handler itself — a truthy non-string
+      // code made the FST prefix check throw, falling back to fastify's
+      // default serializer and bypassing the envelope entirely.
+      const explodingMetrics = {
+        render: () => {
+          throw { code: 11000, message: 'driver failure' };
+        },
+      } as never;
+      const server = await buildServer({
+        engine: new FakeEngine(),
+        metrics: explodingMetrics,
+      });
+      try {
+        const response = await server.inject({ method: 'GET', url: '/metrics' });
+        expect(response.statusCode).toBe(500);
+        expect(response.json().error).toMatchObject({ code: 'INTERNAL', retryable: false });
+        expect(response.body).not.toContain('driver failure');
       } finally {
         await server.close();
       }
@@ -583,10 +641,10 @@ describe('server edge branches', () => {
   });
 
   describe('fastify error handler', () => {
-    // The custom error handler is registered on the root context, so it is
-    // only reached by root-level (unversioned) routes; /v1 child-plugin
-    // parser errors fall through to fastify's built-in serializer. Both
-    // behaviors are pinned here.
+    // One error contract on both route planes: the handler is registered
+    // before any awaited plugin, so root-route handler failures get the
+    // INTERNAL envelope, /v1 parser errors the INVALID_REQUEST envelope,
+    // and fastify built-ins keep their original statuses.
     it('keeps fastify built-in error statuses for FST errors on root routes', async () => {
       const server = await buildServer({ engine: new FakeEngine() });
       try {
