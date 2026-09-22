@@ -8,7 +8,11 @@ import type {
 import { ApprovalGate } from '@agentbrowser/core';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { afterEach, expect, it, vi } from 'vitest';
-import { AgentBrowserService, type ServiceDependencies } from './service.js';
+import {
+  AgentBrowserService,
+  type ServiceDependencies,
+  type ServiceEvidenceReviewContext,
+} from './service.js';
 import { createApplicationDraft } from './test-support/application-draft.js';
 
 const operator = { actor: 'operator' as const, tenant: 'owner' };
@@ -557,8 +561,8 @@ it('rejects a provider that changes source identity and never allocates a token'
   const f = await fixture({ publicProvider: true });
   const resolve = f.provider.getMockImplementation();
   assert(resolve);
-  f.provider.mockImplementation((routing) => {
-    const configured = resolve(routing);
+  f.provider.mockImplementation((routing, context) => {
+    const configured = resolve(routing, context);
     assert(configured);
     return { ...configured, source: { ...configured.source, ownerId: 'different-owner' } };
   });
@@ -573,8 +577,8 @@ it('rechecks the original application and page after provider reentry, including
     const f = await fixture({ publicProvider: true });
     const resolve = f.provider.getMockImplementation();
     assert(resolve);
-    f.provider.mockImplementation((routing) => {
-      const result = resolve(routing);
+    f.provider.mockImplementation((routing, context) => {
+      const result = resolve(routing, context);
       const pages = (f.service as unknown as { pages: Map<string, unknown> }).pages;
       pages.delete(f.pageId);
       if (throws) throw new Error('PRIVATE provider details');
@@ -643,7 +647,8 @@ it('detaches the complete public request before application authorization callba
       identity: expect.objectContaining({ pageId: f.pageId }),
       source: expectedSource,
       application: expect.objectContaining({ operationId: 'public-submit' }),
-    })
+    }),
+    expect.objectContaining({ nativeForm: expect.any(Object) })
   );
   expect(f.owner.submissionCount()).toBe(0);
 });
@@ -676,3 +681,200 @@ it('refuses review disclosure when the final application callback revokes eviden
   expect(f.owner.submissionCount()).toBe(0);
   expect(f.service.authority.get(f.sessionId)?.operation('public-submit')).toBeUndefined();
 });
+
+// The native reader owns lifetime; the source owns evidence qualification and permission.
+function captureForm() {
+  return {
+    url: 'https://example.test/apply',
+    documentId: 'document',
+    form: { nodeId: 'document:1', id: 'form', name: '', action: '', method: 'post' as const },
+    controls: [
+      {
+        nodeId: 'document:2',
+        blockId: null,
+        id: 'name',
+        name: 'name',
+        tag: 'input' as const,
+        type: 'text',
+        value: 'Synthetic Person',
+        disabled: false,
+        required: true,
+        visible: true,
+      },
+    ],
+  };
+}
+
+it('gives each public review phase a frozen scoped reader without eager collection', async () => {
+  const f = await fixture({ publicProvider: true });
+  const resolve = f.provider.getMockImplementation();
+  assert(resolve);
+  const contexts: ServiceEvidenceReviewContext[] = [];
+  let collections = 0;
+  f.raw.captureNativeForm = vi.fn(async () => captureForm());
+  f.provider.mockImplementation((routing, context) => {
+    assert(context, 'Scoped native context must be supplied');
+    expect(Object.keys(context)).toEqual(['nativeForm']);
+    expect(Object.isFrozen(context)).toBe(true);
+    expect(Object.isFrozen(context.nativeForm)).toBe(true);
+    expect(Object.isFrozen(context.nativeForm.identity)).toBe(true);
+    expect(context.nativeForm.identity).toEqual({
+      sessionId: routing.identity.sessionId,
+      pageId: routing.identity.pageId,
+      sessionIncarnation: routing.identity.sessionIncarnation,
+    });
+    expect(f.raw.captureNativeForm).toHaveBeenCalledTimes(collections);
+    contexts.push(context);
+    const configured = resolve(routing, context);
+    assert(configured);
+    return {
+      ...configured,
+      source: {
+        ...configured.source,
+        async collect(signal) {
+          // This runs after the provider has returned, still within the same admission.
+          collections++;
+          const native = await context.nativeForm.read(signal);
+          return { application: f.owner.read(), document: native.documentId };
+        },
+      },
+    };
+  });
+  const view = await f.service.applicationReview(f.sessionId, operator, reviewBody(f));
+  await f.run(() => f.service.getApproval(f.sessionId, view.tokenId));
+  await f.approve(view.tokenId);
+  await f.service.applicationExecute(f.sessionId, operator, {
+    ...reviewBody(f).request,
+    approvalToken: view.tokenId,
+  });
+  expect(contexts).toHaveLength(4);
+  expect(new Set(contexts.map((c) => c.nativeForm)).size).toBe(4);
+  expect(f.owner.submissionCount()).toBe(1);
+  for (const context of contexts) {
+    await expect(f.run(() => context.nativeForm.read())).rejects.toThrow();
+    await expect(context.nativeForm.read()).rejects.toThrow();
+  }
+  expect(f.raw.captureNativeForm).toHaveBeenCalledTimes(collections);
+});
+
+it.each(['collect', 'selection'] as const)(
+  'drains cancelled native work started during provider %s before another writer',
+  async (phase) => {
+    const f = await fixture({ publicProvider: true });
+    const resolve = f.provider.getMockImplementation();
+    assert(resolve);
+    let started!: () => void;
+    let finish!: () => void;
+    const reading = new Promise<void>((r) => {
+      started = r;
+    });
+    const drain = new Promise<void>((r) => {
+      finish = r;
+    });
+    const cancellation = new AbortController();
+    let captureSignal: AbortSignal | undefined;
+    let pending: Promise<unknown> | undefined;
+    f.raw.captureNativeForm = vi.fn(async (options) => {
+      captureSignal = options?.signal;
+      started();
+      await drain;
+      return captureForm();
+    });
+    f.provider.mockImplementation((routing, context) => {
+      assert(context, 'Scoped native context must be supplied');
+      const configured = resolve(routing, context);
+      assert(configured);
+      if (phase === 'selection') {
+        pending = context.nativeForm.read(cancellation.signal);
+        void pending.catch(() => {});
+        // Refusal must still drain the host read started before source resolution.
+        return undefined;
+      }
+      return {
+        ...configured,
+        source: {
+          ...configured.source,
+          async collect(signal) {
+            return await context.nativeForm.read(AbortSignal.any([signal, cancellation.signal]));
+          },
+        },
+      };
+    });
+    const creation = f.service.applicationReview(f.sessionId, operator, reviewBody(f));
+    const refused = expect(creation).rejects.toThrow();
+    // Race prevents a missing context from leaving this failing-first test hung.
+    await Promise.race([reading, refused]);
+    try {
+      expect(f.raw.captureNativeForm).toHaveBeenCalledOnce();
+      f.service.authority.takeover(f.sessionId);
+      cancellation.abort();
+      expect(captureSignal?.aborted).toBe(true);
+      await expect(f.run(async () => true)).rejects.toMatchObject({ code: 'SESSION_BUSY' });
+    } finally {
+      finish();
+    }
+    await refused;
+    if (pending) await expect(pending).rejects.toThrow();
+    await expect
+      .poll(async () => {
+        try {
+          return await f.run(async () => true);
+        } catch {
+          return false;
+        }
+      })
+      .toBe(true);
+    expect(f.owner.submissionCount()).toBe(0);
+  }
+);
+
+it.each(['binding', 'page', 'permission', 'throw-after-page'] as const)(
+  'refuses provider-native evidence on a %s mutation attempt during capture',
+  async (change) => {
+    const f = await fixture({ publicProvider: true });
+    const resolve = f.provider.getMockImplementation();
+    assert(resolve);
+    let bindingRefusal: unknown;
+    f.raw.captureNativeForm = vi.fn(async () => {
+      if (change === 'binding') {
+        try {
+          f.service.applicationBind(f.sessionId, operator, {
+            adapter: f.owner.adapter.id,
+            resource: 'consent',
+          });
+        } catch (error) {
+          bindingRefusal = error;
+          throw error;
+        }
+      } else if (change === 'permission') f.revoke();
+      else {
+        const pages = (f.service as unknown as { pages: Map<string, unknown> }).pages;
+        pages.delete(f.pageId);
+        if (change === 'throw-after-page') throw new Error('PRIVATE capture detail');
+      }
+      return captureForm();
+    });
+    f.provider.mockImplementation((routing, context) => {
+      const configured = resolve(routing, context);
+      assert(configured);
+      return {
+        ...configured,
+        source: {
+          ...configured.source,
+          async collect(signal) {
+            return await context.nativeForm.read(signal);
+          },
+        },
+      };
+    });
+    const allocate = vi.spyOn(f.gate, 'generateReviewedApproval');
+    await expect(
+      f.service.applicationReview(f.sessionId, operator, reviewBody(f))
+    ).rejects.not.toThrow('PRIVATE');
+    expect(f.raw.captureNativeForm).toHaveBeenCalledOnce();
+    if (change === 'binding') expect(bindingRefusal).toMatchObject({ code: 'SESSION_BUSY' });
+    expect(allocate).not.toHaveBeenCalled();
+    expect(f.owner.submissionCount()).toBe(0);
+    expect(f.service.authority.get(f.sessionId)?.operation('public-submit')).toBeUndefined();
+  }
+);

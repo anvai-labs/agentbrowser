@@ -72,6 +72,16 @@ owner and execution authority. The host must configure an application adapter an
 an evidence-review provider that independently reconstructs the intended action;
 the default service does not register a submit operation or a production ATS source.
 
+The trusted host callback is `evidenceReviewProvider(request, context)`. Its frozen
+`context.nativeForm` is the existing admission-scoped native reader: use
+`context.nativeForm.read(signal)` inside the returned source's collector. It stays
+valid after provider return within that admission, but cannot be reused in a later
+request. Each review/inspection/decision/consumption gets a fresh context. Source
+permission and application witness qualification remain required; the reader exposes
+no service, browser page, cookies or execution authority. Existing one-argument
+providers remain compatible. See the [embedding packet](spec/design/t4-production-evidence-composition.md)
+for lifecycle and production configuration gates.
+
 Create a controlled session with reviewed approval and retain operator control.
 Prepare a private `review.json` containing `pageId`, a host-supplied `source` hint
 (`ownerId` and `contract: {id, version}`), and `request` with the planned `operation`,

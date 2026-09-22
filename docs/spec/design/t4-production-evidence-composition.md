@@ -1,24 +1,25 @@
 # T4/P0: trusted evidence composition without exposing the service
 
-Status: design only, based on develop `d53829e` (C3c, PR #257). No production
-adapter, startup loader or live-site capability is implemented by this document.
+Status: P0a/P0b implemented in the current develop candidate, based on the approved
+design in #258 (`54daeaa`). See [qualification evidence](../evidence/t4-production-evidence-composition.md).
+P0c/P1 remain gated; no production adapter, startup loader or live-site capability is shipped.
 Read application/T4 context and this packet; load the job eligibility packet only
 when that application needs it. Published 1.9.1 is unchanged.
 
 ## Proven gap and decision
 
 C3c exposes review -> inspect -> approve -> execute through public CLI/SDK/REST,
-but its paired browser/application witness is composed inside a test. In
-`packages/api/src/application-witness-real-chromium.test.ts`, a prototype spy captures
-the service created privately by `buildServer`. The fixture then calls
-`prepareNativeFormReadInScope`. A deployment must not need that backdoor.
+but its paired browser/application witness is composed inside a test. The original
+`packages/api/src/application-witness-real-chromium.test.ts` used a prototype spy to
+capture the service created privately by `buildServer`, then called
+`prepareNativeFormReadInScope`. P0 replaces that unsupported composition seam.
 
 Extend the existing trusted review-provider callback with one frozen, admission-owned
 read context, always passed as the required second parameter in the callback type
 (existing single-argument implementations still satisfy it). Do not add a second provider registry, service accessor, authority,
 executor, transport, general plugin loader, source-discovery API or workflow engine.
 The first callback argument remains the existing bounded identity/routing snapshot.
-Existing single-argument providers remain compatible. Proposed second argument:
+Existing single-argument providers remain compatible. Implemented second argument:
 
 ```ts
 interface ServiceEvidenceReviewContext {

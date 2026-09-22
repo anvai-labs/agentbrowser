@@ -155,6 +155,7 @@ async function fixture(
     brokenUi?: boolean;
     beforeUploadCommit?: () => Promise<void>;
     loseSubmitReturn?: boolean;
+    providerNativeReader?: boolean;
     review?: boolean;
     submit?: boolean;
   } = {}
@@ -197,9 +198,11 @@ async function fixture(
         },
       }
     : draft.submissionOperation;
-  let resolveReview: ServiceDependencies['evidenceReviewProvider'];
-  const resolutions = vi.fn((request: Parameters<NonNullable<typeof resolveReview>>[0]) =>
-    resolveReview?.(request)
+  type ReviewProvider = NonNullable<ServiceDependencies['evidenceReviewProvider']>;
+  let resolveReview: ReviewProvider;
+  const resolutions = vi.fn(
+    (request: Parameters<ReviewProvider>[0], context: Parameters<ReviewProvider>[1]) =>
+      resolveReview?.(request, context)
   );
   const server = await buildServer({
     apiKeys: new Map(
@@ -248,62 +251,86 @@ async function fixture(
     await rm(directory, { recursive: true, force: true });
   };
   try {
-    // Capture the server-owned service only in this test; production has no raw-service hook.
     let captured: AgentBrowserService | undefined;
-    const original = AgentBrowserService.prototype.createSession;
-    const capture = vi
-      .spyOn(AgentBrowserService.prototype, 'createSession')
-      .mockImplementation(function (this: AgentBrowserService, request) {
-        captured = this;
-        return original.call(this, request);
-      });
     let sessionId: string;
-    try {
-      const created = await server.inject({
-        method: 'POST',
-        url: '/v1/sessions',
-        headers: { authorization: 'Bearer owner' },
-        payload: {
-          controlMode: 'delegated',
-          headless: true,
-          ...(options.review ? { policy: { approval: { review: 'operator' } } } : {}),
-        },
-      });
-      expect(created.statusCode).toBe(201);
-      sessionId = created.json().sessionId;
-    } finally {
-      capture.mockRestore();
+    let baseUrl: string | undefined;
+    let client: AgentBrowserClient | undefined;
+    const sessionRequest = {
+      controlMode: 'delegated' as const,
+      headless: true,
+      ...(options.review ? { policy: { approval: { review: 'operator' as const } } } : {}),
+    };
+    if (options.providerNativeReader) {
+      await server.listen({ host: '127.0.0.1', port: 0 });
+      baseUrl = `http://127.0.0.1:${(server.server.address() as AddressInfo).port}`;
+      client = new AgentBrowserClient({ baseUrl, apiKey: 'owner' });
+      sessionId = (await client.sessions.create(sessionRequest)).sessionId;
+    } else {
+      // Internal-owner tests keep their direct seam; public qualification never installs this spy.
+      const original = AgentBrowserService.prototype.createSession;
+      const capture = vi
+        .spyOn(AgentBrowserService.prototype, 'createSession')
+        .mockImplementation(function (this: AgentBrowserService, request) {
+          captured = this;
+          return original.call(this, request);
+        });
+      try {
+        const created = await server.inject({
+          method: 'POST',
+          url: '/v1/sessions',
+          headers: { authorization: 'Bearer owner' },
+          payload: sessionRequest,
+        });
+        expect(created.statusCode).toBe(201);
+        sessionId = created.json().sessionId;
+      } finally {
+        capture.mockRestore();
+      }
     }
-    assert(captured);
-    const service = captured;
+    const internalService = () => {
+      assert(captured);
+      return captured;
+    };
     permittedSession = sessionId;
     const operator = { actor: 'operator' as const, tenant: 'owner' };
     const run = async <T>(callback: () => Promise<T>): Promise<T> => {
+      const service = internalService();
       const result = await service.authority.run(sessionId, operator, {}, callback);
       if (result && typeof result === 'object' && 'replay' in result)
         throw new Error('Unexpected replay');
       return result as T;
     };
-    service.applicationBind(sessionId, operator, {
-      adapter: draft.adapter.id,
-      resource: 'live-witness',
-    });
-    const { pageId } = await run(() => service.createPage(sessionId, { url: http.url }));
+    if (client)
+      await client.sessions.applicationBind(sessionId, {
+        adapter: draft.adapter.id,
+        resource: 'live-witness',
+      });
+    else
+      internalService().applicationBind(sessionId, operator, {
+        adapter: draft.adapter.id,
+        resource: 'live-witness',
+      });
+    const { pageId } = client
+      ? await client.sessions.createPage(sessionId, { url: http.url })
+      : await run(() => internalService().createPage(sessionId, { url: http.url }));
     assert(raw);
     const backing = (raw as EnginePage & { backingPage(): Page }).backingPage();
-    const expectedPage = await run(async () => {
-      const reader = service.prepareNativeFormReadInScope(sessionId, pageId);
-      const native = await reader.read();
-      return {
-        ...reader.identity,
-        url: new URL(http.url).href,
-        documentId: native.documentId,
-        formNodeId: native.form.nodeId,
-        controls: Object.fromEntries(
-          native.controls.map(({ id, nodeId, blockId }) => [id, { nodeId, blockId }])
-        ),
-      };
-    });
+    const expectedPage = client
+      ? undefined
+      : await run(async () => {
+          const service = internalService();
+          const reader = service.prepareNativeFormReadInScope(sessionId, pageId);
+          const native = await reader.read();
+          return {
+            ...reader.identity,
+            url: new URL(http.url).href,
+            documentId: native.documentId,
+            formNodeId: native.form.nodeId,
+            controls: Object.fromEntries(
+              native.controls.map(({ id, nodeId, blockId }) => [id, { nodeId, blockId }])
+            ),
+          };
+        });
     const snapshot = draft.read();
     const expectedApplication = {
       id: snapshot.id,
@@ -312,30 +339,46 @@ async function fixture(
       destination: snapshot.destination,
       intent: snapshot.intent,
     };
-    const fill = await run(() =>
-      service.autofill(sessionId, pageId, {
-        fields: [
-          { match: { dataAutomationId: 'fullName' }, value: 'Synthetic Person', verify: 'exact' },
-          { match: { dataAutomationId: 'currentCompany' }, value: 'Current Co', verify: 'exact' },
-          { match: { dataAutomationId: 'previousCompany' }, value: 'Previous Co', verify: 'exact' },
-          { match: { label: 'Work preference' }, option: { value: 'remote' }, verify: 'exact' },
-        ],
-        policy: { settleMs: 0 },
-      })
-    );
+    const autofillRequest = {
+      fields: [
+        { match: { dataAutomationId: 'fullName' }, value: 'Synthetic Person', verify: 'exact' },
+        { match: { dataAutomationId: 'currentCompany' }, value: 'Current Co', verify: 'exact' },
+        { match: { dataAutomationId: 'previousCompany' }, value: 'Previous Co', verify: 'exact' },
+        { match: { label: 'Work preference' }, option: { value: 'remote' }, verify: 'exact' },
+      ],
+      policy: { settleMs: 0 },
+    };
+    const fill = client
+      ? await client.sessions.autofill(sessionId, pageId, autofillRequest)
+      : await run(() => internalService().autofill(sessionId, pageId, autofillRequest));
     expect(fill.ok).toBe(true);
     const act = async (role: string, action: 'check' | 'upload') =>
-      run(async () => {
-        const observed = await service.observe(sessionId, pageId, { include: ['fileInputs'] });
-        const target = observed.elements.find((element) => element.role === role);
-        assert(target);
-        const result = await service.act(sessionId, pageId, {
-          action,
-          target: { ref: target.ref },
-          ...(action === 'upload' ? { paths: [filename] } : {}),
-        });
-        expect(result).toMatchObject({ status: 'success' });
-      });
+      client
+        ? (async () => {
+            const observed = await client.sessions.observe(sessionId, pageId, {
+              include: ['fileInputs'],
+            });
+            const target = observed.elements.find((element) => element.role === role);
+            assert(target);
+            const result = await client.sessions.executeAction(sessionId, pageId, {
+              action,
+              target: { ref: target.ref },
+              ...(action === 'upload' ? { paths: [filename] } : {}),
+            });
+            expect(result).toMatchObject({ status: 'success' });
+          })()
+        : run(async () => {
+            const service = internalService();
+            const observed = await service.observe(sessionId, pageId, { include: ['fileInputs'] });
+            const target = observed.elements.find((element) => element.role === role);
+            assert(target);
+            const result = await service.act(sessionId, pageId, {
+              action,
+              target: { ref: target.ref },
+              ...(action === 'upload' ? { paths: [filename] } : {}),
+            });
+            expect(result).toMatchObject({ status: 'success' });
+          });
     await act('checkbox', 'check');
     await act('fileinput', 'upload');
     const diagnostics = async () =>
@@ -346,6 +389,7 @@ async function fixture(
     assert(registry);
     const sources = registry;
     const prepareCollector = (afterFirstNative?: () => void) => {
+      assert(expectedPage);
       const signal = new AbortController().signal;
       const application = sources.prepareRead(
         'draft',
@@ -355,7 +399,7 @@ async function fixture(
         verifier
       );
       assert(application);
-      const page = service.prepareNativeFormReadInScope(sessionId, pageId);
+      const page = internalService().prepareNativeFormReadInScope(sessionId, pageId);
       const reader = afterFirstNative
         ? {
             ...page,
@@ -377,7 +421,7 @@ async function fixture(
       run(async () => {
         const { collector } = prepareCollector(afterFirstNative);
         const result = await collector(new AbortController().signal);
-        expect(service.authority.didDispatchInScope(sessionId)).toBe(false);
+        expect(internalService().authority.didDispatchInScope(sessionId)).toBe(false);
         return result;
       });
     const composition = () => {
@@ -420,12 +464,65 @@ async function fixture(
         },
       };
     };
-    resolveReview = (request) => {
+    type ExpectedPage = Parameters<typeof createDraftWitnessCollector>[0]['expected']['page'];
+    let providerExpectedPage: ExpectedPage | undefined;
+    const providerComposition = (nativeForm: Parameters<ReviewProvider>[1]['nativeForm']) => {
+      const signal = new AbortController().signal;
+      const application = sources.prepareRead(
+        'draft',
+        'application.draft',
+        { sessionId, pageId, signal },
+        'witness-check',
+        verifier
+      );
+      assert(application);
+      const collector = async (collectSignal: AbortSignal) => {
+        let pinned = providerExpectedPage;
+        if (!pinned) {
+          const native = await nativeForm.read(collectSignal);
+          pinned = {
+            ...nativeForm.identity,
+            url: new URL(http.url).href,
+            documentId: native.documentId,
+            formNodeId: native.form.nodeId,
+            controls: Object.fromEntries(
+              native.controls.map(({ id, nodeId, blockId }) => [id, { nodeId, blockId }])
+            ),
+          };
+        }
+        const read = createDraftWitnessCollector({
+          application,
+          page: nativeForm,
+          expected: { page: pinned, application: expectedApplication },
+        });
+        const result = await read(collectSignal);
+        providerExpectedPage ??= structuredClone(pinned);
+        return result;
+      };
+      return {
+        source: {
+          ownerId: permissionOwnerId,
+          contract: { id: 'synthetic-native-draft', version: '1' },
+          permission: {
+            generation: permissionGeneration,
+            currentGeneration: () => permissionGeneration,
+          },
+          assertAuthorized() {
+            application.assertAuthorized();
+            nativeForm.assertAuthority();
+          },
+          collect: collector,
+        },
+      };
+    };
+    resolveReview = (request, context) => {
       if (
         request.identity.tenant !== 'owner' ||
         request.identity.sessionId !== sessionId ||
-        request.identity.sessionIncarnation !== expectedPage.sessionIncarnation ||
         request.identity.pageId !== pageId ||
+        context.nativeForm.identity.sessionId !== request.identity.sessionId ||
+        context.nativeForm.identity.pageId !== request.identity.pageId ||
+        context.nativeForm.identity.sessionIncarnation !== request.identity.sessionIncarnation ||
         request.source.ownerId !== permissionOwnerId ||
         request.source.contract.id !== 'synthetic-native-draft' ||
         request.source.contract.version !== '1'
@@ -434,6 +531,37 @@ async function fixture(
       const selected = (
         request as typeof request & { application?: Readonly<ApplicationReviewSelector> }
       ).application;
+      if (options.providerNativeReader) {
+        if (!selected) return undefined;
+        const current = draft.read();
+        if (
+          selected.adapter !== draft.adapter.id ||
+          selected.resource !== 'live-witness' ||
+          selected.operation !== 'submit' ||
+          selected.expectedVersion !== current.version
+        )
+          return undefined;
+        const configured = providerComposition(context.nativeForm);
+        return {
+          source: configured.source,
+          action: {
+            type: 'application-submit',
+            intent: 'submit',
+            tenant: 'owner',
+            sessionId,
+            sessionIncarnation: request.identity.sessionIncarnation,
+            adapter: selected.adapter,
+            resource: selected.resource,
+            bindingGeneration: selected.bindingGeneration,
+            operation: selected.operation,
+            operationId: selected.operationId,
+            expectedVersion: selected.expectedVersion,
+            input: { intent: 'submit', expected: current },
+          },
+        };
+      }
+      assert(expectedPage);
+      if (request.identity.sessionIncarnation !== expectedPage.sessionIncarnation) return undefined;
       if (!selected) return composition();
       const current = draft.read();
       if (
@@ -464,6 +592,7 @@ async function fixture(
     };
     const review = <T>(callback: (prepared: PreparedEvidenceReview) => Promise<T>) =>
       run(async () => {
+        const service = internalService();
         const prepared = service.prepareEvidenceReviewInScope(sessionId, pageId, composition());
         const result = await callback(prepared);
         expect(service.authority.didDispatchInScope(sessionId)).toBe(false);
@@ -476,7 +605,11 @@ async function fixture(
       sessionId,
       resolutions,
       dispatch: vi.spyOn(raw, 'act'),
-      service,
+      get service() {
+        return internalService();
+      },
+      baseUrl,
+      client,
       backing,
       collect,
       review,
@@ -498,7 +631,7 @@ async function fixture(
 }
 
 async function publicApplicationSurface(f: Awaited<ReturnType<typeof fixture>>) {
-  await f.server.listen({ host: '127.0.0.1', port: 0 });
+  if (!f.baseUrl) await f.server.listen({ host: '127.0.0.1', port: 0 });
   const baseUrl = `http://127.0.0.1:${(f.server.server.address() as AddressInfo).port}`;
   const client = new AgentBrowserClient({ baseUrl, apiKey: 'owner' });
   const cli = fileURLToPath(new URL('../../cli/dist/bin.js', import.meta.url));
@@ -550,7 +683,7 @@ function executeReviewedSubmission(
 }
 
 it('creates, inspects, approves and qualifies a protected application submission through the public CLI', async () => {
-  const f = await fixture({ review: true, submit: true });
+  const f = await fixture({ review: true, submit: true, providerNativeReader: true });
   try {
     const { client, invoke } = await publicApplicationSurface(f);
     const first = f.applicationReviewRequest('public-reviewed-submit');
@@ -558,9 +691,9 @@ it('creates, inspects, approves and qualifies a protected application submission
       (await invoke(['application', 'review', f.sessionId, JSON.stringify(first)])).stdout
     );
     expect(created).toMatchObject({ status: 'pending' });
-    expect(
-      f.service.authority.get(f.sessionId)?.operation(first.request.operationId)
-    ).toBeUndefined();
+    await expect(
+      client.sessions.operation(f.sessionId, first.request.operationId)
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(f.draft.submissionCount()).toBe(0);
 
     // One real permission owner can independently reconstruct more than one planned operation.
@@ -568,9 +701,9 @@ it('creates, inspects, approves and qualifies a protected application submission
     const secondToken = await client.sessions.applicationReview(f.sessionId, second);
     expect(secondToken).toMatchObject({ status: 'pending' });
     expect(secondToken.tokenId).not.toBe(created.tokenId);
-    expect(
-      f.service.authority.get(f.sessionId)?.operation(second.request.operationId)
-    ).toBeUndefined();
+    await expect(
+      client.sessions.operation(f.sessionId, second.request.operationId)
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(f.draft.submissionCount()).toBe(0);
 
     const inspected = JSON.parse(
@@ -680,7 +813,12 @@ it('creates, inspects, approves and qualifies a protected application submission
 }, 60_000);
 
 it('keeps a lost public execution unknown and records separate named receipt reconciliation', async () => {
-  const f = await fixture({ review: true, submit: true, loseSubmitReturn: true });
+  const f = await fixture({
+    review: true,
+    submit: true,
+    providerNativeReader: true,
+    loseSubmitReturn: true,
+  });
   try {
     const { client, invoke } = await publicApplicationSurface(f);
     const body = f.applicationReviewRequest('public-lost-submit');
@@ -729,7 +867,7 @@ it('keeps a lost public execution unknown and records separate named receipt rec
         testedSeam: 'application',
       },
     });
-    expect(f.service.authority.get(f.sessionId)?.operation(expected.operationId)).toMatchObject({
+    expect(await client.sessions.operation(f.sessionId, expected.operationId)).toMatchObject({
       status: 'outcome_unknown',
       dispatched: true,
     });
@@ -1123,9 +1261,9 @@ it.each([
 ])(
   'refuses a public protected submission after review when %s drifts',
   async (_name, mutate) => {
-    const f = await fixture({ review: true, submit: true });
+    const f = await fixture({ review: true, submit: true, providerNativeReader: true });
     try {
-      const { invoke } = await publicApplicationSurface(f);
+      const { client, invoke } = await publicApplicationSurface(f);
       const body = f.applicationReviewRequest(`public-consent-drift-${randomUUID()}`);
       const token = JSON.parse(
         (await invoke(['application', 'review', f.sessionId, JSON.stringify(body)])).stdout
@@ -1137,9 +1275,10 @@ it.each([
 
       await mutate(f);
       await expect(executeReviewedSubmission(f, invoke, body, token.tokenId)).rejects.toBeDefined();
-      expect(
-        f.service.authority.get(f.sessionId)?.operation(body.request.operationId)
-      ).toMatchObject({ status: 'failed', dispatched: false });
+      expect(await client.sessions.operation(f.sessionId, body.request.operationId)).toMatchObject({
+        status: 'failed',
+        dispatched: false,
+      });
       expect(f.draft.submissionCount()).toBe(0);
       expect(f.http.submissionAttempts()).toBe(0);
     } finally {
