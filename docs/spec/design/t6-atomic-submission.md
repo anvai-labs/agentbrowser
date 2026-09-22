@@ -23,7 +23,7 @@ payload. Begin with a cooperative application owner that can compare its full cu
 state and commit the accepted application synchronously. Report that narrower guarantee.
 Unsupported live ATS forms remain draft/manual; this design authorizes no live submission.
 
-## C3a — independent atomic acceptance oracle (current slice)
+## C3a — independent atomic acceptance oracle (merged #249)
 
 Extend `test-support/application-draft.ts`, not a parallel fixture/owner. Add a direct
 **test-only** `submit(expectedVersion, command)` method. Do not register a submit
@@ -62,6 +62,10 @@ No operation in the public adapter can create the acceptance in this slice. Draf
 incarnation and complete accepted identity prevent confusing receipts across owners.
 
 ## C3b — mandatory consent at the shared dispatch boundary (design gate)
+
+The [concrete C3b design](t6-mandatory-application-consent.md) and its
+[qualification](../evidence/t6-mandatory-application-consent.md) implement the internal
+enforcement gate. Public creation/execution projection still belongs to C3c.
 
 Before exposing a submit operation, settle a minimal trusted operation policy in
 ApplicationAuthority. Every invocation of a review-required operation must enforce it;

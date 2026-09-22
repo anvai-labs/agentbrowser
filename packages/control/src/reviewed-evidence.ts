@@ -27,6 +27,8 @@ export interface EvidenceReviewSource {
 }
 
 export interface PreparedEvidenceReview {
+  /** Recheck the captured owner after consumption, inside the original admission only. */
+  assertCurrent(signal: AbortSignal): void;
   generate(signal: AbortSignal): Promise<OperatorApprovalView>;
   get(tokenId: string, signal: AbortSignal): Promise<OperatorApprovalView | undefined>;
   decide(
@@ -209,6 +211,8 @@ export function prepareEvidenceReview(
         permission.assertAuthorized();
         invokeSync(assertSourceCallback, source);
         invokeSync(assertAuthorityCallback, options);
+        // Either callback may revoke the generation after its earlier check.
+        permission.assertAuthorized();
       } catch {
         ownerRevoked = true;
         throw unavailable();
@@ -287,6 +291,9 @@ export function prepareEvidenceReview(
     };
 
     const prepared: PreparedEvidenceReview = {
+      assertCurrent(signal) {
+        guard(combinedSignal(signal));
+      },
       async generate(signal) {
         try {
           const activeSignal = combinedSignal(signal);

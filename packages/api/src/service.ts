@@ -18,8 +18,11 @@ import {
   ApplicationAuthority,
   type ApplicationReadEvidenceSourceOptions,
   type ApplicationReceiptEvidenceSourceOptions,
+  type ApplicationRequest,
   type EvidenceReviewSource,
   NATIVE_FORM_REVIEW_TYPE,
+  type PreparedApplicationConsent,
+  type PreparedApplicationOperationReview,
   type PreparedEvidenceReview,
   TrustedEvidenceSourceRegistry,
   type TrustedVerifierRegistry,
@@ -487,7 +490,8 @@ export class AgentBrowserService {
       throw new Error('Evidence source registry and provider are mutually exclusive');
     this.applicationAuthority = new ApplicationAuthority(
       this.authority,
-      deps.applicationAdapters ?? []
+      deps.applicationAdapters ?? [],
+      { consentPolicy: (review, tokenId) => this.prepareApplicationConsent(review, tokenId) }
     );
     if (evidenceSourceRegistryProvider !== undefined) {
       if (typeof evidenceSourceRegistryProvider !== 'function')
@@ -1809,6 +1813,31 @@ export class AgentBrowserService {
     pageId: string,
     options: { action: Record<string, unknown>; source: EvidenceReviewSource }
   ): PreparedEvidenceReview {
+    return this.prepareBoundEvidenceReview(sessionId, pageId, options);
+  }
+
+  /** Internal C3b composition only; public review creation remains a separate gate. */
+  prepareApplicationSubmissionReviewInScope(
+    sessionId: string,
+    pageId: string,
+    request: ApplicationRequest,
+    source: EvidenceReviewSource
+  ): PreparedEvidenceReview {
+    const review = this.applicationAuthority.prepareOperationReviewInScope(sessionId, request);
+    return this.prepareBoundEvidenceReview(
+      sessionId,
+      pageId,
+      { action: review.action, source },
+      review.assertCurrent
+    );
+  }
+
+  private prepareBoundEvidenceReview(
+    sessionId: string,
+    pageId: string,
+    options: { action: Readonly<Record<string, unknown>>; source: EvidenceReviewSource },
+    assertApplication?: () => void
+  ): PreparedEvidenceReview {
     try {
       const context = this.reviewContext(sessionId);
       const contextKey = canonicalJson(context);
@@ -1818,6 +1847,7 @@ export class AgentBrowserService {
       // Reuse the existing page/admission owner, without performing another native read.
       const page = this.prepareNativeFormReadInScope(sessionId, pageId);
       const assertAuthority = () => {
+        assertApplication?.();
         page.assertAuthority();
         if (canonicalJson(this.reviewContext(sessionId)) !== contextKey)
           throw new ServiceError('CONTROL_REVOKED', 'Review authority changed.');
@@ -1836,6 +1866,47 @@ export class AgentBrowserService {
     } catch {
       throw new ServiceError('INVALID_REQUEST', 'Evidence review unavailable');
     }
+  }
+
+  private prepareApplicationConsent(
+    review: PreparedApplicationOperationReview,
+    tokenId: string
+  ): PreparedApplicationConsent {
+    const sessionId = review.sessionId;
+    const context = this.reviewContext(sessionId);
+    const signal = this.authority.signal(sessionId);
+    let prepared: PreparedEvidenceReview | undefined;
+    let assertPinned: (() => void) | undefined;
+    let attempted = false;
+    let consumed = false;
+    return Object.freeze({
+      consume: async () => {
+        if (attempted) throw new ServiceError('CONTROL_REQUIRED', 'Submission consent unavailable');
+        attempted = true;
+        review.assertCurrent();
+        const resolved = await this.resolveApproval(sessionId, tokenId, review.action);
+        this.assertReviewContext(sessionId, context);
+        review.assertCurrent();
+        if (!resolved.prepared || !resolved.assertPinned)
+          throw new ServiceError('CONTROL_REQUIRED', 'Submission consent unavailable');
+        prepared = resolved.prepared;
+        assertPinned = resolved.assertPinned;
+        const result = await prepared.consume(tokenId, signal);
+        this.assertReviewContext(sessionId, context);
+        review.assertCurrent();
+        consumed = result === true;
+        return consumed;
+      },
+      assertCurrent: () => {
+        if (!consumed || !prepared || !assertPinned)
+          throw new ServiceError('CONTROL_REQUIRED', 'Submission consent unavailable');
+        this.assertReviewContext(sessionId, context);
+        review.assertCurrent();
+        prepared.assertCurrent(signal);
+        assertPinned();
+        this.assertReviewContext(sessionId, context);
+      },
+    });
   }
 
   // ------------------------------------------------------------------
@@ -3637,13 +3708,19 @@ export class AgentBrowserService {
   }
 
   /** Resolve a stored review without exposing its private action or witness to configuration. */
-  private async resolveApproval(sessionId: string, tokenId: string) {
+  private async resolveApproval(
+    sessionId: string,
+    tokenId: string,
+    expectedAction?: Readonly<Record<string, unknown>>
+  ) {
     const context = this.reviewContext(sessionId);
     const current = await this.approvalGate.getReviewedApproval(tokenId, context);
     this.authority.assert(sessionId);
     if (!current) throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
-    if (current.action.type !== NATIVE_FORM_REVIEW_TYPE)
-      return { context, current, prepared: undefined };
+    if (current.action.type !== NATIVE_FORM_REVIEW_TYPE) {
+      if (expectedAction) throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
+      return { context, current, prepared: undefined, assertPinned: undefined };
+    }
 
     const selector = selectEvidenceReview(current.action);
     const provider = this.evidenceReviewProvider;
@@ -3692,6 +3769,8 @@ export class AgentBrowserService {
       canonicalJson(action);
       if (!action || typeof action !== 'object' || Array.isArray(action))
         throw new Error('Unavailable provider result');
+      if (expectedAction && canonicalJson(action) !== canonicalJson(expectedAction))
+        throw new Error('Approval does not match the intended application operation');
       const source = own.source.value as EvidenceReviewSource;
       assertPinned();
       const prepared = prepareEvidenceReview({
@@ -3706,7 +3785,7 @@ export class AgentBrowserService {
         lifecycleSignal: this.authority.signal(sessionId),
       });
       assertPinned();
-      return { context, current, prepared };
+      return { context, current, prepared, assertPinned };
     } catch {
       try {
         assertPinned?.();
