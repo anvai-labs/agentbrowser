@@ -24,6 +24,58 @@ function deferred() {
   return { promise, resolve };
 }
 
+it.each([false, true])(
+  'finalizes through the captured owner before release (abandoned write: %s)',
+  async (abandoned) => {
+    const authority = new SessionAuthority();
+    authority.register('session', 'owner', new AbortController().signal);
+    const control = authority.get('session')!;
+    const release = deferred();
+    const finish = control.finish.bind(control);
+    const observations: unknown[] = [];
+    const readChecks: unknown[] = [];
+    const forbiddenEffect = vi.fn();
+    vi.spyOn(control, 'finish').mockImplementation((ticket) => {
+      observations.push(control.view());
+      try {
+        authority.assert('session');
+        readChecks.push('unexpected authority');
+      } catch (error) {
+        readChecks.push(error);
+      }
+      // Inject a late reclassification attempt; real publication is a later slice.
+      try {
+        authority.dispatchInScope('session', forbiddenEffect);
+      } catch {
+        // The execution scope must already be sealed.
+      }
+      finish(ticket, 'failed');
+    });
+    await authority.run('session', operator, { id: 'finalized', fingerprint: 'a' }, async () => {
+      if (abandoned) void authority.dispatchInScope('session', () => release.promise);
+      else await authority.dispatchInScope('session', () => 42);
+    });
+    if (abandoned) {
+      expect(observations).toHaveLength(0);
+      expect(control.operation('finalized')?.status).toBe('in_flight');
+      expect(control.view().busy).toBe(true);
+      release.resolve();
+      await vi.waitFor(() => expect(control.view().busy).toBe(false));
+    }
+    const status = abandoned ? 'outcome_unknown' : 'completed';
+    expect(observations).toEqual([
+      expect.objectContaining({
+        busy: true,
+        operation: expect.objectContaining({ status, dispatched: true }),
+      }),
+    ]);
+    expect(control.operation('finalized')?.status).toBe(status);
+    expect(control.view().busy).toBe(false);
+    expect(forbiddenEffect).not.toHaveBeenCalled();
+    expect(readChecks).toEqual([expect.objectContaining({ code: 'CONTROL_REQUIRED' })]);
+  }
+);
+
 it.each(['act', 'navigate', 'close'] as const)(
   'retains an abandoned guarded %s until drain and never reports it completed',
   async (method) => {

@@ -21,7 +21,7 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T2 shared execution/verification | Complete, released | 100% | Production evidence belongs to T4; restart durability to T5 |
 | T3 QA regression | Complete, released | 100% | Broader provisioning and demand-backed report adapters are follow-ups |
 | T4 application operations/parity | Active | ~40% | Production UI/API oracle and evidence; U0/U1 operator UX merged; synthetic parity qualified; callback repair merged #236 |
-| T5 durable recovery | Active J0 dispatch/drain foundation | ~10% | Journal/recovery and process-loss qualification; no durable guarantee yet |
+| T5 durable recovery | Active J0/A1 dispatch and finalization foundation | ~10% | Journal/recovery and process-loss qualification; no durable guarantee yet |
 | T6 forms/operations | Active | ~40% | Production sources, candidate/job eligibility and live qualification; C3c public synthetic workflow merged #257 |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
 | T8 installed harnesses | Active source repair; installed acceptance unqualified | 0% installed qualification | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |
@@ -336,3 +336,14 @@ browser approval/target revalidation remains a separate gate. The packets name
 existing owners and failing-first tests instead of creating another executor.
 They are proposed only: T5 stays ~10%, exactly 3/9 finite milestones are complete,
 and no durability, installed-harness qualification or release is claimed.
+
+
+## T5 A1: core finalization — 2026-09-23
+
+The [A1 evidence](t5-finalization.md) records finalization separately from ticket
+release in the existing SessionControl owner. SessionAuthority composes it after
+J0 drain; terminal status cannot be overwritten by a late classification attempt.
+No second record store, executor, publisher or dependency was introduced. HTTP
+publication remains A2–A4 work, and J1-B/C journal integration is still unimplemented.
+The coarse T5 estimate remains ~10%; exactly 3/9 finite milestones are complete.
+Published 1.9.1 and running services remain unchanged.

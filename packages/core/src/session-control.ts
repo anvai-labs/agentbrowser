@@ -35,6 +35,7 @@ export class SessionControl {
   private epoch = 0;
   private review = randomUUID();
   private active: ControlTicket | undefined;
+  private finalized = false;
   private readonly records = new Map<
     string,
     { fingerprint: string; actor: string; record: OperationRecord }
@@ -170,6 +171,7 @@ export class SessionControl {
         },
       });
     this.active = ticket;
+    this.finalized = false;
     return ticket;
   }
 
@@ -185,6 +187,8 @@ export class SessionControl {
 
   dispatched(ticket: ControlTicket): void {
     this.check(ticket);
+    if (this.finalized)
+      throw new ControlError('CONTROL_REVOKED', 'Operation execution is finalized');
     ticket.didDispatch = true;
     if (ticket.operationId) {
       const entry = this.records.get(ticket.operationId);
@@ -192,12 +196,21 @@ export class SessionControl {
     }
   }
 
-  finish(ticket: ControlTicket, status: Exclude<OperationRecord['status'], 'in_flight'>): void {
-    if (this.active !== ticket) return;
+  /** Freeze execution facts without releasing the captured ticket's exclusion. */
+  finalize(ticket: ControlTicket, status: Exclude<OperationRecord['status'], 'in_flight'>): void {
+    // Completion bookkeeping must also work after revocation while the old owner drains.
+    if (this.active !== ticket || this.finalized) return;
     if (ticket.operationId) {
       const entry = this.records.get(ticket.operationId);
       if (entry) entry.record.status = status;
     }
+    this.finalized = true;
+  }
+
+  /** Compatibility composition: finalize once, then release only the captured ticket. */
+  finish(ticket: ControlTicket, status: Exclude<OperationRecord['status'], 'in_flight'>): void {
+    if (this.active !== ticket) return;
+    this.finalize(ticket, status);
     this.active = undefined;
     if (this.state === 'PAUSE_REQUESTED') this.state = 'HUMAN_ACTIVE';
   }

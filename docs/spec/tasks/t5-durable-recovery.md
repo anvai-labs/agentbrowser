@@ -1,6 +1,6 @@
 # T5: optional durable operations and recovery
 
-Status: active J0 dispatch/drain foundation; durable recovery is not yet implemented.
+Status: active J0 dispatch/drain and A1 core finalization; durable recovery unimplemented.
 Repository: agentbrowser. Depends on: T2.
 Inputs: core, contracts, execution, state-memory, security.
 
@@ -26,9 +26,10 @@ The [journal design](../design/t5-operation-journal.md) assigns owners, crash st
 response-acknowledgment changes, retention/key policy and J1–J4 delivery gates. Read
 it explicitly for T5 implementation; it is not added to unrelated mode context.
 
-Next implement [J1-A finalization/publication](../design/t5-finalization-publication.md)
-in A1–A4 packets, followed by the [J1-B/C journal contract](../design/t5-journal-contract.md)
-and application-only integration. Both modules are proposed and loaded on demand.
+A1 core finalization is implemented ([evidence](../evidence/t5-finalization.md)).
+Next implement [J1-A publication](../design/t5-finalization-publication.md)
+packets A2–A4, then the [J1-B/C journal contract](../design/t5-journal-contract.md)
+and application-only integration. Remaining packets are proposed and loaded on demand.
 Browser durability waits for its existing target/policy/approval owners to support
 post-storage-wait revalidation. Do not advertise recovery from J0 or this design.
 

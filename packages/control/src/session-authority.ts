@@ -268,6 +268,7 @@ export class SessionAuthority {
             status = ticket.didDispatch ? 'outcome_unknown' : 'failed';
           }
           // Finish only the captured control; removal/re-registration cannot release a new owner.
+          entry.control.finalize(ticket, status);
           entry.control.finish(ticket, status);
         };
         if (scope.pending.size === 0) finish();
