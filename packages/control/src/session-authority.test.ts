@@ -24,6 +24,132 @@ function deferred() {
   return { promise, resolve };
 }
 
+it.each(['act', 'navigate', 'close'] as const)(
+  'retains an abandoned guarded %s until drain and never reports it completed',
+  async (method) => {
+    const authority = new SessionAuthority();
+    authority.register('session', 'owner', new AbortController().signal);
+    const release = deferred();
+    const effect = vi.fn(() => release.promise);
+    const page = authority.guardPage('session', { [method]: effect } as unknown as EnginePage);
+    const invoke = () => {
+      if (method === 'act') return page.act({ action: 'press', key: 'Tab' });
+      if (method === 'navigate') return page.navigate({ url: 'https://example.test' });
+      return page.close();
+    };
+    let work!: Promise<unknown>;
+    await authority.run('session', operator, { id: 'abandoned', fingerprint: 'a' }, async () => {
+      work = invoke();
+      expect(effect).toHaveBeenCalledTimes(1);
+      return 'response';
+    });
+    expect(authority.status('session')).toMatchObject({
+      busy: true,
+      operation: { status: 'in_flight', dispatched: true },
+    });
+    await expect(authority.run('session', operator, {}, async () => 'new')).rejects.toThrow('busy');
+    release.resolve();
+    await work;
+    await vi.waitFor(() => expect(authority.status('session').busy).toBe(false));
+    expect(authority.get('session')?.operation('abandoned')).toMatchObject({
+      status: 'outcome_unknown',
+      dispatched: true,
+    });
+    expect(effect).toHaveBeenCalledTimes(1);
+  }
+);
+
+it('drains abandoned failing writes without leaking rejection or releasing a replacement owner', async () => {
+  const authority = new SessionAuthority();
+  authority.register('session', 'owner', new AbortController().signal);
+  const oldControl = authority.get('session')!;
+  const release = deferred();
+  const next = deferred();
+  const effect = vi.fn(async () => {
+    await release.promise;
+    throw new Error('late write');
+  });
+  await authority.run('session', operator, { id: 'old', fingerprint: 'a' }, async () => {
+    void authority.dispatchInScope('session', effect);
+  });
+  expect(authority.takeover('session').state).toBe('PAUSE_REQUESTED');
+  authority.remove('session');
+  authority.register('session', 'owner', new AbortController().signal);
+  const replacement = authority.run('session', operator, {}, () => next.promise);
+  release.resolve();
+  await vi.waitFor(() => expect(oldControl.view().busy).toBe(false));
+  expect(oldControl.operation('old')?.status).toBe('outcome_unknown');
+  expect(authority.status('session').busy).toBe(true);
+  next.resolve();
+  await replacement;
+  expect(authority.status('session').busy).toBe(false);
+});
+
+it('shares dispatch tracking with reads while retaining awaited and handled failure semantics', async () => {
+  const authority = new SessionAuthority();
+  authority.register('session', 'owner', new AbortController().signal);
+  const release = deferred();
+  let read!: Promise<void>;
+  await authority.run('session', operator, { id: 'handled', fingerprint: 'a' }, async () => {
+    read = authority.trackReadInScope('session', () => release.promise);
+    await expect(
+      authority.dispatchInScope('session', () => {
+        throw new Error('handled');
+      })
+    ).rejects.toThrow('handled');
+    expect(await authority.dispatchInScope('session', () => 42)).toBe(42);
+  });
+  expect(authority.status('session').busy).toBe(true);
+  release.resolve();
+  await read;
+  await vi.waitFor(() => expect(authority.status('session').busy).toBe(false));
+  expect(authority.get('session')?.operation('handled')?.status).toBe('completed');
+});
+
+it('refuses dispatch outside the captured live scope and invokes admitted callbacks immediately', async () => {
+  const authority = new SessionAuthority();
+  authority.register('session', 'owner', new AbortController().signal);
+  const effect = vi.fn(() => 42);
+  expect(() => authority.dispatchInScope('session', effect)).toThrow();
+  await expect(
+    authority.run('session', operator, {}, async () => {
+      expect(() => authority.dispatchInScope('wrong', effect)).toThrow();
+      const result = authority.dispatchInScope('session', effect);
+      expect(effect).toHaveBeenCalledTimes(1);
+      expect(await result).toBe(42);
+      authority.remove('session');
+      authority.register('session', 'owner', new AbortController().signal);
+      expect(() => authority.dispatchInScope('session', effect)).toThrow();
+    })
+  ).rejects.toThrow('Session owner changed');
+  expect(effect).toHaveBeenCalledTimes(1);
+});
+
+it('drains every outstanding dispatch and refuses nested writes after the parent exits', async () => {
+  const authority = new SessionAuthority();
+  authority.register('session', 'owner', new AbortController().signal);
+  const first = deferred();
+  const second = deferred();
+  const effect = vi.fn();
+  let a!: Promise<void>;
+  let b!: Promise<void>;
+  await authority.run('session', operator, { id: 'multiple', fingerprint: 'a' }, async () => {
+    a = authority.dispatchInScope('session', () => first.promise);
+    b = authority.dispatchInScope('session', async () => {
+      await second.promise;
+      expect(() => authority.dispatchInScope('session', effect)).toThrow();
+    });
+  });
+  first.resolve();
+  await a;
+  expect(authority.status('session').busy).toBe(true);
+  second.resolve();
+  await b;
+  await vi.waitFor(() => expect(authority.status('session').busy).toBe(false));
+  expect(authority.get('session')?.operation('multiple')?.status).toBe('outcome_unknown');
+  expect(effect).not.toHaveBeenCalled();
+});
+
 it.each([false, true])(
   'retains tracked work after response and fences late authority (takeover: %s)',
   async (takeover) => {

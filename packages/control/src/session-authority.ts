@@ -50,6 +50,7 @@ type Scope = {
   admission: SessionAdmission;
   open: boolean;
   pending: Set<Promise<unknown>>;
+  pendingDispatches: number;
 };
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 
@@ -223,7 +224,15 @@ export class SessionAuthority {
         : {}),
     });
     if ('replay' in ticket) return { replay: true, operation: ticket.replay };
-    const scope: Scope = { sessionId, entry, ticket, admission, open: true, pending: new Set() };
+    const scope: Scope = {
+      sessionId,
+      entry,
+      ticket,
+      admission,
+      open: true,
+      pending: new Set(),
+      pendingDispatches: 0,
+    };
     return this.scope.run(scope, async () => {
       let status: Parameters<SessionControl['finish']>[1] = 'failed';
       try {
@@ -247,6 +256,9 @@ export class SessionAuthority {
       } finally {
         // Response completion ends permission to do more work, even while prior I/O drains.
         scope.open = false;
+        // A caller that abandoned a write did not establish a terminal outcome.
+        // Keep the captured ticket draining, even if the write later succeeds.
+        if (scope.pendingDispatches > 0) status = 'outcome_unknown';
         const finish = () => {
           try {
             if (this.require(sessionId) !== entry)
@@ -267,9 +279,22 @@ export class SessionAuthority {
     });
   }
 
-  /** Retain read-only observation I/O through drain; writes must settle inside run itself. */
+  /** Retain observations through drain without retroactively failing completed execution. */
   trackReadInScope<T>(sessionId: string, callback: () => T | PromiseLike<T>): Promise<T> {
-    this.assert(sessionId);
+    return this.trackInScope(sessionId, callback, false);
+  }
+
+  /** One effect boundary: check and mark synchronously, then retain work through drain. */
+  dispatchInScope<T>(sessionId: string, callback: () => T | PromiseLike<T>): Promise<T> {
+    return this.trackInScope(sessionId, callback, true);
+  }
+
+  private trackInScope<T>(
+    sessionId: string,
+    callback: () => T | PromiseLike<T>,
+    dispatch: boolean
+  ): Promise<T> {
+    this.assert(sessionId, dispatch);
     const scope = this.scope.getStore();
     if (!scope) throw new ControlError('CONTROL_REQUIRED', 'Missing operation authority');
     let start: () => void = () => {};
@@ -283,11 +308,13 @@ export class SessionAuthority {
       };
     });
     scope.pending.add(task);
+    if (dispatch) scope.pendingDispatches++;
+    const settled = () => {
+      scope.pending.delete(task);
+      if (dispatch) scope.pendingDispatches--;
+    };
     // Attach both handlers immediately: tracking must never introduce unhandled rejection.
-    void task.then(
-      () => scope.pending.delete(task),
-      () => scope.pending.delete(task)
-    );
+    void task.then(settled, settled);
     // Register before invocation while preserving the caller's synchronous admission checks.
     start();
     return task;
@@ -458,7 +485,9 @@ export class SessionAuthority {
         return (...args: unknown[]) => {
           if (authority.active(sessionId) !== owner)
             throw new ControlError('CONTROL_REVOKED', 'Page belongs to a removed session owner');
-          authority.assert(sessionId, key === 'act' || key === 'navigate' || key === 'close');
+          if (key === 'act' || key === 'navigate' || key === 'close')
+            return authority.dispatchInScope(sessionId, () => value.apply(target, args));
+          authority.assert(sessionId);
           return value.apply(target, args);
         };
       },

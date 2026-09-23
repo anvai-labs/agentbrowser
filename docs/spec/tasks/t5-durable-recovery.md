@@ -1,6 +1,7 @@
 # T5: optional durable operations and recovery
 
-Status: not started. Repository: agentbrowser. Depends on: T2.
+Status: active J0 dispatch/drain foundation; durable recovery is not yet implemented.
+Repository: agentbrowser. Depends on: T2.
 Inputs: core, contracts, execution, state-memory, security.
 
 ## Reuse and scope
@@ -12,10 +13,18 @@ and no copied authority machine. Reuse shared evidence storage and canonical inp
 
 ## Slices
 
+0. [J0 shared dispatch/drain](../design/t5-operation-journal.md): consolidate the three
+   existing business-write boundaries under SessionAuthority. Retain pending writes
+   through drain and refuse to report abandoned unresolved work as completed.
+   This prerequisite adds no store, wire capability or durable acknowledgment.
 1. Define journal transition/retention/schema/key-lifecycle contract and failure tests.
 2. Persist bounded intent, dispatch and terminal metadata; recover under a new generation.
 3. Add authorized receipt/report lookup and explicit resume of revalidated undispatched
    work. Qualify cursor snapshot/event recovery through the existing event boundary.
+
+The [journal design](../design/t5-operation-journal.md) assigns owners, crash states,
+response-acknowledgment changes, retention/key policy and J1–J4 delivery gates. Read
+it explicitly for T5 implementation; it is not added to unrelated mode context.
 
 ## TDD and acceptance
 

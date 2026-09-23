@@ -529,8 +529,10 @@ export class ApplicationAuthority {
           assertApplicationAuthorized(adapter, scope);
           assertBinding();
         }
-        this.authority.assert(sessionId, write);
-        const result = await execute(scope);
+        this.authority.assert(sessionId);
+        const result = await (write
+          ? this.authority.dispatchInScope(sessionId, () => execute(scope))
+          : execute(scope));
         rejected = result.status === 'rejected';
         if (!rejected && result.status !== (write ? 'committed' : 'read'))
           throw new Error('Application adapter returned an invalid result kind');
