@@ -66,6 +66,8 @@ type Scope = {
   open: boolean;
   pending: Set<Promise<unknown>>;
   pendingDispatches: number;
+  /** Actual bounded output lifetime, never borrowed from a caller-supplied context. */
+  publicationGuard: (() => void) | undefined;
 };
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 
@@ -263,6 +265,7 @@ export class SessionAuthority {
       open: true,
       pending: new Set(),
       pendingDispatches: 0,
+      publicationGuard: undefined,
     };
     return this.scope.run(scope, async () => {
       let status: TerminalStatus = 'failed';
@@ -337,12 +340,20 @@ export class SessionAuthority {
     status: TerminalStatus,
     publication: SessionPublication<T>
   ): Promise<void> {
-    await publishWithin(
-      publication,
-      () => this.checkScopeOwner(scope),
-      this.now,
-      (context) => publication.publish(result, Object.freeze({ ...context, status }))
-    );
+    try {
+      await publishWithin(
+        publication,
+        () => this.checkScopeOwner(scope),
+        this.now,
+        (context) => {
+          scope.publicationGuard = context.assertCurrent;
+          return publication.publish(result, Object.freeze({ ...context, status }));
+        }
+      );
+    } finally {
+      // Clear before release even when a non-cooperative publisher is still pending.
+      scope.publicationGuard = undefined;
+    }
   }
 
   /** Publish an explicit status snapshot without acquiring or borrowing an execution ticket. */
@@ -524,6 +535,41 @@ export class SessionAuthority {
     };
   }
 
+  /** Capture during execution; check only inside this exact run's bounded publication. */
+  publicationGuardInScope(sessionId: string): () => void {
+    this.assert(sessionId);
+    const scope = this.scope.getStore();
+    if (!scope) throw new ControlError('CONTROL_REQUIRED', 'Missing publication owner');
+    return () => {
+      if (!scope.publicationGuard)
+        throw new ControlError('CONTROL_REVOKED', 'Publication is not active');
+      scope.publicationGuard();
+    };
+  }
+
+  /** Review identity and output pins; conveys no read, dispatch or consent authority. */
+  captureReviewPublicationInScope(sessionId: string) {
+    const binding = this.reviewBindingInScope(sessionId);
+    const scope = this.scope.getStore();
+    if (!scope) throw new ControlError('CONTROL_REQUIRED', 'Missing review owner');
+    const publication = this.publicationGuardInScope(sessionId);
+    let revoked = false;
+    return Object.freeze({
+      binding,
+      assertCurrent: () => {
+        if (revoked) throw new ControlError('CONTROL_REVOKED', 'Review publication revoked');
+        try {
+          publication();
+          if (this.reviewBinding(scope).reviewVersion !== binding.reviewVersion)
+            throw new ControlError('CONTROL_REVOKED', 'Review authority changed');
+        } catch (error) {
+          revoked = true;
+          throw error;
+        }
+      },
+    });
+  }
+
   currentEpoch(sessionId: string): number | undefined {
     return this.active(sessionId)?.control.view().epoch;
   }
@@ -537,8 +583,14 @@ export class SessionAuthority {
   reviewBindingInScope(sessionId: string): SessionReviewBinding {
     this.assert(sessionId);
     const scope = this.scope.getStore();
+    if (!scope) throw new ControlError('CONTROL_REQUIRED', 'Missing review owner');
+    return this.reviewBinding(scope);
+  }
+
+  /** Shared owner projection; execution and publication supply distinct lifetime checks. */
+  private reviewBinding(scope: Scope): SessionReviewBinding {
+    this.checkScopeOwner(scope);
     if (
-      !scope ||
       scope.admission.actor !== 'operator' ||
       scope.entry.configuring ||
       scope.entry.control.view().state !== 'HUMAN_ACTIVE'
@@ -546,7 +598,7 @@ export class SessionAuthority {
       throw new ControlError('CONTROL_REQUIRED', 'Stable operator control is required for review');
     return Object.freeze({
       tenant: scope.admission.tenant,
-      sessionId,
+      sessionId: scope.sessionId,
       sessionIncarnation: scope.entry.incarnation,
       epoch: scope.ticket.epoch,
       reviewVersion: scope.entry.control.reviewVersion(),
