@@ -77,7 +77,7 @@ import {
   extractTables,
   extractVisibleText,
 } from '@agentbrowser/extraction';
-import { NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
+import { type NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
 import type {
   ArtifactRef,
   ObservationRequest,
@@ -112,6 +112,7 @@ import {
   DownloadTransport,
   type DownloadTransportOptions,
 } from './download-transport.js';
+import { createDefaultNetworkPolicy } from './network-policy-config.js';
 import type { SessionPrincipal } from './session-authority.js';
 
 /** Typed failure carrying a protocol error code. */
@@ -563,9 +564,7 @@ export class AgentBrowserService {
     this.executor = deps.executor ?? new ActionExecutor(this.normalizer);
     // SSRF defenses are on by default (ADR-006): loopback, private ranges and
     // cloud metadata endpoints are blocked unless a policy is injected.
-    this.networkPolicy =
-      deps.networkPolicy ??
-      new NetworkPolicy({ blockLoopback: true, blockPrivateIPs: true, blockMetadata: true });
+    this.networkPolicy = deps.networkPolicy ?? createDefaultNetworkPolicy();
     this.approvalGate =
       deps.approvalGate ??
       new ApprovalGate({
