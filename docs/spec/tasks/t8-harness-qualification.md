@@ -58,7 +58,16 @@ provider-final schema conversion or a modern Victor server relay. Full schema
 preservation costs more than lossy stubs; reduce selected tools through existing
 mode/profile controls, not by discarding constraints. CLI remains first-class and
 MCP optional. Details and commands are owned by
-[Victor's schema fidelity record](https://github.com/anvai-labs/victor/blob/6a6bbbcb52111333bc4dbd6355e0fef830456a5d/docs/architecture/mcp-schema-fidelity.md).
+[Victor's schema fidelity record](https://github.com/anvai-labs/victor/blob/95612eddc52ac264edd91d61f97b109ad8af0bc0/docs/architecture/mcp-schema-fidelity.md).
+
+A later adversarial audit withdrew the initial source verdict before merge:
+preserved references could trigger external retrieval and permissive fallback.
+The repair uses the existing JSON Schema library with offline reference resolution,
+recognized dialect validation and static refusal. The executor preserves captured
+arguments, requires validation and refuses the reserved context field instead of
+silently stripping it. Regression coverage includes direct dispatch and all executor
+validation modes. Provider/ToolPipeline transformations before the executor remain
+an explicit installed-harness acceptance gate.
 
 Next qualify a released installed harness and the provider's actual tool-call
 path, then the remaining correlation/reconnect/cancellation and footprint gates.
