@@ -1,7 +1,7 @@
 # T5 J1-B/C: journal port and acknowledgment integration
 
 Status: proposed, not implemented. Baseline: develop `dbe23b5`.
-A1/A2 primitives ship separately; HTTP/replay publication remains gated.
+A1/A2/A4a1 primitives ship separately; HTTP/replay publication remains gated.
 Requires [J1-A response finalization](t5-finalization-publication.md) before runtime
 integration. Parent: [T5 J0–J4 sequence](t5-operation-journal.md). This module is
 loaded explicitly for journal work; unrelated modes do not load its structures.
@@ -153,4 +153,4 @@ settling I/O. A fake adapter alone cannot establish crash durability.
 J2 still needs one optional SQLite runtime/packaging/ownership audit and real process-loss
 tests on the supported Node/Bun matrix. J3 historical authorization/continuation and J4
 event/cursor qualification remain separate. No store, public durability claim, percentage increase or release ships here.
-Runtime has J0, A1 and A2 publication primitives only.
+Runtime has J0, A1/A2 publication and A4a1 status lookup only.

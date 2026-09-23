@@ -1,7 +1,7 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
 Rechecked published 1.9.1 at `310e01d43982824caac2c63ed8d98355e17efdce`
-and develop `9eb5defeca0658c6249aab6c0c8414ef0cf94c0b` (PR #270; alignment
+and develop `df1d0a9c3451da6063a64e2a68fb7542dff47061` (PR #271; alignment
 rechecked 2026-09-23). C3c incorporates the merged #256 error-containment repair.
 The [release ladder](release-1.9.1.md) includes Bun CLI/MCP artifacts,
 Node 24 service qualification, Homebrew and develop back-sync. Existing browser
@@ -21,7 +21,7 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T2 shared execution/verification | Complete, released | 100% | Production evidence belongs to T4; restart durability to T5 |
 | T3 QA regression | Complete, released | 100% | Broader provisioning and demand-backed report adapters are follow-ups |
 | T4 application operations/parity | Active | ~40% | Production UI/API oracle and evidence; U0/U1 operator UX merged; synthetic parity qualified; callback repair merged #236 |
-| T5 durable recovery | Active J0/A1/A2 shared publication foundation | ~10% | Journal/recovery and process-loss qualification; no durable guarantee yet |
+| T5 durable recovery | Active J0/A1/A2/A4a1 publication foundation | ~10% | Journal/recovery and process-loss qualification; no durable guarantee yet |
 | T6 forms/operations | Active | ~40% | Production sources, candidate/job eligibility and live qualification; C3c public synthetic workflow merged #257 |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
 | T8 installed harnesses | Active source repair; installed acceptance unqualified | 0% installed qualification | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |
@@ -378,3 +378,18 @@ retaining different lifetimes. No new executor, consent consumption or public wi
 surface is added. HTTP draft migration (A3), authorized replay publication (A4) and
 durable journal/recovery remain open. T5 stays ~10%; 3/9 finite milestones remain
 complete. Release 1.9.1 and running services are unchanged.
+
+
+## T5 A4a1: explicit status publication — 2026-09-23
+
+A2b merged [#271](https://github.com/anvai-labs/agentbrowser/pull/271) at `df1d0a9`;
+reviewed tree `f2bf71cc411a4461a6910200bd1a8f1fbe53e43b` matched the actual merge.
+Both normal hooks passed 3,434 tests with 24 existing skips. PR CI `35868864909`
+and post-merge CI `35869656371` each passed all eight checks without reruns.
+
+[A4a1 evidence](t5-operation-status-publication.md) records explicit status publication
+using existing principal/record owners and the shared bounded publication lifetime.
+It does not acquire or finish an execution ticket. The next sequence is A4a2 captured
+replay/application composition, A3 HTTP integration, then A4b full wire parity. Status
+lookup alone cannot authorize publication of a retained duplicate from another owner.
+T5 remains ~10%; exactly 3/9 finite milestones remain complete. Release/service unchanged.
