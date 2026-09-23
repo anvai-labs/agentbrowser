@@ -408,3 +408,291 @@ it('pre-aborted publication does not invoke the publisher or change the inspecte
   expect(publish).not.toHaveBeenCalled();
   expect(f.control.operation('write')?.status).toBe('completed');
 });
+
+const identity = { id: 'write', fingerprint: 'a' };
+function replay(
+  f: ReturnType<typeof fixture>,
+  publication: OperationPublication,
+  principal = operator
+) {
+  return f.authority.run(
+    's',
+    principal,
+    identity,
+    async () => {
+      throw new Error('duplicate executed');
+    },
+    undefined,
+    undefined,
+    publication
+  );
+}
+
+it('validates replay publication before admitting a fresh effect', async () => {
+  const f = fixture();
+  const effect = vi.fn();
+  await expect(
+    f.authority.run('s', operator, identity, effect, undefined, undefined, {
+      timeoutMs: 0,
+      publish: vi.fn(),
+    })
+  ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+  expect(effect).not.toHaveBeenCalled();
+  expect(f.control.operation('write')).toBeUndefined();
+});
+
+for (const phase of ['execution', 'drain', 'publication'] as const) {
+  it(`publishes a duplicate during ${phase} without finishing the original ticket`, async () => {
+    const f = fixture();
+    const release = Promise.withResolvers<void>();
+    const entered = Promise.withResolvers<void>();
+    const effect = vi.fn(() => release.promise);
+    const original = f.authority.run(
+      's',
+      operator,
+      identity,
+      async () => {
+        if (phase === 'drain') {
+          void f.authority.dispatchInScope('s', effect);
+          entered.resolve();
+        } else if (phase === 'execution') {
+          entered.resolve();
+          await f.authority.dispatchInScope('s', effect);
+        }
+        return 42;
+      },
+      undefined,
+      phase === 'publication'
+        ? {
+            timeoutMs: 1000,
+            publish: async () => {
+              entered.resolve();
+              await release.promise;
+            },
+          }
+        : undefined
+    );
+    await entered.promise;
+    const finish = vi.spyOn(f.control, 'finish');
+    const publish = vi.fn((record, context: PublicationContext) => {
+      expect(record.status).toBe(phase === 'publication' ? 'completed' : 'in_flight');
+      expect(Object.isFrozen(record)).toBe(true);
+      expect(Object.keys(context).sort()).toEqual(['assertCurrent', 'signal']);
+      context.assertCurrent();
+    });
+    try {
+      await replay(f, { timeoutMs: 1000, publish });
+      expect(publish).toHaveBeenCalledTimes(1);
+      expect(f.control.view().busy).toBe(true);
+      expect(finish).not.toHaveBeenCalled();
+      expect(effect).toHaveBeenCalledTimes(phase === 'publication' ? 0 : 1);
+    } finally {
+      release.resolve();
+      await original;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    expect(f.control.operation('write')?.status).toBe(
+      phase === 'drain' ? 'outcome_unknown' : 'completed'
+    );
+  });
+}
+
+it('isolates nested replay publication and restores the enclosing execution scope', async () => {
+  const f = fixture();
+  await f.seed();
+  const effect = vi.fn();
+  const publish = vi.fn(async (_record, context: PublicationContext) => {
+    await Promise.resolve();
+    context.assertCurrent();
+    expect(() => f.authority.dispatchInScope('s', effect)).toThrow();
+    expect(() => f.authority.trackReadInScope('s', effect)).toThrow();
+  });
+  await f.authority.run('s', operator, { id: 'outer', fingerprint: 'outer' }, async () => {
+    await replay(f, { timeoutMs: 1000, publish });
+    await f.authority.dispatchInScope('s', effect);
+  });
+  expect(publish).toHaveBeenCalledTimes(1);
+  expect(effect).toHaveBeenCalledTimes(1);
+});
+
+it('rejects core identity conflicts before replay publication', async () => {
+  const f = fixture();
+  await f.seed();
+  const publish = vi.fn();
+  await expect(
+    f.authority.run(
+      's',
+      operator,
+      { ...identity, fingerprint: 'different' },
+      vi.fn(),
+      undefined,
+      undefined,
+      { timeoutMs: 1000, publish }
+    )
+  ).rejects.toThrow();
+  const agent = f.delegate();
+  await expect(
+    f.authority.run('s', agent, identity, vi.fn(), undefined, undefined, {
+      timeoutMs: 1000,
+      publish,
+    })
+  ).rejects.toThrow();
+  expect(publish).not.toHaveBeenCalled();
+  expect(f.control.operation('write')?.status).toBe('completed');
+});
+
+it('pins replay owner before the scheduling gap and never looks up a replacement record', async () => {
+  const f = fixture();
+  await f.seed();
+  const publish = vi.fn();
+  const outcome = replay(f, { timeoutMs: 1000, publish }).catch((error) => error);
+  f.authority.remove('s');
+  f.authority.register('s', 'owner', new AbortController().signal);
+  const release = Promise.withResolvers<void>();
+  const next = f.authority.run('s', operator, identity, () => release.promise);
+  try {
+    expect(await outcome).toMatchObject({ code: 'CONTROL_REVOKED' });
+    expect(publish).not.toHaveBeenCalled();
+    expect(f.authority.get('s')?.view().busy).toBe(true);
+  } finally {
+    release.resolve();
+    await next;
+  }
+});
+
+for (const cause of ['timeout', 'cancel', 'replace', 'review'] as const) {
+  it(`closes delayed replay after ${cause} without releasing execution or changing facts`, async () => {
+    const f = fixture();
+    const release = Promise.withResolvers<void>();
+    const original = f.authority
+      .run('s', operator, identity, () => release.promise)
+      .catch((error) => error);
+    const entered = Promise.withResolvers<void>();
+    const late = Promise.withResolvers<void>();
+    const cancelled = new AbortController();
+    const sent = vi.fn();
+    let retained: PublicationContext | undefined;
+    let next: Promise<unknown> | undefined;
+    const outcome = replay(f, {
+      timeoutMs: cause === 'timeout' ? 20 : 1000,
+      signal: cancelled.signal,
+      publish: async (_record, context) => {
+        retained = context;
+        entered.resolve();
+        await late.promise;
+        context.assertCurrent();
+        sent();
+      },
+    }).catch((error) => error);
+    await Promise.race([entered.promise, outcome]);
+    if (cause === 'cancel') cancelled.abort();
+    if (cause === 'review') f.control.invalidateReview();
+    if (cause === 'replace') {
+      f.authority.remove('s');
+      f.authority.register('s', 'owner', new AbortController().signal);
+      next = f.authority.run('s', operator, identity, () => release.promise);
+    }
+    if (cause === 'review' || cause === 'replace') late.resolve();
+    try {
+      expect(await outcome).toMatchObject({ code: 'CONTROL_REVOKED' });
+      expect(retained).toBeDefined();
+      expect(retained?.assertCurrent).toThrow();
+      expect(f.authority.get('s')?.view().busy).toBe(true);
+      expect(sent).not.toHaveBeenCalled();
+    } finally {
+      late.resolve();
+      release.resolve();
+      await original;
+      await next;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    expect(sent).not.toHaveBeenCalled();
+  });
+}
+
+it('snapshots replay callback and principal while keeping no-options replay unchanged', async () => {
+  const f = fixture();
+  await f.seed();
+  const principal = { ...operator };
+  const original = vi.fn();
+  const replacement = vi.fn();
+  const publication = { timeoutMs: 1000, publish: original };
+  const outcome = replay(f, publication, principal);
+  principal.tenant = 'other';
+  publication.publish = replacement;
+  publication.timeoutMs = 0;
+  await outcome;
+  expect(original).toHaveBeenCalledTimes(1);
+  expect(replacement).not.toHaveBeenCalled();
+  expect(await f.authority.run('s', operator, identity, vi.fn())).toMatchObject({
+    replay: true,
+    operation: { status: 'completed' },
+  });
+});
+
+it('authorizes current-agent replay and revokes delayed output after takeover', async () => {
+  const f = fixture();
+  const agent = f.delegate();
+  await f.authority.run('s', agent, identity, async () => 42);
+  const first = vi.fn();
+  await f.authority.run('s', agent, identity, vi.fn(), undefined, undefined, {
+    timeoutMs: 1000,
+    publish: first,
+  });
+  expect(first).toHaveBeenCalledTimes(1);
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const sent = vi.fn();
+  const outcome = f.authority
+    .run('s', agent, identity, vi.fn(), undefined, undefined, {
+      timeoutMs: 1000,
+      publish: async (_record, context) => {
+        entered.resolve();
+        await release.promise;
+        context.assertCurrent();
+        sent();
+      },
+    })
+    .catch((error) => error);
+  await Promise.race([entered.promise, outcome]);
+  f.authority.takeover('s');
+  release.resolve();
+  expect(await outcome).toMatchObject({ code: 'CONTROL_REQUIRED' });
+  expect(sent).not.toHaveBeenCalled();
+  expect(f.control.operation('write')?.status).toBe('completed');
+});
+
+for (const failure of ['preabort', 'callback'] as const) {
+  it(`preserves outcome_unknown when replay delivery fails by ${failure}`, async () => {
+    const f = fixture();
+    await expect(
+      f.authority.run('s', operator, identity, async () => {
+        await f.authority.dispatchInScope('s', () => {
+          throw new Error('uncertain effect');
+        });
+      })
+    ).rejects.toThrow();
+    const cancel = new AbortController();
+    if (failure === 'preabort') cancel.abort();
+    const publish = vi.fn(() => {
+      throw new Error('publisher failed');
+    });
+    await expect(replay(f, { timeoutMs: 1000, signal: cancel.signal, publish })).rejects.toThrow();
+    expect(publish).toHaveBeenCalledTimes(failure === 'preabort' ? 0 : 1);
+    expect(f.control.operation('write')?.status).toBe('outcome_unknown');
+    expect(f.control.view().busy).toBe(false);
+  });
+}
+
+it('refuses a replay initiated during owner configuration', async () => {
+  const f = fixture();
+  await f.seed();
+  const publish = vi.fn();
+  let outcome: Promise<unknown> | undefined;
+  f.authority.configure('s', operator, () => {
+    outcome = replay(f, { timeoutMs: 1000, publish }).catch((error) => error);
+  });
+  expect(await outcome).toMatchObject({ code: 'CONTROL_REVOKED' });
+  expect(publish).not.toHaveBeenCalled();
+  expect(f.control.operation('write')?.status).toBe('completed');
+});

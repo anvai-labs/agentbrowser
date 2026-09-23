@@ -8,7 +8,12 @@ import {
   validateApplicationOperationDescriptors,
 } from '@agentbrowser/protocol';
 import { canonicalJson } from './canonical-json.js';
-import { type SessionPublication, snapshotPublication } from './publication.js';
+import {
+  type OperationPublication,
+  type PublicationContext,
+  type SessionPublication,
+  snapshotPublication,
+} from './publication.js';
 import {
   type SessionAdmission,
   SessionAuthority,
@@ -448,12 +453,17 @@ export class ApplicationAuthority {
     sessionId: string,
     principal: SessionPrincipal,
     callerRequest: ApplicationRequest,
-    publication?: SessionPublication<ApplicationResult>
+    publication?: SessionPublication<ApplicationResult>,
+    replayOptions?: OperationPublication
   ) {
     const output = this.preparePublication(sessionId, publication);
+    const replay = replayOptions === undefined ? undefined : snapshotPublication(replayOptions);
     const { request, serialized } = normalizeApplicationRequest(callerRequest);
     this.authority.assertPrincipal(sessionId, principal);
     const { binding, adapter, operation, write } = this.captureOperation(sessionId, request);
+    const replayOwner = replay
+      ? { binding, adapter, scope: this.scope(sessionId, binding, request) }
+      : undefined;
     const protectedWrite = operation.review === 'operator-submit';
     const fingerprint = write
       ? createHash('sha256')
@@ -566,7 +576,14 @@ export class ApplicationAuthority {
         return result;
       },
       () => (rejected ? 'rejected' : false),
-      output?.publication
+      output?.publication,
+      replay && replayOwner
+        ? {
+            ...replay,
+            publish: (value, context) =>
+              this.publishApplication(sessionId, replayOwner, value, context, replay.publish),
+          }
+        : undefined
     );
   }
 
@@ -797,17 +814,31 @@ export class ApplicationAuthority {
         publish: async (value: T, context) => {
           if (!captured)
             throw new ControlError('CONTROL_REVOKED', 'Application publication unavailable');
-          const access = this.applicationAccess(sessionId, captured.owner, context.assertCurrent);
-          const output = Object.freeze({
-            ...context,
-            assertCurrent: () => access.assertAuthority(),
-          });
-          output.assertCurrent();
-          await publication.publish(value, output);
-          output.assertCurrent();
+          await this.publishApplication(
+            sessionId,
+            captured.owner,
+            value,
+            context,
+            publication.publish
+          );
         },
       } satisfies SessionPublication<T>,
     };
+  }
+
+  /** Shared guarded output; result and replay retain distinct capture lifetimes. */
+  private async publishApplication<T, Context extends PublicationContext>(
+    sessionId: string,
+    owner: ApplicationAccessOwner | undefined,
+    value: T,
+    context: Readonly<Context>,
+    publish: (value: T, context: Readonly<Context>) => void | PromiseLike<void>
+  ): Promise<void> {
+    const access = this.applicationAccess(sessionId, owner, context.assertCurrent);
+    const output = Object.freeze({ ...context, assertCurrent: () => access.assertAuthority() });
+    output.assertCurrent();
+    await publish(value, output);
+    output.assertCurrent();
   }
 
   private scope(

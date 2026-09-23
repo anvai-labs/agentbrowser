@@ -12,6 +12,7 @@ import {
   CONTROL_OPERATION_ID,
   type ControlView,
   DEFAULT_AGENT_MODE,
+  type OperationRecord,
   type RunCursor,
   agentModeProfile,
 } from '@agentbrowser/protocol';
@@ -227,12 +228,19 @@ export class SessionAuthority {
     operation: { id?: string; fingerprint?: string },
     fn: () => Promise<T>,
     failed: () => boolean | 'rejected' = () => false,
-    publicationOptions?: SessionPublication<T>
+    publicationOptions?: SessionPublication<T>,
+    replayOptions?: OperationPublication
   ): Promise<T | { replay: true; operation: unknown }> {
     const publication =
       publicationOptions === undefined ? undefined : snapshotPublication(publicationOptions);
-    const admitted = this.admit(sessionId, principal);
+    const replayPublication =
+      replayOptions === undefined ? undefined : snapshotPublication(replayOptions);
+    const candidate = Object.freeze(snapshotPrincipal(principal));
+    const admitted = this.admit(sessionId, candidate);
     const { entry, admission } = admitted;
+    const assertReplayOwner = replayPublication
+      ? this.statusOwner(sessionId, candidate, entry)
+      : undefined;
     const ticket = entry.control.begin({
       actor: admission.actor,
       ...(admitted.epoch !== undefined ? { epoch: admitted.epoch } : {}),
@@ -240,7 +248,13 @@ export class SessionAuthority {
         ? { operationId: operation.id, fingerprint: operation.fingerprint ?? '' }
         : {}),
     });
-    if ('replay' in ticket) return { replay: true, operation: ticket.replay };
+    if ('replay' in ticket) {
+      const record =
+        replayPublication && assertReplayOwner
+          ? await this.publishStatus(ticket.replay, replayPublication, assertReplayOwner)
+          : ticket.replay;
+      return { replay: true, operation: record };
+    }
     const scope: Scope = {
       sessionId,
       entry,
@@ -343,9 +357,20 @@ export class SessionAuthority {
     if (typeof operationId !== 'string' || !CONTROL_OPERATION_ID.test(operationId))
       throw new ControlError('INVALID_REQUEST', 'Invalid operation ID');
     const { entry, admission, epoch: agentEpoch } = this.admit(sessionId, candidate);
+    const assertOwner = this.statusOwner(sessionId, candidate, entry);
+    assertOwner();
+    const record = entry.control.operation(operationId);
+    assertOwner();
+    if (!record) return undefined;
+    if (admission.actor === 'agent' && record.epoch !== agentEpoch)
+      throw new ControlError('CONTROL_REQUIRED', 'Operation belongs to another control generation');
+    return this.publishStatus(record, publication, assertOwner);
+  }
+
+  private statusOwner(sessionId: string, candidate: SessionPrincipal, entry: Entry) {
     const epoch = entry.control.view().epoch;
     const review = entry.control.reviewVersion();
-    const assertOwner = () => {
+    return () => {
       const current = this.admit(sessionId, candidate);
       const view = entry.control.view();
       if (
@@ -357,12 +382,13 @@ export class SessionAuthority {
       )
         throw new ControlError('CONTROL_REVOKED', 'Operation status authority changed');
     };
-    assertOwner();
-    const record = entry.control.operation(operationId);
-    assertOwner();
-    if (!record) return undefined;
-    if (admission.actor === 'agent' && record.epoch !== agentEpoch)
-      throw new ControlError('CONTROL_REQUIRED', 'Operation belongs to another control generation');
+  }
+
+  private publishStatus(
+    record: OperationRecord,
+    publication: OperationPublication,
+    assertOwner: () => void
+  ) {
     const snapshot = Object.freeze(record);
     // A nested lookup must not lend its caller's open execution scope to the publisher.
     return this.scope.exit(async () => {
