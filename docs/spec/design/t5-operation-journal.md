@@ -1,6 +1,6 @@
 # T5: shared dispatch and optional operation journal
 
-Status: J0 dispatch/drain prerequisite implemented; J1–J4 proposed.
+Status: J0 dispatch/drain and J1-A1 core finalization implemented; remaining J1–J4 proposed.
 Baseline: develop `b01a51b`. This design does not advertise durable recovery.
 Task: [T5](../tasks/t5-durable-recovery.md). Shared contracts remain in
 [execution](../execution.md) and [state/memory](../state-memory.md).
@@ -101,7 +101,8 @@ The implementation sequence is now split into demand-loaded packets:
 [J1-B port and J1-C integration](t5-journal-contract.md). The first durable qualification
 targets application writes only. Browser target/policy/approval checks need a separate
 post-storage-wait qualification through their existing owners. These packets are
-designs, not implemented APIs; J0 remains the only delivered runtime increment.
+designs except A1 core finalization. Publication, journal APIs and durability remain
+unimplemented. See [A1 evidence](../evidence/t5-finalization.md).
 
 | Last durable fact at process loss | Recovery classification | Effect replay |
 | --- | --- | --- |

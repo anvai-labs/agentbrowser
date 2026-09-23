@@ -1,6 +1,7 @@
 # T5 J1-A: execution finalization and response publication
 
-Status: proposed; design packet only. Baseline: develop `dbe23b5` (J0, PR #267).
+Status: A1 core finalization implemented; A2–A4 publication proposed.
+Design baseline: develop `dbe23b5` (J0, PR #267).
 Parent: [T5 journal sequence](t5-operation-journal.md). Next contract:
 [J1-B/C journal acknowledgment](t5-journal-contract.md). No durability ships here.
 Read this module only when implementing the response boundary, not in default modes.
@@ -145,6 +146,10 @@ non-stream publication qualification. No global change to ephemeral acknowledgme
 semantics should be hidden in a storage patch. Record intentional ordering differences
 and measured timeout behavior in that implementation's evidence.
 
-Current runtime remains J0. No public methods, wire fields, response drafts, publisher,
-scope phases or finalization method described above exist yet. No percentage increase
-or release follows from accepting this design alone.
+A1 now extracts `SessionControl.finalize` and calls it from the existing authority
+drain before `finish`. Terminal facts freeze while the captured ticket remains busy;
+new dispatch refuses after finalization. `finish` retains compatibility by reusing
+finalization before release. See [A1 evidence](../evidence/t5-finalization.md).
+A2–A4 remain proposed: no publisher, HTTP draft migration, public wire change or
+durability is delivered. The current HTTP ordering probe still fails the future A3
+expectation; this slice does not claim to repair response-before-finalization.
