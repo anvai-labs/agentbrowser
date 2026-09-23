@@ -22,7 +22,7 @@ interface Publication<T, Context extends PublicationContext = PublicationContext
 }
 /** Trusted host composition only; not an HTTP option or a replay publisher. */
 export interface SessionPublication<T> extends Publication<T, SessionPublicationContext> {}
-/** Explicit owner-provided status lookup only; never an arbitrary payload or effect. */
+/** Core-owned status lookup or replay only; never an arbitrary payload or effect. */
 export interface OperationPublication extends Publication<Readonly<OperationRecord>> {}
 
 export function snapshotPublication<T, Context extends PublicationContext>(

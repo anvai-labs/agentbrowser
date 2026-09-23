@@ -1,6 +1,6 @@
 # T5 A4a1: explicit operation-status publication
 
-Status: internal session lookup implemented; automatic/application replay and HTTP adoption pending.
+Status: internal session lookup implemented; replay follows in A4a2; HTTP adoption pending.
 Base: develop `df1d0a9` ([A2b #271](https://github.com/anvai-labs/agentbrowser/pull/271)).
 Design: [status-publication sequence](../design/t5-status-publication.md).
 
@@ -64,7 +64,7 @@ Published 1.9.1 and running services are unchanged. No journal or recovery guara
 
 ## Next gate
 
-A4a2 must retain the original run's replay owner and compose fresh application access.
+[A4a2](t5-replay-publication.md) retains the original run's replay owner and composes fresh application access.
 Do not republish an old replay by performing this fresh lookup after an await: a new
 session with the same textual IDs would then be a different owner. Existing `begin`
 remains the fingerprint/actor/epoch conflict owner; no second deduplication table.

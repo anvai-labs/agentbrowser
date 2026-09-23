@@ -23,6 +23,7 @@ function fixture(consentPolicy?: ApplicationConsentPolicy) {
   const authorize = vi.fn(() => true);
   const effect = vi.fn(async () => ({ status: 'committed' as const, value: 42 }));
   const receipt = vi.fn(async () => ({ value: 42 }));
+  const parse = vi.fn(() => null);
   const app = new ApplicationAuthority(
     authority,
     [
@@ -31,11 +32,11 @@ function fixture(consentPolicy?: ApplicationConsentPolicy) {
         authorize,
         receipt,
         operations: {
-          write: defineApplicationOperation({ mode: 'write', parse: () => null, execute: effect }),
+          write: defineApplicationOperation({ mode: 'write', parse, execute: effect }),
           submit: defineApplicationOperation({
             mode: 'write',
             review: 'operator-submit',
-            parse: () => null,
+            parse,
             execute: effect,
           }),
         },
@@ -53,7 +54,7 @@ function fixture(consentPolicy?: ApplicationConsentPolicy) {
     if (kind === 'receipt') return app.lookupReceipt('s', operator, 'receipt-1', publication);
     return app.execute('s', operator, command, publication);
   };
-  return { authority, app, authorize, effect, receipt, bind, invoke };
+  return { authority, app, authorize, effect, receipt, parse, bind, invoke };
 }
 
 for (const kind of ['discover', 'execute', 'receipt'] as const) {
@@ -393,4 +394,116 @@ it('rechecks lifetime when the final absent-binding lookup itself expires the ow
   });
   await expect(result).rejects.toMatchObject({ code: 'CONTROL_REVOKED' });
   expect(sent).not.toHaveBeenCalled();
+});
+
+it('refuses invalid replay options on a fresh application write before callbacks', async () => {
+  const f = fixture();
+  const calls = f.authorize.mock.calls.length;
+  await expect(
+    f.app.execute('s', operator, command, undefined, { timeoutMs: 0, publish: vi.fn() })
+  ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+  expect(f.authorize).toHaveBeenCalledTimes(calls);
+  expect(f.effect).not.toHaveBeenCalled();
+  expect(f.authority.get('s')?.operation('write-1')).toBeUndefined();
+});
+
+it('publishes protected replay with fresh access but no new consent, preparation, receipt or effect', async () => {
+  const consume = vi.fn(async () => true);
+  const consent = vi.fn(() => ({ consume, assertCurrent: () => {} }));
+  const f = fixture(consent);
+  const request = { ...command, operation: 'submit', approvalToken: 'approval' };
+  await f.app.execute('s', operator, request);
+  const resultPublisher = vi.fn();
+  const publish = vi.fn((_record, context) => {
+    context.assertCurrent();
+    expect(() => f.app.prepareReceiptReadInScope('s')).toThrow();
+  });
+  await f.app.execute(
+    's',
+    operator,
+    request,
+    { timeoutMs: 1000, publish: resultPublisher },
+    { timeoutMs: 1000, publish }
+  );
+  expect(publish).toHaveBeenCalledTimes(1);
+  expect(resultPublisher).not.toHaveBeenCalled();
+  expect(consent).toHaveBeenCalledTimes(1);
+  expect(f.parse).toHaveBeenCalledTimes(1);
+  expect(consume).toHaveBeenCalledTimes(1);
+  expect(f.effect).toHaveBeenCalledTimes(1);
+  expect(f.receipt).not.toHaveBeenCalled();
+});
+
+for (const change of [
+  'denied',
+  'rebind',
+  'replace-in-authorization',
+  'takeover-in-authorization',
+] as const) {
+  it(`refuses application replay handoff on ${change}`, async () => {
+    const f = fixture();
+    await f.app.execute('s', operator, command);
+    const publish = vi.fn();
+    if (change === 'denied') f.authorize.mockReturnValue(false);
+    if (change.endsWith('in-authorization'))
+      f.authorize.mockImplementation(() => {
+        if (change === 'replace-in-authorization') {
+          f.authority.remove('s');
+          f.authority.register('s', 'owner', new AbortController().signal);
+        } else f.authority.takeover('s');
+        return true;
+      });
+    const outcome = f.app.execute('s', operator, command, undefined, { timeoutMs: 1000, publish });
+    if (change === 'rebind') f.bind();
+    await expect(outcome).rejects.toThrow();
+    expect(publish).not.toHaveBeenCalled();
+    expect(f.effect).toHaveBeenCalledTimes(1);
+  });
+}
+
+it('latches permission revocation during delayed application replay', async () => {
+  const f = fixture();
+  await f.app.execute('s', operator, command);
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const sent = vi.fn();
+  const outcome = f.app
+    .execute('s', operator, command, undefined, {
+      timeoutMs: 1000,
+      publish: async (_record, context) => {
+        entered.resolve();
+        await release.promise;
+        expect(context.assertCurrent).toThrow();
+        f.authorize.mockReturnValue(true);
+        context.assertCurrent();
+        sent();
+      },
+    })
+    .catch((error) => error);
+  await Promise.race([entered.promise, outcome]);
+  f.authorize.mockReturnValue(false);
+  release.resolve();
+  expect(await outcome).toMatchObject({ code: 'CONTROL_REVOKED' });
+  expect(sent).not.toHaveBeenCalled();
+  expect(f.effect).toHaveBeenCalledTimes(1);
+  expect(f.authority.get('s')?.operation('write-1')?.status).toBe('completed');
+});
+
+it('validates replay settings before consuming consent on a fresh protected write', async () => {
+  const consume = vi.fn(async () => true);
+  const consent = vi.fn(() => ({ consume, assertCurrent: () => {} }));
+  const f = fixture(consent);
+  await expect(
+    f.app.execute(
+      's',
+      operator,
+      { ...command, operation: 'submit', approvalToken: 'approval' },
+      undefined,
+      { timeoutMs: 0, publish: vi.fn() }
+    )
+  ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+  expect(consent).not.toHaveBeenCalled();
+  expect(consume).not.toHaveBeenCalled();
+  expect(f.parse).not.toHaveBeenCalled();
+  expect(f.effect).not.toHaveBeenCalled();
 });

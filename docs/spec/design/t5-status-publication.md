@@ -1,7 +1,7 @@
 # T5 A4a: authorized status publication before HTTP adoption
 
-Status: A4a1 session status lookup implemented; A4a2/A3/A4b proposed.
-Base: develop `df1d0a9` (A2b, PR #271).
+Status: A4a1/A4a2 internal primitives implemented; A3/A4b proposed.
+Base: develop `61ad5c1` (A4a1, PR #272).
 Parent: [finalization/publication](t5-finalization-publication.md).
 Load this module explicitly for status publication; unrelated modes do not need it.
 
@@ -70,6 +70,33 @@ no second deduplication table or fake ticket. Fresh application access must comp
 its existing owner without rerunning effects, consuming consent, or borrowing A2b's
 execution-only capture. Do not cast replay data into `ApplicationResult`.
 
+A4a2 adds a separate optional `OperationPublication` to `SessionAuthority.run`
+(seventh argument) and `ApplicationAuthority.execute` (fifth). Result publication
+continues to accept only its original result type and terminal context. Snapshot and
+validate both option sets before admission or application callbacks, even when a fresh
+operation will not use the replay publisher. No-options behavior stays unchanged.
+
+At the existing core replay branch, use the admitted Entry, captured principal and
+core-provided flat replay record. Capture the status lifetime before `begin`; use the
+same private owner fence and scope-exited publisher as explicit lookup. Never perform
+a fresh operation lookup, begin another ticket, finalize or finish the original one.
+The original execution/drain/publication remains independent of duplicate output.
+
+Application replay captures the request's existing Binding, adapter and ApplicationScope
+synchronously before the asynchronous output handoff. It reuses `applicationAccess`
+and the same guarded-publisher wrapper as result publication, with a fixed owner in
+place of execution-only capture. Fresh authorization runs before handoff, at guarded
+output and after settlement. Observed denial is sticky; a boolean policy cannot detect
+an unobserved revoke/regrant. No consent, preparation, effect or receipt callback runs
+again. A trusted publisher must guard actual output; raw capabilities are not confined.
+
+Replay qualification additionally covers invalid options on fresh writes, duplicates
+during execution/drain/result publication, core conflicts, same-ID replacement during
+the scheduling gap, nested asynchronous scope isolation, authorization callbacks that
+replace/take over ownership, delayed permission denial, and timeout/cancel/late output
+without releasing original or replacement tickets. Output failure preserves operation
+facts, including completed and outcome_unknown. No public transport adopts this yet.
+
 A3 includes self-admitted application review and control resume-review as well as
 ordinary handlers. Inventory by `registeredRoutes` and declared metadata. Preserve
 operator status inspection during delegated control. A4b proves actual HTTP disconnect,
@@ -93,4 +120,5 @@ Journal ACK/quarantine work remains gated after this sequence.
 - Existing A2a/A2b output lifetime and application permission suites stay green after
   shared-helper extraction. No public endpoint, manifest, release or service changes.
 
-Implementation and validation: [A4a1 evidence](../evidence/t5-operation-status-publication.md).
+Implementation and validation: [A4a1 evidence](../evidence/t5-operation-status-publication.md)
+and [A4a2 evidence](../evidence/t5-replay-publication.md).
