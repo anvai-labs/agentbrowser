@@ -126,3 +126,54 @@ Production source permission, native/application witness qualification and compl
 payload consent stay with the existing T2/T4/C3c owners. The
 [P0 embedding seam](../../docs/spec/design/t4-production-evidence-composition.md) is
 available on develop; live integration and actual portal qualification remain gated.
+
+## Capture one listing for private review
+
+`captureListingForReview` is the first read-only E0c consumer. It requires an existing
+page already navigated by the owner and an absolute path to a private regular JSON
+file (0600 on POSIX). Example config below is synthetic; use current session/page IDs
+and an owner-selected canonical HTTPS listing URL. The CLI executable and service are
+trusted operator configuration, never values taken from listing text.
+
+```json
+{
+  "schemaVersion": 1,
+  "cli": ["/absolute/path/to/agentbrowser"],
+  "serviceBaseUrl": "http://127.0.0.1:5709",
+  "sessionId": "ses_example",
+  "pageId": "pg_example",
+  "listingUrl": "https://jobs.example.com/roles/one"
+}
+```
+
+```js
+import { captureListingForReview } from './listing-review.mjs';
+
+const captured = await captureListingForReview('/private/listing-config.json', {
+  env: process.env,
+  token: readOnlyServiceCredential, // omit only for an intentionally unauthenticated service
+  signal: abortController.signal,
+});
+// Keep captured private. status is captured_unreviewed; eligibility is not_evaluated.
+```
+
+This issues only `extract --format text`; it never navigates, fills, uploads or submits.
+The caller's token is isolated by the existing CLI helper; inherited application keys
+and Node injection variables are excluded. Config and returned JSON use the existing
+64 KiB snapshot limit; process stdout+stderr use the helper's 64 KiB combined limit
+and 20-second timeout. Oversized pages refuse instead of being truncated into evidence.
+Warnings, unexpected fields, nonzero CLI exits and mismatched source URLs also refuse.
+
+The returned capture contains source URL/revision/hash, local start/completion times
+and text. These are correlation data, not proof of account identity, source authenticity,
+freshness policy, role suitability or base compensation. Every failure uses the fixed
+`Listing review capture failed.` diagnostic without source text or private paths.
+The function does not print or publish the return value. No extra installation or CLI
+is provided: it consumes the same installed AgentBrowser CLI/service through the built
+workspace. Existing `pnpm test:job-eligibility` includes its type check and Node tests.
+
+Next, independently review and normalize private policy/profile/listing/history facts
+before calling the pure evaluator. Missing required records mean evaluation is not
+available; this function does not invent empty history, defaults or qualified sources.
+See [design](../../docs/spec/design/t6-listing-review.md) and
+[qualification](../../docs/spec/evidence/t6-listing-review.md).

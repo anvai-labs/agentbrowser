@@ -1,6 +1,6 @@
 import type { EngineError, EnginePage } from '@agentbrowser/engine';
 import type { Page } from 'playwright';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PlaywrightChromiumEngine } from './index.js';
 
 function backingPage(page: EnginePage): Page {
@@ -73,14 +73,11 @@ describe('remap retry and stale identity refusals', () => {
 
   it('preserves the original refusal when the heal re-observe dies with the page', async () => {
     const engine = new PlaywrightChromiumEngine();
+    let release = () => {};
+    let restore = () => {};
     try {
       const page = await (await engine.createSession({ headless: true })).newPage();
-      // A large body keeps the heal's re-observation busy long enough to be
-      // interrupted by the close below.
-      const filler = Array.from({ length: 400 }, (_, i) => `<p>F${i}</p>`).join('');
-      await page.navigate({
-        url: `data:text/html,${filler}<button onclick="document.title='clicked'">Save</button>`,
-      });
+      await page.navigate({ url: 'data:text/html,<button>Save</button>' });
       const ref = (await page.observe({})).elements.find((el) => el.role === 'button')?.ref;
       if (!ref) throw new Error('Missing observed button');
 
@@ -89,26 +86,46 @@ describe('remap retry and stale identity refusals', () => {
         if (el) el.replaceWith(el.cloneNode(true));
       });
 
-      const actPromise = page.act({ type: 'click', target: { ref }, remap: true });
-      // Close while the heal is still in flight. The heal's re-observation
-      // of this 400-paragraph document takes far longer than this window on
-      // any host; settle-guard keeps a freak-fast host from closing after
-      // the act already resolved and misreading the result.
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      if (await Promise.race([actPromise.then(() => true), Promise.resolve(false)])) {
-        throw new Error('act settled before the page close; the race window was lost');
-      }
+      // Pin the existing healing boundary, then close the real browser page.
+      // No document-size or host-speed assumption determines whether the race occurs.
+      let enter = () => {};
+      const entered = new Promise<void>((resolve) => {
+        enter = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const observe = page.observe.bind(page);
+      const spy = vi.spyOn(page, 'observe').mockImplementationOnce(async (options) => {
+        enter();
+        await gate;
+        return observe(options);
+      });
+      restore = () => spy.mockRestore();
+      const actPromise = page
+        .act({ type: 'click', target: { ref }, remap: true })
+        .catch((error: unknown) => error as EngineError);
+      await Promise.race([
+        entered,
+        actPromise.then(() => {
+          throw new Error('Action settled before entering heal observation');
+        }),
+      ]);
       await page.close();
+      release();
 
-      const error: EngineError = await actPromise.catch((e: unknown) => e as EngineError);
-      // The heal could not complete, so the caller sees the refusal that
-      // triggered it - with its remap details - never a raw teardown error.
+      const error = await actPromise;
+      expect(spy).toHaveBeenCalledTimes(1);
+      // The actual re-observation of the closed page fails. Surface the refusal
+      // which triggered healing, never the raw browser teardown error.
       expect(error).toMatchObject({ code: 'STALE_TARGET', retryable: false });
-      expect(error.message).toMatch(/detached or replaced/);
+      expect((error as EngineError).message).toMatch(/detached or replaced/);
       expect((error as { details?: { remapEligible?: boolean } }).details?.remapEligible).toBe(
         true
       );
     } finally {
+      release();
+      restore();
       await engine.close();
     }
   });

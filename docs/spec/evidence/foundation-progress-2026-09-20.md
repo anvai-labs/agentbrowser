@@ -1,7 +1,7 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
 Rechecked published 1.9.1 at `310e01d43982824caac2c63ed8d98355e17efdce`
-and develop `0afe7de5f71c5e89eb4b60867d9965b46163fcab` (PR #262; alignment
+and develop `4bcc47b95b2c650b36242639221184bab3c7ba04` (PR #263; alignment
 rechecked 2026-09-22). C3c incorporates the merged #256 error-containment repair.
 The [release ladder](release-1.9.1.md) includes Bun CLI/MCP artifacts,
 Node 24 service qualification, Homebrew and develop back-sync. Existing browser
@@ -258,3 +258,10 @@ CI; see [evidence](t4-operator-reconciliation.md). The next [N0 document-read
 repair](../design/t6-document-read.md) removes avoidable interactive binding from
 extraction/export after actual headed public capture timed out. E0c private integration
 and E1 live draft qualification remain open; no whole milestone or release changes.
+
+N0 merged #263 with 8/8 PR and post-merge CI, clean exact-head review and 3,370
+passing tests in each normal hook (24 existing skips). Headed public capture passed;
+see [evidence](t6-document-read.md). The next [private listing-review consumer](../design/t6-listing-review.md)
+uses existing bounded owners and returns unreviewed source data only. T4/T6 estimates
+and the 3/9 complete milestone count remain unchanged; complete private eligibility
+and authenticated live draft qualification still need their actual source inputs.
