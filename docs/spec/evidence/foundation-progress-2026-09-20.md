@@ -280,14 +280,20 @@ qualification and authenticated live drafts remain open.
 
 The next independent [T8 source checkpoint](../tasks/t8-harness-qualification.md#source-level-schema-checkpoint)
 repairs demonstrated schema loss in the owning Victor repository. Local evidence:
-490 affected tests, 33,303 full-suite collection, two real AgentBrowser catalog/
-delegation acceptances and 25 unchanged resource-limit tests on Linux. The two
-macOS real-child limit cases reject `RLIMIT_AS` on this host; no sandbox policy was
-weakened. Exact Victor head `6a6bbbcb52111333bc4dbd6355e0fef830456a5d` received
-independent SHIP review. The first CI candidate found a missing mapping to legacy test locations; the
-existing selector now includes those suites. Its exact local run passed 465 tests
-with three existing skips and 100% changed-production-line coverage. CI/merge
-evidence belongs to the linked Victor PR.
+589 CI-selected tests, 33,338 full-suite collection, 100% changed-production-line
+coverage and two real AgentBrowser catalog/delegation acceptances. The unchanged
+resource-limit suite previously passed all 25 tests on Linux; this Mac rejects
+`RLIMIT_AS` in two real-child cases, without any weakened policy or assertion.
+
+The initial source verdict was withdrawn before merge after an adversarial audit
+found implicit reference retrieval and permissive fallback. The repair validates
+captured contracts offline, refuses malformed/unresolved schemas and preserves
+executor arguments instead of repairing or stripping them. Failing-first tests
+also pin reserved-context refusal and static diagnostics. Exact Victor head
+`95612eddc52ac264edd91d61f97b109ad8af0bc0` received independent SHIP review;
+this supersedes the earlier `6a6bbb` evidence. CI/merge evidence belongs to
+[Victor PR #1168](https://github.com/anvai-labs/victor/pull/1168). Provider and
+ToolPipeline transformations before the executor still require qualification.
 
 No AgentBrowser runtime or release change is required for that harness repair.
 T4/T6 remain ~40%, T8 installed acceptance stays unqualified, and exactly 3/9
