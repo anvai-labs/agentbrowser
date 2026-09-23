@@ -2,10 +2,13 @@
 
 Status: active product architecture and implementation contract. A capability is
 delivered only when its task evidence records a merged and qualified implementation.
-Published baseline: AgentBrowser 1.9.0 at
-`02f263f3764b41f923553c69c11dff69c819fae5`. Current develop baseline:
-`a437c48` after PR #228; Victor was last inspected at
-`c8a0950fed49914bb2877feeb65f5ab32cc47b97`. Reviewed 2026-09-20 UTC.
+Published baseline: AgentBrowser 1.9.1 at
+`310e01d43982824caac2c63ed8d98355e17efdce`. Rechecked develop baseline:
+`d53829e6c06e26b977bdd0396e61094282b4081c` after PR #257, retaining #255 and
+the #256 error-containment repair. Local Victor was last inspected at `68502d82d`
+(not installed-harness qualification). Develop alignment reviewed 2026-09-22.
+See the [release evidence](evidence/release-1.9.1.md) and
+[progress checkpoint](evidence/foundation-progress-2026-09-20.md).
 
 Build a shared execution and verification service for people and agents. A mode
 selects a small policy and capability profile; it does not create another runner,
@@ -58,13 +61,14 @@ non-secret run cursor and inline operator mode selection. See the
 consumption remains T8 work.
 T2 is complete. AgentBrowser 1.9.0 includes the configurable REST/SDK/CLI outcome run,
 shared receipt correlation, admission/drain and evidence-permission foundations, and
-the controlled G4 CLI qualification delivered through PR #208. T3 is complete on develop with
+the controlled G4 CLI qualification delivered through PR #208. T3 is complete and released in 1.9.1 with
 the bound-report/navigation foundation, offline CLI evaluator from PR #225, native
 JUnit qualification from PR #226 and the application-owned installed-CLI recipe from
 PR #227, report links/live JUnit from #229–230, and standalone/cost qualification from
 #231. PR #228 moved default qualification and release builds to Node 24 LTS while
 retaining the Node 22 minimum. Arbitrary application setup remains. Production
-evidence sources, G6 and durable recovery remain explicitly unqualified. See the
+evidence sources, production G6 and durable recovery remain unqualified; #257 supplies
+only synthetic G6 accepted-receipt qualification. See the
 [foundation qualification](evidence/t2-foundation-qualification.md) for the acceptance
 mapping and delivery record.
 See the
@@ -81,7 +85,7 @@ See the
 
 T3 reuses that CLI/service path for a 13-case deterministic matrix. Offline `test
 evaluate`, native JUnit failure probes and the fixed application-owned recipe are
-merged on develop; published 1.9.0 predates them. The current
+released in 1.9.1. The
 [private report-link design](design/t3-report-artifacts.md) adds an example-local
 evaluation/manifest pair without a public artifact API, HTML renderer, dependency or
 CI job. The [T3 completion record](evidence/t3-standalone-qualification.md) unlocks T7
@@ -91,19 +95,30 @@ T4 has one public-interface slice delivered in 1.8.20 by PR #201: bounded,
 authenticated application discovery, execution and receipt lookup now use the shared
 `ApplicationAuthority` through REST, the TypeScript SDK and a first-class CLI command
 group. This is not the complete application-parity vertical. The 1.9.0 foundation
-adds delegated receipt-permission composition; operator-binding UX, an independent
-UI/API parity oracle, production application evidence and durable restart receipts
-remain open. MCP is optional and has no
+adds delegated receipt-permission composition. Synthetic UI/API draft parity and
+public reviewed submission are qualified on develop; operator-binding UX, production
+application evidence and durable restart receipts remain open. MCP is optional and has no
 application-operation projection. See the
 [application authority guide](../application-operation-authority.md) and
 [T4 packet](tasks/t4-application-parity.md).
 
 T6 is partially delivered in 1.8.19: the existing autofill orchestrator now has named
-`react-select` and `chip-multiselect` strategies. Broader widget qualification,
-reusable mapping and cross-engine acceptance remain open. T3 delivers the first bounded
+`react-select` and `chip-multiselect` strategies. Develop adds bounded reusable mapping,
+checked uploads, native/app witnesses and public reviewed submission through #257.
+Broader widget, production workflow and cross-engine acceptance remain open. Version 1.9.1 additionally
+ships Q0 committed-widget verification and CLI cookie-file input. T3 delivers the first bounded
 application-owned QA workflow; T5 and T7 remain unimplemented. T8 still needs
 installed-harness qualification. T9 is a
 recurring release gate rather than a one-time feature.
+
+The bounded packets [P0 trusted evidence composition](design/t4-production-evidence-composition.md)
+and [E0 job eligibility](design/t6-job-eligibility.md) extend the existing
+[job checkpoint](design/t6-job-application-checkpoint.md), with explicit agent tasks,
+failing-first acceptance and production/live stop gates. P0a/P0b merged in #259 and E0a/E0b in #260; production/private integration and live
+qualification remain open. The [operator binding UI](design/t4-operator-application-binding.md) merged in #261;
+the [reconciliation candidate](design/t4-operator-reconciliation.md) reuses the same
+panel and public read routes. Detailed packets are linked
+on demand and are not automatically loaded into core or unrelated modes.
 
 ## Modes
 
@@ -148,3 +163,15 @@ without weakening them. Requirements in modes reference shared contracts instead
 of copying them. Update this index/manifest only when a module's responsibility or
 load boundary changes. Update source-derived capability documentation with its
 implementation; never maintain parallel handwritten protocol schema catalogs.
+
+
+The [C3b consent design](design/t6-mandatory-application-consent.md) adds an internal
+mandatory guard for declared submission operations using the same application
+authority and approval/evidence owners. [Qualification](evidence/t6-mandatory-application-consent.md)
+includes synthetic browser/app acceptance and drift refusal; public submission and
+live ATS readiness remain gated on C3c and production evidence.
+
+The [C3c public workflow design](design/t6-public-application-review.md) specifies
+operator create → inspect → approve → application execution through the first-class
+CLI and existing REST/SDK. Source hints never grant permission. Independent named
+receipt verification uses the application seam; process-loss recovery remains T5.

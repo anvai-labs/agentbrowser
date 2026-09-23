@@ -14,6 +14,7 @@ import { Value } from '@sinclair/typebox/value';
 import { INTERACTION_GUIDANCE } from './interaction-guidance.js';
 import { ActionSchema, PlanStepSchema, SessionRequestSchema } from './schemas.js';
 import type { SessionRequest, SupportedAction } from './types.js';
+import { validateUploadIntegrity } from './upload.js';
 
 /** One validation failure, addressed by pointer path. */
 export interface ValidationIssue {
@@ -57,6 +58,8 @@ const action = TypeCompiler.Compile(ActionSchema);
  * /plan and direct service callers all pass through one gate.
  */
 export function validateAction(body: unknown): Validated<SupportedAction> {
+  const integrityError = validateUploadIntegrity(body);
+  if (integrityError) return { ok: false, issues: [{ path: '/sha256', message: integrityError }] };
   if (action.Check(body)) {
     return { ok: true, value: body as SupportedAction };
   }
@@ -79,6 +82,8 @@ const planStep = TypeCompiler.Compile(PlanStepSchema);
  * Like the other validators: constrains, does not strip.
  */
 export function validatePlanStep(body: unknown): Validated<Record<string, unknown>> {
+  const integrityError = validateUploadIntegrity(body);
+  if (integrityError) return { ok: false, issues: [{ path: '/sha256', message: integrityError }] };
   // The nested { action: { type: ... } } envelope is the service-internal
   // representation; left to the compiled union it surfaces as an opaque
   // "Expected union value", so name the flat shape before that check runs.

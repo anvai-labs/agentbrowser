@@ -468,6 +468,201 @@
         }
       }
     },
+    "/v1/sessions/{sessionId}/approvals/{tokenId}": {
+      "get": {
+        "operationId": "getOperatorApproval",
+        "summary": "Read a private operator action review",
+        "tags": [
+          "sessions"
+        ],
+        "description": "Requires an authenticated owning operator. Private action projection only; not full-form or file-content consent. Responses are not cached.",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tokenId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Private approval state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorApprovalView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owning operator required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session admission refused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "decideOperatorApproval",
+        "summary": "Approve or deny a reviewed action",
+        "tags": [
+          "sessions"
+        ],
+        "description": "Requires an authenticated owning operator and ordinary controlled-session admission. Repeated operation identities return the recorded outcome without repeating the decision.",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tokenId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-AgentBrowser-Operation-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperatorApprovalDecision"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Private approval state, or recorded operation replay.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/OperatorApprovalView"
+                    },
+                    {
+                      "$ref": "#/components/schemas/OperationReplay"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was malformed or failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owning operator required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session admission or approval transition refused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/sessions/{sessionId}/application": {
       "get": {
         "operationId": "discoverApplication",
@@ -696,6 +891,109 @@
           },
           "404": {
             "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{sessionId}/application/reviews": {
+      "post": {
+        "operationId": "applicationReview",
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Operator: create a pending complete application review without executing it",
+        "description": "Requires trusted evidence configuration. Source selectors are lookup hints, not permission. Creation allocates a pending expiring token and is not idempotent; a lost response may leave a pending token. The future execution ID belongs in the body request. Execution operation headers are rejected. The response contains private reviewed data; use a private output destination.",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplicationReviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pending private operator review",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorApprovalView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was malformed or failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Credential is absent, expired, or revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Operator or session authority is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session busy or review revoked. Do not blindly repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected server error occurred.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1744,6 +2042,20 @@
                   "fields"
                 ],
                 "properties": {
+                  "scope": {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "url"
+                    ],
+                    "properties": {
+                      "url": {
+                        "minLength": 1,
+                        "maxLength": 2048,
+                        "type": "string"
+                      }
+                    }
+                  },
                   "fields": {
                     "minItems": 1,
                     "maxItems": 50,
@@ -3114,6 +3426,17 @@
                       "minLength": 1,
                       "type": "string"
                     }
+                  },
+                  "sha256": {
+                    "pattern": "^[a-f0-9]{64}$",
+                    "description": "Opt-in integrity check of exactly one service-host regular file, at most 16 MiB; the verified bytes are uploaded.",
+                    "type": "string"
+                  },
+                  "mimeType": {
+                    "pattern": "^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$",
+                    "maxLength": 127,
+                    "description": "Upload metadata only; requires sha256. Defaults to application/octet-stream; does not validate content type.",
+                    "type": "string"
                   },
                   "deltaX": {
                     "type": "number"
@@ -4767,6 +5090,87 @@
           }
         ]
       },
+      "OperatorApprovalDecision": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "decision"
+        ],
+        "properties": {
+          "decision": {
+            "anyOf": [
+              {
+                "const": "approve",
+                "type": "string"
+              },
+              {
+                "const": "deny",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      },
+      "OperatorApprovalView": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tokenId",
+          "status",
+          "createdAt",
+          "expiresAt",
+          "action"
+        ],
+        "properties": {
+          "tokenId": {
+            "minLength": 1,
+            "maxLength": 128,
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "pending",
+                "type": "string"
+              },
+              {
+                "const": "approved",
+                "type": "string"
+              },
+              {
+                "const": "denied",
+                "type": "string"
+              },
+              {
+                "const": "used",
+                "type": "string"
+              },
+              {
+                "const": "expired",
+                "type": "string"
+              }
+            ]
+          },
+          "createdAt": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "expiresAt": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "approvedAt": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "action": {
+            "type": "object",
+            "patternProperties": {
+              "^(.*)$": {}
+            }
+          }
+        }
+      },
       "OperationRecord": {
         "additionalProperties": false,
         "type": "object",
@@ -4937,6 +5341,10 @@
                       "type": "string"
                     }
                   ]
+                },
+                "review": {
+                  "const": "operator-submit",
+                  "type": "string"
                 }
               }
             }
@@ -4967,6 +5375,93 @@
           "expectedVersion": {
             "minimum": 0,
             "type": "integer"
+          },
+          "approvalToken": {
+            "minLength": 1,
+            "maxLength": 128,
+            "type": "string"
+          }
+        }
+      },
+      "ApplicationReviewRequest": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "pageId",
+          "source",
+          "request"
+        ],
+        "properties": {
+          "pageId": {
+            "minLength": 1,
+            "maxLength": 255,
+            "type": "string"
+          },
+          "source": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "ownerId",
+              "contract"
+            ],
+            "properties": {
+              "ownerId": {
+                "pattern": "^[!-~]{1,255}$",
+                "type": "string"
+              },
+              "contract": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "id",
+                  "version"
+                ],
+                "properties": {
+                  "id": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                    "type": "string"
+                  },
+                  "version": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "request": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "operation",
+              "input",
+              "operationId",
+              "expectedVersion"
+            ],
+            "properties": {
+              "operation": {
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-zA-Z0-9_-]{1,128}$",
+                "type": "string"
+              },
+              "input": {},
+              "operationId": {
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-zA-Z0-9_-]{1,128}$",
+                "type": "string"
+              },
+              "expectedVersion": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              }
+            }
           }
         }
       },
@@ -5546,6 +6041,10 @@
               "approval": {
                 "type": "object",
                 "properties": {
+                  "review": {
+                    "const": "operator",
+                    "type": "string"
+                  },
                   "transactions": {
                     "anyOf": [
                       {
@@ -6690,6 +7189,17 @@
               "type": "string"
             }
           },
+          "sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "Opt-in integrity check of exactly one service-host regular file, at most 16 MiB; the verified bytes are uploaded.",
+            "type": "string"
+          },
+          "mimeType": {
+            "pattern": "^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$",
+            "maxLength": 127,
+            "description": "Upload metadata only; requires sha256. Defaults to application/octet-stream; does not validate content type.",
+            "type": "string"
+          },
           "deltaX": {
             "type": "number"
           },
@@ -7105,6 +7615,17 @@
                     "minLength": 1,
                     "type": "string"
                   }
+                },
+                "sha256": {
+                  "pattern": "^[a-f0-9]{64}$",
+                  "description": "Opt-in integrity check of exactly one service-host regular file, at most 16 MiB; the verified bytes are uploaded.",
+                  "type": "string"
+                },
+                "mimeType": {
+                  "pattern": "^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$",
+                  "maxLength": 127,
+                  "description": "Upload metadata only; requires sha256. Defaults to application/octet-stream; does not validate content type.",
+                  "type": "string"
                 },
                 "deltaX": {
                   "type": "number"
@@ -8418,7 +8939,7 @@
             "$ref": "#/components/schemas/PageState"
           },
           "result": {
-            "description": "Evidence payload, present only for actions that produce one. upload reports the attached files: {success, files:[{name,size}], inputFiles?:[names]} (files from the validated local paths, inputFiles read back from the live input)."
+            "description": "Evidence payload, present only for actions that produce one. upload reports the attached files: {success, files:[{name,size,sha256?}], inputFiles?:[names]} (checked uploads report the digest of the bytes supplied; legacy metadata comes from validated service-host paths; inputFiles is read from the live input)."
           }
         }
       }

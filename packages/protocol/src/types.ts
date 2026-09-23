@@ -113,6 +113,7 @@ export interface SessionPolicy {
  * Approval policy for actions
  */
 export interface ApprovalPolicy {
+  review?: 'operator';
   transactions?: 'allow' | 'deny' | 'required';
   externalMessages?: 'allow' | 'deny' | 'required';
 }
@@ -463,6 +464,10 @@ export interface UploadAction extends Action {
   type: 'upload';
   target?: ElementTarget;
   paths: string[];
+  /** Single-file, bounded integrity check; the engine uploads the bytes it hashes. */
+  sha256?: string;
+  /** Metadata only, requires sha256; default application/octet-stream. */
+  mimeType?: string;
 }
 
 /**

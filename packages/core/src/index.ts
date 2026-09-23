@@ -18,3 +18,4 @@ export * from './bounded-cache.js';
 export * from './ring-buffer.js';
 
 export * from './session-control.js';
+export * from './canonical-json.js';

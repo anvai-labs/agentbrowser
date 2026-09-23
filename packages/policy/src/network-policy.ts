@@ -5,12 +5,15 @@
  * with configurable security rules and comprehensive logging.
  */
 
+import { BlockList, isIP } from 'node:net';
 import { RingBuffer } from '@agentbrowser/core';
 import { classifyIPAddress } from './ip-address.js';
 
 export interface NetworkPolicyOptions {
   blockLoopback?: boolean;
   blockPrivateIPs?: boolean;
+  /** Operator-owned private CIDR exceptions; never bypass loopback, metadata or host rules. */
+  allowedPrivateCIDRs?: string[];
   blockMetadata?: boolean;
   maxRedirects?: number;
   maxResponseSize?: number;
@@ -79,6 +82,7 @@ export class NetworkPolicyError extends Error {
  */
 export class NetworkPolicy {
   private readonly options: Required<NetworkPolicyOptions>;
+  private allowedPrivate: BlockList;
   private readonly logs: RingBuffer<LogEntry>;
 
   // Cloud metadata service endpoints
@@ -89,9 +93,14 @@ export class NetworkPolicy {
   ];
 
   constructor(options: NetworkPolicyOptions = {}) {
+    const allowed = compilePrivateCIDRs(
+      options.allowedPrivateCIDRs === undefined ? [] : options.allowedPrivateCIDRs
+    );
+    this.allowedPrivate = allowed.ranges;
     this.options = {
       blockLoopback: options.blockLoopback ?? false,
       blockPrivateIPs: options.blockPrivateIPs ?? false,
+      allowedPrivateCIDRs: allowed.cidrs,
       blockMetadata: options.blockMetadata ?? false,
       maxRedirects: options.maxRedirects ?? 10,
       maxResponseSize: options.maxResponseSize ?? 10 * 1024 * 1024, // 10MB default
@@ -139,7 +148,7 @@ export class NetworkPolicy {
       );
     }
 
-    if (this.options.blockPrivateIPs && address?.privateIP) {
+    if (this.options.blockPrivateIPs && address?.privateIP && !this.isAllowedPrivate(address)) {
       throw new NetworkPolicyError(
         'POLICY_DENIED',
         `Private IP addresses are blocked: ${hostname}`,
@@ -211,7 +220,11 @@ export class NetworkPolicy {
           { address, rule: 'resolvedLoopback' }
         );
       }
-      if (this.options.blockPrivateIPs && classification.privateIP) {
+      if (
+        this.options.blockPrivateIPs &&
+        classification.privateIP &&
+        !this.isAllowedPrivate(classification)
+      ) {
         throw new NetworkPolicyError(
           'POLICY_DENIED',
           `Resolved address is private (DNS rebinding): ${address}`,
@@ -228,6 +241,10 @@ export class NetworkPolicy {
         );
       }
     }
+  }
+
+  private isAllowedPrivate(address: NonNullable<ReturnType<typeof classifyIPAddress>>): boolean {
+    return this.allowedPrivate.check(address.address, address.type);
   }
 
   /**
@@ -307,7 +324,7 @@ export class NetworkPolicy {
    * Get current policy configuration
    */
   getConfig(): Readonly<NetworkPolicyOptions> {
-    return { ...this.options };
+    return { ...this.options, allowedPrivateCIDRs: [...this.options.allowedPrivateCIDRs] };
   }
 
   /** Fixed session-generation rules, without multiplying raw request-log buffers. */
@@ -367,8 +384,43 @@ export class NetworkPolicy {
       throw new Error('maxRedirects must be non-negative');
     }
 
-    Object.assign(this.options, options);
+    // Validate the entire update before mutating anything. Frozen snapshots reject
+    // the assignment before their compiled range set can change.
+    const allowed =
+      options.allowedPrivateCIDRs !== undefined
+        ? compilePrivateCIDRs(options.allowedPrivateCIDRs)
+        : undefined;
+    Object.assign(this.options, options, {
+      allowedPrivateCIDRs: allowed?.cidrs ?? this.options.allowedPrivateCIDRs,
+    });
+    if (allowed) this.allowedPrivate = allowed.ranges;
   }
+}
+
+/** Strict CIDR syntax: no implicit prefix, DNS names, scoped literals or numeric coercion. */
+function compilePrivateCIDRs(input: string[]): { cidrs: string[]; ranges: BlockList } {
+  if (!Array.isArray(input)) throw new Error('allowedPrivateCIDRs must be an array of CIDRs');
+  const cidrs = [...input];
+  const ranges = new BlockList();
+  for (const cidr of cidrs) {
+    const match = typeof cidr === 'string' ? /^([^/%]+)\/(0|[1-9]\d*)$/.exec(cidr) : null;
+    const subnet = match?.[1] ?? '';
+    const family = isIP(subnet);
+    const prefix = Number(match?.[2]);
+    if (
+      match?.[0] !== cidr ||
+      !family ||
+      !Number.isInteger(prefix) ||
+      prefix < 0 ||
+      prefix > (family === 4 ? 32 : 128)
+    ) {
+      // Do not echo arbitrary operator input into startup logs.
+      throw new Error('Invalid allowedPrivateCIDRs CIDR: expected an IP address and valid prefix');
+    }
+    ranges.addSubnet(subnet, prefix, family === 4 ? 'ipv4' : 'ipv6');
+  }
+  Object.freeze(cidrs);
+  return { cidrs, ranges };
 }
 
 // ---------------------------------------------------------------------------

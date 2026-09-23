@@ -133,7 +133,7 @@ Terminal outcomes (lowercase states in code; close carries a reason):
 
 ## Implementation Notes
 
-### CLI file handoff (1.9.1 candidate)
+### CLI file handoff (released in 1.9.1)
 
 The [cookie-file spec](../spec/design/cli-cookie-file-handoff.md) applies explicit
 persistence at the client boundary: local file import maps to the existing `cookies`

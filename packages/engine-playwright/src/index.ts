@@ -19,6 +19,8 @@ import type {
   EngineTarget,
   ExtractionRequest,
   ExtractionResult,
+  NativeFormControlEvidence,
+  NativeFormEvidence,
   NavigationRequest,
   NavigationResult,
   NewPageOptions,
@@ -31,8 +33,18 @@ import type {
   ScreenshotRequest,
 } from '@agentbrowser/engine';
 import type { RequestPolicy } from '@agentbrowser/engine';
-import { EngineError, normalizeEngineError } from '@agentbrowser/engine';
-import { DELIVERED_ACTION_TYPES, DELIVERED_OBSERVATION_MODES } from '@agentbrowser/protocol';
+import {
+  EngineError,
+  NATIVE_FORM_EVIDENCE_LIMITS,
+  normalizeEngineError,
+  parseNativeFormEvidence,
+  readVerifiedUpload,
+} from '@agentbrowser/engine';
+import {
+  DELIVERED_ACTION_TYPES,
+  DELIVERED_OBSERVATION_MODES,
+  validateUploadIntegrity,
+} from '@agentbrowser/protocol';
 import {
   type Browser,
   type BrowserContext,
@@ -113,46 +125,372 @@ interface FormEvidenceNode {
   type?: string;
   multiple?: boolean;
   value?: string;
+  ownerDocument: FormEvidenceDocument;
+  getBoundingClientRect(): { width: number; height: number };
   getAttribute(name: string): string | null;
+  matches(selector: string): boolean;
   closest(selector: string): FormEvidenceNode | null;
   querySelector(selector: string): { textContent: string | null } | null;
   querySelectorAll(selector: string): ArrayLike<{ textContent: string | null }>;
+}
+interface FormEvidenceDocument {
+  activeElement: FormEvidenceNode | null;
+  querySelectorAll(selector: string): ArrayLike<FormEvidenceNode>;
+  defaultView: { getComputedStyle(node: FormEvidenceNode): { visibility: string } } | null;
+}
+interface FormPopupEvidence {
+  state: 'ready' | 'pending' | 'invalid';
+  popup?: FormEvidenceNode;
+  owner?: FormEvidenceNode;
 }
 interface FormIdentityState {
   nodes: WeakMap<object, string>;
   next: number;
   document: string;
+  root: object;
+  ownerDocument: object;
+  token(node: object): string;
+  popups?: WeakMap<object, FormPopupEvidence>;
+}
+
+/** Browser-only structural views keep this engine free of DOM runtime/type dependencies. */
+interface NativeCaptureNode extends FormEvidenceNode {
+  name: string;
+  action: string;
+  method: string;
+  form: NativeCaptureNode | null;
+  disabled: boolean;
+  required: boolean;
+  checked: boolean;
+  indeterminate: boolean;
+  selectedIndex: number;
+  textContent: string | null;
+  shadowRoot: object | null;
+  isContentEditable: boolean;
+  options: ArrayLike<{ value: string; label: string; selected: boolean; disabled: boolean }>;
+  files: ArrayLike<NativeCaptureFile> | null;
+}
+interface NativeCaptureFile {
+  name: string;
+  type: string;
+  size: number;
+  lastModified: number;
+  arrayBuffer(): Promise<ArrayBuffer>;
+}
+interface NativeCaptureDocument {
+  documentElement: NativeCaptureNode;
+  URL: string;
+  createTreeWalker(
+    root: NativeCaptureNode,
+    whatToShow: number
+  ): {
+    nextNode(): NativeCaptureNode | null;
+  };
+  defaultView: {
+    getComputedStyle(node: NativeCaptureNode): { visibility: string };
+    crypto: { subtle: { digest(algorithm: string, bytes: ArrayBuffer): Promise<ArrayBuffer> } };
+  } | null;
+}
+
+/** Cooperative native pages only; opaque closed roots are outside this bounded contract. */
+async function captureNativeFormEvidence({
+  state,
+  limits,
+}: {
+  state: FormIdentityState;
+  limits: typeof NATIVE_FORM_EVIDENCE_LIMITS;
+}): Promise<NativeFormEvidence> {
+  const doc = (globalThis as unknown as { document: NativeCaptureDocument }).document;
+  const root = doc.documentElement;
+  const documentId = state.document;
+  const refuse = (): never => {
+    throw new Error('Native form evidence unavailable');
+  };
+  const bounded = (value: unknown, maximum: number = limits.identifier): string => {
+    if (typeof value !== 'string' || value.length > maximum) return refuse();
+    return value;
+  };
+  const inventory = () => {
+    if (
+      state.ownerDocument !== doc ||
+      state.root !== root ||
+      doc.documentElement !== root ||
+      state.document !== documentId
+    )
+      refuse();
+    const forms: NativeCaptureNode[] = [];
+    const nodes: NativeCaptureNode[] = [];
+    const ids = new Set<string>();
+    const walker = doc.createTreeWalker(root, 1 /* SHOW_ELEMENT */);
+    let node: NativeCaptureNode | null = root;
+    let visited = 0;
+    while (node) {
+      if (++visited > limits.treeElements) refuse();
+      const tag = node.tagName.toLowerCase();
+      if (
+        node.shadowRoot ||
+        node.isContentEditable ||
+        tag.includes('-') ||
+        ['iframe', 'frame', 'object', 'embed', 'output', 'meter', 'progress', 'optgroup'].includes(
+          tag
+        ) ||
+        node.getAttribute('role') !== null ||
+        node.getAttribute('shadowrootmode') !== null
+      )
+        refuse();
+      if (node.id) {
+        if (ids.has(node.id)) refuse();
+        ids.add(node.id);
+      }
+      if (tag === 'form') {
+        forms.push(node);
+        if (forms.length > 1) refuse();
+      }
+      if (['input', 'textarea', 'select', 'button'].includes(tag)) {
+        nodes.push(node);
+        if (nodes.length > limits.controls) refuse();
+      }
+      node = walker.nextNode();
+    }
+    const form = forms[0];
+    if (!form || nodes.length === 0) return refuse();
+    const files: NativeCaptureFile[] = [];
+    const controls = nodes.map((control): NativeFormControlEvidence => {
+      if (control.form !== form) return refuse();
+      const tag = control.tagName.toLowerCase() as NativeFormControlEvidence['tag'];
+      const type = bounded(control.type ?? tag);
+      if (tag === 'input' && !limits.inputTypes.includes(type)) refuse();
+      if (control.multiple || control.indeterminate) refuse();
+      const block = control.closest('fieldset');
+      const rect = control.getBoundingClientRect();
+      const visibility = doc.defaultView?.getComputedStyle(control).visibility;
+      const item: NativeFormControlEvidence = {
+        nodeId: state.token(control),
+        blockId: block ? state.token(block) : null,
+        id: bounded(control.id),
+        name: bounded(control.name),
+        tag,
+        type,
+        value: bounded(control.value, limits.value),
+        disabled: control.matches(':disabled'),
+        required: Boolean(control.required),
+        visible:
+          rect.width > 0 && rect.height > 0 && visibility !== 'hidden' && visibility !== 'collapse',
+      };
+      if (type === 'checkbox' || type === 'radio') item.checked = control.checked;
+      if (tag === 'select') {
+        if (control.options.length > limits.options) refuse();
+        item.selectedIndex = control.selectedIndex;
+        item.options = Array.from(control.options, (option) => ({
+          value: bounded(option.value, limits.value),
+          label: bounded(option.label),
+          selected: option.selected,
+          disabled: option.disabled,
+        }));
+      }
+      if (tag === 'button') item.text = bounded(control.textContent ?? '', limits.text);
+      if (type === 'file') {
+        if (!control.files || control.files.length > limits.files) return refuse();
+        item.files = Array.from(control.files, (file) => {
+          if (
+            !Number.isSafeInteger(file.size) ||
+            file.size < 0 ||
+            file.size > limits.fileBytes ||
+            !Number.isFinite(file.lastModified)
+          )
+            refuse();
+          files.push(file);
+          if (files.length > limits.files) refuse();
+          return {
+            name: bounded(file.name),
+            type: bounded(file.type, limits.mimeType),
+            size: file.size,
+            lastModified: file.lastModified,
+            sha256: '',
+          };
+        });
+      }
+      return item;
+    });
+    const evidence: NativeFormEvidence = {
+      url: bounded(doc.URL, limits.url),
+      documentId,
+      form: {
+        nodeId: state.token(form),
+        id: bounded(form.id),
+        name: bounded(form.name),
+        action: bounded(form.action, limits.url),
+        method: bounded(form.method),
+      },
+      controls,
+    };
+    const serialized = JSON.stringify(evidence);
+    if (new TextEncoder().encode(serialized).byteLength > limits.serializedBytes) refuse();
+    return { evidence, serialized, form, nodes, files };
+  };
+  const before = inventory();
+  const hashes: string[] = [];
+  for (const file of before.files) {
+    const bytes = await file.arrayBuffer();
+    if (bytes.byteLength !== file.size || bytes.byteLength > limits.fileBytes) refuse();
+    const digest = await doc.defaultView?.crypto.subtle.digest('SHA-256', bytes);
+    if (!digest) return refuse();
+    hashes.push(
+      Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+    );
+  }
+  const after = inventory();
+  if (
+    before.serialized !== after.serialized ||
+    before.form !== after.form ||
+    before.nodes.some((node, index) => node !== after.nodes[index]) ||
+    before.files.some((file, index) => file !== after.files[index])
+  )
+    refuse();
+  let index = 0;
+  for (const control of before.evidence.controls) {
+    for (const file of control.files ?? []) file.sha256 = hashes[index++] ?? refuse();
+  }
+  return before.evidence;
+}
+
+/** One bounded ownership index per observation; refreshed again before dispatch. */
+function refreshFormPopupEvidence(state: FormIdentityState): void {
+  const doc = (globalThis as unknown as { document: FormEvidenceDocument }).document;
+  const nodes = doc.querySelectorAll('[id], [role="combobox"], [role="listbox"]');
+  const evidence = new WeakMap<object, FormPopupEvidence>();
+  state.popups = evidence;
+  // If the index cannot be complete, omitted evidence is invalid, never a guess.
+  if (nodes.length > 10_000) return;
+  const ids = new Map<string, FormEvidenceNode[]>();
+  const controls: FormEvidenceNode[] = [];
+  const popups: FormEvidenceNode[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i];
+    if (!node) continue;
+    if (node.id) {
+      const matches = ids.get(node.id) ?? [];
+      matches.push(node);
+      ids.set(node.id, matches);
+    }
+    const role = node.getAttribute('role');
+    if (role === 'combobox' && node.tagName !== 'SELECT') controls.push(node);
+    if (role === 'listbox') popups.push(node);
+  }
+  const owners = new Map<FormEvidenceNode, Set<FormEvidenceNode>>();
+  const candidates = new Map<FormEvidenceNode, FormEvidenceNode>();
+  for (const control of controls) {
+    const controlsValue = control.getAttribute('aria-controls') ?? '';
+    const ownsValue = control.getAttribute('aria-owns') ?? '';
+    if (controlsValue.length + ownsValue.length > 1024) {
+      state.popups = new WeakMap();
+      return;
+    }
+    const references = [
+      ...new Set(`${controlsValue} ${ownsValue}`.trim().split(/\s+/).filter(Boolean)),
+    ];
+    if (references.length > 32) {
+      state.popups = new WeakMap();
+      return;
+    }
+    let invalid = false;
+    let missing = references.length === 0;
+    const resolved = new Set<FormEvidenceNode>();
+    for (const reference of references) {
+      const matches = ids.get(reference) ?? [];
+      if (matches.length === 0) missing = true;
+      else if (matches.length !== 1 || matches[0]?.getAttribute('role') !== 'listbox')
+        invalid = true;
+      // Record every declared owner, even an ambiguous one, so another control
+      // cannot claim a popup simply because its competitor has invalid markup.
+      for (const popup of matches) {
+        if (popup.getAttribute('role') !== 'listbox') continue;
+        const declaredOwners = owners.get(popup) ?? new Set<FormEvidenceNode>();
+        declaredOwners.add(control);
+        owners.set(popup, declaredOwners);
+        resolved.add(popup);
+      }
+    }
+    if (invalid || resolved.size > 1 || (missing && references.length > 1)) {
+      evidence.set(control, { state: 'invalid' });
+    } else if (missing) evidence.set(control, { state: 'pending' });
+    else {
+      const popup = [...resolved][0];
+      if (popup) candidates.set(control, popup);
+      else evidence.set(control, { state: 'invalid' });
+    }
+  }
+  for (const popup of popups) evidence.set(popup, { state: 'invalid' });
+  for (const [owner, popup] of candidates) {
+    if (owners.get(popup)?.size !== 1) {
+      evidence.set(owner, { state: 'invalid' });
+      continue;
+    }
+    const box = popup.getBoundingClientRect();
+    const visibility = doc.defaultView?.getComputedStyle(popup).visibility;
+    const visible =
+      box.width > 0 && box.height > 0 && visibility !== 'hidden' && visibility !== 'collapse';
+    const entry: FormPopupEvidence = visible
+      ? { state: 'ready', popup, owner }
+      : { state: 'pending' };
+    evidence.set(owner, entry);
+    evidence.set(popup, entry);
+  }
 }
 function captureFormEvidence(
   node: FormEvidenceNode,
   state: FormIdentityState
 ): { attributes: Record<string, string>; value?: string } {
-  const token = (element: FormEvidenceNode) => {
-    let id = state.nodes.get(element);
-    if (!id) {
-      id = `${state.document}:${++state.next}`;
-      state.nodes.set(element, id);
+  const token = (element: FormEvidenceNode) => state.token(element);
+  const identity = (element: FormEvidenceNode): Record<string, string> => {
+    const block = element.closest('fieldset');
+    const attributes: Record<string, string> = {
+      tag: element.tagName.toLowerCase(),
+      'autofill-node': token(element),
+      'autofill-block': block ? token(block) : '',
+    };
+    for (const name of ['id', 'data-automation-id', 'aria-autocomplete']) {
+      const value = element.getAttribute(name);
+      if (value !== null) attributes[name] = value.slice(0, 512);
     }
-    return id;
+    if (block) {
+      attributes['fieldset-id'] = block.id.slice(0, 512);
+      attributes['fieldset-label'] = (block.querySelector(':scope > legend')?.textContent ?? '')
+        .trim()
+        .slice(0, 512);
+    }
+    return attributes;
   };
-  const block = node.closest('fieldset');
-  const attributes: Record<string, string> = {
-    tag: node.tagName.toLowerCase(),
-    'autofill-node': token(node),
-    'autofill-block': block ? token(block) : '',
-  };
-  for (const name of ['id', 'data-automation-id', 'aria-autocomplete']) {
-    const value = node.getAttribute(name);
-    if (value !== null) attributes[name] = value.slice(0, 512);
-  }
-  if (block) {
-    attributes['fieldset-id'] = block.id.slice(0, 512);
-    attributes['fieldset-label'] = (block.querySelector(':scope > legend')?.textContent ?? '')
-      .trim()
-      .slice(0, 512);
-  }
+  const attributes = identity(node);
   if (node.tagName === 'INPUT') attributes.type = node.type ?? 'text';
   if (node.tagName === 'SELECT' && node.multiple) attributes.multiple = 'true';
+  const role = node.getAttribute('role');
+  if (role === 'combobox' && node.tagName !== 'SELECT') {
+    const popup = state.popups?.get(node);
+    attributes['autofill-popup-state'] = popup?.state ?? 'invalid';
+    attributes['autofill-focused'] = String(node.ownerDocument.activeElement === node);
+    if (popup?.popup) attributes['autofill-popup'] = token(popup.popup);
+  } else if (role === 'option' && node.tagName !== 'OPTION') {
+    const parent = node.closest('[role="listbox"]');
+    const popup = parent ? state.popups?.get(parent) : undefined;
+    attributes['autofill-popup-state'] = popup?.state ?? 'invalid';
+    if (popup?.popup && popup.owner) {
+      attributes['autofill-popup'] = token(popup.popup);
+      attributes['autofill-owner'] = token(popup.owner);
+      attributes['autofill-owner-context'] = JSON.stringify(identity(popup.owner));
+      attributes['autofill-owner-focused'] = String(
+        node.ownerDocument.activeElement === popup.owner
+      );
+      const box = popup.owner.getBoundingClientRect();
+      const visibility = node.ownerDocument.defaultView?.getComputedStyle(popup.owner).visibility;
+      attributes['autofill-owner-visible'] = String(
+        box.width > 0 && box.height > 0 && visibility !== 'hidden' && visibility !== 'collapse'
+      );
+      attributes['autofill-owner-enabled'] = String(
+        !popup.owner.matches(':disabled') && popup.owner.getAttribute('aria-disabled') !== 'true'
+      );
+    }
+  }
   // Known React-Select markup keeps the committed selection outside the input,
   // whose value only contains transient query text. Capture bounded committed
   // labels; absence or incomplete capture can never be treated as a commit.
@@ -1103,8 +1441,11 @@ class PlaywrightSession implements EngineSession {
  */
 class PlaywrightPage implements EnginePage {
   private formIdentityState: JSHandle<FormIdentityState> | undefined;
+  private formIdentityInitialization: Promise<JSHandle<FormIdentityState>> | undefined;
+  private formIdentityGeneration = 0;
   private readonly onFrameNavigated = (frame: import('playwright').Frame) => {
     if (frame === this.page.mainFrame()) {
+      this.formIdentityGeneration++;
       void this.formIdentityState?.dispose().catch(() => {});
       this.formIdentityState = undefined;
     }
@@ -1269,6 +1610,89 @@ class PlaywrightPage implements EnginePage {
     for (const wake of waiters) {
       wake();
     }
+  }
+
+  /** One browser-owned identity map shared by observation and native capture. */
+  private async ensureFormIdentityState(): Promise<JSHandle<FormIdentityState>> {
+    if (!this.formIdentityState) {
+      if (!this.formIdentityInitialization) {
+        const generation = this.formIdentityGeneration;
+        const pending = this.page
+          .evaluateHandle((id): FormIdentityState => {
+            const doc = (globalThis as unknown as { document: NativeCaptureDocument }).document;
+            return {
+              nodes: new WeakMap(),
+              next: 0,
+              document: id,
+              root: doc.documentElement,
+              ownerDocument: doc,
+              token(node: object) {
+                let value = this.nodes.get(node);
+                if (!value) {
+                  value = `${this.document}:${++this.next}`;
+                  this.nodes.set(node, value);
+                }
+                return value;
+              },
+            };
+          }, randomUUID())
+          .then(async (state) => {
+            if (generation !== this.formIdentityGeneration) {
+              await state.dispose().catch(() => {});
+              throw new Error('Document changed');
+            }
+            this.formIdentityState = state;
+            return state;
+          });
+        this.formIdentityInitialization = pending;
+        void pending
+          .finally(() => {
+            if (this.formIdentityInitialization === pending)
+              this.formIdentityInitialization = undefined;
+          })
+          .catch(() => {});
+      }
+      await this.formIdentityInitialization;
+    }
+    const state = this.formIdentityState;
+    if (!state) throw new Error('Document changed');
+    await state.evaluate((state, id) => {
+      const doc = (globalThis as unknown as { document: NativeCaptureDocument }).document;
+      if (state.ownerDocument !== doc || state.root !== doc.documentElement) {
+        state.nodes = new WeakMap();
+        state.next = 0;
+        state.document = id;
+        state.root = doc.documentElement;
+        state.ownerDocument = doc;
+        state.popups = new WeakMap();
+      }
+    }, randomUUID());
+    return state;
+  }
+
+  async captureNativeForm(options?: { signal?: AbortSignal }): Promise<NativeFormEvidence> {
+    try {
+      if (options?.signal?.aborted) throw new Error();
+      const state = await this.ensureFormIdentityState();
+      if (options?.signal?.aborted) throw new Error();
+      const evidence = await this.page.evaluate(captureNativeFormEvidence, {
+        state,
+        limits: NATIVE_FORM_EVIDENCE_LIMITS,
+      });
+      if (options?.signal?.aborted) throw new Error();
+      const snapshot = parseNativeFormEvidence(evidence);
+      if (options?.signal?.aborted) throw new Error();
+      return snapshot;
+    } catch {
+      throw new EngineError('ENGINE_UNSUPPORTED', 'Native form evidence unavailable');
+    }
+  }
+
+  async readDocument(): Promise<Pick<RawPageState, 'url' | 'title' | 'content'>> {
+    // These native reads retain HTML serialization and error behavior without
+    // rebuilding ref bindings. They do not claim an atomic document snapshot.
+    const [content, title] = await Promise.all([this.page.content(), this.page.title()]);
+    return { url: this.page.url(), title, content };
   }
 
   async getUrl(): Promise<string> {
@@ -1493,13 +1917,11 @@ class PlaywrightPage implements EnginePage {
       // stays its own sequential sub-pass below (unchanged semantics: first
       // 50 links in document order that actually carry a non-empty href,
       // not the first 50 link-role elements - a fetch can come back empty).
-      if (request.include?.includes('formControls') && !this.formIdentityState) {
-        this.formIdentityState = await this.page.evaluateHandle(
-          (document) => ({ nodes: new WeakMap(), next: 0, document }),
-          randomUUID()
-        );
-      }
-      const formState = this.formIdentityState;
+      const formState = request.include?.includes('formControls')
+        ? await this.ensureFormIdentityState()
+        : this.formIdentityState;
+      if (request.include?.includes('formControls') && formState)
+        await this.page.evaluate(refreshFormPopupEvidence, formState);
       await Promise.all(
         boundElements.map(async ({ element, handle, locator }) => {
           element.visible = await handle.isVisible();
@@ -2161,6 +2583,8 @@ class PlaywrightPage implements EnginePage {
   }
 
   private async performAction(action: EngineAction): Promise<ActionEffect> {
+    const integrityError = validateUploadIntegrity(action);
+    if (integrityError) throw new EngineError('INVALID_REQUEST', integrityError);
     // Upload skips the visibility gate: file inputs are hidden by design and
     // a targeted upload addresses an observed ref whose handle was bound
     // regardless of visibility.
@@ -2174,6 +2598,8 @@ class PlaywrightPage implements EnginePage {
       if (binding?.formEvidence) {
         if (!this.formIdentityState)
           throw new EngineError('STALE_TARGET', 'Form document changed', false);
+        if ('autofill-popup-state' in binding.formEvidence)
+          await this.page.evaluate(refreshFormPopupEvidence, this.formIdentityState);
         const live = await binding.handle.evaluate(captureFormEvidence, this.formIdentityState);
         if (JSON.stringify(live.attributes) !== JSON.stringify(binding.formEvidence))
           throw new EngineError(
@@ -2318,19 +2744,29 @@ class PlaywrightPage implements EnginePage {
         if (paths.length === 0) {
           throw new EngineError('INVALID_REQUEST', 'upload requires at least one path');
         }
-        const { stat } = await import('node:fs/promises');
-        const { basename } = await import('node:path');
-        const files: Array<{ name: string; size: number }> = [];
-        for (const p of paths) {
-          try {
-            const s = await stat(p);
-            if (!s.isFile()) {
-              throw new EngineError('INVALID_REQUEST', `Not a regular file: ${p}`);
+        const files: Array<{ name: string; size: number; sha256?: string }> = [];
+        let upload: string[] | Awaited<ReturnType<typeof readVerifiedUpload>> = paths;
+        if (action.sha256 !== undefined) {
+          upload = await readVerifiedUpload(
+            paths[0] as string,
+            action.sha256 as string,
+            action.mimeType as string | undefined
+          );
+          files.push({ name: upload.name, size: upload.buffer.length, sha256: upload.sha256 });
+        } else {
+          const { stat } = await import('node:fs/promises');
+          const { basename } = await import('node:path');
+          for (const p of paths) {
+            try {
+              const s = await stat(p);
+              if (!s.isFile()) {
+                throw new EngineError('INVALID_REQUEST', `Not a regular file: ${p}`);
+              }
+              files.push({ name: basename(p), size: s.size });
+            } catch (error) {
+              if (error instanceof EngineError) throw error;
+              throw new EngineError('INVALID_REQUEST', `File not found: ${p}`);
             }
-            files.push({ name: basename(p), size: s.size });
-          } catch (error) {
-            if (error instanceof EngineError) throw error;
-            throw new EngineError('INVALID_REQUEST', `File not found: ${p}`);
           }
         }
         // Browser-verified evidence, read BEFORE bumpRevision - releaseRefs
@@ -2346,7 +2782,7 @@ class PlaywrightPage implements EnginePage {
           // Only the visibility pre-check is skipped for this action.
           await this.resolve(action.target as EngineTarget);
           const handle = this.locatorFor((action.target as EngineTarget).ref);
-          await handle.setInputFiles(paths);
+          await handle.setInputFiles(upload);
           inputFiles = await handle
             .evaluate((el) => {
               const input = el as unknown as {
@@ -2381,7 +2817,7 @@ class PlaywrightPage implements EnginePage {
               }
             );
           }
-          await locator.setInputFiles(paths);
+          await locator.setInputFiles(upload);
           inputFiles = await locator
             .evaluate((el) => {
               const input = el as unknown as {

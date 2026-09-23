@@ -6,7 +6,14 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { ErrorCode, createApiError, createApiErrorDetail, isApiError } from './errors';
+import {
+  ErrorCode,
+  UsageError,
+  createApiError,
+  createApiErrorDetail,
+  formatErrorForUser,
+  isApiError,
+} from './errors';
 import type { ApiErrorDetail } from './errors';
 
 describe('Error Codes', () => {
@@ -282,5 +289,46 @@ describe('ApiErrorDetail', () => {
 
     expect(envelope.error).toEqual(detail);
     expect(isApiError({ error: detail })).toBe(true);
+  });
+});
+
+describe('formatErrorForUser (ADR-015)', () => {
+  const staleError = (message: string): Error =>
+    Object.assign(new Error(message), { code: 'STALE_TARGET' });
+
+  it('returns a UsageError message bare, with no code prefix', () => {
+    const error = new UsageError('flip is not a supported action');
+    expect(formatErrorForUser(error)).toBe('flip is not a supported action');
+  });
+
+  it('ignores the stale hint for non-UsageError shapes that lack the STALE_TARGET code', () => {
+    const error = Object.assign(new Error('boom'), { code: 'ENGINE_CRASHED' });
+    expect(formatErrorForUser(error, 're-observe the page')).toBe('ENGINE_CRASHED: boom');
+  });
+
+  it('prefixes a coded error with its code when the message does not already start with it', () => {
+    const error = Object.assign(new Error('the page moved on'), { code: 'STALE_TARGET' });
+    expect(formatErrorForUser(error)).toBe('STALE_TARGET: the page moved on');
+  });
+
+  it('leaves the message alone when it already starts with the code', () => {
+    const error = staleError('STALE_TARGET: the page moved on');
+    expect(formatErrorForUser(error)).toBe('STALE_TARGET: the page moved on');
+  });
+
+  it('appends the stale remediation hint to a STALE_TARGET error', () => {
+    const error = staleError('Element reference e1_0 belongs to revision 1');
+    expect(formatErrorForUser(error, 'Re-observe and retry with a fresh ref.')).toBe(
+      'Element reference e1_0 belongs to revision 1\n\nRe-observe and retry with a fresh ref.'
+    );
+  });
+
+  it('returns the message of a plain Error without a code', () => {
+    expect(formatErrorForUser(new Error('just a message'))).toBe('just a message');
+  });
+
+  it('stringifies non-Error throwables', () => {
+    expect(formatErrorForUser('plain rejection')).toBe('plain rejection');
+    expect(formatErrorForUser(42)).toBe('42');
   });
 });

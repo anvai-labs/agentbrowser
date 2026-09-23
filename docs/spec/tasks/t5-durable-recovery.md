@@ -1,6 +1,7 @@
 # T5: optional durable operations and recovery
 
-Status: not started. Repository: agentbrowser. Depends on: T2.
+Status: active J0/A1/A2/A4a/A3a1 shared foundation; durable recovery unimplemented.
+Repository: agentbrowser. Depends on: T2.
 Inputs: core, contracts, execution, state-memory, security.
 
 ## Reuse and scope
@@ -12,10 +13,30 @@ and no copied authority machine. Reuse shared evidence storage and canonical inp
 
 ## Slices
 
+0. [J0 shared dispatch/drain](../design/t5-operation-journal.md): consolidate the three
+   existing business-write boundaries under SessionAuthority. Retain pending writes
+   through drain and refuse to report abandoned unresolved work as completed.
+   This prerequisite adds no store, wire capability or durable acknowledgment.
 1. Define journal transition/retention/schema/key-lifecycle contract and failure tests.
 2. Persist bounded intent, dispatch and terminal metadata; recover under a new generation.
 3. Add authorized receipt/report lookup and explicit resume of revalidated undispatched
    work. Qualify cursor snapshot/event recovery through the existing event boundary.
+
+The [journal design](../design/t5-operation-journal.md) assigns owners, crash states,
+response-acknowledgment changes, retention/key policy and J1–J4 delivery gates. Read
+it explicitly for T5 implementation; it is not added to unrelated mode context.
+
+A1 finalization and A2a/A2b publication primitives are implemented
+([A1](../evidence/t5-finalization.md), [A2a](../evidence/t5-session-publication.md),
+[A2b](../evidence/t5-application-publication.md)).
+[A4a1 status lookup](../evidence/t5-operation-status-publication.md) and
+[A4a2 replay/application composition](../evidence/t5-replay-publication.md) are implemented.
+[A3a1 review owner pins](../evidence/t5-review-publication.md) are implemented.
+Next compose A3a2 page/evidence disclosure, A3 HTTP and A4b replay parity,
+then the [J1-B/C journal contract](../design/t5-journal-contract.md)
+and application-only integration. Remaining packets are proposed and loaded on demand.
+Browser durability waits for its existing target/policy/approval owners to support
+post-storage-wait revalidation. Do not advertise recovery from J0 or this design.
 
 ## TDD and acceptance
 

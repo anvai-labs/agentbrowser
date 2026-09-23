@@ -128,6 +128,12 @@ function isValidDeliveredWait(wait: unknown): boolean {
  * executes.
  */
 export function validateWireActionBatch(body: unknown): Validated<WireActionBatchRequest> {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    return {
+      ok: false,
+      issues: [{ path: '', message: 'Batch envelope must be an object.' }],
+    };
+  }
   const issues: Array<{ path: string; message: string }> = [];
   const record = body as Record<string, unknown>;
   if ('action' in record || 'type' in record) {

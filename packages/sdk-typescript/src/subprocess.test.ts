@@ -183,5 +183,111 @@ describe('managed subprocess server', () => {
         (launcher.fetchOk as ReturnType<typeof vi.fn>).mock.calls.length
       ).toBeGreaterThanOrEqual(2);
     });
+
+    it('should declare the server dead only after two consecutive failed probes', async () => {
+      const server = await startServer();
+      const onExit = vi.fn();
+      server.onExit(onExit);
+      (launcher.fetchOk as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+
+      await tick(5_000);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(onExit).toHaveBeenCalledWith({ code: null, expected: false });
+      expect(server.isRunning()).toBe(false);
+      await server.stop();
+    });
+
+    it('should absorb a single failed probe (two-strike rule)', async () => {
+      const server = await startServer();
+      const onExit = vi.fn();
+      server.onExit(onExit);
+      let probes = 0;
+      (launcher.fetchOk as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        probes += 1;
+        return probes > 1; // sick on the first probe, healthy afterwards
+      });
+
+      await tick(5_000);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(onExit).not.toHaveBeenCalled();
+      expect(server.isRunning()).toBe(true);
+      await server.stop();
+    });
+  });
+
+  describe('child plumbing', () => {
+    it('should forward child stderr through the operator prefix', async () => {
+      const server = await startServer();
+      const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      try {
+        const spawnedChild = (launcher.spawn as ReturnType<typeof vi.fn>).mock.results[0]?.value as
+          | { stderr: { on: ReturnType<typeof vi.fn> } }
+          | undefined;
+        expect(spawnedChild).toBeDefined();
+        const stderrOn = spawnedChild?.stderr.on;
+        expect(stderrOn).toHaveBeenCalledWith('data', expect.any(Function));
+        const handler = stderrOn?.mock.calls[0]?.[1] as (chunk: unknown) => void;
+        handler('health check failed\n');
+        expect(write).toHaveBeenCalledWith('[agentbrowser] health check failed\n');
+      } finally {
+        write.mockRestore();
+        await server.stop();
+      }
+    });
+
+    it('should clear the real health interval on stop when no timer handles are injected', async () => {
+      const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval');
+      const server = await createManagedServer({
+        launcher,
+        clock: () => clock.now,
+        healthIntervalMs: 5,
+        defaultPort: 3991,
+      });
+      expect(server.isRunning()).toBe(true);
+
+      await server.stop();
+
+      expect(clearIntervalSpy).toHaveBeenCalledWith(expect.anything());
+      expect(server.isRunning()).toBe(false);
+      clearIntervalSpy.mockRestore();
+    });
+  });
+
+  describe('default launcher', () => {
+    it('should time out with SERVER_START_TIMEOUT against a server that never comes up', async () => {
+      // Real spawn, real fetch, real timers: node rejects the bogus flag
+      // immediately, so nothing ever answers /health on the chosen port.
+      await expect(
+        createManagedServer({
+          serverArgs: ['--definitely-not-a-real-agentbrowser-flag'],
+          port: 46555,
+          startupTimeoutMs: 80,
+        })
+      ).rejects.toMatchObject({ code: 'SERVER_START_TIMEOUT' });
+    }, 20_000);
+
+    it('should resolve once a real child reports healthy and support a clean stop', async () => {
+      // The real default launcher end to end: a trivial loopback-only node
+      // HTTP server stands in for the API server and answers /health.
+      const port = 46556;
+      const server = await createManagedServer({
+        serverArgs: [
+          '-e',
+          `require('node:http').createServer((_q, s) => { s.end(JSON.stringify({ status: 'ok' })) }).listen(${port}, '127.0.0.1')`,
+        ],
+        port,
+        startupTimeoutMs: 5_000,
+      });
+      try {
+        expect(server.isRunning()).toBe(true);
+        expect(server.baseUrl).toBe(`http://127.0.0.1:${port}`);
+        expect(await server.client.health()).toEqual({ status: 'ok' });
+      } finally {
+        await server.stop();
+      }
+      expect(server.isRunning()).toBe(false);
+    }, 20_000);
   });
 });

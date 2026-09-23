@@ -13,7 +13,12 @@ export interface AutofillPorts {
   assert(): void;
   redact?(value: string): string;
   resolveValue?(value: string): Promise<string>;
-  observe(): Promise<{ elements: PageElement[]; truncated?: boolean; degraded?: boolean }>;
+  observe(): Promise<{
+    elements: PageElement[];
+    url?: string;
+    truncated?: boolean;
+    degraded?: boolean;
+  }>;
   act(request: ServiceActRequest, onDispatch: () => void): Promise<unknown>;
   snapshot(): Promise<{ artifactId: string }>;
 }
@@ -24,9 +29,9 @@ interface StrategyScope {
   /** Fresh, complete observation (guarded, non-degraded). */
   observe(): Promise<PageElement[]>;
   /** Re-resolve the original selector and identity after a prior step changed refs. */
-  resolveRef(elements: PageElement[], match: AutofillMatch, identity: string): string;
-  /** Bounded settle between strategy steps. */
-  settle(ms: number): Promise<void>;
+  resolve(elements: PageElement[], match: AutofillMatch, identity: string): PageElement;
+  /** Bounded read-only readiness polling; undefined means pending, exceptions stop. */
+  ready<T>(read: (elements: PageElement[]) => T | undefined): Promise<T>;
 }
 
 interface WidgetStrategy {
@@ -77,6 +82,66 @@ function committedMember(element: PageElement, expected: string): boolean {
   }
 }
 
+/** Shared typeahead sequence; selection must belong to this control's observed popup. */
+const runTypeahead: NonNullable<WidgetStrategy['run']> = async (field, ref, identity, scope) => {
+  const label = (field.option?.value ?? '').trim();
+  if (!label) throw new AutofillFailure('INVALID_REQUEST', 'Widget requires option.value');
+  let popup: string | undefined;
+  const control = (elements: PageElement[]) => {
+    const fresh = scope.resolve(elements, field.match, identity);
+    if (!fresh.visible || !fresh.enabled || fresh.attributes?.['autofill-focused'] !== 'true')
+      throw new AutofillFailure('STALE_TARGET', 'Widget lost focus or readiness');
+    const state = fresh.attributes['autofill-popup-state'];
+    if (state !== 'ready' && state !== 'pending')
+      throw new AutofillFailure('ENGINE_UNSUPPORTED', 'Widget popup ownership is unavailable');
+    if (state === 'ready') {
+      const observed = fresh.attributes['autofill-popup'];
+      if (!observed)
+        throw new AutofillFailure('ENGINE_UNSUPPORTED', 'Widget popup identity is unavailable');
+      if (popup !== undefined && observed !== popup)
+        throw new AutofillFailure('STALE_TARGET', 'Widget popup was replaced');
+      popup = observed;
+    }
+    return fresh;
+  };
+  await scope.act({ action: 'click', target: { ref }, remap: false });
+  const input = control(await scope.observe());
+  await scope.act({
+    action: 'typeText',
+    target: { ref: input.ref },
+    value: label,
+    delay: 35,
+    remap: false,
+  });
+  const option = await scope.ready((elements) => {
+    const fresh = control(elements);
+    if (fresh.attributes?.['autofill-popup-state'] !== 'ready') return undefined;
+    const matches = elements.filter(
+      (candidate) =>
+        candidate.role === 'option' &&
+        candidate.visible &&
+        candidate.attributes?.['autofill-owner'] === identity &&
+        candidate.attributes['autofill-popup'] === popup &&
+        (candidate.name ?? '').trim() === label
+    );
+    if (matches.length > 1)
+      throw new AutofillFailure('TARGET_AMBIGUOUS', 'Multiple exact options in the owned popup');
+    const match = matches[0];
+    if (!match || !match.enabled) return undefined;
+    if (
+      match.attributes?.['autofill-popup-state'] !== 'ready' ||
+      match.attributes['autofill-owner-focused'] !== 'true'
+    )
+      throw new AutofillFailure('STALE_TARGET', 'Option ownership or focus changed');
+    return match;
+  });
+  await scope.act({ action: 'click', target: { ref: option.ref }, remap: false });
+  return { expected: label };
+};
+
+const hasPopupEvidence = (element: PageElement) =>
+  ['ready', 'pending'].includes(element.attributes?.['autofill-popup-state'] ?? '');
+
 // Trusted code owns the registry. No page-provided scripts or unqualified keyboard fallback.
 const strategies: readonly WidgetStrategy[] = [
   {
@@ -115,74 +180,24 @@ const strategies: readonly WidgetStrategy[] = [
       f.option !== undefined &&
       e.role === 'combobox' &&
       !!e.attributes?.['aria-autocomplete'] &&
-      e.attributes?.tag === 'input',
+      e.attributes?.tag === 'input' &&
+      hasPopupEvidence(e),
     action: (f, ref) => ({ action: 'click', target: { ref }, remap: false }),
     isCommitted: singleValueCommitted,
-    run: async (field, ref, identity, scope) => {
-      const label = field.option?.value ?? '';
-      if (!label)
-        throw new AutofillFailure('INVALID_REQUEST', 'react-select requires option.value');
-      await scope.act({ action: 'click', target: { ref }, remap: false });
-      await scope.settle(2000);
-      const inputRef = scope.resolveRef(await scope.observe(), field.match, identity);
-      await scope.act({ action: 'typeText', target: { ref: inputRef }, value: label, delay: 35 });
-      await scope.settle(2500);
-      const options = await scope.observe();
-      scope.resolveRef(options, field.match, identity);
-      const exact = options.find((e) => e.role === 'option' && (e.name ?? '').trim() === label);
-      const partial = options.find(
-        (e) =>
-          e.role === 'option' && (e.name ?? '').trim().toLowerCase().startsWith(label.toLowerCase())
-      );
-      const match = exact ?? partial;
-      if (!match)
-        throw new AutofillFailure(
-          'TARGET_NOT_FOUND',
-          `No option matching '${label}' appeared after typeahead filtering`
-        );
-      await scope.act({ action: 'click', target: { ref: match.ref }, remap: false });
-      await scope.settle(1500);
-      return { expected: label };
-    },
+    run: runTypeahead,
   },
   {
     // Add-only React Select-style multi-value control. A click commits only
     // when a complete, bounded membership capture contains the requested label.
     name: 'chip-multiselect',
     supports: (e, f) =>
-      f.option !== undefined && e.role === 'combobox' && !!e.attributes?.['aria-autocomplete'],
+      f.option !== undefined &&
+      e.role === 'combobox' &&
+      !!e.attributes?.['aria-autocomplete'] &&
+      hasPopupEvidence(e),
     action: (f, ref) => ({ action: 'click', target: { ref }, remap: false }),
     isCommitted: committedMember,
-    run: async (field, ref, identity, scope) => {
-      const label = field.option?.value ?? '';
-      if (!label)
-        throw new AutofillFailure('INVALID_REQUEST', 'chip-multiselect requires option.value');
-      await scope.act({ action: 'click', target: { ref }, remap: false });
-      await scope.settle(2000);
-      const inputRef = scope.resolveRef(await scope.observe(), field.match, identity);
-      await scope.act({ action: 'typeText', target: { ref: inputRef }, value: label, delay: 35 });
-      await scope.settle(2500);
-      const options = await scope.observe();
-      scope.resolveRef(options, field.match, identity);
-      const exact = options.find(
-        (e) => e.role === 'option' && (e.name ?? '').trim().toLowerCase() === label.toLowerCase()
-      );
-      const partial = options.find(
-        (e) =>
-          e.role === 'option' &&
-          (e.name ?? '').trim().toLowerCase().startsWith(label.toLowerCase()) &&
-          !(e.name ?? '').toLowerCase().includes('press delete')
-      );
-      const match = exact ?? partial;
-      if (!match)
-        throw new AutofillFailure(
-          'TARGET_NOT_FOUND',
-          `No chip option matching '${label}' appeared after typeahead filtering`
-        );
-      await scope.act({ action: 'click', target: { ref: match.ref }, remap: false });
-      await scope.settle(1500);
-      return { expected: label };
-    },
+    run: runTypeahead,
   },
 ];
 
@@ -250,17 +265,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
     ...request.policy,
   };
   const started = performance.now();
-  // Resolve the complete payload before browser I/O; dispatch retains the original
-  // reference so the existing action layer still performs its normal secret handling.
   const expectedValues: string[] = [];
-  for (const field of request.fields) {
-    const value =
-      field.value !== undefined
-        ? await (ports.resolveValue?.(field.value) ?? field.value)
-        : (field.option?.value ?? '');
-    if (value.length > 8192) throw new Error('Resolved autofill value exceeds 8192 characters');
-    expectedValues.push(value);
-  }
   const blocks = new Map<string, string>();
   const identities = new Map<number, string>();
   const selectedStrategies = new Map<number, WidgetStrategy>();
@@ -283,7 +288,17 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
         'Autofill deadline reached; remaining fields were not attempted'
       );
   };
+  const scopePins = new Map<number, { node: string; block: string | undefined }>();
+  let scopeValid = !request.scope;
+  let preflightFieldIndex = 0;
+  const strategyFor = (element: PageElement, field: AutofillRequest['fields'][number]) =>
+    strategies.find(
+      (s) =>
+        (field.strategy === undefined || field.strategy === s.name) && s.supports(element, field)
+    );
   const observe = async () => {
+    preflightFieldIndex = 0;
+    if (request.scope) scopeValid = false;
     guard();
     const view = await ports.observe();
     guard();
@@ -292,9 +307,76 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
         'OUTPUT_TRUNCATED',
         'Autofill requires complete, non-degraded observations'
       );
+    if (request.scope) {
+      if (view.url !== request.scope.url)
+        throw new AutofillFailure(
+          'FORM_SCOPE_MISMATCH',
+          'Page URL does not match the mapped stage'
+        );
+      const nodes = new Set<string>();
+      for (const [index, field] of request.fields.entries()) {
+        preflightFieldIndex = index;
+        const element = resolve(view.elements, field.match, blocks);
+        const node = element.attributes?.['autofill-node'];
+        const block = element.attributes?.['autofill-block'];
+        if (
+          !node ||
+          block === undefined ||
+          !element.visible ||
+          !element.enabled ||
+          !strategyFor(element, field)
+        )
+          throw new AutofillFailure(
+            'ENGINE_UNSUPPORTED',
+            'Mapped stage requires ready qualified controls and identity evidence'
+          );
+        if (nodes.has(node))
+          throw new AutofillFailure(
+            'TARGET_AMBIGUOUS',
+            'Mapped fields must identify distinct controls'
+          );
+        nodes.add(node);
+        const pin = scopePins.get(index);
+        if (pin && (pin.node !== node || pin.block !== block))
+          throw new AutofillFailure('STALE_TARGET', 'Mapped stage identity changed');
+        scopePins.set(index, { node, block });
+      }
+      scopeValid = true;
+    }
     return view.elements;
   };
-  for (const [index, field] of request.fields.entries()) {
+  let preflightFailed = false;
+  if (request.scope) {
+    try {
+      await observe();
+    } catch (error) {
+      ports.assert();
+      preflightFailed = true;
+      const receipt = receipts[preflightFieldIndex] as AutofillReceipt;
+      receipt.status = 'failed';
+      receipt.error =
+        error instanceof AutofillFailure
+          ? { code: error.code, message: error.message }
+          : {
+              code: 'ACTION_FAILED',
+              message: 'Mapped stage preflight failed; no write dispatched',
+            };
+    }
+  }
+  // Resolve the full private payload only after successful mapped preflight, before writes.
+  // Preserve references in actions for the existing secret handling owner.
+  if (!preflightFailed) {
+    for (const field of request.fields) {
+      guard();
+      const value =
+        field.value !== undefined
+          ? await (ports.resolveValue?.(field.value) ?? field.value)
+          : (field.option?.value ?? '');
+      if (value.length > 8192) throw new Error('Resolved autofill value exceeds 8192 characters');
+      expectedValues.push(value);
+    }
+  }
+  for (const [index, field] of (preflightFailed ? [] : request.fields).entries()) {
     const receipt = receipts[index] as AutofillReceipt;
     const execution: { state: 'not_started' | 'dispatched' | 'completed' } = {
       state: 'not_started',
@@ -330,10 +412,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
         };
         continue;
       }
-      const strategy = strategies.find(
-        (s) =>
-          (field.strategy === undefined || field.strategy === s.name) && s.supports(element, field)
-      );
+      const strategy = strategyFor(element, field);
       if (!identity || !strategy)
         throw new AutofillFailure(
           'ENGINE_UNSUPPORTED',
@@ -342,16 +421,23 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
       identities.set(index, identity);
       selectedStrategies.set(index, strategy);
       guard();
+      const dispatch = async (action: ServiceActRequest) => {
+        guard();
+        // A dispatched page handler can invalidate scope even if the adapter then throws.
+        // Only a subsequent complete observation can authorize raw artifact capture again.
+        if (request.scope) scopeValid = false;
+        return ports.act(action, () => {
+          if (execution.state === 'not_started') execution.state = 'dispatched';
+        });
+      };
+      // A multi-step receipt identifies its final action, never an earlier setup step.
       let effect: unknown;
       if (strategy.run) {
         // Multi-step strategy: each step dispatches through the same admission;
         // the scope keeps the loop inside this field's serial grant.
         const scope: StrategyScope = {
           act: async (request) => {
-            guard();
-            const effect = await ports.act(request, () => {
-              if (execution.state === 'not_started') execution.state = 'dispatched';
-            });
+            effect = await dispatch(request);
             execution.state = 'dispatched';
             return effect;
           },
@@ -359,27 +445,34 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
             guard();
             return observe();
           },
-          resolveRef: (elements, match, expectedIdentity) => {
+          resolve: (elements, match, expectedIdentity) => {
             const fresh = resolve(elements, match, blocks);
             if (
               fresh.attributes?.['autofill-node'] !== expectedIdentity ||
               fresh.attributes?.['autofill-block'] !== blockIdentity
             )
               throw new AutofillFailure('STALE_TARGET', 'Widget changed between strategy steps');
-            return fresh.ref;
+            return fresh;
           },
-          settle: async (ms) => {
-            await new Promise((r) => setTimeout(r, ms));
-            guard();
+          ready: async (read) => {
+            for (let attempt = 0; ; attempt++) {
+              const result = read(await observe());
+              if (result !== undefined) return result;
+              if (attempt >= policy.maxReobserve)
+                throw new AutofillFailure(
+                  'TARGET_NOT_FOUND',
+                  'No ready exact option in the owned popup'
+                );
+              await new Promise((r) => setTimeout(r, policy.settleMs));
+              guard();
+            }
           },
         };
         const outcome = await strategy.run(field, element.ref, identity, scope);
         execution.state = 'completed';
         if (outcome.expected !== undefined) expectedValues[index] = outcome.expected;
       } else {
-        const effect = await ports.act(strategy.action(field, element.ref), () => {
-          if (execution.state === 'not_started') execution.state = 'dispatched';
-        });
+        effect = await dispatch(strategy.action(field, element.ref));
         if (execution.state === 'not_started')
           throw new AutofillFailure(
             'ENGINE_UNSUPPORTED',
@@ -506,6 +599,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
   };
   try {
     guard();
+    if (!scopeValid) throw new AutofillFailure('FORM_SCOPE_MISMATCH', 'Mapped scope unavailable');
     const artifact = await ports.snapshot();
     report.snapshot = { ...artifact };
   } catch {

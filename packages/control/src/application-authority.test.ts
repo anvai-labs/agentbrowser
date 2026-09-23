@@ -2,7 +2,9 @@ import { createHash } from 'node:crypto';
 import { VersionedCounter } from '@agentbrowser/testkit';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  type ApplicationAdapter,
   ApplicationAuthority,
+  type ApplicationOperation,
   type ApplicationScope,
   ApplicationSessions,
   defineApplicationOperation,
@@ -75,6 +77,318 @@ function setup(
 }
 
 afterEach(() => vi.useRealTimers());
+
+describe('trusted application configuration contracts', () => {
+  const malformed: [string, () => unknown][] = [
+    ['false', () => false],
+    ['string', () => 'true'],
+    ['object', () => ({ allowed: true })],
+    ['resolved promise', () => Promise.resolve(false)],
+    ['rejected promise', () => Promise.reject(new Error('PRIVATE-AUTHORIZATION'))],
+    [
+      'thenable',
+      () => ({
+        // biome-ignore lint/suspicious/noThenProperty: deliberately malformed policy
+        then: (_resolve: unknown, reject: (error: Error) => void) =>
+          reject(new Error('PRIVATE-AUTHORIZATION')),
+      }),
+    ],
+    [
+      'throw',
+      () => {
+        throw new Error('PRIVATE-AUTHORIZATION');
+      },
+    ],
+    [
+      'throwing then getter',
+      () =>
+        Object.defineProperty({}, 'then', {
+          get() {
+            throw new Error('PRIVATE-AUTHORIZATION');
+          },
+        }),
+    ],
+  ];
+  for (const boundary of ['bind', 'discover', 'execute', 'receipt'] as const) {
+    it.each(malformed)(
+      `denies ${boundary} on %s without exposing private errors or effects`,
+      async (_name, invalid) => {
+        let check: () => unknown = () => true;
+        const s = setup(() => check() as boolean);
+        if (boundary !== 'bind') s.port.bind('session', operator, binding);
+        check = invalid;
+        const attempt = async () => {
+          if (boundary === 'bind') return s.port.bind('session', operator, binding);
+          if (boundary === 'discover') return s.port.discover('session', operator);
+          if (boundary === 'execute') return s.port.execute('session', operator, command);
+          return s.port.lookupReceipt('session', operator, 'receipt-1');
+        };
+        const failure = await attempt().then(
+          () => undefined,
+          (error: unknown) => error
+        );
+        expect(failure).toMatchObject({ code: 'CONTROL_REQUIRED' });
+        expect(String(failure)).not.toContain('PRIVATE-AUTHORIZATION');
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(s.parse).not.toHaveBeenCalled();
+        expect(s.effect).not.toHaveBeenCalled();
+        expect(s.receipt).not.toHaveBeenCalled();
+        expect(s.oracle.snapshot()).toEqual({ version: 0, total: 0 });
+        check = () => true;
+        if (boundary === 'bind') expect(await s.port.discover('session', operator)).toBeNull();
+        if (boundary === 'execute') {
+          expect(s.authority.get('session')!.operation(command.operationId)).toMatchObject({
+            status: 'failed',
+            dispatched: false,
+          });
+          expect(await s.port.execute('session', operator, command)).toMatchObject({
+            replay: true,
+          });
+          expect(s.effect).not.toHaveBeenCalled();
+        }
+      }
+    );
+  }
+
+  it('rechecks policy after preparation before dispatch and preserves a failed replay', async () => {
+    let allowed = true;
+    const s = setup(() => allowed);
+    s.port.bind('session', operator, binding);
+    s.parse.mockImplementation(() => {
+      allowed = false;
+      return 3;
+    });
+    await expect(s.port.execute('session', operator, command)).rejects.toMatchObject({
+      code: 'CONTROL_REQUIRED',
+    });
+    expect(s.parse).toHaveBeenCalledOnce();
+    expect(s.effect).not.toHaveBeenCalled();
+    expect(s.oracle.snapshot()).toEqual({ version: 0, total: 0 });
+    allowed = true;
+    expect(await s.port.execute('session', operator, command)).toMatchObject({
+      replay: true,
+      operation: { status: 'failed', dispatched: false },
+    });
+  });
+
+  it.each([
+    ['resolved promise', () => Promise.resolve(() => undefined)],
+    ['rejected promise', () => Promise.reject(new Error('PRIVATE-PREPARATION'))],
+    ['nonfunction', () => ({ execute: true })],
+  ] as const)('refuses %s preparation before recording dispatch', async (_name, prepare) => {
+    const s = setup();
+    const port = new ApplicationAuthority(s.authority, [
+      {
+        id: 'counter',
+        authorize: () => true,
+        receipt: s.receipt,
+        operations: {
+          add: { mode: 'write', prepare: prepare as unknown as ApplicationOperation['prepare'] },
+        },
+      },
+    ]);
+    port.bind('session', operator, binding);
+    await expect(port.execute('session', operator, command)).rejects.toThrow();
+    expect(s.authority.get('session')!.operation(command.operationId)).toMatchObject({
+      status: 'failed',
+      dispatched: false,
+    });
+    expect(s.effect).not.toHaveBeenCalled();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  });
+
+  it.each(['replacement', 'takeover', 'rebind', 'busy'] as const)(
+    'does not install an outer binding after authorization changes %s',
+    async (change) => {
+      const s = setup();
+      let armed = true;
+      let pending: Promise<unknown> | undefined;
+      const release = deferred();
+      const port = new ApplicationAuthority(s.authority, [
+        {
+          id: 'counter',
+          authorize: () => {
+            if (armed) {
+              armed = false;
+              if (change === 'replacement') {
+                s.authority.remove('session');
+                s.authority.register('session', 'replacement-owner', new AbortController().signal);
+              } else if (change === 'takeover') s.authority.takeover('session');
+              else if (change === 'rebind')
+                port.bind('session', operator, { ...binding, resource: 'inner' });
+              else pending = s.authority.run('session', operator, {}, () => release.promise);
+            }
+            return true;
+          },
+          operations: {},
+          receipt: async () => undefined,
+        },
+      ]);
+      if (change === 'takeover') s.authority.get('session')!.prepareResume();
+      try {
+        expect(() => port.bind('session', operator, binding)).toThrow();
+      } finally {
+        if (change === 'busy') {
+          expect(s.authority.status('session')).toMatchObject({
+            state: 'PAUSE_REQUESTED',
+            busy: true,
+          });
+          const refused = expect(pending).rejects.toMatchObject({ code: 'CONTROL_REVOKED' });
+          release.resolve();
+          await refused;
+          expect(s.authority.status('session')).toMatchObject({
+            state: 'HUMAN_ACTIVE',
+            busy: false,
+          });
+        } else {
+          release.resolve();
+          await pending;
+        }
+      }
+      const owner: SessionPrincipal =
+        change === 'replacement' ? { actor: 'operator', tenant: 'replacement-owner' } : operator;
+      const discovered = await port.discover('session', owner);
+      if (change === 'rebind') expect(discovered).toMatchObject({ resource: 'inner' });
+      else expect(discovered).toBeNull();
+    }
+  );
+
+  it('binds the checked scalar request and tenant despite caller object mutation', async () => {
+    const s = setup();
+    const owner: SessionPrincipal = { actor: 'operator', tenant: 'owner' };
+    const requested = { ...binding };
+    const port = new ApplicationAuthority(s.authority, [
+      {
+        id: 'counter',
+        authorize: (scope) => {
+          requested.resource = 'unchecked-resource';
+          owner.tenant = 'unchecked-tenant';
+          return scope.tenant === 'owner' && scope.resource === 'account-a';
+        },
+        operations: {},
+        receipt: async () => undefined,
+      },
+    ]);
+    port.bind('session', owner, requested);
+    expect(await port.discover('session', operator)).toMatchObject(binding);
+  });
+
+  it('rechecks admission after policy and before operation preparation', async () => {
+    let check = () => true;
+    const s = setup(() => check());
+    s.port.bind('session', operator, binding);
+    check = () => {
+      s.authority.takeover('session');
+      return true;
+    };
+    await expect(s.port.execute('session', operator, command)).rejects.toMatchObject({
+      code: 'CONTROL_REVOKED',
+    });
+    expect(s.parse).not.toHaveBeenCalled();
+    expect(s.effect).not.toHaveBeenCalled();
+  });
+
+  const registration = (operations: ApplicationAdapter['operations']) => {
+    const s = setup();
+    return {
+      ...s,
+      port: new ApplicationAuthority(s.authority, [
+        {
+          id: 'counter',
+          authorize: () => true,
+          operations,
+          receipt: async () => undefined,
+        },
+      ]),
+    };
+  };
+  const readOperation = (): ApplicationOperation => ({
+    mode: 'read',
+    prepare: () => async () => ({ status: 'read', value: 1 }),
+  });
+  it.each(['bad name', '', 'x'.repeat(129)])(
+    'rejects an unreachable operation name: %s',
+    (name) => {
+      expect(() => registration({ [name]: readOperation() })).toThrow();
+    }
+  );
+  it.each([undefined, null, 'READ', 'delete', 1])('rejects malformed operation mode %s', (mode) => {
+    expect(() =>
+      registration({ state: { ...readOperation(), mode } as ApplicationOperation })
+    ).toThrow();
+  });
+  it('rejects missing preparation and oversized catalogs before registration', () => {
+    expect(() => registration({ state: { mode: 'read' } as ApplicationOperation })).toThrow();
+    expect(() =>
+      registration(
+        Object.fromEntries(Array.from({ length: 257 }, (_, i) => [`op${i}`, readOperation()]))
+      )
+    ).toThrow();
+    expect(() =>
+      registration(
+        Object.fromEntries(Array.from({ length: 256 }, (_, i) => [`op${i}`, readOperation()]))
+      )
+    ).not.toThrow();
+  });
+  it('captures write mode and preparation while preserving the custom method receiver', async () => {
+    const original = vi.fn(async () => ({ status: 'committed' as const, value: 7 }));
+    const replacement = vi.fn(async () => ({ status: 'read' as const, value: 99 }));
+    class Operation {
+      mode: 'read' | 'write' = 'write';
+      marker = 7;
+      prepare() {
+        expect(this.marker).toBe(7);
+        return original;
+      }
+    }
+    const op = new Operation();
+    const operations = Object.assign(Object.create(null), { add: op });
+    const s = registration(operations);
+    s.port.bind('session', operator, binding);
+    op.mode = 'read';
+    Object.assign(op, { prepare: () => replacement });
+    operations.add = readOperation();
+    expect(await s.port.discover('session', operator)).toMatchObject({
+      operations: [{ name: 'add', mode: 'write' }],
+    });
+    await expect(
+      s.port.execute('session', operator, { operation: 'add', input: null })
+    ).rejects.toThrow('Writes require');
+    expect(await s.port.execute('session', operator, command)).toEqual({
+      status: 'committed',
+      value: 7,
+    });
+    expect(original).toHaveBeenCalledOnce();
+    expect(replacement).not.toHaveBeenCalled();
+  });
+  it('captures typed builder parser/executor references without freezing caller state', async () => {
+    const definition = {
+      mode: 'read' as const,
+      marker: 7,
+      parse(input: unknown) {
+        expect(this.marker).toBe(7);
+        return input;
+      },
+      async execute(input: unknown) {
+        expect(this.marker).toBe(7);
+        return { status: 'read' as const, value: input };
+      },
+    };
+    const s = registration({ state: defineApplicationOperation(definition) });
+    s.port.bind('session', operator, binding);
+    definition.parse = () => {
+      throw new Error('Replaced parser');
+    };
+    definition.execute = async () => {
+      throw new Error('Replaced executor');
+    };
+    expect(await s.port.execute('session', operator, { operation: 'state', input: 4 })).toEqual({
+      status: 'read',
+      value: 4,
+    });
+    expect(Object.isFrozen(definition)).toBe(false);
+  });
+});
 
 describe('application authority without a browser', () => {
   it.each(['resolve', 'reject'] as const)(

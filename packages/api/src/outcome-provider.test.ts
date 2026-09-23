@@ -31,9 +31,105 @@ describe('lazy service evidence-source composition', () => {
     try {
       expect(provider).toHaveBeenCalledOnce();
       expect(Object.isFrozen(captured)).toBe(true);
-      expect(Object.keys(captured ?? {})).toEqual(['applicationReceipt']);
+      expect(Object.keys(captured ?? {})).toEqual(['applicationReceipt', 'applicationRead']);
       expect(typeof captured?.applicationReceipt).toBe('function');
+      expect(typeof captured?.applicationRead).toBe('function');
       expect(service.applicationAuthority).toBeDefined();
+    } finally {
+      await service.shutdown();
+    }
+  });
+
+  it('reads the service-owned binding within one admission and refuses another verifier', async () => {
+    const principal = { actor: 'operator' as const, tenant: 'fixture-tenant' };
+    const input = { key: 'setting' };
+    const execute = vi.fn(async (scope: ApplicationScope) => ({
+      status: 'read' as const,
+      value: { resource: scope.resource, setting: 'saved' },
+    }));
+    const prepare = vi.fn((candidate: unknown) => {
+      expect(candidate).toEqual(input);
+      return execute;
+    });
+    let captured: TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext> | undefined;
+    const service = new AgentBrowserService({
+      engine: new FakeEngine(),
+      applicationAdapters: [
+        {
+          id: 'fixture-app',
+          authorize: (scope) => scope.tenant === principal.tenant && scope.resource === 'settings',
+          operations: { state: { mode: 'read', prepare } },
+          receipt: async () => undefined,
+        },
+      ],
+      evidenceSourceRegistryProvider: (sources) => {
+        captured = new TrustedEvidenceSourceRegistry([
+          sources.applicationRead({
+            descriptor: { id: 'fixture.state', capability: 'setting.matches' },
+            request: { operation: 'state', input },
+            authorize: (request) => {
+              expect(Object.isFrozen(request.identity)).toBe(true);
+              expect(request.identity).toMatchObject({
+                adapter: 'fixture-app',
+                resource: 'settings',
+                operation: 'state',
+                admission: principal,
+              });
+              expect(request).not.toHaveProperty('context');
+              if (request.verifier.id !== 'setting.matches' || request.verifier.version !== '1')
+                return undefined;
+              return { generation: 1, currentGeneration: () => 1 };
+            },
+            evidenceRefs: () => ['setting-receipt'],
+          }),
+        ]);
+        return captured;
+      },
+    });
+    try {
+      const session = await service.createSession({
+        tenantId: principal.tenant,
+        controlMode: 'delegated',
+      });
+      service.applicationBind(session.sessionId, principal, {
+        adapter: 'fixture-app',
+        resource: 'settings',
+      });
+      if (!captured) throw new Error('Missing fixture source registry');
+      const sources = captured;
+      const signal = new AbortController().signal;
+      const context = { sessionId: session.sessionId, pageId: 'fixture-page', signal };
+      const admission = vi.spyOn(service.authority, 'run');
+      await service.authority.run(session.sessionId, principal, {}, async () => {
+        const read = sources.prepareRead(
+          'fixture.state',
+          'setting.matches',
+          context,
+          'correlation',
+          {
+            id: 'setting.matches',
+            version: '1',
+            input: { expected: 'saved' },
+          }
+        );
+        expect(read).toBeDefined();
+        if (!read) throw new Error('Missing fixture read');
+        expect(await read(signal)).toEqual({
+          status: 'ready',
+          evidence: { resource: 'settings', setting: 'saved' },
+          evidenceRefIds: ['setting-receipt'],
+        });
+        expect(() =>
+          sources.prepareRead('fixture.state', 'setting.matches', context, 'correlation', {
+            id: 'another.verifier',
+            version: '1',
+            input: { expected: 'saved' },
+          })
+        ).toThrow('Evidence authorization unavailable');
+      });
+      expect(admission).toHaveBeenCalledOnce();
+      expect(prepare).toHaveBeenCalledOnce();
+      expect(execute).toHaveBeenCalledOnce();
     } finally {
       await service.shutdown();
     }

@@ -1,12 +1,25 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { ControlError, type SessionControl } from '@agentbrowser/core';
-import { CONTROL_OPERATION_ID } from '@agentbrowser/protocol';
+import {
+  type ApplicationDiscovery,
+  CONTROL_OPERATION_ID,
+  VERIFICATION_SNAPSHOT_LIMITS,
+  snapshotJsonData,
+  validateApplicationOperationDescriptors,
+} from '@agentbrowser/protocol';
 import { canonicalJson } from './canonical-json.js';
+import {
+  type OperationPublication,
+  type PublicationContext,
+  type SessionPublication,
+  snapshotPublication,
+} from './publication.js';
 import {
   type SessionAdmission,
   SessionAuthority,
   type SessionPrincipal,
 } from './session-authority.js';
+import { snapshotAuthorizationInput, synchronousResult } from './trusted-callback.js';
 
 export interface ApplicationScope {
   readonly sessionId: string;
@@ -30,6 +43,22 @@ export interface PreparedApplicationReceiptReader {
   read(operationId: string, signal?: AbortSignal): Promise<unknown>;
 }
 
+/** Trusted application data composed inside one existing admission. */
+export interface PreparedApplicationRead {
+  readonly identity: PreparedApplicationReceiptReader['identity'] & Readonly<{ operation: string }>;
+  assertAuthority(): void;
+  read(signal?: AbortSignal): Promise<unknown>;
+}
+
+/**
+ * Descriptor inspection rejects symbols, hidden properties and extra array keys
+ * that canonicalJson intentionally does not serialize. Canonical serialization
+ * then enforces finite JSON and its existing exact 64 KiB output budget.
+ */
+function snapshotReadData(input: unknown): unknown {
+  return JSON.parse(canonicalJson(snapshotJsonData(input, VERIFICATION_SNAPSHOT_LIMITS)));
+}
+
 function assertReceiptId(operationId: string): void {
   if (typeof operationId !== 'string' || !CONTROL_OPERATION_ID.test(operationId))
     throw new ControlError('INVALID_REQUEST', 'Invalid receipt ID');
@@ -41,20 +70,28 @@ export type ApplicationResult<T = unknown> =
 
 export interface ApplicationOperation {
   readonly mode: 'read' | 'write';
+  readonly review?: 'operator-submit';
   prepare(input: unknown): (scope: ApplicationScope) => Promise<ApplicationResult>;
 }
 
 /** Type-check adapter input/output while keeping validation inside admission. */
 export function defineApplicationOperation<Input, Output>(operation: {
   mode: 'read' | 'write';
+  review?: 'operator-submit';
   parse(input: unknown): Input;
   execute(input: Input, scope: ApplicationScope): Promise<ApplicationResult<Output>>;
 }): ApplicationOperation {
+  const mode = operation.mode;
+  const review = operation.review;
+  validateReviewDeclaration(mode, review);
+  const parse = operation.parse.bind(operation);
+  const execute = operation.execute.bind(operation);
   return Object.freeze({
-    mode: operation.mode,
+    mode,
+    ...(review !== undefined ? { review } : {}),
     prepare(input: unknown) {
-      const parsed = operation.parse(input);
-      return (scope: ApplicationScope) => operation.execute(parsed, scope);
+      const parsed = parse(input);
+      return (scope: ApplicationScope) => execute(parsed, scope);
     },
   });
 }
@@ -72,29 +109,178 @@ export interface ApplicationBinding {
 export interface ApplicationRequest {
   operation: string;
   input: unknown;
-  operationId?: string;
-  expectedVersion?: number;
+  operationId?: string | undefined;
+  expectedVersion?: number | undefined;
+  approvalToken?: string | undefined;
+}
+
+export interface PreparedApplicationOperationReview {
+  readonly sessionId: string;
+  readonly action: Readonly<Record<string, unknown>>;
+  assertCurrent(): void;
+  /** Callback-free final admission, review-context and binding check. */
+  assertPinned(): void;
+  /** Captured output checks, valid only during this review operation's actual publication. */
+  readonly publication: Readonly<{
+    assertCurrent(): void;
+    /** Final owner pins without invoking application authorization. */
+    assertPinned(): void;
+  }>;
+}
+export interface PreparedApplicationConsent {
+  consume(): Promise<boolean>;
+  assertCurrent(): void;
+}
+export type ApplicationConsentPolicy = (
+  review: PreparedApplicationOperationReview,
+  approvalToken: string
+) => PreparedApplicationConsent;
+
+function validateReviewDeclaration(mode: unknown, review: unknown): void {
+  if (review !== undefined && (review !== 'operator-submit' || mode !== 'write'))
+    throw new ControlError('INVALID_REQUEST', 'Invalid application review declaration');
+}
+
+/** Inspect and detach caller data completely before consulting mutable application owners. */
+function normalizeApplicationRequest(request: ApplicationRequest): {
+  request: ApplicationRequest;
+  serialized: string;
+} {
+  try {
+    if (!request || Object.getPrototypeOf(request) !== Object.prototype) throw new Error();
+    const own = Object.getOwnPropertyDescriptors(request);
+    const allowed = ['operation', 'input', 'operationId', 'expectedVersion', 'approvalToken'];
+    if (
+      Reflect.ownKeys(own).some((key) => typeof key !== 'string' || !allowed.includes(key)) ||
+      Object.values(own).some((field) => !field.enumerable || !Object.hasOwn(field, 'value')) ||
+      !own.operation ||
+      !own.input
+    )
+      throw new Error();
+    const operation = own.operation.value;
+    const operationId = own.operationId?.value;
+    const expectedVersion = own.expectedVersion?.value;
+    const approvalToken = own.approvalToken?.value;
+    if (
+      typeof operation !== 'string' ||
+      !CONTROL_OPERATION_ID.test(operation) ||
+      (operationId !== undefined &&
+        (typeof operationId !== 'string' || !CONTROL_OPERATION_ID.test(operationId))) ||
+      (expectedVersion !== undefined &&
+        (typeof expectedVersion !== 'number' ||
+          !Number.isSafeInteger(expectedVersion) ||
+          expectedVersion < 0)) ||
+      (approvalToken !== undefined &&
+        (typeof approvalToken !== 'string' ||
+          approvalToken.length < 1 ||
+          approvalToken.length > 128))
+    )
+      throw new Error();
+    const input = snapshotReadData(own.input.value);
+    const serialized = canonicalJson(input);
+    return {
+      request: Object.freeze({
+        operation,
+        input,
+        ...(operationId !== undefined ? { operationId } : {}),
+        ...(expectedVersion !== undefined ? { expectedVersion } : {}),
+        ...(approvalToken !== undefined ? { approvalToken } : {}),
+      }),
+      serialized,
+    };
+  } catch {
+    throw new ControlError('INVALID_REQUEST', 'Invalid application request');
+  }
 }
 type Binding = ApplicationBinding & { generation: string; tenant: string };
+type ApplicationAccessOwner = {
+  binding: Binding;
+  adapter: ApplicationAdapter;
+  scope: ApplicationScope;
+};
+
+/** All application policy boundaries share strict synchronous, non-disclosing denial. */
+function assertApplicationAuthorized(
+  adapter: ApplicationAdapter,
+  scope: { tenant: string; resource: string }
+): void {
+  try {
+    if (synchronousResult(adapter.authorize(scope)) === true) return;
+  } catch {
+    // Callback exceptions and malformed results are policy denial, never private diagnostics.
+  }
+  throw new ControlError('CONTROL_REQUIRED', 'Application scope is not permitted');
+}
 
 /** Opt-in trusted adapters. This port owns no browser, planner, network client or database. */
 export class ApplicationAuthority {
   private readonly adapters = new Map<string, ApplicationAdapter>();
   private readonly bindings = new WeakMap<SessionControl, Binding>();
+  private readonly consentPolicy: ApplicationConsentPolicy | undefined;
 
   constructor(
     private readonly authority: SessionAuthority,
-    adapters: readonly ApplicationAdapter[] = []
+    adapters: readonly ApplicationAdapter[] = [],
+    options: { consentPolicy?: ApplicationConsentPolicy } = {}
   ) {
+    const consentPolicy = options.consentPolicy;
+    if (consentPolicy !== undefined && typeof consentPolicy !== 'function')
+      throw new ControlError('INVALID_REQUEST', 'Invalid application consent policy');
+    this.consentPolicy = consentPolicy;
     for (const adapter of adapters) {
-      if (!CONTROL_OPERATION_ID.test(adapter.id) || this.adapters.has(adapter.id))
+      try {
+        const id = adapter.id;
+        const authorize = adapter.authorize;
+        const receipt = adapter.receipt;
+        const declared = adapter.operations;
+        if (
+          typeof id !== 'string' ||
+          !CONTROL_OPERATION_ID.test(id) ||
+          this.adapters.has(id) ||
+          typeof authorize !== 'function' ||
+          typeof receipt !== 'function' ||
+          !declared ||
+          typeof declared !== 'object' ||
+          Array.isArray(declared)
+        )
+          throw new Error();
+        const operations = Object.entries(declared).map(([name, operation]) => {
+          const mode = operation.mode;
+          const review = operation.review;
+          validateReviewDeclaration(mode, review);
+          const prepare = operation.prepare;
+          if (typeof prepare !== 'function') throw new Error();
+          return [
+            name,
+            Object.freeze({
+              mode,
+              ...(review !== undefined ? { review } : {}),
+              prepare: prepare.bind(operation),
+            }),
+          ] as const;
+        });
+        if (
+          !validateApplicationOperationDescriptors(
+            operations.map(([name, operation]) => ({
+              name,
+              mode: operation.mode,
+              ...(operation.review !== undefined ? { review: operation.review } : {}),
+            }))
+          ).ok
+        )
+          throw new Error();
+        this.adapters.set(
+          id,
+          Object.freeze({
+            id,
+            authorize: authorize.bind(adapter),
+            receipt: receipt.bind(adapter),
+            operations: Object.freeze(Object.fromEntries(operations)),
+          })
+        );
+      } catch {
         throw new ControlError('INVALID_REQUEST', 'Invalid or duplicate application adapter');
-      this.adapters.set(adapter.id, {
-        id: adapter.id,
-        authorize: adapter.authorize.bind(adapter),
-        receipt: adapter.receipt.bind(adapter),
-        operations: Object.freeze({ ...adapter.operations }),
-      });
+      }
     }
   }
 
@@ -106,46 +292,81 @@ export class ApplicationAuthority {
   }
 
   bind(sessionId: string, principal: SessionPrincipal, requested: ApplicationBinding): void {
-    this.authority.configure(sessionId, principal, () => {
-      const adapter = this.adapters.get(requested.adapter);
+    if (principal.actor !== 'operator')
+      throw new ControlError('CONTROL_REQUIRED', 'Operator authority does not match');
+    const requestedTenant = principal.tenant;
+    const owner: SessionPrincipal = {
+      actor: 'operator',
+      ...(requestedTenant !== undefined ? { tenant: requestedTenant } : {}),
+    };
+    const adapterId = requested.adapter;
+    const resource = requested.resource;
+    this.authority.configure(sessionId, owner, () => {
+      const adapter = this.adapters.get(adapterId);
+      const tenant = owner.tenant;
       if (
         !adapter ||
-        !principal.tenant ||
-        !CONTROL_OPERATION_ID.test(requested.resource) ||
-        !adapter.authorize({ tenant: principal.tenant, resource: requested.resource })
+        !tenant ||
+        typeof resource !== 'string' ||
+        !CONTROL_OPERATION_ID.test(resource)
       )
         throw new ControlError('CONTROL_REQUIRED', 'Application binding is not permitted');
       const control = this.authority.get(sessionId);
       if (!control) throw new ControlError('CONTROL_REVOKED', 'Session was removed');
+      const epoch = control.view().epoch;
+      const previous = this.bindings.get(control);
+      assertApplicationAuthorized(adapter, Object.freeze({ tenant, resource }));
+      const view = control.view();
+      if (
+        this.authority.get(sessionId) !== control ||
+        view.epoch !== epoch ||
+        view.busy ||
+        (view.state !== 'HUMAN_ACTIVE' && view.state !== 'RESUME_REVIEW') ||
+        this.bindings.get(control) !== previous
+      )
+        throw new ControlError('CONTROL_REVOKED', 'Application binding authority changed');
       this.bindings.set(control, {
         adapter: adapter.id,
-        resource: requested.resource,
-        tenant: principal.tenant,
+        resource,
+        tenant,
         generation: randomUUID(),
       });
     });
   }
 
-  async discover(sessionId: string, principal: SessionPrincipal) {
-    return this.authority.run(sessionId, principal, {}, async () => {
-      const binding = this.binding(sessionId, false);
-      if (!binding) return null;
-      const adapter = this.adapter(binding.adapter);
-      if (!adapter.authorize(this.scope(sessionId, binding)))
-        throw new ControlError('CONTROL_REQUIRED', 'Application scope was revoked');
-      return {
-        adapter: binding.adapter,
-        resource: binding.resource,
-        operations: Object.entries(adapter.operations).map(([name, op]) => ({
-          name,
-          mode: op.mode,
-        })),
-      };
-    });
+  async discover(
+    sessionId: string,
+    principal: SessionPrincipal,
+    publication?: SessionPublication<ApplicationDiscovery | null>
+  ) {
+    const output = this.preparePublication(sessionId, publication);
+    return this.authority.run(
+      sessionId,
+      principal,
+      {},
+      async () => {
+        output?.captureInScope();
+        const binding = this.binding(sessionId, false);
+        if (!binding) return null;
+        const adapter = this.adapter(binding.adapter);
+        assertApplicationAuthorized(adapter, this.scope(sessionId, binding));
+        this.authority.assert(sessionId);
+        return {
+          adapter: binding.adapter,
+          resource: binding.resource,
+          operations: Object.entries(adapter.operations).map(([name, op]) => ({
+            name,
+            mode: op.mode,
+            ...(op.review !== undefined ? { review: op.review } : {}),
+          })),
+        };
+      },
+      undefined,
+      output?.publication
+    );
   }
 
-  async execute(sessionId: string, principal: SessionPrincipal, request: ApplicationRequest) {
-    this.authority.assertPrincipal(sessionId, principal);
+  private captureOperation(sessionId: string, request: ApplicationRequest) {
     const binding = this.binding(sessionId);
     const adapter = this.adapter(binding.adapter);
     const operation = Object.hasOwn(adapter.operations, request.operation)
@@ -153,22 +374,118 @@ export class ApplicationAuthority {
       : undefined;
     if (!operation) throw new ControlError('INVALID_REQUEST', 'Unknown application operation');
     const write = operation.mode === 'write';
-    if (
-      write &&
-      (!request.operationId ||
-        !CONTROL_OPERATION_ID.test(request.operationId) ||
-        typeof request.expectedVersion !== 'number' ||
-        !Number.isSafeInteger(request.expectedVersion) ||
-        request.expectedVersion < 0)
-    )
+    if (write && (request.operationId === undefined || request.expectedVersion === undefined))
       throw new ControlError(
         'INVALID_REQUEST',
         'Writes require an operation ID and expected version'
       );
     if (!write && (request.operationId !== undefined || request.expectedVersion !== undefined))
       throw new ControlError('INVALID_REQUEST', 'Read operations do not accept write identities');
-    const serialized = canonicalJson(request.input);
-    const input: unknown = JSON.parse(serialized);
+    if (operation.review === undefined && request.approvalToken !== undefined)
+      throw new ControlError(
+        'INVALID_REQUEST',
+        'Ordinary operations do not accept approval tokens'
+      );
+    return { binding, adapter, operation, write };
+  }
+
+  private operationReview(sessionId: string, request: ApplicationRequest, binding: Binding) {
+    const publicationOwner = this.authority.captureReviewPublicationInScope(sessionId);
+    const context = canonicalJson(publicationOwner.binding);
+    const owner = this.captureReadInScope(sessionId, binding);
+    const publication = this.applicationAccess(
+      sessionId,
+      owner.accessOwner,
+      publicationOwner.assertCurrent
+    );
+    let revoked = false;
+    const assertPinned = () => {
+      if (revoked) throw new ControlError('CONTROL_REVOKED', 'Application review was revoked');
+      try {
+        owner.assertPinned();
+        if (canonicalJson(this.authority.reviewBindingInScope(sessionId)) !== context)
+          throw new ControlError('CONTROL_REVOKED', 'Application review changed');
+      } catch (error) {
+        revoked = true;
+        throw error;
+      }
+    };
+    const assertCurrent = () => {
+      try {
+        assertPinned();
+        owner.assertAuthority();
+        assertPinned();
+      } catch (error) {
+        revoked = true;
+        throw error;
+      }
+    };
+    let action: Readonly<Record<string, unknown>>;
+    try {
+      action = snapshotAuthorizationInput({
+        type: 'application-submit',
+        intent: 'submit',
+        tenant: binding.tenant,
+        sessionId,
+        sessionIncarnation: owner.identity.sessionIncarnation,
+        adapter: binding.adapter,
+        resource: binding.resource,
+        bindingGeneration: binding.generation,
+        operation: request.operation,
+        operationId: request.operationId,
+        expectedVersion: request.expectedVersion,
+        input: request.input,
+      }) as Readonly<Record<string, unknown>>;
+      canonicalJson(action);
+    } catch {
+      assertPinned();
+      throw new ControlError('INVALID_REQUEST', 'Invalid application review');
+    }
+    assertPinned();
+    return {
+      review: Object.freeze({
+        sessionId,
+        action,
+        assertCurrent,
+        assertPinned,
+        publication: Object.freeze({
+          assertCurrent: () => publication.assertAuthority(),
+          assertPinned: () => publication.assertPinned(),
+        }),
+      }),
+      assertPinned,
+    };
+  }
+
+  /** Build an intended action inside an existing read admission without reserving an operation. */
+  prepareOperationReviewInScope(
+    sessionId: string,
+    plannedRequest: ApplicationRequest
+  ): PreparedApplicationOperationReview {
+    const { request } = normalizeApplicationRequest(plannedRequest);
+    this.authority.reviewBindingInScope(sessionId);
+    const captured = this.captureOperation(sessionId, request);
+    if (request.approvalToken !== undefined || captured.operation.review !== 'operator-submit')
+      throw new ControlError('INVALID_REQUEST', 'Expected a protected operation without a token');
+    return this.operationReview(sessionId, request, captured.binding).review;
+  }
+
+  async execute(
+    sessionId: string,
+    principal: SessionPrincipal,
+    callerRequest: ApplicationRequest,
+    publication?: SessionPublication<ApplicationResult>,
+    replayOptions?: OperationPublication
+  ) {
+    const output = this.preparePublication(sessionId, publication);
+    const replay = replayOptions === undefined ? undefined : snapshotPublication(replayOptions);
+    const { request, serialized } = normalizeApplicationRequest(callerRequest);
+    this.authority.assertPrincipal(sessionId, principal);
+    const { binding, adapter, operation, write } = this.captureOperation(sessionId, request);
+    const replayOwner = replay
+      ? { binding, adapter, scope: this.scope(sessionId, binding, request) }
+      : undefined;
+    const protectedWrite = operation.review === 'operator-submit';
     const fingerprint = write
       ? createHash('sha256')
           .update('application-operation:v1\0')
@@ -177,6 +494,9 @@ export class ApplicationAuthority {
               ...binding,
               operation: request.operation,
               expectedVersion: request.expectedVersion,
+              ...(protectedWrite && request.approvalToken !== undefined
+                ? { approvalToken: request.approvalToken }
+                : {}),
             })
           )
           .update('\0')
@@ -189,25 +509,123 @@ export class ApplicationAuthority {
       principal,
       write && request.operationId && fingerprint ? { id: request.operationId, fingerprint } : {},
       async () => {
+        output?.captureInScope(binding);
         const scope = this.scope(sessionId, binding, request);
-        if (!adapter.authorize(scope))
-          throw new ControlError('CONTROL_REQUIRED', 'Application scope was revoked');
-        const execute = operation.prepare(input);
-        this.authority.assert(sessionId, write);
-        const result = await execute(scope);
+        const assertBinding = () => {
+          this.authority.assert(sessionId);
+          if (this.binding(sessionId) !== binding)
+            throw new ControlError('CONTROL_REVOKED', 'Application binding changed');
+        };
+        const owned = protectedWrite
+          ? this.operationReview(sessionId, request, binding)
+          : undefined;
+        assertApplicationAuthorized(adapter, scope);
+        assertBinding();
+        let execute: ReturnType<ApplicationOperation['prepare']>;
+        try {
+          const input = JSON.parse(serialized);
+          execute = synchronousResult(
+            operation.prepare(owned ? snapshotAuthorizationInput(input) : input)
+          );
+        } catch (error) {
+          assertBinding();
+          if (owned) {
+            owned.review.assertCurrent();
+            throw new ControlError('INVALID_REQUEST', 'Application preparation failed');
+          }
+          throw error;
+        }
+        assertBinding();
+        if (typeof execute !== 'function')
+          throw new ControlError('INVALID_REQUEST', 'Invalid application preparation');
+        if (owned) {
+          const unavailable = () =>
+            new ControlError('CONTROL_REQUIRED', 'Application consent unavailable');
+          try {
+            owned.review.assertCurrent();
+            if (!this.consentPolicy || request.approvalToken === undefined) throw unavailable();
+            const consent = synchronousResult(
+              Reflect.apply(this.consentPolicy, undefined, [owned.review, request.approvalToken])
+            );
+            owned.review.assertCurrent();
+            if (!consent || Object.getPrototypeOf(consent) !== Object.prototype)
+              throw unavailable();
+            const own = Object.getOwnPropertyDescriptors(consent);
+            if (
+              Reflect.ownKeys(own).length !== 2 ||
+              !['consume', 'assertCurrent'].every(
+                (key) =>
+                  own[key]?.enumerable &&
+                  Object.hasOwn(own[key], 'value') &&
+                  typeof own[key]?.value === 'function'
+              )
+            )
+              throw unavailable();
+            const consume = own.consume?.value;
+            const current = own.assertCurrent?.value;
+            if (typeof consume !== 'function' || typeof current !== 'function') throw unavailable();
+            const assertConsent = () => {
+              if (synchronousResult(Reflect.apply(current, consent, [])) !== undefined)
+                throw unavailable();
+            };
+            owned.review.assertCurrent();
+            owned.assertPinned();
+            if ((await Reflect.apply(consume, consent, [])) !== true) throw unavailable();
+            // Adapter callbacks precede the final consent guard. The following pin check is callback-free.
+            owned.review.assertCurrent();
+            assertConsent();
+            owned.assertPinned();
+          } catch {
+            try {
+              owned.review.assertCurrent();
+            } catch {
+              /* Observe sticky revocation; diagnostics stay static. */
+            }
+            throw unavailable();
+          }
+        } else {
+          assertApplicationAuthorized(adapter, scope);
+          assertBinding();
+        }
+        this.authority.assert(sessionId);
+        const result = await (write
+          ? this.authority.dispatchInScope(sessionId, () => execute(scope))
+          : execute(scope));
         rejected = result.status === 'rejected';
         if (!rejected && result.status !== (write ? 'committed' : 'read'))
           throw new Error('Application adapter returned an invalid result kind');
         return result;
       },
-      () => (rejected ? 'rejected' : false)
+      () => (rejected ? 'rejected' : false),
+      output?.publication,
+      replay && replayOwner
+        ? {
+            ...replay,
+            publish: (value, context) =>
+              this.publishApplication(sessionId, replayOwner, value, context, replay.publish),
+          }
+        : undefined
     );
   }
 
-  async lookupReceipt(sessionId: string, principal: SessionPrincipal, operationId: string) {
+  async lookupReceipt(
+    sessionId: string,
+    principal: SessionPrincipal,
+    operationId: string,
+    publication?: SessionPublication<unknown>
+  ) {
+    const output = this.preparePublication(sessionId, publication);
     assertReceiptId(operationId);
-    return this.authority.run(sessionId, principal, {}, () =>
-      this.readReceiptInScope(sessionId, operationId)
+    return this.authority.run(
+      sessionId,
+      principal,
+      {},
+      () => {
+        output?.captureInScope();
+        return this.readReceiptInScope(sessionId, operationId);
+      },
+      undefined,
+      output?.publication
     );
   }
 
@@ -219,37 +637,119 @@ export class ApplicationAuthority {
 
   /** Capture and validate a receipt binding before a caller dispatches its existing executor. */
   prepareReceiptReadInScope(sessionId: string): PreparedApplicationReceiptReader {
+    const owner = this.captureReadInScope(sessionId);
+    return Object.freeze({
+      identity: owner.identity,
+      assertAuthority: () => owner.assertAuthority(),
+      read: async (operationId: string, signal?: AbortSignal) => {
+        assertReceiptId(operationId);
+        return owner.track((scope) => owner.adapter.receipt(scope, operationId), signal);
+      },
+    });
+  }
+
+  prepareReadInScope(
+    sessionId: string,
+    request: { operation: string; input: unknown }
+  ): PreparedApplicationRead {
+    // Capture the owner BEFORE inspecting any caller-controlled object or proxy.
+    const owner = this.captureReadInScope(sessionId);
+    let snapshot: unknown;
+    try {
+      snapshot = snapshotReadData(request);
+    } catch {
+      owner.assertAuthority();
+      throw new ControlError('INVALID_REQUEST', 'Invalid application read request');
+    }
+    owner.assertAuthority();
+    if (
+      !snapshot ||
+      typeof snapshot !== 'object' ||
+      Array.isArray(snapshot) ||
+      Object.keys(snapshot).length !== 2 ||
+      !Object.hasOwn(snapshot, 'operation') ||
+      !Object.hasOwn(snapshot, 'input')
+    )
+      throw new ControlError('INVALID_REQUEST', 'Invalid application read request');
+    const pinned = snapshot as { operation: unknown; input: unknown };
+    if (
+      typeof pinned.operation !== 'string' ||
+      !Object.hasOwn(owner.adapter.operations, pinned.operation)
+    )
+      throw new ControlError('INVALID_REQUEST', 'Invalid application read request');
+    const operation = owner.adapter.operations[pinned.operation];
+    if (!operation || operation.mode !== 'read')
+      throw new ControlError('INVALID_REQUEST', 'Invalid application read request');
+    const serialized = canonicalJson(pinned.input);
+    owner.assertAuthority();
+    return Object.freeze({
+      identity: Object.freeze({ ...owner.identity, operation: pinned.operation }),
+      assertAuthority: () => owner.assertAuthority(),
+      read: async (signal?: AbortSignal) => {
+        return owner.track(async (scope) => {
+          const check = () => owner.assertAuthority(scope);
+          let execute: ReturnType<ApplicationOperation['prepare']>;
+          try {
+            execute = synchronousResult(operation.prepare(JSON.parse(serialized)));
+          } catch {
+            check();
+            throw new ControlError('INVALID_REQUEST', 'Application read callback failed');
+          }
+          check();
+          if (typeof execute !== 'function')
+            throw new ControlError('INVALID_REQUEST', 'Application read callback failed');
+          let result: unknown;
+          try {
+            result = await execute(scope);
+          } catch {
+            check();
+            throw new ControlError('INVALID_REQUEST', 'Application read callback failed');
+          }
+          check();
+          let detached: unknown;
+          try {
+            detached = snapshotReadData(result);
+          } catch {
+            check();
+            throw new ControlError('INVALID_REQUEST', 'Invalid application read result');
+          }
+          check();
+          if (
+            !detached ||
+            typeof detached !== 'object' ||
+            Array.isArray(detached) ||
+            Object.keys(detached).length !== 2 ||
+            !Object.hasOwn(detached, 'status') ||
+            !Object.hasOwn(detached, 'value') ||
+            (detached as { status: unknown }).status !== 'read'
+          )
+            throw new ControlError('INVALID_REQUEST', 'Invalid application read result');
+          return (detached as { value: unknown }).value;
+        }, signal);
+      },
+    });
+  }
+
+  /** Shared admission, binding, authorization and drain owner for prepared reads. */
+  private captureReadInScope(sessionId: string, expectedBinding?: Binding) {
     const guard = this.authority.outputGuard(sessionId);
     const admission = this.authority.admissionInScope(sessionId);
     const binding = this.binding(sessionId);
     const adapter = this.adapter(binding.adapter);
     const ownedScope = this.scope(sessionId, binding);
-    let revoked = false;
-    const checkAuthority = (scope: ApplicationScope = ownedScope) => {
-      if (revoked) throw new ControlError('CONTROL_REVOKED', 'Application receipt reader revoked');
-      try {
-        const checkAdmission = () => {
-          guard();
-          if (this.authority.admissionInScope(sessionId) !== admission)
-            throw new ControlError('CONTROL_REQUIRED', 'Application receipt admission changed');
-          if (scope.signal.aborted)
-            throw new ControlError('CONTROL_REVOKED', 'Application receipt read cancelled');
-          if (this.binding(sessionId) !== binding)
-            throw new ControlError('CONTROL_REQUIRED', 'Application scope was revoked');
-        };
-        checkAdmission();
-        if (!adapter.authorize(scope))
-          throw new ControlError('CONTROL_REQUIRED', 'Application scope was revoked');
-        // Trusted callbacks can synchronously replace authority, bindings, or cancel the read.
-        checkAdmission();
-      } catch (error) {
-        // A failed prepared capability cannot revive after a later permission regrant.
-        revoked = true;
-        throw error;
-      }
-    };
+    if (expectedBinding !== undefined && binding !== expectedBinding)
+      throw new ControlError('CONTROL_REVOKED', 'Application binding changed');
+    const accessOwner = { binding, adapter, scope: ownedScope };
+    const { assertAuthority: checkAuthority, assertPinned: checkAdmission } =
+      this.applicationAccess(sessionId, accessOwner, () => {
+        guard();
+        if (this.authority.admissionInScope(sessionId) !== admission)
+          throw new ControlError('CONTROL_REQUIRED', 'Application receipt admission changed');
+      });
     checkAuthority();
-    return Object.freeze({
+    return {
+      adapter,
+      accessOwner,
       identity: Object.freeze({
         admission,
         adapter: binding.adapter,
@@ -257,20 +757,111 @@ export class ApplicationAuthority {
         sessionId,
         sessionIncarnation: ownedScope.sessionIncarnation,
       }),
-      assertAuthority: () => checkAuthority(),
-      read: async (operationId: string, signal?: AbortSignal) => {
-        assertReceiptId(operationId);
+      assertAuthority: checkAuthority,
+      assertPinned: () => checkAdmission(),
+      track: <T>(
+        callback: (scope: ApplicationScope) => Promise<T>,
+        signal?: AbortSignal
+      ): Promise<T> => {
         const scope = signal
           ? Object.freeze({ ...ownedScope, signal: AbortSignal.any([ownedScope.signal, signal]) })
           : ownedScope;
         return this.authority.trackReadInScope(sessionId, async () => {
           checkAuthority(scope);
-          const receipt = await adapter.receipt(scope, operationId);
+          const result = await callback(scope);
           checkAuthority(scope);
-          return receipt;
+          return result;
         });
       },
-    });
+    };
+  }
+
+  /** One sticky application access fence; the caller supplies its lifetime authority. */
+  private applicationAccess(
+    sessionId: string,
+    owner: ApplicationAccessOwner | undefined,
+    assertLifetime: () => void
+  ) {
+    let revoked = false;
+    const assertPinned = (scope = owner?.scope) => {
+      if (revoked) throw new ControlError('CONTROL_REVOKED', 'Application access revoked');
+      try {
+        assertLifetime();
+        if (scope?.signal.aborted)
+          throw new ControlError('CONTROL_REVOKED', 'Application access cancelled');
+        if (this.binding(sessionId, false) !== owner?.binding)
+          throw new ControlError('CONTROL_REQUIRED', 'Application scope was revoked');
+        // Lookup can expire an unbound owner; absence equality is not lifetime proof.
+        assertLifetime();
+      } catch (error) {
+        revoked = true;
+        throw error;
+      }
+    };
+    const assertAuthority = (scope = owner?.scope) => {
+      try {
+        assertPinned(scope);
+        if (owner) assertApplicationAuthorized(owner.adapter, scope ?? owner.scope);
+        assertPinned(scope);
+      } catch (error) {
+        revoked = true;
+        throw error;
+      }
+    };
+    return { assertAuthority, assertPinned };
+  }
+
+  /** Compose disclosure inside the existing session run, never a second admission. */
+  private preparePublication<T>(sessionId: string, options?: SessionPublication<T>) {
+    if (options === undefined) return undefined;
+    const publication = snapshotPublication(options);
+    let captured: { owner: ApplicationAccessOwner | undefined } | undefined;
+    return {
+      captureInScope: (expectedBinding?: Binding) => {
+        this.authority.assert(sessionId);
+        const binding = this.binding(sessionId, false);
+        if (expectedBinding !== undefined && binding !== expectedBinding)
+          throw new ControlError('CONTROL_REVOKED', 'Application binding changed');
+        captured = {
+          owner: binding
+            ? {
+                binding,
+                adapter: this.adapter(binding.adapter),
+                scope: this.scope(sessionId, binding),
+              }
+            : undefined,
+        };
+      },
+      publication: {
+        ...publication,
+        publish: async (value: T, context) => {
+          if (!captured)
+            throw new ControlError('CONTROL_REVOKED', 'Application publication unavailable');
+          await this.publishApplication(
+            sessionId,
+            captured.owner,
+            value,
+            context,
+            publication.publish
+          );
+        },
+      } satisfies SessionPublication<T>,
+    };
+  }
+
+  /** Shared guarded output; result and replay retain distinct capture lifetimes. */
+  private async publishApplication<T, Context extends PublicationContext>(
+    sessionId: string,
+    owner: ApplicationAccessOwner | undefined,
+    value: T,
+    context: Readonly<Context>,
+    publish: (value: T, context: Readonly<Context>) => void | PromiseLike<void>
+  ): Promise<void> {
+    const access = this.applicationAccess(sessionId, owner, context.assertCurrent);
+    const output = Object.freeze({ ...context, assertCurrent: () => access.assertAuthority() });
+    output.assertCurrent();
+    await publish(value, output);
+    output.assertCurrent();
   }
 
   private scope(

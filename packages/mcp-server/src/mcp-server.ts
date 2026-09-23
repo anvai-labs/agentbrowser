@@ -277,7 +277,7 @@ export function buildTools(client: McpClient): ToolDefinition[] {
       outputSchema: AutofillReportSchema,
       annotations: { readOnlyHint: false, idempotentHint: false },
       description:
-        'Fill and verify structured fields in one serial server operation. Match labels within a unique fieldset block (id or legend label). Supports native text inputs and single selects; custom widgets are refused. Verification retries only read; uncertain writes stop the batch. Returns per-field receipts and an authorized raw HTML artifact. Performs no explicit submit action; page input/change handlers may commit effects. After a lost response, reconcile the operation under current authorization before any further write: use browser_operation in delegated mode or SDK/REST operation status otherwise.',
+        'Fill and verify structured fields in one serial server operation. Match labels within a unique fieldset block (id or legend label). Supports native inputs/selects and explicitly selected qualified react-select/chip-multiselect shapes. Optional exact URL scope preflights all fields and pins stage identities. Verification retries only read; uncertain writes stop the batch. Returns per-field receipts and an authorized raw HTML artifact. Performs no explicit submit action; page input/change handlers may commit effects. After a lost response, reconcile the operation under current authorization before any further write: use browser_operation in delegated mode or SDK/REST operation status otherwise.',
       inputSchema: {
         type: 'object',
         additionalProperties: false,
@@ -295,6 +295,7 @@ export function buildTools(client: McpClient): ToolDefinition[] {
         try {
           payload = parseAutofillRequest({
             fields: args.fields,
+            ...(args.scope !== undefined ? { scope: args.scope } : {}),
             ...(args.policy !== undefined ? { policy: args.policy } : {}),
           });
         } catch (error) {
@@ -793,6 +794,10 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
         message = JSON.parse(line);
       } catch {
         return error(null, -32700, 'Parse error');
+      }
+
+      if (message === null || typeof message !== 'object' || Array.isArray(message)) {
+        return error(null, -32600, 'Invalid request');
       }
 
       // Notifications carry no id and get no response.

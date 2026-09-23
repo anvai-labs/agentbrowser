@@ -275,6 +275,9 @@ describe('multi-step widget strategies', () => {
       'aria-autocomplete': 'list',
       'autofill-node': ref,
       'autofill-block': block,
+      'autofill-popup': `${ref}-popup`,
+      'autofill-popup-state': 'ready',
+      'autofill-focused': 'true',
       ...(committed ? { 'autofill-committed': committed } : {}),
     },
   });
@@ -312,7 +315,12 @@ describe('multi-step widget strategies', () => {
               role: 'option',
               name: 'Chicago, Illinois, United States',
               value: undefined,
-              attributes: { tag: 'li', 'autofill-node': 'opt_1', 'autofill-block': 'rs-block' },
+              attributes: {
+                ...ownedOption('opt_1', '', 'rs_1').attributes,
+                tag: 'li',
+                'autofill-node': 'opt_1',
+                'autofill-block': 'rs-block',
+              },
             },
           ]);
         }
@@ -361,6 +369,7 @@ describe('multi-step widget strategies', () => {
               role: 'option',
               name: 'Chicago',
               attributes: {
+                ...ownedOption('', '', 'rs_query').attributes,
                 tag: 'li',
                 'autofill-node': optionRef,
                 'autofill-block': 'rs-block',
@@ -420,6 +429,7 @@ describe('multi-step widget strategies', () => {
               role: 'option',
               name: 'Chicago',
               attributes: {
+                ...ownedOption('', '', 'rs_lost').attributes,
                 tag: 'li',
                 'autofill-node': optionRef,
                 'autofill-block': 'rs-block',
@@ -530,6 +540,7 @@ describe('multi-step widget strategies', () => {
             role: 'option',
             name: 'Chicago',
             attributes: {
+              ...ownedOption('', '', 'rs_moved_after_type').attributes,
               tag: 'li',
               'autofill-node': optionRef,
               'autofill-block': 'other-block',
@@ -608,7 +619,12 @@ describe('multi-step widget strategies', () => {
               role: 'option',
               name: 'United States of America',
               value: undefined,
-              attributes: { tag: 'li', 'autofill-node': 'chip_1', 'autofill-block': 'ms-block' },
+              attributes: {
+                ...ownedOption('chip_1', '', 'ms_1').attributes,
+                tag: 'li',
+                'autofill-node': 'chip_1',
+                'autofill-block': 'ms-block',
+              },
             },
           ]);
         }
@@ -649,6 +665,7 @@ describe('multi-step widget strategies', () => {
               role: 'option',
               name: 'United States of America',
               attributes: {
+                ...ownedOption('', '', 'ms_incomplete').attributes,
                 tag: 'li',
                 'autofill-node': chipRef,
                 'autofill-block': 'ms-block',
@@ -702,4 +719,431 @@ describe('multi-step widget strategies', () => {
     expect(f.observe).not.toHaveBeenCalled();
     expect(f.act).not.toHaveBeenCalled();
   });
+  const ownedOption = (ref = 'owned-option', name = 'Chicago', owner = 'owned'): PageElement => ({
+    ref,
+    role: 'option',
+    name,
+    visible: true,
+    enabled: true,
+    attributes: {
+      'autofill-node': ref,
+      'autofill-popup': `${owner}-popup`,
+      'autofill-owner': owner,
+      'autofill-owner-focused': 'true',
+      'autofill-popup-state': 'ready',
+    },
+  });
+  const ownedControl = (): PageElement => ({
+    ...rsCombobox('owned'),
+    attributes: {
+      ...rsCombobox('owned').attributes,
+      'autofill-popup': 'owned-popup',
+      'autofill-popup-state': 'ready',
+      'autofill-focused': 'true',
+    },
+  });
+
+  for (const strategy of ['react-select', 'chip-multiselect'] as const) {
+    it.each([
+      'other-popup',
+      'prefix',
+      'case-only',
+      'duplicate',
+      'disabled',
+      'focus-theft',
+      'popup-replaced',
+      'missing-evidence',
+    ] as const)(
+      `${strategy}: refuses %s without clicking an unsafe option or continuing the suffix`,
+      async (fault) => {
+        const f = fixture([ownedControl(), field('suffix', 'suffix')]);
+        const choices =
+          fault === 'duplicate'
+            ? [ownedOption(), ownedOption('duplicate')]
+            : fault === 'prefix'
+              ? [ownedOption('prefix', 'Chicago Heights')]
+              : fault === 'other-popup'
+                ? [ownedOption('unrelated', 'Chicago', 'other')]
+                : [ownedOption()];
+        if (fault === 'case-only') choices[0] = ownedOption('lowercase', 'chicago');
+        if (fault === 'disabled') choices[0] = { ...choices[0]!, enabled: false };
+        f.act.mockImplementation(async (request: { action: string }, onDispatch) => {
+          onDispatch();
+          f.dispatch();
+          if (request.action === 'typeText') {
+            const control = ownedControl();
+            if (fault === 'focus-theft') control.attributes!['autofill-focused'] = 'false';
+            if (fault === 'popup-replaced') control.attributes!['autofill-popup'] = 'replacement';
+            if (fault === 'missing-evidence')
+              control.attributes = Object.fromEntries(
+                Object.entries(control.attributes ?? {}).filter(
+                  ([key]) => key !== 'autofill-popup-state'
+                )
+              );
+            f.replace([control, ...choices, field('suffix', 'suffix')]);
+          }
+        });
+        const report = await runStrategy(
+          {
+            fields: [
+              {
+                match: { role: 'combobox', label: 'Location (City)' },
+                option: { value: 'Chicago' },
+                strategy,
+              },
+              { match: { label: 'Company name' }, value: 'must not execute' },
+            ],
+            policy: { maxReobserve: 1, settleMs: 0, onAmbiguous: 'skip' },
+          },
+          f
+        );
+        expect(report.receipts).toMatchObject([
+          { status: 'uncertain', verified: false },
+          { status: 'not_attempted' },
+        ]);
+        expect(f.act.mock.calls.map(([request]) => request.target?.ref)).toEqual([
+          'owned',
+          'owned',
+        ]);
+      }
+    );
+
+    it.each(['ready', 'pending'] as const)(
+      `${strategy}: waits from %s for owned options without replaying writes and ignores an identical foreign option`,
+      async (initialState) => {
+        const initial = ownedControl();
+        initial.attributes = {
+          ...initial.attributes,
+          'autofill-popup-state': initialState,
+          'autofill-popup': initialState === 'ready' ? 'owned-popup' : '',
+        };
+        const f = fixture([initial]);
+        let typed = false;
+        let selected = false;
+        let reads = 0;
+        const read = f.observe.getMockImplementation()!;
+        f.observe.mockImplementation(async () => {
+          if (typed && !selected && ++reads === 2)
+            f.replace([ownedControl(), ownedOption('foreign', 'Chicago', 'other'), ownedOption()]);
+          return read();
+        });
+        f.act.mockImplementation(
+          async (request: { action: string; target?: { ref?: string } }, onDispatch) => {
+            onDispatch();
+            f.dispatch();
+            if (request.action === 'typeText') typed = true;
+            if (request.target?.ref === 'owned-option') {
+              selected = true;
+              const control = ownedControl();
+              Object.assign(control.attributes!, {
+                'autofill-committed': 'Chicago',
+                'autofill-committed-members': '["Chicago"]',
+                'autofill-committed-members-complete': 'true',
+              });
+              f.replace([control]);
+            }
+          }
+        );
+        const report = await runStrategy(
+          {
+            fields: [
+              {
+                match: { role: 'combobox', label: 'Location (City)' },
+                option: { value: 'Chicago' },
+                strategy,
+              },
+            ],
+            policy: { maxReobserve: 2, settleMs: 0 },
+          },
+          f
+        );
+        expect(report.ok).toBe(true);
+        expect(f.act.mock.calls.map(([request]) => request.target?.ref)).toEqual([
+          'owned',
+          'owned',
+          'owned-option',
+        ]);
+        expect(reads).toBe(2);
+      }
+    );
+  }
+  it('refuses missing engine ownership evidence before any widget write', async () => {
+    const control = ownedControl();
+    control.attributes = { tag: 'input', 'aria-autocomplete': 'list', 'autofill-node': 'owned' };
+    const f = fixture([control]);
+    const report = await runStrategy(
+      {
+        fields: [
+          {
+            match: { role: 'combobox', label: 'Location (City)' },
+            option: { value: 'Chicago' },
+            strategy: 'react-select',
+          },
+        ],
+      },
+      f
+    );
+    expect(report.receipts[0]).toMatchObject({
+      status: 'failed',
+      error: { code: 'ENGINE_UNSUPPORTED' },
+    });
+    expect(f.act).not.toHaveBeenCalled();
+  });
+
+  it('refuses focus theft immediately after opening before typing', async () => {
+    const f = fixture([ownedControl()]);
+    f.act.mockImplementation(async (_request, onDispatch) => {
+      onDispatch();
+      const control = ownedControl();
+      control.attributes = { ...control.attributes, 'autofill-focused': 'false' };
+      f.replace([control]);
+    });
+    const report = await runStrategy(
+      {
+        fields: [
+          {
+            match: { role: 'combobox', label: 'Location (City)' },
+            option: { value: 'Chicago' },
+            strategy: 'react-select',
+          },
+        ],
+      },
+      f
+    );
+    expect(report.receipts[0]).toMatchObject({
+      status: 'uncertain',
+      error: { code: 'STALE_TARGET' },
+    });
+    expect(f.act).toHaveBeenCalledOnce();
+  });
+  it.each([0, 2])(
+    'bounds option absence to %i extra reads without replaying writes',
+    async (maxReobserve) => {
+      const f = fixture([ownedControl()]);
+      f.act.mockImplementation(async (_request, onDispatch) => {
+        onDispatch();
+      });
+      const report = await runStrategy(
+        {
+          fields: [
+            {
+              match: { role: 'combobox', label: 'Location (City)' },
+              option: { value: 'Chicago' },
+              strategy: 'react-select',
+            },
+          ],
+          policy: { maxReobserve, settleMs: 0 },
+        },
+        f
+      );
+      expect(report.receipts[0]).toMatchObject({
+        status: 'uncertain',
+        error: { code: 'TARGET_NOT_FOUND' },
+      });
+      expect(f.observe).toHaveBeenCalledTimes(3 + maxReobserve);
+      expect(f.act).toHaveBeenCalledTimes(2);
+    }
+  );
+  it('never selects an option while a current ownership relation remains undeclared', async () => {
+    const control = ownedControl();
+    control.attributes = {
+      ...control.attributes,
+      'autofill-popup-state': 'pending',
+      'autofill-popup': '',
+    };
+    const unowned = {
+      ...ownedOption(),
+      attributes: { 'autofill-node': 'unowned', 'autofill-popup-state': 'invalid' },
+    };
+    const f = fixture([control, unowned]);
+    f.act.mockImplementation(async (_request, onDispatch) => {
+      onDispatch();
+    });
+    const report = await runStrategy(
+      {
+        fields: [
+          {
+            match: { role: 'combobox', label: 'Location (City)' },
+            option: { value: 'Chicago' },
+            strategy: 'react-select',
+          },
+        ],
+        policy: { maxReobserve: 1, settleMs: 0 },
+      },
+      f
+    );
+    expect(report.receipts[0]).toMatchObject({
+      status: 'uncertain',
+      error: { code: 'TARGET_NOT_FOUND' },
+    });
+    expect(f.act.mock.calls.map(([request]) => request.target?.ref)).toEqual(['owned', 'owned']);
+  });
+});
+
+describe('mapped stage scope and preflight', () => {
+  const url = 'https://example.test/apply?id=123';
+  const request = () => ({
+    scope: { url },
+    fields: [
+      {
+        match: { label: 'Company name', block: { id: 'one' } },
+        value: 'First',
+        strategy: 'native-input',
+      },
+      {
+        match: { label: 'Company name', block: { id: 'two' } },
+        value: 'Second',
+        strategy: 'native-input',
+      },
+    ],
+    policy: { settleMs: 0, maxReobserve: 0 },
+  });
+  const scopedFixture = () => {
+    const f = fixture([field('a', 'one'), field('b', 'two')]);
+    const read = f.observe.getMockImplementation()!;
+    f.observe.mockImplementation(async () => ({ ...(await read()), url }));
+    return { ...f, resolveValue: vi.fn(async (value: string) => value) };
+  };
+  it('preflights repeated labels in separate blocks and runs the existing executor', async () => {
+    const f = scopedFixture();
+    const report = await runAutofill(request(), f);
+    expect(report.ok).toBe(true);
+    expect(f.dispatch).toHaveBeenCalledTimes(2);
+    expect(f.resolveValue).toHaveBeenCalledTimes(2);
+  });
+  it.each([
+    'wrong-url',
+    'missing-url',
+    'truncated',
+    'degraded',
+    'missing-later',
+    'ambiguous-later',
+    'hidden-later',
+    'unsupported-later',
+    'duplicate-target',
+  ])('refuses %s before any write or private reference resolution', async (kind) => {
+    const f = scopedFixture();
+    const input = request();
+    if (kind === 'wrong-url')
+      f.observe.mockResolvedValue({
+        elements: [field('a', 'one'), field('b', 'two')],
+        url: 'https://other.test/apply',
+      } as never);
+    if (kind === 'missing-url')
+      f.observe.mockResolvedValue({ elements: [field('a', 'one'), field('b', 'two')] });
+    if (kind === 'truncated' || kind === 'degraded')
+      f.observe.mockResolvedValue({
+        elements: [field('a', 'one'), field('b', 'two')],
+        url,
+        [kind]: true,
+      } as never);
+    if (kind === 'missing-later') f.replace([field('a', 'one')]);
+    if (kind === 'ambiguous-later')
+      f.replace([field('a', 'one'), field('b', 'two'), field('c', 'two')]);
+    if (kind === 'hidden-later')
+      f.replace([field('a', 'one'), { ...field('b', 'two'), visible: false }]);
+    if (kind === 'unsupported-later')
+      f.replace([
+        field('a', 'one'),
+        { ...field('b', 'two'), attributes: { ...field('b', 'two').attributes, type: 'password' } },
+      ]);
+    if (kind === 'duplicate-target') input.fields[1]!.match.block.id = 'one';
+    const report = await runAutofill(input, f);
+    expect(report.ok).toBe(false);
+    const fieldSpecific = [
+      'missing-later',
+      'ambiguous-later',
+      'hidden-later',
+      'unsupported-later',
+      'duplicate-target',
+    ].includes(kind);
+    expect(report.receipts.map((r) => r.status)).toEqual(
+      fieldSpecific ? ['not_attempted', 'failed'] : ['failed', 'not_attempted']
+    );
+    expect(report.receipts.every((r) => !r.verified)).toBe(true);
+    expect(f.act).not.toHaveBeenCalled();
+    expect(f.resolveValue).not.toHaveBeenCalled();
+    expect(f.snapshot).not.toHaveBeenCalled();
+  });
+  it.each([
+    'replacement',
+    'block-move',
+    'selector-drift',
+    'url-drift',
+    'hidden-later',
+    'disabled-later',
+  ])('stops after a first field changes the remaining mapped stage: %s', async (kind) => {
+    const f = scopedFixture();
+    f.act.mockImplementationOnce(async (_action, onDispatch) => {
+      onDispatch();
+      f.dispatch();
+      let next = field('b', 'two');
+      if (kind === 'hidden-later') next = { ...next, visible: false };
+      if (kind === 'disabled-later') next = { ...next, enabled: false };
+      if (kind === 'replacement') next = field('new', 'two');
+      if (kind === 'block-move') next = field('b', 'other');
+      if (kind === 'selector-drift') next = { ...next, name: 'Changed' };
+      f.replace([field('a', 'one', 'First'), next]);
+      if (kind === 'url-drift')
+        f.observe.mockResolvedValue({
+          elements: [field('a', 'one', 'First'), next],
+          url: `${url}4`,
+        } as never);
+    });
+    const report = await runAutofill(request(), f);
+    expect(f.dispatch).toHaveBeenCalledOnce();
+    expect(report.receipts.map((r) => r.status)).toEqual(['uncertain', 'not_attempted']);
+    expect(f.snapshot).not.toHaveBeenCalled();
+  });
+  it('rechecks scope after a private resolver changes the page, before writing', async () => {
+    const f = scopedFixture();
+    f.resolveValue.mockImplementationOnce(async (value) => {
+      f.replace([field('a', 'one'), field('replacement', 'two')]);
+      return value;
+    });
+    const report = await runAutofill(request(), f);
+    expect(report.ok).toBe(false);
+    expect(f.act).not.toHaveBeenCalled();
+  });
+});
+
+it('accepts scoped engine identity for a control outside any fieldset', async () => {
+  const f = fixture([field('a', '')]);
+  const read = f.observe.getMockImplementation()!;
+  const url = 'https://example.test/';
+  f.observe.mockImplementation(async () => ({ ...(await read()), url }));
+  const report = await runAutofill(
+    {
+      scope: { url },
+      fields: [{ match: { label: 'Company name' }, strategy: 'native-input', value: 'Top level' }],
+      policy: { settleMs: 0 },
+    },
+    f
+  );
+  expect(report.ok).toBe(true);
+  expect(f.dispatch).toHaveBeenCalledOnce();
+});
+it('never exports an artifact from stale scope after dispatch rejects before verification', async () => {
+  const f = fixture([field('a', 'one')]);
+  const url = 'https://example.test/';
+  f.observe.mockResolvedValue({ elements: [field('a', 'one')], url } as never);
+  f.act.mockImplementationOnce(async (_request, onDispatch) => {
+    onDispatch();
+    f.dispatch();
+    f.observe.mockResolvedValue({
+      elements: [field('a', 'one')],
+      url: 'https://other.test/',
+    } as never);
+    throw new Error('navigation after dispatch');
+  });
+  const report = await runAutofill(
+    {
+      scope: { url },
+      fields: [{ match: { label: 'Company name' }, strategy: 'native-input', value: 'x' }],
+    },
+    f
+  );
+  expect(report.receipts[0]?.status).toBe('uncertain');
+  expect(f.dispatch).toHaveBeenCalledOnce();
+  expect(f.snapshot).not.toHaveBeenCalled();
 });

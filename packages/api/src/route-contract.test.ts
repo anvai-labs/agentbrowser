@@ -16,7 +16,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildServer } from './server.js';
 
 const EXPECTED: Array<['GET' | 'POST' | 'PUT' | 'DELETE', string, AgentCapability | null]> = [
+  ['GET', '/v1/sessions/:sessionId/approvals/:tokenId', null],
+  ['POST', '/v1/sessions/:sessionId/approvals/:tokenId', null],
   ['POST', '/v1/sessions/:sessionId/application/execute', 'application.execute'],
+  ['POST', '/v1/sessions/:sessionId/application/reviews', null],
   ['GET', '/v1/sessions/:sessionId/application/receipts/:operationId', 'application.discover'],
   ['DELETE', '/v1/sessions/:sessionId/application', null],
   ['GET', '/v1/sessions/:sessionId/application', 'application.discover'],
@@ -119,6 +122,7 @@ describe('route contract metadata', () => {
       'DELETE /v1/sessions/:sessionId/application',
       'GET /v1/sessions/:sessionId/application',
       'POST /v1/sessions/:sessionId/application/execute',
+      'POST /v1/sessions/:sessionId/application/reviews',
       'GET /v1/sessions/:sessionId/application/receipts/:operationId',
       `DELETE ${DELETE_SESSION}`,
     ]);

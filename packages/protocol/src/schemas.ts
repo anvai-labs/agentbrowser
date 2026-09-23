@@ -8,6 +8,11 @@
 import { Static, Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import { DELIVERED_ACTION_TYPES, DELIVERED_WAIT_TYPES, REF_PATTERN } from './types.js';
+import {
+  UPLOAD_MIME_TYPE_MAX_LENGTH,
+  UPLOAD_MIME_TYPE_PATTERN,
+  UPLOAD_SHA256_PATTERN,
+} from './upload.js';
 
 // Re-export all types for convenience
 export * from './types.js';
@@ -76,6 +81,7 @@ export const EngineTypeSchema = Type.Union([
 ]);
 
 export const ApprovalPolicySchema = Type.Object({
+  review: Type.Optional(Type.Literal('operator')),
   transactions: Type.Optional(
     Type.Union([Type.Literal('allow'), Type.Literal('deny'), Type.Literal('required')])
   ),
@@ -347,12 +353,31 @@ export const SelectActionSchema = Type.Object({
   values: Type.Array(Type.String(), { minItems: 1 }),
 });
 
+const uploadIntegrityProperties = {
+  sha256: Type.Optional(
+    Type.String({
+      pattern: UPLOAD_SHA256_PATTERN,
+      description:
+        'Opt-in integrity check of exactly one service-host regular file, at most 16 MiB; the verified bytes are uploaded.',
+    })
+  ),
+  mimeType: Type.Optional(
+    Type.String({
+      pattern: UPLOAD_MIME_TYPE_PATTERN,
+      maxLength: UPLOAD_MIME_TYPE_MAX_LENGTH,
+      description:
+        'Upload metadata only; requires sha256. Defaults to application/octet-stream; does not validate content type.',
+    })
+  ),
+};
+
 export const UploadActionSchema = Type.Object({
   type: Type.Literal('upload'),
   // Optional: file inputs are hidden by design and get no ref from observe.
   // Without a target the engine requires exactly one file input on the page.
   target: Type.Optional(ElementTargetSchema),
   paths: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+  ...uploadIntegrityProperties,
 });
 
 export const ScrollActionSchema = Type.Object({
@@ -422,6 +447,7 @@ export const PlanStepSchema = Type.Object({
   value: Type.Optional(Type.String()),
   values: Type.Optional(Type.Array(Type.String(), { minItems: 1 })),
   paths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
+  ...uploadIntegrityProperties,
   deltaX: Type.Optional(Type.Number()),
   deltaY: Type.Optional(Type.Number()),
   key: Type.Optional(Type.String()),

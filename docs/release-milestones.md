@@ -1,17 +1,37 @@
 # Release milestones and acceptance gates
 
-## Current checkpoint: 1.9.1 candidate (2026-09-20)
+## Current candidate: 1.10.0 (2026-09-23)
 
-Published baseline remains **1.9.0**. T3 completed on develop through
+The owner authorized promotion after the LAN CIDR checkpoint (#275). Version
+1.10.0 is a minor release because the changes since 1.9.1 add public CLI/API
+capabilities. Scope and remaining limits are in the [changelog](../CHANGELOG.md).
+The [candidate evidence](spec/evidence/release-1.10.0.md) records validation.
+Release review also required narrow fixes for invalid API-key configuration and
+stored application-review authorization before promotion.
+
+This is release preparation, not publication evidence. Required sequence: reviewed
+release PR to develop, PR to protected main, verify the exact main tree and checks,
+annotated tag, release workflow, published artifact/npm verification, Homebrew tap
+PR and installation qualification, then synchronize main back into develop.
+OIDC, inbound CIDRs, durable recovery and unfinished use-case milestones are not
+implicitly completed by this release.
+
+## Delivered checkpoint: 1.9.1 published and installed (2026-09-20)
+
+Published baseline is **1.9.1**. T3 completed on develop through
 [PR 231](https://github.com/anvai-labs/agentbrowser/pull/231), followed by the bounded
 T6 widget commitment repair in [PR 232](https://github.com/anvai-labs/agentbrowser/pull/232)
 at `d510a56d5d69e0cc9afe17dc56d27a0a11987cff`; its eight
 [post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/35539537406)
 passed. The owner selected an earlier **1.9.1** delivery checkpoint for these changes,
-foundation alignment, the Node 24 baseline and CLI cookie-file handoff. Cookie-file
-qualification, final review, develop/main PRs, publication and tap delivery remain
-candidate gates until their exact evidence is recorded. A local version bump is not
-a release. See the [changelog](../CHANGELOG.md) and [T9](spec/tasks/t9-release-hardening.md).
+foundation alignment, the Node 24 baseline and CLI cookie-file handoff. The cookie and
+version checkpoint merged through [PR 233](https://github.com/anvai-labs/agentbrowser/pull/233),
+then [PR 234](https://github.com/anvai-labs/agentbrowser/pull/234) promoted develop to
+protected main at `310e01d43982824caac2c63ed8d98355e17efdce`. All eight main checks and
+all twelve release jobs passed on that exact tagged commit. Published artifacts, npm
+and the local Homebrew 1.9.0-to-1.9.1 upgrade passed their checks. See the
+[delivery evidence](spec/evidence/release-1.9.1.md) for exact identities, tap status,
+installed qualification and limits, and the [changelog](../CHANGELOG.md) for features.
 
 The [full job-application checkpoint](spec/design/t6-job-application-checkpoint.md)
 remains later work. This release does not close production verification/G6, durable

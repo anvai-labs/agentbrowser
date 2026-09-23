@@ -62,8 +62,25 @@ limited to 32 labels, 512 characters per label and 16,384 serialized characters;
 incomplete membership cannot verify a selection. Search input or menu text alone is
 not commitment. This is a named markup contract, not qualification of every React
 Select version or arbitrary chip widget. Removal, replacement and rollback remain
-unsupported. Option matching retains the existing first exact/prefix candidate;
-popup-scoped ambiguity handling and bounded async option polling remain follow-ups.
+unsupported. Custom option selection requires a unique visible exact label in the
+listbox owned by the intended combobox through unambiguous `aria-controls`/`aria-owns`
+evidence. Comparison trims surrounding whitespace but preserves case; there is no
+prefix or first-match fallback. Portaled lists may live outside the fieldset. Duplicate
+IDs/owners, duplicate exact options, lost focus and changed popup identity refuse the
+selection. The engine rechecks ownership immediately before dispatch; DOM checks and
+clicking are not atomic against hostile page scripts.
+
+After opening, focus must remain on the original control. The service types once,
+observes immediately and polls only pending popup/option readiness, using at most
+`maxReobserve` extra observations separated by `settleMs`. This readiness budget is
+separate from existing field-discovery/verification budgets and shares the same overall
+deadline. It never replays opening or typing. Missing or invalid engine popup-state
+metadata refuses the field before opening. A control without a current ARIA relation
+is pending: the strategy may open/type once into the uniquely matched, stable, focused
+control while waiting for a relation to appear. It cannot click an option until unique
+ownership is proven. Opening/typing may already have effects, so a later
+refusal is uncertain and stops the suffix. See the
+[owned-popup design](spec/design/t6-owned-popup-readiness.md) for the bounded contract.
 
 ## Co-design decisions and next qualification
 
@@ -77,3 +94,65 @@ popup-scoped ambiguity handling and bounded async option polling remain follow-u
 Local qualification includes repeated labels, fieldset reorder, moved/replaced nodes, native select verification, post-write normalization, cross-field invalidation, redaction collisions, human takeover, bounded display values and duplicate-operation refusal. A real Chromium fixture is driven through one actual stdio MCP call.
 
 Live acceptance remains: fill and verify CrowdStrike R29506 and Coinbase Core Automation in fewer than four minutes each with zero per-field agent calls. This requires the authorized target sessions/URLs and approved profile/field mapping, plus qualification of the widgets those live forms actually use. Autofill does not intentionally submit the form; custom strategies do click controls and options, and page handlers may independently commit effects.
+
+## Reusable mapping preparation (develop, after 1.9.1)
+
+Use `agentbrowser form prepare --help` and
+`agentbrowser describe form prepare --schema` for the offline mapping/private-value
+join. This command emits **private JSON**, not a report or proof of page applicability.
+It contacts no service. The existing autofill command remains the sole executor:
+
+```sh
+set -o pipefail
+agentbrowser form prepare @mapping.json @private-values.json |
+  agentbrowser --json --operation-id "$OPERATION_ID" autofill "$SESSION_ID" "$PAGE_ID" -
+```
+
+Use the existing token and unique operation-ID configuration required by the session.
+After a lost response, query operation status instead of rerunning the pipeline.
+Keep the values file and prepared output private; do not enable shell tracing or send
+output to shared logs. stdin may supply either preparation input, but not both.
+
+A minimal public mapping is:
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "employment",
+  "revision": "1",
+  "scope": { "url": "https://example.test/apply" },
+  "fields": [{
+    "match": { "label": "Company", "block": { "id": "current" } },
+    "strategy": "native-input",
+    "input": "value",
+    "valueKey": "company"
+  }]
+}
+```
+
+The separate values object is `{"company":"Example"}`. Keys must match the mapping
+exactly. Input kind is `value` for native-input and `option` for the three existing
+select strategies. All fields are required and verified exactly. The mapping cannot
+embed values, scripts, saved refs or a policy that skips failures. IDs/revisions are
+local provenance, not server authorization or a durable mapping registry.
+
+The materialized request carries optional `scope: {url}`. The service checks the
+exact canonical HTTP(S) URL, including query/fragment, and resolves every mapped field
+before private-reference resolution or writes. It rechecks all node/block identities,
+selectors and readiness on every observation. Reorder is allowed; replacement, drift,
+hidden/disabled controls, incomplete observations or unsupported widgets stop the stage.
+An uncertain write never replays. Initially conditional fields require a later stage.
+Existing requests without scope retain their previous behavior.
+
+The mapping budget is 128 KiB of string/key data, 2,000 nodes and depth 8; private values
+are limited to 50 keys, 8,192 UTF-16 units each and 512 KiB of string/key data. Prepared
+compact JSON plus its newline is limited to 1 MiB. Each CLI input also uses the existing
+1 MiB / 30-second EOF reader. Errors do not echo private values. These bounds do not
+make arbitrary in-process JavaScript proxies a security sandbox.
+
+Mapping URLs and labels must themselves be safe to share: never copy signed links,
+access tokens or applicant PII into them. Scope is a page constraint, not job/account
+identity, submission approval or atomic protection against hostile page scripts.
+This slice does not qualify arbitrary ATS sites, installed release binaries or recovery.
+See the [design](spec/design/t6-form-mapping.md) and
+[qualification evidence](spec/evidence/t6-form-mapping.md).

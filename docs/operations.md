@@ -31,6 +31,88 @@ page, revision, resolved target fingerprint and action parameters. This protocol
 records caller confirmation; it does not independently authenticate a human.
 Stale targets must be reobserved and require new confirmation.
 
+For explicit operator decisions, create an authenticated controlled session with
+`policy.approval.review: "operator"` (CLI: `session create --delegated --reviewed-approval`).
+This changes actions requiring approval; allowed actions remain allowed and policy
+denials still win. Pending-token echo cannot authorize a reviewed action. The
+operator must stay in human control for inspection, decision and execution.
+
+After an action reports `APPROVAL_REQUIRED`, use its token ID:
+
+```bash
+agentbrowser --json session approval "$SESSION" "$TOKEN"
+agentbrowser --operation-id decision-1 session approval-decide "$SESSION" "$TOKEN" --decision approve
+agentbrowser --operation-id execution-1 act --approval-token "$TOKEN" click "$SESSION" "$PAGE" "$REF"
+```
+
+`--json` inspection contains private action parameters; text output shows only
+token/status. Inspect before deciding. Use `--decision deny` to refuse a pending
+challenge or revoke an approved one. Used/denied/expired tokens cannot reapprove.
+Takeover, configuration changes and handoff invalidate old authority context;
+page/action drift is rechecked on execution. Inspection reports stored lifecycle
+state, not a guarantee that the page still matches or execution will succeed.
+
+Decision and execution use distinct operation IDs. After response loss, inspect
+`session operation` and current approval state; do not replay an uncertain action
+with a fresh ID. SDK replay reports `OPERATION_RECORDED`. Records are bounded and
+ephemeral; missing or stale records convey no permission.
+
+Vault references and actions containing registered secret data refuse reviewed
+approval. The review covers an action, not complete form answers, file bytes or
+the resulting network payload. This does not qualify application submission.
+Operator API keys confer operator authority even when held by software; keep them
+outside delegated harnesses. MCP is not required. See the
+[C1 design](spec/design/t6-operator-approval.md) for the bounded contract.
+
+### Reviewed application submission (develop candidate)
+
+For a trusted application embedding, discovery can declare a write operation with
+`review: "operator-submit"`. Its complete-payload review uses the same approval
+owner and execution authority. The host must configure an application adapter and
+an evidence-review provider that independently reconstructs the intended action;
+the default service does not register a submit operation or a production ATS source.
+
+The trusted host callback is `evidenceReviewProvider(request, context)`. Its frozen
+`context.nativeForm` is the existing admission-scoped native reader: use
+`context.nativeForm.read(signal)` inside the returned source's collector. It stays
+valid after provider return within that admission, but cannot be reused in a later
+request. Each review/inspection/decision/consumption gets a fresh context. Source
+permission and application witness qualification remain required; the reader exposes
+no service, browser page, cookies or execution authority. Existing one-argument
+providers remain compatible. See the [embedding packet](spec/design/t4-production-evidence-composition.md)
+for lifecycle and production configuration gates.
+
+Create a controlled session with reviewed approval and retain operator control.
+Prepare a private `review.json` containing `pageId`, a host-supplied `source` hint
+(`ownerId` and `contract: {id, version}`), and `request` with the planned `operation`,
+complete `input`, future `operationId` and `expectedVersion`. Discover the exact
+wire shape with `agentbrowser describe application review --schema`.
+
+```bash
+agentbrowser application review "$SESSION" @review.json
+agentbrowser --json session approval "$SESSION" "$TOKEN"
+agentbrowser --operation-id decision-1 session approval-decide "$SESSION" "$TOKEN" --decision approve
+agentbrowser --operation-id submit-1 application execute "$SESSION" submit @input.json --expected-version 2 --approval-token "$TOKEN"
+agentbrowser --json application receipt "$SESSION" submit-1
+```
+
+Use the exact operation ID, version and input reviewed in `review.json`; `input.json`
+contains only that request's input. Review creation also accepts stdin (`-`) through
+the common bounded JSON reader. Text output contains token/status only; explicit
+JSON inspection contains private answers and attachment metadata. Creation does not
+approve, dispatch, or reserve the future execution ID. It rejects global
+`--operation-id` because allocation is not idempotent: a lost creation response may
+leave a pending token until expiry, and an explicit new review creates a new token.
+
+Inspection, decision and execution recheck current owners and evidence permission.
+Changed answers, hidden values or file identity refuse the old consent. Execution
+reuses the original operation ID for status-only replay. A lost execution response
+remains unknown; a fresh authorized receipt can supply separate reconciliation
+evidence without repeating the submission. The named accepted-receipt verifier is
+currently qualified in the synthetic fixture, not installed as a general ATS verifier.
+See the [C3c design](spec/design/t6-public-application-review.md) and
+[qualification evidence](spec/evidence/t6-public-application-review.md).
+
 ## Installation
 
 ### Release version consistency
@@ -124,10 +206,11 @@ and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 
 | Variable | Who reads it | Meaning |
 | --- | --- | --- |
-| `AGENTBROWSER_API_KEYS` | service | Bearer auth for `/v1`, format `key:tenant[,key:tenant...]`. **Without it, `/v1` is unauthenticated** — the service logs a loud warning at startup. Each key maps to one tenant; sessions are isolated per tenant. |
+| `AGENTBROWSER_API_KEYS` | service | Bearer auth for `/v1`, format `key:tenant[,key:tenant...]`. **Without it, `/v1` is unauthenticated** — the service logs a loud warning at startup. Each key maps to one tenant; sessions are isolated per tenant. An explicitly empty, malformed or conflicting key list aborts startup; unset the variable for intentional trusted-local mode. |
 | `AGENTBROWSER_API_KEY` | MCP server, CLI | The bearer key sent to the service; CLI `--api-key` takes precedence. |
 | `AGENTBROWSER_BASE_URL` | MCP server | Service location; default `http://localhost:5709`. The CLI uses `--base-url`, not this variable. |
 | `AGENTBROWSER_LOG_LEVEL` | service | `debug` or `info` (default). Logs are structured JSON, scrubbed of registered secrets. |
+| `AGENTBROWSER_ALLOWED_CIDRS` | service entrypoint | Comma-separated operator private-IP exceptions, e.g. `192.168.1.89/32,fd12::/64`. Unset/blank: none. Invalid CIDRs or empty list entries abort startup; `/0` warns. Loopback, metadata and session host restrictions still apply. See [LAN CIDR policy](HANDOFF-LAN-CIDR-ALLOWLIST.md). |
 | `AGENTBROWSER_CHROME_PATH` | service (Playwright engine) | Explicit Chrome binary for headed sessions; wrapper scripts included ([ADR-013](adr/013-headed-sessions-and-walled-logins.md)). When set, branded-Chrome auto-detection is skipped — an existing path launches that exact binary, a missing path falls back to bundled Chromium ([ADR-016](adr/016-branded-chrome-first-headed-launches.md)). |
 | `AGENTBROWSER_PREFER_BUNDLED` | service (Playwright engine) | `1`/`true` skips branded-Chrome auto-detection for headed sessions — always launches bundled Chromium, for deterministic CI and test farms ([ADR-016](adr/016-branded-chrome-first-headed-launches.md)). An explicit `AGENTBROWSER_CHROME_PATH` still wins. |
 | `AGENTBROWSER_ARTIFACT_KEY` | service | Bearer key guarding artifact download URLs, when set. |

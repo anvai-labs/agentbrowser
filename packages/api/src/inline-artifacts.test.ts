@@ -88,8 +88,10 @@ describe('inline artifact payloads (F8)', () => {
       .catch((e: unknown) => e as { code: string; message: string });
     // The store's ceiling still bites (mapped to INTERNAL outside the
     // download path per the frozen taxonomy); F8 must not swallow or
-    // truncate it.
-    expect(error.message).toContain('maximum');
+    // truncate it. The raw store text is withheld at the engine boundary —
+    // the typed INTERNAL rejection is the contract.
+    expect(error.code).toBe('INTERNAL');
+    expect(error.message).toBe('An unexpected engine error occurred');
   });
 
   it('inlines pdf captures', async () => {

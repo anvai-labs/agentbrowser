@@ -16,6 +16,23 @@ export class EngineError extends Error {
 }
 
 const codes = new Set<string>(Object.values(ErrorCode));
+// Public navigation diagnostics are fixed transport codes, never adapter prose or URLs.
+const navigationDiagnostics = new Set([
+  'net::ERR_ABORTED',
+  'net::ERR_FAILED',
+  'net::ERR_CONNECTION_REFUSED',
+  'net::ERR_NAME_NOT_RESOLVED',
+  'net::ERR_CONNECTION_RESET',
+  'net::ERR_CONNECTION_TIMED_OUT',
+  'net::ERR_TIMED_OUT',
+  'net::ERR_INTERNET_DISCONNECTED',
+  'net::ERR_ADDRESS_UNREACHABLE',
+  'net::ERR_NETWORK_CHANGED',
+  'net::ERR_CERT_AUTHORITY_INVALID',
+  'net::ERR_CERT_COMMON_NAME_INVALID',
+  'net::ERR_CERT_DATE_INVALID',
+  'net::ERR_SSL_PROTOCOL_ERROR',
+]);
 
 /** One compatibility boundary for older adapters; typed codes always win. */
 export function normalizeEngineError(error: unknown, operation = 'act'): ApiErrorDetail {
@@ -56,9 +73,22 @@ export function normalizeEngineError(error: unknown, operation = 'act'): ApiErro
     // mistake (wrong ref type), not a server fault.
     code = ErrorCode.INVALID_REQUEST;
   }
+  const navigationDiagnostic =
+    operation === 'navigate' ? message.match(/\bnet::ERR_[A-Z0-9_]{1,80}\b/)?.[0] : undefined;
   return {
     code,
-    message: message === 'SESSION_NOT_FOUND' ? 'Session does not exist.' : message,
+    // INTERNAL is a server fault: the raw message (driver paths, topology,
+    // stack-adjacent detail) is classification input only and must not reach
+    // clients, where redact() cannot scrub unregistered values. Navigation
+    // retains only a recognized transport code, excluding surrounding text.
+    message:
+      message === 'SESSION_NOT_FOUND'
+        ? 'Session does not exist.'
+        : code === ErrorCode.INTERNAL
+          ? navigationDiagnostic && navigationDiagnostics.has(navigationDiagnostic)
+            ? navigationDiagnostic
+            : 'An unexpected engine error occurred'
+          : message,
     retryable: typeof candidate.retryable === 'boolean' ? candidate.retryable : false,
     ...(candidate.details !== null &&
     typeof candidate.details === 'object' &&

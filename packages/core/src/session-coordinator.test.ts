@@ -10,6 +10,7 @@ import type {
   EngineCapabilities,
   EngineSession,
   EngineSessionOptions,
+  RequestPolicy,
 } from '@agentbrowser/engine';
 import type { SessionRequest } from '@agentbrowser/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -85,6 +86,7 @@ describe('SessionCoordinator', () => {
       await vi.advanceTimersByTimeAsync(30);
       expect(context.signal.aborted).toBe(true);
       expect(context.signal.reason).toMatchObject({ code: 'SESSION_EXPIRED' });
+      expect(context.metadata.state).toBe(SessionState.EXPIRED);
     } finally {
       await owner.shutdown();
       vi.useRealTimers();
@@ -117,10 +119,12 @@ describe('SessionCoordinator', () => {
         }
         expect(context.signal.aborted).toBe(true);
         expect(close).toHaveBeenCalledTimes(1);
+        expect(context.metadata.state).toBe(context.state);
       } finally {
         finish();
         await completion;
         await owner.shutdown();
+        expect(context.metadata.state).toBe(context.state);
       }
     }
   );
@@ -333,6 +337,8 @@ describe('SessionCoordinator', () => {
 
       // Should be ACTIVE
       expect(session?.state).toBe(SessionState.ACTIVE);
+      expect(session?.metadata.state).toBe(SessionState.ACTIVE);
+      expect(coordinator.getAllSessions()[0]?.state).toBe(SessionState.ACTIVE);
     });
 
     it('should remain ACTIVE on subsequent activities', async () => {
@@ -388,6 +394,17 @@ describe('SessionCoordinator', () => {
 
       expect((engineSession as MockEngineSession).closed).toBe(true);
       expect((engineSession as MockEngineSession).closeReason).toBe('test');
+    });
+
+    it('keeps metadata synchronized when engine close fails', async () => {
+      const created = await coordinator.create({ engine: 'mock-engine' }, mockEngine);
+      const context = coordinator.get(created.sessionId);
+      if (!context) throw new Error('Missing session context');
+      vi.spyOn(context.engineSession, 'close').mockRejectedValueOnce(new Error('close failed'));
+      await expect(coordinator.close(created.sessionId)).rejects.toThrow('close failed');
+      expect(context.state).toBe(SessionState.ENGINE_CRASHED);
+      expect(context.metadata.state).toBe(SessionState.ENGINE_CRASHED);
+      expect(coordinator.getAllSessions()[0]?.state).toBe(SessionState.ENGINE_CRASHED);
     });
 
     it('should throw for non-existent session', async () => {
@@ -571,6 +588,33 @@ describe('SessionCoordinator', () => {
 
       await loggedCoordinator.shutdown();
     });
+
+    it('should stringify non-Error cleanup-close failures for the logger', async () => {
+      const lines: string[] = [];
+      const logger = new StructuredLogger({ sink: (line) => lines.push(line) });
+      const failingEngine = new MockEngine();
+      failingEngine.createSession = async () => {
+        const session = new MockEngineSession();
+        session.close = async () => {
+          throw 'close failed without an error object';
+        };
+        return session;
+      };
+      const loggedCoordinator = new SessionCoordinator({
+        defaultTtlMs: 50,
+        cleanupCheckIntervalMs: 30,
+        logger,
+      });
+
+      await loggedCoordinator.create({ engine: 'mock-engine' }, failingEngine);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(lines.some((line) => line.includes('close failed without an error object'))).toBe(
+        true
+      );
+
+      await loggedCoordinator.shutdown();
+    });
   });
 
   describe('engine integration', () => {
@@ -606,6 +650,148 @@ describe('SessionCoordinator', () => {
       expect(response.engine.name).toBe('mock-engine');
       expect(response.engine.version).toBe('1.0.0');
       expect(response.engine.capabilities).toBeDefined();
+    });
+
+    it('should forward timezone, egress policy, service-worker opt-out and snapshot budget to the engine', async () => {
+      // Each optional session-create field rides through to the engine
+      // untouched; dropping any of them would silently change engine behavior
+      // (locale-style regressions happened before with `cookies`).
+      const requestPolicy: RequestPolicy = {
+        checkRequest: async () => {},
+      };
+      const downloadPolicy = { allow: false, maxBytes: 0 };
+
+      await coordinator.create(
+        {
+          engine: 'mock-engine',
+          timezoneId: 'Europe/Berlin',
+          requestPolicy,
+          downloadPolicy,
+          allowServiceWorkers: true,
+          snapshotTimeoutMs: 20000,
+        },
+        mockEngine
+      );
+
+      expect(mockEngine.lastOptions).toMatchObject({
+        timezoneId: 'Europe/Berlin',
+        requestPolicy,
+        downloadPolicy,
+        allowServiceWorkers: true,
+        snapshotTimeoutMs: 20000,
+      });
+    });
+
+    it('should record the owning tenant on the session metadata when the request carries one', async () => {
+      await coordinator.create(
+        { engine: 'mock-engine', tenantId: 'tenant-a' } as SessionRequest,
+        mockEngine
+      );
+
+      expect(coordinator.getAllSessions()).toHaveLength(1);
+      expect(coordinator.getAllSessions()[0]?.tenantId).toBe('tenant-a');
+    });
+
+    it('should omit the tenant field when the request does not carry one', async () => {
+      await coordinator.create({ engine: 'mock-engine' }, mockEngine);
+
+      expect(coordinator.getAllSessions()[0]?.tenantId).toBeUndefined();
+    });
+
+    it('should omit passthrough options the request does not set', async () => {
+      await coordinator.create({ engine: 'mock-engine' }, mockEngine);
+
+      expect(mockEngine.lastOptions).toMatchObject({
+        headless: true,
+      });
+      expect(mockEngine.lastOptions?.timezoneId).toBeUndefined();
+      expect(mockEngine.lastOptions?.requestPolicy).toBeUndefined();
+      expect(mockEngine.lastOptions?.allowServiceWorkers).toBeUndefined();
+      expect(mockEngine.lastOptions?.snapshotTimeoutMs).toBeUndefined();
+    });
+  });
+
+  describe('cookie export', () => {
+    it('should return the engine session cookies for an existing session', async () => {
+      const created = await coordinator.create({ engine: 'mock-engine' }, mockEngine);
+      const context = coordinator.get(created.sessionId);
+      const engineCookies = [
+        {
+          name: 'session',
+          value: 'secret-value',
+          domain: 'app.example.com',
+          path: '/',
+          httpOnly: true,
+          secure: true,
+          sameSite: 'Lax' as const,
+        },
+      ];
+      vi.spyOn(context?.engineSession as MockEngineSession, 'cookies').mockResolvedValue(
+        engineCookies
+      );
+
+      await expect(coordinator.cookies(created.sessionId)).resolves.toEqual(engineCookies);
+    });
+
+    it('should reject a cookie export for an unknown session', async () => {
+      await expect(coordinator.cookies('ses_missing')).rejects.toThrow('SESSION_NOT_FOUND');
+    });
+  });
+
+  describe('engine failure handling', () => {
+    it('should mark the session ENGINE_CRASHED and rethrow when the engine close fails', async () => {
+      const created = await coordinator.create({ engine: 'mock-engine' }, mockEngine);
+      const context = coordinator.get(created.sessionId);
+      vi.spyOn(context?.engineSession as MockEngineSession, 'close').mockRejectedValue(
+        new Error('transport died')
+      );
+
+      await expect(coordinator.close(created.sessionId)).rejects.toThrow('transport died');
+      expect(context?.state).toBe(SessionState.ENGINE_CRASHED);
+      // A failed close keeps the (crashed) entry tracked rather than silently
+      // dropping the session from coordination.
+      expect(coordinator.getSessionCount()).toBe(1);
+    });
+
+    it('should terminate without surfacing an engine close failure', async () => {
+      const created = await coordinator.create({ engine: 'mock-engine' }, mockEngine);
+      const context = coordinator.get(created.sessionId);
+      vi.spyOn(context?.engineSession as MockEngineSession, 'close').mockRejectedValue(
+        new Error('engine already dead')
+      );
+
+      // A dead engine must not block abnormal cleanup.
+      await expect(
+        coordinator.terminate(created.sessionId, SessionState.POLICY_TERMINATED, 'egress violation')
+      ).resolves.toBeUndefined();
+      expect(coordinator.get(created.sessionId)).toBeUndefined();
+      // Non-crash terminations cancel consumers with the generic reason code.
+      expect(context?.signal.reason).toMatchObject({ code: 'SESSION_NOT_FOUND' });
+    });
+
+    it('should cancel consumers with ENGINE_CRASHED when terminating for a crash', async () => {
+      const created = await coordinator.create({ engine: 'mock-engine' }, mockEngine);
+      const context = coordinator.get(created.sessionId);
+
+      await coordinator.terminate(created.sessionId, SessionState.ENGINE_CRASHED, 'renderer gone');
+
+      expect(context?.signal.reason).toMatchObject({ code: 'ENGINE_CRASHED' });
+    });
+
+    it('should expire an idle session even while its ttl is still in the future', async () => {
+      const idleCoordinator = new SessionCoordinator({ cleanupCheckIntervalMs: 3_600_000 });
+      const created = await idleCoordinator.create(
+        { engine: 'mock-engine', ttlMs: 3_600_000, idleTimeoutMs: 30 },
+        mockEngine
+      );
+      const context = idleCoordinator.get(created.sessionId);
+
+      await new Promise((resolve) => setTimeout(resolve, 60));
+
+      expect(idleCoordinator.get(created.sessionId)).toBeUndefined();
+      expect(context?.signal.aborted).toBe(true);
+      expect(context?.signal.reason).toMatchObject({ code: 'SESSION_EXPIRED' });
+      await idleCoordinator.shutdown();
     });
   });
 });

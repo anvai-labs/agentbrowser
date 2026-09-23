@@ -17,6 +17,7 @@ import {
   ApplicationDiscoverySchema,
   ApplicationExecuteRequestSchema,
   ApplicationOperationResultSchema,
+  ApplicationReviewRequestSchema,
   ArtifactRefSchema,
   AutofillReportSchema,
   AutofillRequestSchema,
@@ -30,6 +31,8 @@ import {
   ObservationRequestSchema,
   OperationRecordSchema,
   OperationReplaySchema,
+  OperatorApprovalDecisionSchema,
+  OperatorApprovalViewSchema,
   OutcomeRunReportSchema,
   OutcomeRunRequestSchema,
   PageElementSchema,
@@ -87,6 +90,60 @@ const controlResponses = (schema: string) => ({
   '404': NOT_FOUND,
   '409': errorResponse('Session busy or review revoked. Do not blindly repeat a write.'),
 });
+const approvalPaths = {
+  '/v1/sessions/{sessionId}/approvals/{tokenId}': {
+    get: {
+      operationId: 'getOperatorApproval',
+      summary: 'Read a private operator action review',
+      tags: ['sessions'],
+      description:
+        'Requires an authenticated owning operator. Private action projection only; not full-form or file-content consent. Responses are not cached.',
+      parameters: [
+        sessionIdParam,
+        { name: 'tokenId', in: 'path', required: true, schema: { type: 'string' } },
+      ],
+      responses: {
+        '200': {
+          description: 'Private approval state.',
+          content: json(ref('OperatorApprovalView')),
+        },
+        '401': errorResponse('Authentication required.'),
+        '403': errorResponse('Owning operator required.'),
+        '404': NOT_FOUND,
+        '409': errorResponse('Session admission refused.'),
+      },
+    },
+    post: {
+      operationId: 'decideOperatorApproval',
+      summary: 'Approve or deny a reviewed action',
+      tags: ['sessions'],
+      description:
+        'Requires an authenticated owning operator and ordinary controlled-session admission. Repeated operation identities return the recorded outcome without repeating the decision.',
+      parameters: [
+        sessionIdParam,
+        { name: 'tokenId', in: 'path', required: true, schema: { type: 'string' } },
+        {
+          name: 'X-AgentBrowser-Operation-Id',
+          in: 'header',
+          required: true,
+          schema: { type: 'string' },
+        },
+      ],
+      requestBody: { required: true, content: json(ref('OperatorApprovalDecision')) },
+      responses: {
+        '200': {
+          description: 'Private approval state, or recorded operation replay.',
+          content: json({ oneOf: [ref('OperatorApprovalView'), ref('OperationReplay')] }),
+        },
+        '400': INVALID_REQUEST,
+        '401': errorResponse('Authentication required.'),
+        '403': errorResponse('Owning operator required.'),
+        '404': NOT_FOUND,
+        '409': errorResponse('Session admission or approval transition refused.'),
+      },
+    },
+  },
+};
 const controlPaths = {
   '/v1/sessions/{sessionId}/control': {
     get: {
@@ -228,6 +285,29 @@ const applicationPaths = {
       },
     },
   },
+  '/v1/sessions/{sessionId}/application/reviews': {
+    post: {
+      operationId: 'applicationReview',
+      tags: ['sessions'],
+      summary: 'Operator: create a pending complete application review without executing it',
+      description:
+        'Requires trusted evidence configuration. Source selectors are lookup hints, not permission. ' +
+        'Creation allocates a pending expiring token and is not idempotent; a lost response may leave a pending token. ' +
+        'The future execution ID belongs in the body request. Execution operation headers are rejected. ' +
+        'The response contains private reviewed data; use a private output destination.',
+      parameters: [sessionIdParam],
+      requestBody: { required: true, content: json(ref('ApplicationReviewRequest')) },
+      responses: {
+        ...controlResponses('OperatorApprovalView'),
+        '200': {
+          description: 'Pending private operator review',
+          content: json(ref('OperatorApprovalView')),
+        },
+        '400': INVALID_REQUEST,
+        '500': INTERNAL,
+      },
+    },
+  },
   '/v1/sessions/{sessionId}/application/execute': {
     post: {
       operationId: 'executeApplication',
@@ -300,6 +380,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
     ],
     paths: {
       ...controlPaths,
+      ...approvalPaths,
       ...applicationPaths,
       '/openapi.json': {
         get: {
@@ -1260,11 +1341,14 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         ControlView: ControlViewSchema,
         ControlReview: ControlReviewSchema,
         ControlGrant: ControlGrantSchema,
+        OperatorApprovalDecision: OperatorApprovalDecisionSchema,
+        OperatorApprovalView: OperatorApprovalViewSchema,
         OperationRecord: OperationRecordSchema,
         OperationReplay: OperationReplaySchema,
         ApplicationBinding: ApplicationBindingSchema,
         ApplicationDiscovery: ApplicationDiscoverySchema,
         ApplicationExecuteRequest: ApplicationExecuteRequestSchema,
+        ApplicationReviewRequest: ApplicationReviewRequestSchema,
         ApplicationOperationResult: ApplicationOperationResultSchema,
         ApiError: ApiErrorSchema,
         ApiErrorDetail: ApiErrorDetailSchema,
@@ -1326,8 +1410,8 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             result: {
               description:
                 'Evidence payload, present only for actions that produce one. ' +
-                'upload reports the attached files: {success, files:[{name,size}], inputFiles?:[names]} ' +
-                '(files from the validated local paths, inputFiles read back from the live input).',
+                'upload reports the attached files: {success, files:[{name,size,sha256?}], inputFiles?:[names]} ' +
+                '(checked uploads report the digest of the bytes supplied; legacy metadata comes from validated service-host paths; inputFiles is read from the live input).',
             },
           },
         },

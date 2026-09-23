@@ -19,8 +19,30 @@ export const AutofillMatchSchema = Type.Object(
   },
   { ...strict, minProperties: 1 }
 );
+export const AutofillScopeSchema = Type.Object(
+  { url: Type.String({ minLength: 1, maxLength: 2048 }) },
+  strict
+);
+
+/** Exact, canonical page scope; never credentials or a URL-pattern authority grant. */
+export function validateAutofillScope(scope: Static<typeof AutofillScopeSchema>): void {
+  try {
+    const url = new URL(scope.url);
+    if (
+      !['http:', 'https:'].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.href !== scope.url
+    )
+      throw new Error();
+  } catch {
+    throw new Error('Autofill scope requires an exact canonical HTTP(S) URL without credentials');
+  }
+}
+
 export const AutofillRequestSchema = Type.Object(
   {
+    scope: Type.Optional(AutofillScopeSchema),
     fields: Type.Array(
       Type.Object(
         {
@@ -135,6 +157,17 @@ export function parseAutofillRequest(input: unknown): AutofillRequest {
     );
   // Copy before any await so a trusted caller cannot change later fields mid-batch.
   const request = structuredClone(input);
+  if (request.scope) {
+    validateAutofillScope(request.scope);
+    if (
+      request.fields.some((field) => field.verify === 'none' || field.strategy === undefined) ||
+      request.policy?.onAmbiguous === 'skip' ||
+      request.policy?.onVerifyFail === 'skip'
+    )
+      throw new Error(
+        'Scoped autofill requires explicit strategies, exact verification and cannot skip failures'
+      );
+  }
   for (const field of request.fields) {
     if ((field.value === undefined) === (field.option === undefined))
       throw new Error('Each autofill field requires exactly one of value or option.value');

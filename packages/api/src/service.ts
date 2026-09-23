@@ -16,11 +16,27 @@ import { SessionAuthority } from './session-authority.js';
 import {
   type ApplicationAdapter,
   ApplicationAuthority,
+  type ApplicationReadEvidenceSourceOptions,
   type ApplicationReceiptEvidenceSourceOptions,
+  type ApplicationRequest,
+  type ApplicationReviewSelector,
+  type EvidenceReviewSelector,
+  type EvidenceReviewSource,
+  NATIVE_FORM_REVIEW_TYPE,
+  type PreparedApplicationConsent,
+  type PreparedApplicationOperationReview,
+  type PreparedEvidenceReview,
   TrustedEvidenceSourceRegistry,
   type TrustedVerifierRegistry,
+  captureEvidenceReviewSource,
+  defineApplicationReadEvidenceSource,
   defineApplicationReceiptEvidenceSource,
+  prepareEvidenceReview,
   runVerifiedOutcome,
+  selectApplicationReview,
+  selectEvidenceReview,
+  snapshotAuthorizationInput,
+  synchronousResult,
 } from '@agentbrowser/control';
 import {
   ActionExecutor,
@@ -32,13 +48,20 @@ import {
   SessionCoordinator,
   SessionState,
   budgetObservation,
+  canonicalJson,
 } from '@agentbrowser/core';
-import type { ArtifactMetadata, SessionContext } from '@agentbrowser/core';
+import type { ApprovalReviewBinding, ArtifactMetadata, SessionContext } from '@agentbrowser/core';
 import type { InMemoryTracer, Span } from '@agentbrowser/core';
 import type { MetricsRegistry } from '@agentbrowser/core';
 import type { StructuredLogger } from '@agentbrowser/core';
 import { ActionRiskPolicy, type ActionRiskPolicyOptions } from '@agentbrowser/core';
-import type { BrowserEngine, EngineEvent, EnginePage } from '@agentbrowser/engine';
+import {
+  type BrowserEngine,
+  type EngineEvent,
+  type EnginePage,
+  type NativeFormEvidence,
+  parseNativeFormEvidence,
+} from '@agentbrowser/engine';
 import type { EngineSession, EngineSessionOptions, NormalizedCookie } from '@agentbrowser/engine';
 import type { RawPageState } from '@agentbrowser/engine';
 import type { RequestPolicy } from '@agentbrowser/engine';
@@ -54,10 +77,11 @@ import {
   extractTables,
   extractVisibleText,
 } from '@agentbrowser/extraction';
-import { NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
+import { type NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
 import type {
   ArtifactRef,
   ObservationRequest,
+  OperatorApprovalView,
   OutcomeRunReport,
   OutcomeRunRequest,
   PageElement,
@@ -72,12 +96,15 @@ import {
   DELIVERED_WAIT_TYPES,
   type DeliveredExtractFormat,
   REF_PATTERN,
+  VERIFICATION_SNAPSHOT_LIMITS,
   createOutcomeRunReportParser,
   decodeWireAction,
   parseOutcomeRunRequest,
   parseRef,
+  snapshotJsonData,
   validateApplicationBinding,
   validateApplicationExecute,
+  validateApplicationReview,
 } from '@agentbrowser/protocol';
 import { runAutofill } from './autofill.js';
 import {
@@ -85,6 +112,7 @@ import {
   DownloadTransport,
   type DownloadTransportOptions,
 } from './download-transport.js';
+import { createDefaultNetworkPolicy } from './network-policy-config.js';
 import type { SessionPrincipal } from './session-authority.js';
 
 /** Typed failure carrying a protocol error code. */
@@ -183,6 +211,9 @@ export interface ServiceActRequest {
   /** Native-field comparison after one fill; no write replay. */
   expectValue?: string | undefined;
   values?: string[] | undefined;
+  paths?: string[] | undefined;
+  sha256?: string | undefined;
+  mimeType?: string | undefined;
   deltaX?: number | undefined;
   deltaY?: number | undefined;
   key?: string | undefined;
@@ -254,6 +285,26 @@ export interface ServiceBatchActResult {
   error?: { code: string; message: string } | undefined;
 }
 
+/** Public-safe identity passed to trusted evidence-review composition. */
+export interface ServiceEvidenceReviewRequest {
+  readonly application?: ApplicationReviewSelector;
+  readonly identity: Readonly<{
+    tenant: string;
+    sessionId: string;
+    sessionIncarnation: string;
+    pageId: string;
+  }>;
+  readonly source: Readonly<{
+    ownerId: string;
+    contract: Readonly<{ id: string; version: string }>;
+  }>;
+}
+
+/** Trusted host observation scoped to the current review admission, never client supplied. */
+export interface ServiceEvidenceReviewContext {
+  readonly nativeForm: PreparedNativeFormRead;
+}
+
 export interface ServiceDependencies {
   approvalPolicy?: ActionRiskPolicyOptions;
   engine: BrowserEngine;
@@ -310,6 +361,14 @@ export interface ServiceDependencies {
    * objects, so an externally built authority could never see them.
    */
   applicationAdapters?: readonly ApplicationAdapter[];
+  /**
+   * Synchronous trusted deployment composition for public evidence reviews.
+   * The returned collector may use context.nativeForm within this admission only.
+   */
+  evidenceReviewProvider?: (
+    request: ServiceEvidenceReviewRequest,
+    context: ServiceEvidenceReviewContext
+  ) => { action: Record<string, unknown>; source: EvidenceReviewSource } | undefined;
 }
 
 /** Minimum context exposed to a trusted evidence adapter. */
@@ -325,6 +384,20 @@ export interface ServiceEvidenceSourceBuilder {
   applicationReceipt(
     config: ApplicationReceiptEvidenceSourceOptions
   ): ReturnType<typeof defineApplicationReceiptEvidenceSource<ServiceOutcomeEvidenceContext>>;
+  applicationRead(
+    config: ApplicationReadEvidenceSourceOptions
+  ): ReturnType<typeof defineApplicationReadEvidenceSource<ServiceOutcomeEvidenceContext>>;
+}
+
+/** Admission-owned reader for a bounded native form witness. */
+export interface PreparedNativeFormRead {
+  readonly identity: Readonly<{
+    sessionId: string;
+    pageId: string;
+    sessionIncarnation: string;
+  }>;
+  assertAuthority(): void;
+  read(signal?: AbortSignal): Promise<NativeFormEvidence>;
 }
 
 interface PageContext {
@@ -399,6 +472,7 @@ export class AgentBrowserService {
   private readonly evidenceSourceRegistry:
     | TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>
     | undefined;
+  private readonly evidenceReviewProvider: ServiceDependencies['evidenceReviewProvider'];
   /** Per-session download policy, captured at creation (denying by default). */
   private readonly sessionDownloadPolicy = new Map<
     string,
@@ -425,12 +499,16 @@ export class AgentBrowserService {
   private sweepTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(deps: ServiceDependencies) {
-    const { evidenceSourceRegistry, evidenceSourceRegistryProvider } = deps;
+    const { evidenceReviewProvider, evidenceSourceRegistry, evidenceSourceRegistryProvider } = deps;
+    if (evidenceReviewProvider !== undefined && typeof evidenceReviewProvider !== 'function')
+      throw new Error('Invalid evidence review provider');
+    this.evidenceReviewProvider = evidenceReviewProvider;
     if (evidenceSourceRegistry !== undefined && evidenceSourceRegistryProvider !== undefined)
       throw new Error('Evidence source registry and provider are mutually exclusive');
     this.applicationAuthority = new ApplicationAuthority(
       this.authority,
-      deps.applicationAdapters ?? []
+      deps.applicationAdapters ?? [],
+      { consentPolicy: (review, tokenId) => this.prepareApplicationConsent(review, tokenId) }
     );
     if (evidenceSourceRegistryProvider !== undefined) {
       if (typeof evidenceSourceRegistryProvider !== 'function')
@@ -439,6 +517,11 @@ export class AgentBrowserService {
       const sources: ServiceEvidenceSourceBuilder = Object.freeze({
         applicationReceipt: (config: ApplicationReceiptEvidenceSourceOptions) =>
           defineApplicationReceiptEvidenceSource<ServiceOutcomeEvidenceContext>(
+            applicationAuthority,
+            config
+          ),
+        applicationRead: (config: ApplicationReadEvidenceSourceOptions) =>
+          defineApplicationReadEvidenceSource<ServiceOutcomeEvidenceContext>(
             applicationAuthority,
             config
           ),
@@ -481,9 +564,7 @@ export class AgentBrowserService {
     this.executor = deps.executor ?? new ActionExecutor(this.normalizer);
     // SSRF defenses are on by default (ADR-006): loopback, private ranges and
     // cloud metadata endpoints are blocked unless a policy is injected.
-    this.networkPolicy =
-      deps.networkPolicy ??
-      new NetworkPolicy({ blockLoopback: true, blockPrivateIPs: true, blockMetadata: true });
+    this.networkPolicy = deps.networkPolicy ?? createDefaultNetworkPolicy();
     this.approvalGate =
       deps.approvalGate ??
       new ApprovalGate({
@@ -1012,6 +1093,13 @@ export class AgentBrowserService {
 
   async createSession(input: ServiceSessionRequest): Promise<ServiceSessionView> {
     const request = { ...input, ...(input.approval ? { approval: { ...input.approval } } : {}) };
+    if (
+      request.approval?.review !== undefined &&
+      (request.approval.review !== 'operator' ||
+        request.controlMode !== 'delegated' ||
+        !request.tenantId)
+    )
+      throw new ServiceError('INVALID_REQUEST', 'Operator review requires a controlled session');
     // Validate tenant ID format (lightweight security)
     this.validateTenantId(request.tenantId);
 
@@ -1225,6 +1313,39 @@ export class AgentBrowserService {
     );
   }
 
+  /** Shared document source selection and crash recovery for extraction/export. */
+  private async readPageSource(
+    sessionId: string,
+    pageId: string,
+    operation: 'extract' | 'exportHtml',
+    needsElements = false
+  ): Promise<RawPageState> {
+    const page = this.requirePage(sessionId, pageId);
+    this.coordinator.updateActivity(sessionId);
+    try {
+      const readDocument = needsElements ? undefined : page.enginePage.readDocument;
+      if (readDocument) {
+        const document = await readDocument.call(page.enginePage);
+        return { ...document, status: 'interactive', elements: [] };
+      }
+      return await page.enginePage.observe({});
+    } catch (error) {
+      if (this.isCrash(error)) {
+        const errorDetail = this.secretManager.redact(
+          error instanceof Error ? error.message : String(error)
+        );
+        await this.recoverFromCrash(sessionId, `${operation}: engine crashed`, errorDetail);
+        throw new ServiceError(
+          'ENGINE_CRASHED',
+          'The browser engine crashed; the session has been terminated.',
+          false,
+          { sessionId, errorDetail }
+        );
+      }
+      throw error;
+    }
+  }
+
   /**
    * A3 evidence: capture the page's current HTML as an artifact. Raw HTML
    * is NOT secret-scrubbed - typed-in form values ride it verbatim - so
@@ -1233,26 +1354,7 @@ export class AgentBrowserService {
    */
   async exportHtml(sessionId: string, pageId: string): Promise<ArtifactMetadata> {
     return this.traced('html.export', { sessionId, pageId }, async () => {
-      const page = this.requirePage(sessionId, pageId);
-      this.coordinator.updateActivity(sessionId);
-      let raw: Awaited<ReturnType<EnginePage['observe']>>;
-      try {
-        raw = await page.enginePage.observe({});
-      } catch (error) {
-        if (this.isCrash(error)) {
-          const errorDetail = this.secretManager.redact(
-            error instanceof Error ? error.message : String(error)
-          );
-          await this.recoverFromCrash(sessionId, 'exportHtml: engine crashed', errorDetail);
-          throw new ServiceError(
-            'ENGINE_CRASHED',
-            'The browser engine crashed; the session has been terminated.',
-            false,
-            { sessionId, errorDetail }
-          );
-        }
-        throw error;
-      }
+      const raw = await this.readPageSource(sessionId, pageId, 'exportHtml');
       const html = raw.content ?? '';
       const metadata = this.putArtifact(
         sessionId,
@@ -1290,8 +1392,13 @@ export class AgentBrowserService {
     const engine = this.engines.get(name);
     if (engine === undefined) {
       const registered = ['auto', this.engine.name, ...this.engines.keys()].join(', ');
-      throw new Error(
-        `ENGINE_NOT_FOUND: no engine registered as "${name}". Registered: ${registered}`
+      // Service-authored diagnostics: thrown as a protocol error so the
+      // deliberate message survives (a plain Error would be normalized to
+      // withheld INTERNAL prose).
+      throw new ServiceError(
+        'TARGET_NOT_FOUND',
+        `ENGINE_NOT_FOUND: no engine registered as "${name}". Registered: ${registered}`,
+        false
       );
     }
     return engine;
@@ -1641,6 +1748,201 @@ export class AgentBrowserService {
     }
   }
 
+  /**
+   * Prepare an admission-owned native-form read without exposing the page,
+   * engine callback or authority scope to its consumer. This is an internal
+   * composition seam; no public route grants it independently.
+   */
+  prepareNativeFormReadInScope(sessionId: string, pageId: string): PreparedNativeFormRead {
+    const session = this.requireSession(sessionId);
+    const page = this.requirePage(sessionId, pageId);
+    const enginePage = page.enginePage;
+    const guard = this.authority.outputGuard(sessionId);
+    const admission = this.authority.admissionInScope(sessionId);
+    const sessionIncarnation = this.authority.sessionIncarnation(sessionId);
+    const ownerSignal = this.authority.signal(sessionId);
+    let revoked: unknown;
+
+    const assertOwner = () => {
+      if (revoked !== undefined) throw revoked;
+      try {
+        guard();
+        if (this.authority.admissionInScope(sessionId) !== admission)
+          throw new ServiceError('CONTROL_REVOKED', 'Native form read admission changed.');
+        if (
+          this.authority.sessionIncarnation(sessionId) !== sessionIncarnation ||
+          this.coordinator.get(sessionId) !== session ||
+          this.pages.get(pageId) !== page ||
+          page.sessionId !== sessionId ||
+          page.enginePage !== enginePage ||
+          ownerSignal.aborted
+        )
+          throw new ServiceError('CONTROL_REVOKED', 'Native form read owner changed.');
+      } catch (error) {
+        revoked = error;
+        throw error;
+      }
+    };
+    const assertRead = (signal?: AbortSignal) => {
+      assertOwner();
+      if (signal?.aborted)
+        throw new ServiceError('CONTROL_REVOKED', 'Native form read was cancelled.');
+    };
+
+    let capture: EnginePage['captureNativeForm'];
+    try {
+      capture = enginePage.captureNativeForm;
+    } catch {
+      assertOwner();
+      throw new ServiceError('ENGINE_UNSUPPORTED', 'Native form evidence capture is unavailable.');
+    }
+    assertOwner();
+    if (typeof capture !== 'function')
+      throw new ServiceError('ENGINE_UNSUPPORTED', 'Native form evidence capture is unavailable.');
+    const captureNativeForm = capture;
+    const identity = Object.freeze({ sessionId, pageId, sessionIncarnation });
+
+    return Object.freeze({
+      identity,
+      assertAuthority: () => assertOwner(),
+      read: async (signal?: AbortSignal) => {
+        assertRead(signal);
+        const combinedSignal = signal ? AbortSignal.any([ownerSignal, signal]) : ownerSignal;
+        return await this.authority.trackReadInScope(sessionId, async () => {
+          assertRead(signal);
+          let captured: unknown;
+          try {
+            captured = await Reflect.apply(captureNativeForm, enginePage, [
+              { signal: combinedSignal },
+            ]);
+          } catch {
+            assertOwner();
+            if (signal?.aborted)
+              throw new ServiceError('CONTROL_REVOKED', 'Native form read was cancelled.');
+            throw new ServiceError('ENGINE_UNSUPPORTED', 'Native form evidence capture failed.');
+          }
+          assertRead(signal);
+          let detached: NativeFormEvidence;
+          try {
+            detached = parseNativeFormEvidence(captured);
+          } catch {
+            assertOwner();
+            if (signal?.aborted)
+              throw new ServiceError('CONTROL_REVOKED', 'Native form read was cancelled.');
+            throw new ServiceError(
+              'ENGINE_UNSUPPORTED',
+              'Native form evidence capture returned invalid data.'
+            );
+          }
+          assertRead(signal);
+          return detached;
+        });
+      },
+    });
+  }
+
+  /** Internal native-form qualification; consuming this review never dispatches an action. */
+  prepareEvidenceReviewInScope(
+    sessionId: string,
+    pageId: string,
+    options: { action: Record<string, unknown>; source: EvidenceReviewSource }
+  ): PreparedEvidenceReview {
+    return this.prepareBoundEvidenceReview(sessionId, pageId, options);
+  }
+
+  /** Internal C3b composition only; public review creation remains a separate gate. */
+  prepareApplicationSubmissionReviewInScope(
+    sessionId: string,
+    pageId: string,
+    request: ApplicationRequest,
+    source: EvidenceReviewSource
+  ): PreparedEvidenceReview {
+    const review = this.applicationAuthority.prepareOperationReviewInScope(sessionId, request);
+    return this.prepareBoundEvidenceReview(
+      sessionId,
+      pageId,
+      { action: review.action, source },
+      review.assertCurrent
+    );
+  }
+
+  private prepareBoundEvidenceReview(
+    sessionId: string,
+    pageId: string,
+    options: { action: Readonly<Record<string, unknown>>; source: EvidenceReviewSource },
+    assertApplication?: () => void
+  ): PreparedEvidenceReview {
+    try {
+      const context = this.reviewContext(sessionId);
+      const contextKey = canonicalJson(context);
+      const action = JSON.parse(
+        canonicalJson(snapshotJsonData(options.action, VERIFICATION_SNAPSHOT_LIMITS))
+      ) as Record<string, unknown>;
+      // Reuse the existing page/admission owner, without performing another native read.
+      const page = this.prepareNativeFormReadInScope(sessionId, pageId);
+      const assertAuthority = () => {
+        assertApplication?.();
+        page.assertAuthority();
+        if (canonicalJson(this.reviewContext(sessionId)) !== contextKey)
+          throw new ServiceError('CONTROL_REVOKED', 'Review authority changed.');
+      };
+      return prepareEvidenceReview({
+        gate: this.approvalGate,
+        context,
+        pageId,
+        action,
+        source: options.source,
+        assertAuthority,
+        assertDisclosureSafe: (value) => this.assertReviewDisclosureSafe(value),
+        trackRead: (read) => this.authority.trackReadInScope(sessionId, read),
+        lifecycleSignal: this.authority.signal(sessionId),
+      });
+    } catch {
+      throw new ServiceError('INVALID_REQUEST', 'Evidence review unavailable');
+    }
+  }
+
+  private prepareApplicationConsent(
+    review: PreparedApplicationOperationReview,
+    tokenId: string
+  ): PreparedApplicationConsent {
+    const sessionId = review.sessionId;
+    const context = this.reviewContext(sessionId);
+    const signal = this.authority.signal(sessionId);
+    let prepared: PreparedEvidenceReview | undefined;
+    let assertPinned: (() => void) | undefined;
+    let attempted = false;
+    let consumed = false;
+    return Object.freeze({
+      consume: async () => {
+        if (attempted) throw new ServiceError('CONTROL_REQUIRED', 'Submission consent unavailable');
+        attempted = true;
+        review.assertCurrent();
+        const resolved = await this.resolveApproval(sessionId, tokenId, review);
+        this.assertReviewContext(sessionId, context);
+        review.assertCurrent();
+        if (!resolved.prepared || !resolved.assertPinned)
+          throw new ServiceError('CONTROL_REQUIRED', 'Submission consent unavailable');
+        prepared = resolved.prepared;
+        assertPinned = resolved.assertPinned;
+        const result = await prepared.consume(tokenId, signal);
+        this.assertReviewContext(sessionId, context);
+        review.assertCurrent();
+        consumed = result === true;
+        return consumed;
+      },
+      assertCurrent: () => {
+        if (!consumed || !prepared || !assertPinned)
+          throw new ServiceError('CONTROL_REQUIRED', 'Submission consent unavailable');
+        this.assertReviewContext(sessionId, context);
+        review.assertCurrent();
+        prepared.assertCurrent(signal);
+        assertPinned();
+        this.assertReviewContext(sessionId, context);
+      },
+    });
+  }
+
   // ------------------------------------------------------------------
   // Application surface (shared-infra slice 2): thin wrappers around the
   // composed ApplicationAuthority. Every method demands a principal from
@@ -1683,6 +1985,54 @@ export class AgentBrowserService {
     principal: SessionPrincipal
   ): Promise<Awaited<ReturnType<ApplicationAuthority['discover']>>> {
     return this.applicationAuthority.discover(sessionId, principal);
+  }
+
+  /** Allocate one pending review; no execution identity is reserved or dispatched. */
+  async applicationReview(
+    sessionId: string,
+    principal: SessionPrincipal,
+    input: unknown
+  ): Promise<OperatorApprovalView> {
+    if (principal.actor !== 'operator')
+      throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+    const validated = validateApplicationReview(input);
+    if (!validated.ok)
+      throw new ServiceError('INVALID_REQUEST', 'Invalid application review request');
+    const body = validated.value;
+    const result = await this.authority.run(sessionId, principal, {}, async () => {
+      const context = this.reviewContext(sessionId);
+      const originalPage = this.prepareNativeFormReadInScope(sessionId, body.pageId);
+      const intent = this.applicationAuthority.prepareOperationReviewInScope(
+        sessionId,
+        body.request
+      );
+      const assertIntent = () => {
+        intent.assertCurrent();
+        originalPage.assertAuthority();
+        this.assertReviewContext(sessionId, context);
+      };
+      assertIntent();
+      const application = selectApplicationReview(intent.action);
+      if (!application) throw new ServiceError('INVALID_REQUEST', 'Application review unavailable');
+      const { prepared, assertPinned } = this.prepareConfiguredEvidenceReview(
+        sessionId,
+        context,
+        { pageId: body.pageId, source: body.source, application },
+        intent.action,
+        assertIntent
+      );
+      const view = await prepared.generate(this.authority.signal(sessionId));
+      assertPinned();
+      // Application callbacks run before the final evidence generation check.
+      // Finish with captured-owner checks that cannot call host authorization again.
+      prepared.assertCurrent(this.authority.signal(sessionId));
+      intent.assertPinned();
+      originalPage.assertAuthority();
+      this.assertReviewContext(sessionId, context);
+      return view;
+    });
+    if ('replay' in result) throw new ServiceError('INTERNAL', 'Application review unavailable');
+    return result;
   }
 
   /** Dispatch one application operation. Writes require operation ID + expected version. */
@@ -1884,8 +2234,10 @@ export class AgentBrowserService {
       }
     }
 
-    this.assertAuthority(sessionId, true);
-    const rawPage = await session.engineSession.newPage();
+    const create = () => session.engineSession.newPage();
+    const rawPage = await (this.controlledContexts.has(session)
+      ? this.authority.dispatchInScope(sessionId, create)
+      : create());
     if (session.signal.aborted) {
       await rawPage.close().catch(() => {});
       throw new ServiceError('SESSION_NOT_FOUND', 'Session ended during page creation');
@@ -2287,9 +2639,19 @@ export class AgentBrowserService {
   private async actWithDispatchObserver(
     sessionId: string,
     pageId: string,
-    request: ServiceActRequest,
+    input: ServiceActRequest,
     onDispatch?: () => void
   ): Promise<ServiceActResult | ServiceBatchActResult> {
+    // Reviewed consent and dispatch must share one detached request across all
+    // awaits, including nested target/values/paths. Legacy input semantics stay intact.
+    let request = input;
+    if (this.sessionApprovalPolicies.get(sessionId)?.review === 'operator') {
+      try {
+        request = JSON.parse(canonicalJson(input)) as ServiceActRequest;
+      } catch {
+        throw new ServiceError('INVALID_REQUEST', 'Reviewed actions require bounded JSON data');
+      }
+    }
     return this.traced('act', { sessionId, pageId, action: request.action }, async (span) => {
       const page = this.requirePage(sessionId, pageId);
       this.coordinator.updateActivity(sessionId);
@@ -3096,27 +3458,13 @@ export class AgentBrowserService {
     }
   ): Promise<import('@agentbrowser/engine').ExtractionResult> {
     return this.traced('extract', { sessionId, pageId, format: request.format }, async () => {
+      const raw = await this.readPageSource(
+        sessionId,
+        pageId,
+        'extract',
+        request.format === 'forms'
+      );
       const page = this.requirePage(sessionId, pageId);
-      this.coordinator.updateActivity(sessionId);
-
-      let raw: RawPageState;
-      try {
-        raw = await page.enginePage.observe({});
-      } catch (error) {
-        if (this.isCrash(error)) {
-          const errorDetail = this.secretManager.redact(
-            error instanceof Error ? error.message : String(error)
-          );
-          await this.recoverFromCrash(sessionId, 'extract: engine crashed', errorDetail);
-          throw new ServiceError(
-            'ENGINE_CRASHED',
-            'The browser engine crashed; the session has been terminated.',
-            false,
-            { sessionId, errorDetail }
-          );
-        }
-        throw error;
-      }
 
       // Evidence attests to the service's revision of the page.
       const sourced: RawPageState = {
@@ -3376,9 +3724,9 @@ export class AgentBrowserService {
 
   // ---- internals ----------------------------------------------------------
 
-  private assertAuthority(sessionId: string, dispatch = false): void {
+  private assertAuthority(sessionId: string): void {
     const context = this.requireSession(sessionId);
-    if (this.controlledContexts.has(context)) this.authority.assert(sessionId, dispatch);
+    if (this.controlledContexts.has(context)) this.authority.assert(sessionId);
   }
 
   private guardPage(sessionId: string, page: EnginePage): EnginePage {
@@ -3409,6 +3757,230 @@ export class AgentBrowserService {
   }
 
   /** Gate high-risk elements behind single-use approval tokens (ADR-007). */
+  private reviewContext(sessionId: string) {
+    if (this.sessionApprovalPolicies.get(sessionId)?.review !== 'operator')
+      throw new ServiceError('INVALID_REQUEST', 'Session does not use operator-reviewed approval');
+    return this.authority.reviewBindingInScope(sessionId);
+  }
+
+  private assertReviewContext(sessionId: string, expected: ApprovalReviewBinding): void {
+    if (canonicalJson(this.reviewContext(sessionId)) !== canonicalJson(expected))
+      throw new ServiceError('CONTROL_REVOKED', 'Review authority changed.');
+  }
+
+  /** Only call on bounded, detached owner data, never caller objects or callbacks. */
+  private assertReviewDisclosureSafe(value: unknown): void {
+    if (JSON.stringify(this.secretManager.redactUntrusted(value)) !== JSON.stringify(value))
+      throw new ServiceError(
+        'POLICY_DENIED',
+        'Operator review of registered secret data is not supported'
+      );
+  }
+
+  /** Resolve a stored review without exposing its private action or witness to configuration. */
+  private async resolveApproval(
+    sessionId: string,
+    tokenId: string,
+    intendedReview?: PreparedApplicationOperationReview
+  ) {
+    const context = this.reviewContext(sessionId);
+    const current = await this.approvalGate.getReviewedApproval(tokenId, context);
+    this.authority.assert(sessionId);
+    if (!current) throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
+    if (current.action.type !== NATIVE_FORM_REVIEW_TYPE) {
+      if (intendedReview) throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
+      return {
+        context,
+        current,
+        prepared: undefined,
+        assertPinned: undefined,
+        application: undefined,
+      };
+    }
+
+    const selector = selectEvidenceReview(current.action);
+    if (!selector) throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
+    let application = intendedReview;
+    try {
+      if (selector.application) {
+        // selectEvidenceReview validated this complete gate-owned action. Its
+        // private input stays here; the provider receives only routing identity.
+        const action = (current.action.parameters as { action: Readonly<Record<string, unknown>> })
+          .action;
+        application ??= this.applicationAuthority.prepareOperationReviewInScope(sessionId, {
+          operation: selector.application.operation,
+          operationId: selector.application.operationId,
+          expectedVersion: selector.application.expectedVersion,
+          input: action.input,
+        });
+        application.assertCurrent();
+        if (canonicalJson(application.action) !== canonicalJson(action))
+          throw new Error('Application review changed');
+      } else if (application) {
+        throw new Error('Expected application review');
+      }
+    } catch {
+      throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
+    }
+    return {
+      context,
+      current,
+      application,
+      ...this.prepareConfiguredEvidenceReview(
+        sessionId,
+        context,
+        selector,
+        application?.action,
+        application?.assertCurrent
+      ),
+    };
+  }
+
+  /** One provider capture/composition path for creation and stored review resolution. */
+  private prepareConfiguredEvidenceReview(
+    sessionId: string,
+    context: ApprovalReviewBinding,
+    selector: EvidenceReviewSelector,
+    expectedAction?: Readonly<Record<string, unknown>>,
+    assertApplication?: () => void
+  ): { prepared: PreparedEvidenceReview; assertPinned: () => void } {
+    let assertPinned: (() => void) | undefined;
+    try {
+      const provider = this.evidenceReviewProvider;
+      if (!provider) throw new Error('Unavailable provider');
+      const page = this.prepareNativeFormReadInScope(sessionId, selector.pageId);
+      assertPinned = () => {
+        assertApplication?.();
+        page.assertAuthority();
+        this.assertReviewContext(sessionId, context);
+      };
+      assertPinned();
+      if (
+        page.identity.sessionId !== sessionId ||
+        page.identity.pageId !== selector.pageId ||
+        page.identity.sessionIncarnation !== context.sessionIncarnation
+      )
+        throw new Error('Unavailable review page');
+      const request = snapshotAuthorizationInput({
+        identity: {
+          tenant: context.tenant,
+          sessionId,
+          sessionIncarnation: context.sessionIncarnation,
+          pageId: selector.pageId,
+        },
+        source: selector.source,
+        ...(selector.application ? { application: selector.application } : {}),
+      }) as ServiceEvidenceReviewRequest;
+      assertPinned();
+      const readContext: ServiceEvidenceReviewContext = Object.freeze({ nativeForm: page });
+      const configured = synchronousResult(
+        Reflect.apply(provider, undefined, [request, readContext])
+      );
+      assertPinned();
+      if (!configured || typeof configured !== 'object' || Array.isArray(configured))
+        throw new Error('Unavailable provider result');
+      const own = Object.getOwnPropertyDescriptors(configured);
+      if (
+        Object.getPrototypeOf(configured) !== Object.prototype ||
+        Reflect.ownKeys(own).some((key) => key !== 'action' && key !== 'source') ||
+        !own.action ||
+        !Object.hasOwn(own.action, 'value') ||
+        !own.action.enumerable ||
+        !own.source ||
+        !Object.hasOwn(own.source, 'value') ||
+        !own.source.enumerable
+      )
+        throw new Error('Unavailable provider result');
+      const action = snapshotAuthorizationInput(own.action.value);
+      if (!action || typeof action !== 'object' || Array.isArray(action))
+        throw new Error('Unavailable provider action');
+      if (expectedAction && canonicalJson(action) !== canonicalJson(expectedAction))
+        throw new Error('Approval does not match intended application operation');
+      const source = captureEvidenceReviewSource(own.source.value);
+      assertPinned();
+      if (
+        canonicalJson({ ownerId: source.ownerId, contract: source.contract }) !==
+        canonicalJson(request.source)
+      )
+        throw new Error('Unavailable source identity');
+      const prepared = this.prepareBoundEvidenceReview(
+        sessionId,
+        selector.pageId,
+        { action: action as Record<string, unknown>, source },
+        assertPinned
+      );
+      assertPinned();
+      return { prepared, assertPinned };
+    } catch {
+      try {
+        assertPinned?.();
+      } catch {
+        /* Keep source and callback diagnostics private. */
+      }
+      throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
+    }
+  }
+
+  /** Private action projection; only admitted operators may inspect reviewed challenges. */
+  async getApproval(
+    sessionId: string,
+    tokenId: string
+  ): Promise<import('@agentbrowser/protocol').OperatorApprovalView> {
+    const resolved = await this.resolveApproval(sessionId, tokenId);
+    this.assertReviewContext(sessionId, resolved.context);
+    if (resolved.prepared) {
+      try {
+        const result = await resolved.prepared.get(tokenId, this.authority.signal(sessionId));
+        if (result) {
+          resolved.application?.assertPinned();
+          return result;
+        }
+      } catch {
+        // Source permission and authority failures are indistinguishable from absence.
+      }
+      throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
+    }
+    this.assertReviewDisclosureSafe(resolved.current);
+    return resolved.current;
+  }
+
+  async decideApproval(
+    sessionId: string,
+    tokenId: string,
+    decision: 'approve' | 'deny'
+  ): Promise<import('@agentbrowser/protocol').OperatorApprovalView> {
+    const resolved = await this.resolveApproval(sessionId, tokenId);
+    this.assertReviewContext(sessionId, resolved.context);
+    if (resolved.prepared) {
+      try {
+        const result = await resolved.prepared.decide(
+          tokenId,
+          decision,
+          this.authority.signal(sessionId)
+        );
+        if (result) {
+          resolved.application?.assertPinned();
+          return result;
+        }
+      } catch {
+        // Source permission and authority failures are indistinguishable from absence.
+      }
+      throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
+    }
+    // A legacy decision must not approve data that the operator cannot safely inspect.
+    this.assertReviewDisclosureSafe(resolved.current);
+    const result = await this.approvalGate.decideReviewedApproval(
+      tokenId,
+      resolved.context,
+      decision
+    );
+    this.authority.assert(sessionId);
+    if (!result)
+      throw new ServiceError('NOT_FOUND', 'Current approval cannot accept that decision');
+    this.assertReviewDisclosureSafe(result);
+    return result;
+  }
+
   private async checkApproval(
     sessionId: string,
     pageId: string,
@@ -3458,13 +4030,52 @@ export class AgentBrowserService {
       },
     };
 
+    if (this.sessionApprovalPolicies.get(sessionId)?.review === 'operator') {
+      const context = this.reviewContext(sessionId);
+      // A mutable vault reference is not a value witness, and review must not expose
+      // vault plaintext. Qualify this separately before supporting reviewed secrets.
+      if (request.value !== undefined && this.secretManager.isReference(request.value))
+        throw new ServiceError(
+          'POLICY_DENIED',
+          'Operator-reviewed vault references are not supported'
+        );
+      const reviewedRequest = JSON.parse(canonicalJson(approvalRequest)) as typeof approvalRequest;
+      this.assertReviewDisclosureSafe(reviewedRequest);
+      if (
+        request.approvalToken !== undefined &&
+        (await this.approvalGate.consumeReviewedApproval(
+          request.approvalToken,
+          reviewedRequest,
+          context
+        ))
+      ) {
+        this.authority.assert(sessionId);
+        if (span)
+          this.tracer?.addEvent(span, 'approval.granted', {
+            effect: risk,
+            ref,
+            review: 'operator',
+          });
+        return;
+      }
+      const token = await this.approvalGate.generateReviewedApproval(reviewedRequest, context);
+      this.authority.assert(sessionId);
+      if (span)
+        this.tracer?.addEvent(span, 'approval.required', { effect: risk, ref, review: 'operator' });
+      throw new ServiceError(
+        'APPROVAL_REQUIRED',
+        'Action requires an explicit operator decision.',
+        false,
+        { tokenId: token.tokenId, effect: risk, ref, review: 'operator' }
+      );
+    }
+
     if (request.approvalToken !== undefined) {
-      const valid = await this.approvalGate.validateApprovalToken(
+      const consumed = await this.approvalGate.consumeApprovalToken(
         request.approvalToken,
         approvalRequest
       );
-      if (valid) {
-        await this.approvalGate.useApprovalToken(request.approvalToken);
+      if (consumed) {
         if (span) {
           this.tracer?.addEvent(span, 'approval.granted', { effect: risk, ref });
         }

@@ -26,10 +26,15 @@ import {
   AGENT_MODE_IDS,
   ApplicationExecuteRequestSchema,
   ApplicationOperationResultSchema,
+  ApplicationReviewRequestSchema,
   AutofillReportSchema,
   AutofillRequestSchema,
   DELIVERED_EXTRACT_FORMATS,
+  FormMappingSchema,
+  FormValuesSchema,
   INTERACTION_GUIDANCE,
+  OperatorApprovalDecisionSchema,
+  OperatorApprovalViewSchema,
   OutcomeRunReportSchema,
   OutcomeRunRequestSchema,
   PlanActionsSchema,
@@ -44,10 +49,14 @@ import {
   formatErrorForUser,
   isAgentMode,
   isPassingOutcome,
+  materializeAutofillMapping,
   parseAutofillReport,
   parseAutofillRequest,
+  parseOperatorApprovalView,
   parseOutcomeRunRequest,
   parsePlanSteps,
+  validateApplicationReview,
+  validateOperatorApprovalDecision,
   validateWireAction,
 } from '@agentbrowser/sdk-typescript';
 import { Command, type Option } from 'commander';
@@ -94,9 +103,12 @@ export interface CliClient
         | 'prepareResume'
         | 'delegate'
         | 'operation'
+        | 'approval'
+        | 'decideApproval'
         | 'applicationBind'
         | 'applicationUnbind'
         | 'applicationDiscover'
+        | 'applicationReview'
         | 'applicationExecute'
         | 'applicationReceipt'
       >
@@ -214,6 +226,9 @@ export function buildCli(deps: CliDependencies): Cli {
                 : {}),
             }),
             json: Boolean(globals.json),
+            ...(act.opts().approvalToken
+              ? { approvalToken: String(act.opts().approvalToken) }
+              : {}),
             ...(globals.operationId ? { operationId: globals.operationId as string } : {}),
             out: deps.out,
             emit: (value: unknown, render: () => string[]) => {
@@ -299,11 +314,57 @@ export function buildCli(deps: CliDependencies): Cli {
           })
         );
 
+      const approvalRead = session
+        .command('approval <sessionId> <tokenId>')
+        .description(
+          'read operator approval status; --json includes private action/evidence data when configured: use a private output destination'
+        )
+        .action(
+          action(async (ctx, sessionId: string, tokenId: string) => {
+            if (!ctx.client.sessions.approval)
+              throw new UsageError('Client does not support operator approval');
+            const view = parseOperatorApprovalView(
+              await ctx.client.sessions.approval(sessionId, tokenId)
+            );
+            ctx.emit(view, () => [`${view.tokenId}: ${view.status}`]);
+          })
+        );
+      advertiseWireSchema(approvalRead, {
+        input: { type: 'object', properties: {}, additionalProperties: false },
+        output: OperatorApprovalViewSchema,
+      });
+      const approvalDecide = session
+        .command('approval-decide <sessionId> <tokenId>')
+        .description(
+          'approve or deny the stored review; qualified evidence requires service configuration; does not submit'
+        )
+        .requiredOption('--decision <decision>', 'approve or deny')
+        .action(
+          action(async (ctx, sessionId: string, tokenId: string, options: { decision: string }) => {
+            const checked = validateOperatorApprovalDecision({ decision: options.decision });
+            if (!checked.ok) throw new UsageError('Approval decision must be approve or deny');
+            if (!ctx.client.sessions.decideApproval)
+              throw new UsageError('Client does not support operator approval');
+            const view = parseOperatorApprovalView(
+              await ctx.client.sessions.decideApproval(sessionId, tokenId, checked.value.decision)
+            );
+            ctx.emit(view, () => [`${view.tokenId}: ${view.status}`]);
+          })
+        );
+      advertiseWireSchema(approvalDecide, {
+        input: OperatorApprovalDecisionSchema,
+        output: OperatorApprovalViewSchema,
+      });
+
       const sessionCreate = session
         .command('create')
         .description('create a new session')
         .requiredOption('--tenant <id>', 'tenant identifier')
         .option('--delegated', 'require explicit human review and revocable agent authority')
+        .option(
+          '--reviewed-approval',
+          'require independent operator approval of challenged actions; requires --delegated'
+        )
         .option('--engine <name>', 'engine to use')
         .option('--headless', 'run headless (the server default; explicit)')
         .option(
@@ -358,6 +419,8 @@ export function buildCli(deps: CliDependencies): Cli {
         .action(
           action(async (ctx, options: Record<string, string | boolean | undefined>) => {
             const request: SessionRequest = { tenantId: String(options.tenant) };
+            if (options.reviewedApproval && !options.delegated)
+              throw new UsageError('--reviewed-approval requires --delegated');
             if (options.delegated) request.controlMode = 'delegated';
 
             if (options.engine) {
@@ -422,6 +485,7 @@ export function buildCli(deps: CliDependencies): Cli {
             // (the server maps them onto the session); any combination is
             // restrict-only over the SSRF base.
             const policy: Record<string, unknown> = {};
+            if (options.reviewedApproval) policy.approval = { review: 'operator' };
             if (options.allowDownloads !== undefined) {
               policy.allowDownloads = Boolean(options.allowDownloads);
             }
@@ -610,12 +674,40 @@ export function buildCli(deps: CliDependencies): Cli {
               return [
                 `Adapter ${discovery.adapter} bound to ${discovery.resource}`,
                 ...discovery.operations.map(
-                  (operation) => `  ${operation.mode.padEnd(5)} ${operation.name}`
+                  (operation) =>
+                    `  ${operation.mode.padEnd(5)} ${operation.name}${operation.review ? ` (review: ${operation.review})` : ''}`
                 ),
               ];
             });
           })
         );
+      const applicationReview = application
+        .command('review <sessionId> <reviewJson>')
+        .description(
+          'create a pending operator review from inline JSON, @file or stdin (-); future operationId belongs in request. Creation is not idempotent; no automatic retry after a lost response. --json contains private reviewed data: use a private output destination'
+        )
+        .action(
+          action(async (ctx, sessionId: string, reviewJson: string) => {
+            if (ctx.operationId !== undefined)
+              throw new UsageError(
+                'Review creation refuses --operation-id; put the future operationId inside request.'
+              );
+            if (!ctx.client.sessions.applicationReview)
+              throw new UsageError('Client does not support application review');
+            const checked = validateApplicationReview(
+              await readCommandJson(applicationReview, reviewJson, 'application review')
+            );
+            if (!checked.ok) throw new UsageError('Invalid application review request');
+            const view = parseOperatorApprovalView(
+              await ctx.client.sessions.applicationReview(sessionId, checked.value)
+            );
+            ctx.emit(view, () => [`${view.tokenId}: ${view.status}`]);
+          })
+        );
+      advertiseWireSchema(applicationReview, {
+        input: ApplicationReviewRequestSchema,
+        output: OperatorApprovalViewSchema,
+      });
       const applicationExecute = application
         .command('execute <sessionId> <operation> [inputJson]')
         .description(
@@ -625,6 +717,10 @@ export function buildCli(deps: CliDependencies): Cli {
             'for read operations - reads refuse a write identity'
         )
         .option('--expected-version <n>', 'business version for optimistic writes')
+        .option(
+          '--approval-token <token>',
+          'consume existing operator consent for this exact operation; does not grant approval'
+        )
         .action(
           action(
             async (
@@ -632,7 +728,7 @@ export function buildCli(deps: CliDependencies): Cli {
               sessionId: string,
               operation: string,
               inputJson: string | undefined,
-              options: { expectedVersion?: string }
+              options: { expectedVersion?: string; approvalToken?: string }
             ) => {
               if (!ctx.client.sessions.applicationExecute)
                 throw new UsageError('Client does not support the application surface');
@@ -651,6 +747,9 @@ export function buildCli(deps: CliDependencies): Cli {
                 input,
                 ...(ctx.operationId !== undefined ? { operationId: ctx.operationId } : {}),
                 ...(expectedVersion !== undefined ? { expectedVersion } : {}),
+                ...(options.approvalToken !== undefined
+                  ? { approvalToken: options.approvalToken }
+                  : {}),
               });
               const lines =
                 'replay' in result
@@ -1015,7 +1114,13 @@ export function buildCli(deps: CliDependencies): Cli {
       });
 
       // ---- act -------------------------------------------------------------
-      const act = program.command('act').description(INTERACTION_GUIDANCE.action);
+      const act = program
+        .command('act')
+        .description(INTERACTION_GUIDANCE.action)
+        .option(
+          '--approval-token <token>',
+          'consume a previously approved action token; does not grant approval'
+        );
 
       act
         .command('click')
@@ -1077,7 +1182,17 @@ export function buildCli(deps: CliDependencies): Cli {
 
       act
         .command('upload')
-        .description('attach local file(s) to a file input (ref optional when the page has one)')
+        .description(
+          'attach service-host file(s) to a file input (ref optional when the page has one)'
+        )
+        .option(
+          '--sha256 <digest>',
+          'verify and upload the same bytes: one regular file, at most 16 MiB, lowercase SHA-256'
+        )
+        .option(
+          '--mime-type <type>',
+          'MIME metadata for checked upload; requires --sha256 (default application/octet-stream)'
+        )
         .argument('<sessionId>')
         .argument('<pageId>')
         .argument(
@@ -1086,7 +1201,7 @@ export function buildCli(deps: CliDependencies): Cli {
         )
         .argument(
           '[paths...]',
-          "absolute local file path(s); they replace the input's current files"
+          "absolute service-host file path(s); they replace the input's current files"
         )
         .action(
           action(
@@ -1095,7 +1210,8 @@ export function buildCli(deps: CliDependencies): Cli {
               sessionId: string,
               pageId: string,
               refArg: string | undefined,
-              pathsArg: string[]
+              pathsArg: string[],
+              options: { sha256?: string; mimeType?: string }
             ) => {
               // commander fills the optional [ref] before the variadic paths,
               // so untargeted invocations parse their first path into the ref
@@ -1116,6 +1232,8 @@ export function buildCli(deps: CliDependencies): Cli {
                 action: 'upload',
                 ...(ref ? { target: refTarget(ref) } : {}),
                 paths,
+                ...(options.sha256 !== undefined ? { sha256: options.sha256 } : {}),
+                ...(options.mimeType !== undefined ? { mimeType: options.mimeType } : {}),
               });
             }
           )
@@ -1568,10 +1686,53 @@ export function buildCli(deps: CliDependencies): Cli {
           })
         );
 
+      const form = program.command('form').description('prepare reusable form mappings offline');
+      const prepareForm = form
+        .command('prepare')
+        .description(
+          'materialize a mapping and private values into one autofill JSON payload, offline. Each input accepts inline JSON, @file, or - for stdin; at most 1 MiB per input and stdin EOF within 30 seconds. Output contains private values: pipe it directly to autofill or capture it in a private file.'
+        )
+        .argument('<mappingJson>', 'reusable mapping JSON: inline, @file, or -')
+        .argument('<valuesJson>', 'private values JSON: inline, @file, or -')
+        .addHelpText(
+          'after',
+          '\nEmits the prepared payload as JSON in every output mode. Preparation does not contact the service, inspect a page, or verify a form. Mapping URLs and labels must be safe to share; do not place private data or access tokens in them. Use stdin for at most one input. --operation-id is unused.'
+        )
+        .action(async (mappingJson: string, valuesJson: string) => {
+          // Offline: action() would construct a client and read credentials.
+          try {
+            if (mappingJson === '-' && valuesJson === '-') {
+              throw new UsageError('Stdin can be used only once per command.');
+            }
+            const mapping = await readCommandJson(prepareForm, mappingJson, 'form mapping');
+            const values = await readCommandJson(prepareForm, valuesJson, 'form values');
+            let prepared: AutofillRequest;
+            try {
+              prepared = materializeAutofillMapping(mapping, values);
+            } catch (error) {
+              // The canonical materializer owns static, value-free diagnostics.
+              throw new UsageError((error as Error).message);
+            }
+            deps.out(JSON.stringify(prepared));
+          } catch (error) {
+            exitCode = 1;
+            deps.err(formatError(error));
+          }
+        });
+      advertiseWireSchema(prepareForm, {
+        input: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['mapping', 'values'],
+          properties: { mapping: FormMappingSchema, values: FormValuesSchema },
+        },
+        output: AutofillRequestSchema,
+      });
+
       const autofill = program
         .command('autofill')
         .description(
-          'bulk-fill form fields from one structured payload (inline JSON, @file, or - for stdin). At most 1 MiB per input; stdin EOF within 30 seconds. The server resolves, fills, and verifies each field serially and returns per-field receipts. A failed report exits 1; inspect receipts for verification.'
+          'bulk-fill form fields from one structured payload (inline JSON, @file, or - for stdin). At most 1 MiB per input; stdin EOF within 30 seconds. The server resolves, fills, and verifies each field serially and returns per-field receipts. Optional scope.url preflights and pins a complete stage; use form prepare for reusable mappings. A failed report exits 1; inspect receipts for verification.'
         )
         .argument('<sessionId>')
         .argument('<pageId>')
@@ -1691,6 +1852,8 @@ export function buildCli(deps: CliDependencies): Cli {
               downloadIdOrFilename: string,
               options: { out?: string }
             ) => {
+              // Commander may parse this shared option on the parent download command.
+              const output = options.out ?? download.opts().out;
               const artifact = await ctx.client.sessions.collectDownload(
                 sessionId,
                 pageId,
@@ -1700,8 +1863,8 @@ export function buildCli(deps: CliDependencies): Cli {
                 `Download ${artifact.artifactId}`,
                 `  bytes: ${artifact.sizeBytes}`,
               ]);
-              if (options.out) {
-                const saved = await saveArtifactBytes(ctx, sessionId, artifact, options.out);
+              if (output) {
+                const saved = await saveArtifactBytes(ctx, sessionId, artifact, output);
                 ctx.emit({ saved: saved.path, sizeBytes: saved.sizeBytes }, () => [
                   `Saved ${artifact.artifactId} to ${saved.path} (${saved.sizeBytes} bytes)`,
                 ]);
@@ -1854,6 +2017,7 @@ export function buildCli(deps: CliDependencies): Cli {
 interface CommandContext {
   client: CliClient;
   json: boolean;
+  approvalToken?: string;
   /** The global reconciliation operation ID; the application execute write identity. */
   operationId?: string;
   out(line: string): void;
@@ -1883,7 +2047,11 @@ async function runAction(
   pageId: string,
   input: unknown
 ): Promise<void> {
-  const validated = validateWireAction(input);
+  const validated = validateWireAction(
+    ctx.approvalToken && input && typeof input === 'object'
+      ? { ...input, approvalToken: ctx.approvalToken }
+      : input
+  );
   if (!validated.ok)
     throw new UsageError(
       `Invalid action: ${validated.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; ')}`
@@ -1989,6 +2157,24 @@ function renderObservation(observation: ObservationResponse): string[] {
 }
 
 function formatError(error: unknown): string {
+  if (error instanceof Error) {
+    const approval = error as Error & {
+      code?: string;
+      details?: { tokenId?: unknown; review?: unknown };
+    };
+    const tokenId = approval.details?.tokenId;
+    if (
+      approval.code === 'APPROVAL_REQUIRED' &&
+      typeof tokenId === 'string' &&
+      /^[A-Za-z0-9_-]{1,128}$/.test(tokenId)
+    ) {
+      const guidance =
+        approval.details?.review === 'operator'
+          ? 'Inspect with session approval, then decide with session approval-decide.'
+          : 'For legacy confirmation, review the action and repeat it with act --approval-token.';
+      return `${formatErrorForUser(error)}\nApproval token: ${tokenId}\n${guidance}`;
+    }
+  }
   return formatErrorForUser(
     error,
     'The element ref is stale. Run observe again to get fresh refs at the current revision, then act on the new ref. Do not retry the old one.'

@@ -39,8 +39,10 @@ export function classifyIPAddress(input: string) {
   // The browser policy port also receives URL hostnames such as [::1].
   // Brackets never make sense for IPv4 or resolver-owned transport records.
   if (!family || (bracketed && family !== 6)) return undefined;
-  const type = family === 4 ? 'ipv4' : 'ipv6';
+  const type: 'ipv4' | 'ipv6' = family === 4 ? 'ipv4' : 'ipv6';
   return {
+    address,
+    type,
     loopback: loopback.check(address, type),
     privateIP: privateIPs.check(address, type),
     metadata: metadata.check(address, type),

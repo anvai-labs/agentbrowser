@@ -13,7 +13,7 @@ current user scope and the [task protocol](tasks/README.md).
 | Native bulk forms | 1.8.19 native, react-select and chip-multiselect strategies, scoped identities and readback | Broader widget/cross-engine and transfer/deadline qualification |
 | Application-only path | Typed authority plus bounded authenticated REST/SDK/CLI surface released in 1.8.20 | Production receipt-predicate qualification and binding UX, independent UI/API parity and durable receipt recovery |
 | Agent surfaces | CLI and SDK are first-class HTTP clients; stdio MCP remains optional with 13 unbound/12 delegated tools | Generated profiles, typed results and qualified context reduction |
-| QA | T3 complete on develop through #231: application-owned CLI recipe, native JUnit/private evidence and standalone/cost qualification | General provisioning, artifact API/HTML only if justified, and T9 automatic impact selection |
+| QA | T3 complete through #231, released in 1.9.1: application-owned CLI recipe, native JUnit/private evidence and standalone/cost qualification | General provisioning, artifact API/HTML only if justified, and T9 automatic impact selection |
 | Security | Policy and known engine limitations | Scoped external scanner adapters after enforcement qualification |
 | Memory | Ephemeral bounded control state; artifact store | Optional journal and explicit mode-scoped context lifecycle |
 
@@ -23,7 +23,7 @@ current user scope and the [task protocol](tasks/README.md).
 | --- | --- | --- |
 | Discovery and profiles | T0 released; T1 local loader, profiles and run cursor released | Installed harness consumes and preserves profile/cursor semantics |
 | Shared outcomes | T2 is complete; 1.9.0 includes REST/SDK/CLI outcome, correlation, admitted receipt drain, permission composition and controlled G4 CLI/service qualification | Qualify production UI-caused evidence and G6 under T4; durable recovery under T5 |
-| Bulk forms | Named react-select and chip-multiselect strategies released in 1.8.19 | Broader widgets, reusable mappings and cross-engine commitment evidence |
+| Bulk forms | Named react-select and chip-multiselect strategies released in 1.8.19 | Bounded mapping/preflight now available on develop; multi-stage/live and cross-engine qualification remain |
 | Application parity | First T4 public-interface slice released in 1.8.20 by PR #201: application bind, discovery, execute and receipt operations over REST, SDK and CLI | Qualify the scoped receipt predicate in a production fixture, binding UX, independent UI/API parity and T5 durable restart receipts |
 | QA and durable runs | T3 complete through #231: 13-case foundation, offline CLI evaluation, native JUnit/private links and standalone application-owned recipe; Node 24 qualification with Node 22 compatibility | General provisioning and justified report adapters remain separate; durable recovery stays under T5 |
 | Audit, appsec and bounty | Mode contracts and profiles exist; no scanner/product vertical | T3 now permits audit task context; appsec/bounty still require T4 and qualified scope enforcement |
@@ -58,8 +58,15 @@ alignment baseline and resolved guard follow-ups. T3's
 [application-owned recipe](design/t3-application-recipe.md), private report links and
 live JUnit are merged. The [T3 completion checkpoint](evidence/t3-standalone-qualification.md)
 adds standalone/cost evidence through #231; public report APIs, justified HTML and
-general provisioning remain separate. Next repair T6 widget commitment/coverage and
-the existing T4 application authorization callback guard before expanding mappings.
+general provisioning remain separate. Version 1.9.1 includes this checkpoint,
+Q0 committed-widget verification and CLI cookie-file input; its release and Homebrew
+ladder is [qualified](evidence/release-1.9.1.md). T4 application
+[callback hardening](design/t4-application-callback-contracts.md) merged through #236.
+The current [T6 owned-popup/readiness slice](design/t6-owned-popup-readiness.md)
+merged through #237. The next [mapping foundation](design/t6-form-mapping.md)
+adds offline private preparation and server stage preflight before live job qualification. The
+[progress checkpoint](evidence/foundation-progress-2026-09-20.md) distinguishes partial
+implementation from completed acceptance.
 Order remaining T4/T5 work by acceptance and demand. T7 follows actual audit/security demand, not
 a speculative full scanner roadmap. T8/T9 accompany delivery. Each task may be split
 into reviewable sub-PRs using its declared slices; avoid one giant implementation PR.

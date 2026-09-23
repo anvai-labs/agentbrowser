@@ -227,7 +227,7 @@ export class SessionCoordinator {
       // Check expiration and don't return expired sessions
       if (this.isSessionExpired(session)) {
         // Mark as expired and remove
-        session.state = SessionState.EXPIRED;
+        this.setState(session, SessionState.EXPIRED);
         this.sessions.delete(sessionId);
         session.cancellation.abort(new EngineError('SESSION_EXPIRED', 'Session expired'));
         // Close engine session asynchronously without calling close()
@@ -252,7 +252,7 @@ export class SessionCoordinator {
     }
 
     // Mark as closing
-    session.state = SessionState.CLOSING;
+    this.setState(session, SessionState.CLOSING);
     session.cancellation.abort(new EngineError('SESSION_NOT_FOUND', 'Session closed'));
 
     try {
@@ -263,10 +263,10 @@ export class SessionCoordinator {
       this.sessions.delete(sessionId);
 
       // Update state
-      session.state = SessionState.CLOSED;
+      this.setState(session, SessionState.CLOSED);
     } catch (error) {
       // Mark as crashed if close fails
-      session.state = SessionState.ENGINE_CRASHED;
+      this.setState(session, SessionState.ENGINE_CRASHED);
       throw error;
     }
   }
@@ -281,7 +281,7 @@ export class SessionCoordinator {
       throw new Error('SESSION_NOT_FOUND');
     }
 
-    session.state = state;
+    this.setState(session, state);
     this.sessions.delete(sessionId);
     session.cancellation.abort(
       new EngineError(
@@ -308,7 +308,7 @@ export class SessionCoordinator {
 
       // Transition to ACTIVE if in READY state
       if (session.state === SessionState.READY) {
-        session.state = SessionState.ACTIVE;
+        this.setState(session, SessionState.ACTIVE);
       }
     }
   }
@@ -360,7 +360,7 @@ export class SessionCoordinator {
     // Clean up expired sessions in a single pass
     for (const [id, session] of this.sessions.entries()) {
       if (this.isSessionExpired(session)) {
-        session.state = SessionState.EXPIRED;
+        this.setState(session, SessionState.EXPIRED);
         // Remove from sessions map first
         this.sessions.delete(id);
         session.cancellation.abort(new EngineError('SESSION_EXPIRED', 'Session expired'));
@@ -373,6 +373,12 @@ export class SessionCoordinator {
         });
       }
     }
+  }
+
+  /** Keep live context and listed metadata consistent before cancellation callbacks run. */
+  private setState(session: SessionContext, state: SessionState): void {
+    session.state = state;
+    session.metadata.state = state;
   }
 
   /**

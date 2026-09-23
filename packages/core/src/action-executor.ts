@@ -15,6 +15,7 @@ import {
   ErrorCode,
   createApiErrorDetail,
   parseRef,
+  validateUploadIntegrity,
 } from '@agentbrowser/protocol';
 import type {
   ActionRequest,
@@ -188,6 +189,8 @@ export class ActionExecutor {
    * Validate that an action is supported and carries its required parameters
    */
   private validateAction(action: SupportedAction): ApiErrorDetail | null {
+    const integrityError = validateUploadIntegrity(action);
+    if (integrityError) return invalidRequest(integrityError);
     if (!isSupportedActionType(action.type)) {
       return invalidRequest(`Unsupported action type: ${action.type}`, {
         actionType: action.type,

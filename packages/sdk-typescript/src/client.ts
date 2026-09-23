@@ -5,9 +5,13 @@ import {
   createPlanReportParser,
   parseAutofillReport,
   parseOperationReplay,
+  parseOperatorApprovalView,
+  validateApplicationReview,
+  validateOperatorApprovalDecision,
 } from '@agentbrowser/protocol';
 import type {
   OperationReplay,
+  OperatorApprovalView,
   OutcomeRunReport,
   OutcomeRunRequest,
   PlanReport,
@@ -22,7 +26,9 @@ import type {
 import type {
   AgentMode,
   ApplicationDiscovery,
+  ApplicationExecuteRequest,
   ApplicationOperationResult,
+  ApplicationReviewRequest,
   AutofillReport,
   AutofillRequest,
   ControlView,
@@ -40,6 +46,7 @@ export type {
   ApplicationDiscovery,
   ApplicationExecuteRequest,
   ApplicationOperationResult,
+  ApplicationReviewRequest,
 } from '@agentbrowser/protocol';
 export interface MutationOptions {
   operationId?: string;
@@ -436,6 +443,15 @@ class HttpClient {
   }
 }
 
+/** Bind the private review response to the requested approval identity. */
+function approvalViewParser(tokenId: string): (input: unknown) => OperatorApprovalView {
+  return (input) => {
+    const view = parseOperatorApprovalView(input);
+    if (view.tokenId !== tokenId) throw new Error('Approval identity mismatch');
+    return view;
+  };
+}
+
 /**
  * Sessions API client
  */
@@ -478,6 +494,38 @@ export class SessionsClient {
       `/v1/sessions/${sessionId}/operations/${encodeURIComponent(operationId)}`
     );
   }
+  /** Private action projection; requires an authenticated operator. */
+  async approval(sessionId: string, tokenId: string): Promise<OperatorApprovalView> {
+    return this.http.requestJson(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/approvals/${encodeURIComponent(tokenId)}`,
+      {
+        parseResponse: approvalViewParser(tokenId),
+      }
+    );
+  }
+  async decideApproval(
+    sessionId: string,
+    tokenId: string,
+    decision: 'approve' | 'deny',
+    options: MutationOptions = {}
+  ): Promise<OperatorApprovalView> {
+    const checked = validateOperatorApprovalDecision({ decision });
+    if (!checked.ok)
+      throw new AgentBrowserError(
+        'INVALID_REQUEST',
+        'Approval decision must be approve or deny',
+        false
+      );
+    return this.http.requestJson(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/approvals/${encodeURIComponent(tokenId)}`,
+      {
+        method: 'POST',
+        body: checked.value,
+        ...options,
+        parseResponse: approvalViewParser(tokenId),
+      }
+    );
+  }
   /** Operator: bind an application adapter to a resource while the human owns the session. */
   async applicationBind(
     sessionId: string,
@@ -500,6 +548,19 @@ export class SessionsClient {
   async applicationDiscover(sessionId: string): Promise<ApplicationDiscovery | null> {
     return this.http.requestJson(`/v1/sessions/${sessionId}/application`);
   }
+  /** Allocate a pending operator review. A lost response is not automatically retried. */
+  async applicationReview(
+    sessionId: string,
+    request: ApplicationReviewRequest
+  ): Promise<OperatorApprovalView> {
+    const checked = validateApplicationReview(request);
+    if (!checked.ok)
+      throw new AgentBrowserError('INVALID_REQUEST', 'Invalid application review request', false);
+    return this.http.requestJson(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/application/reviews`,
+      { method: 'POST', body: checked.value, parseResponse: parseOperatorApprovalView }
+    );
+  }
   /**
    * Dispatch one application operation. Writes need operationId +
    * expectedVersion; a repeated operationId returns the recorded
@@ -508,12 +569,7 @@ export class SessionsClient {
    */
   async applicationExecute(
     sessionId: string,
-    request: {
-      operation: string;
-      input: unknown;
-      operationId?: string;
-      expectedVersion?: number;
-    }
+    request: ApplicationExecuteRequest
   ): Promise<ApplicationOperationResult> {
     return this.http.requestJson(`/v1/sessions/${sessionId}/application/execute`, {
       method: 'POST',

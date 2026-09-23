@@ -1,14 +1,64 @@
 # AgentBrowser from shell-based agents
 
-Status: AgentBrowser 1.9.0 includes offline `describe`, bounded JSON input,
+Status: AgentBrowser 1.9.1 includes offline `describe`, bounded JSON input,
 plan/autofill result validation and receipt-correlated `outcome`. Its installed
 CLI/service qualification covers a controlled G4 fixture; it does not qualify a
-production evidence source, G6 independence or durable recovery. The develop candidate
-also provides offline `test evaluate`; it is absent from published 1.9.0.
+production evidence source, G6 independence or durable recovery. Offline `test
+evaluate` is included in 1.9.1. Develop adds reusable `form prepare`; the checked
+upload flags below are on develop and are not in published 1.9.1.
 
 The CLI is a thin SDK client to the shared AgentBrowser service. It owns no browser
 session state or alternate executor. Use ordinary Bash/shell tools to inspect JSON;
 MCP is an alternative adapter to the same execution and authority boundaries.
+
+## Background service and harness setup
+
+The Homebrew formula installs the service and compiled CLI/MCP binaries together.
+Shell-capable harnesses can use the CLI directly; no MCP registration is needed:
+
+```sh
+brew services start anvai-labs/tap/agentbrowser
+agentbrowser --base-url http://127.0.0.1:5709 --json health
+agentbrowser --version
+```
+
+Compare both versions: upgrading the installed binary does not restart an older
+process. At an explicit session checkpoint, use `brew upgrade anvai-labs/tap/agentbrowser`
+and `brew services restart anvai-labs/tap/agentbrowser`, then check health again.
+Restarting interrupts service-owned browser sessions; preserve interactive logins.
+
+Suggested project instruction for Codex's `AGENTS.md` or Claude Code's `CLAUDE.md`:
+
+> Use AgentBrowser through its CLI and the existing service at http://127.0.0.1:5709.
+> Run `agentbrowser --base-url http://127.0.0.1:5709 --json ...`. Discover only the
+> needed command with `agentbrowser describe <command> --schema` and command help.
+> Reuse authorized sessions/pages, preserve interactive logins, prefer bulk autofill,
+> and inspect verification receipts. Reconcile uncertain mutations by operation ID.
+> Do not restart the service or submit applications without applicable authorization.
+
+For optional MCP, register the stable Homebrew adapter path (Apple Silicon):
+
+```sh
+codex mcp add agentbrowser \
+  --env AGENTBROWSER_BASE_URL=http://127.0.0.1:5709 \
+  -- /opt/homebrew/opt/agentbrowser/bin/agentbrowser-mcp
+
+claude mcp add --scope user \
+  --env AGENTBROWSER_BASE_URL=http://127.0.0.1:5709 \
+  --transport stdio agentbrowser \
+  -- /opt/homebrew/opt/agentbrowser/bin/agentbrowser-mcp
+```
+
+Update an existing named entry instead of duplicating it, or remove that registration
+in its existing scope before adding it again. Start a new harness session and inspect
+`/mcp`. On other Homebrew prefixes, substitute the installed adapter path. See the
+[Codex MCP configuration](https://developers.openai.com/codex/mcp) and
+[Claude Code MCP configuration](https://code.claude.com/docs/en/mcp).
+
+The adapter speaks stdio to the harness and REST to the service. Port 5709 is not
+an HTTP MCP endpoint. `AGENTBROWSER_BASE_URL` configures the adapter; the CLI uses
+`--base-url`. Both support `AGENTBROWSER_API_KEY` when service authentication is
+enabled. Keep credentials out of committed project instructions and configuration.
 
 ## Discover only the command you need
 
@@ -35,7 +85,7 @@ request that child's path to expand it.
 `scope: "cli-command-definitions"` means installed CLI syntax, **not** live backend
 capabilities or granted permissions. This is metadata, not a complete action JSON
 schema by default. `describe autofill --schema`, `describe plan --schema`,
-`describe outcome --schema`, `describe application execute --schema`, and candidate
+`describe outcome --schema`, `describe application execute --schema`, and
 `describe test evaluate --schema` include
 canonical input and output schemas (plan input is an array, matching its CLI
 payload); other commands currently return `schemas: null` with that flag.
@@ -104,7 +154,34 @@ output: use `--json` for structured results; raw HTML is sensitive even in JSON 
 | Qualified native scoped bulk forms | CLI `autofill`, SDK/REST autofill or MCP `browser_autofill` |
 | Plan plus independently registered outcome verifier | CLI `outcome` or SDK/REST outcome; MCP has no outcome tool |
 | Uncertain delegated mutation | CLI `session operation`; delegated MCP `browser_operation` |
-| Repeatable TestRun / durable workflow | Planned; do not infer availability from the design spec |
+| Offline finalized regression evaluation | CLI `test evaluate`; setup, observations and cleanup stay application-owned |
+| Durable workflow recovery | Planned; operation records do not survive a service restart |
+
+## Attach the bytes you reviewed (develop slice)
+
+The existing upload command accepts an optional digest; no MCP tool or separate
+file-transfer service is required:
+
+```sh
+agentbrowser describe act upload
+agentbrowser describe plan --schema
+agentbrowser --json --operation-id "$operation_id" act upload \
+  "$session_id" "$page_id" /service-host/resume.pdf \
+  --sha256 "$reviewed_sha256" --mime-type application/pdf
+```
+
+The absolute path is on the **service host**, even when the CLI runs remotely.
+With `--sha256`, exactly one regular file of at most 16 MiB is read, checked and
+uploaded as the same bytes; symlinks and mismatches refuse. MIME is caller-supplied
+metadata (default `application/octet-stream`), not document validation. Without
+these flags, legacy multiple-file uploads retain their behavior. Discover a ref
+with `observe --include fileInputs` when more than one file input is present.
+
+A page may send a file immediately on attachment; apply the operator's upload
+approval policy before disclosing sensitive data. A matching upload digest does
+not establish complete-form consent or application acceptance. The current
+synthetic draft qualification denies final submit; see the
+[bounded design](spec/design/t6-verified-upload-draft.md).
 
 ## Submit bulk JSON without putting private values in argv
 
@@ -215,3 +292,25 @@ fetch or authenticate evidence, or prove that its caller performed the work. A f
 passing bundle is not regression evidence. Setup/finalizer failures in the conventional
 runner must fail the whole run even if an earlier case passed. Portable deployment setup,
 conventional-runner qualification and JUnit/HTML adapters remain later T3 work.
+
+## Qualified evidence reviews (develop)
+
+The existing `session approval <sessionId> <tokenId>` and `session approval-decide
+<sessionId> <tokenId> --decision approve|deny` commands also work for host-created
+qualified evidence records when a trusted embedding configures an
+`evidenceReviewProvider`. The stock service has no provider and refuses those
+records. This is deployment code, not an environment flag or caller-supplied source.
+The CLI remains a thin SDK/REST client; MCP is optional.
+
+Text output contains only token ID and status. `--json` includes private action and
+witness data: use a private output destination. Each inspection and new decision
+reauthorizes the source; revoked generations cannot be restored by regranting access.
+Operation-ID replay returns status only, so reread the approval to inspect private
+content under current permission. Inspect the stored snapshot before deciding.
+
+Approval records operator credential authority, not proof of a human's presence or
+unchanged live content. Public creation, consumption and submission are not exposed
+by this slice. A later internal consumption recollects evidence and refuses drift;
+atomic app-owned submission and independent acceptance remain separate gates. See the
+[public review design](spec/design/t6-public-evidence-review.md) and
+[qualification evidence](spec/evidence/t6-public-evidence-review.md).

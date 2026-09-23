@@ -22,6 +22,7 @@ import {
   agentModeAllows,
   isAgentMode,
   parsePlanSteps,
+  validateOperatorApprovalDecision,
   validateSessionRequest,
   validateWireAction,
   validateWireActionBatch,
@@ -65,6 +66,8 @@ declare module 'fastify' {
 }
 
 export interface ServerOptions {
+  /** Trusted embedding source selection for private evidence-backed approval records. */
+  evidenceReviewProvider?: import('./service.js').ServiceDependencies['evidenceReviewProvider'];
   /** Operator-owned rules. Client-supplied session policy can only restrict these. */
   approvalPolicy?: import('@agentbrowser/core').ActionRiskPolicyOptions;
   /** Trusted embedding only; session host rules can restrict but never weaken these rules. */
@@ -125,20 +128,21 @@ function sha256Hex(value: string): string {
  */
 function apiKeysFromEnv(): Map<string, string> | undefined {
   const raw = process.env.AGENTBROWSER_API_KEYS;
-  if (raw === undefined || raw.trim() === '') {
+  if (raw === undefined) {
     return undefined;
   }
   const keys = new Map<string, string>();
   for (const pair of raw.split(',')) {
     const separator = pair.lastIndexOf(':');
     if (separator <= 0) {
-      continue;
+      throw new Error('Invalid AGENTBROWSER_API_KEYS configuration');
     }
     const key = pair.slice(0, separator).trim();
     const tenant = pair.slice(separator + 1).trim();
-    if (key.length > 0 && tenant.length > 0) {
-      keys.set(sha256Hex(key), tenant);
-    }
+    const digest = sha256Hex(key);
+    if (!key || !tenant || (keys.has(digest) && keys.get(digest) !== tenant))
+      throw new Error('Invalid AGENTBROWSER_API_KEYS configuration');
+    keys.set(digest, tenant);
   }
   return keys;
 }
@@ -202,8 +206,91 @@ function statusFor(code: string): number {
 }
 
 export async function buildServer(options: ServerOptions = {}): Promise<FastifyInstance> {
+  // Validate before allocating service resources. Own the credential map so a
+  // caller clearing it later cannot switch a running service into local mode.
+  const configuredKeys = options.apiKeys ?? apiKeysFromEnv();
+  const apiKeys = configuredKeys === undefined ? undefined : new Map(configuredKeys);
   const fastify = Fastify({
     logger: false, // Disable logging for cleaner test output
+  });
+
+  // Error handler — registered before any route or awaited plugin so it
+  // governs every encapsulation context in this build (an awaited
+  // fastify.register() mid-build splits the root context: handlers added
+  // afterwards never see routes registered earlier, which leaked raw
+  // handler-thrown error text on unauthenticated routes).
+  fastify.setErrorHandler((error: FastifyError, _request, reply) => {
+    // An escaped protocol error serializes exactly as the route wrapper's
+    // fail() would — one shared serializer, not a hand-synced copy.
+    if (error instanceof ControlError || error instanceof ServiceError) {
+      return fail(reply, error);
+    }
+
+    const fstError = typeof error.code === 'string' && error.code.startsWith('FST_ERR_');
+    const status = error.statusCode ?? 500;
+
+    // fastify's own logger is a noop under logger:false; this is the only
+    // sink for framework-plane faults (route-plane failures are logged by
+    // fail(), whose wrapper catches them before this handler runs). 5xx
+    // only — client mistakes are normal traffic, not error-rate signal.
+    // Unregistered diagnostics and request URLs can contain credentials, so
+    // the sink receives only a fixed code and numeric status.
+    if (status >= 500) {
+      try {
+        options.logger?.error('http.framework_error', {
+          code: 'INTERNAL',
+          status: typeof status === 'number' && Number.isInteger(status) ? status : 500,
+        });
+      } catch {
+        // Logging must not replace the safe response with a sink's private diagnostic.
+      }
+    }
+
+    // Fastify's built-in 5xx are server faults: generic INTERNAL body —
+    // never the raw internal text, never the client-fault code.
+    if (fstError && status >= 500) {
+      return reply.status(status).send({
+        error: {
+          code: 'INTERNAL',
+          message: 'An unexpected error occurred',
+          retryable: false,
+        },
+      });
+    }
+
+    // Built-in and 4xx-classified client errors keep their original status
+    // with a redacted request-diagnostic message.
+    if (fstError || (status >= 400 && status < 500)) {
+      return reply.status(status).send({
+        error: {
+          code: status === 404 ? 'NOT_FOUND' : 'INVALID_REQUEST',
+          message:
+            options.secretManager?.redact(error.message || 'Request failed') ??
+            (error.message || 'Request failed'),
+          retryable: false,
+        },
+      });
+    }
+
+    // For all other errors, return 500 INTERNAL
+    return reply.status(500).send({
+      error: {
+        code: 'INTERNAL',
+        message: 'An unexpected error occurred',
+        retryable: false,
+      },
+    });
+  });
+
+  // 404 handler
+  fastify.setNotFoundHandler((_request, reply) => {
+    reply.status(404).send({
+      error: {
+        code: 'NOT_FOUND',
+        message: 'Resource not found',
+        retryable: false,
+      },
+    });
   });
 
   // Contract-completeness collector (the MCP generated-catalog pattern
@@ -303,6 +390,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     });
   const service = new AgentBrowserService({
     engine,
+    ...(options.evidenceReviewProvider !== undefined
+      ? { evidenceReviewProvider: options.evidenceReviewProvider }
+      : {}),
     ...(options.networkPolicy ? { networkPolicy: options.networkPolicy } : {}),
     ...((options.approvalPolicy ?? process.env.AGENTBROWSER_APPROVAL_POLICY) !== undefined
       ? {
@@ -334,26 +424,52 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     await service.shutdown();
   });
 
-  /** Translate a service failure into the protocol error envelope. */
+  /**
+   * Invoke caller serialization once, then redact detached data. Contain both
+   * phases and detach the result so reply serialization invokes no callbacks.
+   */
+  const serialDetails = (details: unknown): unknown => {
+    try {
+      const serialized = JSON.stringify(details);
+      if (serialized === undefined) return undefined;
+      const detached: unknown = JSON.parse(serialized);
+      const safe = options.secretManager?.redact(detached) ?? detached;
+      return JSON.parse(JSON.stringify(safe));
+    } catch {
+      return undefined;
+    }
+  };
+
   const fail = (reply: FastifyReply, error: unknown) => {
     if (error instanceof ControlError || error instanceof ServiceError) {
+      const details =
+        error instanceof ServiceError && error.details !== undefined
+          ? serialDetails(error.details)
+          : undefined;
       return reply.status(statusFor(error.code)).send({
         error: {
           code: error.code,
           message: options.secretManager?.redact(error.message) ?? error.message,
           retryable: error instanceof ServiceError ? error.retryable : false,
-          ...(error instanceof ServiceError && error.details !== undefined
-            ? { details: options.secretManager?.redact(error.details) ?? error.details }
-            : {}),
+          ...(details !== undefined ? { details } : {}),
         },
       });
+    }
+    // Internal faults never echo error text to the client: redact() only
+    // substitutes registered values. Keep unregistered text out of both
+    // the client response and the server-side sink.
+    try {
+      options.logger?.error('http.framework_error', {
+        code: 'INTERNAL',
+        status: 500,
+      });
+    } catch {
+      // Logging must not replace the safe response with a sink's private diagnostic.
     }
     return reply.status(500).send({
       error: {
         code: 'INTERNAL',
-        message:
-          options.secretManager?.redact(error instanceof Error ? error.message : 'Unknown error') ??
-          (error instanceof Error ? error.message : 'Unknown error'),
+        message: 'An unexpected error occurred',
         retryable: false,
       },
     });
@@ -498,7 +614,6 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     return { status: 'live', timestamp: new Date().toISOString() };
   });
 
-  const apiKeys = options.apiKeys ?? apiKeysFromEnv();
   if (apiKeys === undefined || apiKeys.size === 0) {
     console.warn(
       '[agentbrowser] No API keys configured; /v1 is UNAUTHENTICATED. ' +
@@ -530,11 +645,13 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       }
       const capabilities = await engine.capabilities();
       return { status: 'ready', engine: engine.name, version: engine.version, capabilities };
-    } catch (error) {
+    } catch {
+      // Unauthenticated infra route: state only, never the engine's raw
+      // error text (driver paths, topology, stack-adjacent detail).
       return reply.status(503).send({
         error: {
           code: 'ENGINE_CRASHED',
-          message: `Engine is not responding: ${error instanceof Error ? error.message : String(error)}`,
+          message: 'Engine is not responding',
           retryable: true,
         },
       });
@@ -831,6 +948,24 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         { capability: 'session.control', admission: 'self' }
       );
 
+      on('GET', '/sessions/:sessionId/approvals/:tokenId', async (request, reply) => {
+        const { sessionId, tokenId } = params(request, 'sessionId', 'tokenId');
+        if (principals.get(request)?.actor !== 'operator')
+          throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+        if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
+        return reply.send(await service.getApproval(sessionId, tokenId));
+      });
+      on('POST', '/sessions/:sessionId/approvals/:tokenId', async (request, reply) => {
+        const { sessionId, tokenId } = params(request, 'sessionId', 'tokenId');
+        if (principals.get(request)?.actor !== 'operator')
+          throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+        if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
+        const checked = validateOperatorApprovalDecision(request.body);
+        if (!checked.ok)
+          throw new ServiceError('INVALID_REQUEST', 'Approval decision must be approve or deny');
+        return reply.send(await service.decideApproval(sessionId, tokenId, checked.value.decision));
+      });
+
       // Application surface (shared-infra slice 2). Binding is operator-only
       // while the human owns the session; discovery/execution/receipts are
       // open to operators (ownership-checked) and to delegated grants whose
@@ -877,6 +1012,25 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           return reply.send(await service.applicationDiscover(sessionId, principal));
         },
         { capability: 'application.discover', admission: 'self' }
+      );
+      on(
+        'POST',
+        '/sessions/:sessionId/application/reviews',
+        async (request, reply) => {
+          const { sessionId } = params(request, 'sessionId');
+          const principal = principals.get(request);
+          if (principal?.actor !== 'operator')
+            throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+          if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
+          if (request.headers['x-agentbrowser-operation-id'] !== undefined)
+            throw new ServiceError(
+              'INVALID_REQUEST',
+              'Review creation does not accept an execution operation header'
+            );
+          if (!requireBody(reply, request.body)) return reply;
+          return reply.send(await service.applicationReview(sessionId, principal, request.body));
+        },
+        { admission: 'self' }
       );
       on(
         'POST',
@@ -1474,53 +1628,6 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     },
     { prefix: '/v1' }
   );
-
-  // Error handler
-  fastify.setErrorHandler((error: FastifyError, _request, reply) => {
-    fastify.log.error(error);
-
-    // Don't convert Fastify's built-in errors - let them pass with their original status
-    if (error.code?.startsWith('FST_ERR_')) {
-      return reply.status(error.statusCode || 500).send({
-        error: {
-          code: error.statusCode === 404 ? 'NOT_FOUND' : 'INVALID_REQUEST',
-          message: error.message || 'Request failed',
-          retryable: false,
-        },
-      });
-    }
-
-    // For 4xx client errors, return the original status code with INVALID_REQUEST
-    if (error.statusCode && error.statusCode >= 400 && error.statusCode < 500) {
-      return reply.status(error.statusCode).send({
-        error: {
-          code: 'INVALID_REQUEST',
-          message: error.message || 'Invalid request',
-          retryable: false,
-        },
-      });
-    }
-
-    // For all other errors, return 500 INTERNAL
-    return reply.status(500).send({
-      error: {
-        code: 'INTERNAL',
-        message: 'An unexpected error occurred',
-        retryable: false,
-      },
-    });
-  });
-
-  // 404 handler
-  fastify.setNotFoundHandler((_request, reply) => {
-    reply.status(404).send({
-      error: {
-        code: 'NOT_FOUND',
-        message: 'Resource not found',
-        retryable: false,
-      },
-    });
-  });
 
   return fastify;
 }

@@ -42,10 +42,123 @@ second bulk orchestrator. This is a bounded T6 slice, not completion of T6: reus
 mapping, removal/rollback semantics, broader async/recycled-option coverage and
 cross-engine actual-surface qualification remain open.
 
-The [Q0 commitment repair](../evidence/t6-widget-commitment.md) is the current candidate.
+The [Q0 commitment repair](../evidence/t6-widget-commitment.md) shipped in 1.9.1 through PR #232.
 It restores four dormant tests, shares each strategy's commitment predicate between
 immediate/final verification, captures bounded known-markup chip membership, and
 reuses scoped resolution to reacquire refs between custom strategy actions. A real
 Chromium/stdio fixture retains one five-field bulk payload and adds query-only and
 incomplete-membership negative controls. This is synthetic markup qualification,
 not broad library/version or live-site acceptance. T6 remains active.
+
+
+The [owned-popup/readiness slice](../design/t6-owned-popup-readiness.md)
+merged through PR #237 with eight PR and eight post-merge checks green. It extends
+engine evidence and one shared typeahead helper for both custom strategies.
+It removes page-wide/prefix selection, requires a unique exact option in the owned
+listbox, and retries observations without replaying writes. Engine dispatch rechecks
+ownership and focus; native field semantics and commitment predicates stay shared.
+See the [qualification evidence](../evidence/t6-owned-popup-readiness.md); no arbitrary ATS coverage,
+rollback or reusable mapping claim follows.
+
+The [mapping foundation](../design/t6-form-mapping.md), merged in PR #238, adds a pure protocol join,
+offline CLI preparation and exact-URL/all-field preflight inside the same executor.
+See [evidence](../evidence/t6-form-mapping.md). This is one fully present stage;
+conditional stages, business/job identity and live workflow qualification remain open.
+
+The [verified upload and draft slice](../design/t6-verified-upload-draft.md), merged in PR #239,
+reuses the upload action and a shared bounded file reader, then qualifies a synthetic
+CLI draft with an independent browser-file digest and final submit denied. It does
+not close complete-payload consent or live application acceptance.
+
+The [reviewed-payload consent sequence](../design/t6-reviewed-payload-consent.md)
+starts with C0 token ownership and atomic service consumption. It reuses the existing
+bounded canonical serializer and ApprovalGate; C1a operator action approval is delivered in #242; C2 live payload
+consent and C3 qualified submission remain pending.
+See the [C0 evidence](../evidence/t6-approval-consumption.md). Legacy token echo is
+action confirmation, not proof of independent review or complete-form consent.
+
+C0 merged in #240. The [C1 review-binding foundation](../design/t6-review-authority-binding.md)
+extends the existing control/authority owners before adding operator-approval surfaces.
+It addresses same-epoch review invalidation and configuration cleanup; no approval
+CLI/API or live-submit capability follows from this internal context projection.
+
+The authority foundation merged in #241. The [C1a implementation](../design/t6-operator-approval.md)
+adds explicit operator action approval through the existing REST/SDK/CLI owners,
+including token inspection, approve/deny and ordinary action consumption. This is
+operator-only action consent, not full-payload consent or live-submit qualification.
+
+C1a merged in #242. The [C2a draft oracle](../design/t6-draft-oracle.md) qualifies
+a test-only versioned application contract and independent UI/API parity, including
+server-received attachment bytes. [Evidence](../evidence/t6-draft-oracle.md) separates
+this candidate from C2b service-collected witness binding and C3 accepted submission.
+
+C2a merged in #243. The [C2b scoped-read foundation](../design/t6-scoped-application-read.md)
+reuses captured application/admission ownership to collect bounded read data without
+nested execution. Source qualification, page correlation and consent binding remain
+separate gates; [evidence](../evidence/t6-scoped-application-read.md) records this limit.
+
+Prepared reads merged #244. Next, [authorized read sources and named draft data
+validation](../design/t6-application-read-evidence.md) reuse the existing registry
+and service-owned authority. Follow with trusted page/document correlation and
+stable app/UI collection before extending consent. Data shape is not a page witness.
+
+Native form witnesses merged #246 and internal scoped evidence review merged #247.
+They reuse engine evidence, ApprovalGate and source permission ownership; see the
+[C2c evidence](../evidence/t6-evidence-review-binding.md).
+
+The [C2d public review slice](../design/t6-public-evidence-review.md) reuses existing
+REST/SDK/CLI inspection and decisions for host-created evidence records only when a
+trusted embedding supplies current source selection. It retains default refusal,
+private JSON/status-only text, current permission checks and internal drift detection.
+See [qualification](../evidence/t6-public-evidence-review.md). Public creation,
+atomic submission/acceptance and live ATS qualification remain open.
+
+
+C2d merged #248. The [C3 sequence](../design/t6-atomic-submission.md) starts with an
+atomic synthetic application acceptance oracle inside the existing draft owner; see
+[evidence](../evidence/t6-atomic-submission.md). Public submit remains unavailable.
+Mandatory shared consent enforcement and public acceptance qualification follow under
+separate design gates; this oracle alone does not complete T6.
+
+
+The [C3b internal dispatch guard](../design/t6-mandatory-application-consent.md)
+now binds reviewed evidence to the actual app operation, version, input and binding;
+see [qualification](../evidence/t6-mandatory-application-consent.md). Public creation,
+CLI/REST execution projection and independent T2 acceptance qualification remain C3c.
+No production or live portal submission is enabled by this internal increment.
+
+The [C3c public application review design](../design/t6-public-application-review.md)
+passed independent review and is implemented in the current candidate. Its
+[qualification](../evidence/t6-public-application-review.md) covers shared routing,
+REST/SDK/CLI review and consent, and named independent accepted-receipt verification.
+Production sources, candidate/job eligibility and live portal coverage remain separate
+acceptance gates; historical C3a/C3b restrictions above describe those earlier slices.
+
+## Next bounded packets: eligibility and deployment
+
+The [E0 eligibility design](../design/t6-job-eligibility.md) owns job-specific normalized
+facts, deterministic eligible/hold/reject decisions and freshness/duplicate rules.
+E0a/E0b merged in #260 as an application-owned module; see
+[qualification](../evidence/t6-job-eligibility.md). They add no shared protocol schema
+or default-mode payload. Private integration and
+headed live draft qualification remain E0c/E1 gates. Reuse the separate
+[P0 deployment seam](../design/t4-production-evidence-composition.md); do not duplicate
+the service or promote an eligibility decision into consent. P0a/P0b merged in #259; E0c/E1 and P0c/P1 remain separate integration gates.
+
+
+## N0 prerequisite found during live integration
+
+The [document-read repair](../design/t6-document-read.md) adds one optional engine
+port and a shared service source reader after public careers-index extraction timed
+out on merged develop. Pure extraction and HTML export avoid interactive reference
+construction; forms and unsupported engines retain observation. No second browser
+stack, extractor, authority or default context payload is added. See
+[qualification](../evidence/t6-document-read.md). E0c/E1 still require their own
+private policy, current source evidence and complete live workflow qualification.
+
+The N0 repair merged #263 with 8/8 PR and post-merge CI. The first
+[E0c listing-review consumer](../design/t6-listing-review.md) reuses bounded private-file,
+CLI-process and JSON owners to capture an existing page for private review. See
+[evidence](../evidence/t6-listing-review.md). It does not normalize applicant facts,
+authenticate accounts, evaluate eligibility or close E0c/E1. Those remaining gates must
+be completed in the owning workflow, not replaced by more generic browser helpers.

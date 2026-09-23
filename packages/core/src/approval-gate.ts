@@ -6,6 +6,8 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
+import type { OperatorApprovalView } from '@agentbrowser/protocol';
+import { canonicalJson } from './canonical-json.js';
 import type { StructuredLogger } from './logger.js';
 
 const LOW_RISK_ACTIONS = new Set<string>(['observe', 'navigate', 'scroll', 'press']);
@@ -49,6 +51,25 @@ export interface ApprovalToken {
   usedAt?: number;
 }
 
+/** Trusted service context; structurally valid data alone does not establish authority. */
+export interface ApprovalReviewBinding {
+  readonly tenant: string;
+  readonly sessionId: string;
+  readonly sessionIncarnation: string;
+  readonly epoch: number;
+  readonly reviewVersion: string;
+}
+
+type StoredApproval =
+  | { kind: 'confirmation'; token: ApprovalToken }
+  | {
+      kind: 'reviewed';
+      sessionId: string;
+      actionFingerprint: string;
+      contextFingerprint: string;
+      token: OperatorApprovalView;
+    };
+
 export class ApprovalError extends Error {
   constructor(
     public code: string,
@@ -67,7 +88,7 @@ export class ApprovalError extends Error {
 export class ApprovalGate {
   private readonly options: Required<Omit<ApprovalGateOptions, 'logger'>>;
   private readonly logger: StructuredLogger | undefined;
-  private readonly tokens: Map<string, ApprovalToken> = new Map();
+  private readonly tokens: Map<string, StoredApproval> = new Map();
   /**
    * Session -> token id index (TD-BROWSER-9, A6): keeps getSessionTokens()
    * O(1) instead of an O(n) scan over every token. Must be kept consistent
@@ -76,6 +97,7 @@ export class ApprovalGate {
    */
   private readonly sessionIndex: Map<string, Set<string>> = new Map();
   private cleanupTimer?: NodeJS.Timeout;
+  private closed = false;
 
   // High-risk action patterns
   private readonly HIGH_RISK_PATTERNS = [
@@ -135,14 +157,22 @@ export class ApprovalGate {
    * Generate an approval token
    */
   async generateApprovalToken(request: ApprovalRequest): Promise<ApprovalToken> {
-    const tokenId = this.generateTokenId();
-    const actionFingerprint = this.generateActionFingerprint(request.action);
-    const now = Date.now();
+    const record = await this.allocate(this.snapshotBinding(request));
+    if (record.kind !== 'confirmation') throw new Error('Invalid token kind');
+    return { ...record.token };
+  }
+
+  private async allocate(
+    binding: Pick<ApprovalToken, 'sessionId' | 'actionFingerprint'>,
+    review?: { action: Record<string, unknown>; contextFingerprint: string }
+  ): Promise<StoredApproval> {
+    this.assertOpen();
 
     // Check token limit and clean up if needed
     if (this.tokens.size >= this.options.maxTokens) {
       await this.runCleanup();
     }
+    this.assertOpen();
     // Check again after cleanup. There is no await between this admission
     // decision and insertion, so concurrent callers cannot over-admit.
     if (this.tokens.size >= this.options.maxTokens) {
@@ -151,91 +181,184 @@ export class ApprovalGate {
       });
     }
 
-    const token: ApprovalToken = {
+    const tokenId = this.generateTokenId();
+    const now = Date.now();
+    const lifecycle = {
       tokenId,
-      sessionId: request.sessionId,
-      actionFingerprint,
-      status: 'pending',
+      status: 'pending' as const,
       createdAt: now,
       expiresAt: now + this.options.tokenTtlMs,
     };
-
-    this.tokens.set(tokenId, token);
-    const sessionTokenIds = this.sessionIndex.get(request.sessionId) ?? new Set<string>();
+    const record: StoredApproval = review
+      ? {
+          kind: 'reviewed',
+          ...binding,
+          contextFingerprint: review.contextFingerprint,
+          token: { ...lifecycle, action: review.action },
+        }
+      : { kind: 'confirmation', token: { ...lifecycle, ...binding } };
+    this.tokens.set(tokenId, record);
+    const sessionTokenIds = this.sessionIndex.get(binding.sessionId) ?? new Set<string>();
     sessionTokenIds.add(tokenId);
-    this.sessionIndex.set(request.sessionId, sessionTokenIds);
+    this.sessionIndex.set(binding.sessionId, sessionTokenIds);
 
-    return token;
+    return record;
+  }
+
+  async generateReviewedApproval(
+    request: ApprovalRequest,
+    context: ApprovalReviewBinding
+  ): Promise<OperatorApprovalView> {
+    const snapshot = this.snapshotReviewed({ request, context });
+    const record = await this.allocate(snapshot.binding, {
+      action: snapshot.request.action as unknown as Record<string, unknown>,
+      contextFingerprint: snapshot.contextFingerprint,
+    });
+    if (record.kind !== 'reviewed') throw new Error('Invalid token kind');
+    return this.reviewView(record);
+  }
+
+  async getReviewedApproval(
+    tokenId: string,
+    context: ApprovalReviewBinding
+  ): Promise<OperatorApprovalView | undefined> {
+    const fingerprint = this.snapshotContext(context);
+    const record = this.reviewedToken(tokenId, fingerprint, Date.now());
+    return record ? this.reviewView(record) : undefined;
+  }
+
+  async decideReviewedApproval(
+    tokenId: string,
+    context: ApprovalReviewBinding,
+    decision: 'approve' | 'deny'
+  ): Promise<OperatorApprovalView | undefined> {
+    const fingerprint = this.snapshotContext(context);
+    if (decision !== 'approve' && decision !== 'deny')
+      throw new ApprovalError('INVALID_REQUEST', 'Invalid approval decision');
+    const now = Date.now();
+    const record = this.reviewedToken(tokenId, fingerprint, now);
+    if (!record || record.token.status === 'expired' || record.token.status === 'used')
+      return undefined;
+    const token = record.token;
+    if (decision === 'approve') {
+      if (token.status === 'denied') return undefined;
+      if (token.status === 'pending') {
+        token.status = 'approved';
+        token.approvedAt = now;
+      }
+    } else token.status = 'denied';
+    return this.reviewView(record);
+  }
+
+  async consumeReviewedApproval(
+    tokenId: string,
+    request: ApprovalRequest,
+    context: ApprovalReviewBinding
+  ): Promise<boolean> {
+    // Snapshot all caller-controlled data before reading mutable token state.
+    const snapshot = this.snapshotReviewed({ request, context });
+    const record = this.reviewedToken(tokenId, snapshot.contextFingerprint, Date.now());
+    if (
+      !record ||
+      record.token.status !== 'approved' ||
+      record.sessionId !== snapshot.binding.sessionId ||
+      record.actionFingerprint !== snapshot.binding.actionFingerprint
+    )
+      return false;
+    record.token.status = 'used';
+    return true;
+  }
+
+  private reviewedToken(
+    tokenId: string,
+    contextFingerprint: string,
+    now: number
+  ): Extract<StoredApproval, { kind: 'reviewed' }> | undefined {
+    const record = this.tokens.get(tokenId);
+    if (record?.kind !== 'reviewed' || record.contextFingerprint !== contextFingerprint)
+      return undefined;
+    this.expire(record.token, now);
+    return record;
+  }
+
+  private reviewView(record: Extract<StoredApproval, { kind: 'reviewed' }>): OperatorApprovalView {
+    // Stored data is bounded plain JSON; no caller callback is invoked by this copy.
+    return JSON.parse(JSON.stringify(record.token)) as OperatorApprovalView;
+  }
+
+  private snapshotContext(context: ApprovalReviewBinding): string {
+    try {
+      const detached = JSON.parse(canonicalJson(context)) as ApprovalReviewBinding;
+      if (
+        !detached ||
+        Object.keys(detached).length !== 5 ||
+        ['tenant', 'sessionId', 'sessionIncarnation', 'reviewVersion'].some((key) => {
+          const value = detached[key as keyof ApprovalReviewBinding];
+          return typeof value !== 'string' || value.length === 0 || value.length > 255;
+        }) ||
+        !Number.isSafeInteger(detached.epoch) ||
+        detached.epoch < 0
+      )
+        throw new Error();
+      return canonicalJson(detached);
+    } catch {
+      throw new ApprovalError('INVALID_REQUEST', 'Invalid bounded approval context');
+    }
+  }
+
+  private snapshotReviewed(input: { request: ApprovalRequest; context: ApprovalReviewBinding }) {
+    try {
+      const snapshot = JSON.parse(canonicalJson(input)) as typeof input;
+      const contextFingerprint = this.snapshotContext(snapshot.context);
+      const binding = this.snapshotBinding(snapshot.request);
+      if (binding.sessionId !== snapshot.context.sessionId) throw new Error();
+      return { request: snapshot.request, binding, contextFingerprint };
+    } catch {
+      throw new ApprovalError('INVALID_REQUEST', 'Invalid bounded reviewed action');
+    }
   }
 
   /**
    * Validate an approval token
    */
   async validateApprovalToken(tokenId: string, request: ApprovalRequest): Promise<boolean> {
-    const token = this.tokens.get(tokenId);
+    const binding = this.snapshotBinding(request);
+    return this.matchingToken(tokenId, binding, Date.now()) !== undefined;
+  }
 
-    if (!token) {
-      return false;
-    }
-
-    // Check if token is expired
-    if (Date.now() > token.expiresAt) {
-      token.status = 'expired';
-      return false;
-    }
-
-    // Check if token has been used
-    if (token.status === 'used') {
-      return false;
-    }
-
-    // Check if token is for the correct session
-    if (token.sessionId !== request.sessionId) {
-      return false;
-    }
-
-    // Check if token is for the correct action
-    const requestFingerprint = this.generateActionFingerprint(request.action);
-    if (token.actionFingerprint !== requestFingerprint) {
-      return false;
-    }
-
+  /** Validate current binding/expiry and burn without yielding; a probe never reserves consent. */
+  async consumeApprovalToken(tokenId: string, request: ApprovalRequest): Promise<boolean> {
+    // Proxy inspection can reenter the gate. Finish it BEFORE reading current token state.
+    const binding = this.snapshotBinding(request);
+    const now = Date.now();
+    const token = this.matchingToken(tokenId, binding, now);
+    if (!token) return false;
+    token.status = 'used';
+    token.usedAt = now;
     return true;
   }
 
   /**
-   * Use an approval token (mark as consumed)
+   * Legacy trusted-owner burn. Authorization paths must use consumeApprovalToken.
    */
   async useApprovalToken(tokenId: string): Promise<void> {
-    const token = this.tokens.get(tokenId);
-
-    if (!token) {
-      throw new ApprovalError('INVALID_TOKEN', `Token not found: ${tokenId}`, false, { tokenId });
-    }
-
-    if (token.status === 'used') {
-      throw new ApprovalError('INVALID_TOKEN', `Token already used: ${tokenId}`, false, {
-        tokenId,
-        status: token.status,
-      });
-    }
-
+    const now = Date.now();
+    const token = this.pendingToken(tokenId, now);
+    if (!token)
+      throw new ApprovalError('INVALID_TOKEN', 'Token is not live and pending', false, { tokenId });
     token.status = 'used';
-    token.usedAt = Date.now();
+    token.usedAt = now;
   }
 
   /**
    * Get token by ID
    */
   async getToken(tokenId: string): Promise<ApprovalToken | undefined> {
-    const token = this.tokens.get(tokenId);
+    const record = this.tokens.get(tokenId);
+    const token = record?.kind === 'confirmation' ? record.token : undefined;
 
-    // Return undefined if expired
-    if (token && Date.now() > token.expiresAt) {
-      token.status = 'expired';
-    }
-
-    return token;
+    if (token) this.expire(token, Date.now());
+    return token ? { ...token } : undefined;
   }
 
   /**
@@ -251,11 +374,13 @@ export class ApprovalGate {
     const now = Date.now();
     const sessionTokens: ApprovalToken[] = [];
     for (const tokenId of tokenIds) {
-      const token = this.tokens.get(tokenId);
+      const record = this.tokens.get(tokenId);
+      const token = record?.kind === 'confirmation' ? record.token : undefined;
       // Skip expired tokens (and tolerate an index entry outliving its token,
       // though runCleanup keeps that from happening in normal operation).
-      if (token && now <= token.expiresAt) {
-        sessionTokens.push(token);
+      if (token) this.expire(token, now);
+      if (token && token.status !== 'expired' && now < token.expiresAt) {
+        sessionTokens.push({ ...token });
       }
     }
 
@@ -273,6 +398,7 @@ export class ApprovalGate {
    * Shutdown approval gate
    */
   async shutdown(): Promise<void> {
+    this.closed = true;
     // Stop cleanup timer
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
@@ -304,14 +430,22 @@ export class ApprovalGate {
 
     // Remove expired tokens in a single pass, keeping the session index
     // consistent with the primary map.
-    for (const [tokenId, token] of this.tokens.entries()) {
-      if (now > token.expiresAt || token.status === 'used') {
+    for (const [tokenId, record] of this.tokens.entries()) {
+      const token = record.token;
+      if (
+        now >= token.expiresAt ||
+        token.status === 'used' ||
+        token.status === 'expired' ||
+        token.status === 'denied'
+      ) {
         this.tokens.delete(tokenId);
-        const sessionTokenIds = this.sessionIndex.get(token.sessionId);
+        const sessionId =
+          record.kind === 'confirmation' ? record.token.sessionId : record.sessionId;
+        const sessionTokenIds = this.sessionIndex.get(sessionId);
         if (sessionTokenIds) {
           sessionTokenIds.delete(tokenId);
           if (sessionTokenIds.size === 0) {
-            this.sessionIndex.delete(token.sessionId);
+            this.sessionIndex.delete(sessionId);
           }
         }
       }
@@ -328,20 +462,61 @@ export class ApprovalGate {
   /**
    * Generate action fingerprint for validation
    */
-  private generateActionFingerprint(action: ApprovalActionRequest): string {
-    const canonical = (value: unknown): unknown => {
-      if (Array.isArray(value)) return value.map(canonical);
-      if (value !== null && typeof value === 'object')
-        return Object.fromEntries(
-          Object.entries(value)
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([key, item]) => [key, canonical(item)])
-        );
-      return value;
-    };
-    return `${action.type}:${createHash('sha256')
-      .update(JSON.stringify(canonical(action)))
-      .digest('hex')}`;
+  private snapshotBinding(
+    request: ApprovalRequest
+  ): Pick<ApprovalToken, 'sessionId' | 'actionFingerprint'> {
+    try {
+      const detached = JSON.parse(canonicalJson(request)) as ApprovalRequest;
+      if (
+        !detached ||
+        typeof detached.sessionId !== 'string' ||
+        !detached.sessionId.length ||
+        detached.sessionId.length > 255 ||
+        !detached.action ||
+        typeof detached.action.type !== 'string' ||
+        !detached.action.type.length ||
+        detached.action.type.length > 128
+      )
+        throw new Error('Invalid binding');
+      return {
+        sessionId: detached.sessionId,
+        actionFingerprint: `${detached.action.type}:${createHash('sha256').update(canonicalJson(detached.action)).digest('hex')}`,
+      };
+    } catch {
+      throw new ApprovalError(
+        'INVALID_REQUEST',
+        'Approval request must be bounded JSON with a sessionId and action.type'
+      );
+    }
+  }
+
+  private expire(token: ApprovalToken | OperatorApprovalView, now: number): void {
+    if ((token.status === 'pending' || token.status === 'approved') && now >= token.expiresAt)
+      token.status = 'expired';
+  }
+
+  private pendingToken(tokenId: string, now: number): ApprovalToken | undefined {
+    const record = this.tokens.get(tokenId);
+    const token = record?.kind === 'confirmation' ? record.token : undefined;
+    if (!token) return undefined;
+    this.expire(token, now);
+    return token.status === 'pending' ? token : undefined;
+  }
+
+  private matchingToken(
+    tokenId: string,
+    binding: Pick<ApprovalToken, 'sessionId' | 'actionFingerprint'>,
+    now: number
+  ): ApprovalToken | undefined {
+    const token = this.pendingToken(tokenId, now);
+    return token?.sessionId === binding.sessionId &&
+      token.actionFingerprint === binding.actionFingerprint
+      ? token
+      : undefined;
+  }
+
+  private assertOpen(): void {
+    if (this.closed) throw new ApprovalError('INVALID_TOKEN', 'Approval gate is closed');
   }
 
   /**
@@ -365,7 +540,7 @@ export class ApprovalGate {
     Object.assign(this.options, options);
 
     // Restart cleanup timer with new interval
-    if (this.cleanupTimer && options.cleanupIntervalMs) {
+    if (!this.closed && this.cleanupTimer && options.cleanupIntervalMs) {
       clearInterval(this.cleanupTimer);
       this.startCleanupTimer();
     }

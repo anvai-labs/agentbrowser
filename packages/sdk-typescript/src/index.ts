@@ -10,6 +10,8 @@ export {
   INTERACTION_GUIDANCE,
   validateSessionRequest,
   ApplicationExecuteRequestSchema,
+  ApplicationReviewRequestSchema,
+  validateApplicationReview,
   ApplicationOperationResultSchema,
   AutofillRequestSchema,
   AutofillReportSchema,
@@ -46,3 +48,18 @@ export type {
   PlanReport,
   RunCursor,
 } from '@agentbrowser/protocol';
+
+export {
+  FormMappingSchema,
+  FormValuesSchema,
+  materializeAutofillMapping,
+} from '@agentbrowser/protocol';
+export type { FormMapping, FormValues } from '@agentbrowser/protocol';
+
+export {
+  OperatorApprovalDecisionSchema,
+  OperatorApprovalViewSchema,
+  parseOperatorApprovalView,
+  validateOperatorApprovalDecision,
+} from '@agentbrowser/protocol';
+export type { OperatorApprovalView, OperatorApprovalDecision } from '@agentbrowser/protocol';

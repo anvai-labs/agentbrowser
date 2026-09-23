@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   CONTROL_OPERATION_ID,
   type ControlState,
@@ -32,7 +33,9 @@ export interface ControlTicket {
 export class SessionControl {
   private state: ControlState = 'HUMAN_ACTIVE';
   private epoch = 0;
+  private review = randomUUID();
   private active: ControlTicket | undefined;
+  private finalized = false;
   private readonly records = new Map<
     string,
     { fingerprint: string; actor: string; record: OperationRecord }
@@ -66,8 +69,19 @@ export class SessionControl {
     return record ? { ...record } : undefined;
   }
 
+  /** Opaque control-review version, not permission or page/payload evidence. */
+  reviewVersion(): string {
+    return this.review;
+  }
+
+  /** Trusted owners invalidate review around configuration callbacks too. */
+  invalidateReview(): void {
+    this.review = randomUUID();
+  }
+
   takeover(): ControlView {
     if (this.state === 'STOPPED') return this.view();
+    this.invalidateReview();
     if (this.state !== 'PAUSE_REQUESTED' && this.state !== 'HUMAN_ACTIVE') this.epoch++;
     this.state = this.active ? 'PAUSE_REQUESTED' : 'HUMAN_ACTIVE';
     return this.view();
@@ -78,6 +92,7 @@ export class SessionControl {
       throw new ControlError('SESSION_BUSY', 'Session is busy draining an operation');
     if (this.state !== 'HUMAN_ACTIVE' && this.state !== 'RESUME_REVIEW')
       throw new ControlError('CONTROL_REQUIRED', 'Human takeover is required before review');
+    this.invalidateReview();
     this.epoch++;
     this.state = 'RESUME_REVIEW';
     return this.view();
@@ -87,6 +102,7 @@ export class SessionControl {
     if (this.active) throw new ControlError('SESSION_BUSY', 'Session is busy');
     if (this.state !== 'RESUME_REVIEW' || reviewEpoch !== this.epoch)
       throw new ControlError('CONTROL_REVOKED', 'A current human review is required');
+    this.invalidateReview();
     this.epoch++;
     this.state = 'AGENT_ACTIVE';
     return this.view();
@@ -133,6 +149,7 @@ export class SessionControl {
       throw new ControlError('QUOTA_EXCEEDED', 'Session operation budget exhausted');
     // A review describes the state before this write, even if dispatch fails.
     if (request.actor === 'operator' && request.operationId && this.state === 'RESUME_REVIEW') {
+      this.invalidateReview();
       this.epoch++;
       this.state = 'HUMAN_ACTIVE';
     }
@@ -154,6 +171,7 @@ export class SessionControl {
         },
       });
     this.active = ticket;
+    this.finalized = false;
     return ticket;
   }
 
@@ -169,6 +187,8 @@ export class SessionControl {
 
   dispatched(ticket: ControlTicket): void {
     this.check(ticket);
+    if (this.finalized)
+      throw new ControlError('CONTROL_REVOKED', 'Operation execution is finalized');
     ticket.didDispatch = true;
     if (ticket.operationId) {
       const entry = this.records.get(ticket.operationId);
@@ -176,17 +196,27 @@ export class SessionControl {
     }
   }
 
-  finish(ticket: ControlTicket, status: Exclude<OperationRecord['status'], 'in_flight'>): void {
-    if (this.active !== ticket) return;
+  /** Freeze execution facts without releasing the captured ticket's exclusion. */
+  finalize(ticket: ControlTicket, status: Exclude<OperationRecord['status'], 'in_flight'>): void {
+    // Completion bookkeeping must also work after revocation while the old owner drains.
+    if (this.active !== ticket || this.finalized) return;
     if (ticket.operationId) {
       const entry = this.records.get(ticket.operationId);
       if (entry) entry.record.status = status;
     }
+    this.finalized = true;
+  }
+
+  /** Compatibility composition: finalize once, then release only the captured ticket. */
+  finish(ticket: ControlTicket, status: Exclude<OperationRecord['status'], 'in_flight'>): void {
+    if (this.active !== ticket) return;
+    this.finalize(ticket, status);
     this.active = undefined;
     if (this.state === 'PAUSE_REQUESTED') this.state = 'HUMAN_ACTIVE';
   }
 
   stop(): void {
+    this.invalidateReview();
     this.epoch++;
     this.state = 'STOPPED';
   }
