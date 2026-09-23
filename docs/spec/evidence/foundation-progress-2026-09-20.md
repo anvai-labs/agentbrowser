@@ -1,7 +1,7 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
 Rechecked published 1.9.1 at `310e01d43982824caac2c63ed8d98355e17efdce`
-and develop `4bcc47b95b2c650b36242639221184bab3c7ba04` (PR #263; alignment
+and develop `5cbdb997d049fdee8c33797701fceec0a7429ca5` (PR #264; alignment
 rechecked 2026-09-22). C3c incorporates the merged #256 error-containment repair.
 The [release ladder](release-1.9.1.md) includes Bun CLI/MCP artifacts,
 Node 24 service qualification, Homebrew and develop back-sync. Existing browser
@@ -24,14 +24,15 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T5 durable recovery | Not started | 0% | Design, journal/recovery and process-loss qualification |
 | T6 forms/operations | Active | ~40% | Production sources, candidate/job eligibility and live qualification; C3c public synthetic workflow merged #257 |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
-| T8 installed harnesses | Not qualified | 0% | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |
+| T8 installed harnesses | Active source repair; installed acceptance unqualified | 0% installed qualification | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |
 | T9 release hardening | Recurring | 100% of 1.9.1 checkpoint | Repeat per later release |
 
 Exact milestone count: **3 of 9 finite tasks complete (33%)**. Counting all original
 ten rows gives 30%, including recurring T9. No defensible effort-weighted overall
 percentage is available. Partial estimates are intentionally not averaged.
-Local `../codingagent` was clean at `68502d82d` when inspected. This updates the
-inspection baseline, not the installed-harness qualification claim or its release.
+Victor source was rechecked at develop `82eb4a49c`; the schema repair is tracked
+in [PR #1168](https://github.com/anvai-labs/victor/pull/1168). Installed Victor is
+0.9.3 and remains unqualified; source progress does not establish release acceptance.
 
 ## Incremental continuation and code owners
 
@@ -265,3 +266,30 @@ see [evidence](t6-document-read.md). The next [private listing-review consumer](
 uses existing bounded owners and returns unreviewed source data only. T4/T6 estimates
 and the 3/9 complete milestone count remain unchanged; complete private eligibility
 and authenticated live draft qualification still need their actual source inputs.
+
+
+## Listing review and harness schema continuation
+
+The listing-review consumer merged in #264 at `5cbdb99`, preserving reviewed tree
+`3eac55c`. PR run `35804055133` and post-merge run `35804457610` each passed 8/8
+checks without reruns; both normal hooks passed 3,370 tests with 24 existing skips.
+It consumes shared private-file, bounded CLI and JSON owners and reports source
+capture as unreviewed. It does not normalize eligibility or authorize an application.
+See [listing-review evidence](t6-listing-review.md). Private policy/source/history
+qualification and authenticated live drafts remain open.
+
+The next independent [T8 source checkpoint](../tasks/t8-harness-qualification.md#source-level-schema-checkpoint)
+repairs demonstrated schema loss in the owning Victor repository. Local evidence:
+490 affected tests, 33,303 full-suite collection, two real AgentBrowser catalog/
+delegation acceptances and 25 unchanged resource-limit tests on Linux. The two
+macOS real-child limit cases reject `RLIMIT_AS` on this host; no sandbox policy was
+weakened. Exact Victor head `6a6bbbcb52111333bc4dbd6355e0fef830456a5d` received
+independent SHIP review. The first CI candidate found a missing mapping to legacy test locations; the
+existing selector now includes those suites. Its exact local run passed 465 tests
+with three existing skips and 100% changed-production-line coverage. CI/merge
+evidence belongs to the linked Victor PR.
+
+No AgentBrowser runtime or release change is required for that harness repair.
+T4/T6 remain ~40%, T8 installed acceptance stays unqualified, and exactly 3/9
+finite milestones remain complete. Keep subsequent installed-provider acceptance
+separate from registration, a source test or a protocol-version bump.

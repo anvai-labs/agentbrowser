@@ -1,6 +1,7 @@
 # T8: harness correlation, schema fidelity and footprint
 
-Status: not started. Repositories: agentbrowser and ../codingagent, tracked separately.
+Status: active source-level qualification; installed harness acceptance remains open.
+Repositories: agentbrowser and ../codingagent, tracked separately.
 Depends on: T0; profile/run slices additionally require T1/T3.
 Inputs: core, interfaces, state-memory, quality-ci, review.
 
@@ -37,3 +38,29 @@ from prompt bytes/tokens. Application-only execution needs no browser or model S
 Close R05/R11 and harness portions of R12/R16 with named installed versions. Each repo
 has its own tests, PR, CI and release evidence; one merge does not release the other.
 Unsupported client/profile behavior remains explicit; no protocol-version-only upgrade.
+
+## Source-level schema checkpoint
+
+[Victor PR #1168](https://github.com/anvai-labs/victor/pull/1168) repairs the proven
+schema loss in its existing MCP client/tool model/adapter. Capture preserves the
+complete server contract; the adapter delegates to its existing full renderer
+instead of flattening nested fields in compact/stub modes. Legacy tools keep
+existing behavior. No AgentBrowser runtime, dependency or default catalog changes.
+
+Failing-first tests covered nested arrays/unions/enums/references, detached mutable
+state, invalid schema-root refusal and legacy compatibility. Independent review also
+found boolean/union assumptions in the existing exporter and argument coercion;
+both have regression coverage. A real built AgentBrowser catalog now matches every
+model-facing adapter schema level, and bound execution/takeover acceptance passes.
+
+This source evidence does not qualify installed Victor 0.9.3, a live model loop,
+provider-final schema conversion or a modern Victor server relay. Full schema
+preservation costs more than lossy stubs; reduce selected tools through existing
+mode/profile controls, not by discarding constraints. CLI remains first-class and
+MCP optional. Details and commands are owned by
+[Victor's schema fidelity record](https://github.com/anvai-labs/victor/blob/6a6bbbcb52111333bc4dbd6355e0fef830456a5d/docs/architecture/mcp-schema-fidelity.md).
+
+Next qualify a released installed harness and the provider's actual tool-call
+path, then the remaining correlation/reconnect/cancellation and footprint gates.
+Retain explicit limits until those named acceptance runs exist; no whole-milestone
+completion or release is implied by this source repair.
