@@ -1,7 +1,7 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
 Rechecked published 1.9.1 at `310e01d43982824caac2c63ed8d98355e17efdce`
-and develop `61ad5c17b35c700d15673d55d67042152eb12992` (PR #272; alignment
+and develop `8752c6b746996802209bac2490ceb285e3569265` (PR #273; alignment
 rechecked 2026-09-23). C3c incorporates the merged #256 error-containment repair.
 The [release ladder](release-1.9.1.md) includes Bun CLI/MCP artifacts,
 Node 24 service qualification, Homebrew and develop back-sync. Existing browser
@@ -21,7 +21,7 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T2 shared execution/verification | Complete, released | 100% | Production evidence belongs to T4; restart durability to T5 |
 | T3 QA regression | Complete, released | 100% | Broader provisioning and demand-backed report adapters are follow-ups |
 | T4 application operations/parity | Active | ~40% | Production UI/API oracle and evidence; U0/U1 operator UX merged; synthetic parity qualified; callback repair merged #236 |
-| T5 durable recovery | Active J0/A1/A2/A4a publication foundation | ~10% | Journal/recovery and process-loss qualification; no durable guarantee yet |
+| T5 durable recovery | Active J0/A1/A2/A4a/A3a1 publication foundation | ~10% | Journal/recovery and process-loss qualification; no durable guarantee yet |
 | T6 forms/operations | Active | ~40% | Production sources, candidate/job eligibility and live qualification; C3c public synthetic workflow merged #257 |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
 | T8 installed harnesses | Active source repair; installed acceptance unqualified | 0% installed qualification | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |
@@ -407,3 +407,18 @@ It reuses the status guard, publication lifetime and application-access fence. T
 sequence is A3 HTTP integration and A4b wire parity before journal ACK/recovery work.
 Internal replay qualification adds no HTTP adoption or durability claim. T5 stays ~10%;
 3/9 finite milestones are complete. Published 1.9.1 and running services are unchanged.
+
+## T5 A3a1: review publication owner pins — 2026-09-23
+
+A4a2 merged [#273](https://github.com/anvai-labs/agentbrowser/pull/273) at `8752c6b`;
+reviewed tree `7cbc37f6534288f20cccdbbd1d133df5ad248937` matched the actual merge.
+Both normal hooks passed 3,481 tests with 24 existing skips. PR CI `35890344580`
+and post-merge CI `35891111476` each passed all eight checks on attempt 1.
+
+[A3a1 evidence](t5-review-publication.md) records session/application checks tied to
+the captured operation's actual publication, reusing existing review and access owners.
+Read/consent checks remain execution-only. The next [A3a2 composition](../design/t5-review-publication.md)
+must retain page, evidence permission and secret-disclosure checks before HTTP adoption.
+No new timer, executor, registry or token store is introduced. Review-view status remains
+a capture-time snapshot; ApprovalGate owns later current-state validation. T5 stays ~10%;
+3/9 finite milestones are complete. Release 1.9.1 and running services are unchanged.

@@ -120,6 +120,12 @@ export interface PreparedApplicationOperationReview {
   assertCurrent(): void;
   /** Callback-free final admission, review-context and binding check. */
   assertPinned(): void;
+  /** Captured output checks, valid only during this review operation's actual publication. */
+  readonly publication: Readonly<{
+    assertCurrent(): void;
+    /** Final owner pins without invoking application authorization. */
+    assertPinned(): void;
+  }>;
 }
 export interface PreparedApplicationConsent {
   consume(): Promise<boolean>;
@@ -384,8 +390,14 @@ export class ApplicationAuthority {
   }
 
   private operationReview(sessionId: string, request: ApplicationRequest, binding: Binding) {
-    const context = canonicalJson(this.authority.reviewBindingInScope(sessionId));
+    const publicationOwner = this.authority.captureReviewPublicationInScope(sessionId);
+    const context = canonicalJson(publicationOwner.binding);
     const owner = this.captureReadInScope(sessionId, binding);
+    const publication = this.applicationAccess(
+      sessionId,
+      owner.accessOwner,
+      publicationOwner.assertCurrent
+    );
     let revoked = false;
     const assertPinned = () => {
       if (revoked) throw new ControlError('CONTROL_REVOKED', 'Application review was revoked');
@@ -431,7 +443,16 @@ export class ApplicationAuthority {
     }
     assertPinned();
     return {
-      review: Object.freeze({ sessionId, action, assertCurrent, assertPinned }),
+      review: Object.freeze({
+        sessionId,
+        action,
+        assertCurrent,
+        assertPinned,
+        publication: Object.freeze({
+          assertCurrent: () => publication.assertAuthority(),
+          assertPinned: () => publication.assertPinned(),
+        }),
+      }),
       assertPinned,
     };
   }
@@ -718,8 +739,9 @@ export class ApplicationAuthority {
     const ownedScope = this.scope(sessionId, binding);
     if (expectedBinding !== undefined && binding !== expectedBinding)
       throw new ControlError('CONTROL_REVOKED', 'Application binding changed');
+    const accessOwner = { binding, adapter, scope: ownedScope };
     const { assertAuthority: checkAuthority, assertPinned: checkAdmission } =
-      this.applicationAccess(sessionId, { binding, adapter, scope: ownedScope }, () => {
+      this.applicationAccess(sessionId, accessOwner, () => {
         guard();
         if (this.authority.admissionInScope(sessionId) !== admission)
           throw new ControlError('CONTROL_REQUIRED', 'Application receipt admission changed');
@@ -727,6 +749,7 @@ export class ApplicationAuthority {
     checkAuthority();
     return {
       adapter,
+      accessOwner,
       identity: Object.freeze({
         admission,
         adapter: binding.adapter,

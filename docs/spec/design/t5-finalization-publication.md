@@ -1,6 +1,6 @@
 # T5 J1-A: execution finalization and response publication
 
-Status: A1/A2/A4a primitives implemented; A3/A4b proposed.
+Status: A1/A2/A4a/A3a1 primitives implemented; HTTP/recovery gated.
 Design baseline: develop `dbe23b5` (J0, PR #267).
 Parent: [T5 journal sequence](t5-operation-journal.md). Next contract:
 [J1-B/C journal acknowledgment](t5-journal-contract.md). No durability ships here.
@@ -113,9 +113,9 @@ ACK state gates durability claims as specified in J1-B, even if RAM is ahead of 
 
 ## Implementation packets and failing-first acceptance
 
-After A2, implement [A4a status publication](t5-status-publication.md) before A3,
-then A4b wire parity. Use existing fixtures, HTTP harness and route collector. One reviewed ready candidate per bounded
-packet; run focused local tests before the repository's mandatory hooks/CI.
+A4a is implemented. Next: [A3a review ownership](t5-review-publication.md), A3 HTTP,
+then A4b parity. Reuse fixtures and route metadata; one reviewed candidate per bounded
+packet, with focused tests before mandatory hooks/CI.
 
 | Packet | Existing owners changed | Required independent observable tests |
 | --- | --- | --- |
@@ -163,6 +163,7 @@ proof of completed execution.
 A2b composes application access for discover/execute/receipt using one shared guard;
 see [A2b evidence](../evidence/t5-application-publication.md). Reads keep execution-only
 authority; publication pins current permission/binding without re-consuming consent.
-A4a status/replay primitives are implemented. A3 HTTP and A4b remain proposed.
+A4a status/replay and A3a1 review owner pins are implemented. A3a2 page/evidence,
+A3 HTTP and A4b remain gated.
 The HTTP ordering probe still fails the future A3 expectation. No public wire change,
 durable guarantee or real HTTP publication qualification is delivered.
