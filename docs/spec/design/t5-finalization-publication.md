@@ -1,6 +1,6 @@
 # T5 J1-A: execution finalization and response publication
 
-Status: A1 finalization and A2a/A2b publication primitives implemented; A3–A4 proposed.
+Status: A1/A2 and A4a1 primitives implemented; A4a2/A3/A4b proposed.
 Design baseline: develop `dbe23b5` (J0, PR #267).
 Parent: [T5 journal sequence](t5-operation-journal.md). Next contract:
 [J1-B/C journal acknowledgment](t5-journal-contract.md). No durability ships here.
@@ -113,8 +113,8 @@ ACK state gates durability claims as specified in J1-B, even if RAM is ahead of 
 
 ## Implementation packets and failing-first acceptance
 
-Implement these in sequence on current develop. Use existing FakeEngine, application
-fixtures, HTTP harness and route collector. One reviewed ready candidate per bounded
+After A2, implement [A4a status publication](t5-status-publication.md) before A3,
+then A4b wire parity. Use existing fixtures, HTTP harness and route collector. One reviewed ready candidate per bounded
 packet; run focused local tests before the repository's mandatory hooks/CI.
 
 | Packet | Existing owners changed | Required independent observable tests |
@@ -123,7 +123,7 @@ packet; run focused local tests before the repository's mandatory hooks/CI.
 | A2a session publication (implemented) | Same SessionAuthority lifecycle and shared bounded wait | Closed execution scope refuses work; publication guard checks owner/deadline; timeout/revocation suppress output; legacy run/drain unchanged |
 | A2b application publication (implemented) | ApplicationAuthority permission and binding owners | Compose application permission/binding fence after execution; revocation during publication suppresses output; no nested admission or weakened read guard |
 | A3 HTTP draft migration | Existing route wrapper, result/error helpers and publisher | onSend observes finalized status before bytes; paused publisher keeps ticket busy; real HTTP disconnect and timeout revoke late send; no thenable dependency cycle; headers/status/body and HEAD parity |
-| A4 replay/failure parity | Existing operation lookup and authority checks | Duplicate during execute/drain/publication returns authorized status only; mismatched identity conflicts; no nested admission; callback/serialization/transport failures never reveal private payload or repeat effects |
+| A4a primitives / A4b replay parity | Existing operation lookup and authority checks | Duplicate during execute/drain/publication returns authorized status only; mismatched identity conflicts; no nested admission; callback/serialization/transport failures never reveal private payload or repeat effects |
 
 Before A1, write a regression demonstrating today's response-before-finalization
 ordering with the actual HTTP wrapper and an instrumented captured control. Do not
@@ -163,6 +163,6 @@ proof of completed execution.
 A2b composes application access for discover/execute/receipt using one shared guard;
 see [A2b evidence](../evidence/t5-application-publication.md). Reads keep execution-only
 authority; publication pins current permission/binding without re-consuming consent.
-A3 HTTP and A4 replay remain proposed; duplicates do not invoke the publisher.
+A4a1 explicit status lookup is implemented. A4a2 replay, A3 HTTP and A4b remain proposed.
 The HTTP ordering probe still fails the future A3 expectation. No public wire change,
 durable guarantee or real HTTP publication qualification is delivered.

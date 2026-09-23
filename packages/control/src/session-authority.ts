@@ -9,18 +9,25 @@ import {
 import type { EnginePage } from '@agentbrowser/engine';
 import {
   type AgentMode,
+  CONTROL_OPERATION_ID,
   type ControlView,
   DEFAULT_AGENT_MODE,
   type RunCursor,
   agentModeProfile,
 } from '@agentbrowser/protocol';
-import { TIMEOUT, within } from './bounded-wait.js';
 import {
+  type OperationPublication,
   type SessionPublication,
   type TerminalStatus,
+  publishWithin,
   snapshotPublication,
 } from './publication.js';
-export type { SessionPublication, SessionPublicationContext } from './publication.js';
+export type {
+  OperationPublication,
+  PublicationContext,
+  SessionPublication,
+  SessionPublicationContext,
+} from './publication.js';
 import { synchronousResult } from './trusted-callback.js';
 
 export type SessionPrincipal =
@@ -316,33 +323,54 @@ export class SessionAuthority {
     status: TerminalStatus,
     publication: SessionPublication<T>
   ): Promise<void> {
-    const deadline = this.now() + publication.timeoutMs;
-    let open = true;
-    const unavailable = () => new ControlError('CONTROL_REVOKED', 'Publication expired or revoked');
-    try {
-      const outcome = await within(
-        async (signal) => {
-          const assertCurrent = () => {
-            try {
-              if (!open || signal.aborted || this.now() >= deadline) throw unavailable();
-              this.checkScopeOwner(scope);
-            } catch (error) {
-              open = false;
-              throw error;
-            }
-          };
-          assertCurrent();
-          await publication.publish(result, Object.freeze({ status, signal, assertCurrent }));
-          assertCurrent();
-        },
-        publication.timeoutMs,
-        publication.signal
+    await publishWithin(
+      publication,
+      () => this.checkScopeOwner(scope),
+      this.now,
+      (context) => publication.publish(result, Object.freeze({ ...context, status }))
+    );
+  }
+
+  /** Publish an explicit status snapshot without acquiring or borrowing an execution ticket. */
+  async publishOperation(
+    sessionId: string,
+    principal: SessionPrincipal,
+    operationId: string,
+    options: OperationPublication
+  ) {
+    const publication = snapshotPublication(options);
+    const candidate = Object.freeze(snapshotPrincipal(principal));
+    if (typeof operationId !== 'string' || !CONTROL_OPERATION_ID.test(operationId))
+      throw new ControlError('INVALID_REQUEST', 'Invalid operation ID');
+    const { entry, admission, epoch: agentEpoch } = this.admit(sessionId, candidate);
+    const epoch = entry.control.view().epoch;
+    const review = entry.control.reviewVersion();
+    const assertOwner = () => {
+      const current = this.admit(sessionId, candidate);
+      const view = entry.control.view();
+      if (
+        current.entry !== entry ||
+        entry.configuring ||
+        view.state === 'STOPPED' ||
+        view.epoch !== epoch ||
+        entry.control.reviewVersion() !== review
+      )
+        throw new ControlError('CONTROL_REVOKED', 'Operation status authority changed');
+    };
+    assertOwner();
+    const record = entry.control.operation(operationId);
+    assertOwner();
+    if (!record) return undefined;
+    if (admission.actor === 'agent' && record.epoch !== agentEpoch)
+      throw new ControlError('CONTROL_REQUIRED', 'Operation belongs to another control generation');
+    const snapshot = Object.freeze(record);
+    // A nested lookup must not lend its caller's open execution scope to the publisher.
+    return this.scope.exit(async () => {
+      await publishWithin(publication, assertOwner, this.now, (context) =>
+        publication.publish(snapshot, context)
       );
-      if (outcome === TIMEOUT) throw unavailable();
-    } finally {
-      // Fence even a non-cooperative publisher before its captured ticket is released.
-      open = false;
-    }
+      return snapshot;
+    });
   }
 
   /** Retain observations through drain without retroactively failing completed execution. */

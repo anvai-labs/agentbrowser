@@ -1,6 +1,6 @@
 # T5: optional durable operations and recovery
 
-Status: active J0/A1/A2 shared foundation; durable recovery unimplemented.
+Status: active J0/A1/A2/A4a1 shared foundation; durable recovery unimplemented.
 Repository: agentbrowser. Depends on: T2.
 Inputs: core, contracts, execution, state-memory, security.
 
@@ -29,8 +29,10 @@ it explicitly for T5 implementation; it is not added to unrelated mode context.
 A1 finalization and A2a/A2b publication primitives are implemented
 ([A1](../evidence/t5-finalization.md), [A2a](../evidence/t5-session-publication.md),
 [A2b](../evidence/t5-application-publication.md)).
-Next implement [J1-A publication](../design/t5-finalization-publication.md)
-packets A3 HTTP and A4 replay, then the [J1-B/C journal contract](../design/t5-journal-contract.md)
+[A4a1 status lookup](../evidence/t5-operation-status-publication.md) is also implemented.
+Next implement [A4a2 replay/application composition](../design/t5-status-publication.md),
+A3 HTTP and A4b replay parity,
+then the [J1-B/C journal contract](../design/t5-journal-contract.md)
 and application-only integration. Remaining packets are proposed and loaded on demand.
 Browser durability waits for its existing target/policy/approval owners to support
 post-storage-wait revalidation. Do not advertise recovery from J0 or this design.
