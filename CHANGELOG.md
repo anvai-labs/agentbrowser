@@ -5,6 +5,58 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [1.10.0] - 2026-09-23
+
+### Added
+
+- First-class CLI `form prepare` compiles reusable form mappings into bounded,
+  block-scoped autofill requests. Scoped stage checks and owned widget popups
+  prevent repeated-label and unrelated-option selection (#237–#238).
+- Byte-verified uploads accept expected SHA-256 and MIME type. Shared native-form
+  evidence and application-owned draft adapters qualify attachment and field
+  state across controlled UI/API fixtures (#239, #243–#246, #249).
+- Explicit operator-reviewed approvals, application submission reviews and
+  payload-bound consent across REST, SDK and CLI. The operator panel supports
+  application binding and read-only operation/receipt reconciliation
+  (#240–#242, #247–#248, #254, #257, #259, #261–#262).
+- Operator-only `AGENTBROWSER_ALLOWED_CIDRS` permits selected private destinations
+  at both hostname and DNS-address gates. Defaults remain blocked; loopback,
+  metadata and per-session host restrictions still apply. Invalid CIDRs abort
+  startup and `/0` emits a warning. Use `/32` for one IPv4 host (#275).
+- Offline job-eligibility and listing-review examples use explicit evidence and
+  compensation criteria; these are reusable examples, not live job-portal or
+  application-submission qualification (#260, #264).
+
+### Fixed
+
+- Application authorization, callback ownership, scoped reads and drain handling
+  now reject stale or reentrant owners. Stored application review reads/decisions
+  recheck the application authority before evidence-provider invocation and pin
+  the original action; provider permission cannot replace application permission.
+- Explicitly empty, malformed or conflicting `AGENTBROWSER_API_KEYS` configuration
+  now aborts startup instead of selecting anonymous mode. Embedded credential maps
+  are copied so caller mutation cannot disable authentication. Unset the variable
+  for intentional trusted-local operation; valid `key:tenant` configuration is
+  unchanged.
+- Engine and HTTP error surfaces use bounded, detached and redacted diagnostics;
+  framework logger failures cannot reveal private callback details (#252–#253,
+  #255–#256). Document extraction uses the shared stable-read boundary (#263).
+
+### Internal foundations and limits
+
+- Shared dispatch/finalization and bounded publication helpers cover execution,
+  lookup, replay and review owners without duplicating authority or operation
+  stores (#267, #269–#274). HTTP publication integration, durable journal/recovery
+  and restart guarantees remain unfinished; these helpers do not close T5.
+- T4/T6 remain partial. No production evidence source is enabled by default; full
+  live ATS/job applications, broader widgets and installed external-harness
+  qualification remain open. Inbound client CIDRs, OIDC and Basic authentication
+  are follow-up designs and are not included in this release.
+- CLI and optional MCP executables remain Bun-compiled. The service ships compiled
+  JavaScript with production dependencies, qualified on Node 24.21.0. Existing
+  browser-egress and platform limits remain as documented in the
+  [threat model](docs/threat-model.md) and [release tracker](docs/release-milestones.md).
+
 ## [1.9.1] - 2026-09-20
 
 ### Added

@@ -47,8 +47,8 @@ describe('server edge branches', () => {
     };
 
     it(
-      'parses trimmed, multi-colon and junk pairs; unknown or absent bearers are rejected',
-      withEnv('k1:tenant-a, k2:tenant-b , brokenpair, :orphan, ghost:, deep:key:x', async () => {
+      'parses trimmed and multi-colon pairs; unknown or absent bearers are rejected',
+      withEnv('k1:tenant-a, k2:tenant-b , deep:key:x', async () => {
         const server = await buildServer({ engine: new FakeEngine() });
         try {
           // With keys configured, requests without credentials never reach routes.
@@ -56,7 +56,7 @@ describe('server edge branches', () => {
           expect(anonymous.statusCode).toBe(401);
           expect(anonymous.json().error.code).toBe('UNAUTHORIZED');
 
-          // A pair without a separator is skipped: it authenticates nothing.
+          // A key not present in configuration authenticates nothing.
           const junk = await server.inject({
             method: 'POST',
             url: '/v1/sessions',
@@ -87,22 +87,30 @@ describe('server edge branches', () => {
       })
     );
 
-    it(
-      'treats a whitespace-only variable as unset and runs unauthenticated',
-      withEnv('   ', async () => {
-        const server = await buildServer({ engine: new FakeEngine() });
+    it.each([
+      '',
+      '   ',
+      'brokenpair',
+      ':orphan',
+      'ghost:',
+      'valid:tenant,brokenpair',
+      'valid:tenant,',
+      'same:a,same:b',
+    ])('rejects malformed explicit configuration %j before resource creation', async (value) => {
+      await withEnv(value, async () => {
+        let server: Awaited<ReturnType<typeof buildServer>> | undefined;
         try {
-          const created = await server.inject({
-            method: 'POST',
-            url: '/v1/sessions',
-            payload: { tenantId: 't1' },
-          });
-          expect(created.statusCode).toBe(201);
+          await expect(
+            buildServer({ engine: new FakeEngine() }).then((built) => {
+              server = built;
+              return built;
+            })
+          ).rejects.toThrow('Invalid AGENTBROWSER_API_KEYS configuration');
         } finally {
-          await server.close();
+          await server?.close();
         }
-      })
-    );
+      })();
+    });
 
     it(
       'rejects session creation without any tenantId in unauthenticated mode',
@@ -120,6 +128,26 @@ describe('server edge branches', () => {
         }
       })
     );
+  });
+
+  it('owns injected credentials so clearing the caller map cannot disable authentication', async () => {
+    const keys = keyMap({ 'operator-key': 'owner' });
+    const server = await buildServer({ engine: new FakeEngine(), apiKeys: keys });
+    keys.clear();
+    try {
+      expect((await server.inject({ method: 'GET', url: '/v1/sessions' })).statusCode).toBe(401);
+      expect(
+        (
+          await server.inject({
+            method: 'GET',
+            url: '/v1/sessions',
+            headers: { authorization: 'Bearer operator-key' },
+          })
+        ).statusCode
+      ).toBe(200);
+    } finally {
+      await server.close();
+    }
   });
 
   describe('operator configuration', () => {

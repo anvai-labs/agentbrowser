@@ -1,6 +1,22 @@
 # Release milestones and acceptance gates
 
-## Current checkpoint: 1.9.1 published and installed (2026-09-20)
+## Current candidate: 1.10.0 (2026-09-23)
+
+The owner authorized promotion after the LAN CIDR checkpoint (#275). Version
+1.10.0 is a minor release because the changes since 1.9.1 add public CLI/API
+capabilities. Scope and remaining limits are in the [changelog](../CHANGELOG.md).
+The [candidate evidence](spec/evidence/release-1.10.0.md) records validation.
+Release review also required narrow fixes for invalid API-key configuration and
+stored application-review authorization before promotion.
+
+This is release preparation, not publication evidence. Required sequence: reviewed
+release PR to develop, PR to protected main, verify the exact main tree and checks,
+annotated tag, release workflow, published artifact/npm verification, Homebrew tap
+PR and installation qualification, then synchronize main back into develop.
+OIDC, inbound CIDRs, durable recovery and unfinished use-case milestones are not
+implicitly completed by this release.
+
+## Delivered checkpoint: 1.9.1 published and installed (2026-09-20)
 
 Published baseline is **1.9.1**. T3 completed on develop through
 [PR 231](https://github.com/anvai-labs/agentbrowser/pull/231), followed by the bounded

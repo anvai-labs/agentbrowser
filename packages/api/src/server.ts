@@ -128,20 +128,21 @@ function sha256Hex(value: string): string {
  */
 function apiKeysFromEnv(): Map<string, string> | undefined {
   const raw = process.env.AGENTBROWSER_API_KEYS;
-  if (raw === undefined || raw.trim() === '') {
+  if (raw === undefined) {
     return undefined;
   }
   const keys = new Map<string, string>();
   for (const pair of raw.split(',')) {
     const separator = pair.lastIndexOf(':');
     if (separator <= 0) {
-      continue;
+      throw new Error('Invalid AGENTBROWSER_API_KEYS configuration');
     }
     const key = pair.slice(0, separator).trim();
     const tenant = pair.slice(separator + 1).trim();
-    if (key.length > 0 && tenant.length > 0) {
-      keys.set(sha256Hex(key), tenant);
-    }
+    const digest = sha256Hex(key);
+    if (!key || !tenant || (keys.has(digest) && keys.get(digest) !== tenant))
+      throw new Error('Invalid AGENTBROWSER_API_KEYS configuration');
+    keys.set(digest, tenant);
   }
   return keys;
 }
@@ -205,6 +206,10 @@ function statusFor(code: string): number {
 }
 
 export async function buildServer(options: ServerOptions = {}): Promise<FastifyInstance> {
+  // Validate before allocating service resources. Own the credential map so a
+  // caller clearing it later cannot switch a running service into local mode.
+  const configuredKeys = options.apiKeys ?? apiKeysFromEnv();
+  const apiKeys = configuredKeys === undefined ? undefined : new Map(configuredKeys);
   const fastify = Fastify({
     logger: false, // Disable logging for cleaner test output
   });
@@ -609,7 +614,6 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     return { status: 'live', timestamp: new Date().toISOString() };
   });
 
-  const apiKeys = options.apiKeys ?? apiKeysFromEnv();
   if (apiKeys === undefined || apiKeys.size === 0) {
     console.warn(
       '[agentbrowser] No API keys configured; /v1 is UNAUTHENTICATED. ' +
