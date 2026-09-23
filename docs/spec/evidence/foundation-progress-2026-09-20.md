@@ -1,8 +1,8 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
 Rechecked published 1.9.1 at `310e01d43982824caac2c63ed8d98355e17efdce`
-and develop `5cbdb997d049fdee8c33797701fceec0a7429ca5` (PR #264; alignment
-rechecked 2026-09-22). C3c incorporates the merged #256 error-containment repair.
+and develop `dbe23b587882d3fe62a6ad07dcc11259d51de81e` (PR #267; alignment
+rechecked 2026-09-23). C3c incorporates the merged #256 error-containment repair.
 The [release ladder](release-1.9.1.md) includes Bun CLI/MCP artifacts,
 Node 24 service qualification, Homebrew and develop back-sync. Existing browser
 sessions were preserved; an upgraded installed binary does not prove every running
@@ -30,9 +30,10 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 Exact milestone count: **3 of 9 finite tasks complete (33%)**. Counting all original
 ten rows gives 30%, including recurring T9. No defensible effort-weighted overall
 percentage is available. Partial estimates are intentionally not averaged.
-Victor source was rechecked at develop `82eb4a49c`; the schema repair is tracked
-in [PR #1168](https://github.com/anvai-labs/victor/pull/1168). Installed Victor is
-0.9.3 and remains unqualified; source progress does not establish release acceptance.
+Victor source repair merged at `f3ca959579793b52ed7555b7af53aa458c5ce828`
+in [PR #1168](https://github.com/anvai-labs/victor/pull/1168). The last checked
+installed Victor was 0.9.3 and remains unqualified; source progress does not establish
+release acceptance.
 
 ## Incremental continuation and code owners
 
@@ -317,3 +318,21 @@ J1–J4 still need durable intent/dispatch/terminal acknowledgments, response or
 runtime/store qualification and authorized historical lookup. Exactly 3/9 finite
 milestones remain complete; the T5 estimate reflects foundation work only. Published
 1.9.1 and running services remain unchanged.
+
+J0 merged through [PR #267](https://github.com/anvai-labs/agentbrowser/pull/267)
+at `dbe23b587882d3fe62a6ad07dcc11259d51de81e`. Reviewed candidate `72aef165`
+and merge share tree `04aa26ac89ef72f6f23fc610da1e10a0d64ab2e2`. Normal commit
+and push hooks each passed 3,378 tests with 24 existing skips. PR CI run
+`35826719915` and post-merge run `35827242740` each passed all eight checks;
+independent exact-head adversarial review was clean.
+
+The next design checkpoint splits J1 into
+[finalization/publication](../design/t5-finalization-publication.md) and
+[journal contract/integration](../design/t5-journal-contract.md). Source review
+confirmed the Fastify reply-thenable cycle risk, output-guard scope coupling,
+post-ACK consent revalidation, concurrent marker sharing and in-memory/durable
+replay distinction. Application writes are the first qualification target; native
+browser approval/target revalidation remains a separate gate. The packets name
+existing owners and failing-first tests instead of creating another executor.
+They are proposed only: T5 stays ~10%, exactly 3/9 finite milestones are complete,
+and no durability, installed-harness qualification or release is claimed.

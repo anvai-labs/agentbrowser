@@ -96,6 +96,13 @@ J1 therefore also needs an explicit response/finalization composition design. An
 write added to the current `finally` or background drain is not sufficient. Ephemeral
 mode keeps its documented behavior; REST and CLI cannot invent a durable guarantee.
 
+The implementation sequence is now split into demand-loaded packets:
+[J1-A finalization/publication](t5-finalization-publication.md), then
+[J1-B port and J1-C integration](t5-journal-contract.md). The first durable qualification
+targets application writes only. Browser target/policy/approval checks need a separate
+post-storage-wait qualification through their existing owners. These packets are
+designs, not implemented APIs; J0 remains the only delivered runtime increment.
+
 | Last durable fact at process loss | Recovery classification | Effect replay |
 | --- | --- | --- |
 | No acknowledged intent | Not known to be accepted; receipt may be absent | Never infer permission to retry from absence |

@@ -21,10 +21,10 @@ declared files and budgets without contacting a service.
 | [T2](t2-shared-execution.md) | Complete | Shared execution/evidence shipped; develop #257 adds synthetic G6 acceptance, with production evidence and durability still gated | T0 |
 | [T3](t3-qa-regressions.md) | Complete | First application-owned CLI regression workflow, private JUnit evidence, standalone-copy and measured-cost qualification delivered through #231 and released in 1.9.1 | T2 |
 | [T4](t4-application-parity.md) | Active | REST/SDK/CLI shipped; synthetic UI/API parity and C3c public consent qualified; P0 trusted native-read composition merged #259; U0 binding UI merged #261; U1 receipt UX merged #262; production gates remain | T2 |
-| [T5](t5-durable-recovery.md) | Not started | Optional single-owner durable recovery | T2 |
-| [T6](t6-widget-strategies.md) | Active | Mapping, uploads, native/app witnesses and C3c synthetic submission qualified on develop; E0a/E0b eligibility merged #260; N0 document read merged #263; E0c private listing-review candidate; private integration/live gates remain | T2 |
+| [T5](t5-durable-recovery.md) | Active | J0 shared dispatch/drain merged #267; J1 design packets ready; durable recovery unimplemented | T2 |
+| [T6](t6-widget-strategies.md) | Active | Mapping, uploads, native/app witnesses and C3c synthetic submission qualified on develop; E0a/E0b eligibility merged #260; N0 document read merged #263; E0c private listing review merged #264; private integration/live gates remain | T2 |
 | [T7](t7-audit-security.md) | Not started | Optional audit/security adapters and profiles | T3; T4 additionally for application-security parity |
-| [T8](t8-harness-qualification.md) | Not started | Transport risks documented; installed Victor/Codex/Claude qualification remains | T0; profile/full-run slices also require T1/T3 |
+| [T8](t8-harness-qualification.md) | Active source repair | Victor schema repair merged #1168; installed Victor/Codex/Claude qualification remains | T0; profile/full-run slices also require T1/T3 |
 | [T9](t9-release-hardening.md) | Recurring | Branch protection and release process exist; every changed slice still needs its own promotion evidence | T0; each release also requires its changed tasks' acceptance |
 
 T7 has additional scope-enforcement and customer-demand gates. T8 transport repair
