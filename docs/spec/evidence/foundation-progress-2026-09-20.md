@@ -1,7 +1,7 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
 Rechecked published 1.9.1 at `310e01d43982824caac2c63ed8d98355e17efdce`
-and develop `dbe23b587882d3fe62a6ad07dcc11259d51de81e` (PR #267; alignment
+and develop `3dad07c38308fefd81f396035fb7fb523efeb74f` (PR #269; alignment
 rechecked 2026-09-23). C3c incorporates the merged #256 error-containment repair.
 The [release ladder](release-1.9.1.md) includes Bun CLI/MCP artifacts,
 Node 24 service qualification, Homebrew and develop back-sync. Existing browser
@@ -21,7 +21,7 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T2 shared execution/verification | Complete, released | 100% | Production evidence belongs to T4; restart durability to T5 |
 | T3 QA regression | Complete, released | 100% | Broader provisioning and demand-backed report adapters are follow-ups |
 | T4 application operations/parity | Active | ~40% | Production UI/API oracle and evidence; U0/U1 operator UX merged; synthetic parity qualified; callback repair merged #236 |
-| T5 durable recovery | Active J0/A1 dispatch and finalization foundation | ~10% | Journal/recovery and process-loss qualification; no durable guarantee yet |
+| T5 durable recovery | Active J0/A1/A2a shared session foundation | ~10% | Journal/recovery and process-loss qualification; no durable guarantee yet |
 | T6 forms/operations | Active | ~40% | Production sources, candidate/job eligibility and live qualification; C3c public synthetic workflow merged #257 |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
 | T8 installed harnesses | Active source repair; installed acceptance unqualified | 0% installed qualification | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |
@@ -347,3 +347,19 @@ No second record store, executor, publisher or dependency was introduced. HTTP
 publication remains A2–A4 work, and J1-B/C journal integration is still unimplemented.
 The coarse T5 estimate remains ~10%; exactly 3/9 finite milestones are complete.
 Published 1.9.1 and running services remain unchanged.
+
+
+## T5 A2a: session publication — 2026-09-23
+
+A1 merged [#269](https://github.com/anvai-labs/agentbrowser/pull/269) at `3dad07c`;
+reviewed tree `f12b5f17cfef9cb92ee263a8df90378fd4576099` was preserved. Both
+normal hooks passed 3,387 tests with 24 existing skips; PR run `35847260132` and
+post-merge run `35847860435` each passed all eight checks without reruns.
+
+[A2a evidence](t5-session-publication.md) records optional session publication in the
+same authority lifecycle, reuse of the outcome runner's bounded-wait helper, closed
+execution scope and immutable terminal facts through output failures. This is session
+authority only. Application permission/binding publication fencing (A2b), actual HTTP
+migration (A3) and authorized replay publication (A4) remain open. Durable recovery
+is unimplemented; T5 stays ~10% and exactly 3/9 finite milestones remain complete.
+No release or service restart is included.

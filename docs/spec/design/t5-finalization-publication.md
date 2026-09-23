@@ -1,6 +1,6 @@
 # T5 J1-A: execution finalization and response publication
 
-Status: A1 core finalization implemented; A2–A4 publication proposed.
+Status: A1 finalization and A2a session publication implemented; A2b–A4 proposed.
 Design baseline: develop `dbe23b5` (J0, PR #267).
 Parent: [T5 journal sequence](t5-operation-journal.md). Next contract:
 [J1-B/C journal acknowledgment](t5-journal-contract.md). No durability ships here.
@@ -120,7 +120,8 @@ packet; run focused local tests before the repository's mandatory hooks/CI.
 | Packet | Existing owners changed | Required independent observable tests |
 | --- | --- | --- |
 | A1 finalize vs release | SessionControl, SessionAuthority | Terminal status while ticket still excludes new writes; release cannot overwrite it; old owner cannot finish replacement; publication failure preserves finalized execution |
-| A2 shared publication | Same authority, then ApplicationAuthority composition | Closed execution scope refuses effect/read callbacks during publication; output guard succeeds only for current publication; expiry/takeover/replacement suppress output; internal run and J0 drain semantics unchanged |
+| A2a session publication (implemented) | Same SessionAuthority lifecycle and shared bounded wait | Closed execution scope refuses work; publication guard checks owner/deadline; timeout/revocation suppress output; legacy run/drain unchanged |
+| A2b application publication (next) | ApplicationAuthority permission and binding owners | Compose application permission/binding fence after execution; revocation during publication suppresses output; no nested admission or weakened read guard |
 | A3 HTTP draft migration | Existing route wrapper, result/error helpers and publisher | onSend observes finalized status before bytes; paused publisher keeps ticket busy; real HTTP disconnect and timeout revoke late send; no thenable dependency cycle; headers/status/body and HEAD parity |
 | A4 replay/failure parity | Existing operation lookup and authority checks | Duplicate during execute/drain/publication returns authorized status only; mismatched identity conflicts; no nested admission; callback/serialization/transport failures never reveal private payload or repeat effects |
 
@@ -150,6 +151,16 @@ A1 now extracts `SessionControl.finalize` and calls it from the existing authori
 drain before `finish`. Terminal facts freeze while the captured ticket remains busy;
 new dispatch refuses after finalization. `finish` retains compatibility by reusing
 finalization before release. See [A1 evidence](../evidence/t5-finalization.md).
-A2–A4 remain proposed: no publisher, HTTP draft migration, public wire change or
-durability is delivered. The current HTTP ordering probe still fails the future A3
-expectation; this slice does not claim to repair response-before-finalization.
+A2a adds optional trusted-host publication to the SAME `run` lifecycle; see
+[A2a evidence](../evidence/t5-session-publication.md). It shares the bounded-wait
+helper extracted from outcome-runner and captured-owner checks with execution/read
+composition. Timeout (1–60,000 ms, no default) starts only after drain/finalization.
+The optional signal cancels output, not execution or drain; even pre-aborted output
+still permits the work callback. Transport request cancellation is a separate concern.
+The publisher receives frozen terminal status and must check its guard at actual send.
+A returned result is not proof of completed execution when status is outcome_unknown.
+
+A2b–A4 remain proposed. No application permission fence, HTTP draft migration or replay
+publisher is wired: duplicates return existing status without invoking this callback.
+The current HTTP ordering probe still fails the future A3 expectation. No public wire
+change, durable guarantee or real HTTP publication qualification is delivered.
