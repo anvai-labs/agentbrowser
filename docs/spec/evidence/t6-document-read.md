@@ -1,6 +1,9 @@
 # T6 N0 document-read qualification
 
-Candidate based on develop `0afe7de` (#262); see the
+Merged in #263 at `4bcc47b`, preserving reviewed head `ffc0e65` and tree
+`63502b2`. PR run `35799197911` and post-merge run `35799640846` passed all
+eight jobs without reruns. Independent exact-head review returned SHIP; both normal
+hooks passed 3,370 tests with 24 existing skips. See the
 [design](../design/t6-document-read.md). One optional engine document port feeds
 existing pure extractors and HTML export through a shared service source helper.
 Forms still observe interactive elements; engines without the port retain fallback.
@@ -24,7 +27,7 @@ retained actionable references, closed-page refusal, and a 1,200-link index with
 inventing refs. These are deterministic fixture tests; no performance threshold or
 network dependency is introduced into CI. Independent design and source reviews
 found no blocking issue after correcting the artifact-publication assertion.
-Normal hooks and exact-head review/CI remain the delivery gates.
+Normal hooks and exact-head review/CI completed the delivery gates.
 
 ## Authorized headed CLI re-drive, 2026-09-22
 

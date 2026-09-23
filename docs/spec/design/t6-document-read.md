@@ -1,6 +1,6 @@
 # T6 N0: document reads without interactive reference construction
 
-Status: implemented candidate, based on develop `0afe7de` (#262). See
+Status: merged in #263 at `4bcc47b`, based on develop `0afe7de` (#262). See
 [qualification evidence](../evidence/t6-document-read.md).
 
 ## Observed blocker and scope

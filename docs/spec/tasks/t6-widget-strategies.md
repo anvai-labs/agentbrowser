@@ -155,3 +155,10 @@ construction; forms and unsupported engines retain observation. No second browse
 stack, extractor, authority or default context payload is added. See
 [qualification](../evidence/t6-document-read.md). E0c/E1 still require their own
 private policy, current source evidence and complete live workflow qualification.
+
+The N0 repair merged #263 with 8/8 PR and post-merge CI. The first
+[E0c listing-review consumer](../design/t6-listing-review.md) reuses bounded private-file,
+CLI-process and JSON owners to capture an existing page for private review. See
+[evidence](../evidence/t6-listing-review.md). It does not normalize applicant facts,
+authenticate accounts, evaluate eligibility or close E0c/E1. Those remaining gates must
+be completed in the owning workflow, not replaced by more generic browser helpers.

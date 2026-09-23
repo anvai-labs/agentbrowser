@@ -159,6 +159,13 @@ export function createCliEnvironment(env, token) {
   return isolated;
 }
 
+/**
+ * Shared bounded CLI process owner for application recipes.
+ * @param {string[]} cli
+ * @param {string[]} args
+ * @param {{env?: NodeJS.ProcessEnv, token?: string, input?: string, timeoutMs?: number, maxOutputBytes?: number, signal?: AbortSignal}} options
+ * @returns {Promise<{stdout: string, stderr: string, code: number}>}
+ */
 export async function callInstalledCli(
   cli,
   args,
