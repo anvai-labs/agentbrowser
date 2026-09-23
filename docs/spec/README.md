@@ -2,12 +2,12 @@
 
 Status: active product architecture and implementation contract. A capability is
 delivered only when its task evidence records a merged and qualified implementation.
-Published baseline: AgentBrowser 1.9.1 at
-`310e01d43982824caac2c63ed8d98355e17efdce`. Rechecked develop baseline:
-`d53829e6c06e26b977bdd0396e61094282b4081c` after PR #257, retaining #255 and
-the #256 error-containment repair. Local Victor was last inspected at `68502d82d`
-(not installed-harness qualification). Develop alignment reviewed 2026-09-22.
-See the [release evidence](evidence/release-1.9.1.md) and
+Published baseline: AgentBrowser 1.10.0 at
+`2ba4efe3992f5372881f988624dde4a9807c07e8`, promoted from develop
+`502fa734cdf84286022a28e5b616318b4be3d6d0` through PR #277. Release alignment
+reviewed 2026-09-23. Victor source repair is recorded by T8; installed-harness
+qualification remains open.
+See the [release evidence](evidence/release-1.10.0.md) and
 [progress checkpoint](evidence/foundation-progress-2026-09-20.md).
 
 Build a shared execution and verification service for people and agents. A mode
@@ -96,18 +96,19 @@ authenticated application discovery, execution and receipt lookup now use the sh
 `ApplicationAuthority` through REST, the TypeScript SDK and a first-class CLI command
 group. This is not the complete application-parity vertical. The 1.9.0 foundation
 adds delegated receipt-permission composition. Synthetic UI/API draft parity and
-public reviewed submission are qualified on develop; operator-binding UX, production
-application evidence and durable restart receipts remain open. MCP is optional and has no
+public reviewed submission, operator binding and read-only reconciliation are shipped
+in 1.10.0; production application evidence and durable restart receipts remain open. MCP is optional and has no
 application-operation projection. See the
 [application authority guide](../application-operation-authority.md) and
 [T4 packet](tasks/t4-application-parity.md).
 
 T6 is partially delivered in 1.8.19: the existing autofill orchestrator now has named
-`react-select` and `chip-multiselect` strategies. Develop adds bounded reusable mapping,
+`react-select` and `chip-multiselect` strategies. Version 1.10.0 adds bounded reusable mapping,
 checked uploads, native/app witnesses and public reviewed submission through #257.
 Broader widget, production workflow and cross-engine acceptance remain open. Version 1.9.1 additionally
 ships Q0 committed-widget verification and CLI cookie-file input. T3 delivers the first bounded
-application-owned QA workflow; T5 and T7 remain unimplemented. T8 still needs
+application-owned QA workflow. T5 has shared dispatch/finalization/publication
+foundations; HTTP publication and durable recovery remain pending. T7 is unimplemented. T8 still needs
 installed-harness qualification. T9 is a
 recurring release gate rather than a one-time feature.
 
@@ -116,8 +117,10 @@ and [E0 job eligibility](design/t6-job-eligibility.md) extend the existing
 [job checkpoint](design/t6-job-application-checkpoint.md), with explicit agent tasks,
 failing-first acceptance and production/live stop gates. P0a/P0b merged in #259 and E0a/E0b in #260; production/private integration and live
 qualification remain open. The [operator binding UI](design/t4-operator-application-binding.md) merged in #261;
-the [reconciliation candidate](design/t4-operator-reconciliation.md) reuses the same
-panel and public read routes. Detailed packets are linked
+the [reconciliation slice](design/t4-operator-reconciliation.md) merged in #262 and reuses
+the same panel and public read routes. The first E0c listing-capture slice merged in #264;
+normalization and private integration remain open.
+These bounded slices are included in 1.10.0; live application acceptance remains open. Detailed packets are linked
 on demand and are not automatically loaded into core or unrelated modes.
 
 ## Modes
