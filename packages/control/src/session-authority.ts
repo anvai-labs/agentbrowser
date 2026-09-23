@@ -11,10 +11,43 @@ import {
   type AgentMode,
   type ControlView,
   DEFAULT_AGENT_MODE,
+  type OperationRecord,
   type RunCursor,
   agentModeProfile,
 } from '@agentbrowser/protocol';
+import { TIMEOUT, within } from './bounded-wait.js';
 import { synchronousResult } from './trusted-callback.js';
+
+type TerminalStatus = Exclude<OperationRecord['status'], 'in_flight'>;
+export interface SessionPublicationContext {
+  readonly status: TerminalStatus;
+  readonly signal: AbortSignal;
+  /** Must be checked at the actual output boundary; conveys no execution authority. */
+  assertCurrent(): void;
+}
+
+/** Trusted host composition only; not an HTTP option or a replay publisher. */
+export interface SessionPublication<T> {
+  readonly timeoutMs: number;
+  /** Cancels publication only, never execution or its drain. */
+  readonly signal?: AbortSignal;
+  publish(value: T, context: Readonly<SessionPublicationContext>): void | PromiseLike<void>;
+}
+
+function snapshotPublication<T>(options: SessionPublication<T>): SessionPublication<T> {
+  const timeoutMs = options.timeoutMs;
+  const publish = options.publish;
+  const signal = options.signal;
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < 1 ||
+    timeoutMs > 60_000 ||
+    typeof publish !== 'function' ||
+    (signal !== undefined && !(signal instanceof AbortSignal))
+  )
+    throw new ControlError('INVALID_REQUEST', 'Invalid publication options');
+  return Object.freeze({ timeoutMs, publish, ...(signal ? { signal } : {}) });
+}
 
 export type SessionPrincipal =
   | { actor: 'operator'; tenant?: string }
@@ -212,8 +245,11 @@ export class SessionAuthority {
     principal: SessionPrincipal,
     operation: { id?: string; fingerprint?: string },
     fn: () => Promise<T>,
-    failed: () => boolean | 'rejected' = () => false
+    failed: () => boolean | 'rejected' = () => false,
+    publicationOptions?: SessionPublication<T>
   ): Promise<T | { replay: true; operation: unknown }> {
+    const publication =
+      publicationOptions === undefined ? undefined : snapshotPublication(publicationOptions);
     const admitted = this.admit(sessionId, principal);
     const { entry, admission } = admitted;
     const ticket = entry.control.begin({
@@ -234,12 +270,13 @@ export class SessionAuthority {
       pendingDispatches: 0,
     };
     return this.scope.run(scope, async () => {
-      let status: Parameters<SessionControl['finish']>[1] = 'failed';
+      let status: TerminalStatus = 'failed';
+      let result!: T;
+      let executionError: unknown;
+      let succeeded = false;
       try {
-        const result = await fn();
-        if (this.require(sessionId) !== entry)
-          throw new ControlError('CONTROL_REVOKED', 'Session owner changed');
-        entry.control.check(ticket);
+        result = await fn();
+        this.checkScopeOwner(scope);
         const failure = failed();
         status =
           failure === 'rejected'
@@ -249,35 +286,89 @@ export class SessionAuthority {
                 ? 'outcome_unknown'
                 : 'failed'
               : 'completed';
-        return result;
+        succeeded = true;
       } catch (error) {
         status = ticket.didDispatch ? 'outcome_unknown' : 'failed';
-        throw error;
+        executionError = error;
       } finally {
-        // Response completion ends permission to do more work, even while prior I/O drains.
+        // Completion of the work callback ends permission to admit more work.
         scope.open = false;
-        // A caller that abandoned a write did not establish a terminal outcome.
-        // Keep the captured ticket draining, even if the write later succeeds.
         if (scope.pendingDispatches > 0) status = 'outcome_unknown';
-        const finish = () => {
-          try {
-            if (this.require(sessionId) !== entry)
-              throw new ControlError('CONTROL_REVOKED', 'Session owner changed');
-            entry.control.check(ticket);
-          } catch {
-            status = ticket.didDispatch ? 'outcome_unknown' : 'failed';
-          }
-          // Finish only the captured control; removal/re-registration cannot release a new owner.
-          entry.control.finalize(ticket, status);
-          entry.control.finish(ticket, status);
-        };
+      }
+      const finalize = () => {
+        try {
+          this.checkScopeOwner(scope);
+        } catch {
+          status = ticket.didDispatch ? 'outcome_unknown' : 'failed';
+        }
+        entry.control.finalize(ticket, status);
+      };
+      const finish = () => {
+        finalize();
+        // Never release another incarnation's ticket.
+        entry.control.finish(ticket, status);
+      };
+      if (!publication) {
         if (scope.pending.size === 0) finish();
         else
           void Promise.allSettled([...scope.pending])
             .then(finish)
             .catch(() => undefined);
+        if (!succeeded) throw executionError;
+        return result;
+      }
+      try {
+        if (scope.pending.size > 0) await Promise.allSettled([...scope.pending]);
+        finalize();
+        if (!succeeded) throw executionError;
+        await this.publish(scope, result, status, publication);
+        return result;
+      } finally {
+        // Publication errors must not reclassify already-finalized execution.
+        entry.control.finish(ticket, status);
       }
     });
+  }
+
+  private checkScopeOwner(scope: Scope): void {
+    if (this.active(scope.sessionId) !== scope.entry)
+      throw new ControlError('CONTROL_REVOKED', 'Session owner changed');
+    scope.entry.control.check(scope.ticket);
+  }
+
+  private async publish<T>(
+    scope: Scope,
+    result: T,
+    status: TerminalStatus,
+    publication: SessionPublication<T>
+  ): Promise<void> {
+    const deadline = this.now() + publication.timeoutMs;
+    let open = true;
+    const unavailable = () => new ControlError('CONTROL_REVOKED', 'Publication expired or revoked');
+    try {
+      const outcome = await within(
+        async (signal) => {
+          const assertCurrent = () => {
+            try {
+              if (!open || signal.aborted || this.now() >= deadline) throw unavailable();
+              this.checkScopeOwner(scope);
+            } catch (error) {
+              open = false;
+              throw error;
+            }
+          };
+          assertCurrent();
+          await publication.publish(result, Object.freeze({ status, signal, assertCurrent }));
+          assertCurrent();
+        },
+        publication.timeoutMs,
+        publication.signal
+      );
+      if (outcome === TIMEOUT) throw unavailable();
+    } finally {
+      // Fence even a non-cooperative publisher before its captured ticket is released.
+      open = false;
+    }
   }
 
   /** Retain observations through drain without retroactively failing completed execution. */
@@ -399,9 +490,9 @@ export class SessionAuthority {
     const scope = this.scope.getStore();
     if (!scope) throw new ControlError('CONTROL_REQUIRED', 'Missing output authority');
     return () => {
-      if (!scope.open || this.active(sessionId) !== scope.entry)
+      if (!scope.open)
         throw new ControlError('CONTROL_REVOKED', 'Session owner expired or changed');
-      scope.entry.control.check(scope.ticket);
+      this.checkScopeOwner(scope);
     };
   }
 
