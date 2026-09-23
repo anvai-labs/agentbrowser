@@ -1,12 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { ControlError, type SessionControl } from '@agentbrowser/core';
 import {
+  type ApplicationDiscovery,
   CONTROL_OPERATION_ID,
   VERIFICATION_SNAPSHOT_LIMITS,
   snapshotJsonData,
   validateApplicationOperationDescriptors,
 } from '@agentbrowser/protocol';
 import { canonicalJson } from './canonical-json.js';
+import { type SessionPublication, snapshotPublication } from './publication.js';
 import {
   type SessionAdmission,
   SessionAuthority,
@@ -180,6 +182,11 @@ function normalizeApplicationRequest(request: ApplicationRequest): {
   }
 }
 type Binding = ApplicationBinding & { generation: string; tenant: string };
+type ApplicationAccessOwner = {
+  binding: Binding;
+  adapter: ApplicationAdapter;
+  scope: ApplicationScope;
+};
 
 /** All application policy boundaries share strict synchronous, non-disclosing denial. */
 function assertApplicationAuthorized(
@@ -316,23 +323,36 @@ export class ApplicationAuthority {
     });
   }
 
-  async discover(sessionId: string, principal: SessionPrincipal) {
-    return this.authority.run(sessionId, principal, {}, async () => {
-      const binding = this.binding(sessionId, false);
-      if (!binding) return null;
-      const adapter = this.adapter(binding.adapter);
-      assertApplicationAuthorized(adapter, this.scope(sessionId, binding));
-      this.authority.assert(sessionId);
-      return {
-        adapter: binding.adapter,
-        resource: binding.resource,
-        operations: Object.entries(adapter.operations).map(([name, op]) => ({
-          name,
-          mode: op.mode,
-          ...(op.review !== undefined ? { review: op.review } : {}),
-        })),
-      };
-    });
+  async discover(
+    sessionId: string,
+    principal: SessionPrincipal,
+    publication?: SessionPublication<ApplicationDiscovery | null>
+  ) {
+    const output = this.preparePublication(sessionId, publication);
+    return this.authority.run(
+      sessionId,
+      principal,
+      {},
+      async () => {
+        output?.captureInScope();
+        const binding = this.binding(sessionId, false);
+        if (!binding) return null;
+        const adapter = this.adapter(binding.adapter);
+        assertApplicationAuthorized(adapter, this.scope(sessionId, binding));
+        this.authority.assert(sessionId);
+        return {
+          adapter: binding.adapter,
+          resource: binding.resource,
+          operations: Object.entries(adapter.operations).map(([name, op]) => ({
+            name,
+            mode: op.mode,
+            ...(op.review !== undefined ? { review: op.review } : {}),
+          })),
+        };
+      },
+      undefined,
+      output?.publication
+    );
   }
 
   private captureOperation(sessionId: string, request: ApplicationRequest) {
@@ -424,7 +444,13 @@ export class ApplicationAuthority {
     return this.operationReview(sessionId, request, captured.binding).review;
   }
 
-  async execute(sessionId: string, principal: SessionPrincipal, callerRequest: ApplicationRequest) {
+  async execute(
+    sessionId: string,
+    principal: SessionPrincipal,
+    callerRequest: ApplicationRequest,
+    publication?: SessionPublication<ApplicationResult>
+  ) {
+    const output = this.preparePublication(sessionId, publication);
     const { request, serialized } = normalizeApplicationRequest(callerRequest);
     this.authority.assertPrincipal(sessionId, principal);
     const { binding, adapter, operation, write } = this.captureOperation(sessionId, request);
@@ -452,6 +478,7 @@ export class ApplicationAuthority {
       principal,
       write && request.operationId && fingerprint ? { id: request.operationId, fingerprint } : {},
       async () => {
+        output?.captureInScope(binding);
         const scope = this.scope(sessionId, binding, request);
         const assertBinding = () => {
           this.authority.assert(sessionId);
@@ -538,14 +565,29 @@ export class ApplicationAuthority {
           throw new Error('Application adapter returned an invalid result kind');
         return result;
       },
-      () => (rejected ? 'rejected' : false)
+      () => (rejected ? 'rejected' : false),
+      output?.publication
     );
   }
 
-  async lookupReceipt(sessionId: string, principal: SessionPrincipal, operationId: string) {
+  async lookupReceipt(
+    sessionId: string,
+    principal: SessionPrincipal,
+    operationId: string,
+    publication?: SessionPublication<unknown>
+  ) {
+    const output = this.preparePublication(sessionId, publication);
     assertReceiptId(operationId);
-    return this.authority.run(sessionId, principal, {}, () =>
-      this.readReceiptInScope(sessionId, operationId)
+    return this.authority.run(
+      sessionId,
+      principal,
+      {},
+      () => {
+        output?.captureInScope();
+        return this.readReceiptInScope(sessionId, operationId);
+      },
+      undefined,
+      output?.publication
     );
   }
 
@@ -659,32 +701,12 @@ export class ApplicationAuthority {
     const ownedScope = this.scope(sessionId, binding);
     if (expectedBinding !== undefined && binding !== expectedBinding)
       throw new ControlError('CONTROL_REVOKED', 'Application binding changed');
-    let revoked = false;
-    const checkAdmission = (scope: ApplicationScope = ownedScope) => {
-      if (revoked) throw new ControlError('CONTROL_REVOKED', 'Application receipt reader revoked');
-      try {
+    const { assertAuthority: checkAuthority, assertPinned: checkAdmission } =
+      this.applicationAccess(sessionId, { binding, adapter, scope: ownedScope }, () => {
         guard();
         if (this.authority.admissionInScope(sessionId) !== admission)
           throw new ControlError('CONTROL_REQUIRED', 'Application receipt admission changed');
-        if (scope.signal.aborted)
-          throw new ControlError('CONTROL_REVOKED', 'Application receipt read cancelled');
-        if (this.binding(sessionId) !== binding)
-          throw new ControlError('CONTROL_REQUIRED', 'Application scope was revoked');
-      } catch (error) {
-        revoked = true;
-        throw error;
-      }
-    };
-    const checkAuthority = (scope: ApplicationScope = ownedScope) => {
-      try {
-        checkAdmission(scope);
-        assertApplicationAuthorized(adapter, scope);
-        checkAdmission(scope);
-      } catch (error) {
-        revoked = true;
-        throw error;
-      }
-    };
+      });
     checkAuthority();
     return {
       adapter,
@@ -711,6 +733,80 @@ export class ApplicationAuthority {
           return result;
         });
       },
+    };
+  }
+
+  /** One sticky application access fence; the caller supplies its lifetime authority. */
+  private applicationAccess(
+    sessionId: string,
+    owner: ApplicationAccessOwner | undefined,
+    assertLifetime: () => void
+  ) {
+    let revoked = false;
+    const assertPinned = (scope = owner?.scope) => {
+      if (revoked) throw new ControlError('CONTROL_REVOKED', 'Application access revoked');
+      try {
+        assertLifetime();
+        if (scope?.signal.aborted)
+          throw new ControlError('CONTROL_REVOKED', 'Application access cancelled');
+        if (this.binding(sessionId, false) !== owner?.binding)
+          throw new ControlError('CONTROL_REQUIRED', 'Application scope was revoked');
+        // Lookup can expire an unbound owner; absence equality is not lifetime proof.
+        assertLifetime();
+      } catch (error) {
+        revoked = true;
+        throw error;
+      }
+    };
+    const assertAuthority = (scope = owner?.scope) => {
+      try {
+        assertPinned(scope);
+        if (owner) assertApplicationAuthorized(owner.adapter, scope ?? owner.scope);
+        assertPinned(scope);
+      } catch (error) {
+        revoked = true;
+        throw error;
+      }
+    };
+    return { assertAuthority, assertPinned };
+  }
+
+  /** Compose disclosure inside the existing session run, never a second admission. */
+  private preparePublication<T>(sessionId: string, options?: SessionPublication<T>) {
+    if (options === undefined) return undefined;
+    const publication = snapshotPublication(options);
+    let captured: { owner: ApplicationAccessOwner | undefined } | undefined;
+    return {
+      captureInScope: (expectedBinding?: Binding) => {
+        this.authority.assert(sessionId);
+        const binding = this.binding(sessionId, false);
+        if (expectedBinding !== undefined && binding !== expectedBinding)
+          throw new ControlError('CONTROL_REVOKED', 'Application binding changed');
+        captured = {
+          owner: binding
+            ? {
+                binding,
+                adapter: this.adapter(binding.adapter),
+                scope: this.scope(sessionId, binding),
+              }
+            : undefined,
+        };
+      },
+      publication: {
+        ...publication,
+        publish: async (value: T, context) => {
+          if (!captured)
+            throw new ControlError('CONTROL_REVOKED', 'Application publication unavailable');
+          const access = this.applicationAccess(sessionId, captured.owner, context.assertCurrent);
+          const output = Object.freeze({
+            ...context,
+            assertCurrent: () => access.assertAuthority(),
+          });
+          output.assertCurrent();
+          await publication.publish(value, output);
+          output.assertCurrent();
+        },
+      } satisfies SessionPublication<T>,
     };
   }
 
