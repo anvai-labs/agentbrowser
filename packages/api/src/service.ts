@@ -2235,8 +2235,10 @@ export class AgentBrowserService {
       }
     }
 
-    this.assertAuthority(sessionId, true);
-    const rawPage = await session.engineSession.newPage();
+    const create = () => session.engineSession.newPage();
+    const rawPage = await (this.controlledContexts.has(session)
+      ? this.authority.dispatchInScope(sessionId, create)
+      : create());
     if (session.signal.aborted) {
       await rawPage.close().catch(() => {});
       throw new ServiceError('SESSION_NOT_FOUND', 'Session ended during page creation');
@@ -3723,9 +3725,9 @@ export class AgentBrowserService {
 
   // ---- internals ----------------------------------------------------------
 
-  private assertAuthority(sessionId: string, dispatch = false): void {
+  private assertAuthority(sessionId: string): void {
     const context = this.requireSession(sessionId);
-    if (this.controlledContexts.has(context)) this.authority.assert(sessionId, dispatch);
+    if (this.controlledContexts.has(context)) this.authority.assert(sessionId);
   }
 
   private guardPage(sessionId: string, page: EnginePage): EnginePage {

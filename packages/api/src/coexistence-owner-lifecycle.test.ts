@@ -1,9 +1,50 @@
 import { FakeEngine } from '@agentbrowser/testkit';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { AgentBrowserService } from './service.js';
 
 const operator = { actor: 'operator' as const, tenant: 'owner' };
 const drain = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+it('retains controlled page creation in the shared dispatch drain after the parent exits', async () => {
+  const engine = new FakeEngine();
+  const service = new AgentBrowserService({ engine });
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  try {
+    const { sessionId } = await service.createSession({
+      tenantId: 'owner',
+      controlMode: 'delegated',
+    });
+    const session = engine.getSession(engine.getSessionIds()[0]!)!;
+    const create = session.newPage.bind(session);
+    vi.spyOn(session, 'newPage').mockImplementation(async () => {
+      await pending;
+      return create();
+    });
+    let work!: ReturnType<typeof service.createPage>;
+    await service.authority.run(
+      sessionId,
+      operator,
+      { id: 'create', fingerprint: 'a' },
+      async () => {
+        work = service.createPage(sessionId);
+      }
+    );
+    expect(service.authority.status(sessionId)).toMatchObject({
+      busy: true,
+      operation: { dispatched: true },
+    });
+    release();
+    expect((await work).pageId).toBeTruthy();
+    await vi.waitFor(() => expect(service.authority.status(sessionId).busy).toBe(false));
+    expect(service.authority.get(sessionId)?.operation('create')?.status).toBe('outcome_unknown');
+  } finally {
+    release();
+    await service.shutdown();
+  }
+});
 
 async function fixture() {
   const engine = new FakeEngine();

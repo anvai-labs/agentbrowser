@@ -21,7 +21,7 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T2 shared execution/verification | Complete, released | 100% | Production evidence belongs to T4; restart durability to T5 |
 | T3 QA regression | Complete, released | 100% | Broader provisioning and demand-backed report adapters are follow-ups |
 | T4 application operations/parity | Active | ~40% | Production UI/API oracle and evidence; U0/U1 operator UX merged; synthetic parity qualified; callback repair merged #236 |
-| T5 durable recovery | Not started | 0% | Design, journal/recovery and process-loss qualification |
+| T5 durable recovery | Active J0 dispatch/drain foundation | ~10% | Journal/recovery and process-loss qualification; no durable guarantee yet |
 | T6 forms/operations | Active | ~40% | Production sources, candidate/job eligibility and live qualification; C3c public synthetic workflow merged #257 |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
 | T8 installed harnesses | Active source repair; installed acceptance unqualified | 0% installed qualification | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |
@@ -299,3 +299,21 @@ No AgentBrowser runtime or release change is required for that harness repair.
 T4/T6 remain ~40%, T8 installed acceptance stays unqualified, and exactly 3/9
 finite milestones remain complete. Keep subsequent installed-provider acceptance
 separate from registration, a source test or a protocol-version bump.
+
+## T5 dispatch prerequisite — 2026-09-23
+
+The [J0 design and journal sequence](../design/t5-operation-journal.md) starts from
+the existing SessionControl and SessionAuthority owners. Guarded page writes, page
+creation and application writes use one dispatch helper and the existing drain
+tracker. A parent exiting with unresolved writes retains its ticket through drain
+and leaves an unknown outcome, even if the abandoned write later succeeds. Awaited
+operations, handled failures, read tracking and synchronous admission keep their
+existing semantics. No engine, REST, CLI or MCP owns another journal/executor.
+
+Six failing-first authority tests preceded the shared helper and consumer migration.
+Follow-up tests cover multiple writes, late rejection, replaced owners and API page
+creation. This is a live-process prerequisite, not evidence for restart recovery.
+J1–J4 still need durable intent/dispatch/terminal acknowledgments, response ordering,
+runtime/store qualification and authorized historical lookup. Exactly 3/9 finite
+milestones remain complete; the T5 estimate reflects foundation work only. Published
+1.9.1 and running services remain unchanged.
