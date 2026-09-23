@@ -111,3 +111,12 @@ held through publication. A later asynchronous onSend hook cannot bypass the fin
 output abort must prevent a late send, not merely substitute a stale 409 body.
 
 Implementation and validation: [A3a1 evidence](../evidence/t5-review-publication.md).
+
+## Release 1.10.0 prerequisite repair
+
+Stored application approval get/decide now recheck the current application authority
+before invoking the evidence provider, pin the complete stored action and perform
+final application owner checks. Consent consumption reuses its existing prepared
+review handle. This narrowly fixes the observed execution-phase access gap; it does
+not complete A3a2 page/evidence/disclosure publication or HTTP adoption. See the
+[release qualification](../evidence/release-1.10.0.md).

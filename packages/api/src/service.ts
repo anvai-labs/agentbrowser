@@ -1918,7 +1918,7 @@ export class AgentBrowserService {
         if (attempted) throw new ServiceError('CONTROL_REQUIRED', 'Submission consent unavailable');
         attempted = true;
         review.assertCurrent();
-        const resolved = await this.resolveApproval(sessionId, tokenId, review.action);
+        const resolved = await this.resolveApproval(sessionId, tokenId, review);
         this.assertReviewContext(sessionId, context);
         review.assertCurrent();
         if (!resolved.prepared || !resolved.assertPinned)
@@ -3781,23 +3781,58 @@ export class AgentBrowserService {
   private async resolveApproval(
     sessionId: string,
     tokenId: string,
-    expectedAction?: Readonly<Record<string, unknown>>
+    intendedReview?: PreparedApplicationOperationReview
   ) {
     const context = this.reviewContext(sessionId);
     const current = await this.approvalGate.getReviewedApproval(tokenId, context);
     this.authority.assert(sessionId);
     if (!current) throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
     if (current.action.type !== NATIVE_FORM_REVIEW_TYPE) {
-      if (expectedAction) throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
-      return { context, current, prepared: undefined, assertPinned: undefined };
+      if (intendedReview) throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
+      return {
+        context,
+        current,
+        prepared: undefined,
+        assertPinned: undefined,
+        application: undefined,
+      };
     }
 
     const selector = selectEvidenceReview(current.action);
     if (!selector) throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
+    let application = intendedReview;
+    try {
+      if (selector.application) {
+        // selectEvidenceReview validated this complete gate-owned action. Its
+        // private input stays here; the provider receives only routing identity.
+        const action = (current.action.parameters as { action: Readonly<Record<string, unknown>> })
+          .action;
+        application ??= this.applicationAuthority.prepareOperationReviewInScope(sessionId, {
+          operation: selector.application.operation,
+          operationId: selector.application.operationId,
+          expectedVersion: selector.application.expectedVersion,
+          input: action.input,
+        });
+        application.assertCurrent();
+        if (canonicalJson(application.action) !== canonicalJson(action))
+          throw new Error('Application review changed');
+      } else if (application) {
+        throw new Error('Expected application review');
+      }
+    } catch {
+      throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
+    }
     return {
       context,
       current,
-      ...this.prepareConfiguredEvidenceReview(sessionId, context, selector, expectedAction),
+      application,
+      ...this.prepareConfiguredEvidenceReview(
+        sessionId,
+        context,
+        selector,
+        application?.action,
+        application?.assertCurrent
+      ),
     };
   }
 
@@ -3896,7 +3931,10 @@ export class AgentBrowserService {
     if (resolved.prepared) {
       try {
         const result = await resolved.prepared.get(tokenId, this.authority.signal(sessionId));
-        if (result) return result;
+        if (result) {
+          resolved.application?.assertPinned();
+          return result;
+        }
       } catch {
         // Source permission and authority failures are indistinguishable from absence.
       }
@@ -3920,7 +3958,10 @@ export class AgentBrowserService {
           decision,
           this.authority.signal(sessionId)
         );
-        if (result) return result;
+        if (result) {
+          resolved.application?.assertPinned();
+          return result;
+        }
       } catch {
         // Source permission and authority failures are indistinguishable from absence.
       }

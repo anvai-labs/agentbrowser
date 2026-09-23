@@ -54,6 +54,7 @@ async function fixture(
   let lostReturn = false;
   let afterConsume: (() => void) | undefined;
   let onAuthorize: (() => void) | undefined;
+  let applicationPermitted = true;
   const consume = gate.consumeReviewedApproval.bind(gate);
   vi.spyOn(gate, 'consumeReviewedApproval').mockImplementation(async (...args) => {
     const result = await consume(...args);
@@ -125,7 +126,7 @@ async function fixture(
         ...owner.adapter,
         authorize(scope) {
           onAuthorize?.();
-          return owner.adapter.authorize(scope);
+          return applicationPermitted && owner.adapter.authorize(scope);
         },
         operations: { ...owner.adapter.operations, submit },
       },
@@ -203,6 +204,9 @@ async function fixture(
     generate,
     approve,
     execute,
+    denyApplication() {
+      applicationPermitted = false;
+    },
     revoke() {
       generation++;
       permitted = false;
@@ -876,5 +880,49 @@ it.each(['binding', 'page', 'permission', 'throw-after-page'] as const)(
     expect(allocate).not.toHaveBeenCalled();
     expect(f.owner.submissionCount()).toBe(0);
     expect(f.service.authority.get(f.sessionId)?.operation('public-submit')).toBeUndefined();
+  }
+);
+
+it.each(['get', 'approve', 'deny'] as const)(
+  'refuses stored application %s before invoking evidence provider after access revocation',
+  async (operation) => {
+    const f = await fixture();
+    const token = await f.generate();
+    f.provider.mockClear();
+    f.collect.mockClear();
+    f.denyApplication();
+    const access = () =>
+      operation === 'get'
+        ? f.service.getApproval(f.sessionId, token.tokenId)
+        : f.service.decideApproval(f.sessionId, token.tokenId, operation);
+    await expect(f.run(access)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(f.provider).not.toHaveBeenCalled();
+    expect(f.collect).not.toHaveBeenCalled();
+    expect(f.owner.submissionCount()).toBe(0);
+  }
+);
+
+it.each(['get', 'approve'] as const)(
+  'refuses application %s if provider revokes access during resolution',
+  async (operation) => {
+    const f = await fixture();
+    const token = await f.generate();
+    const provider = f.provider.getMockImplementation();
+    assert(provider);
+    f.provider.mockImplementation((...args) => {
+      const result = provider(...args);
+      f.denyApplication();
+      return result;
+    });
+    f.collect.mockClear();
+    await expect(
+      f.run(() =>
+        operation === 'get'
+          ? f.service.getApproval(f.sessionId, token.tokenId)
+          : f.service.decideApproval(f.sessionId, token.tokenId, 'approve')
+      )
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(f.collect).not.toHaveBeenCalled();
+    expect(f.owner.submissionCount()).toBe(0);
   }
 );
