@@ -1,6 +1,6 @@
 # T5: shared dispatch and optional operation journal
 
-Status: J0, J1-A1 finalization and A2a session publication implemented; remaining J1–J4 proposed.
+Status: J0, J1-A1 and A2a/A2b publication primitives implemented; remaining J1–J4 proposed.
 Baseline: develop `b01a51b`. This design does not advertise durable recovery.
 Task: [T5](../tasks/t5-durable-recovery.md). Shared contracts remain in
 [execution](../execution.md) and [state/memory](../state-memory.md).
@@ -101,9 +101,10 @@ The implementation sequence is now split into demand-loaded packets:
 [J1-B port and J1-C integration](t5-journal-contract.md). The first durable qualification
 targets application writes only. Browser target/policy/approval checks need a separate
 post-storage-wait qualification through their existing owners. These packets are
-designs except A1 finalization and A2a session publication. Application/HTTP/replay
-publication and journal/recovery remain unimplemented. See [A1 evidence](../evidence/t5-finalization.md)
-and [A2a evidence](../evidence/t5-session-publication.md).
+designs except A1 finalization and A2a/A2b publication primitives. HTTP/replay
+publication and journal/recovery remain unimplemented. See [A1 evidence](../evidence/t5-finalization.md),
+[A2a evidence](../evidence/t5-session-publication.md) and
+[A2b application access](../evidence/t5-application-publication.md).
 
 | Last durable fact at process loss | Recovery classification | Effect replay |
 | --- | --- | --- |
