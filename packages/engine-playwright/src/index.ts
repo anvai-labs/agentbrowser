@@ -700,10 +700,27 @@ function preferBundledEnv(): boolean {
   return value === '1' || value === 'true';
 }
 
+/** A session owns its context and, only for a local headed launch, its browser. */
+async function closeSessionResources(
+  context?: BrowserContext,
+  ownedBrowser?: Browser
+): Promise<void> {
+  try {
+    await context?.close();
+  } finally {
+    // Still attempt browser cleanup when context close fails. Preserve the
+    // existing session-close contract for an already disconnected browser.
+    await ownedBrowser?.close().catch(() => {});
+  }
+}
+
 export class PlaywrightChromiumEngine implements BrowserEngine {
   private _name = 'playwright-chromium';
   private _version = '1.0.0';
-  private browser: Browser | undefined;
+  private sharedBrowser: Promise<Browser> | undefined;
+  private readonly pendingSessions = new Set<Promise<EngineSession>>();
+  private closed = false;
+  private closeTask: Promise<void> | undefined;
   readonly dialogGraceMs: number;
   private readonly rootEgress: RequestPolicy | undefined;
   private readonly webSocketPolicy: 'off' | 'deny-all' | undefined;
@@ -759,7 +776,42 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     };
   }
 
-  async createSession(options: EngineSessionOptions = {}): Promise<EngineSession> {
+  createSession(options: EngineSessionOptions = {}): Promise<EngineSession> {
+    if (this.closed)
+      return Promise.reject(new EngineError('INTERNAL', 'Browser engine is closed', false));
+    const pending = this.initializeSession(options);
+    this.pendingSessions.add(pending);
+    void pending.then(
+      () => this.pendingSessions.delete(pending),
+      () => this.pendingSessions.delete(pending)
+    );
+    return pending;
+  }
+
+  private requireOpen(): void {
+    if (this.closed) throw new EngineError('INTERNAL', 'Browser engine is closed', false);
+  }
+
+  /** One engine-owned launch/connection, including while initialization is pending. */
+  private acquireSharedBrowser(): Promise<Browser> {
+    if (this.sharedBrowser) return this.sharedBrowser;
+    const pending =
+      this.cdpEndpoint !== undefined
+        ? chromium.connectOverCDP(this.cdpEndpoint)
+        : this.launchBrowser(true, false);
+    this.sharedBrowser = pending;
+    void pending.catch(() => {
+      if (this.sharedBrowser === pending) this.sharedBrowser = undefined;
+    });
+    return pending;
+  }
+
+  private async initializeSession(options: EngineSessionOptions): Promise<EngineSession> {
+    // Reject bad input before allocating a browser or context.
+    const sessionSnapshotTimeout =
+      options.snapshotTimeoutMs !== undefined
+        ? snapshotTimeout(options.snapshotTimeoutMs)
+        : undefined;
     // Launch (or connect) the browser family if not already active.
     // TD-BROWSER-6: an explicitly headed session gets a DEDICATED browser.
     // The shared browser is the throughput story for the (default) headless
@@ -772,99 +824,101 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     // Remote CDP browsers have their own host; local environment says nothing about them.
     const warnings = !headless && this.cdpEndpoint === undefined ? headedDisplayWarnings() : [];
     for (const warning of warnings) console.warn(`[agentbrowser] ${warning}`);
-    let browser: Browser;
-    if (this.cdpEndpoint !== undefined) {
-      if (this.browserFamily !== 'chromium') {
-        throw new Error('cdpEndpoint requires the chromium family');
-      }
-      if (!this.browser) {
-        this.browser = await chromium.connectOverCDP(this.cdpEndpoint);
-      }
-      browser = this.browser;
-    } else if (!headless) {
-      browser = await this.launchBrowser(false, options.viewport === undefined);
-    } else {
-      if (!this.browser) {
-        this.browser = await this.launchBrowser(true, false);
-      }
-      browser = this.browser;
-    }
-
-    const egress = options.requestPolicy ?? this.rootEgress;
-
-    // Create browser context (incognito isolation)
-    const locale = options.locale || 'en-US';
-    const context = await browser.newContext({
-      viewport: resolveContextViewport(options.viewport, headless),
-      locale,
-      timezoneId: options.timezoneId || 'America/New_York',
-      // Service-worker fetches bypass context.route; a choke point with a
-      // bypass hole is not a choke point. ADR-019: a caller may explicitly
-      // accept that hole for one session via allowServiceWorkers - e.g. a
-      // destination whose anti-fraud tooling keys off service-worker
-      // presence and rejects sessions that block it. Off by default.
-      ...(egress !== undefined && options.allowServiceWorkers !== true
-        ? { serviceWorkers: 'block' as const }
-        : {}),
-    });
-    if (options.headless === false) {
-      // Keep the headed overrides aligned with the context locale. Playwright
-      // exposes only that locale in navigator.languages; include its base
-      // language as a fallback, without duplicating a language-only locale.
-      await context.addInitScript((locale: string) => {
-        Object.defineProperty(navigator, 'webdriver', { get: () => false });
-        const languages = Object.freeze([...new Set([locale, locale.split('-')[0]])]);
-        Object.defineProperty(navigator, 'languages', { get: () => languages });
-      }, locale);
-    }
-
-    // Request-event sink (spec 5.1 network summary, Phase 3): the route
-    // handler below emits request.started/finished/failed through this
-    // holder; the session routes each event to its originating page so the
-    // existing event pipeline (page queue -> service pump -> replay/WS)
-    // carries it with no new transport. installEgress runs before any page
-    // exists, hence the mutable holder.
-    const requestSink: RequestEventSink = { emit: undefined };
-    if (egress !== undefined) {
-      await this.installEgress(context, egress, requestSink);
-    }
-
-    // Seed cookies so a caller can reuse an already-authenticated session
-    // (e.g. to skip an SSO / device-trust login the headless browser cannot
-    // satisfy). `__Host-`/`__Secure-`-prefixed cookies MUST be host-only and
-    // Secure or Chromium silently rejects them; Playwright expresses host-only
-    // cookies via `url` (not `domain`/`path`), so convert those here.
-    if (options.cookies !== undefined && options.cookies.length > 0) {
-      const toAdd = options.cookies.map((c) => {
-        if (c.name.startsWith('__Host-')) {
-          return {
-            name: c.name,
-            value: c.value,
-            url: `https://${c.domain}/`,
-            secure: true,
-            ...(c.httpOnly !== undefined ? { httpOnly: c.httpOnly } : {}),
-            ...(c.sameSite !== undefined ? { sameSite: c.sameSite } : {}),
-            ...(c.expires !== undefined ? { expires: c.expires } : {}),
-          };
+    const ownsBrowser = !headless && this.cdpEndpoint === undefined;
+    let browser: Browser | undefined;
+    let context: BrowserContext | undefined;
+    try {
+      if (this.cdpEndpoint !== undefined) {
+        if (this.browserFamily !== 'chromium') {
+          throw new Error('cdpEndpoint requires the chromium family');
         }
-        return c;
-      });
-      await context.addCookies(toAdd as Parameters<typeof context.addCookies>[0]);
-    }
+        browser = await this.acquireSharedBrowser();
+      } else if (!headless) {
+        browser = await this.launchBrowser(false, options.viewport === undefined);
+      } else {
+        browser = await this.acquireSharedBrowser();
+      }
+      this.requireOpen();
 
-    return new PlaywrightSession(
-      context,
-      this,
-      options.headless === false ? browser : undefined,
-      requestSink,
-      options.downloadPolicy,
-      // Validate/normalize eagerly (throws RangeError at session-creation
-      // time for a bad explicit value, not silently on the first observe()).
-      options.snapshotTimeoutMs !== undefined
-        ? snapshotTimeout(options.snapshotTimeoutMs)
-        : undefined,
-      warnings
-    );
+      const egress = options.requestPolicy ?? this.rootEgress;
+
+      // Create browser context (incognito isolation)
+      const locale = options.locale || 'en-US';
+      context = await browser.newContext({
+        viewport: resolveContextViewport(options.viewport, headless),
+        locale,
+        timezoneId: options.timezoneId || 'America/New_York',
+        // Service-worker fetches bypass context.route; a choke point with a
+        // bypass hole is not a choke point. ADR-019: a caller may explicitly
+        // accept that hole for one session via allowServiceWorkers - e.g. a
+        // destination whose anti-fraud tooling keys off service-worker
+        // presence and rejects sessions that block it. Off by default.
+        ...(egress !== undefined && options.allowServiceWorkers !== true
+          ? { serviceWorkers: 'block' as const }
+          : {}),
+      });
+      this.requireOpen();
+      if (options.headless === false) {
+        // Keep the headed overrides aligned with the context locale. Playwright
+        // exposes only that locale in navigator.languages; include its base
+        // language as a fallback, without duplicating a language-only locale.
+        await context.addInitScript((locale: string) => {
+          Object.defineProperty(navigator, 'webdriver', { get: () => false });
+          const languages = Object.freeze([...new Set([locale, locale.split('-')[0]])]);
+          Object.defineProperty(navigator, 'languages', { get: () => languages });
+        }, locale);
+      }
+
+      // Request-event sink (spec 5.1 network summary, Phase 3): the route
+      // handler below emits request.started/finished/failed through this
+      // holder; the session routes each event to its originating page so the
+      // existing event pipeline (page queue -> service pump -> replay/WS)
+      // carries it with no new transport. installEgress runs before any page
+      // exists, hence the mutable holder.
+      const requestSink: RequestEventSink = { emit: undefined };
+      if (egress !== undefined) {
+        await this.installEgress(context, egress, requestSink);
+      }
+
+      // Seed cookies so a caller can reuse an already-authenticated session
+      // (e.g. to skip an SSO / device-trust login the headless browser cannot
+      // satisfy). `__Host-`/`__Secure-`-prefixed cookies MUST be host-only and
+      // Secure or Chromium silently rejects them; Playwright expresses host-only
+      // cookies via `url` (not `domain`/`path`), so convert those here.
+      if (options.cookies !== undefined && options.cookies.length > 0) {
+        const toAdd = options.cookies.map((c) => {
+          if (c.name.startsWith('__Host-')) {
+            return {
+              name: c.name,
+              value: c.value,
+              url: `https://${c.domain}/`,
+              secure: true,
+              ...(c.httpOnly !== undefined ? { httpOnly: c.httpOnly } : {}),
+              ...(c.sameSite !== undefined ? { sameSite: c.sameSite } : {}),
+              ...(c.expires !== undefined ? { expires: c.expires } : {}),
+            };
+          }
+          return c;
+        });
+        await context.addCookies(toAdd as Parameters<typeof context.addCookies>[0]);
+      }
+
+      this.requireOpen();
+      return new PlaywrightSession(
+        context,
+        this,
+        ownsBrowser ? browser : undefined,
+        requestSink,
+        options.downloadPolicy,
+        sessionSnapshotTimeout,
+        warnings
+      );
+    } catch (error) {
+      // Preserve the setup failure, even if cleanup itself fails. Shared browser
+      // ownership remains with the engine; never disconnect sibling sessions.
+      await closeSessionResources(context, ownsBrowser ? browser : undefined).catch(() => {});
+      throw error;
+    }
   }
 
   /**
@@ -1193,11 +1247,22 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     });
   }
 
-  async close(): Promise<void> {
-    if (this.browser) {
-      await this.browser.close();
-      this.browser = undefined;
+  close(): Promise<void> {
+    if (!this.closeTask) {
+      this.closed = true;
+      this.closeTask = this.dispose();
     }
+    return this.closeTask;
+  }
+
+  private async dispose(): Promise<void> {
+    // A late launch/context cannot escape shutdown. Existing dedicated sessions
+    // remain session-owned; the coordinator closes live sessions before engines.
+    await Promise.allSettled(this.pendingSessions);
+    const pending = this.sharedBrowser;
+    this.sharedBrowser = undefined;
+    const browser = await pending?.catch(() => undefined);
+    await browser?.close();
   }
 }
 
@@ -1420,25 +1485,16 @@ class PlaywrightSession implements EngineSession {
       return;
     }
     this.closed = true;
-    // Close all pages
-    for (const page of this.pageMap.values()) {
-      await page.close();
-    }
-    this.pageMap.clear();
-    this.downloads.clear();
-
-    // Close context
-    await this.context.close();
-
-    // TD-BROWSER-6: a headed session owns its browser; dispose it. Failure to
-    // close must not fail the session close (the OS reaps the process).
-    if (this.ownedBrowser !== undefined) {
-      try {
-        await this.ownedBrowser.close();
-      } catch {
-        // already gone or unresponsive; nothing further to release
+    try {
+      for (const page of this.pageMap.values()) {
+        await page.close();
       }
+    } finally {
+      this.pageMap.clear();
+      this.downloads.clear();
+      const ownedBrowser = this.ownedBrowser;
       this.ownedBrowser = undefined;
+      await closeSessionResources(this.context, ownedBrowser);
     }
   }
 }

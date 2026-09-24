@@ -16,6 +16,12 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ### Fixed
 
+- Concurrent Playwright headless/CDP sessions share one pending browser initialization.
+  Closing a remote session releases only its context, preserving sibling sessions.
+  Failed setup cleans up owned resources; engine shutdown drains pending setup and
+  refuses further creates on that engine instance. Service shutdown releases every
+  distinct registered engine, including auxiliary pools and connections.
+
 - A resolved Playwright navigation to an internal browser error document now fails
   instead of reporting success. Its diagnostic reason is `browser_error_document`;
   it does not infer a bot wall, disclose the error URL or retry automatically.
