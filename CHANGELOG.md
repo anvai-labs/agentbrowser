@@ -15,6 +15,13 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   1 MiB, configured at startup with `AGENTBROWSER_EXTRACT_MAX_BYTES`). Oversized results
   fail explicitly without returning partial JSON or evidence.
 
+### Internal foundations
+
+- Captured operator review views reuse shared page, application and evidence owners
+  during their original publication phase. Disclosure checks cannot collect new
+  evidence, consume consent or dispatch effects. HTTP publication integration and
+  durable recovery remain separate gates.
+
 ## [1.10.1] - 2026-09-23
 
 ### Added

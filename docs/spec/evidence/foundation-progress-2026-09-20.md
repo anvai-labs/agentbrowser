@@ -21,7 +21,7 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T2 shared execution/verification | Complete, released | 100% | Production evidence belongs to T4; restart durability to T5 |
 | T3 QA regression | Complete, released | 100% | Broader provisioning and demand-backed report adapters are follow-ups |
 | T4 application operations/parity | Active | ~40% | Production UI/API oracle and evidence; U0/U1 operator UX merged; synthetic parity qualified; callback repair merged #236 |
-| T5 durable recovery | Active J0/A1/A2/A4a/A3a1 publication foundation | ~10% | Journal/recovery and process-loss qualification; no durable guarantee yet |
+| T5 durable recovery | Active J0/A1/A2/A4a/A3a publication foundation | ~10% | HTTP adoption/parity, journal/recovery and process-loss qualification; no durable guarantee yet |
 | T6 forms/operations | Active | ~40% | Production sources, candidate/job eligibility and live qualification; C3c public synthetic workflow merged #257 |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
 | T8 installed harnesses | Active source repair; installed acceptance unqualified | 0% installed qualification | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |
