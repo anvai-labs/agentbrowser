@@ -20,7 +20,7 @@ import {
   StructuredLogger,
 } from '@agentbrowser/core';
 import { FakeEngine } from '@agentbrowser/testkit';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentBrowserService } from './service';
 import { ServiceError } from './service';
 
@@ -2338,6 +2338,37 @@ describe('AgentBrowserService', () => {
   });
 
   describe('shutdown', () => {
+    it('closes every distinct registered engine after its sessions, including aliases', async () => {
+      const auxiliary = new FakeEngine();
+      const originalClose = auxiliary.close.bind(auxiliary);
+      const primaryClose = vi.spyOn(engine, 'close');
+      const auxiliaryClose = vi.spyOn(auxiliary, 'close');
+      const owner = new AgentBrowserService({
+        engine,
+        engines: { primaryAlias: engine, auxiliary, auxiliaryAlias: auxiliary },
+      });
+      const created = await owner.createSession({ tenantId: 't1', engine: 'auxiliary' });
+      auxiliaryClose.mockImplementation(async () => {
+        expect(owner.getSession(created.sessionId)).toBeUndefined();
+        await originalClose();
+      });
+      await owner.shutdown();
+      expect(primaryClose).toHaveBeenCalledTimes(1);
+      expect(auxiliaryClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('attempts every engine close even if another engine throws synchronously', async () => {
+      const auxiliary = new FakeEngine();
+      const auxiliaryClose = vi.spyOn(auxiliary, 'close');
+      const failure = new Error('primary close failed');
+      vi.spyOn(engine, 'close').mockImplementation(() => {
+        throw failure;
+      });
+      const owner = new AgentBrowserService({ engine, engines: { auxiliary } });
+      await expect(owner.shutdown()).rejects.toBe(failure);
+      expect(auxiliaryClose).toHaveBeenCalledTimes(1);
+    });
+
     it('should close all sessions and the engine', async () => {
       const sessionId = (await service.createSession({ tenantId: 't1' })).sessionId;
 

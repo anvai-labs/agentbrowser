@@ -3887,7 +3887,12 @@ export class AgentBrowserService {
     for (const sessionId of this.sessionDownloadPolicy.keys()) this.deleteSessionState(sessionId);
     this.pages.clear();
     await this.approvalGate.shutdown();
-    await this.engine.close();
+    // Registry aliases may point to the same engine instance. Every distinct
+    // owner must release its pool/connection even if another close fails.
+    const engines = new Set([this.engine, ...this.engines.values()]);
+    const results = await Promise.allSettled([...engines].map(async (engine) => engine.close()));
+    const failure = results.find((result) => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
   }
 
   // ---- internals ----------------------------------------------------------

@@ -1,7 +1,9 @@
 # Consumer research workload: grounded intake
 
 Status: R1 local fixture qualification, R2 basic MCP adapter and R3 browser-error
-classification are implementation candidates; remaining work below is proposed.
+classification merged in PR #286 (`1aa63f0`), with pre/post-merge CI green.
+The [R4 browser ownership prerequisite](research-browser-ownership.md) is an
+implementation candidate; public launch diagnostics and remaining work are proposed.
 Source: [consumer field report, 2026-09-24](../../consumer-field-handoff-2026-09-24.md).
 Code reviewed: develop `5eae01d` plus the storage-neutral journal in PR #285,
 merged as `5ebf820`. The report does not identify the exact service/MCP build used; observations
