@@ -10,6 +10,12 @@ export interface ScreenshotRequest {
   maskSensitive?: boolean;
   format?: 'png' | 'jpeg' | 'webp';
   quality?: number;
+  /**
+   * Optional readiness wait applied BEFORE the capture, so a JS SPA that has
+   * not painted yet does not yield a blank image. Reuses the same wait
+   * mechanism as browser_act.
+   */
+  wait?: DeliveredWaitCondition;
 }
 
 /**
@@ -233,10 +239,16 @@ export interface PageState {
    * div-based combobox) is entirely absent. Do not trust role/name matching
    * on this observation - retry with a larger snapshotTimeoutMs on the
    * session, or narrow the observation instead.
+   *
+   * 'empty-snapshot-nonempty-dom' is a distinct case: the ariaSnapshot
+   * SUCCEEDED (no timeout) but surfaced no addressable elements while the live
+   * DOM plainly holds content - the common JS-SPA-not-mounted-yet failure. Wait
+   * for readiness (observe/screenshot `wait`) and retry, or read via
+   * browser_html.
    */
   degraded?: boolean;
   /** Why the observation has reduced semantic coverage. */
-  degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset';
+  degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset' | 'empty-snapshot-nonempty-dom';
 }
 
 /**
@@ -700,6 +712,12 @@ export interface ObservationRequest {
   continueFrom?: number;
   scope?: 'viewport' | 'full' | 'frame' | 'element';
   include?: string[];
+  /**
+   * Optional readiness wait applied BEFORE the snapshot, so a slow-mounting JS
+   * SPA does not observe as empty. Reuses the same wait mechanism as
+   * browser_act (settled/networkidle/selectorVisible/minElements/...).
+   */
+  wait?: DeliveredWaitCondition;
 }
 
 /**

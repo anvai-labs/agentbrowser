@@ -5,6 +5,33 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [1.10.1] - 2026-09-23
+
+### Added
+
+- SPA-capture robustness. `observe()` now flags an empty-but-successful
+  accessibility snapshot over a content-rich DOM (the common
+  JS-SPA-not-mounted-yet case) with `degradedReason: "empty-snapshot-nonempty-dom"`,
+  distinct from the timeout case, so callers can wait/retry or read via
+  `browser_html` instead of mistaking it for an empty page.
+- Optional readiness `wait` on `browser_observe`/`browser_screenshot` (and the
+  `observe`/`screenshot` CLI commands via `--wait-until/--wait-timeout/`
+  `--wait-selector/--wait-pattern/--wait-count`), reusing the `browser_act` wait
+  vocabulary. Applied before the snapshot/capture so slow-mounting SPAs do not
+  observe empty or screenshot blank.
+- Headed sessions with no reachable display (e.g. the service under a launchd
+  daemon) now launch as before but log a warning, and `browser_create` returns a
+  `warnings` entry, steering callers to `browser_html` or a GUI login session.
+  Overridable with `AGENTBROWSER_ASSUME_DISPLAY=1`.
+
+### Changed
+
+- The degraded DOM fallback (`getContentElements`) now covers more ARIA-role
+  widgets (`combobox`, `menuitem`, `tab`, `checkbox`, `option`, `contenteditable`)
+  and captures a best-effort accessible name, so a timed-out observation stays
+  addressable. Empty-DOM thresholds are tunable via
+  `AGENTBROWSER_EMPTY_DOM_MIN_TEXT` / `AGENTBROWSER_EMPTY_DOM_MIN_NODES`.
+
 ## [1.10.0] - 2026-09-23
 
 ### Added

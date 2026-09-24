@@ -43,6 +43,7 @@ import {
 import {
   DELIVERED_ACTION_TYPES,
   DELIVERED_OBSERVATION_MODES,
+  detectDisplayAvailability,
   validateUploadIntegrity,
 } from '@agentbrowser/protocol';
 import {
@@ -57,6 +58,7 @@ import {
 import {
   SnapshotBudget,
   type SnapshotEvidence,
+  classifyEmptyObservation,
   sameSnapshotEvidence,
   snapshotDigest,
   snapshotTimeout,
@@ -867,6 +869,20 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
    * one code path.
    */
   private async launchBrowser(headless: boolean, startMaximized: boolean): Promise<Browser> {
+    if (!headless) {
+      // Keep working (never fail the launch), but warn loudly: under a launchd
+      // system daemon there is no GUI session, so a "headed" browser renders to
+      // a null surface and screenshots come back blank. See detectDisplayAvailability.
+      const display = detectDisplayAvailability();
+      if (!display.available) {
+        console.warn(
+          `[agentbrowser] headed session requested but no display detected (${display.reason}); ` +
+            'the browser cannot open a visible window and screenshots will be blank. ' +
+            'Read the page via browser_html, or run the service in a GUI login session ' +
+            '(a per-user LaunchAgent, not a system daemon), or set AGENTBROWSER_ASSUME_DISPLAY=1.'
+        );
+      }
+    }
     const launcher =
       this.browserFamily === 'firefox'
         ? (await import('playwright')).firefox
@@ -1779,11 +1795,17 @@ class PlaywrightPage implements EnginePage {
     // rather than the real accessibility tree.
     let ariaSnapshotDegraded = false;
 
+    // True when the ariaSnapshot itself succeeded (no timeout). Distinguishes an
+    // empty-but-successful snapshot (JS SPA not mounted -> empty-snapshot-nonempty-dom)
+    // from a timed-out one (aria-snapshot-timeout, handled via getContentElements).
+    let ariaSnapshotSucceeded = false;
+
     if (mode === 'interactive' || mode === 'accessibility' || mode === 'content') {
       // Only timeouts can recover. Transport/context errors are not evidence.
       const yaml = await snapshotBudget.capture(this.page.locator('body'));
       documentSnapshot = snapshotDigest(yaml);
       if (yaml !== undefined) {
+        ariaSnapshotSucceeded = true;
         elements = this.parseAriaSnapshot(yaml, this.revision);
       } else {
         ariaSnapshotDegraded = true;
@@ -2015,6 +2037,21 @@ class PlaywrightPage implements EnginePage {
         ? await this.collectOverlays(elements)
         : undefined;
 
+    // An empty-but-successful ariaSnapshot over a content-rich DOM is the common
+    // JS-SPA-not-mounted-yet case; it never trips SnapshotBudget, so without this
+    // check it would look identical to a genuinely empty page. Surface it as its
+    // own degraded reason so callers can wait/retry or read via HTML. Only probe
+    // the DOM when there is nothing to lose (no elements) to avoid per-observe cost.
+    let emptyOverNonEmptyDom = false;
+    if (!ariaSnapshotDegraded && ariaSnapshotSucceeded && elements.length === 0) {
+      const { bodyTextLength, domNodeCount } = await this.measureDomContent();
+      emptyOverNonEmptyDom = classifyEmptyObservation({
+        elementCount: 0,
+        bodyTextLength,
+        domNodeCount,
+      });
+    }
+
     return {
       revision: this.revision,
       url: this.page.url(),
@@ -2025,8 +2062,30 @@ class PlaywrightPage implements EnginePage {
       ...(overlays !== undefined ? { overlays } : {}),
       ...(ariaSnapshotDegraded
         ? { degraded: true, degradedReason: 'aria-snapshot-timeout' as const }
-        : {}),
+        : emptyOverNonEmptyDom
+          ? { degraded: true, degradedReason: 'empty-snapshot-nonempty-dom' as const }
+          : {}),
     };
+  }
+
+  /**
+   * Cheap DOM-content measurement for the empty-snapshot-nonempty-dom signal.
+   * Best-effort: a detached/navigating page yields zeros rather than throwing.
+   */
+  private async measureDomContent(): Promise<{ bodyTextLength: number; domNodeCount: number }> {
+    try {
+      const body = this.page.locator('body');
+      const [text, domNodeCount] = await Promise.all([
+        body.innerText({ timeout: 1000 }).catch(() => ''),
+        this.page
+          .locator('body *')
+          .count()
+          .catch(() => 0),
+      ]);
+      return { bodyTextLength: text.length, domNodeCount };
+    } catch {
+      return { bodyTextLength: 0, domNodeCount: 0 };
+    }
   }
 
   /**
@@ -2123,7 +2182,10 @@ class PlaywrightPage implements EnginePage {
   }
 
   private async getContentElements(): Promise<StoredElement[]> {
-    // Get interactive elements using query selectors
+    // Get interactive elements using query selectors. The ARIA-role entries
+    // beyond button/link/textbox catch role-less custom widgets common in React
+    // SPAs (comboboxes, tabs, menu items) that would otherwise vanish entirely
+    // when the accessibility snapshot times out and this DOM fallback fires.
     const selectors = [
       'button',
       'a',
@@ -2133,6 +2195,12 @@ class PlaywrightPage implements EnginePage {
       '[role="button"]',
       '[role="link"]',
       '[role="textbox"]',
+      '[role="combobox"]',
+      '[role="menuitem"]',
+      '[role="tab"]',
+      '[role="checkbox"]',
+      '[role="option"]',
+      '[contenteditable]',
     ];
 
     const elements: StoredElement[] = [];
@@ -2149,9 +2217,14 @@ class PlaywrightPage implements EnginePage {
             // the moment the ARIA snapshot times out and this DOM fallback
             // fires (observed live against LinkedIn's auth wall).
             const bracketRole = /\[role="([^"]+)"\]/.exec(selector)?.[1];
+            // Fallback elements were previously nameless (ref/role/visible/enabled
+            // only), so a degraded observation had nothing to match on. Capture a
+            // best-effort accessible name so the elements stay addressable.
+            const name = await this.fallbackAccessibleName(node);
             elements.push({
               ref: `e${this.revision}_${elements.length}`,
               role: bracketRole ?? selector.replace(/[^a-zA-Z]/g, ''),
+              ...(name !== undefined ? { name } : {}),
               visible: true,
               enabled: await node.isEnabled().catch(() => true),
             });
@@ -2163,6 +2236,19 @@ class PlaywrightPage implements EnginePage {
     }
 
     return elements;
+  }
+
+  /** Best-effort accessible name for a DOM-fallback element: aria-label, else text. */
+  private async fallbackAccessibleName(node: Locator): Promise<string | undefined> {
+    try {
+      const label = (await node.getAttribute('aria-label'))?.trim();
+      if (label) return label.slice(0, 200);
+      const text = (await node.textContent())?.trim();
+      if (text) return text.replace(/\s+/g, ' ').slice(0, 200);
+    } catch {
+      // Best effort only; a detached node yields no name.
+    }
+    return undefined;
   }
 
   /**

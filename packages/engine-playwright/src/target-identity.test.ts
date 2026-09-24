@@ -366,7 +366,7 @@ describe('whole-body snapshot fallback (observe())', () => {
     });
   }
 
-  it('surfaces degraded:true with a DOM-tag-only role and no name, unlike the real ARIA path', async () => {
+  it('surfaces degraded:true and a best-effort name for a fallback element', async () => {
     const engine = new PlaywrightChromiumEngine();
     try {
       const page = await (await engine.createSession({ headless: true })).newPage();
@@ -379,14 +379,13 @@ describe('whole-body snapshot fallback (observe())', () => {
       expect(state.degradedReason).toBe('aria-snapshot-timeout');
       const button = state.elements.find((element) => element.role === 'button');
       if (!button?.ref) throw new Error('Missing degraded-mode button ref');
-      // The DOM-tag-only fallback never learns a name - the real ARIA path
-      // would have found "Go". A caller must not role/name-match on this
-      // response: the getByRole(role, {name: ''}) rebind this ref implies
-      // will not find a button whose real accessible name is non-empty, so
-      // this ref is not safely actionable either - exactly why `degraded`
-      // exists as an explicit signal instead of a same-shaped response.
-      expect(button.name).toBeUndefined();
-      await expect(page.act({ type: 'click', target: { ref: button.ref } })).rejects.toThrow();
+      // `degraded` still signals reduced coverage (role-less custom widgets are
+      // absent from the DOM-tag-only fallback). But individual captured elements
+      // now carry a best-effort accessible name (aria-label, else text), so this
+      // button surfaces "Go" and its ref rebinds via getByRole('button',
+      // {name: 'Go'}) - actionable, unlike the previous nameless fallback.
+      expect(button.name).toBe('Go');
+      await expect(page.act({ type: 'click', target: { ref: button.ref } })).resolves.toBeDefined();
     } finally {
       await engine.close();
     }

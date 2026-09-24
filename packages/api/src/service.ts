@@ -438,6 +438,8 @@ export type PartialObservation = {
   sinceRevision?: number | undefined;
   continueFrom?: number | undefined;
   include?: string[] | undefined;
+  /** Optional readiness wait applied BEFORE the snapshot (SPA readiness). */
+  wait?: ServiceWaitCondition | undefined;
 };
 
 /** Optional observation enrichments the stack actually delivers. */
@@ -2163,7 +2165,10 @@ export class AgentBrowserService {
     fields: Array<{ ref: string; role: string; label: string }>;
     truncated?: boolean;
     degraded?: boolean;
-    degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset';
+    degradedReason?:
+      | 'aria-snapshot-timeout'
+      | 'dom-semantic-subset'
+      | 'empty-snapshot-nonempty-dom';
   }> {
     // Payload economics (TD-BROWSER-8 pressure matrix, row 4): the fields
     // list previously had no way to bound its size from the caller's side;
@@ -2180,7 +2185,10 @@ export class AgentBrowserService {
       elements?: Array<{ ref: string; role?: string; name?: string }>;
       truncated?: boolean;
       degraded?: boolean;
-      degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset';
+      degradedReason?:
+        | 'aria-snapshot-timeout'
+        | 'dom-semantic-subset'
+        | 'empty-snapshot-nonempty-dom';
     };
     return {
       url: view.url ?? '',
@@ -2450,6 +2458,12 @@ export class AgentBrowserService {
           { include: request.include, validIncludes: [...DELIVERED_INCLUDES].sort() }
         );
       }
+    }
+    // Optional readiness wait (SPA hydration): run the same wait machinery as
+    // browser_act BEFORE snapshotting, so a slow-mounting page does not observe
+    // as empty. Omitting `wait` keeps the fast default path unchanged.
+    if (request.wait !== undefined) {
+      await this.waitFor(page.enginePage, request.wait);
     }
     const observationRequest: ObservationRequest = {
       ...(request.mode !== undefined ? { mode: request.mode } : {}),
@@ -3634,6 +3648,12 @@ export class AgentBrowserService {
     return this.traced('screenshot', { sessionId, pageId }, async () => {
       const page = this.requirePage(sessionId, pageId);
       this.coordinator.updateActivity(sessionId);
+
+      // Optional readiness wait before capture, so a JS SPA that has not painted
+      // yet does not produce a blank image. Omitting `wait` is the fast default.
+      if (request.wait !== undefined) {
+        await this.waitFor(page.enginePage, request.wait as ServiceWaitCondition);
+      }
 
       let captured: Awaited<ReturnType<EnginePage['screenshot']>>;
       try {

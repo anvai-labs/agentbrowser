@@ -33,6 +33,7 @@ import type {
   AutofillRequest,
   ControlView,
   DELIVERED_ACTION_TYPES,
+  DeliveredWaitCondition,
   OperationRecord,
   RunCursor,
   SessionRequest,
@@ -114,6 +115,8 @@ export interface ObservationRequest {
   continueFrom?: number;
   /** Optional enrichments, e.g. ["overlays"] or ["fileInputs"]. */
   include?: string[];
+  /** Optional readiness wait applied before the snapshot (SPA readiness). */
+  wait?: DeliveredWaitCondition;
 }
 
 export interface ObservationResponse {
@@ -168,8 +171,8 @@ export interface ObservationResponse {
    * session, or narrow the observation instead.
    */
   degraded?: boolean;
-  /** Why `degraded` is set, when it is. Currently only one cause exists. */
-  degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset';
+  /** Why `degraded` is set, when it is. */
+  degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset' | 'empty-snapshot-nonempty-dom';
 }
 
 /** The delivered action set, derived from the protocol source of truth. */
@@ -225,6 +228,8 @@ export interface ScreenshotRequest {
   format?: 'png' | 'jpeg' | 'webp';
   quality?: number;
   maskSensitive?: boolean;
+  /** Optional readiness wait applied before the capture (avoids blank SPA shots). */
+  wait?: DeliveredWaitCondition;
 }
 
 export interface ArtifactRef {
@@ -302,8 +307,8 @@ export interface PageSnapshot {
    * either way. Retry with a larger snapshotTimeoutMs on the session.
    */
   degraded?: boolean;
-  /** Why `degraded` is set, when it is. Currently only one cause exists. */
-  degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset';
+  /** Why `degraded` is set, when it is. */
+  degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset' | 'empty-snapshot-nonempty-dom';
 }
 
 /**

@@ -64,6 +64,40 @@ import { assertCookieRequestSize, readCookieFile, writeCookieFile } from './cook
 import { type JsonInputStream, createJsonArgumentReader } from './json-input.js';
 import { PRODUCT_VERSION } from './product-version.js';
 
+/** Shared --wait-* flags for observe/screenshot readiness (SPA hydration). */
+interface WaitFlagOptions {
+  waitUntil?: string;
+  waitTimeout?: string;
+  waitSelector?: string;
+  waitPattern?: string;
+  waitCount?: string;
+}
+
+const WAIT_UNTIL_VALUES = new Set([
+  'settled',
+  'domcontentloaded',
+  'load',
+  'networkidle',
+  'urlPattern',
+  'selectorVisible',
+  'minElements',
+]);
+
+function waitFromOptions(
+  options: WaitFlagOptions
+): NonNullable<ObservationRequest['wait']> | undefined {
+  if (!options.waitUntil) return undefined;
+  if (!WAIT_UNTIL_VALUES.has(options.waitUntil)) {
+    throw new Error(`--wait-until must be one of: ${[...WAIT_UNTIL_VALUES].join(', ')}`);
+  }
+  const wait = { until: options.waitUntil } as NonNullable<ObservationRequest['wait']>;
+  if (options.waitTimeout) wait.timeoutMs = Number.parseInt(options.waitTimeout, 10);
+  if (options.waitSelector) wait.selector = options.waitSelector;
+  if (options.waitPattern) wait.pattern = options.waitPattern;
+  if (options.waitCount) wait.count = Number.parseInt(options.waitCount, 10);
+  return wait;
+}
+
 /** SDK-owned signatures; optional families still permit partial test stand-ins. */
 export interface CliClient
   extends Partial<Pick<AgentBrowserClient, 'health' | 'healthLive' | 'healthReady'>> {
@@ -973,6 +1007,14 @@ export function buildCli(deps: CliDependencies): Cli {
           '--since-revision <n>',
           'only observe if the page revision is newer than this (else the previous observation stands)'
         )
+        .option(
+          '--wait-until <until>',
+          'readiness wait before observing: settled|domcontentloaded|load|networkidle|urlPattern|selectorVisible|minElements'
+        )
+        .option('--wait-timeout <ms>', 'wait timeout in milliseconds')
+        .option('--wait-selector <css>', 'selectorVisible: CSS selector to wait for')
+        .option('--wait-pattern <glob>', 'urlPattern: glob or /regex/ to wait for')
+        .option('--wait-count <n>', 'minElements: minimum observed element count')
         .action(
           action(
             async (
@@ -986,7 +1028,7 @@ export function buildCli(deps: CliDependencies): Cli {
                 include?: string[];
                 continueFrom?: string;
                 sinceRevision?: string;
-              }
+              } & WaitFlagOptions
             ) => {
               const request: ObservationRequest = {};
               if (options.mode) {
@@ -1006,6 +1048,10 @@ export function buildCli(deps: CliDependencies): Cli {
               }
               if (options.sinceRevision) {
                 request.sinceRevision = Number.parseInt(options.sinceRevision, 10);
+              }
+              const observeWait = waitFromOptions(options);
+              if (observeWait) {
+                request.wait = observeWait;
               }
 
               const observation = await ctx.client.sessions.observe(sessionId, pageId, request);
@@ -1523,6 +1569,14 @@ export function buildCli(deps: CliDependencies): Cli {
         .option('--quality <n>', 'jpeg/webp quality (0-100)')
         .option('--mask-sensitive', 'mask sensitive fields in the capture')
         .option('--out <file>', 'save the screenshot bytes to a file')
+        .option(
+          '--wait-until <until>',
+          'readiness wait before capture: settled|domcontentloaded|load|networkidle|urlPattern|selectorVisible|minElements'
+        )
+        .option('--wait-timeout <ms>', 'wait timeout in milliseconds')
+        .option('--wait-selector <css>', 'selectorVisible: CSS selector to wait for')
+        .option('--wait-pattern <glob>', 'urlPattern: glob or /regex/ to wait for')
+        .option('--wait-count <n>', 'minElements: minimum observed element count')
         .action(
           action(
             async (
@@ -1535,7 +1589,7 @@ export function buildCli(deps: CliDependencies): Cli {
                 quality?: string;
                 maskSensitive?: boolean;
                 out?: string;
-              }
+              } & WaitFlagOptions
             ) => {
               const request: ScreenshotRequest = {};
               if (options.fullPage) {
@@ -1549,6 +1603,10 @@ export function buildCli(deps: CliDependencies): Cli {
               }
               if (options.maskSensitive) {
                 request.maskSensitive = true;
+              }
+              const screenshotWait = waitFromOptions(options);
+              if (screenshotWait) {
+                request.wait = screenshotWait;
               }
 
               const artifact = await ctx.client.sessions.screenshot(sessionId, pageId, request);

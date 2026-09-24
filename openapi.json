@@ -6908,6 +6908,10 @@
               {
                 "const": "dom-semantic-subset",
                 "type": "string"
+              },
+              {
+                "const": "empty-snapshot-nonempty-dom",
+                "type": "string"
               }
             ]
           }
@@ -7073,6 +7077,66 @@
             "type": "array",
             "items": {
               "type": "string"
+            }
+          },
+          "wait": {
+            "type": "object",
+            "required": [
+              "until"
+            ],
+            "properties": {
+              "until": {
+                "anyOf": [
+                  {
+                    "const": "settled",
+                    "type": "string"
+                  },
+                  {
+                    "const": "domcontentloaded",
+                    "type": "string"
+                  },
+                  {
+                    "const": "load",
+                    "type": "string"
+                  },
+                  {
+                    "const": "networkidle",
+                    "type": "string"
+                  },
+                  {
+                    "const": "urlPattern",
+                    "type": "string"
+                  },
+                  {
+                    "const": "selectorVisible",
+                    "type": "string"
+                  },
+                  {
+                    "const": "minElements",
+                    "type": "string"
+                  }
+                ]
+              },
+              "timeoutMs": {
+                "minimum": 0,
+                "maximum": 300000,
+                "type": "integer"
+              },
+              "pattern": {
+                "minLength": 1,
+                "maxLength": 2048,
+                "type": "string"
+              },
+              "selector": {
+                "minLength": 1,
+                "maxLength": 500,
+                "type": "string"
+              },
+              "count": {
+                "minimum": 1,
+                "maximum": 10000,
+                "type": "integer"
+              }
             }
           }
         }
@@ -8546,6 +8610,10 @@
                   },
                   {
                     "const": "dom-semantic-subset",
+                    "type": "string"
+                  },
+                  {
+                    "const": "empty-snapshot-nonempty-dom",
                     "type": "string"
                   }
                 ]

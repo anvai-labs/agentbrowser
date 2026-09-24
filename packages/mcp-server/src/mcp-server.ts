@@ -21,13 +21,14 @@ import {
   WireActionEnvelopeSchema,
   agentModeAllows,
   createPlanReportParser,
+  detectDisplayAvailability,
   formatErrorForUser,
   parseAutofillReport,
   parseAutofillRequest,
   parsePlanSteps,
   validateWireAction,
 } from '@agentbrowser/protocol';
-import type { AgentCapability, AgentMode } from '@agentbrowser/protocol';
+import type { AgentCapability, AgentMode, DeliveredWaitCondition } from '@agentbrowser/protocol';
 import type {
   AgentBrowserClient,
   ClientOptions,
@@ -105,6 +106,57 @@ function sessionAndPage(args: Record<string, unknown>): [string, string] {
     throw new UsageError('pageId is required and must be a non-empty string.');
   }
   return [args.sessionId, args.pageId];
+}
+
+/** JSON-schema fragment for an optional pre-op readiness wait (SPA readiness). */
+const WAIT_INPUT_SCHEMA = {
+  type: 'object',
+  description:
+    'Optional readiness wait applied BEFORE this operation, using the same wait ' +
+    'mechanism as browser_act. For a JS SPA that observes empty or screenshots ' +
+    'blank, wait with until:"networkidle"/"selectorVisible"/"minElements" first.',
+  properties: {
+    until: {
+      type: 'string',
+      enum: [
+        'settled',
+        'domcontentloaded',
+        'load',
+        'networkidle',
+        'urlPattern',
+        'selectorVisible',
+        'minElements',
+      ],
+    },
+    timeoutMs: { type: 'number' },
+    pattern: { type: 'string', description: 'urlPattern only.' },
+    selector: { type: 'string', description: 'selectorVisible only.' },
+    count: { type: 'number', description: 'minElements only.' },
+  },
+  required: ['until'],
+} as const;
+
+const WAIT_UNTIL_VALUES = new Set([
+  'settled',
+  'domcontentloaded',
+  'load',
+  'networkidle',
+  'urlPattern',
+  'selectorVisible',
+  'minElements',
+]);
+
+/** Parse an optional wait arg into a DeliveredWaitCondition, or undefined. */
+function parseWaitArg(raw: unknown): DeliveredWaitCondition | undefined {
+  if (raw === null || typeof raw !== 'object') return undefined;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.until !== 'string' || !WAIT_UNTIL_VALUES.has(obj.until)) return undefined;
+  const wait: DeliveredWaitCondition = { until: obj.until as DeliveredWaitCondition['until'] };
+  if (typeof obj.timeoutMs === 'number') wait.timeoutMs = obj.timeoutMs;
+  if (typeof obj.pattern === 'string') wait.pattern = obj.pattern;
+  if (typeof obj.selector === 'string') wait.selector = obj.selector;
+  if (typeof obj.count === 'number') wait.count = obj.count;
+  return wait;
 }
 
 /**
@@ -229,7 +281,27 @@ export function buildTools(client: McpClient): ToolDefinition[] {
         // Observing requires a page; create one up front so the caller's very
         // next tool call can be navigate or observe.
         const page = await client.sessions.createPage(session.sessionId);
-        return { ...session, pageId: page.pageId };
+
+        // Headed with no reachable display (e.g. this server under a launchd
+        // daemon) launches fine but renders to a null surface - warn so the
+        // caller expects blank screenshots and reads via browser_html instead.
+        const warnings: string[] = [];
+        if (request.headless === false) {
+          const display = detectDisplayAvailability();
+          if (!display.available) {
+            warnings.push(
+              `headed session requested but no display detected (${display.reason}); ` +
+                'screenshots will be blank. Read the page via browser_html, run the service ' +
+                'in a GUI login session, or set AGENTBROWSER_ASSUME_DISPLAY=1.'
+            );
+          }
+        }
+
+        return {
+          ...session,
+          pageId: page.pageId,
+          ...(warnings.length > 0 ? { warnings } : {}),
+        };
       },
     },
 
@@ -406,6 +478,10 @@ export function buildTools(client: McpClient): ToolDefinition[] {
         'name/value, and custom widgets with no native form control (e.g. a div-based ' +
         'combobox) are missing entirely - do not role/name-match on it. Re-create the ' +
         'session with a larger snapshotTimeoutMs and retry instead. ' +
+        'degradedReason "empty-snapshot-nonempty-dom" is different: the snapshot succeeded ' +
+        'but found no elements while the DOM holds content (a JS SPA that has not mounted) - ' +
+        'pass `wait` (e.g. until:"networkidle" or "minElements") and retry, or read via ' +
+        'browser_html. ' +
         'When a response is truncated it carries `continuation` {nextOrdinal, remaining}; ' +
         'pass `continueFrom` (that nextOrdinal) on the next call to get the remaining ' +
         'elements in document order.',
@@ -440,6 +516,7 @@ export function buildTools(client: McpClient): ToolDefinition[] {
               '"fileInputs" adds role:"fileinput" elements for every input[type=file] ' +
               '(hidden ones included) so upload can target one by ref.',
           },
+          wait: WAIT_INPUT_SCHEMA,
         },
         required: ['sessionId', 'pageId'],
       },
@@ -447,6 +524,10 @@ export function buildTools(client: McpClient): ToolDefinition[] {
         const [sessionId, pageId] = sessionAndPage(args);
 
         const request: ObservationRequest = {};
+        const wait = parseWaitArg(args.wait);
+        if (wait !== undefined) {
+          request.wait = wait;
+        }
         if (typeof args.mode === 'string') {
           request.mode = args.mode as NonNullable<ObservationRequest['mode']>;
         }
@@ -682,7 +763,10 @@ export function buildTools(client: McpClient): ToolDefinition[] {
       requiredCapability: 'page.capture',
       description:
         'Capture a screenshot as optional evidence. Screenshots are not the primary ' +
-        'observation mode; use browser_observe to decide what to do next.',
+        'observation mode; use browser_observe to decide what to do next. Pass `wait` ' +
+        'to hold for readiness before capture so a JS SPA does not yield a blank image. ' +
+        'Note: a headed session with no display (e.g. the service under a launchd daemon) ' +
+        'renders blank regardless - read the page via browser_html instead.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -690,6 +774,7 @@ export function buildTools(client: McpClient): ToolDefinition[] {
           pageId: { type: 'string' },
           fullPage: { type: 'boolean' },
           format: { type: 'string', enum: ['png', 'jpeg', 'webp'] },
+          wait: WAIT_INPUT_SCHEMA,
         },
         required: ['sessionId', 'pageId'],
       },
@@ -700,6 +785,10 @@ export function buildTools(client: McpClient): ToolDefinition[] {
         if (args.fullPage === true) request.fullPage = true;
         if (typeof args.format === 'string') {
           request.format = args.format as NonNullable<ScreenshotRequest['format']>;
+        }
+        const wait = parseWaitArg(args.wait);
+        if (wait !== undefined) {
+          request.wait = wait;
         }
 
         return await client.sessions.screenshot(sessionId, pageId, request);

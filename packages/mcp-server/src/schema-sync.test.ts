@@ -41,9 +41,10 @@ describe('MCP tool-schema sync', () => {
   it('browser_screenshot stays within its delivered surface', () => {
     // quality and maskSensitive are delivered REST/CLI options, not yet
     // projected here; adding them requires the handler to read them (same
-    // PR), never the schema alone.
+    // PR), never the schema alone. `wait` IS read by the handler (SPA
+    // readiness before capture), so it belongs here.
     expect(propertiesOf('browser_screenshot')).toEqual(
-      new Set(['sessionId', 'pageId', 'fullPage', 'format'])
+      new Set(['sessionId', 'pageId', 'fullPage', 'format', 'wait'])
     );
   });
 

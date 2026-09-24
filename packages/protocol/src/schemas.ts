@@ -287,7 +287,11 @@ export const PageStateSchema = Type.Object({
   continuation: Type.Optional(ContinuationCursorSchema),
   degraded: Type.Optional(Type.Boolean()),
   degradedReason: Type.Optional(
-    Type.Union([Type.Literal('aria-snapshot-timeout'), Type.Literal('dom-semantic-subset')])
+    Type.Union([
+      Type.Literal('aria-snapshot-timeout'),
+      Type.Literal('dom-semantic-subset'),
+      Type.Literal('empty-snapshot-nonempty-dom'),
+    ])
   ),
 });
 
@@ -572,6 +576,7 @@ export const ObservationRequestSchema = Type.Object({
     ])
   ),
   include: Type.Optional(Type.Array(Type.String())),
+  wait: Type.Optional(DeliveredWaitConditionSchema),
 });
 
 // ============================================================================
