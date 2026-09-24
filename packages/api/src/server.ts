@@ -35,6 +35,7 @@ import websocket from '@fastify/websocket';
 import Fastify from 'fastify';
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ArtifactAuthorizer } from './artifact-auth.js';
+import { createHttpPublication } from './http-publication.js';
 import { buildOpenApiDocument } from './openapi.js';
 import { PRODUCT_VERSION } from './product-version.js';
 import {
@@ -51,12 +52,14 @@ export interface RegisteredRoute {
   method: string;
   url: string;
   capability: AgentCapability | undefined;
+  publication?: 'guarded';
 }
 
 declare module 'fastify' {
   interface FastifyContextConfig {
     /** Delegated-grant capability this route requires (see the `on` helper). */
     capability?: AgentCapability;
+    publication?: 'guarded';
   }
   interface FastifyInstance {
     /**
@@ -318,6 +321,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         method,
         url: routeOptions.url,
         capability: routeOptions.config?.capability,
+        ...(routeOptions.config?.publication
+          ? { publication: routeOptions.config.publication }
+          : {}),
       });
     }
   });
@@ -504,6 +510,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
    * to 22 identical copies (from 16 at the last audit) as new routes kept
    * repeating the pattern instead of using an abstraction.
    */
+  const httpPublication = createHttpPublication();
   const principals = new WeakMap<FastifyRequest, SessionPrincipal>();
   const outputGuards = new WeakMap<FastifyRequest, () => void>();
   const executionFailures = new WeakSet<FastifyRequest>();
@@ -600,6 +607,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         if (!reply.sent) return reply.send(result);
         return result;
       } catch (error) {
+        if (reply.raw.destroyed) return reply.hijack();
         if (reply.sent) return reply;
         outputGuards.delete(request);
         return fail(reply, error);
@@ -788,12 +796,27 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         method: 'GET' | 'POST' | 'PUT' | 'DELETE',
         url: string,
         handler: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>,
-        meta: { capability?: AgentCapability; admission?: 'self'; safe?: boolean } = {}
+        meta: {
+          capability?: AgentCapability;
+          admission?: 'self';
+          safe?: boolean;
+          publication?: 'guarded';
+        } = {}
       ) =>
         v1.route({
           method,
           url,
           ...(meta.capability !== undefined ? { config: { capability: meta.capability } } : {}),
+          ...(meta.publication
+            ? {
+                config: {
+                  ...(meta.capability ? { capability: meta.capability } : {}),
+                  publication: meta.publication,
+                },
+                onSend: httpPublication.onSend,
+                onError: httpPublication.onError,
+              }
+            : {}),
           handler: route(handler, meta),
         });
 
@@ -946,14 +969,19 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         async (request, reply) => {
           const { sessionId, operationId } = params(request, 'sessionId', 'operationId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
-          const operation = service.authority.get(sessionId)?.operation(operationId);
-          if (!operation) throw new ServiceError('NOT_FOUND', 'Operation is not recorded');
           const principal = principals.get(request);
-          if (principal?.actor === 'agent' && operation.epoch !== principal.epoch)
-            throw new ServiceError('FORBIDDEN', 'Operation belongs to another control generation');
-          return reply.send(operation);
+          if (!principal) throw new ServiceError('FORBIDDEN', 'Session authority does not match');
+          return httpPublication.respond(request, reply, async (output) => {
+            const operation = await service.authority.publishOperation(
+              sessionId,
+              principal,
+              operationId,
+              output.publication()
+            );
+            if (!operation) throw new ServiceError('NOT_FOUND', 'Operation is not recorded');
+          });
         },
-        { capability: 'session.control', admission: 'self' }
+        { capability: 'session.control', admission: 'self', publication: 'guarded' }
       );
 
       on('GET', '/sessions/:sessionId/approvals/:tokenId', async (request, reply) => {
@@ -1017,9 +1045,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           const { sessionId } = params(request, 'sessionId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
           const principal = principals.get(request) ?? { actor: 'operator' as const, tenant: '' };
-          return reply.send(await service.applicationDiscover(sessionId, principal));
+          return httpPublication.respond(request, reply, async (output) => {
+            await service.applicationDiscover(sessionId, principal, output.publication());
+          });
         },
-        { capability: 'application.discover', admission: 'self' }
+        { capability: 'application.discover', admission: 'self', publication: 'guarded' }
       );
       on(
         'POST',
@@ -1048,9 +1078,17 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
           if (!requireBody(reply, request.body)) return reply;
           const principal = principals.get(request) ?? { actor: 'operator' as const, tenant: '' };
-          return reply.send(await service.applicationExecute(sessionId, principal, request.body));
+          return httpPublication.respond(request, reply, async (output) => {
+            await service.applicationExecute(
+              sessionId,
+              principal,
+              request.body,
+              output.publication(),
+              output.publication((operation) => ({ replay: true, operation }))
+            );
+          });
         },
-        { capability: 'application.execute', admission: 'self' }
+        { capability: 'application.execute', admission: 'self', publication: 'guarded' }
       );
       on(
         'GET',
@@ -1059,10 +1097,16 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           const { sessionId, operationId } = params(request, 'sessionId', 'operationId');
           if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
           const principal = principals.get(request) ?? { actor: 'operator' as const, tenant: '' };
-          const receipt = await service.applicationReceipt(sessionId, principal, operationId);
-          return reply.send(receipt ?? null);
+          return httpPublication.respond(request, reply, async (output) => {
+            await service.applicationReceipt(
+              sessionId,
+              principal,
+              operationId,
+              output.publication((value) => value ?? null)
+            );
+          });
         },
-        { capability: 'application.discover', admission: 'self' }
+        { capability: 'application.discover', admission: 'self', publication: 'guarded' }
       );
 
       // Session event stream: WebSocket upgrade, JSON per frame.

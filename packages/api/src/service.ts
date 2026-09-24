@@ -23,10 +23,12 @@ import {
   type EvidenceReviewSelector,
   type EvidenceReviewSource,
   NATIVE_FORM_REVIEW_TYPE,
+  type OperationPublication,
   type PreparedApplicationConsent,
   type PreparedApplicationOperationReview,
   type PreparedEvidenceReview,
   type PreparedReviewDisclosure,
+  type SessionPublication,
   TrustedEvidenceSourceRegistry,
   type TrustedVerifierRegistry,
   captureEvidenceReviewSource,
@@ -2056,9 +2058,10 @@ export class AgentBrowserService {
   /** Discovery: the bound adapter's operations, or null when nothing is bound. */
   async applicationDiscover(
     sessionId: string,
-    principal: SessionPrincipal
+    principal: SessionPrincipal,
+    publication?: Parameters<ApplicationAuthority['discover']>[2]
   ): Promise<Awaited<ReturnType<ApplicationAuthority['discover']>>> {
-    return this.applicationAuthority.discover(sessionId, principal);
+    return this.applicationAuthority.discover(sessionId, principal, publication);
   }
 
   /** Allocate one pending review; no execution identity is reserved or dispatched. */
@@ -2120,7 +2123,9 @@ export class AgentBrowserService {
   async applicationExecute(
     sessionId: string,
     principal: SessionPrincipal,
-    input: unknown
+    input: unknown,
+    publication?: Parameters<ApplicationAuthority['execute']>[3],
+    replay?: OperationPublication
   ): Promise<Awaited<ReturnType<ApplicationAuthority['execute']>>> {
     const validated = validateApplicationExecute(input);
     if (!validated.ok) {
@@ -2131,16 +2136,23 @@ export class AgentBrowserService {
           .join('; ')}`
       );
     }
-    return this.applicationAuthority.execute(sessionId, principal, validated.value);
+    return this.applicationAuthority.execute(
+      sessionId,
+      principal,
+      validated.value,
+      publication,
+      replay
+    );
   }
 
   /** Read one application receipt by its operation ID. */
   async applicationReceipt(
     sessionId: string,
     principal: SessionPrincipal,
-    operationId: string
+    operationId: string,
+    publication?: SessionPublication<unknown>
   ): Promise<unknown> {
-    return this.applicationAuthority.lookupReceipt(sessionId, principal, operationId);
+    return this.applicationAuthority.lookupReceipt(sessionId, principal, operationId, publication);
   }
 
   /**

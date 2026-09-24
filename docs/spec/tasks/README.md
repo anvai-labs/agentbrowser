@@ -1,7 +1,7 @@
 # Agent implementation task packets
 
 Status: implementation activated by the user's subsequent foundation-first instruction.
-The table records the published AgentBrowser 1.10.0 checkpoint and remaining work.
+The table records the published AgentBrowser 1.10.1 checkpoint and remaining work.
 Reading this task list alone does not
 authorize implementation or publication; follow the current user-authorized scope.
 
@@ -34,11 +34,13 @@ acceptance infrastructure; they are not instructions to create ten packages/serv
 
 ## Current continuation
 
-AgentBrowser 1.10.0 is published and installed; see its
-[delivery evidence](../evidence/release-1.10.0.md). This checkpoint includes the
+AgentBrowser 1.10.1 is published and installed; its release workflow passed 12/12
+checks and Homebrew PR #70 plus post-merge validation passed 4/4 checks. The prior
+[1.10.0 delivery evidence](../evidence/release-1.10.0.md) records the foundation release. This checkpoint includes the
 bounded T4/T6 slices and T5 owner primitives through #276, without completing those
 milestones. A3a2 shared page/evidence disclosure is now implemented as internal
-composition, pending release. Continue with T5 A3 HTTP publication and A4b parity,
+composition, pending release. The next [A3b application HTTP slice](../design/t5-http-publication.md) is a local
+candidate; A3c browser/review adoption and A4b whole-inventory parity remain pending,
 and the remaining T4/T6 production/private/live gates. T8 installed
 external-harness qualification remains separate. Recheck concurrent branches first.
 

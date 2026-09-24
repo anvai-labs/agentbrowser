@@ -9,6 +9,11 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ### Fixed
 
+- Application discovery, execution (including replay), receipts and operation status
+  keep their captured publication authority through HTTP delivery. Late permission
+  changes, disconnects and output deadlines suppress unsent responses without
+  rewriting committed operation facts. Browser/review HTTP adoption remains pending.
+
 - CLI extraction prints complete data instead of silently cutting at 4,000 characters.
   `extract --max-bytes` forwards a UTF-8 response budget through SDK/REST; optional MCP
   exposes the same field. The server enforces one ceiling across all formats (default

@@ -1,12 +1,12 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
-Rechecked published 1.9.1 at `310e01d43982824caac2c63ed8d98355e17efdce`
-and develop `8752c6b746996802209bac2490ceb285e3569265` (PR #273; alignment
-rechecked 2026-09-23). C3c incorporates the merged #256 error-containment repair.
-The [release ladder](release-1.9.1.md) includes Bun CLI/MCP artifacts,
-Node 24 service qualification, Homebrew and develop back-sync. Existing browser
-sessions were preserved; an upgraded installed binary does not prove every running
-service was restarted. No new release is required for the next develop slice.
+Latest recheck: published 1.10.1 at `124afc35484225374bfb8739a07b87b2698d03f4`
+and develop `89c20e6941bcadf99a09db1a79c1ba9f6877383f` (#282), 2026-09-24.
+Release, npm, Homebrew and installed acceptance are complete; the live service was
+preserved on 1.10.0. Extraction budgets (#281) and A3a2 (#282) are develop-only.
+The historical records below preserve earlier baselines; the current table and final
+checkpoint describe the latest acceptance position. No new release is required for
+the next develop slice.
 
 ## Acceptance progress
 
@@ -25,7 +25,7 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T6 forms/operations | Active | ~40% | Production sources, candidate/job eligibility and live qualification; C3c public synthetic workflow merged #257 |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
 | T8 installed harnesses | Active source repair; installed acceptance unqualified | 0% installed qualification | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |
-| T9 release hardening | Recurring | 100% of 1.9.1 checkpoint | Repeat per later release |
+| T9 release hardening | Recurring | 100% of 1.10.1 checkpoint | Repeat per later release |
 
 Exact milestone count: **3 of 9 finite tasks complete (33%)**. Counting all original
 ten rows gives 30%, including recurring T9. No defensible effort-weighted overall
@@ -422,3 +422,18 @@ must retain page, evidence permission and secret-disclosure checks before HTTP a
 No new timer, executor, registry or token store is introduced. Review-view status remains
 a capture-time snapshot; ApprovalGate owns later current-state validation. T5 stays ~10%;
 3/9 finite milestones are complete. Release 1.9.1 and running services are unchanged.
+
+
+## 2026-09-24 checkpoint
+
+Release 1.10.1 at `124afc3` is published on GitHub/npm; release CI passed 12/12.
+Homebrew #70 merged `8a0c2fc`; PR and post-merge CI passed 4/4, and the actual
+installed CLI/MCP/server acceptance passed. The live service was preserved on 1.10.0.
+Develop `89c20e6` additionally contains extraction budgets (#281) and A3a2 review
+disclosure (#282), each with 8/8 PR and post-merge CI. These are not in 1.10.1.
+
+The next [A3b HTTP publication candidate](t5-http-publication.md) integrates existing
+authorities into four application/status routes. A3c browser/review routes, full A4b
+parity and journal/recovery remain pending. Estimates remain T1~80%, T4/T6~40%,
+T5~10%, installed T8 unqualified; finite milestone count remains 3/9 (33%). T9 is
+complete for the 1.10.1 release checkpoint and recurs for subsequent releases.
