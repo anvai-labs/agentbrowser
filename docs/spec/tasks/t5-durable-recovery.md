@@ -33,7 +33,9 @@ A1 finalization and A2a/A2b publication primitives are implemented
 [A4a2 replay/application composition](../evidence/t5-replay-publication.md) are implemented.
 [A3a review owner pins and page/evidence disclosure](../evidence/t5-review-publication.md)
 are implemented as internal composition; A3a2 is pending release.
-Next implement A3 HTTP and A4b replay parity,
+The bounded [A3b application HTTP adoption](../design/t5-http-publication.md) is a
+local candidate ([evidence](../evidence/t5-http-publication.md)). Next complete A3c
+review/browser adoption and A4b whole-inventory replay parity,
 then the [J1-B/C journal contract](../design/t5-journal-contract.md)
 and application-only integration. Remaining packets are proposed and loaded on demand.
 Browser durability waits for its existing target/policy/approval owners to support

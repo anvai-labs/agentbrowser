@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { setImmediate as settlePublication } from 'node:timers/promises';
 import {
   type ApplicationReceiptAuthorizationRequest,
   type ApplicationScope,
@@ -368,6 +369,8 @@ describe('application-scoped permission through delegated HTTP outcomes', () => 
             })
           ).statusCode
         ).toBe(200);
+        // inject resolves at response finish before publication's release continuation.
+        await settlePublication();
         const page = await server.inject({
           method: 'POST',
           url: `${base}/pages`,

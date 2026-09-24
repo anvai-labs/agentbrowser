@@ -1,3 +1,4 @@
+import { setImmediate as settlePublication } from 'node:timers/promises';
 import {
   type ApplicationScope,
   type EvidenceAuthorizationRequest,
@@ -351,6 +352,8 @@ describe('verified outcome REST projection', () => {
         });
         expect(seeded.statusCode).toBe(200);
         expect(seeded.json()).toEqual({ status: 'committed', value: true });
+        // inject resolves at response finish before publication's release continuation.
+        await settlePublication();
         let sessionId = ownerSession;
         if (mode === 'other-session') {
           const second = await server.inject({

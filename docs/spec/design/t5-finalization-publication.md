@@ -1,6 +1,6 @@
 # T5 J1-A: execution finalization and response publication
 
-Status: A1/A2/A4a/A3a1 primitives implemented; HTTP/recovery gated.
+Status: A1/A2/A4a/A3a primitives implemented; partial A3b HTTP candidate; recovery gated.
 Design baseline: develop `dbe23b5` (J0, PR #267).
 Parent: [T5 journal sequence](t5-operation-journal.md). Next contract:
 [J1-B/C journal acknowledgment](t5-journal-contract.md). No durability ships here.
@@ -163,7 +163,9 @@ proof of completed execution.
 A2b composes application access for discover/execute/receipt using one shared guard;
 see [A2b evidence](../evidence/t5-application-publication.md). Reads keep execution-only
 authority; publication pins current permission/binding without re-consuming consent.
-A4a status/replay and A3a1 review owner pins are implemented. A3a2 page/evidence,
-A3 HTTP and A4b remain gated.
-The HTTP ordering probe still fails the future A3 expectation. No public wire change,
-durable guarantee or real HTTP publication qualification is delivered.
+A4a status/replay and A3a review owner/page/evidence composition are implemented.
+Whole-inventory A3 HTTP adoption and A4b parity remain gated.
+The [A3b packet](t5-http-publication.md) adopts application result/replay/status HTTP
+publication first; review/browser routes and full A4b parity remain separate gates.
+Only the bounded A3b public transport slice has real HTTP qualification. Full-inventory
+A3/A4b adoption and durable recovery guarantees remain unimplemented.

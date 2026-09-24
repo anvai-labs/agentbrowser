@@ -129,3 +129,8 @@ Normal full hooks, independent final review and PR CI remain required. This cand
 does not migrate HTTP send ownership, add a journal or advertise durable recovery.
 Next is A3 HTTP adoption and A4b transport/replay parity; T5 stays approximately 10%
 and 3/9 finite milestones remain complete.
+
+
+A3a2 delivered in [PR #282](https://github.com/anvai-labs/agentbrowser/pull/282),
+merge `89c20e6`. PR run `35956410505` and post-merge `35956821515` passed 8/8
+checks with independent clean review. The source is merged, pending a later release.
