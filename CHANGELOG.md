@@ -24,6 +24,11 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ### Internal foundations
 
+- Storage-neutral operation journal contract with immutable metadata, keyed fingerprints,
+  bounded acknowledgment validation and shared adapter conformance tests. Unknown writes
+  quarantine further mutations; late acknowledgments cannot restore authority. No concrete
+  store, runtime durability setting or restart recovery is enabled.
+
 - Captured operator review views reuse shared page, application and evidence owners
   during their original publication phase. Disclosure checks cannot collect new
   evidence, consume consent or dispatch effects. Durable recovery remains unimplemented.

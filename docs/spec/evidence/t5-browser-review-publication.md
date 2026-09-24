@@ -1,7 +1,11 @@
 # T5 A3c/A4b browser/review HTTP evidence
 
 Base: develop `58e3605ca3aa6cfe1f25ae1e7921083a926af819` (PR #283).
-Status: local candidate; exact-head review, required hooks and CI still pending.
+Status: merged as PR #284 at `5eae01dca6c83be75dea3f3a8aea154dd1b0eef7`.
+Reviewed head `7100c098f684b95e94f93150a62cd1a3c68af218`; merge tree exactly
+`1bc62c4fbe8a2af9b0ee6c7c9eb51d69f956d7b6`. Independent adversarial verdict: SHIP.
+Normal hooks passed 3,918 tests with 24 existing skips. PR run `36014451281` and
+post-merge run `36015258734` each passed all eight jobs without reruns.
 Design: [browser/review publication](../design/t5-browser-review-publication.md).
 
 Two actual HTTP tests failed first: browser status was still in flight at `onSend`,

@@ -6,3 +6,5 @@ export * from './application-evidence.js';
 export * from './reviewed-evidence.js';
 export { composePublicationContext, snapshotPublication } from './publication.js';
 export { snapshotAuthorizationInput, synchronousResult } from './trusted-callback.js';
+export { openOperationJournal } from './operation-journal.js';
+export type * from './journal-types.js';
