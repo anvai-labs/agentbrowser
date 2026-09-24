@@ -92,7 +92,7 @@ import type {
 } from '@agentbrowser/protocol';
 import {
   DELIVERED_EXTRACT_FORMATS,
-  DELIVERED_OBSERVATION_MODES,
+  DELIVERED_OBSERVATION_INCLUDES,
   DELIVERED_WAIT_TYPES,
   type DeliveredExtractFormat,
   REF_PATTERN,
@@ -105,6 +105,9 @@ import {
   validateApplicationBinding,
   validateApplicationExecute,
   validateApplicationReview,
+  validateDeliveredWaitCondition,
+  validateObservationRequest,
+  validateScreenshotRequest,
 } from '@agentbrowser/protocol';
 import { runAutofill } from './autofill.js';
 import {
@@ -165,6 +168,8 @@ export interface ServiceSessionRequest {
 }
 
 export interface ServiceSessionView {
+  /** Diagnostics reported by the browser host. */
+  warnings?: string[];
   sessionId: string;
   status: string;
   engine: { name: string; version: string };
@@ -443,7 +448,7 @@ export type PartialObservation = {
 };
 
 /** Optional observation enrichments the stack actually delivers. */
-const DELIVERED_INCLUDES = new Set<string>(['overlays', 'fileInputs', 'formControls']);
+const DELIVERED_INCLUDES = new Set<string>(DELIVERED_OBSERVATION_INCLUDES);
 
 export class AgentBrowserService {
   readonly authority = new SessionAuthority();
@@ -1209,6 +1214,9 @@ export class AgentBrowserService {
         ttlMs: session.ttlMs,
         idleTimeoutMs: session.idleTimeoutMs,
         pages: 0,
+        ...(context.engineSession.warnings?.length
+          ? { warnings: [...context.engineSession.warnings] }
+          : {}),
         ...(request.tenantId !== undefined ? { tenantId: request.tenantId } : {}),
       };
     });
@@ -1249,6 +1257,9 @@ export class AgentBrowserService {
       ttlMs: context.metadata.ttlMs,
       idleTimeoutMs: context.metadata.idleTimeoutMs,
       pages: this.countPages(sessionId),
+      ...(context.engineSession.warnings?.length
+        ? { warnings: [...context.engineSession.warnings] }
+        : {}),
       ...(context.metadata.tenantId !== undefined ? { tenantId: context.metadata.tenantId } : {}),
     };
   }
@@ -1265,6 +1276,9 @@ export class AgentBrowserService {
         ttlMs: metadata.ttlMs,
         idleTimeoutMs: metadata.idleTimeoutMs,
         pages: this.countPages(metadata.id),
+        ...(this.getSession(metadata.id)?.warnings
+          ? { warnings: this.getSession(metadata.id)?.warnings ?? [] }
+          : {}),
       }));
   }
 
@@ -2433,32 +2447,19 @@ export class AgentBrowserService {
     pageId: string,
     request: PartialObservation
   ): Promise<PageState> {
+    const checked = validateObservationRequest(request);
+    if (!checked.ok)
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        checked.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; '),
+        false,
+        { issues: checked.issues, validIncludes: [...DELIVERED_INCLUDES].sort() }
+      );
     const page = this.requirePage(sessionId, pageId);
     this.coordinator.updateActivity(sessionId);
 
-    // Normalize the FULL element list; pagination and diffing are service
-    // concerns so the cursor and changes stay coherent with each other.
-    // Honest stopgap (A3): the protocol mode superset contains values the
-    // stack does not deliver (compact_dom, visual); a silent empty-element
-    // observation is a lie - reject typed instead.
-    const DELIVERED_MODES = new Set<string>(DELIVERED_OBSERVATION_MODES);
-    if (request.mode !== undefined && !DELIVERED_MODES.has(request.mode)) {
-      throw new ServiceError(
-        'INVALID_REQUEST',
-        `Observation mode '${request.mode}' is not delivered. Supported: ${[...DELIVERED_MODES].join(', ')}.`
-      );
-    }
-    if (request.include !== undefined) {
-      const unknown = request.include.filter((token) => !DELIVERED_INCLUDES.has(token));
-      if (unknown.length > 0) {
-        throw new ServiceError(
-          'INVALID_REQUEST',
-          `Observation include token(s) not delivered: ${unknown.join(', ')}. Supported: ${[...DELIVERED_INCLUDES].join(', ')}.`,
-          false,
-          { include: request.include, validIncludes: [...DELIVERED_INCLUDES].sort() }
-        );
-      }
-    }
+    // Capture schemas validate delivered modes and enrichments before any browser work.
+    // Normalize the full element list; pagination and diffing are service concerns.
     // Optional readiness wait (SPA hydration): run the same wait machinery as
     // browser_act BEFORE snapshotting, so a slow-mounting page does not observe
     // as empty. Omitting `wait` keeps the fast default path unchanged.
@@ -2466,8 +2467,8 @@ export class AgentBrowserService {
       await this.waitFor(page.enginePage, request.wait);
     }
     const observationRequest: ObservationRequest = {
-      ...(request.mode !== undefined ? { mode: request.mode } : {}),
-      ...(request.include !== undefined ? { include: request.include } : {}),
+      ...(checked.value.mode !== undefined ? { mode: checked.value.mode } : {}),
+      ...(checked.value.include !== undefined ? { include: checked.value.include } : {}),
     };
     let raw: Awaited<ReturnType<EnginePage['observe']>>;
     try {
@@ -3082,6 +3083,12 @@ export class AgentBrowserService {
    * reason, never a silent hang).
    */
   private async waitFor(enginePage: EnginePage, wait: ServiceWaitCondition): Promise<string> {
+    const checked = validateDeliveredWaitCondition(wait);
+    if (!checked.ok)
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        checked.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; ')
+      );
     // A wire-supplied 0 would disable the underlying engine timeouts
     // (Playwright treats explicit 0 as "wait forever"); every condition is
     // deadline-bounded, so clamp to a positive floor.
@@ -3645,6 +3652,12 @@ export class AgentBrowserService {
     pageId: string,
     request: ScreenshotRequest
   ): Promise<ArtifactMetadata> {
+    const checked = validateScreenshotRequest(request);
+    if (!checked.ok)
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        checked.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; ')
+      );
     return this.traced('screenshot', { sessionId, pageId }, async () => {
       const page = this.requirePage(sessionId, pageId);
       this.coordinator.updateActivity(sessionId);

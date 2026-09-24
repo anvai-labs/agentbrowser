@@ -2440,9 +2440,9 @@ describe('maxBytes hardening (Phase 1, A4)', () => {
     const pageId = (await service.createPage(session.sessionId)).pageId;
     await expect(
       service.observe(session.sessionId, pageId, { maxBytes: 1.5 as number })
-    ).rejects.toThrow(/Invalid maxBytes/);
+    ).rejects.toThrow(/maxBytes/);
     await expect(service.observe(session.sessionId, pageId, { maxBytes: 0 })).rejects.toThrow(
-      /Invalid maxBytes/
+      /maxBytes/
     );
   });
 

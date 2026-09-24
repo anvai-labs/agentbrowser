@@ -6,19 +6,6 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Force display detection to "unavailable" so the headed-warning branch is
-// exercised deterministically regardless of the host platform.
-vi.mock('@agentbrowser/protocol', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@agentbrowser/protocol')>();
-  return {
-    ...actual,
-    detectDisplayAvailability: () => ({
-      available: false,
-      reason: 'macos-launchd-no-aqua-session',
-    }),
-  };
-});
-
 import { buildMcpServer } from './mcp-server';
 import type { McpClient, McpDependencies } from './mcp-server';
 
@@ -94,14 +81,14 @@ describe('MCP SPA-capture surface', () => {
     );
   });
 
-  it('browser_observe omits wait when the until value is unknown', async () => {
-    await call('2', 'browser_observe', {
+  it('browser_observe rejects wait when the until value is unknown', async () => {
+    const response = await call('2', 'browser_observe', {
       sessionId: 'ses_1',
       pageId: 'pg_1',
       wait: { until: 'bogus' },
     });
-    const request = sessions.observe.mock.calls[0]?.[2] as Record<string, unknown>;
-    expect(request.wait).toBeUndefined();
+    expect(JSON.parse(response ?? '{}').result.isError).toBe(true);
+    expect(sessions.observe).not.toHaveBeenCalled();
   });
 
   it('browser_screenshot forwards a selectorVisible wait', async () => {
@@ -119,7 +106,11 @@ describe('MCP SPA-capture surface', () => {
     );
   });
 
-  it('browser_create warns when a headed session has no reachable display', async () => {
+  it('browser_create preserves warnings from the browser host', async () => {
+    sessions.create.mockResolvedValueOnce({
+      sessionId: 'ses_1',
+      warnings: ['No display detected on remote browser host'],
+    });
     const result = textOf(
       await call('4', 'browser_create', { tenantId: 't1', headless: false })
     ) as {

@@ -27,19 +27,24 @@ import {
   ApplicationExecuteRequestSchema,
   ApplicationOperationResultSchema,
   ApplicationReviewRequestSchema,
+  ArtifactRefSchema,
   AutofillReportSchema,
   AutofillRequestSchema,
   DELIVERED_EXTRACT_FORMATS,
+  DELIVERED_WAIT_TYPES,
   FormMappingSchema,
   FormValuesSchema,
   INTERACTION_GUIDANCE,
+  ObservationRequestSchema,
   OperatorApprovalDecisionSchema,
   OperatorApprovalViewSchema,
   OutcomeRunReportSchema,
   OutcomeRunRequestSchema,
+  PageStateSchema,
   PlanActionsSchema,
   PlanReportSchema,
   REF_PATTERN,
+  ScreenshotRequestSchema,
   TestCaseEvaluationInputSchema,
   TestCaseEvaluationReportSchema,
   UsageError,
@@ -52,9 +57,11 @@ import {
   materializeAutofillMapping,
   parseAutofillReport,
   parseAutofillRequest,
+  parseObservationRequest,
   parseOperatorApprovalView,
   parseOutcomeRunRequest,
   parsePlanSteps,
+  parseScreenshotRequest,
   validateApplicationReview,
   validateOperatorApprovalDecision,
   validateWireAction,
@@ -73,28 +80,36 @@ interface WaitFlagOptions {
   waitCount?: string;
 }
 
-const WAIT_UNTIL_VALUES = new Set([
-  'settled',
-  'domcontentloaded',
-  'load',
-  'networkidle',
-  'urlPattern',
-  'selectorVisible',
-  'minElements',
-]);
+const WAIT_UNTIL_VALUES = new Set<string>(DELIVERED_WAIT_TYPES);
+
+function captureInteger(value: string, flag: string): number {
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)))
+    throw new UsageError(`${flag} must be an integer`);
+  return Number(value);
+}
 
 function waitFromOptions(
   options: WaitFlagOptions
 ): NonNullable<ObservationRequest['wait']> | undefined {
-  if (!options.waitUntil) return undefined;
+  if (!options.waitUntil) {
+    if (
+      [options.waitTimeout, options.waitSelector, options.waitPattern, options.waitCount].some(
+        (value) => value !== undefined
+      )
+    )
+      throw new UsageError('--wait-until is required with other --wait-* options');
+    return undefined;
+  }
   if (!WAIT_UNTIL_VALUES.has(options.waitUntil)) {
-    throw new Error(`--wait-until must be one of: ${[...WAIT_UNTIL_VALUES].join(', ')}`);
+    throw new UsageError(`--wait-until must be one of: ${[...WAIT_UNTIL_VALUES].join(', ')}`);
   }
   const wait = { until: options.waitUntil } as NonNullable<ObservationRequest['wait']>;
-  if (options.waitTimeout) wait.timeoutMs = Number.parseInt(options.waitTimeout, 10);
-  if (options.waitSelector) wait.selector = options.waitSelector;
-  if (options.waitPattern) wait.pattern = options.waitPattern;
-  if (options.waitCount) wait.count = Number.parseInt(options.waitCount, 10);
+  if (options.waitTimeout !== undefined)
+    wait.timeoutMs = captureInteger(options.waitTimeout, '--wait-timeout');
+  if (options.waitSelector !== undefined) wait.selector = options.waitSelector;
+  if (options.waitPattern !== undefined) wait.pattern = options.waitPattern;
+  if (options.waitCount !== undefined)
+    wait.count = captureInteger(options.waitCount, '--wait-count');
   return wait;
 }
 
@@ -558,6 +573,7 @@ export function buildCli(deps: CliDependencies): Cli {
               `Session ${created.sessionId}`,
               `  status:  ${created.status ?? 'unknown'}`,
               `  created: ${created.createdAt ?? 'unknown'}`,
+              ...(created.warnings ?? []).map((warning) => `  Warning: ${warning}`),
             ]);
           })
         );
@@ -985,7 +1001,7 @@ export function buildCli(deps: CliDependencies): Cli {
         );
 
       // ---- observe ---------------------------------------------------------
-      program
+      const observe = program
         .command('observe')
         .description('capture a semantic observation of a page')
         .argument('<sessionId>')
@@ -1034,32 +1050,38 @@ export function buildCli(deps: CliDependencies): Cli {
               if (options.mode) {
                 request.mode = options.mode as NonNullable<ObservationRequest['mode']>;
               }
-              if (options.maxElements) {
-                request.maxElements = Number.parseInt(options.maxElements, 10);
+              if (options.maxElements !== undefined) {
+                request.maxElements = captureInteger(options.maxElements, '--max-elements');
               }
-              if (options.maxBytes) {
-                request.maxBytes = Number.parseInt(options.maxBytes, 10);
+              if (options.maxBytes !== undefined) {
+                request.maxBytes = captureInteger(options.maxBytes, '--max-bytes');
               }
               if (options.include && options.include.length > 0) {
-                request.include = options.include;
+                request.include = options.include as NonNullable<ObservationRequest['include']>;
               }
-              if (options.continueFrom) {
-                request.continueFrom = Number.parseInt(options.continueFrom, 10);
+              if (options.continueFrom !== undefined) {
+                request.continueFrom = captureInteger(options.continueFrom, '--continue-from');
               }
-              if (options.sinceRevision) {
-                request.sinceRevision = Number.parseInt(options.sinceRevision, 10);
+              if (options.sinceRevision !== undefined) {
+                request.sinceRevision = captureInteger(options.sinceRevision, '--since-revision');
               }
               const observeWait = waitFromOptions(options);
               if (observeWait) {
                 request.wait = observeWait;
               }
 
-              const observation = await ctx.client.sessions.observe(sessionId, pageId, request);
+              const observation = await ctx.client.sessions.observe(
+                sessionId,
+                pageId,
+                parseObservationRequest(request)
+              );
 
               ctx.emit(observation, () => renderObservation(observation));
             }
           )
         );
+
+      advertiseWireSchema(observe, { input: ObservationRequestSchema, output: PageStateSchema });
 
       // ---- snapshot (TD-BROWSER-8) -------------------------------------------
       program
@@ -1559,7 +1581,7 @@ export function buildCli(deps: CliDependencies): Cli {
       );
 
       // ---- screenshot ------------------------------------------------------
-      program
+      const screenshot = program
         .command('screenshot')
         .description('capture a screenshot artifact')
         .argument('<sessionId>')
@@ -1599,7 +1621,7 @@ export function buildCli(deps: CliDependencies): Cli {
                 request.format = options.format as NonNullable<ScreenshotRequest['format']>;
               }
               if (options.quality !== undefined) {
-                request.quality = Number(options.quality);
+                request.quality = captureInteger(options.quality, '--quality');
               }
               if (options.maskSensitive) {
                 request.maskSensitive = true;
@@ -1609,7 +1631,11 @@ export function buildCli(deps: CliDependencies): Cli {
                 request.wait = screenshotWait;
               }
 
-              const artifact = await ctx.client.sessions.screenshot(sessionId, pageId, request);
+              const artifact = await ctx.client.sessions.screenshot(
+                sessionId,
+                pageId,
+                parseScreenshotRequest(request)
+              );
 
               ctx.emit(artifact, () => [
                 `Screenshot ${artifact.artifactId}`,
@@ -1626,6 +1652,11 @@ export function buildCli(deps: CliDependencies): Cli {
             }
           )
         );
+
+      advertiseWireSchema(screenshot, {
+        input: ScreenshotRequestSchema,
+        output: ArtifactRefSchema,
+      });
 
       program
         .command('pdf')
@@ -2180,6 +2211,11 @@ function renderObservation(observation: ObservationResponse): string[] {
   if (observation.summary) {
     lines.push(`  summary:  ${observation.summary}`);
   }
+
+  if (observation.degraded)
+    lines.push(
+      `  Warning: degraded observation (${observation.degradedReason ?? 'unknown'}). Wait for readiness or inspect HTML before acting.`
+    );
 
   lines.push('', 'Elements:');
 

@@ -63,3 +63,17 @@ export {
   validateOperatorApprovalDecision,
 } from '@agentbrowser/protocol';
 export type { OperatorApprovalView, OperatorApprovalDecision } from '@agentbrowser/protocol';
+
+export {
+  ObservationRequestSchema,
+  ScreenshotRequestSchema,
+  DeliveredWaitConditionSchema,
+  PageStateSchema,
+  ArtifactRefSchema,
+  DELIVERED_WAIT_TYPES,
+  parseObservationRequest,
+  parseScreenshotRequest,
+  validateObservationRequest,
+  validateScreenshotRequest,
+} from '@agentbrowser/protocol';
+export type { DeliveredWaitCondition } from '@agentbrowser/protocol';

@@ -362,6 +362,8 @@ export interface BrowserEngine {
  * Engine session interface
  */
 export interface EngineSession {
+  /** Diagnostics from the engine host, shared by all consumption surfaces. */
+  readonly warnings?: readonly string[];
   /** Consume a captured download by unique ID, or an unambiguous legacy filename. */
   takeDownload?(
     pageId: string,

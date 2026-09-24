@@ -19,10 +19,10 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   `--wait-selector/--wait-pattern/--wait-count`), reusing the `browser_act` wait
   vocabulary. Applied before the snapshot/capture so slow-mounting SPAs do not
   observe empty or screenshot blank.
-- Headed sessions with no reachable display (e.g. the service under a launchd
-  daemon) now launch as before but log a warning, and `browser_create` returns a
-  `warnings` entry, steering callers to `browser_html` or a GUI login session.
-  Overridable with `AGENTBROWSER_ASSUME_DISPLAY=1`.
+- Display diagnostics originate on the browser host and pass through REST,
+  SDK, CLI, and MCP session responses. Linux checks display environment hints;
+  a macOS launchd label alone no longer implies a missing GUI session. Operators
+  may declare availability with `AGENTBROWSER_ASSUME_DISPLAY=1` or absence with `0`.
 
 ### Changed
 
@@ -31,6 +31,16 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   and captures a best-effort accessible name, so a timed-out observation stays
   addressable. Empty-DOM thresholds are tunable via
   `AGENTBROWSER_EMPTY_DOM_MIN_TEXT` / `AGENTBROWSER_EMPTY_DOM_MIN_NODES`.
+
+- Capture requests share protocol schemas and runtime validation across REST,
+  SDK, CLI, and MCP, including condition-specific wait fields and bounded numeric
+  options. Invalid and unsupported options now fail instead of being ignored.
+- Screenshot readiness waits reach the HTTP service. MCP also exposes screenshot
+  `quality`/`maskSensitive` and observation `sinceRevision`. CLI `describe --schema`
+  and MCP output schemas expose the capture contracts; CLI human output reports
+  degraded observations. Artifact schemas describe both inline and URL delivery.
+- DOM fallback refs bind to the discovered node rather than a guessed accessible
+  name, preventing a ref from selecting a different node with a matching name.
 
 ## [1.10.0] - 2026-09-23
 

@@ -366,6 +366,73 @@ describe('whole-body snapshot fallback (observe())', () => {
     });
   }
 
+  it('releases discovered fallback handles if an enrichment fails before binding', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const page = await (await engine.createSession({ headless: true })).newPage();
+      await page.navigate({ url: 'data:text/html,<button>Go</button>' });
+      degradeBody(page);
+      const internals = page as unknown as {
+        getContentElements(): Promise<object[]>;
+        describeFileInputs(): Promise<unknown[]>;
+        fallbackNodes: WeakMap<object, { handle: { dispose(): Promise<void> } }>;
+      };
+      const collect = internals.getContentElements.bind(internals);
+      const disposals: Array<ReturnType<typeof vi.spyOn>> = [];
+      vi.spyOn(internals, 'getContentElements').mockImplementation(async () => {
+        const elements = await collect();
+        for (const element of elements) {
+          const handle = internals.fallbackNodes.get(element)?.handle;
+          if (handle) disposals.push(vi.spyOn(handle, 'dispose'));
+        }
+        return elements;
+      });
+      vi.spyOn(internals, 'describeFileInputs').mockRejectedValue(new Error('Enrichment failed'));
+      await expect(page.observe({ include: ['fileInputs'] })).rejects.toThrow('Enrichment failed');
+      expect(disposals).toHaveLength(1);
+      for (const dispose of disposals) expect(dispose).toHaveBeenCalledOnce();
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('binds fallback refs to discovered nodes when text differs from accessible names', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const page = await (await engine.createSession({ headless: true })).newPage();
+      const html =
+        '<span id="label">Keep account</span><button aria-labelledby="label" onclick="document.title=\'SAFE\'">Delete account</button><button onclick="document.title=\'WRONG\'">Delete account</button>';
+      await page.navigate({ url: `data:text/html,${encodeURIComponent(html)}` });
+      degradeBody(page);
+      const state = await page.observe({});
+      const first = state.elements.find((element) => element.role === 'button');
+      if (!first?.ref) throw new Error('No fallback button');
+      await page.act({ type: 'click', target: { ref: first.ref } });
+      expect(await backingPage(page).title()).toBe('SAFE');
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('deduplicates native role widgets and binds contenteditable refs', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const page = await (await engine.createSession({ headless: true })).newPage();
+      await page.navigate({
+        url: 'data:text/html,<button role="button">Go</button><div contenteditable="true" aria-label="Notes"></div>',
+      });
+      degradeBody(page);
+      const state = await page.observe({});
+      expect(state.elements.filter((element) => element.role === 'button')).toHaveLength(1);
+      const editor = state.elements.find((element) => element.name === 'Notes');
+      if (!editor?.ref) throw new Error('No editor ref');
+      await page.act({ type: 'fill', target: { ref: editor.ref }, value: 'hello' });
+      expect(await backingPage(page).locator('[contenteditable]').innerText()).toBe('hello');
+    } finally {
+      await engine.close();
+    }
+  });
+
   it('surfaces degraded:true and a best-effort name for a fallback element', async () => {
     const engine = new PlaywrightChromiumEngine();
     try {

@@ -3269,6 +3269,16 @@
                 }
               }
             }
+          },
+          "504": {
+            "description": "The readiness wait timed out.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       }
@@ -3503,124 +3513,316 @@
                     "type": "string"
                   },
                   "wait": {
-                    "type": "object",
-                    "required": [
-                      "until"
-                    ],
-                    "properties": {
-                      "until": {
-                        "anyOf": [
-                          {
-                            "const": "settled",
+                    "description": "Readiness wait before capture. urlPattern requires pattern (glob or /regex/flags), selectorVisible requires selector, and minElements requires count. timeoutMs defaults to 5000; zero uses a 1ms deadline.",
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "until"
+                        ],
+                        "properties": {
+                          "timeoutMs": {
+                            "minimum": 0,
+                            "maximum": 300000,
+                            "type": "integer"
+                          },
+                          "pattern": {
+                            "minLength": 1,
+                            "maxLength": 512,
                             "type": "string"
                           },
-                          {
-                            "const": "domcontentloaded",
+                          "selector": {
+                            "minLength": 1,
+                            "maxLength": 500,
                             "type": "string"
                           },
-                          {
-                            "const": "load",
+                          "count": {
+                            "minimum": 1,
+                            "maximum": 10000,
+                            "type": "integer"
+                          },
+                          "until": {
+                            "anyOf": [
+                              {
+                                "const": "settled",
+                                "type": "string"
+                              },
+                              {
+                                "const": "domcontentloaded",
+                                "type": "string"
+                              },
+                              {
+                                "const": "load",
+                                "type": "string"
+                              },
+                              {
+                                "const": "networkidle",
+                                "type": "string"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "pattern",
+                          "until"
+                        ],
+                        "properties": {
+                          "timeoutMs": {
+                            "minimum": 0,
+                            "maximum": 300000,
+                            "type": "integer"
+                          },
+                          "pattern": {
+                            "minLength": 1,
+                            "maxLength": 512,
                             "type": "string"
                           },
-                          {
-                            "const": "networkidle",
+                          "selector": {
+                            "minLength": 1,
+                            "maxLength": 500,
                             "type": "string"
                           },
-                          {
+                          "count": {
+                            "minimum": 1,
+                            "maximum": 10000,
+                            "type": "integer"
+                          },
+                          "until": {
                             "const": "urlPattern",
                             "type": "string"
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "selector",
+                          "until"
+                        ],
+                        "properties": {
+                          "timeoutMs": {
+                            "minimum": 0,
+                            "maximum": 300000,
+                            "type": "integer"
                           },
-                          {
-                            "const": "selectorVisible",
+                          "pattern": {
+                            "minLength": 1,
+                            "maxLength": 512,
                             "type": "string"
                           },
-                          {
+                          "selector": {
+                            "minLength": 1,
+                            "maxLength": 500,
+                            "type": "string"
+                          },
+                          "count": {
+                            "minimum": 1,
+                            "maximum": 10000,
+                            "type": "integer"
+                          },
+                          "until": {
+                            "const": "selectorVisible",
+                            "type": "string"
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "count",
+                          "until"
+                        ],
+                        "properties": {
+                          "timeoutMs": {
+                            "minimum": 0,
+                            "maximum": 300000,
+                            "type": "integer"
+                          },
+                          "pattern": {
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "type": "string"
+                          },
+                          "selector": {
+                            "minLength": 1,
+                            "maxLength": 500,
+                            "type": "string"
+                          },
+                          "count": {
+                            "minimum": 1,
+                            "maximum": 10000,
+                            "type": "integer"
+                          },
+                          "until": {
                             "const": "minElements",
                             "type": "string"
                           }
-                        ]
-                      },
-                      "timeoutMs": {
-                        "minimum": 0,
-                        "maximum": 300000,
-                        "type": "integer"
-                      },
-                      "pattern": {
-                        "minLength": 1,
-                        "maxLength": 2048,
-                        "type": "string"
-                      },
-                      "selector": {
-                        "minLength": 1,
-                        "maxLength": 500,
-                        "type": "string"
-                      },
-                      "count": {
-                        "minimum": 1,
-                        "maximum": 10000,
-                        "type": "integer"
+                        }
                       }
-                    }
+                    ]
                   },
                   "condition": {
-                    "type": "object",
-                    "required": [
-                      "until"
-                    ],
-                    "properties": {
-                      "until": {
-                        "anyOf": [
-                          {
-                            "const": "settled",
+                    "description": "Readiness wait before capture. urlPattern requires pattern (glob or /regex/flags), selectorVisible requires selector, and minElements requires count. timeoutMs defaults to 5000; zero uses a 1ms deadline.",
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "until"
+                        ],
+                        "properties": {
+                          "timeoutMs": {
+                            "minimum": 0,
+                            "maximum": 300000,
+                            "type": "integer"
+                          },
+                          "pattern": {
+                            "minLength": 1,
+                            "maxLength": 512,
                             "type": "string"
                           },
-                          {
-                            "const": "domcontentloaded",
+                          "selector": {
+                            "minLength": 1,
+                            "maxLength": 500,
                             "type": "string"
                           },
-                          {
-                            "const": "load",
+                          "count": {
+                            "minimum": 1,
+                            "maximum": 10000,
+                            "type": "integer"
+                          },
+                          "until": {
+                            "anyOf": [
+                              {
+                                "const": "settled",
+                                "type": "string"
+                              },
+                              {
+                                "const": "domcontentloaded",
+                                "type": "string"
+                              },
+                              {
+                                "const": "load",
+                                "type": "string"
+                              },
+                              {
+                                "const": "networkidle",
+                                "type": "string"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "pattern",
+                          "until"
+                        ],
+                        "properties": {
+                          "timeoutMs": {
+                            "minimum": 0,
+                            "maximum": 300000,
+                            "type": "integer"
+                          },
+                          "pattern": {
+                            "minLength": 1,
+                            "maxLength": 512,
                             "type": "string"
                           },
-                          {
-                            "const": "networkidle",
+                          "selector": {
+                            "minLength": 1,
+                            "maxLength": 500,
                             "type": "string"
                           },
-                          {
+                          "count": {
+                            "minimum": 1,
+                            "maximum": 10000,
+                            "type": "integer"
+                          },
+                          "until": {
                             "const": "urlPattern",
                             "type": "string"
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "selector",
+                          "until"
+                        ],
+                        "properties": {
+                          "timeoutMs": {
+                            "minimum": 0,
+                            "maximum": 300000,
+                            "type": "integer"
                           },
-                          {
-                            "const": "selectorVisible",
+                          "pattern": {
+                            "minLength": 1,
+                            "maxLength": 512,
                             "type": "string"
                           },
-                          {
+                          "selector": {
+                            "minLength": 1,
+                            "maxLength": 500,
+                            "type": "string"
+                          },
+                          "count": {
+                            "minimum": 1,
+                            "maximum": 10000,
+                            "type": "integer"
+                          },
+                          "until": {
+                            "const": "selectorVisible",
+                            "type": "string"
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "count",
+                          "until"
+                        ],
+                        "properties": {
+                          "timeoutMs": {
+                            "minimum": 0,
+                            "maximum": 300000,
+                            "type": "integer"
+                          },
+                          "pattern": {
+                            "minLength": 1,
+                            "maxLength": 512,
+                            "type": "string"
+                          },
+                          "selector": {
+                            "minLength": 1,
+                            "maxLength": 500,
+                            "type": "string"
+                          },
+                          "count": {
+                            "minimum": 1,
+                            "maximum": 10000,
+                            "type": "integer"
+                          },
+                          "until": {
                             "const": "minElements",
                             "type": "string"
                           }
-                        ]
-                      },
-                      "timeoutMs": {
-                        "minimum": 0,
-                        "maximum": 300000,
-                        "type": "integer"
-                      },
-                      "pattern": {
-                        "minLength": 1,
-                        "maxLength": 2048,
-                        "type": "string"
-                      },
-                      "selector": {
-                        "minLength": 1,
-                        "maxLength": 500,
-                        "type": "string"
-                      },
-                      "count": {
-                        "minimum": 1,
-                        "maximum": 10000,
-                        "type": "integer"
+                        }
                       }
-                    }
+                    ]
                   },
                   "expectValue": {
                     "type": "string"
@@ -4372,28 +4574,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "properties": {
-                  "fullPage": {
-                    "type": "boolean"
-                  },
-                  "format": {
-                    "type": "string",
-                    "enum": [
-                      "png",
-                      "jpeg",
-                      "webp"
-                    ]
-                  },
-                  "quality": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 100
-                  },
-                  "maskSensitive": {
-                    "type": "boolean"
-                  }
-                }
+                "$ref": "#/components/schemas/ScreenshotRequest"
               }
             }
           }
@@ -4441,6 +4622,16 @@
           },
           "500": {
             "description": "An unexpected server error occurred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The readiness wait timed out.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6101,6 +6292,12 @@
           "idleTimeoutMs"
         ],
         "properties": {
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "sessionId": {
             "pattern": "^ses_[a-zA-Z0-9_]+$",
             "type": "string"
@@ -6682,7 +6879,7 @@
             "type": "integer"
           },
           "url": {
-            "pattern": "^https?://[\\w\\-]+(\\.[\\w\\-]+)+\\S*$",
+            "pattern": "^[a-zA-Z][a-zA-Z0-9+.-]*:",
             "type": "string"
           },
           "title": {
@@ -7011,6 +7208,7 @@
         }
       },
       "ObservationRequest": {
+        "additionalProperties": false,
         "type": "object",
         "properties": {
           "mode": {
@@ -7025,14 +7223,6 @@
               },
               {
                 "const": "accessibility",
-                "type": "string"
-              },
-              {
-                "const": "compact_dom",
-                "type": "string"
-              },
-              {
-                "const": "visual",
                 "type": "string"
               }
             ]
@@ -7053,91 +7243,369 @@
             "minimum": 0,
             "type": "integer"
           },
-          "scope": {
+          "include": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "const": "overlays",
+                  "type": "string"
+                },
+                {
+                  "const": "fileInputs",
+                  "type": "string"
+                },
+                {
+                  "const": "formControls",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "wait": {
+            "description": "Readiness wait before capture. urlPattern requires pattern (glob or /regex/flags), selectorVisible requires selector, and minElements requires count. timeoutMs defaults to 5000; zero uses a 1ms deadline.",
             "anyOf": [
               {
-                "const": "viewport",
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "until"
+                ],
+                "properties": {
+                  "timeoutMs": {
+                    "minimum": 0,
+                    "maximum": 300000,
+                    "type": "integer"
+                  },
+                  "pattern": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "selector": {
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "type": "string"
+                  },
+                  "count": {
+                    "minimum": 1,
+                    "maximum": 10000,
+                    "type": "integer"
+                  },
+                  "until": {
+                    "anyOf": [
+                      {
+                        "const": "settled",
+                        "type": "string"
+                      },
+                      {
+                        "const": "domcontentloaded",
+                        "type": "string"
+                      },
+                      {
+                        "const": "load",
+                        "type": "string"
+                      },
+                      {
+                        "const": "networkidle",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "pattern",
+                  "until"
+                ],
+                "properties": {
+                  "timeoutMs": {
+                    "minimum": 0,
+                    "maximum": 300000,
+                    "type": "integer"
+                  },
+                  "pattern": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "selector": {
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "type": "string"
+                  },
+                  "count": {
+                    "minimum": 1,
+                    "maximum": 10000,
+                    "type": "integer"
+                  },
+                  "until": {
+                    "const": "urlPattern",
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "selector",
+                  "until"
+                ],
+                "properties": {
+                  "timeoutMs": {
+                    "minimum": 0,
+                    "maximum": 300000,
+                    "type": "integer"
+                  },
+                  "pattern": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "selector": {
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "type": "string"
+                  },
+                  "count": {
+                    "minimum": 1,
+                    "maximum": 10000,
+                    "type": "integer"
+                  },
+                  "until": {
+                    "const": "selectorVisible",
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "count",
+                  "until"
+                ],
+                "properties": {
+                  "timeoutMs": {
+                    "minimum": 0,
+                    "maximum": 300000,
+                    "type": "integer"
+                  },
+                  "pattern": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "selector": {
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "type": "string"
+                  },
+                  "count": {
+                    "minimum": 1,
+                    "maximum": 10000,
+                    "type": "integer"
+                  },
+                  "until": {
+                    "const": "minElements",
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "ScreenshotRequest": {
+        "additionalProperties": false,
+        "type": "object",
+        "properties": {
+          "fullPage": {
+            "type": "boolean"
+          },
+          "maskSensitive": {
+            "type": "boolean"
+          },
+          "format": {
+            "anyOf": [
+              {
+                "const": "png",
                 "type": "string"
               },
               {
-                "const": "full",
+                "const": "jpeg",
                 "type": "string"
               },
               {
-                "const": "frame",
-                "type": "string"
-              },
-              {
-                "const": "element",
+                "const": "webp",
                 "type": "string"
               }
             ]
           },
-          "include": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
+          "quality": {
+            "minimum": 0,
+            "maximum": 100,
+            "type": "integer"
           },
           "wait": {
-            "type": "object",
-            "required": [
-              "until"
-            ],
-            "properties": {
-              "until": {
-                "anyOf": [
-                  {
-                    "const": "settled",
+            "description": "Readiness wait before capture. urlPattern requires pattern (glob or /regex/flags), selectorVisible requires selector, and minElements requires count. timeoutMs defaults to 5000; zero uses a 1ms deadline.",
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "until"
+                ],
+                "properties": {
+                  "timeoutMs": {
+                    "minimum": 0,
+                    "maximum": 300000,
+                    "type": "integer"
+                  },
+                  "pattern": {
+                    "minLength": 1,
+                    "maxLength": 512,
                     "type": "string"
                   },
-                  {
-                    "const": "domcontentloaded",
+                  "selector": {
+                    "minLength": 1,
+                    "maxLength": 500,
                     "type": "string"
                   },
-                  {
-                    "const": "load",
+                  "count": {
+                    "minimum": 1,
+                    "maximum": 10000,
+                    "type": "integer"
+                  },
+                  "until": {
+                    "anyOf": [
+                      {
+                        "const": "settled",
+                        "type": "string"
+                      },
+                      {
+                        "const": "domcontentloaded",
+                        "type": "string"
+                      },
+                      {
+                        "const": "load",
+                        "type": "string"
+                      },
+                      {
+                        "const": "networkidle",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "pattern",
+                  "until"
+                ],
+                "properties": {
+                  "timeoutMs": {
+                    "minimum": 0,
+                    "maximum": 300000,
+                    "type": "integer"
+                  },
+                  "pattern": {
+                    "minLength": 1,
+                    "maxLength": 512,
                     "type": "string"
                   },
-                  {
-                    "const": "networkidle",
+                  "selector": {
+                    "minLength": 1,
+                    "maxLength": 500,
                     "type": "string"
                   },
-                  {
+                  "count": {
+                    "minimum": 1,
+                    "maximum": 10000,
+                    "type": "integer"
+                  },
+                  "until": {
                     "const": "urlPattern",
                     "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "selector",
+                  "until"
+                ],
+                "properties": {
+                  "timeoutMs": {
+                    "minimum": 0,
+                    "maximum": 300000,
+                    "type": "integer"
                   },
-                  {
-                    "const": "selectorVisible",
+                  "pattern": {
+                    "minLength": 1,
+                    "maxLength": 512,
                     "type": "string"
                   },
-                  {
+                  "selector": {
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "type": "string"
+                  },
+                  "count": {
+                    "minimum": 1,
+                    "maximum": 10000,
+                    "type": "integer"
+                  },
+                  "until": {
+                    "const": "selectorVisible",
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "count",
+                  "until"
+                ],
+                "properties": {
+                  "timeoutMs": {
+                    "minimum": 0,
+                    "maximum": 300000,
+                    "type": "integer"
+                  },
+                  "pattern": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "selector": {
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "type": "string"
+                  },
+                  "count": {
+                    "minimum": 1,
+                    "maximum": 10000,
+                    "type": "integer"
+                  },
+                  "until": {
                     "const": "minElements",
                     "type": "string"
                   }
-                ]
-              },
-              "timeoutMs": {
-                "minimum": 0,
-                "maximum": 300000,
-                "type": "integer"
-              },
-              "pattern": {
-                "minLength": 1,
-                "maxLength": 2048,
-                "type": "string"
-              },
-              "selector": {
-                "minLength": 1,
-                "maxLength": 500,
-                "type": "string"
-              },
-              "count": {
-                "minimum": 1,
-                "maximum": 10000,
-                "type": "integer"
+                }
               }
-            }
+            ]
           }
         }
       },
@@ -7329,124 +7797,316 @@
             "type": "string"
           },
           "wait": {
-            "type": "object",
-            "required": [
-              "until"
-            ],
-            "properties": {
-              "until": {
-                "anyOf": [
-                  {
-                    "const": "settled",
+            "description": "Readiness wait before capture. urlPattern requires pattern (glob or /regex/flags), selectorVisible requires selector, and minElements requires count. timeoutMs defaults to 5000; zero uses a 1ms deadline.",
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "until"
+                ],
+                "properties": {
+                  "timeoutMs": {
+                    "minimum": 0,
+                    "maximum": 300000,
+                    "type": "integer"
+                  },
+                  "pattern": {
+                    "minLength": 1,
+                    "maxLength": 512,
                     "type": "string"
                   },
-                  {
-                    "const": "domcontentloaded",
+                  "selector": {
+                    "minLength": 1,
+                    "maxLength": 500,
                     "type": "string"
                   },
-                  {
-                    "const": "load",
+                  "count": {
+                    "minimum": 1,
+                    "maximum": 10000,
+                    "type": "integer"
+                  },
+                  "until": {
+                    "anyOf": [
+                      {
+                        "const": "settled",
+                        "type": "string"
+                      },
+                      {
+                        "const": "domcontentloaded",
+                        "type": "string"
+                      },
+                      {
+                        "const": "load",
+                        "type": "string"
+                      },
+                      {
+                        "const": "networkidle",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "pattern",
+                  "until"
+                ],
+                "properties": {
+                  "timeoutMs": {
+                    "minimum": 0,
+                    "maximum": 300000,
+                    "type": "integer"
+                  },
+                  "pattern": {
+                    "minLength": 1,
+                    "maxLength": 512,
                     "type": "string"
                   },
-                  {
-                    "const": "networkidle",
+                  "selector": {
+                    "minLength": 1,
+                    "maxLength": 500,
                     "type": "string"
                   },
-                  {
+                  "count": {
+                    "minimum": 1,
+                    "maximum": 10000,
+                    "type": "integer"
+                  },
+                  "until": {
                     "const": "urlPattern",
                     "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "selector",
+                  "until"
+                ],
+                "properties": {
+                  "timeoutMs": {
+                    "minimum": 0,
+                    "maximum": 300000,
+                    "type": "integer"
                   },
-                  {
-                    "const": "selectorVisible",
+                  "pattern": {
+                    "minLength": 1,
+                    "maxLength": 512,
                     "type": "string"
                   },
-                  {
+                  "selector": {
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "type": "string"
+                  },
+                  "count": {
+                    "minimum": 1,
+                    "maximum": 10000,
+                    "type": "integer"
+                  },
+                  "until": {
+                    "const": "selectorVisible",
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "count",
+                  "until"
+                ],
+                "properties": {
+                  "timeoutMs": {
+                    "minimum": 0,
+                    "maximum": 300000,
+                    "type": "integer"
+                  },
+                  "pattern": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "selector": {
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "type": "string"
+                  },
+                  "count": {
+                    "minimum": 1,
+                    "maximum": 10000,
+                    "type": "integer"
+                  },
+                  "until": {
                     "const": "minElements",
                     "type": "string"
                   }
-                ]
-              },
-              "timeoutMs": {
-                "minimum": 0,
-                "maximum": 300000,
-                "type": "integer"
-              },
-              "pattern": {
-                "minLength": 1,
-                "maxLength": 2048,
-                "type": "string"
-              },
-              "selector": {
-                "minLength": 1,
-                "maxLength": 500,
-                "type": "string"
-              },
-              "count": {
-                "minimum": 1,
-                "maximum": 10000,
-                "type": "integer"
+                }
               }
-            }
+            ]
           },
           "condition": {
-            "type": "object",
-            "required": [
-              "until"
-            ],
-            "properties": {
-              "until": {
-                "anyOf": [
-                  {
-                    "const": "settled",
+            "description": "Readiness wait before capture. urlPattern requires pattern (glob or /regex/flags), selectorVisible requires selector, and minElements requires count. timeoutMs defaults to 5000; zero uses a 1ms deadline.",
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "until"
+                ],
+                "properties": {
+                  "timeoutMs": {
+                    "minimum": 0,
+                    "maximum": 300000,
+                    "type": "integer"
+                  },
+                  "pattern": {
+                    "minLength": 1,
+                    "maxLength": 512,
                     "type": "string"
                   },
-                  {
-                    "const": "domcontentloaded",
+                  "selector": {
+                    "minLength": 1,
+                    "maxLength": 500,
                     "type": "string"
                   },
-                  {
-                    "const": "load",
+                  "count": {
+                    "minimum": 1,
+                    "maximum": 10000,
+                    "type": "integer"
+                  },
+                  "until": {
+                    "anyOf": [
+                      {
+                        "const": "settled",
+                        "type": "string"
+                      },
+                      {
+                        "const": "domcontentloaded",
+                        "type": "string"
+                      },
+                      {
+                        "const": "load",
+                        "type": "string"
+                      },
+                      {
+                        "const": "networkidle",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "pattern",
+                  "until"
+                ],
+                "properties": {
+                  "timeoutMs": {
+                    "minimum": 0,
+                    "maximum": 300000,
+                    "type": "integer"
+                  },
+                  "pattern": {
+                    "minLength": 1,
+                    "maxLength": 512,
                     "type": "string"
                   },
-                  {
-                    "const": "networkidle",
+                  "selector": {
+                    "minLength": 1,
+                    "maxLength": 500,
                     "type": "string"
                   },
-                  {
+                  "count": {
+                    "minimum": 1,
+                    "maximum": 10000,
+                    "type": "integer"
+                  },
+                  "until": {
                     "const": "urlPattern",
                     "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "selector",
+                  "until"
+                ],
+                "properties": {
+                  "timeoutMs": {
+                    "minimum": 0,
+                    "maximum": 300000,
+                    "type": "integer"
                   },
-                  {
-                    "const": "selectorVisible",
+                  "pattern": {
+                    "minLength": 1,
+                    "maxLength": 512,
                     "type": "string"
                   },
-                  {
+                  "selector": {
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "type": "string"
+                  },
+                  "count": {
+                    "minimum": 1,
+                    "maximum": 10000,
+                    "type": "integer"
+                  },
+                  "until": {
+                    "const": "selectorVisible",
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "count",
+                  "until"
+                ],
+                "properties": {
+                  "timeoutMs": {
+                    "minimum": 0,
+                    "maximum": 300000,
+                    "type": "integer"
+                  },
+                  "pattern": {
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  "selector": {
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "type": "string"
+                  },
+                  "count": {
+                    "minimum": 1,
+                    "maximum": 10000,
+                    "type": "integer"
+                  },
+                  "until": {
                     "const": "minElements",
                     "type": "string"
                   }
-                ]
-              },
-              "timeoutMs": {
-                "minimum": 0,
-                "maximum": 300000,
-                "type": "integer"
-              },
-              "pattern": {
-                "minLength": 1,
-                "maxLength": 2048,
-                "type": "string"
-              },
-              "selector": {
-                "minLength": 1,
-                "maxLength": 500,
-                "type": "string"
-              },
-              "count": {
-                "minimum": 1,
-                "maximum": 10000,
-                "type": "integer"
+                }
               }
-            }
+            ]
           },
           "expectValue": {
             "type": "string"
@@ -7756,124 +8416,316 @@
                   "type": "string"
                 },
                 "wait": {
-                  "type": "object",
-                  "required": [
-                    "until"
-                  ],
-                  "properties": {
-                    "until": {
-                      "anyOf": [
-                        {
-                          "const": "settled",
+                  "description": "Readiness wait before capture. urlPattern requires pattern (glob or /regex/flags), selectorVisible requires selector, and minElements requires count. timeoutMs defaults to 5000; zero uses a 1ms deadline.",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "until"
+                      ],
+                      "properties": {
+                        "timeoutMs": {
+                          "minimum": 0,
+                          "maximum": 300000,
+                          "type": "integer"
+                        },
+                        "pattern": {
+                          "minLength": 1,
+                          "maxLength": 512,
                           "type": "string"
                         },
-                        {
-                          "const": "domcontentloaded",
+                        "selector": {
+                          "minLength": 1,
+                          "maxLength": 500,
                           "type": "string"
                         },
-                        {
-                          "const": "load",
+                        "count": {
+                          "minimum": 1,
+                          "maximum": 10000,
+                          "type": "integer"
+                        },
+                        "until": {
+                          "anyOf": [
+                            {
+                              "const": "settled",
+                              "type": "string"
+                            },
+                            {
+                              "const": "domcontentloaded",
+                              "type": "string"
+                            },
+                            {
+                              "const": "load",
+                              "type": "string"
+                            },
+                            {
+                              "const": "networkidle",
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "pattern",
+                        "until"
+                      ],
+                      "properties": {
+                        "timeoutMs": {
+                          "minimum": 0,
+                          "maximum": 300000,
+                          "type": "integer"
+                        },
+                        "pattern": {
+                          "minLength": 1,
+                          "maxLength": 512,
                           "type": "string"
                         },
-                        {
-                          "const": "networkidle",
+                        "selector": {
+                          "minLength": 1,
+                          "maxLength": 500,
                           "type": "string"
                         },
-                        {
+                        "count": {
+                          "minimum": 1,
+                          "maximum": 10000,
+                          "type": "integer"
+                        },
+                        "until": {
                           "const": "urlPattern",
                           "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "selector",
+                        "until"
+                      ],
+                      "properties": {
+                        "timeoutMs": {
+                          "minimum": 0,
+                          "maximum": 300000,
+                          "type": "integer"
                         },
-                        {
-                          "const": "selectorVisible",
+                        "pattern": {
+                          "minLength": 1,
+                          "maxLength": 512,
                           "type": "string"
                         },
-                        {
+                        "selector": {
+                          "minLength": 1,
+                          "maxLength": 500,
+                          "type": "string"
+                        },
+                        "count": {
+                          "minimum": 1,
+                          "maximum": 10000,
+                          "type": "integer"
+                        },
+                        "until": {
+                          "const": "selectorVisible",
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "count",
+                        "until"
+                      ],
+                      "properties": {
+                        "timeoutMs": {
+                          "minimum": 0,
+                          "maximum": 300000,
+                          "type": "integer"
+                        },
+                        "pattern": {
+                          "minLength": 1,
+                          "maxLength": 512,
+                          "type": "string"
+                        },
+                        "selector": {
+                          "minLength": 1,
+                          "maxLength": 500,
+                          "type": "string"
+                        },
+                        "count": {
+                          "minimum": 1,
+                          "maximum": 10000,
+                          "type": "integer"
+                        },
+                        "until": {
                           "const": "minElements",
                           "type": "string"
                         }
-                      ]
-                    },
-                    "timeoutMs": {
-                      "minimum": 0,
-                      "maximum": 300000,
-                      "type": "integer"
-                    },
-                    "pattern": {
-                      "minLength": 1,
-                      "maxLength": 2048,
-                      "type": "string"
-                    },
-                    "selector": {
-                      "minLength": 1,
-                      "maxLength": 500,
-                      "type": "string"
-                    },
-                    "count": {
-                      "minimum": 1,
-                      "maximum": 10000,
-                      "type": "integer"
+                      }
                     }
-                  }
+                  ]
                 },
                 "condition": {
-                  "type": "object",
-                  "required": [
-                    "until"
-                  ],
-                  "properties": {
-                    "until": {
-                      "anyOf": [
-                        {
-                          "const": "settled",
+                  "description": "Readiness wait before capture. urlPattern requires pattern (glob or /regex/flags), selectorVisible requires selector, and minElements requires count. timeoutMs defaults to 5000; zero uses a 1ms deadline.",
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "until"
+                      ],
+                      "properties": {
+                        "timeoutMs": {
+                          "minimum": 0,
+                          "maximum": 300000,
+                          "type": "integer"
+                        },
+                        "pattern": {
+                          "minLength": 1,
+                          "maxLength": 512,
                           "type": "string"
                         },
-                        {
-                          "const": "domcontentloaded",
+                        "selector": {
+                          "minLength": 1,
+                          "maxLength": 500,
                           "type": "string"
                         },
-                        {
-                          "const": "load",
+                        "count": {
+                          "minimum": 1,
+                          "maximum": 10000,
+                          "type": "integer"
+                        },
+                        "until": {
+                          "anyOf": [
+                            {
+                              "const": "settled",
+                              "type": "string"
+                            },
+                            {
+                              "const": "domcontentloaded",
+                              "type": "string"
+                            },
+                            {
+                              "const": "load",
+                              "type": "string"
+                            },
+                            {
+                              "const": "networkidle",
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "pattern",
+                        "until"
+                      ],
+                      "properties": {
+                        "timeoutMs": {
+                          "minimum": 0,
+                          "maximum": 300000,
+                          "type": "integer"
+                        },
+                        "pattern": {
+                          "minLength": 1,
+                          "maxLength": 512,
                           "type": "string"
                         },
-                        {
-                          "const": "networkidle",
+                        "selector": {
+                          "minLength": 1,
+                          "maxLength": 500,
                           "type": "string"
                         },
-                        {
+                        "count": {
+                          "minimum": 1,
+                          "maximum": 10000,
+                          "type": "integer"
+                        },
+                        "until": {
                           "const": "urlPattern",
                           "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "selector",
+                        "until"
+                      ],
+                      "properties": {
+                        "timeoutMs": {
+                          "minimum": 0,
+                          "maximum": 300000,
+                          "type": "integer"
                         },
-                        {
-                          "const": "selectorVisible",
+                        "pattern": {
+                          "minLength": 1,
+                          "maxLength": 512,
                           "type": "string"
                         },
-                        {
+                        "selector": {
+                          "minLength": 1,
+                          "maxLength": 500,
+                          "type": "string"
+                        },
+                        "count": {
+                          "minimum": 1,
+                          "maximum": 10000,
+                          "type": "integer"
+                        },
+                        "until": {
+                          "const": "selectorVisible",
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "count",
+                        "until"
+                      ],
+                      "properties": {
+                        "timeoutMs": {
+                          "minimum": 0,
+                          "maximum": 300000,
+                          "type": "integer"
+                        },
+                        "pattern": {
+                          "minLength": 1,
+                          "maxLength": 512,
+                          "type": "string"
+                        },
+                        "selector": {
+                          "minLength": 1,
+                          "maxLength": 500,
+                          "type": "string"
+                        },
+                        "count": {
+                          "minimum": 1,
+                          "maximum": 10000,
+                          "type": "integer"
+                        },
+                        "until": {
                           "const": "minElements",
                           "type": "string"
                         }
-                      ]
-                    },
-                    "timeoutMs": {
-                      "minimum": 0,
-                      "maximum": 300000,
-                      "type": "integer"
-                    },
-                    "pattern": {
-                      "minLength": 1,
-                      "maxLength": 2048,
-                      "type": "string"
-                    },
-                    "selector": {
-                      "minLength": 1,
-                      "maxLength": 500,
-                      "type": "string"
-                    },
-                    "count": {
-                      "minimum": 1,
-                      "maximum": 10000,
-                      "type": "integer"
+                      }
                     }
-                  }
+                  ]
                 },
                 "expectValue": {
                   "type": "string"
@@ -8385,7 +9237,7 @@
                 "type": "integer"
               },
               "url": {
-                "pattern": "^https?://[\\w\\-]+(\\.[\\w\\-]+)+\\S*$",
+                "pattern": "^[a-zA-Z][a-zA-Z0-9+.-]*:",
                 "type": "string"
               },
               "title": {
@@ -8628,8 +9480,7 @@
                 "artifactId",
                 "type",
                 "contentType",
-                "sizeBytes",
-                "url"
+                "sizeBytes"
               ],
               "properties": {
                 "artifactId": {
@@ -8672,6 +9523,43 @@
                 },
                 "url": {
                   "type": "string"
+                },
+                "inline": {
+                  "type": "object",
+                  "required": [
+                    "contentBase64",
+                    "byteSize"
+                  ],
+                  "properties": {
+                    "contentBase64": {
+                      "type": "string"
+                    },
+                    "byteSize": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  }
+                },
+                "createdAt": {
+                  "type": "number"
+                },
+                "expiresAt": {
+                  "type": "number"
+                },
+                "filename": {
+                  "type": "string"
+                },
+                "sessionId": {
+                  "type": "string"
+                },
+                "tenantId": {
+                  "type": "string"
+                },
+                "warnings": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               }
             }
@@ -8868,8 +9756,7 @@
           "artifactId",
           "type",
           "contentType",
-          "sizeBytes",
-          "url"
+          "sizeBytes"
         ],
         "properties": {
           "artifactId": {
@@ -8912,6 +9799,43 @@
           },
           "url": {
             "type": "string"
+          },
+          "inline": {
+            "type": "object",
+            "required": [
+              "contentBase64",
+              "byteSize"
+            ],
+            "properties": {
+              "contentBase64": {
+                "type": "string"
+              },
+              "byteSize": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            }
+          },
+          "createdAt": {
+            "type": "number"
+          },
+          "expiresAt": {
+            "type": "number"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "tenantId": {
+            "type": "string"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -8932,6 +9856,12 @@
               "active",
               "closed"
             ]
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "createdAt": {
             "type": "string",

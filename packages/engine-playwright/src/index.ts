@@ -43,7 +43,7 @@ import {
 import {
   DELIVERED_ACTION_TYPES,
   DELIVERED_OBSERVATION_MODES,
-  detectDisplayAvailability,
+  headedDisplayWarnings,
   validateUploadIntegrity,
 } from '@agentbrowser/protocol';
 import {
@@ -769,6 +769,9 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     // headless). The dedicated browser is owned by the session and closed
     // with it, so an interactive crash cannot take the pool down.
     const headless = options.headless !== false;
+    // Remote CDP browsers have their own host; local environment says nothing about them.
+    const warnings = !headless && this.cdpEndpoint === undefined ? headedDisplayWarnings() : [];
+    for (const warning of warnings) console.warn(`[agentbrowser] ${warning}`);
     let browser: Browser;
     if (this.cdpEndpoint !== undefined) {
       if (this.browserFamily !== 'chromium') {
@@ -859,7 +862,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       // time for a bad explicit value, not silently on the first observe()).
       options.snapshotTimeoutMs !== undefined
         ? snapshotTimeout(options.snapshotTimeoutMs)
-        : undefined
+        : undefined,
+      warnings
     );
   }
 
@@ -869,20 +873,6 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
    * one code path.
    */
   private async launchBrowser(headless: boolean, startMaximized: boolean): Promise<Browser> {
-    if (!headless) {
-      // Keep working (never fail the launch), but warn loudly: under a launchd
-      // system daemon there is no GUI session, so a "headed" browser renders to
-      // a null surface and screenshots come back blank. See detectDisplayAvailability.
-      const display = detectDisplayAvailability();
-      if (!display.available) {
-        console.warn(
-          `[agentbrowser] headed session requested but no display detected (${display.reason}); ` +
-            'the browser cannot open a visible window and screenshots will be blank. ' +
-            'Read the page via browser_html, or run the service in a GUI login session ' +
-            '(a per-user LaunchAgent, not a system daemon), or set AGENTBROWSER_ASSUME_DISPLAY=1.'
-        );
-      }
-    }
     const launcher =
       this.browserFamily === 'firefox'
         ? (await import('playwright')).firefox
@@ -1244,7 +1234,8 @@ class PlaywrightSession implements EngineSession {
       maxBytes: 10 * 1024 * 1024,
     },
     /** Already validated/normalized by createSession(); undefined = engine default. */
-    private readonly snapshotTimeoutMs?: number
+    private readonly snapshotTimeoutMs?: number,
+    readonly warnings: readonly string[] = []
   ) {
     this.id = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     this.context = context;
@@ -1483,8 +1474,12 @@ class PlaywrightPage implements EnginePage {
    */
   private revision = 1;
   /** Include tokens the most recent observe ran with (tryRemap re-observes with them). */
-  private lastObservationInclude: string[] | undefined = undefined;
+  private lastObservationInclude: ObservationRequest['include'] = undefined;
   private refStore = new Map<string, StoredElement>();
+  private readonly fallbackNodes = new WeakMap<
+    StoredElement,
+    { handle: ElementHandle; locator: Locator }
+  >();
   private bindings = new Map<string, NodeBinding>();
   private eventWaiters: Array<() => void> = [];
   private eventsClosed = false;
@@ -1791,7 +1786,7 @@ class PlaywrightPage implements EnginePage {
     // Set only when the whole-body ariaSnapshot budget was actually spent
     // and exceeded (never merely because mode skipped this branch) - a
     // caller-visible signal that `elements` came from getContentElements()'s
-    // DOM-tag-only fallback (no name/value, no ARIA-only custom widgets)
+    // DOM fallback (best-effort names and roles, reduced semantic coverage)
     // rather than the real accessibility tree.
     let ariaSnapshotDegraded = false;
 
@@ -1817,47 +1812,62 @@ class PlaywrightPage implements EnginePage {
     // upload can attach to them through a bound ref - so include:["fileInputs"]
     // scans the DOM for every file input, hidden ones included, and appends
     // bindable elements after the accessibility-derived set.
-    this.lastObservationInclude = request.include;
-    if (request.include?.includes('fileInputs') === true) {
-      for (const info of await this.describeFileInputs()) {
-        elements.push({
-          ref: `e${this.revision}_${elements.length}`,
-          role: 'fileinput',
-          ...(info.name !== undefined ? { name: info.name } : {}),
-          visible: info.visible,
-          enabled: true,
-          fileInputIndex: info.index,
-          attributes: {
-            ...(info.id !== undefined ? { id: info.id } : {}),
-            ...(info.accept !== undefined ? { accept: info.accept } : {}),
-            ...(info.multiple ? { multiple: 'true' } : {}),
-          },
-        });
+    try {
+      this.lastObservationInclude = request.include;
+      if (request.include?.includes('fileInputs') === true) {
+        for (const info of await this.describeFileInputs()) {
+          elements.push({
+            ref: `e${this.revision}_${elements.length}`,
+            role: 'fileinput',
+            ...(info.name !== undefined ? { name: info.name } : {}),
+            visible: info.visible,
+            enabled: true,
+            fileInputIndex: info.index,
+            attributes: {
+              ...(info.id !== undefined ? { id: info.id } : {}),
+              ...(info.accept !== undefined ? { accept: info.accept } : {}),
+              ...(info.multiple ? { multiple: 'true' } : {}),
+            },
+          });
+        }
       }
-    }
 
-    // The ARIA snapshot only emits role-carrying elements, so interactive
-    // controls built as role-less div/span widgets (automation-attributed
-    // dropdown triggers, click-handler tiles) are invisible to observations.
-    // include:["formControls"] scans the DOM for those and mints bindable
-    // refs; the :not([role]) candidate filter keeps elements the snapshot
-    // covered from being minted twice.
-    if (request.include?.includes('formControls') === true) {
-      for (const info of await this.describeFormControls()) {
-        elements.push({
-          ref: `e${this.revision}_${elements.length}`,
-          role: 'control',
-          ...(info.name !== undefined ? { name: info.name } : {}),
-          visible: info.visible,
-          enabled: true,
-          formControlIndex: info.index,
-          attributes: {
-            tag: info.tag,
-            ...(info.id !== undefined ? { id: info.id } : {}),
-            ...(info.automationId !== undefined ? { 'data-automation-id': info.automationId } : {}),
-          },
-        });
+      // The ARIA snapshot only emits role-carrying elements, so interactive
+      // controls built as role-less div/span widgets (automation-attributed
+      // dropdown triggers, click-handler tiles) are invisible to observations.
+      // include:["formControls"] scans the DOM for those and mints bindable
+      // refs; the :not([role]) candidate filter keeps elements the snapshot
+      // covered from being minted twice.
+      if (request.include?.includes('formControls') === true) {
+        for (const info of await this.describeFormControls()) {
+          elements.push({
+            ref: `e${this.revision}_${elements.length}`,
+            role: 'control',
+            ...(info.name !== undefined ? { name: info.name } : {}),
+            visible: info.visible,
+            enabled: true,
+            formControlIndex: info.index,
+            attributes: {
+              tag: info.tag,
+              ...(info.id !== undefined ? { id: info.id } : {}),
+              ...(info.automationId !== undefined
+                ? { 'data-automation-id': info.automationId }
+                : {}),
+            },
+          });
+        }
       }
+    } catch (error) {
+      // An enrichment failure occurs before the ref-binding transaction adopts
+      // fallback handles. Release discovery-owned handles on this path too.
+      for (const element of elements) {
+        await this.fallbackNodes
+          .get(element)
+          ?.handle.dispose()
+          .catch(() => {});
+        this.fallbackNodes.delete(element);
+      }
+      throw error;
     }
 
     // Rebuild the ref store from this observation: refs are deterministic
@@ -1890,17 +1900,19 @@ class PlaywrightPage implements EnginePage {
         // Role resolution excludes hidden nodes and role-less widgets, so
         // file inputs and form controls bind by ordinal over their candidate
         // selectors instead of via getByRole.
+        const fallback = this.fallbackNodes.get(element);
         const locator =
-          element.fileInputIndex !== undefined
+          fallback?.locator ??
+          (element.fileInputIndex !== undefined
             ? this.page.locator('input[type=file]').nth(element.fileInputIndex)
             : element.formControlIndex !== undefined
               ? this.page.locator(FORM_CONTROL_SELECTOR).nth(element.formControlIndex)
               : this.page
                   .getByRole(element.role as never, { name: element.name ?? '', exact: true })
-                  .nth(ordinal);
+                  .nth(ordinal));
         // Bind once to an actual node. An ordinal is never resolved anew at act time.
         if (await locator.count()) {
-          const handle = await locator.elementHandle();
+          const handle = fallback?.handle ?? (await locator.elementHandle());
           if (handle) {
             // Register the handle before more I/O so a capture failure releases it.
             const binding: NodeBinding = {
@@ -2013,6 +2025,14 @@ class PlaywrightPage implements EnginePage {
       this.bumpRevision();
       throw error;
     } finally {
+      // Discovery owns fallback handles until a ref binding adopts them.
+      const retained = new Set([...this.bindings.values()].map((binding) => binding.handle));
+      for (const element of elements) {
+        const fallback = this.fallbackNodes.get(element);
+        if (fallback && !retained.has(fallback.handle))
+          void fallback.handle.dispose().catch(() => {});
+        this.fallbackNodes.delete(element);
+      }
       for (const { handle } of previous.values()) void handle.dispose().catch(() => {});
     }
     if (changed) {
@@ -2182,16 +2202,15 @@ class PlaywrightPage implements EnginePage {
   }
 
   private async getContentElements(): Promise<StoredElement[]> {
-    // Get interactive elements using query selectors. The ARIA-role entries
-    // beyond button/link/textbox catch role-less custom widgets common in React
-    // SPAs (comboboxes, tabs, menu items) that would otherwise vanish entirely
-    // when the accessibility snapshot times out and this DOM fallback fires.
+    // One selector preserves document order and avoids duplicate refs for native
+    // controls that also declare an ARIA role. Bind the discovered node itself;
+    // best-effort names are display metadata, never identity evidence.
     const selectors = [
       'button',
-      'a',
+      'a[href]',
       'input',
-      'select',
       'textarea',
+      'select',
       '[role="button"]',
       '[role="link"]',
       '[role="textbox"]',
@@ -2200,55 +2219,78 @@ class PlaywrightPage implements EnginePage {
       '[role="tab"]',
       '[role="checkbox"]',
       '[role="option"]',
-      '[contenteditable]',
+      '[contenteditable]:not([contenteditable="false"])',
     ];
-
     const elements: StoredElement[] = [];
-
-    for (const selector of selectors) {
-      try {
-        const nodes = await this.page.locator(selector).all();
-        for (const node of nodes) {
-          const isVisible = await node.isVisible().catch(() => false);
-          if (isVisible) {
-            // A bracketed attribute selector (`[role="button"]`) has no bare
-            // tag name to fall back to: stripping the whole bracket left
-            // role as '' here, which crashes rebindRefs's getByRole('')
-            // the moment the ARIA snapshot times out and this DOM fallback
-            // fires (observed live against LinkedIn's auth wall).
-            const bracketRole = /\[role="([^"]+)"\]/.exec(selector)?.[1];
-            // Fallback elements were previously nameless (ref/role/visible/enabled
-            // only), so a degraded observation had nothing to match on. Capture a
-            // best-effort accessible name so the elements stay addressable.
-            const name = await this.fallbackAccessibleName(node);
-            elements.push({
-              ref: `e${this.revision}_${elements.length}`,
-              role: bracketRole ?? selector.replace(/[^a-zA-Z]/g, ''),
-              ...(name !== undefined ? { name } : {}),
-              visible: true,
-              enabled: await node.isEnabled().catch(() => true),
-            });
-          }
-        }
-      } catch {
-        // Selector might not match anything, continue
-      }
-    }
-
-    return elements;
-  }
-
-  /** Best-effort accessible name for a DOM-fallback element: aria-label, else text. */
-  private async fallbackAccessibleName(node: Locator): Promise<string | undefined> {
     try {
-      const label = (await node.getAttribute('aria-label'))?.trim();
-      if (label) return label.slice(0, 200);
-      const text = (await node.textContent())?.trim();
-      if (text) return text.replace(/\s+/g, ' ').slice(0, 200);
-    } catch {
-      // Best effort only; a detached node yields no name.
+      for (const locator of await this.page.locator(selectors.join(',')).all()) {
+        const handle = await locator.elementHandle({ timeout: 1000 });
+        if (!handle) continue;
+        let retained = false;
+        try {
+          if (!(await handle.isVisible())) continue;
+          const info = await handle.evaluate((node) => {
+            const tag = node.tagName.toLowerCase();
+            const inputType = node.getAttribute('type')?.toLowerCase();
+            const role =
+              node.getAttribute('role') ||
+              (tag === 'a'
+                ? 'link'
+                : tag === 'select'
+                  ? 'combobox'
+                  : tag === 'input'
+                    ? inputType === 'checkbox' || inputType === 'radio'
+                      ? inputType
+                      : ['button', 'submit', 'reset'].includes(inputType ?? '')
+                        ? 'button'
+                        : 'textbox'
+                    : tag === 'textarea' || node.hasAttribute('contenteditable')
+                      ? 'textbox'
+                      : tag);
+            const labelledBy = (node.getAttribute('aria-labelledby') ?? '')
+              .split(/\s+/)
+              .map((id: string) => node.ownerDocument.getElementById(id)?.textContent ?? '')
+              .join(' ')
+              .trim();
+            const name =
+              labelledBy ||
+              node.getAttribute('aria-label') ||
+              ('labels' in node
+                ? Array.from(node.labels ?? [])
+                    .map((label: unknown) => (label as { textContent: string | null }).textContent)
+                    .join(' ')
+                : '') ||
+              (tag === 'input' && ['button', 'submit', 'reset'].includes(inputType ?? '')
+                ? node.value
+                : node.textContent) ||
+              '';
+            return { role, name: name.replace(/\s+/g, ' ').trim().slice(0, 200) };
+          });
+          const element: StoredElement = {
+            ref: `e${this.revision}_${elements.length}`,
+            role: info.role,
+            ...(info.name ? { name: info.name } : {}),
+            visible: true,
+            enabled: await handle.isEnabled(),
+          };
+          this.fallbackNodes.set(element, { handle, locator });
+          elements.push(element);
+          retained = true;
+        } finally {
+          if (!retained) await handle.dispose().catch(() => {});
+        }
+      }
+      return elements;
+    } catch (error) {
+      for (const element of elements) {
+        await this.fallbackNodes
+          .get(element)
+          ?.handle.dispose()
+          .catch(() => {});
+        this.fallbackNodes.delete(element);
+      }
+      throw error;
     }
-    return undefined;
   }
 
   /**
@@ -2536,7 +2578,7 @@ class PlaywrightPage implements EnginePage {
    */
   private async tryRemap(
     action: EngineAction,
-    includeTokens?: string[] | undefined
+    includeTokens?: ObservationRequest['include']
   ): Promise<{ action: EngineAction; to: string } | { candidates: number }> {
     const target = action.target;
     if (target === undefined) {
