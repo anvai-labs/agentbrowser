@@ -1,6 +1,6 @@
 # T5: optional durable operations and recovery
 
-Status: active J0/A1/A2/A4a/A3a shared foundation; durable recovery unimplemented.
+Status: HTTP/replay publication merged; B1/B2 journal contract candidate; durable recovery unimplemented.
 Repository: agentbrowser. Depends on: T2.
 Inputs: core, contracts, execution, state-memory, security.
 
@@ -35,11 +35,12 @@ A1 finalization and A2a/A2b publication primitives are implemented
 are implemented as internal composition; A3a2 is pending release.
 The bounded [A3b application HTTP adoption](../design/t5-http-publication.md) merged
 as PR #283 ([evidence](../evidence/t5-http-publication.md)). The
-[A3c/A4b browser/review HTTP candidate](../design/t5-browser-review-publication.md)
-adopts the remaining bounded session routes ([evidence](../evidence/t5-browser-review-publication.md)).
-Finish its exact-head review and delivery gates,
-then the [J1-B/C journal contract](../design/t5-journal-contract.md)
-and application-only integration. Remaining packets are proposed and loaded on demand.
+[A3c/A4b browser/review HTTP adoption](../design/t5-browser-review-publication.md)
+merged as PR #284 and covers the remaining bounded session routes ([evidence](../evidence/t5-browser-review-publication.md)).
+Its exact-head review and PR/post-merge CI are green. The current
+[J1-B1/B2 journal contract](../design/t5-journal-contract.md) candidate adds storage-neutral
+validation and adapter conformance ([evidence](../evidence/t5-journal-contract.md)).
+C1–C4 application-only integration follows its delivery; J2–J4 remain proposed and loaded on demand.
 Browser durability waits for its existing target/policy/approval owners to support
 post-storage-wait revalidation. Do not advertise recovery from J0 or this design.
 
