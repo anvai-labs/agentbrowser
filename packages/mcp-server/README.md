@@ -68,6 +68,34 @@ receipt and preserve uncertain writes. For explicit heterogeneous steps use
 `browser_snapshot` → `browser_plan` — see the
 [main README](../../README.md#the-fast-path-for-forms-snapshot-then-plan).
 
+## Multiple pages and large research results
+
+`browser_create` still returns its initial `pageId`. Use `browser_page_create` with
+that `sessionId` and an optional HTTP(S) `url` to create another page in the same
+cookie context. Use `browser_pages` to discover page IDs, including adopted popups;
+never invent an ID or expect navigation to create a page implicitly. These tools
+delegate to the existing SDK, and the service remains the authorization/policy owner.
+The equivalent shell interfaces remain `agentbrowser page create --help` and
+`agentbrowser page list --help`.
+
+Bound creation requires `operationId` chosen before dispatch. Controlled sessions
+deduplicate that ID, but operation status does not retain the resulting page ID.
+Ordinary sessions made by `browser_create` do not acquire deduplication from an ID
+alone. Do not automatically retry an uncertain create in either case; inventory is
+not proof of which page a concurrent create produced. A general explicit-page quota
+and result correlation remain follow-ups, separate from the existing popup cap.
+
+`browser_extract` preserves complete `data` and evidence within `maxBytes`. Its
+default ceiling is 1 MiB of compact JSON including evidence; the operator can raise
+the ceiling with `AGENTBROWSER_EXTRACT_MAX_BYTES` before starting the service.
+Raw HTML size is not the extracted result size. Over-limit results fail explicitly,
+with no partial JSON. The MCP text envelope is separately serialized and can be
+larger. Any overflow files written by Claude or another harness belong to that
+harness; AgentBrowser does not define their paths.
+
+For the reproducible headed research smoke and its limits, see
+[research qualification](../../docs/spec/evidence/consumer-research-smoke.md).
+
 ## Running it
 
 ### Release consumers: the single binary (recommended)

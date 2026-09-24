@@ -7,7 +7,18 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added
+
+- MCP `browser_page_create` and `browser_pages` reuse the existing SDK/service page
+  lifecycle. Pages share their session's cookies and policy; callers use returned IDs.
+  Controlled-session creation carries caller-selected operation IDs. Ordinary sessions
+  do not gain deduplication, and inventory does not correlate an uncertain create result.
+
 ### Fixed
+
+- A resolved Playwright navigation to an internal browser error document now fails
+  instead of reporting success. Its diagnostic reason is `browser_error_document`;
+  it does not infer a bot wall, disclose the error URL or retry automatically.
 
 - Application discovery, execution (including replay), receipts and operation status
   keep their captured publication authority through HTTP delivery. Late permission

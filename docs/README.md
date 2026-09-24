@@ -28,6 +28,8 @@ start with the [root README](../README.md).
 | Resume active work: local functional validation, priorities and release sequence | [Release milestones and local-functional pivot](release-milestones.md#local-functional-pivot-priority-and-sequence) |
 | Review deferred transport work and unresolved limitations | [Integration contract](transport-integration-contract.md) and [remediation tracker](engineering-review-remediation.md) |
 | Understand the completed connection-policy prerequisite and transport boundary | [T2a connection-authority design](connection-authority-design.md) |
+| See field findings from an intensive MCP consumer run (tabs, bot walls, session lifecycle) | [Consumer field handoff — 2026-09-24](consumer-field-handoff-2026-09-24.md) |
+| Implement the research-workload follow-ups through existing shared owners | [Consumer research intake and acceptance tasks](spec/design/consumer-research-intake.md) |
 
 ## Architecture Decision Records (ADRs)
 
