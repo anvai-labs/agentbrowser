@@ -9,12 +9,28 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ### Added
 
+- Shared launch diagnostics on REST/SDK session create/get/list, CLI JSON and human
+  inspection, and MCP `browser_session`. Facts describe actual browser allocation,
+  executable selection, viewport policy and init-script registration without paths,
+  launch arguments or endpoint credentials. Unsupported adapters omit diagnostics.
+- MCP `browser_session` also works without a bound session, using an explicit session
+  ID. Inspection requires both `session.control` and `page.observe`; bound inspection
+  retains its control and page fields and adds session metadata.
+
 - MCP `browser_page_create` and `browser_pages` reuse the existing SDK/service page
   lifecycle. Pages share their session's cookies and policy; callers use returned IDs.
   Controlled-session creation carries caller-selected operation IDs. Ordinary sessions
   do not gain deduplication, and inventory does not correlate an uncertain create result.
 
 ### Fixed
+
+- Session views retain the selected adapter's immutable name/version, including
+  auxiliary engines, instead of reading the primary engine on later inspections.
+  Capability lookup failures occur before browser allocation and cannot leave an
+  unreachable registered session.
+- TypeScript SDK `SessionResponse` now reuses the canonical HTTP session view.
+  This corrects its previous compile-time claim that `engine.capabilities` was
+  returned by these endpoints; that field was never present on the HTTP wire.
 
 - Concurrent Playwright headless/CDP sessions share one pending browser initialization.
   Closing a remote session releases only its context, preserving sibling sessions.

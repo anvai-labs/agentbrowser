@@ -8,12 +8,12 @@ import { resolve } from 'node:path';
 export const EXPECTED_TOOLS = Object.freeze([
   'browser_create', 'browser_page_create', 'browser_pages', 'browser_close', 'browser_cookies', 'browser_snapshot',
   'browser_plan', 'browser_autofill', 'browser_navigate', 'browser_observe', 'browser_act',
-  'browser_extract', 'browser_html', 'browser_pdf', 'browser_screenshot',
+  'browser_extract', 'browser_html', 'browser_pdf', 'browser_screenshot', 'browser_session',
 ]);
 
 export const EXPECTED_DELEGATED_TOOLS = Object.freeze([
   ...EXPECTED_TOOLS.filter((name) => !['browser_create', 'browser_close', 'browser_cookies'].includes(name)),
-  'browser_session', 'browser_operation',
+  'browser_operation',
 ]);
 
 export const TEST_EVALUATION_INPUT_SCHEMA_ID =

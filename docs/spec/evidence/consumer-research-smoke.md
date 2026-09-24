@@ -84,7 +84,34 @@ hook remains required. No new GitHub runner was used for these smoke exercises.
 
 No extraction ceiling was removed, no new executor/session manager introduced, and
 no automatic navigation/create replay added. General page-count limits, uncertain
-create result correlation, launch diagnostics, public close causes, profile reuse,
+create result correlation, public close causes, profile reuse,
 repeatable live-site qualification and installed Claude overflow remain separate gates.
 The local API/MCP versions report the existing 1.10.1 package version; these changes
 are unreleased source changes, not evidence that installed 1.10.1 contains them.
+
+
+## R4 launch diagnostics qualification
+
+On the PR #287 base (`1a1afc7`), the rebuilt headed smoke passed before commit with
+new identity/diagnostics checks through REST, SDK, the actual CLI executable and MCP
+stdio. Create/get/list snapshots agreed, including selected adapter and actual browser
+runtime version. Local headed facts reported a dedicated browser, no fixed viewport,
+and registered init script. Controlled inspection retained control/pages; the revoked
+grant could not inspect the session. Only the smoke's owned windows/service closed.
+
+Both 13/52 MiB fixtures retained complete 1,408,355-byte extraction, source evidence,
+end-marker grep and bounded-limit refusal. The final local run measured 2,511 ms and
+7,547 ms respectively (fixture timings, not a performance guarantee); JSON remained
+210,051 bytes. Existing cookies, page allocation, failure cleanup and grant checks
+passed in the same run.
+
+The CLI smoke initially failed because its target was supplied through an MCP-only
+environment variable. The test now explicitly uses the CLI's documented `--base-url`.
+This was a test invocation error; no service configuration semantics were changed.
+
+Focused regression suites passed: protocol 11, coordinator 56, API/service 153,
+CLI 122, MCP 161, Playwright engine 345. Workspace build/type checks/lint, documentation
+links, catalog and context selections passed before normal commit hooks. Independent
+review found and fixed capability lookup after allocation; its failing-first regression
+now verifies no allocation or registration on lookup failure. These are source-level
+and isolated real-browser results, not an installed release or harness qualification.

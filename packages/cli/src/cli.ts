@@ -89,6 +89,21 @@ function captureInteger(value: string, flag: string): number {
   return Number(value);
 }
 
+/** Human rendering is a projection of server facts; JSON remains the full view. */
+function sessionFacts(view: import('@agentbrowser/sdk-typescript').SessionResponse): string[] {
+  const facts = view.diagnostics;
+  return [
+    ...(view.engine ? [`  engine:  ${view.engine.name} ${view.engine.version}`] : []),
+    ...(facts
+      ? [
+          `  browser: ${facts.browserFamily} ${facts.browserVersion ?? 'unknown'} (${facts.attachment})`,
+          `  launch:  ${facts.launchMode}; executable=${facts.executableSelection}; resources=${facts.resourceModel}`,
+          `  context: ${facts.context.isolation}; viewport=${facts.context.viewport.mode === 'fixed' ? `${facts.context.viewport.width}x${facts.context.viewport.height}` : facts.context.viewport.mode}; init-script=${facts.context.initScript}`,
+        ]
+      : []),
+  ];
+}
+
 function waitFromOptions(
   options: WaitFlagOptions
 ): NonNullable<ObservationRequest['wait']> | undefined {
@@ -304,7 +319,9 @@ export function buildCli(deps: CliDependencies): Cli {
       const session = program.command('session').description('manage browser sessions');
       session
         .command('get')
-        .description('get one session')
+        .description(
+          'get one session with captured engine identity and launch diagnostics; --json preserves all server facts'
+        )
         .argument('<sessionId>')
         .action(
           action(async (ctx, sessionId: string) => {
@@ -314,6 +331,7 @@ export function buildCli(deps: CliDependencies): Cli {
               `  created: ${got.createdAt ?? 'unknown'}`,
               `  ttl:     ${got.ttlMs ?? '?'} ms`,
               `  idle:    ${got.idleTimeoutMs ?? '?'} ms`,
+              ...sessionFacts(got),
             ]);
           })
         );
@@ -574,6 +592,7 @@ export function buildCli(deps: CliDependencies): Cli {
               `Session ${created.sessionId}`,
               `  status:  ${created.status ?? 'unknown'}`,
               `  created: ${created.createdAt ?? 'unknown'}`,
+              ...sessionFacts(created),
               ...(created.warnings ?? []).map((warning) => `  Warning: ${warning}`),
             ]);
           })

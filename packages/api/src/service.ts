@@ -175,20 +175,7 @@ export interface ServiceSessionRequest {
   snapshotTimeoutMs?: number;
 }
 
-export interface ServiceSessionView {
-  /** Diagnostics reported by the browser host. */
-  warnings?: string[];
-  sessionId: string;
-  status: string;
-  engine: { name: string; version: string };
-  createdAt: string;
-  ttlMs: number;
-  idleTimeoutMs: number;
-  /** Number of live pages registered to the session right now. */
-  pages: number;
-  /** Owning tenant, when the session was created under one. */
-  tenantId?: string;
-}
+export type ServiceSessionView = import('@agentbrowser/protocol').SessionView;
 
 export interface ServicePageView {
   pageId: string;
@@ -1219,19 +1206,7 @@ export class AgentBrowserService {
       this.sessionPolicies.set(session.sessionId, sessionPolicy);
       this.sessionApprovalPolicies.set(session.sessionId, { ...request.approval });
 
-      return {
-        sessionId: session.sessionId,
-        status: 'ready',
-        engine: { name: session.engine.name, version: session.engine.version },
-        createdAt: session.createdAt,
-        ttlMs: session.ttlMs,
-        idleTimeoutMs: session.idleTimeoutMs,
-        pages: 0,
-        ...(context.engineSession.warnings?.length
-          ? { warnings: [...context.engineSession.warnings] }
-          : {}),
-        ...(request.tenantId !== undefined ? { tenantId: request.tenantId } : {}),
-      };
+      return this.sessionView(context, true);
     });
   }
 
@@ -1265,21 +1240,25 @@ export class AgentBrowserService {
 
   getSession(sessionId: string): ServiceSessionView | undefined {
     const context = this.coordinator.get(sessionId);
-    if (!context) {
-      return undefined;
-    }
+    return context ? this.sessionView(context, true) : undefined;
+  }
+
+  private sessionView(context: SessionContext, includeTenant: boolean): ServiceSessionView {
     return {
       sessionId: context.id,
       status: context.state.toLowerCase(),
-      engine: { name: context.metadata.engineName, version: this.engine.version },
+      engine: { ...context.engineIdentity },
       createdAt: new Date(context.metadata.createdAt).toISOString(),
       ttlMs: context.metadata.ttlMs,
       idleTimeoutMs: context.metadata.idleTimeoutMs,
-      pages: this.countPages(sessionId),
+      pages: this.countPages(context.id),
+      ...(context.diagnostics !== undefined ? { diagnostics: context.diagnostics } : {}),
       ...(context.engineSession.warnings?.length
         ? { warnings: [...context.engineSession.warnings] }
         : {}),
-      ...(context.metadata.tenantId !== undefined ? { tenantId: context.metadata.tenantId } : {}),
+      ...(includeTenant && context.metadata.tenantId !== undefined
+        ? { tenantId: context.metadata.tenantId }
+        : {}),
     };
   }
 
@@ -1287,18 +1266,10 @@ export class AgentBrowserService {
     return this.coordinator
       .getAllSessions()
       .filter((metadata) => tenantId === undefined || metadata.tenantId === tenantId)
-      .map((metadata) => ({
-        sessionId: metadata.id,
-        status: metadata.state.toLowerCase(),
-        engine: { name: metadata.engineName, version: this.engine.version },
-        createdAt: new Date(metadata.createdAt).toISOString(),
-        ttlMs: metadata.ttlMs,
-        idleTimeoutMs: metadata.idleTimeoutMs,
-        pages: this.countPages(metadata.id),
-        ...(this.getSession(metadata.id)?.warnings
-          ? { warnings: this.getSession(metadata.id)?.warnings ?? [] }
-          : {}),
-      }));
+      .flatMap((metadata) => {
+        const context = this.coordinator.get(metadata.id);
+        return context ? [this.sessionView(context, false)] : [];
+      });
   }
 
   async closeSession(sessionId: string): Promise<void> {

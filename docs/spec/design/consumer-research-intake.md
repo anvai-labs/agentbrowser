@@ -2,8 +2,10 @@
 
 Status: R1 local fixture qualification, R2 basic MCP adapter and R3 browser-error
 classification merged in PR #286 (`1aa63f0`), with pre/post-merge CI green.
-The [R4 browser ownership prerequisite](research-browser-ownership.md) is an
-implementation candidate; public launch diagnostics and remaining work are proposed.
+The [R4 browser ownership prerequisite](research-browser-ownership.md) was
+merged in PR #287 (`1a1afc7`), with pre/post-merge CI green.
+[Shared launch diagnostics](session-launch-diagnostics.md) are implemented for this
+checkpoint; R5–R7 remain proposed.
 Source: [consumer field report, 2026-09-24](../../consumer-field-handoff-2026-09-24.md).
 Code reviewed: develop `5eae01d` plus the storage-neutral journal in PR #285,
 merged as `5ebf820`. The report does not identify the exact service/MCP build used; observations
@@ -65,7 +67,8 @@ session mortality should point to F3, and its F2 recipe reference to F4, not F5.
 | P3 R7: filings recipe | Documentation consuming existing CLI/service/extraction contracts. | Reproducible commands and output sizing; official guidance checked; bounded pacing/backoff; explicit identification where supported; maintenance/rate-limit stop; no promise of endpoint availability or bot-wall avoidance. |
 
 R1–R3 are bounded consumer-correctness work; they need not wait for a durable store.
-R4/R5 provide operational visibility and can reuse existing publication guards.
+R4/R5 provide operational visibility. Session inspection retains per-read authorization;
+it does not acquire the guarded publication contract of execution/review endpoints.
 R6 requires a design checkpoint; it must not be implemented by exposing the current
 constructor option and claiming it reuses a profile. R7 can follow qualified behavior.
 Batch related changes through normal review/CI rather than running a separate full
@@ -170,5 +173,6 @@ candidate's local validation before commit. R2 adds only the missing adapter too
 the general page budget and result-to-page correlation still require their own
 shared-owner design and tests. R3 uses the existing `INTERNAL` error with a static
 `browser_error_document` reason; it does not add HTTP status or redirect-chain fields.
-R4 diagnostics, R5 lifecycle projection, R6 profile attachment and R7 recipe remain
-next packets in that order. Installed-harness overflow qualification remains T8.
+R4 diagnostics are implemented in the [bounded shared contract](session-launch-diagnostics.md).
+R5 lifecycle projection, R6 profile attachment and R7 recipe remain next packets in
+that order. Installed-harness overflow qualification remains T8.

@@ -1,6 +1,7 @@
 # Research sessions: browser ownership prerequisite
 
-Status: implementation candidate after PR #286; launch diagnostics remain proposed.
+Status: merged in PR #287 (`1a1afc7`), with pre/post-merge CI green; unreleased.
+The follow-on [launch diagnostics contract](session-launch-diagnostics.md) builds on this owner.
 Load only for [research follow-ups](consumer-research-intake.md), session lifecycle
 or engine ownership work. This does not expand default mode context.
 
@@ -73,7 +74,7 @@ connected. The rebuilt headed research smoke passed with unchanged extraction
 bytes and evidence hashes for both 13/52 MiB fixtures. It closed only its own
 sessions/service. These checks do not qualify installed harnesses or a new release.
 
-## Next R4 contract, not yet implemented
+## R4 contract implemented by the follow-on packet
 
 Capture immutable selected adapter name/version at session creation; current
 create/get/list can mix an auxiliary name with the primary engine's version.

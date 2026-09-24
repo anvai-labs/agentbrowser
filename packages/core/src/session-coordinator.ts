@@ -7,6 +7,7 @@
 
 import { type BrowserEngine, EngineError } from '@agentbrowser/engine';
 import type { SessionRequest, SessionResponse } from '@agentbrowser/protocol';
+import { type SessionDiagnostics, captureSessionDiagnostics } from '@agentbrowser/protocol';
 import type { StructuredLogger } from './logger.js';
 
 /**
@@ -158,7 +159,16 @@ export class SessionCoordinator {
       >;
     }
 
+    const engineIdentity = Object.freeze({ name: engine.name, version: engine.version });
+    // Resolve fallible adapter metadata before allocating/registering a session.
+    const capabilities = await engine.capabilities();
     const engineSession = await engine.createSession(sessionOptions);
+    let diagnostics: SessionDiagnostics | undefined;
+    try {
+      diagnostics = captureSessionDiagnostics(engineSession.diagnostics);
+    } catch {
+      // Optional adapter getters may throw; never surface raw adapter details.
+    }
 
     // Calculate expiration times
     const now = Date.now();
@@ -174,6 +184,8 @@ export class SessionCoordinator {
       state: SessionState.READY,
       engine,
       engineSession,
+      engineIdentity,
+      ...(diagnostics !== undefined ? { diagnostics } : {}),
       metadata: {
         id: sessionId,
         state: SessionState.READY,
@@ -182,7 +194,7 @@ export class SessionCoordinator {
         lastActivityAt: now,
         ttlMs,
         idleTimeoutMs,
-        engineName: engine.name,
+        engineName: engineIdentity.name,
         pageCount: 0,
         ...(request.tenantId !== undefined ? { tenantId: request.tenantId } : {}),
       },
@@ -194,9 +206,8 @@ export class SessionCoordinator {
     return {
       sessionId,
       engine: {
-        name: engine.name,
-        version: engine.version,
-        capabilities: await engine.capabilities(),
+        ...engineIdentity,
+        capabilities,
       },
       createdAt: new Date(now).toISOString(),
       ttlMs,
@@ -414,6 +425,8 @@ export class SessionCoordinator {
  * Session context
  */
 export interface SessionContext {
+  readonly engineIdentity: Readonly<{ name: string; version: string }>;
+  readonly diagnostics?: SessionDiagnostics;
   /** Consumer cancellation occurs synchronously before asynchronous engine teardown. */
   readonly signal: AbortSignal;
   id: string;

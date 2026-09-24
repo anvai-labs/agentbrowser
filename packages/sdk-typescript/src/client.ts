@@ -70,22 +70,7 @@ export interface ClientOptions {
 // no caller.
 export type { SessionCookie, SessionRequest } from '@agentbrowser/protocol';
 
-export interface SessionResponse {
-  /** Diagnostics reported by the browser host. */
-  warnings?: string[];
-  sessionId: string;
-  status: string;
-  engine?: {
-    name: string;
-    version: string;
-    capabilities: Record<string, unknown>;
-  };
-  createdAt: string;
-  ttlMs?: number;
-  idleTimeoutMs?: number;
-  /** Number of live pages registered to the session right now. */
-  pages?: number;
-}
+export type SessionResponse = import('@agentbrowser/protocol').SessionView;
 
 export interface PageResponse {
   pageId: string;

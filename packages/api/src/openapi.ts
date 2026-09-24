@@ -42,8 +42,10 @@ import {
   PlanRequestSchema,
   PlanStepSchema,
   ScreenshotRequestSchema,
+  SessionDiagnosticsSchema,
   SessionRequestSchema,
   SessionResponseSchema,
+  SessionViewSchema,
   ViewportSchema,
   WireActionEnvelopeSchema,
 } from '@agentbrowser/protocol';
@@ -1368,20 +1370,8 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         ArtifactRef: ArtifactRefSchema,
 
         // Transport-level shapes the HTTP surface returns today.
-        SessionSummary: {
-          type: 'object',
-          required: ['sessionId', 'status'],
-          properties: {
-            sessionId: { type: 'string' },
-            status: { type: 'string', examples: ['ready', 'active', 'closed'] },
-            warnings: { type: 'array', items: { type: 'string' } },
-            createdAt: { type: 'string', format: 'date-time' },
-            ttlMs: { type: 'integer', minimum: 0 },
-            idleTimeoutMs: { type: 'integer', minimum: 0 },
-            pages: { type: 'integer', minimum: 0 },
-            engine: { $ref: '#/components/schemas/EngineInfo' },
-          },
-        },
+        SessionSummary: SessionViewSchema,
+        SessionDiagnostics: SessionDiagnosticsSchema,
         PageSummary: {
           type: 'object',
           required: ['pageId', 'sessionId', 'status'],
