@@ -33,6 +33,7 @@ import {
   type TrustedVerifierRegistry,
   captureEvidenceReviewSource,
   captureReviewDisclosure,
+  composePublicationContext,
   defineApplicationReadEvidenceSource,
   defineApplicationReceiptEvidenceSource,
   prepareEvidenceReview,
@@ -40,6 +41,7 @@ import {
   selectApplicationReview,
   selectEvidenceReview,
   snapshotAuthorizationInput,
+  snapshotPublication,
   synchronousResult,
 } from '@agentbrowser/control';
 import {
@@ -1255,6 +1257,12 @@ export class AgentBrowserService {
     return count;
   }
 
+  /** Internal lifetime classification; authority removal never makes a controlled session legacy. */
+  requiresSessionAuthority(sessionId: string): boolean {
+    const context = this.coordinator.get(sessionId);
+    return context !== undefined && this.controlledContexts.has(context);
+  }
+
   getSession(sessionId: string): ServiceSessionView | undefined {
     const context = this.coordinator.get(sessionId);
     if (!context) {
@@ -2068,8 +2076,12 @@ export class AgentBrowserService {
   async applicationReview(
     sessionId: string,
     principal: SessionPrincipal,
-    input: unknown
+    input: unknown,
+    publicationOptions?: SessionPublication<OperatorApprovalView>
   ): Promise<OperatorApprovalView> {
+    const publication =
+      publicationOptions === undefined ? undefined : snapshotPublication(publicationOptions);
+    let disclosure: PreparedReviewDisclosure | undefined;
     if (principal.actor !== 'operator')
       throw new ServiceError('FORBIDDEN', 'Operator authority is required');
     const validated = validateApplicationReview(input);
@@ -2079,7 +2091,24 @@ export class AgentBrowserService {
       sessionId,
       principal,
       {},
-      async () => (await this.prepareApplicationReviewInScope(sessionId, validated.value)).view
+      async () => {
+        disclosure = await this.prepareApplicationReviewInScope(sessionId, validated.value);
+        return disclosure.view;
+      },
+      undefined,
+      publication
+        ? {
+            ...publication,
+            publish: async (value, context) => {
+              if (!disclosure)
+                throw new ServiceError('CONTROL_REVOKED', 'Review publication unavailable');
+              const output = composePublicationContext(context, disclosure.assertCurrent);
+              output.assertCurrent();
+              await publication.publish(value, output);
+              output.assertCurrent();
+            },
+          }
+        : undefined
     );
     if ('replay' in result) throw new ServiceError('INTERNAL', 'Application review unavailable');
     return result;

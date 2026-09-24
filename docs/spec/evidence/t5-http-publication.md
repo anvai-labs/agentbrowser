@@ -1,7 +1,10 @@
 # T5 A3b application HTTP publication evidence
 
 Base: develop `89c20e6941bcadf99a09db1a79c1ba9f6877383f` (#282).
-Status: local candidate; normal hooks, independent final review and CI still required.
+Status: merged PR #283 (`58e3605`); independent exact-head review clean.
+Normal hooks: 3,891 passed, 24 existing skips; PR run `35997301373` and
+post-merge run `35997976774` each passed eight checks without reruns.
+Reviewed candidate `1a5a94f` and merge retain identical tree `7329d281dd903e36933e6503bc2de3a7dbd249d6`.
 Design: [bounded HTTP publication](../design/t5-http-publication.md).
 
 Three real-loopback tests failed before implementation: the session was no longer busy

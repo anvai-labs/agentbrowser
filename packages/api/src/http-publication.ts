@@ -1,5 +1,5 @@
 import { finished } from 'node:stream/promises';
-import type { PublicationContext } from '@agentbrowser/control';
+import { type PublicationContext, composePublicationContext } from '@agentbrowser/control';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
 interface HttpPublication<T> {
@@ -10,6 +10,22 @@ interface HttpPublication<T> {
 
 interface HttpOutput {
   publication<T>(body?: (value: T) => unknown): HttpPublication<T>;
+  draftPublication(): HttpPublication<HttpResponseDraft>;
+}
+
+/** Internal data only: handlers cannot send, serialize, or retain a Fastify reply. */
+export interface HttpResponseDraft {
+  readonly body: unknown;
+  readonly statusCode: number;
+  readonly executionFailed?: boolean;
+  readonly assertCurrent?: () => void;
+}
+export function responseDraft(
+  body: unknown,
+  statusCode = 200,
+  options: Pick<HttpResponseDraft, 'executionFailed' | 'assertCurrent'> = {}
+): HttpResponseDraft {
+  return Object.freeze({ body, statusCode, ...options });
 }
 
 /** Authority owns the deadline; the transport owns only disconnect and byte delivery. */
@@ -17,11 +33,21 @@ export const HTTP_PUBLICATION_TIMEOUT_MS = 10_000;
 
 export function createHttpPublication() {
   const guards = new WeakMap<FastifyRequest, () => void>();
+  const uncontrolled = new WeakSet<FastifyRequest>();
   const terminate = (reply: FastifyReply) => {
     reply.hijack();
     reply.raw.destroy();
   };
   return {
+    /** Legacy sessions have no ticket; never masquerade as guarded publication. */
+    sendUncontrolled(request: FastifyRequest, reply: FastifyReply, draft: HttpResponseDraft) {
+      if (draft.assertCurrent || guards.has(request)) {
+        terminate(reply);
+        throw new Error('Invalid uncontrolled publication');
+      }
+      uncontrolled.add(request);
+      return reply.code(draft.statusCode).send(draft.body);
+    },
     /** Install before execution. A disconnect cancels output, never replays an effect. */
     async respond(
       request: FastifyRequest,
@@ -36,38 +62,47 @@ export function createHttpPublication() {
       request.raw.once('aborted', disconnect);
       reply.raw.once('close', close);
       if (request.raw.aborted || reply.raw.destroyed) disconnect();
+      const publication = <T>(draftOf: (value: T) => HttpResponseDraft): HttpPublication<T> => {
+        return {
+          timeoutMs: HTTP_PUBLICATION_TIMEOUT_MS,
+          signal: controller.signal,
+          async publish(value: T, context: PublicationContext) {
+            if (guards.has(request)) {
+              terminate(reply);
+              throw new Error('HTTP publication already installed');
+            }
+            // Retain this guard even after cancellation: a late hook must fail closed.
+            guards.set(request, context.assertCurrent);
+            const abort = () => terminate(reply);
+            context.signal.addEventListener('abort', abort, { once: true });
+            try {
+              context.assertCurrent();
+              const draft = draftOf(value);
+              const outputContext = draft.assertCurrent
+                ? composePublicationContext(context, draft.assertCurrent)
+                : context;
+              guards.set(request, outputContext.assertCurrent);
+              outputContext.assertCurrent();
+              // Observe finish before send: a synchronous send can set writableEnded
+              // before Fastify's reply thenable installs its completion listener.
+              const completion = finished(reply.raw, { cleanup: true });
+              void completion.catch(() => undefined);
+              reply.code(draft.statusCode).send(draft.body);
+              await completion;
+              outputContext.assertCurrent();
+            } catch (error) {
+              terminate(reply);
+              throw error;
+            } finally {
+              context.signal.removeEventListener('abort', abort);
+            }
+          },
+        };
+      };
       const output: HttpOutput = {
-        publication<T>(body: (value: T) => unknown = (value) => value): HttpPublication<T> {
-          return {
-            timeoutMs: HTTP_PUBLICATION_TIMEOUT_MS,
-            signal: controller.signal,
-            async publish(value: T, context: PublicationContext) {
-              if (guards.has(request)) {
-                terminate(reply);
-                throw new Error('HTTP publication already installed');
-              }
-              // Retain this guard even after cancellation: a late hook must fail closed.
-              guards.set(request, context.assertCurrent);
-              const abort = () => terminate(reply);
-              context.signal.addEventListener('abort', abort, { once: true });
-              try {
-                context.assertCurrent();
-                // Observe finish before send: a synchronous send can set writableEnded
-                // before Fastify's reply thenable installs its completion listener.
-                const completion = finished(reply.raw, { cleanup: true });
-                void completion.catch(() => undefined);
-                reply.send(body(value));
-                await completion;
-                context.assertCurrent();
-              } catch (error) {
-                terminate(reply);
-                throw error;
-              } finally {
-                context.signal.removeEventListener('abort', abort);
-              }
-            },
-          };
-        },
+        publication: <T>(body: (value: T) => unknown = (value) => value) =>
+          publication<T>((value) => responseDraft(body(value))),
+        draftPublication: () => publication<HttpResponseDraft>((value) => value),
       };
       try {
         await work(output);
@@ -92,7 +127,8 @@ export function createHttpPublication() {
       const guard = guards.get(request);
       try {
         if (guard) guard();
-        else if (reply.statusCode < 400) throw new Error('Missing HTTP publication');
+        else if (!uncontrolled.has(request) && reply.statusCode < 400)
+          throw new Error('Missing HTTP publication');
       } catch {
         terminate(reply);
         done(new Error('HTTP publication unavailable'));

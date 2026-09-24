@@ -35,7 +35,11 @@ import websocket from '@fastify/websocket';
 import Fastify from 'fastify';
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ArtifactAuthorizer } from './artifact-auth.js';
-import { createHttpPublication } from './http-publication.js';
+import {
+  type HttpResponseDraft,
+  createHttpPublication,
+  responseDraft,
+} from './http-publication.js';
 import { buildOpenApiDocument } from './openapi.js';
 import { PRODUCT_VERSION } from './product-version.js';
 import {
@@ -52,14 +56,14 @@ export interface RegisteredRoute {
   method: string;
   url: string;
   capability: AgentCapability | undefined;
-  publication?: 'guarded';
+  publication?: 'guarded' | 'when-controlled' | 'lifecycle' | 'stream';
 }
 
 declare module 'fastify' {
   interface FastifyContextConfig {
     /** Delegated-grant capability this route requires (see the `on` helper). */
     capability?: AgentCapability;
-    publication?: 'guarded';
+    publication?: 'guarded' | 'when-controlled' | 'lifecycle' | 'stream';
   }
   interface FastifyInstance {
     /**
@@ -454,20 +458,23 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     }
   };
 
-  const fail = (reply: FastifyReply, error: unknown) => {
+  const errorResponse = (error: unknown): HttpResponseDraft => {
     if (error instanceof ControlError || error instanceof ServiceError) {
       const details =
         error instanceof ServiceError && error.details !== undefined
           ? serialDetails(error.details)
           : undefined;
-      return reply.status(statusFor(error.code)).send({
-        error: {
-          code: error.code,
-          message: options.secretManager?.redact(error.message) ?? error.message,
-          retryable: error instanceof ServiceError ? error.retryable : false,
-          ...(details !== undefined ? { details } : {}),
+      return responseDraft(
+        {
+          error: {
+            code: error.code,
+            message: options.secretManager?.redact(error.message) ?? error.message,
+            retryable: error instanceof ServiceError ? error.retryable : false,
+            ...(details !== undefined ? { details } : {}),
+          },
         },
-      });
+        statusFor(error.code)
+      );
     }
     // Internal faults never echo error text to the client: redact() only
     // substitutes registered values. Keep unregistered text out of both
@@ -480,28 +487,26 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     } catch {
       // Logging must not replace the safe response with a sink's private diagnostic.
     }
-    return reply.status(500).send({
-      error: {
-        code: 'INTERNAL',
-        message: 'An unexpected error occurred',
-        retryable: false,
-      },
-    });
-  };
-
-  const requireBody = (reply: FastifyReply, body: unknown): body is Record<string, unknown> => {
-    if (body === undefined || body === null || typeof body !== 'object') {
-      reply.status(400).send({
+    return responseDraft(
+      {
         error: {
-          code: 'INVALID_REQUEST',
-          message: 'A JSON request body is required',
+          code: 'INTERNAL',
+          message: 'An unexpected error occurred',
           retryable: false,
         },
-      });
-      return false;
-    }
-    return true;
+      },
+      500
+    );
   };
+  const fail = (reply: FastifyReply, error: unknown) => {
+    const draft = errorResponse(error);
+    return reply.code(draft.statusCode).send(draft.body);
+  };
+
+  function requireBody(body: unknown): asserts body is Record<string, unknown> {
+    if (body === undefined || body === null || typeof body !== 'object')
+      throw new ServiceError('INVALID_REQUEST', 'A JSON request body is required');
+  }
 
   /**
    * Wrap a /v1 handler with the try/catch -> fail(reply, error) frame every
@@ -512,58 +517,19 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
    */
   const httpPublication = createHttpPublication();
   const principals = new WeakMap<FastifyRequest, SessionPrincipal>();
-  const outputGuards = new WeakMap<FastifyRequest, () => void>();
-  const executionFailures = new WeakSet<FastifyRequest>();
-  const sendExecutionResult = <T extends { ok: boolean } | { status: 'success' | 'failed' }>(
-    request: FastifyRequest,
-    reply: FastifyReply,
+  const responseStatus = (statusCode: number, body: unknown) => responseDraft(body, statusCode);
+  const executionResponse = <T extends { ok: boolean } | { status: 'success' | 'failed' }>(
     result: T
-  ) => {
-    if ('ok' in result ? !result.ok : result.status === 'failed') {
-      executionFailures.add(request);
-    }
-    return reply.send(result);
-  };
-  const sendOutcomeResult = (
-    request: FastifyRequest,
-    reply: FastifyReply,
-    result: Awaited<ReturnType<AgentBrowserService['executeOutcome']>>
-  ) => {
-    if (result.outcome.execution !== 'completed') executionFailures.add(request);
-    return reply.send(result);
-  };
-  fastify.addHook('onSend', async (request, reply, payload) => {
-    const guard = outputGuards.get(request);
-    if (!guard) return payload;
-    try {
-      guard();
-      return payload;
-    } catch {
-      reply.code(409).header('content-type', 'application/json; charset=utf-8');
-      reply.removeHeader('content-length');
-      return JSON.stringify({
-        error: {
-          code: 'CONTROL_REVOKED',
-          message: 'Control changed; inspect operation status before continuing.',
-          retryable: false,
-        },
-      });
-    }
-  });
+  ) =>
+    responseDraft(result, 200, {
+      executionFailed: 'ok' in result ? !result.ok : result.status === 'failed',
+    });
+  const outcomeResponse = (result: Awaited<ReturnType<AgentBrowserService['executeOutcome']>>) =>
+    responseDraft(result, 200, { executionFailed: result.outcome.execution !== 'completed' });
 
-  /**
-   * Per-route authority metadata, declared at registration (see `on`):
-   * `capability` gates delegated grants; `admission: 'self'` marks routes
-   * that admit themselves (control, operations and the application surface,
-   * which opens its own scoped admissions - an envelope ticket would nest a
-   * second begin() and always report the session busy); `safe: true` marks
-   * observation-class POSTs that need no operation identity.
-   */
+  /** Shared error/tenant boundary; `on` admits drafts, `onTransport` owns explicit lifecycle/self admission. */
   const route =
-    (
-      handler: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>,
-      meta: { admission?: 'self'; safe?: boolean } = {}
-    ) =>
+    (handler: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>) =>
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
         const { sessionId } = request.params as { sessionId?: string };
@@ -578,38 +544,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           (principal.actor === 'agent' && principal.sessionId !== sessionId)
         )
           throw new ServiceError('FORBIDDEN', 'Session authority does not match');
-        if (meta.admission === 'self') return await handler(request, reply);
-        const mutation =
-          request.method === 'DELETE' || (request.method === 'POST' && meta.safe !== true);
-        const id = request.headers['x-agentbrowser-operation-id'];
-        if (mutation && (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(id)))
-          throw new ServiceError(
-            'INVALID_REQUEST',
-            'Controlled writes require X-AgentBrowser-Operation-Id (1-128 letters, digits, _ or -)'
-          );
-        const result = await service.authority.run(
-          sessionId,
-          principal,
-          mutation
-            ? {
-                id: id as string,
-                fingerprint: sha256Hex(
-                  JSON.stringify([request.method, request.url, request.body ?? null])
-                ),
-              }
-            : {},
-          async () => {
-            outputGuards.set(request, service.authority.outputGuard(sessionId));
-            return await handler(request, reply);
-          },
-          () => reply.statusCode >= 400 || executionFailures.has(request)
-        );
-        if (!reply.sent) return reply.send(result);
-        return result;
+        return await handler(request, reply);
       } catch (error) {
         if (reply.raw.destroyed) return reply.hijack();
         if (reply.sent) return reply;
-        outputGuards.delete(request);
         return fail(reply, error);
       }
     };
@@ -621,7 +559,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
    * the `= ''` defaults two call sites previously carried were dead code
    * for exactly that reason.
    */
-  const params = <K extends string>(request: FastifyRequest, ...keys: K[]): Record<K, string> => {
+  const params = <K extends string>(
+    request: Pick<FastifyRequest, 'params'>,
+    ...keys: K[]
+  ): Record<K, string> => {
     const raw = request.params as Record<string, string>;
     return Object.fromEntries(keys.map((k) => [k, raw[k]])) as Record<K, string>;
   };
@@ -754,34 +695,17 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           });
       });
 
-      const tenantOf = (request: FastifyRequest): string | undefined =>
+      const tenantOf = (request: FastifyRequest | RequestData): string | undefined =>
         (request as FastifyRequest & { tenant?: string }).tenant;
 
       /** 403 unless the session belongs to the caller's tenant. */
-      const requireOwnership = (
-        reply: FastifyReply,
-        sessionId: string,
-        tenant: string | undefined
-      ): boolean => {
-        if (tenant === undefined) {
-          return true; // unauthenticated local mode: no tenancy to enforce
-        }
+      const requireOwnership = (sessionId: string, tenant: string | undefined): void => {
+        if (tenant === undefined) return;
         const session = service.getSession(sessionId);
-        if (session === undefined) {
+        if (session === undefined)
           throw new ServiceError('SESSION_NOT_FOUND', 'Session does not exist.');
-        }
-        const owner = (session as { tenantId?: string }).tenantId;
-        if (owner !== undefined && owner !== tenant) {
-          reply.status(403).send({
-            error: {
-              code: 'FORBIDDEN',
-              message: `Session ${sessionId} belongs to another tenant.`,
-              retryable: false,
-            },
-          });
-          return false;
-        }
-        return true;
+        if (session.tenantId !== undefined && session.tenantId !== tenant)
+          throw new ServiceError('FORBIDDEN', `Session ${sessionId} belongs to another tenant.`);
       };
 
       /**
@@ -792,40 +716,109 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
        * delegated grants (403), exactly as the previous capability table
        * produced.
        */
-      const on = (
+      type RequestData = Readonly<
+        Pick<FastifyRequest, 'method' | 'url' | 'headers' | 'body' | 'params' | 'query'> & {
+          tenant?: string;
+          principal?: SessionPrincipal;
+        }
+      >;
+      const requestData = (request: FastifyRequest): RequestData => {
+        const tenant = tenantOf(request);
+        const principal = principals.get(request);
+        return Object.freeze({
+          method: request.method,
+          url: request.url,
+          headers: Object.freeze({ ...request.headers }),
+          body: request.body,
+          params: request.params,
+          query: request.query,
+          ...(tenant !== undefined ? { tenant } : {}),
+          ...(principal ? { principal } : {}),
+        });
+      };
+      type RouteMeta = { capability?: AgentCapability; safe?: boolean };
+      const onTransport = (
         method: 'GET' | 'POST' | 'PUT' | 'DELETE',
         url: string,
         handler: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>,
-        meta: {
-          capability?: AgentCapability;
-          admission?: 'self';
-          safe?: boolean;
-          publication?: 'guarded';
-        } = {}
+        meta: RouteMeta & { publication?: 'guarded' | 'when-controlled' } = {}
       ) =>
         v1.route({
           method,
           url,
-          ...(meta.capability !== undefined ? { config: { capability: meta.capability } } : {}),
+          config: {
+            ...(meta.capability ? { capability: meta.capability } : {}),
+            publication: meta.publication ?? 'lifecycle',
+          },
           ...(meta.publication
-            ? {
-                config: {
-                  ...(meta.capability ? { capability: meta.capability } : {}),
-                  publication: meta.publication,
-                },
-                onSend: httpPublication.onSend,
-                onError: httpPublication.onError,
-              }
+            ? { onSend: httpPublication.onSend, onError: httpPublication.onError }
             : {}),
-          handler: route(handler, meta),
+          handler: route(handler),
         });
 
+      // Work receives no Fastify reply: only the publisher can serialize/send.
+      const on = (
+        method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+        url: string,
+        handler: (request: RequestData) => Promise<HttpResponseDraft>,
+        meta: RouteMeta = {}
+      ) =>
+        onTransport(
+          method,
+          url,
+          async (request, reply) => {
+            const { sessionId } = request.params as { sessionId?: string };
+            const input = requestData(request);
+            if (!sessionId || !service.authority.get(sessionId)) {
+              if (sessionId && service.requiresSessionAuthority(sessionId))
+                throw new ServiceError('CONTROL_REVOKED', 'Session authority is unavailable');
+              return httpPublication.sendUncontrolled(request, reply, await handler(input));
+            }
+            const principal = principals.get(request);
+            if (!principal) throw new ServiceError('FORBIDDEN', 'Session authority does not match');
+            const mutation =
+              request.method === 'DELETE' || (request.method === 'POST' && meta.safe !== true);
+            const id = request.headers['x-agentbrowser-operation-id'];
+            if (mutation && (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(id)))
+              throw new ServiceError(
+                'INVALID_REQUEST',
+                'Controlled writes require X-AgentBrowser-Operation-Id (1-128 letters, digits, _ or -)'
+              );
+            return httpPublication.respond(request, reply, async (output) => {
+              let draft: HttpResponseDraft | undefined;
+              await service.authority.run(
+                sessionId,
+                principal,
+                mutation
+                  ? {
+                      id: id as string,
+                      fingerprint: sha256Hex(
+                        JSON.stringify([request.method, request.url, request.body ?? null])
+                      ),
+                    }
+                  : {},
+                async () => {
+                  try {
+                    draft = await handler(input);
+                  } catch (error) {
+                    // Admitted errors may carry private approval details; publish with the same owner.
+                    draft = errorResponse(error);
+                  }
+                  return draft;
+                },
+                () => !!draft && (draft.statusCode >= 400 || draft.executionFailed === true),
+                output.draftPublication(),
+                output.publication((operation) => ({ replay: true, operation }))
+              );
+            });
+          },
+          { ...meta, publication: 'when-controlled' }
+        );
+
       // Session management endpoints
-      on('POST', '/sessions', async (request, reply) => {
+      onTransport('POST', '/sessions', async (request, reply) => {
         const body = request.body;
-        if (!requireBody(reply, body)) {
-          return reply;
-        }
+        requireBody(body);
 
         if (body.controlMode === 'delegated' && principals.get(request)?.actor !== 'operator')
           throw new ServiceError(
@@ -900,30 +893,28 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         return reply.status(201).send(session);
       });
 
-      on(
+      onTransport(
         'GET',
         '/sessions/:sessionId/control',
         async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
+          requireOwnership(sessionId, tenantOf(request));
           const control = service.authority.get(sessionId);
           if (!control) throw new ServiceError('NOT_FOUND', 'Session is not controlled');
           return reply.send(service.authority.status(sessionId));
         },
-        { capability: 'session.control', admission: 'self' }
+        { capability: 'session.control' }
       );
       for (const action of ['takeover', 'prepare-resume', 'delegate'] as const) {
-        on(
+        onTransport(
           'POST',
           `/sessions/:sessionId/control/${action}`,
           async (request, reply) => {
             const { sessionId } = params(request, 'sessionId');
             const principal = principals.get(request);
-            if (
-              principal?.actor !== 'operator' ||
-              !requireOwnership(reply, sessionId, tenantOf(request))
-            )
+            if (principal?.actor !== 'operator')
               throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+            requireOwnership(sessionId, tenantOf(request));
             const control = service.authority.get(sessionId);
             if (!control) throw new ServiceError('NOT_FOUND', 'Session is not controlled');
             if (action === 'takeover') return reply.send(service.authority.takeover(sessionId));
@@ -938,37 +929,47 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             }
             const review = control.prepareResume();
             service.invalidateControlObservations(sessionId);
-            const result = await service.authority
-              .run(sessionId, principal, {}, async () => {
-                const pages = await service.listPages(sessionId);
-                const observations = [];
-                for (const page of pages) {
-                  const observed = await service.observe(sessionId, page.pageId, {});
-                  observations.push({
-                    pageId: page.pageId,
-                    url: observed.url,
-                    title: observed.title,
-                    revision: observed.revision,
-                    summary: observed.summary,
-                  });
-                }
-                return { ...review, pages: observations };
-              })
-              .catch((error) => {
-                service.authority.takeover(sessionId);
-                throw error;
-              });
-            return reply.send(result);
+            return httpPublication.respond(request, reply, async (output) => {
+              await service.authority.run(
+                sessionId,
+                principal,
+                {},
+                async () => {
+                  try {
+                    const pages = await service.listPages(sessionId);
+                    const observations = [];
+                    for (const page of pages) {
+                      const observed = await service.observe(sessionId, page.pageId, {});
+                      observations.push({
+                        pageId: page.pageId,
+                        url: observed.url,
+                        title: observed.title,
+                        revision: observed.revision,
+                        summary: observed.summary,
+                      });
+                    }
+                    return { ...review, pages: observations };
+                  } catch (error) {
+                    // Collection failed, not delivery. Never take over a replacement owner.
+                    if (service.authority.get(sessionId) === control)
+                      service.authority.takeover(sessionId);
+                    throw error;
+                  }
+                },
+                undefined,
+                output.publication()
+              );
+            });
           },
-          { admission: 'self' }
+          { ...(action === 'prepare-resume' ? { publication: 'guarded' as const } : {}) }
         );
       }
-      on(
+      onTransport(
         'GET',
         '/sessions/:sessionId/operations/:operationId',
         async (request, reply) => {
           const { sessionId, operationId } = params(request, 'sessionId', 'operationId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
+          requireOwnership(sessionId, tenantOf(request));
           const principal = principals.get(request);
           if (!principal) throw new ServiceError('FORBIDDEN', 'Session authority does not match');
           return httpPublication.respond(request, reply, async (output) => {
@@ -981,77 +982,79 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             if (!operation) throw new ServiceError('NOT_FOUND', 'Operation is not recorded');
           });
         },
-        { capability: 'session.control', admission: 'self', publication: 'guarded' }
+        { capability: 'session.control', publication: 'guarded' }
       );
 
-      on('GET', '/sessions/:sessionId/approvals/:tokenId', async (request, reply) => {
+      on('GET', '/sessions/:sessionId/approvals/:tokenId', async (request) => {
         const { sessionId, tokenId } = params(request, 'sessionId', 'tokenId');
-        if (principals.get(request)?.actor !== 'operator')
+        if (request.principal?.actor !== 'operator')
           throw new ServiceError('FORBIDDEN', 'Operator authority is required');
-        if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
-        return reply.send(await service.getApproval(sessionId, tokenId));
+        requireOwnership(sessionId, tenantOf(request));
+        const disclosure = await service.prepareApprovalDisclosureInScope(sessionId, tokenId);
+        return responseDraft(disclosure.view, 200, { assertCurrent: disclosure.assertCurrent });
       });
-      on('POST', '/sessions/:sessionId/approvals/:tokenId', async (request, reply) => {
+      on('POST', '/sessions/:sessionId/approvals/:tokenId', async (request) => {
         const { sessionId, tokenId } = params(request, 'sessionId', 'tokenId');
-        if (principals.get(request)?.actor !== 'operator')
+        if (request.principal?.actor !== 'operator')
           throw new ServiceError('FORBIDDEN', 'Operator authority is required');
-        if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
+        requireOwnership(sessionId, tenantOf(request));
         const checked = validateOperatorApprovalDecision(request.body);
         if (!checked.ok)
           throw new ServiceError('INVALID_REQUEST', 'Approval decision must be approve or deny');
-        return reply.send(await service.decideApproval(sessionId, tokenId, checked.value.decision));
+        const disclosure = await service.prepareApprovalDisclosureInScope(
+          sessionId,
+          tokenId,
+          checked.value.decision
+        );
+        return responseDraft(disclosure.view, 200, { assertCurrent: disclosure.assertCurrent });
       });
 
       // Application surface (shared-infra slice 2). Binding is operator-only
       // while the human owns the session; discovery/execution/receipts are
       // open to operators (ownership-checked) and to delegated grants whose
-      // mode carries the application capabilities. Every route self-admits
-      // through the ApplicationAuthority - see the route() envelope note.
-      on(
+      // mode carries the application capabilities. onTransport preserves their
+      // own admissions; the ordinary browser envelope must not nest a ticket.
+      onTransport(
         'PUT',
         '/sessions/:sessionId/application',
         async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
           const principal = principals.get(request);
-          if (
-            principal?.actor !== 'operator' ||
-            !requireOwnership(reply, sessionId, tenantOf(request))
-          )
+          if (principal?.actor !== 'operator')
             throw new ServiceError('FORBIDDEN', 'Operator authority is required');
-          if (!requireBody(reply, request.body)) return reply;
+          requireOwnership(sessionId, tenantOf(request));
+          requireBody(request.body);
           return reply.send(service.applicationBind(sessionId, principal, request.body));
         },
-        { admission: 'self' }
+        {}
       );
-      on(
+      onTransport(
         'DELETE',
         '/sessions/:sessionId/application',
         async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
           const principal = principals.get(request);
-          if (
-            principal?.actor !== 'operator' ||
-            !requireOwnership(reply, sessionId, tenantOf(request))
-          )
+          if (principal?.actor !== 'operator')
             throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+          requireOwnership(sessionId, tenantOf(request));
           return reply.send(service.applicationUnbind(sessionId, principal));
         },
-        { admission: 'self' }
+        {}
       );
-      on(
+      onTransport(
         'GET',
         '/sessions/:sessionId/application',
         async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
+          requireOwnership(sessionId, tenantOf(request));
           const principal = principals.get(request) ?? { actor: 'operator' as const, tenant: '' };
           return httpPublication.respond(request, reply, async (output) => {
             await service.applicationDiscover(sessionId, principal, output.publication());
           });
         },
-        { capability: 'application.discover', admission: 'self', publication: 'guarded' }
+        { capability: 'application.discover', publication: 'guarded' }
       );
-      on(
+      onTransport(
         'POST',
         '/sessions/:sessionId/application/reviews',
         async (request, reply) => {
@@ -1059,24 +1062,31 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           const principal = principals.get(request);
           if (principal?.actor !== 'operator')
             throw new ServiceError('FORBIDDEN', 'Operator authority is required');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
+          requireOwnership(sessionId, tenantOf(request));
           if (request.headers['x-agentbrowser-operation-id'] !== undefined)
             throw new ServiceError(
               'INVALID_REQUEST',
               'Review creation does not accept an execution operation header'
             );
-          if (!requireBody(reply, request.body)) return reply;
-          return reply.send(await service.applicationReview(sessionId, principal, request.body));
+          requireBody(request.body);
+          return httpPublication.respond(request, reply, async (output) => {
+            await service.applicationReview(
+              sessionId,
+              principal,
+              request.body,
+              output.publication()
+            );
+          });
         },
-        { admission: 'self' }
+        { publication: 'guarded' }
       );
-      on(
+      onTransport(
         'POST',
         '/sessions/:sessionId/application/execute',
         async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
-          if (!requireBody(reply, request.body)) return reply;
+          requireOwnership(sessionId, tenantOf(request));
+          requireBody(request.body);
           const principal = principals.get(request) ?? { actor: 'operator' as const, tenant: '' };
           return httpPublication.respond(request, reply, async (output) => {
             await service.applicationExecute(
@@ -1088,14 +1098,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             );
           });
         },
-        { capability: 'application.execute', admission: 'self', publication: 'guarded' }
+        { capability: 'application.execute', publication: 'guarded' }
       );
-      on(
+      onTransport(
         'GET',
         '/sessions/:sessionId/application/receipts/:operationId',
         async (request, reply) => {
           const { sessionId, operationId } = params(request, 'sessionId', 'operationId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
+          requireOwnership(sessionId, tenantOf(request));
           const principal = principals.get(request) ?? { actor: 'operator' as const, tenant: '' };
           return httpPublication.respond(request, reply, async (output) => {
             await service.applicationReceipt(
@@ -1106,54 +1116,56 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             );
           });
         },
-        { capability: 'application.discover', admission: 'self', publication: 'guarded' }
+        { capability: 'application.discover', publication: 'guarded' }
       );
 
       // Session event stream: WebSocket upgrade, JSON per frame.
-      v1.get('/sessions/:sessionId/events', { websocket: true }, (socket, request) => {
-        const { sessionId } = params(request, 'sessionId');
-        const tenant = (request as FastifyRequest & { tenant?: string }).tenant;
-        if (tenant !== undefined) {
-          const session = service.getSession(sessionId);
-          const owner = session && (session as { tenantId?: string }).tenantId;
-          if (owner !== undefined && owner !== tenant) {
-            socket.close(4403, 'forbidden');
+      v1.get(
+        '/sessions/:sessionId/events',
+        { websocket: true, config: { publication: 'stream' } },
+        (socket, request) => {
+          const { sessionId } = params(request, 'sessionId');
+          const tenant = (request as FastifyRequest & { tenant?: string }).tenant;
+          if (tenant !== undefined) {
+            const session = service.getSession(sessionId);
+            const owner = session && (session as { tenantId?: string }).tenantId;
+            if (owner !== undefined && owner !== tenant) {
+              socket.close(4403, 'forbidden');
+              return;
+            }
+          }
+
+          const unsubscribe = service.subscribe(sessionId, (event) => {
+            socket.send(JSON.stringify(event));
+          });
+          if (unsubscribe === undefined) {
+            socket.close(4404, 'session not found');
             return;
           }
+
+          socket.on('close', () => {
+            unsubscribe();
+          });
+          socket.on('error', () => {
+            unsubscribe();
+          });
         }
+      );
 
-        const unsubscribe = service.subscribe(sessionId, (event) => {
-          socket.send(JSON.stringify(event));
-        });
-        if (unsubscribe === undefined) {
-          socket.close(4404, 'session not found');
-          return;
-        }
-
-        socket.on('close', () => {
-          unsubscribe();
-        });
-        socket.on('error', () => {
-          unsubscribe();
-        });
-      });
-
-      on('GET', '/sessions', async (request, reply) => {
+      onTransport('GET', '/sessions', async (request, reply) => {
         return reply.send({ sessions: service.listSessions(tenantOf(request)) });
       });
 
       on(
         'GET',
         '/sessions/:sessionId',
-        async (request, reply) => {
+        async (request) => {
           const { sessionId } = params(request, 'sessionId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-            return reply;
-          }
+          requireOwnership(sessionId, tenantOf(request));
           const session = service.getSession(sessionId);
 
           if (!session) {
-            return reply.status(404).send({
+            return responseStatus(404, {
               error: {
                 code: 'SESSION_NOT_FOUND',
                 message: `Session ${sessionId} not found`,
@@ -1162,50 +1174,42 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             });
           }
 
-          return reply.send(session);
+          return responseDraft(session);
         },
         { capability: 'session.control' }
       );
 
-      on('GET', '/sessions/:sessionId/cookies', async (request, reply) => {
+      on('GET', '/sessions/:sessionId/cookies', async (request) => {
         const { sessionId } = params(request, 'sessionId');
-        if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-          return reply;
-        }
-        return reply.send({ cookies: await service.getSessionCookies(sessionId) });
+        requireOwnership(sessionId, tenantOf(request));
+        return responseDraft({ cookies: await service.getSessionCookies(sessionId) });
       });
 
       // A3 evidence: the session's recent event ledger (console replay).
-      on('GET', '/sessions/:sessionId/events/replay', async (request, reply) => {
+      on('GET', '/sessions/:sessionId/events/replay', async (request) => {
         const { sessionId } = params(request, 'sessionId');
-        if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-          return reply;
-        }
+        requireOwnership(sessionId, tenantOf(request));
         // request.* events live in their own ledger (network summary,
         // spec 5.1); getSessionEvents routes the filter accordingly.
         const typeFilter = (request.query as { type?: string } | null)?.type;
-        return reply.send({ events: service.getSessionEvents(sessionId, typeFilter) });
+        return responseDraft({ events: service.getSessionEvents(sessionId, typeFilter) });
       });
 
       // A3 evidence: export the session's completed spans as an artifact.
-      on('POST', '/sessions/:sessionId/trace', async (request, reply) => {
+      on('POST', '/sessions/:sessionId/trace', async (request) => {
         const { sessionId } = params(request, 'sessionId');
-        if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-          return reply;
-        }
-        return reply.status(201).send(await service.exportTrace(sessionId));
+        requireOwnership(sessionId, tenantOf(request));
+        return responseStatus(201, await service.exportTrace(sessionId));
       });
 
       // A3 evidence: capture the page's current HTML as an artifact.
       on(
         'POST',
         '/sessions/:sessionId/pages/:pageId/html',
-        async (request, reply) => {
+        async (request) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-            return reply;
-          }
-          return reply.status(201).send(await service.exportHtml(sessionId, pageId));
+          requireOwnership(sessionId, tenantOf(request));
+          return responseStatus(201, await service.exportHtml(sessionId, pageId));
         },
         { capability: 'page.capture', safe: true }
       );
@@ -1213,18 +1217,16 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       on(
         'GET',
         '/sessions/:sessionId/pages/:pageId/snapshot',
-        async (request, reply) => {
+        async (request) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-            return reply;
-          }
+          requireOwnership(sessionId, tenantOf(request));
           // Payload economics (TD-BROWSER-8 pressure matrix, row 4).
           const query = request.query as { maxElements?: string; maxBytes?: string };
           const maxElements =
             query.maxElements !== undefined ? Number.parseInt(query.maxElements, 10) : undefined;
           const maxBytes =
             query.maxBytes !== undefined ? Number.parseInt(query.maxBytes, 10) : undefined;
-          return reply.send(
+          return responseDraft(
             await service.getSnapshot(sessionId, pageId, {
               ...(maxElements !== undefined ? { maxElements } : {}),
               ...(maxBytes !== undefined ? { maxBytes } : {}),
@@ -1237,11 +1239,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       on(
         'POST',
         '/sessions/:sessionId/pages/:pageId/plan',
-        async (request, reply) => {
+        async (request) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-            return reply;
-          }
+          requireOwnership(sessionId, tenantOf(request));
           // Empty-body tolerance resolves a zero-length JSON body to
           // undefined; every route must dereference defensively.
           const body = (request.body ?? {}) as { actions?: Array<Record<string, unknown>> };
@@ -1249,7 +1249,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           try {
             actions = parsePlanSteps(body.actions);
           } catch (error) {
-            return reply.status(400).send({
+            return responseStatus(400, {
               error: {
                 code: 'INVALID_REQUEST',
                 message: error instanceof Error ? error.message : 'Invalid plan steps',
@@ -1257,9 +1257,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               },
             });
           }
-          return sendExecutionResult(
-            request,
-            reply,
+          return executionResponse(
             await service.executePlan(sessionId, pageId, actions as unknown as ServiceActRequest[])
           );
         },
@@ -1269,43 +1267,35 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       on(
         'POST',
         '/sessions/:sessionId/pages/:pageId/outcomes',
-        async (request, reply) => {
+        async (request) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
-          if (!requireBody(reply, request.body)) return reply;
-          return sendOutcomeResult(
-            request,
-            reply,
-            await service.executeOutcome(sessionId, pageId, request.body)
-          );
+          requireOwnership(sessionId, tenantOf(request));
+          requireBody(request.body);
+          return outcomeResponse(await service.executeOutcome(sessionId, pageId, request.body));
         },
         { capability: 'page.interact' }
       );
 
-      on(
+      onTransport(
         'DELETE',
         '/sessions/:sessionId',
         async (request, reply) => {
           const { sessionId } = params(request, 'sessionId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-            return reply;
-          }
+          requireOwnership(sessionId, tenantOf(request));
           await service.closeSession(sessionId);
           return reply.send({ sessionId, status: 'closed' });
         },
-        { admission: 'self' }
+        {}
       );
 
       // Page management endpoints
       on(
         'GET',
         '/sessions/:sessionId/pages',
-        async (request, reply) => {
+        async (request) => {
           const { sessionId } = params(request, 'sessionId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-            return reply;
-          }
-          return reply.send({ pages: await service.listPages(sessionId) });
+          requireOwnership(sessionId, tenantOf(request));
+          return responseDraft({ pages: await service.listPages(sessionId) });
         },
         { capability: 'page.observe' }
       );
@@ -1313,14 +1303,12 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       on(
         'POST',
         '/sessions/:sessionId/pages',
-        async (request, reply) => {
+        async (request) => {
           const { sessionId } = params(request, 'sessionId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-            return reply;
-          }
+          requireOwnership(sessionId, tenantOf(request));
           const { url } = (request.body ?? {}) as { url?: unknown };
           if (url !== undefined && typeof url !== 'string') {
-            return reply.status(400).send({
+            return responseStatus(400, {
               error: {
                 code: 'INVALID_REQUEST',
                 message: 'url must be a string',
@@ -1329,7 +1317,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             });
           }
           const page = await service.createPage(sessionId, url !== undefined ? { url } : undefined);
-          return reply.status(201).send(page);
+          return responseStatus(201, page);
         },
         { capability: 'session.manage' }
       );
@@ -1337,15 +1325,13 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       on(
         'GET',
         '/sessions/:sessionId/pages/:pageId',
-        async (request, reply) => {
+        async (request) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-            return reply;
-          }
+          requireOwnership(sessionId, tenantOf(request));
           const page = await service.getPage(sessionId, pageId);
 
           if (!page) {
-            return reply.status(404).send({
+            return responseStatus(404, {
               error: {
                 code: 'NOT_FOUND',
                 message: `Page ${pageId} not found`,
@@ -1354,7 +1340,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             });
           }
 
-          return reply.send(page);
+          return responseDraft(page);
         },
         { capability: 'page.observe' }
       );
@@ -1362,13 +1348,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       on(
         'DELETE',
         '/sessions/:sessionId/pages/:pageId',
-        async (request, reply) => {
+        async (request) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-            return reply;
-          }
+          requireOwnership(sessionId, tenantOf(request));
           await service.closePage(sessionId, pageId);
-          return reply.send({ pageId, status: 'closed' });
+          return responseDraft({ pageId, status: 'closed' });
         },
         { capability: 'session.manage' }
       );
@@ -1377,20 +1361,16 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       on(
         'POST',
         '/sessions/:sessionId/pages/:pageId/navigate',
-        async (request, reply) => {
+        async (request) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-            return reply;
-          }
+          requireOwnership(sessionId, tenantOf(request));
           const body = request.body;
-          if (!requireBody(reply, body)) {
-            return reply;
-          }
+          requireBody(body);
 
           const { url, waitUntil } = body as { url?: string; waitUntil?: string };
 
           if (typeof url !== 'string' || url.length === 0) {
-            return reply.status(400).send({
+            return responseStatus(400, {
               error: {
                 code: 'INVALID_REQUEST',
                 message: 'url is required and must be a string',
@@ -1405,7 +1385,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               ? { waitUntil: waitUntil as 'load' | 'domcontentloaded' | 'networkidle' }
               : {}),
           });
-          return reply.send(result);
+          return responseDraft(result);
         },
         { capability: 'page.navigate' }
       );
@@ -1414,17 +1394,15 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       on(
         'POST',
         '/sessions/:sessionId/pages/:pageId/observe',
-        async (request, reply) => {
+        async (request) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-            return reply;
-          }
+          requireOwnership(sessionId, tenantOf(request));
           const observation = await service.observe(
             sessionId,
             pageId,
             (request.body === undefined ? {} : request.body) as never
           );
-          return reply.send(observation);
+          return responseDraft(observation);
         },
         { capability: 'page.observe', safe: true }
       );
@@ -1432,11 +1410,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       on(
         'POST',
         '/sessions/:sessionId/pages/:pageId/autofill',
-        async (request, reply) => {
+        async (request) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) return reply;
+          requireOwnership(sessionId, tenantOf(request));
           const report = await service.autofill(sessionId, pageId, request.body);
-          return sendExecutionResult(request, reply, report);
+          return executionResponse(report);
         },
         { capability: 'page.form' }
       );
@@ -1445,15 +1423,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       on(
         'POST',
         '/sessions/:sessionId/pages/:pageId/act',
-        async (request, reply) => {
+        async (request) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-            return reply;
-          }
+          requireOwnership(sessionId, tenantOf(request));
           const body = request.body;
-          if (!requireBody(reply, body)) {
-            return reply;
-          }
+          requireBody(body);
 
           const validated =
             typeof body === 'object' &&
@@ -1469,30 +1443,26 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           }
           const result = await service.act(sessionId, pageId, validated.value as ServiceActRequest);
           if (validated.warnings?.length) {
-            return sendExecutionResult(request, reply, {
+            return executionResponse({
               ...result,
               warnings: validated.warnings,
             });
           }
-          return sendExecutionResult(request, reply, result);
+          return executionResponse(result);
         },
         { capability: 'page.interact' }
       );
 
       // Download endpoint: policy-gated artifact capture
-      on('POST', '/sessions/:sessionId/pages/:pageId/download', async (request, reply) => {
+      on('POST', '/sessions/:sessionId/pages/:pageId/download', async (request) => {
         const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
-        if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-          return reply;
-        }
+        requireOwnership(sessionId, tenantOf(request));
         const body = request.body;
-        if (!requireBody(reply, body)) {
-          return reply;
-        }
+        requireBody(body);
 
         const { url, filename } = body as { url?: string; filename?: string };
         if (typeof url !== 'string' || url.length === 0) {
-          return reply.status(400).send({
+          return responseStatus(400, {
             error: {
               code: 'INVALID_REQUEST',
               message: 'url is required and must be a string',
@@ -1505,14 +1475,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           url,
           ...(filename !== undefined ? { filename } : {}),
         });
-        return reply.send(artifact);
+        return responseDraft(artifact);
       });
 
       // Artifact retrieval, scoped to the owning session
       on(
         'GET',
         '/sessions/:sessionId/artifacts/:artifactId',
-        async (request, reply) => {
+        async (request) => {
           const { sessionId, artifactId } = params(request, 'sessionId', 'artifactId');
           // Access granted by session ownership OR a short-lived signed
           // token minted when the artifact was created (spec 13.1).
@@ -1525,7 +1495,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             tokenValid ? undefined : tenantOf(request)
           );
           if (!stored) {
-            return reply.status(404).send({
+            return responseStatus(404, {
               error: {
                 code: 'NOT_FOUND',
                 message: `Artifact ${artifactId} not found`,
@@ -1534,7 +1504,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             });
           }
 
-          return reply.send({
+          return responseDraft({
             metadata: stored.metadata,
             contentBase64: Buffer.from(stored.bytes).toString('base64'),
           });
@@ -1543,34 +1513,21 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       );
 
       // Collect an intercepted in-page download (spec 10)
-      on(
-        'POST',
-        '/sessions/:sessionId/pages/:pageId/downloads/:filename',
-        async (request, reply) => {
-          const { sessionId, pageId, filename } = params(
-            request,
-            'sessionId',
-            'pageId',
-            'filename'
-          );
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-            return reply;
-          }
+      on('POST', '/sessions/:sessionId/pages/:pageId/downloads/:filename', async (request) => {
+        const { sessionId, pageId, filename } = params(request, 'sessionId', 'pageId', 'filename');
+        requireOwnership(sessionId, tenantOf(request));
 
-          const artifact = await service.collectDownload(sessionId, pageId, filename);
-          return reply.send(artifact);
-        }
-      );
+        const artifact = await service.collectDownload(sessionId, pageId, filename);
+        return responseDraft(artifact);
+      });
 
       // PDF capture endpoint
       on(
         'POST',
         '/sessions/:sessionId/pages/:pageId/pdf',
-        async (request, reply) => {
+        async (request) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-            return reply;
-          }
+          requireOwnership(sessionId, tenantOf(request));
           const body = (request.body ?? {}) as {
             landscape?: boolean;
             displayHeaderFooter?: boolean;
@@ -1586,7 +1543,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               ? { printBackground: body.printBackground }
               : {}),
           });
-          return reply.send(artifact);
+          return responseDraft(artifact);
         },
         { capability: 'page.capture', safe: true }
       );
@@ -1595,15 +1552,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       on(
         'POST',
         '/sessions/:sessionId/pages/:pageId/extract',
-        async (request, reply) => {
+        async (request) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-            return reply;
-          }
+          requireOwnership(sessionId, tenantOf(request));
           const body = request.body;
-          if (!requireBody(reply, body)) {
-            return reply;
-          }
+          requireBody(body);
 
           const format = (body as { format?: string }).format;
           const schema = (body as { schema?: Record<string, unknown> }).schema;
@@ -1614,7 +1567,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           ).records;
           const supported: readonly string[] = DELIVERED_EXTRACT_FORMATS;
           if (typeof format !== 'string' || !supported.includes(format)) {
-            return reply.status(400).send({
+            return responseStatus(400, {
               error: {
                 code: 'INVALID_REQUEST',
                 message: `Unknown format ${String(format)}. Supported: ${supported.join(', ')}`,
@@ -1631,7 +1584,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             ...(schema !== undefined ? { schema } : {}),
             ...(records !== undefined ? { records } : {}),
           });
-          return reply.send(result);
+          return responseDraft(result);
         },
         { capability: 'page.extract', safe: true }
       );
@@ -1640,17 +1593,15 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       on(
         'POST',
         '/sessions/:sessionId/pages/:pageId/screenshot',
-        async (request, reply) => {
+        async (request) => {
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
-          if (!requireOwnership(reply, sessionId, tenantOf(request))) {
-            return reply;
-          }
+          requireOwnership(sessionId, tenantOf(request));
           const artifact = await service.screenshot(
             sessionId,
             pageId,
             (request.body === undefined ? {} : request.body) as never
           );
-          return reply.send(artifact);
+          return responseDraft(artifact);
         },
         { capability: 'page.capture', safe: true }
       );

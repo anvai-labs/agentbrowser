@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { setImmediate as settlePublication } from 'node:timers/promises';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildServer } from './server.js';
@@ -39,12 +40,15 @@ async function delegate(
   url: string,
   mode?: string
 ) {
+  // inject resolves at response finish before publication's release continuation.
+  await settlePublication();
   const review = await server.inject({
     method: 'POST',
     url: `${url}/control/prepare-resume`,
     headers: operator,
   });
   expect(review.statusCode).toBe(200);
+  await settlePublication();
   const granted = await server.inject({
     method: 'POST',
     url: `${url}/control/delegate`,
@@ -61,6 +65,7 @@ async function delegate(
     profileRevision: 1,
   });
   expect(JSON.stringify(granted.json().cursor)).not.toContain(granted.json().token);
+  await settlePublication();
   return { authorization: `Bearer ${granted.json().token}` };
 }
 
@@ -175,6 +180,7 @@ describe('delegated coexistence', () => {
       headers: { ...operator, 'x-agentbrowser-operation-id': 'owner-page' },
     });
     const pageId = privatePage.json().pageId;
+    await settlePublication();
     const capture = await server.inject({
       method: 'POST',
       url: `${url}/pages/${pageId}/screenshot`,

@@ -1,6 +1,6 @@
 # T5 J1-A: execution finalization and response publication
 
-Status: A1/A2/A4a/A3a primitives implemented; partial A3b HTTP candidate; recovery gated.
+Status: A1/A2/A4a/A3a primitives implemented; A3b HTTP merged; A3c/A4b candidate; recovery gated.
 Design baseline: develop `dbe23b5` (J0, PR #267).
 Parent: [T5 journal sequence](t5-operation-journal.md). Next contract:
 [J1-B/C journal acknowledgment](t5-journal-contract.md). No durability ships here.
@@ -169,3 +169,6 @@ The [A3b packet](t5-http-publication.md) adopts application result/replay/status
 publication first; review/browser routes and full A4b parity remain separate gates.
 Only the bounded A3b public transport slice has real HTTP qualification. Full-inventory
 A3/A4b adoption and durable recovery guarantees remain unimplemented.
+
+The [A3c/A4b continuation](t5-browser-review-publication.md) migrates browser/review
+responses and records the explicit lifecycle/legacy/stream limits before journal work.

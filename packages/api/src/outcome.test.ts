@@ -374,6 +374,7 @@ describe('verified outcome REST projection', () => {
           headers: { ...operator, 'x-agentbrowser-operation-id': 'create-page' },
         });
         expect(page.statusCode).toBe(201);
+        await settlePublication();
         const headers = {
           ...operator,
           'x-agentbrowser-operation-id': 'outcome-run-1',
@@ -445,10 +446,12 @@ describe('verified outcome REST projection', () => {
     const tenant = 'fixture-tenant';
     const receiptEntered = Promise.withResolvers<void>();
     const receiptRelease = Promise.withResolvers<void>();
+    let receiptSignal: AbortSignal | undefined;
     const receipt = vi.fn(async (_scope: ApplicationScope, _id: string) => {
+      receiptSignal = _scope.signal;
       receiptEntered.resolve();
       // Deliberately ignore the verifier deadline signal: the admitted adapter I/O
-      // must retain the ticket even after the bounded outcome response is sent.
+      // must retain the ticket and defer HTTP publication until the read settles.
       await receiptRelease.promise;
       return true;
     });
@@ -520,6 +523,7 @@ describe('verified outcome REST projection', () => {
         headers: { ...operator, 'x-agentbrowser-operation-id': 'create-page' },
       });
       expect(page.statusCode).toBe(201);
+      await settlePublication();
       const url = `${base}/pages/${page.json().pageId as string}/outcomes`;
       const payload = {
         ...request(),
@@ -539,22 +543,13 @@ describe('verified outcome REST projection', () => {
         payload,
       });
       await receiptEntered.promise;
-      const first = await pendingResponse;
-
-      // The verifier deadline returns through Fastify's onSend hook while the
-      // ignored adapter read remains owned by the original operation ticket.
-      expect(first.statusCode).toBe(200);
-      expect(first.json()).toMatchObject({
-        plan: { ok: true, completed: 1 },
-        outcome: {
-          availability: 'available',
-          execution: 'completed',
-          verification: { status: 'unknown', evidenceRefIds: [] },
-        },
+      let delivered = false;
+      void Promise.resolve(pendingResponse).then(() => {
+        delivered = true;
       });
-      expect(first.body).not.toContain('fixture_receipt_1');
-      expect(execute).toHaveBeenCalledOnce();
-      expect(receipt).toHaveBeenCalledOnce();
+      // The verifier may time out, but HTTP must not publish before the admitted read drains.
+      await expect.poll(() => receiptSignal?.aborted).toBe(true);
+      expect(delivered).toBe(false);
 
       const operation = await server.inject({
         url: `${base}/operations/outcome-drain-1`,
@@ -603,6 +598,23 @@ describe('verified outcome REST projection', () => {
 
       released = true;
       receiptRelease.resolve();
+      const first = await pendingResponse;
+
+      expect(first.statusCode).toBe(200);
+      expect(first.json()).toMatchObject({
+        plan: { ok: true, completed: 1 },
+        outcome: {
+          availability: 'available',
+          execution: 'completed',
+          verification: { status: 'unknown', evidenceRefIds: [] },
+        },
+      });
+      expect(first.body).not.toContain('fixture_receipt_1');
+      expect(execute).toHaveBeenCalledOnce();
+      expect(receipt).toHaveBeenCalledOnce();
+
+      await settlePublication();
+
       await vi.waitFor(async () => {
         const settled = await server?.inject({
           url: `${base}/operations/outcome-drain-1`,
@@ -685,13 +697,16 @@ describe('verified outcome REST projection', () => {
           headers: { ...operator, 'x-agentbrowser-operation-id': 'permission-page' },
         });
         expect(page.statusCode).toBe(201);
+        await settlePublication();
         const pageId = page.json().pageId as string;
+        await settlePublication();
         const review = await server.inject({
           method: 'POST',
           url: `${base}/control/prepare-resume`,
           headers: operator,
         });
         expect(review.statusCode).toBe(200);
+        await settlePublication();
         const delegated = await server.inject({
           method: 'POST',
           url: `${base}/control/delegate`,
@@ -859,11 +874,13 @@ describe('verified outcome REST projection', () => {
           headers: { ...operator, 'x-agentbrowser-operation-id': 'create-page' },
         });
         const pageId = page.json().pageId as string;
+        await settlePublication();
         const review = await server.inject({
           method: 'POST',
           url: `${base}/control/prepare-resume`,
           headers: operator,
         });
+        await settlePublication();
         const delegated = await server.inject({
           method: 'POST',
           url: `${base}/control/delegate`,

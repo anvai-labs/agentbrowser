@@ -97,6 +97,29 @@ describe('route contract metadata', () => {
     }
   });
 
+  it('classifies every v1 transport and keeps lifecycle/stream exceptions explicit', () => {
+    const exceptions = new Map([
+      ['POST /v1/sessions', 'lifecycle'],
+      ['GET /v1/sessions', 'lifecycle'],
+      ['DELETE /v1/sessions/:sessionId', 'lifecycle'],
+      ['GET /v1/sessions/:sessionId/control', 'lifecycle'],
+      ['POST /v1/sessions/:sessionId/control/takeover', 'lifecycle'],
+      ['POST /v1/sessions/:sessionId/control/delegate', 'lifecycle'],
+      ['PUT /v1/sessions/:sessionId/application', 'lifecycle'],
+      ['DELETE /v1/sessions/:sessionId/application', 'lifecycle'],
+      ['GET /v1/sessions/:sessionId/events', 'stream'],
+    ]);
+    for (const route of server.registeredRoutes.filter((r) => r.url.startsWith('/v1/'))) {
+      const key = `${route.method} ${route.url}`;
+      const exception = exceptions.get(key);
+      if (exception) expect(route.publication, key).toBe(exception);
+      else {
+        expect(['guarded', 'when-controlled'], key).toContain(route.publication);
+        expect(route.url, key).toContain(':sessionId');
+      }
+    }
+  });
+
   it('exposes capabilities the mode registry can actually grant', () => {
     for (const route of sessionRoutes()) {
       if (route.capability !== undefined && route.capability !== null) {
