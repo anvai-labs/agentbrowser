@@ -26,9 +26,11 @@ import {
   type PreparedApplicationConsent,
   type PreparedApplicationOperationReview,
   type PreparedEvidenceReview,
+  type PreparedReviewDisclosure,
   TrustedEvidenceSourceRegistry,
   type TrustedVerifierRegistry,
   captureEvidenceReviewSource,
+  captureReviewDisclosure,
   defineApplicationReadEvidenceSource,
   defineApplicationReceiptEvidenceSource,
   prepareEvidenceReview,
@@ -406,6 +408,7 @@ export interface PreparedNativeFormRead {
     sessionIncarnation: string;
   }>;
   assertAuthority(): void;
+  readonly publication: Readonly<{ assertCurrent(): void }>;
   read(signal?: AbortSignal): Promise<NativeFormEvidence>;
 }
 
@@ -1771,11 +1774,10 @@ export class AgentBrowserService {
   }
 
   /**
-   * Prepare an admission-owned native-form read without exposing the page,
-   * engine callback or authority scope to its consumer. This is an internal
-   * composition seam; no public route grants it independently.
+   * Capture one physical page owner with separate execution and publication checks.
+   * Internal only: publication conveys no engine read or dispatch authority.
    */
-  prepareNativeFormReadInScope(sessionId: string, pageId: string): PreparedNativeFormRead {
+  private capturePageOwnerInScope(sessionId: string, pageId: string) {
     const session = this.requireSession(sessionId);
     const page = this.requirePage(sessionId, pageId);
     const enginePage = page.enginePage;
@@ -1783,14 +1785,12 @@ export class AgentBrowserService {
     const admission = this.authority.admissionInScope(sessionId);
     const sessionIncarnation = this.authority.sessionIncarnation(sessionId);
     const ownerSignal = this.authority.signal(sessionId);
+    const publicationGuard = this.authority.publicationGuardInScope(sessionId);
     let revoked: unknown;
-
-    const assertOwner = () => {
-      if (revoked !== undefined) throw revoked;
+    let ownerRevoked: unknown;
+    const assertPinned = () => {
+      if (ownerRevoked !== undefined) throw ownerRevoked;
       try {
-        guard();
-        if (this.authority.admissionInScope(sessionId) !== admission)
-          throw new ServiceError('CONTROL_REVOKED', 'Native form read admission changed.');
         if (
           this.authority.sessionIncarnation(sessionId) !== sessionIncarnation ||
           this.coordinator.get(sessionId) !== session ||
@@ -1801,10 +1801,49 @@ export class AgentBrowserService {
         )
           throw new ServiceError('CONTROL_REVOKED', 'Native form read owner changed.');
       } catch (error) {
+        ownerRevoked = error;
+        throw error;
+      }
+    };
+    const assertOwner = () => {
+      if (revoked !== undefined) throw revoked;
+      try {
+        guard();
+        if (this.authority.admissionInScope(sessionId) !== admission)
+          throw new ServiceError('CONTROL_REVOKED', 'Native form read admission changed.');
+        assertPinned();
+      } catch (error) {
         revoked = error;
         throw error;
       }
     };
+    let publicationRevoked = false;
+    const publication = Object.freeze({
+      assertCurrent: () => {
+        if (publicationRevoked)
+          throw new ServiceError('CONTROL_REVOKED', 'Page publication revoked.');
+        try {
+          publicationGuard();
+          assertPinned();
+        } catch (error) {
+          publicationRevoked = true;
+          throw error;
+        }
+      },
+    });
+    assertOwner();
+    return Object.freeze({
+      identity: Object.freeze({ sessionId, pageId, sessionIncarnation }),
+      enginePage,
+      ownerSignal,
+      assertAuthority: assertOwner,
+      publication,
+    });
+  }
+
+  prepareNativeFormReadInScope(sessionId: string, pageId: string): PreparedNativeFormRead {
+    const owner = this.capturePageOwnerInScope(sessionId, pageId);
+    const { enginePage, ownerSignal, assertAuthority: assertOwner } = owner;
     const assertRead = (signal?: AbortSignal) => {
       assertOwner();
       if (signal?.aborted)
@@ -1822,11 +1861,10 @@ export class AgentBrowserService {
     if (typeof capture !== 'function')
       throw new ServiceError('ENGINE_UNSUPPORTED', 'Native form evidence capture is unavailable.');
     const captureNativeForm = capture;
-    const identity = Object.freeze({ sessionId, pageId, sessionIncarnation });
-
     return Object.freeze({
-      identity,
+      identity: owner.identity,
       assertAuthority: () => assertOwner(),
+      publication: owner.publication,
       read: async (signal?: AbortSignal) => {
         assertRead(signal);
         const combinedSignal = signal ? AbortSignal.any([ownerSignal, signal]) : ownerSignal;
@@ -1884,7 +1922,7 @@ export class AgentBrowserService {
       sessionId,
       pageId,
       { action: review.action, source },
-      review.assertCurrent
+      review
     );
   }
 
@@ -1892,7 +1930,8 @@ export class AgentBrowserService {
     sessionId: string,
     pageId: string,
     options: { action: Readonly<Record<string, unknown>>; source: EvidenceReviewSource },
-    assertApplication?: () => void
+    application?: PreparedApplicationOperationReview,
+    capturedPage?: PreparedNativeFormRead
   ): PreparedEvidenceReview {
     try {
       const context = this.reviewContext(sessionId);
@@ -1901,9 +1940,10 @@ export class AgentBrowserService {
         canonicalJson(snapshotJsonData(options.action, VERIFICATION_SNAPSHOT_LIMITS))
       ) as Record<string, unknown>;
       // Reuse the existing page/admission owner, without performing another native read.
-      const page = this.prepareNativeFormReadInScope(sessionId, pageId);
+      const page = capturedPage ?? this.prepareNativeFormReadInScope(sessionId, pageId);
+      const publication = this.authority.captureReviewPublicationInScope(sessionId);
       const assertAuthority = () => {
-        assertApplication?.();
+        application?.assertCurrent();
         page.assertAuthority();
         if (canonicalJson(this.reviewContext(sessionId)) !== contextKey)
           throw new ServiceError('CONTROL_REVOKED', 'Review authority changed.');
@@ -1915,6 +1955,18 @@ export class AgentBrowserService {
         action,
         source: options.source,
         assertAuthority,
+        publication: {
+          assertCurrent: () => {
+            application?.publication.assertCurrent();
+            page.publication.assertCurrent();
+            publication.assertCurrent();
+          },
+          assertPinned: () => {
+            application?.publication.assertPinned();
+            page.publication.assertCurrent();
+            publication.assertCurrent();
+          },
+        },
         assertDisclosureSafe: (value) => this.assertReviewDisclosureSafe(value),
         trackRead: (read) => this.authority.trackReadInScope(sessionId, read),
         lifecycleSignal: this.authority.signal(sessionId),
@@ -2020,41 +2072,48 @@ export class AgentBrowserService {
     const validated = validateApplicationReview(input);
     if (!validated.ok)
       throw new ServiceError('INVALID_REQUEST', 'Invalid application review request');
-    const body = validated.value;
-    const result = await this.authority.run(sessionId, principal, {}, async () => {
-      const context = this.reviewContext(sessionId);
-      const originalPage = this.prepareNativeFormReadInScope(sessionId, body.pageId);
-      const intent = this.applicationAuthority.prepareOperationReviewInScope(
-        sessionId,
-        body.request
-      );
-      const assertIntent = () => {
-        intent.assertCurrent();
-        originalPage.assertAuthority();
-        this.assertReviewContext(sessionId, context);
-      };
-      assertIntent();
-      const application = selectApplicationReview(intent.action);
-      if (!application) throw new ServiceError('INVALID_REQUEST', 'Application review unavailable');
-      const { prepared, assertPinned } = this.prepareConfiguredEvidenceReview(
-        sessionId,
-        context,
-        { pageId: body.pageId, source: body.source, application },
-        intent.action,
-        assertIntent
-      );
-      const view = await prepared.generate(this.authority.signal(sessionId));
-      assertPinned();
-      // Application callbacks run before the final evidence generation check.
-      // Finish with captured-owner checks that cannot call host authorization again.
-      prepared.assertCurrent(this.authority.signal(sessionId));
-      intent.assertPinned();
-      originalPage.assertAuthority();
-      this.assertReviewContext(sessionId, context);
-      return view;
-    });
+    const result = await this.authority.run(
+      sessionId,
+      principal,
+      {},
+      async () => (await this.prepareApplicationReviewInScope(sessionId, validated.value)).view
+    );
     if ('replay' in result) throw new ServiceError('INTERNAL', 'Application review unavailable');
     return result;
+  }
+
+  /** Internal inert disclosure for an already admitted review; no transport or new ticket. */
+  async prepareApplicationReviewInScope(
+    sessionId: string,
+    input: unknown
+  ): Promise<PreparedReviewDisclosure> {
+    const validated = validateApplicationReview(input);
+    if (!validated.ok)
+      throw new ServiceError('INVALID_REQUEST', 'Invalid application review request');
+    const body = validated.value;
+    const context = this.reviewContext(sessionId);
+    const originalPage = this.prepareNativeFormReadInScope(sessionId, body.pageId);
+    const intent = this.applicationAuthority.prepareOperationReviewInScope(sessionId, body.request);
+    intent.assertCurrent();
+    originalPage.assertAuthority();
+    this.assertReviewContext(sessionId, context);
+    const application = selectApplicationReview(intent.action);
+    if (!application) throw new ServiceError('INVALID_REQUEST', 'Application review unavailable');
+    const { prepared, assertPinned, assertOwners } = this.prepareConfiguredEvidenceReview(
+      sessionId,
+      context,
+      { pageId: body.pageId, source: body.source, application },
+      intent,
+      originalPage
+    );
+    const view = await prepared.generate(this.authority.signal(sessionId));
+    assertPinned();
+    const disclosure = prepared.capturePublication(view);
+    // Finish with captured-owner comparisons after all source/application callbacks.
+    assertOwners();
+    this.assertReviewDisclosureSafe(disclosure.view);
+    assertOwners();
+    return disclosure;
   }
 
   /** Dispatch one application operation. Writes require operation ID + expected version. */
@@ -3894,13 +3953,7 @@ export class AgentBrowserService {
       context,
       current,
       application,
-      ...this.prepareConfiguredEvidenceReview(
-        sessionId,
-        context,
-        selector,
-        application?.action,
-        application?.assertCurrent
-      ),
+      ...this.prepareConfiguredEvidenceReview(sessionId, context, selector, application),
     };
   }
 
@@ -3909,16 +3962,16 @@ export class AgentBrowserService {
     sessionId: string,
     context: ApprovalReviewBinding,
     selector: EvidenceReviewSelector,
-    expectedAction?: Readonly<Record<string, unknown>>,
-    assertApplication?: () => void
-  ): { prepared: PreparedEvidenceReview; assertPinned: () => void } {
+    application?: PreparedApplicationOperationReview,
+    capturedPage?: PreparedNativeFormRead
+  ): { prepared: PreparedEvidenceReview; assertPinned: () => void; assertOwners: () => void } {
     let assertPinned: (() => void) | undefined;
     try {
       const provider = this.evidenceReviewProvider;
       if (!provider) throw new Error('Unavailable provider');
-      const page = this.prepareNativeFormReadInScope(sessionId, selector.pageId);
+      const page = capturedPage ?? this.prepareNativeFormReadInScope(sessionId, selector.pageId);
       assertPinned = () => {
-        assertApplication?.();
+        application?.assertCurrent();
         page.assertAuthority();
         this.assertReviewContext(sessionId, context);
       };
@@ -3962,7 +4015,7 @@ export class AgentBrowserService {
       const action = snapshotAuthorizationInput(own.action.value);
       if (!action || typeof action !== 'object' || Array.isArray(action))
         throw new Error('Unavailable provider action');
-      if (expectedAction && canonicalJson(action) !== canonicalJson(expectedAction))
+      if (application && canonicalJson(action) !== canonicalJson(application.action))
         throw new Error('Approval does not match intended application operation');
       const source = captureEvidenceReviewSource(own.source.value);
       assertPinned();
@@ -3975,10 +4028,16 @@ export class AgentBrowserService {
         sessionId,
         selector.pageId,
         { action: action as Record<string, unknown>, source },
-        assertPinned
+        application,
+        page
       );
       assertPinned();
-      return { prepared, assertPinned };
+      const assertOwners = () => {
+        application?.assertPinned();
+        page.assertAuthority();
+        this.assertReviewContext(sessionId, context);
+      };
+      return { prepared, assertPinned, assertOwners };
     } catch {
       try {
         assertPinned?.();
@@ -3989,64 +4048,81 @@ export class AgentBrowserService {
     }
   }
 
-  /** Private action projection; only admitted operators may inspect reviewed challenges. */
-  async getApproval(
-    sessionId: string,
-    tokenId: string
-  ): Promise<import('@agentbrowser/protocol').OperatorApprovalView> {
-    const resolved = await this.resolveApproval(sessionId, tokenId);
-    this.assertReviewContext(sessionId, resolved.context);
-    if (resolved.prepared) {
-      try {
-        const result = await resolved.prepared.get(tokenId, this.authority.signal(sessionId));
-        if (result) {
-          resolved.application?.assertPinned();
-          return result;
-        }
-      } catch {
-        // Source permission and authority failures are indistinguishable from absence.
-      }
-      throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
-    }
-    this.assertReviewDisclosureSafe(resolved.current);
-    return resolved.current;
+  /** Existing wire callers share preparation with later guarded publishers. */
+  async getApproval(sessionId: string, tokenId: string): Promise<OperatorApprovalView> {
+    return (await this.prepareApprovalDisclosureInScope(sessionId, tokenId)).view;
   }
 
   async decideApproval(
     sessionId: string,
     tokenId: string,
     decision: 'approve' | 'deny'
-  ): Promise<import('@agentbrowser/protocol').OperatorApprovalView> {
+  ): Promise<OperatorApprovalView> {
+    if (decision !== 'approve' && decision !== 'deny')
+      throw new ServiceError('INVALID_REQUEST', 'Approval decision must be approve or deny');
+    return (await this.prepareApprovalDisclosureInScope(sessionId, tokenId, decision)).view;
+  }
+
+  /** Capture a stored view while executing; later checks never repeat the lookup/decision. */
+  async prepareApprovalDisclosureInScope(
+    sessionId: string,
+    tokenId: string,
+    decision?: 'approve' | 'deny'
+  ): Promise<PreparedReviewDisclosure> {
     const resolved = await this.resolveApproval(sessionId, tokenId);
     this.assertReviewContext(sessionId, resolved.context);
     if (resolved.prepared) {
       try {
-        const result = await resolved.prepared.decide(
-          tokenId,
-          decision,
-          this.authority.signal(sessionId)
-        );
+        const signal = this.authority.signal(sessionId);
+        const result =
+          decision === undefined
+            ? await resolved.prepared.get(tokenId, signal)
+            : await resolved.prepared.decide(tokenId, decision, signal);
         if (result) {
-          resolved.application?.assertPinned();
-          return result;
+          const disclosure = resolved.prepared.capturePublication(result);
+          resolved.assertOwners();
+          this.assertReviewDisclosureSafe(disclosure.view);
+          resolved.assertOwners();
+          return disclosure;
         }
       } catch {
         // Source permission and authority failures are indistinguishable from absence.
       }
       throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
     }
-    // A legacy decision must not approve data that the operator cannot safely inspect.
+    const review = this.authority.captureReviewPublicationInScope(sessionId);
+    const pageId = resolved.current.action.pageId;
+    if (pageId !== undefined && typeof pageId !== 'string')
+      throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
+    const page = pageId === undefined ? undefined : this.capturePageOwnerInScope(sessionId, pageId);
     this.assertReviewDisclosureSafe(resolved.current);
-    const result = await this.approvalGate.decideReviewedApproval(
-      tokenId,
-      resolved.context,
-      decision
-    );
+    const result =
+      decision === undefined
+        ? resolved.current
+        : await this.approvalGate.decideReviewedApproval(tokenId, resolved.context, decision);
     this.authority.assert(sessionId);
     if (!result)
       throw new ServiceError('NOT_FOUND', 'Current approval cannot accept that decision');
-    this.assertReviewDisclosureSafe(result);
-    return result;
+    this.assertReviewContext(sessionId, resolved.context);
+    page?.assertAuthority();
+    const assertPublication = () => {
+      review.assertCurrent();
+      page?.publication.assertCurrent();
+    };
+    const assertExecution = () => {
+      this.assertReviewContext(sessionId, resolved.context);
+      page?.assertAuthority();
+    };
+    const disclosure = captureReviewDisclosure(result, {
+      assertExecution,
+      assertCurrent: assertPublication,
+      assertPinned: assertPublication,
+      assertDisclosureSafe: (view) => this.assertReviewDisclosureSafe(view),
+    });
+    // Legacy wire callers unwrap the view before publication adoption. Pin their
+    // execution owners after the last secret callback, without invoking host policy.
+    assertExecution();
+    return disclosure;
   }
 
   private async checkApproval(

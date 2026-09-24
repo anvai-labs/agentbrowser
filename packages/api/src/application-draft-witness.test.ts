@@ -106,6 +106,7 @@ function fixture() {
   const page = {
     identity: { sessionId: 'session', pageId: 'page', sessionIncarnation: 'incarnation' },
     assertAuthority: vi.fn(),
+    publication: { assertCurrent: vi.fn() },
     read: vi.fn(async () => structuredClone(native)),
   } satisfies PreparedNativeFormRead;
   const {

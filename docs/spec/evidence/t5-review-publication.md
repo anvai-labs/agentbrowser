@@ -1,6 +1,7 @@
 # T5 A3a1: session and application review publication owners
 
-Status: internal owner pins implemented; page/evidence composition and HTTP adoption pending.
+Status: A3a1 internal owner pins and A3a2 composition implemented and locally qualified;
+HTTP adoption remains pending. Delivery gates are recorded below.
 Base: develop `8752c6b` ([A4a2 #273](https://github.com/anvai-labs/agentbrowser/pull/273)).
 Design: [review publication ownership](../design/t5-review-publication.md).
 
@@ -75,3 +76,56 @@ Only after that qualification should A3 move real HTTP handlers to inert drafts 
 guarded publisher, with A4b wire/disconnect/late-output parity. The current HTTP probe
 still observes in_flight at onSend and completed after the response; internal owner checks
 alone do not fix that ordering or prove transport safety.
+
+## A3a2: page/evidence disclosure candidate
+
+Rebased on develop `e123a4d`, preserving SPA-capture changes in #279–#280 and
+the extraction budget repair in #281.
+The service extracts physical page ownership once and composes it with the existing
+SessionAuthority publication lifetime, application binding and evidence permission
+generation. Native reads retain their original execution-only admission and tracking.
+No page recapture, replacement-by-ID lookup, evidence collection, token lookup,
+consent consumption or effect dispatch is performed to publish a captured view.
+
+`PreparedEvidenceReview.capturePublication` and the shared `captureReviewDisclosure`
+return detached, deeply frozen views. Their guards expire with the original publisher
+and latch observed refusal. Existing protocol approval-view bounds remain authoritative;
+publication does not silently impose the smaller verification-input depth budget.
+The existing snapshot freezer is reused after protocol parsing.
+
+The service's application review, approval get and approval decide wrappers share
+the same preparation paths with future guarded publishers. Ordinary approvals do
+not require native-form support. An omitted decision is still refused, never
+silently converted into inspection by the optional-decision preparation helper.
+
+Trusted permission owners must advance their generation on every evidence permission
+change, including regrant. Application policy replacement must use existing authority
+invalidation. Reentrant callbacks remain supported; secret disclosure is checked
+after callbacks and final page/application pins are callback-free. Silent same-generation
+source changes violate the trusted-owner contract; arbitrary unversioned Boolean
+application policy mutation is outside its guarantee. Repeating more callbacks cannot
+close that boundary. See the [owner-consistency contract](../design/t5-review-publication.md#trusted-owner-consistency).
+
+Qualification on this candidate:
+
+- 40 added regressions; the original 27 missing-publication cases failed first.
+  A later omitted-decision compatibility case also failed before its repair.
+- Independent review found a missing final execution-owner pin in ordinary approval
+  get/decide preparation. Three failing-first cases reproduced page replacement from
+  the terminal secret check. The ordinary path now reuses its callback-free execution
+  guard after capture, preserving owner checks for existing wire wrappers too.
+- 91 focused control tests and 154 API/service/HTTP tests passed on `124afc3`.
+  The subsequent terminal-secret repair passes all 21 ordinary-approval tests.
+  Whole-workspace build passes on the rebased candidate.
+- Generated/get/approve/deny views publish only in their original run, after operation
+  finalization while exclusion is held. Deferred application/source/page/secret changes
+  suppress sends. Publication deadlines preserve finalized approval facts and refuse
+  retained late sends. Existing compiled CLI approval lifecycle remains qualified.
+- A terminal permission callback that revokes/regrants evidence or replaces the physical
+  page suppresses output without new reads or effects. Retained guards cannot revive
+  under another operation or restored owner. Deep legacy views retain existing limits.
+
+Normal full hooks, independent final review and PR CI remain required. This candidate
+does not migrate HTTP send ownership, add a journal or advertise durable recovery.
+Next is A3 HTTP adoption and A4b transport/replay parity; T5 stays approximately 10%
+and 3/9 finite milestones remain complete.
