@@ -15,6 +15,7 @@ import {
   AutofillRequestSchema,
   DEFAULT_AGENT_MODE,
   DELIVERED_ACTION_TYPES,
+  ExtractMaxBytesSchema,
   INTERACTION_GUIDANCE,
   ObservationRequestSchema,
   PageStateSchema,
@@ -28,6 +29,7 @@ import {
   formatErrorForUser,
   parseAutofillReport,
   parseAutofillRequest,
+  parseExtractMaxBytes,
   parseObservationRequest,
   parsePlanSteps,
   parseScreenshotRequest,
@@ -497,6 +499,7 @@ export function buildTools(client: McpClient): ToolDefinition[] {
             enum: [...DELIVERED_EXTRACT_FORMATS],
             description: 'What to extract (default: text).',
           },
+          maxBytes: ExtractMaxBytesSchema,
           schema: {
             type: 'object',
             description:
@@ -529,6 +532,7 @@ export function buildTools(client: McpClient): ToolDefinition[] {
           );
         }
         const request: ExtractRequest = { format: format as ExtractRequest['format'] };
+        if (args.maxBytes !== undefined) request.maxBytes = parseExtractMaxBytes(args.maxBytes);
         if (args.schema !== undefined && typeof args.schema === 'object') {
           request.schema = args.schema as Record<string, unknown>;
         }

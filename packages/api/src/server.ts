@@ -16,11 +16,13 @@ import { InMemoryTracer, MetricsRegistry, type SecretManager } from '@agentbrows
 import type { StructuredLogger } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
 import {
+  DEFAULT_EXTRACT_MAX_BYTES,
   DELIVERED_ACTION_TYPES,
   DELIVERED_EXTRACT_FORMATS,
   ErrorCode,
   agentModeAllows,
   isAgentMode,
+  parseExtractMaxBytes,
   parsePlanSteps,
   validateOperatorApprovalDecision,
   validateSessionRequest,
@@ -66,6 +68,8 @@ declare module 'fastify' {
 }
 
 export interface ServerOptions {
+  /** Maximum compact JSON extraction response bytes; defaults to 1 MiB. */
+  extractMaxBytes?: number;
   /** Trusted embedding source selection for private evidence-backed approval records. */
   evidenceReviewProvider?: import('./service.js').ServiceDependencies['evidenceReviewProvider'];
   /** Operator-owned rules. Client-supplied session policy can only restrict these. */
@@ -206,6 +210,9 @@ function statusFor(code: string): number {
 }
 
 export async function buildServer(options: ServerOptions = {}): Promise<FastifyInstance> {
+  const extractMaxBytes = parseExtractMaxBytes(
+    options.extractMaxBytes ?? DEFAULT_EXTRACT_MAX_BYTES
+  );
   // Validate before allocating service resources. Own the credential map so a
   // caller clearing it later cannot switch a running service into local mode.
   const configuredKeys = options.apiKeys ?? apiKeysFromEnv();
@@ -389,6 +396,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       ...(options.secretManager ? { secretManager: options.secretManager } : {}),
     });
   const service = new AgentBrowserService({
+    extractMaxBytes,
     engine,
     ...(options.evidenceReviewProvider !== undefined
       ? { evidenceReviewProvider: options.evidenceReviewProvider }
@@ -1573,6 +1581,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
           const result = await service.extract(sessionId, pageId, {
             format: format as never,
+            ...((body as { maxBytes?: number }).maxBytes !== undefined
+              ? { maxBytes: (body as { maxBytes: number }).maxBytes }
+              : {}),
             ...(schema !== undefined ? { schema } : {}),
             ...(records !== undefined ? { records } : {}),
           });

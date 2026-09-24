@@ -5,6 +5,16 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [Unreleased]
+
+### Fixed
+
+- CLI extraction prints complete data instead of silently cutting at 4,000 characters.
+  `extract --max-bytes` forwards a UTF-8 response budget through SDK/REST; optional MCP
+  exposes the same field. The server enforces one ceiling across all formats (default
+  1 MiB, configured at startup with `AGENTBROWSER_EXTRACT_MAX_BYTES`). Oversized results
+  fail explicitly without returning partial JSON or evidence.
+
 ## [1.10.1] - 2026-09-23
 
 ### Added

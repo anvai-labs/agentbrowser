@@ -128,6 +128,8 @@ export interface ActionResult {
 
 export interface ExtractRequest {
   format: 'text' | 'markdown' | 'links' | 'tables' | 'forms' | 'jsonld' | 'schema' | 'records';
+  /** Complete compact JSON response budget in UTF-8 bytes, bounded by the server ceiling. */
+  maxBytes?: number;
   /** JSON Schema constraining the extraction (format: 'schema' only). */
   schema?: Record<string, unknown>;
   /** Repeating-structure selectors (format: 'records' only). */
@@ -138,6 +140,7 @@ export interface ExtractRequest {
 // these from the SDK rather than redeclaring them.
 export {
   DELIVERED_EXTRACT_FORMATS,
+  parseExtractMaxBytesText,
   REF_PATTERN,
   parseRef,
   parseAutofillRequest,

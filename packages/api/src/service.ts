@@ -91,6 +91,7 @@ import type {
   ScreenshotRequest,
 } from '@agentbrowser/protocol';
 import {
+  DEFAULT_EXTRACT_MAX_BYTES,
   DELIVERED_EXTRACT_FORMATS,
   DELIVERED_OBSERVATION_INCLUDES,
   DELIVERED_WAIT_TYPES,
@@ -99,6 +100,7 @@ import {
   VERIFICATION_SNAPSHOT_LIMITS,
   createOutcomeRunReportParser,
   decodeWireAction,
+  parseExtractMaxBytes,
   parseOutcomeRunRequest,
   parseRef,
   snapshotJsonData,
@@ -311,6 +313,8 @@ export interface ServiceEvidenceReviewContext {
 }
 
 export interface ServiceDependencies {
+  /** Operator-owned maximum complete extraction response bytes. */
+  extractMaxBytes?: number;
   approvalPolicy?: ActionRiskPolicyOptions;
   engine: BrowserEngine;
   /**
@@ -460,6 +464,7 @@ export class AgentBrowserService {
   readonly applicationAuthority: ApplicationAuthority;
   private readonly controlledContexts = new WeakSet<SessionContext>();
   private readonly engine: BrowserEngine;
+  private readonly extractMaxBytes: number;
   private readonly engines: Map<string, BrowserEngine> = new Map();
   private readonly coordinator: SessionCoordinator;
   private readonly normalizer: ObservationNormalizer;
@@ -506,6 +511,7 @@ export class AgentBrowserService {
   private sweepTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(deps: ServiceDependencies) {
+    this.extractMaxBytes = parseExtractMaxBytes(deps.extractMaxBytes ?? DEFAULT_EXTRACT_MAX_BYTES);
     const { evidenceReviewProvider, evidenceSourceRegistry, evidenceSourceRegistryProvider } = deps;
     if (evidenceReviewProvider !== undefined && typeof evidenceReviewProvider !== 'function')
       throw new Error('Invalid evidence review provider');
@@ -3474,11 +3480,27 @@ export class AgentBrowserService {
     pageId: string,
     request: {
       format?: DeliveredExtractFormat;
+      maxBytes?: number;
       schema?: Record<string, unknown>;
       records?: { container: string; fields: Record<string, string>; limit?: number };
     }
   ): Promise<import('@agentbrowser/engine').ExtractionResult> {
     return this.traced('extract', { sessionId, pageId, format: request.format }, async () => {
+      let maxBytes: number;
+      try {
+        maxBytes =
+          request.maxBytes === undefined
+            ? this.extractMaxBytes
+            : parseExtractMaxBytes(request.maxBytes);
+        if (maxBytes > this.extractMaxBytes) throw new Error();
+      } catch {
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          'Extraction maxBytes must be a positive safe integer within the server ceiling.',
+          false,
+          { serverMaxBytes: this.extractMaxBytes }
+        );
+      }
       const raw = await this.readPageSource(
         sessionId,
         pageId,
@@ -3493,47 +3515,60 @@ export class AgentBrowserService {
         metadata: { ...(raw.metadata ?? {}), revision: page.revision },
       };
 
-      switch (request.format) {
-        case 'text':
-          return this.secretManager.redact(extractVisibleText(sourced));
-        case 'markdown':
-          return this.secretManager.redact(extractMarkdown(sourced));
-        case 'links':
-          return this.secretManager.redact(extractLinks(sourced));
-        case 'tables':
-          return this.secretManager.redact(extractTables(sourced));
-        case 'forms':
-          return this.secretManager.redact(extractForms(sourced));
-        case 'jsonld': {
-          const result = this.secretManager.redact(extractJsonLd(sourced));
-          return { ...result, data: this.secretManager.redactUntrusted(result.data) };
-        }
-        case 'schema': {
-          this.validateExtractSchema(request.schema);
-          const extractor = new SchemaExtractor({
-            ...(this.secretManager !== undefined ? { secretManager: this.secretManager } : {}),
-          });
-          return await extractor.extract(sourced, request.schema as Record<string, unknown>);
-        }
-        case 'records': {
-          const recordsRequest = this.validateRecordsRequest(request.records);
-          try {
-            return this.secretManager.redact(extractRecords(sourced, recordsRequest));
-          } catch (error) {
-            // Caller-supplied selectors that are not valid CSS are a
-            // request-shape problem: 400, never the parser's raw 500.
-            if (error instanceof RecordsSelectorError) {
-              throw new ServiceError('INVALID_REQUEST', error.message, false);
-            }
-            throw error;
+      const result = await (async () => {
+        switch (request.format) {
+          case 'text':
+            return this.secretManager.redact(extractVisibleText(sourced));
+          case 'markdown':
+            return this.secretManager.redact(extractMarkdown(sourced));
+          case 'links':
+            return this.secretManager.redact(extractLinks(sourced));
+          case 'tables':
+            return this.secretManager.redact(extractTables(sourced));
+          case 'forms':
+            return this.secretManager.redact(extractForms(sourced));
+          case 'jsonld': {
+            const result = this.secretManager.redact(extractJsonLd(sourced));
+            return { ...result, data: this.secretManager.redactUntrusted(result.data) };
           }
+          case 'schema': {
+            this.validateExtractSchema(request.schema);
+            const extractor = new SchemaExtractor({
+              ...(this.secretManager !== undefined ? { secretManager: this.secretManager } : {}),
+            });
+            return await extractor.extract(sourced, request.schema as Record<string, unknown>);
+          }
+          case 'records': {
+            const recordsRequest = this.validateRecordsRequest(request.records);
+            try {
+              return this.secretManager.redact(extractRecords(sourced, recordsRequest));
+            } catch (error) {
+              // Caller-supplied selectors that are not valid CSS are a
+              // request-shape problem: 400, never the parser's raw 500.
+              if (error instanceof RecordsSelectorError) {
+                throw new ServiceError('INVALID_REQUEST', error.message, false);
+              }
+              throw error;
+            }
+          }
+          default:
+            throw new ServiceError(
+              'INVALID_REQUEST',
+              `Unknown extraction format: ${String(request.format)}. Supported: text, markdown, links, tables, forms, jsonld, schema, records.`
+            );
         }
-        default:
-          throw new ServiceError(
-            'INVALID_REQUEST',
-            `Unknown extraction format: ${String(request.format)}. Supported: text, markdown, links, tables, forms, jsonld, schema, records.`
-          );
-      }
+      })();
+      // One budget owner across all formats, measured after redaction. Never slice JSON,
+      // structured records or evidence independently of their source result.
+      const actualBytes = Buffer.byteLength(JSON.stringify(result), 'utf8');
+      if (actualBytes > maxBytes)
+        throw new ServiceError(
+          'OUTPUT_TRUNCATED',
+          'Extraction exceeds maxBytes; no partial result returned. Increase the limit within the server ceiling or narrow the extraction.',
+          false,
+          { maxBytes, serverMaxBytes: this.extractMaxBytes, actualBytes }
+        );
+      return result;
     });
   }
 

@@ -886,10 +886,14 @@ describe('AgentBrowser MCP server', () => {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           format: 'markdown',
+          maxBytes: 65536,
         })
       );
 
-      expect(sessions.extract).toHaveBeenCalledWith('ses_1', 'pg_1', { format: 'markdown' });
+      expect(sessions.extract).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        format: 'markdown',
+        maxBytes: 65536,
+      });
       const extracted = textOf(response);
       expect(extracted.data.markdown).toBe('# Report');
       expect(extracted.evidence[0].hash).toBe('abc12345');

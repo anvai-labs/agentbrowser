@@ -57,6 +57,7 @@ import {
   materializeAutofillMapping,
   parseAutofillReport,
   parseAutofillRequest,
+  parseExtractMaxBytesText,
   parseObservationRequest,
   parseOperatorApprovalView,
   parseOutcomeRunRequest,
@@ -1529,6 +1530,10 @@ export function buildCli(deps: CliDependencies): Cli {
         .argument('<pageId>')
         .option('--format <format>', `one of: ${DELIVERED_EXTRACT_FORMATS.join(' | ')}`)
         .option(
+          '--max-bytes <n>',
+          'complete JSON result byte budget; defaults to server ceiling (1 MiB unless configured); oversized results fail'
+        )
+        .option(
           '--schema <json>',
           'inline JSON Schema for format=schema (flat top-level properties)'
         )
@@ -1542,7 +1547,7 @@ export function buildCli(deps: CliDependencies): Cli {
               ctx,
               sessionId: string,
               pageId: string,
-              options: { format?: string; schema?: string; records?: string }
+              options: { format?: string; schema?: string; records?: string; maxBytes?: string }
             ) => {
               let schemaValue: Record<string, unknown> | undefined;
               if (options.schema !== undefined) {
@@ -1562,11 +1567,14 @@ export function buildCli(deps: CliDependencies): Cli {
               }
               const result = (await ctx.client.sessions.extract(sessionId, pageId, {
                 format: (options.format ?? 'text') as ExtractRequest['format'],
+                ...(options.maxBytes !== undefined
+                  ? { maxBytes: parseExtractMaxBytesText(options.maxBytes) }
+                  : {}),
                 ...(schemaValue !== undefined ? { schema: schemaValue } : {}),
                 ...(recordsValue !== undefined ? { records: recordsValue } : {}),
               })) as unknown;
               ctx.emit(result, () => [
-                JSON.stringify((result as { data?: unknown }).data, null, 2).slice(0, 4000),
+                JSON.stringify((result as { data?: unknown }).data, null, 2),
               ]);
             }
           )

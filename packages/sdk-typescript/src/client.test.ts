@@ -1391,6 +1391,7 @@ describe('SessionsClient.extract schema passthrough', () => {
 
     const localClient = new AgentBrowserClient({ baseUrl: 'http://localhost:5709' });
     await localClient.sessions.extract('ses_1', 'pg_1', {
+      maxBytes: 65536,
       format: 'schema',
       schema: { properties: { price: { type: 'string' } } },
     });
@@ -1400,6 +1401,7 @@ describe('SessionsClient.extract schema passthrough', () => {
     const call = calls[calls.length - 1] as unknown[];
     const body = JSON.parse((call[1] as { body: string }).body);
     expect(body).toEqual({
+      maxBytes: 65536,
       format: 'schema',
       schema: { properties: { price: { type: 'string' } } },
     });

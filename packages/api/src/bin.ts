@@ -8,11 +8,13 @@
 import { MetricsRegistry, StructuredLogger } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
 import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
+import { extractMaxBytesFromEnvironment } from './extraction-config.js';
 import { networkPolicyFromEnvironment } from './network-policy-config.js';
 import { startServer } from './server.js';
 
 // Validate before engine/server startup; invalid operator policy aborts startup.
 const networkPolicy = networkPolicyFromEnvironment(process.env);
+const extractMaxBytes = extractMaxBytesFromEnvironment(process.env);
 const engine = new PlaywrightChromiumEngine();
 
 // TD-BROWSER-7 Phase 2: real Safari via safaridriver, registered for
@@ -49,6 +51,7 @@ const envMs = (name: string): number | undefined => {
 const defaultTtlMs = envMs('AGENTBROWSER_DEFAULT_TTL_MS');
 const defaultIdleTimeoutMs = envMs('AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS');
 const server = await startServer({
+  extractMaxBytes,
   networkPolicy,
   engine,
   engines,
