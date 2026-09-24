@@ -49,6 +49,7 @@ test('wrong MCP release version fails', async () => {
 });
 
 const delegatedTools = [
+  'browser_page_create', 'browser_pages',
   'browser_snapshot', 'browser_plan', 'browser_autofill', 'browser_navigate', 'browser_observe',
   'browser_act', 'browser_extract', 'browser_html', 'browser_pdf',
   'browser_screenshot', 'browser_session', 'browser_operation',

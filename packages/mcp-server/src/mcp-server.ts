@@ -102,15 +102,20 @@ interface ToolDefinition {
   handler(args: Record<string, unknown>): Promise<unknown>;
 }
 
-/** Extract sessionId/pageId from tool args, or throw a usage error. */
-function sessionAndPage(args: Record<string, unknown>): [string, string] {
+function requireSessionId(args: Record<string, unknown>): string {
   if (typeof args.sessionId !== 'string' || args.sessionId.length === 0) {
     throw new UsageError('sessionId is required and must be a non-empty string.');
   }
+  return args.sessionId;
+}
+
+/** Extract sessionId/pageId from tool args, or throw a usage error. */
+function sessionAndPage(args: Record<string, unknown>): [string, string] {
+  const sessionId = requireSessionId(args);
   if (typeof args.pageId !== 'string' || args.pageId.length === 0) {
     throw new UsageError('pageId is required and must be a non-empty string.');
   }
-  return [args.sessionId, args.pageId];
+  return [sessionId, args.pageId];
 }
 
 /**
@@ -135,6 +140,7 @@ export const OPERATION_ID_TOOLS = Object.freeze([
   'browser_plan',
   'browser_autofill',
   'browser_navigate',
+  'browser_page_create',
 ] as const);
 
 export function buildTools(client: McpClient): ToolDefinition[] {
@@ -241,6 +247,45 @@ export function buildTools(client: McpClient): ToolDefinition[] {
     },
 
     {
+      name: 'browser_page_create',
+      requiredCapability: 'session.manage',
+      description:
+        'Create a page in an existing session, sharing its cookies and policy. ' +
+        'Returns the server-generated pageId; never invent page IDs. Optional url navigates before returning. ' +
+        'Do not retry an uncertain create automatically. Operation-ID deduplication applies only to controlled sessions; ' +
+        'operation status does not retain the created pageId. browser_pages shows inventory, not create-result correlation.',
+      inputSchema: {
+        type: 'object',
+        properties: { sessionId: { type: 'string' }, url: { type: 'string' } },
+        required: ['sessionId'],
+      },
+      handler: async (args) => {
+        const sessionId = requireSessionId(args);
+        const request = args.url === undefined ? undefined : { url: requireHttpUrl(args.url) };
+        return client.sessions.createPage(sessionId, request, ...operationOptions(args));
+      },
+    },
+
+    {
+      name: 'browser_pages',
+      requiredCapability: 'page.observe',
+      description:
+        'List current pages in a session, including adopted popups, using server-generated page IDs. ' +
+        'Inventory is not proof of which page an uncertain create produced. Closing a page does not close its siblings.',
+      inputSchema: {
+        type: 'object',
+        properties: { sessionId: { type: 'string' } },
+        required: ['sessionId'],
+      },
+      handler: async (args) => {
+        const sessionId = requireSessionId(args);
+        if (!client.sessions.listPages)
+          throw new UsageError('Client does not support page listing');
+        return { sessionId, pages: await client.sessions.listPages(sessionId) };
+      },
+    },
+
+    {
       name: 'browser_cookies',
       requiredCapability: 'session.manage',
       description:
@@ -252,11 +297,9 @@ export function buildTools(client: McpClient): ToolDefinition[] {
         required: ['sessionId'],
       },
       handler: async (args) => {
-        if (typeof args.sessionId !== 'string' || args.sessionId.length === 0) {
-          throw new UsageError('sessionId is required and must be a non-empty string.');
-        }
-        const cookies = await client.sessions.cookies(args.sessionId);
-        return { sessionId: args.sessionId, cookies };
+        const sessionId = requireSessionId(args);
+        const cookies = await client.sessions.cookies(sessionId);
+        return { sessionId, cookies };
       },
     },
 

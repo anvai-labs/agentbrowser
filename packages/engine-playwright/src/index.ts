@@ -1755,9 +1755,19 @@ class PlaywrightPage implements EnginePage {
     }
     this.bumpRevision();
 
+    // A resolved goto is not proof that target content loaded. Chromium can
+    // commit its internal error document without rejecting the navigation.
+    // Do not label this as a policy wall or expose its potentially private URL.
+    const url = this.page.url();
+    if (/^(?:chrome-error:|edge-error:|about:(?:neterror|certerror)(?:[?#]|$))/i.test(url)) {
+      throw new EngineError('INTERNAL', 'Browser navigation produced an error document', false, {
+        reason: 'browser_error_document',
+      });
+    }
+
     return {
       status: 'success',
-      url: this.page.url(),
+      url,
       redirectChain: [],
     };
   }
