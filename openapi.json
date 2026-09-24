@@ -4383,6 +4383,12 @@
                       "records"
                     ]
                   },
+                  "maxBytes": {
+                    "minimum": 1,
+                    "maximum": 9007199254740991,
+                    "description": "Maximum UTF-8 bytes of the complete compact JSON extraction result, including evidence. Omission uses the server ceiling (default 1048576 bytes, operator configurable). Requests cannot exceed that ceiling. Oversized results fail explicitly; no partial JSON is returned.",
+                    "type": "integer"
+                  },
                   "schema": {
                     "type": "object",
                     "description": "JSON Schema for format=schema: flat top-level properties (name -> {type, description}) + optional required array. Deterministic matching first; an injected model adapter (if configured) only fills fields the deterministic pass could not find.",

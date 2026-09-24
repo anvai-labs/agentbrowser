@@ -28,3 +28,4 @@ export * from './form-mapping.js';
 export * from './upload.js';
 
 export * from './operator-approval.js';
+export * from './extraction.js';

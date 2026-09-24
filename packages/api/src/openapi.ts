@@ -27,6 +27,7 @@ import {
   ElementTargetSchema,
   EngineCapabilitiesSchema,
   EngineInfoSchema,
+  ExtractMaxBytesSchema,
   NavigationStatusSchema,
   ObservationRequestSchema,
   OperationRecordSchema,
@@ -1216,6 +1217,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                   type: 'string',
                   enum: [...DELIVERED_EXTRACT_FORMATS],
                 },
+                maxBytes: ExtractMaxBytesSchema,
                 schema: {
                   type: 'object',
                   description:

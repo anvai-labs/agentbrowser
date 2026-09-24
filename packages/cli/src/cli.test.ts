@@ -1440,6 +1440,26 @@ describe('AgentBrowser CLI', () => {
       );
     });
 
+    it('prints complete extraction data beyond 4000 characters and forwards the byte budget', async () => {
+      const text = `${'x'.repeat(6000)}TAIL`;
+      sessions.extract = vi.fn().mockResolvedValue({ data: { text }, evidence: [] });
+      expect(await run('extract', 'ses_1', 'pg_1', '--max-bytes', '16384')).toBe(0);
+      expect(sessions.extract).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        format: 'text',
+        maxBytes: 16384,
+      });
+      expect(JSON.parse(out.join('\n'))).toEqual({ text });
+    });
+
+    it.each(['0', '-1', '1.5', '100bytes', '1e4', '9007199254740992'])(
+      'refuses an invalid extraction budget %s before contacting the service',
+      async (value) => {
+        sessions.extract = vi.fn();
+        expect(await run('extract', 'ses_1', 'pg_1', '--max-bytes', value)).toBe(1);
+        expect(sessions.extract).not.toHaveBeenCalled();
+      }
+    );
+
     it('help mentions the new commands', async () => {
       await run('--help');
       const text = out.join('\n');
