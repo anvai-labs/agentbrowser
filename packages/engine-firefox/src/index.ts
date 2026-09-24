@@ -304,7 +304,8 @@ class FirefoxPage implements EnginePage {
     return this.run(async () => {
       if (request.mode && !['interactive', 'content'].includes(request.mode))
         throw unsupported(`Observation mode ${request.mode} is not qualified`);
-      if ((request.scope && request.scope !== 'full') || request.include?.includes('overlays'))
+      const legacyScope = (request as ObservationRequest & { scope?: string }).scope;
+      if ((legacyScope && legacyScope !== 'full') || request.include?.includes('overlays'))
         throw unsupported('Scoped and overlay observations are not qualified');
       await this.clearRefs();
       const generation = ++this.generation;

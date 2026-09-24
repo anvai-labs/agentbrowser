@@ -426,7 +426,7 @@ describe('AgentBrowserService edge branches', () => {
           service.observe(sessionId, pageId, { sinceRevision: bad })
         );
         expect(error?.code).toBe('INVALID_REQUEST');
-        expect(error?.message).toContain('Invalid sinceRevision');
+        expect(error?.message).toContain('/sinceRevision');
       }
       await service.shutdown();
     });

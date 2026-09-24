@@ -29,3 +29,29 @@ export const actionSchemaMatchesType = null as unknown as SupportedAction satisf
 export const actionTypeMatchesSchema = null as unknown as SchemaStaticOf<
   typeof ActionSchema
 > satisfies SupportedAction;
+
+// Capture contracts must agree in both directions, including wait discriminants.
+import type {
+  DeliveredWaitConditionSchema,
+  ObservationRequestSchema,
+  ScreenshotRequestSchema,
+} from './schemas.js';
+import type { DeliveredWaitCondition, ObservationRequest, ScreenshotRequest } from './types.js';
+export const observationSchemaMatchesType = null as unknown as Static<
+  typeof ObservationRequestSchema
+> satisfies ObservationRequest;
+export const observationTypeMatchesSchema = null as unknown as ObservationRequest satisfies Static<
+  typeof ObservationRequestSchema
+>;
+export const screenshotSchemaMatchesType = null as unknown as Static<
+  typeof ScreenshotRequestSchema
+> satisfies ScreenshotRequest;
+export const screenshotTypeMatchesSchema = null as unknown as ScreenshotRequest satisfies Static<
+  typeof ScreenshotRequestSchema
+>;
+export const waitSchemaMatchesType = null as unknown as Static<
+  typeof DeliveredWaitConditionSchema
+> satisfies DeliveredWaitCondition;
+export const waitTypeMatchesSchema = null as unknown as DeliveredWaitCondition satisfies Static<
+  typeof DeliveredWaitConditionSchema
+>;

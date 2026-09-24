@@ -701,7 +701,12 @@ describe('AgentBrowser MCP server', () => {
       // F6: the ONE deliberate exception - selectorVisible is a wait poll,
       // never a way to address an action target. Assert it stays confined
       // to the wait/condition properties.
-      expect(act.inputSchema.properties.wait.properties.selector).toBeDefined();
+      expect(
+        act.inputSchema.properties.wait.anyOf.some(
+          (variant: { properties: Record<string, unknown> }) =>
+            variant.properties.selector !== undefined
+        )
+      ).toBe(true);
       expect(act.inputSchema.properties.target.properties.selector).toBeUndefined();
     });
   });

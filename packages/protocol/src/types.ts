@@ -10,6 +10,12 @@ export interface ScreenshotRequest {
   maskSensitive?: boolean;
   format?: 'png' | 'jpeg' | 'webp';
   quality?: number;
+  /**
+   * Optional readiness wait applied BEFORE the capture, so a JS SPA that has
+   * not painted yet does not yield a blank image. Reuses the same wait
+   * mechanism as browser_act.
+   */
+  wait?: DeliveredWaitCondition;
 }
 
 /**
@@ -122,6 +128,8 @@ export interface ApprovalPolicy {
  * Session creation response
  */
 export interface SessionResponse {
+  /** Diagnostics reported by the browser host. */
+  warnings?: string[];
   sessionId: string;
   engine: EngineInfo;
   createdAt: string;
@@ -227,16 +235,19 @@ export interface PageState {
    * dom-semantic-subset means an adapter supplies a limited DOM interpretation,
    * not native AX. Increasing snapshotTimeoutMs cannot restore missing support.
    *
-   * True when the whole-page ariaSnapshot budget was exceeded and `elements`
-   * came from a DOM-tag-only fallback: roles are bare HTML tags with no
-   * name/value, and any custom widget with no native form control (e.g. a
-   * div-based combobox) is entirely absent. Do not trust role/name matching
-   * on this observation - retry with a larger snapshotTimeoutMs on the
-   * session, or narrow the observation instead.
+   * aria-snapshot-timeout means elements came from a DOM fallback with
+   * best-effort roles and names. Its semantic coverage is reduced; a larger
+   * snapshotTimeoutMs may recover the accessibility tree.
+   *
+   * 'empty-snapshot-nonempty-dom' is a distinct case: the ariaSnapshot
+   * SUCCEEDED (no timeout) but surfaced no addressable elements while the live
+   * DOM plainly holds content - the common JS-SPA-not-mounted-yet failure. Wait
+   * for readiness (observe/screenshot `wait`) and retry, or read via
+   * browser_html.
    */
   degraded?: boolean;
   /** Why the observation has reduced semantic coverage. */
-  degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset';
+  degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset' | 'empty-snapshot-nonempty-dom';
 }
 
 /**
@@ -661,16 +672,24 @@ export const DELIVERED_WAIT_TYPES = [
   'selectorVisible',
   'minElements',
 ] as const;
-export type DeliveredWaitCondition = {
-  until: (typeof DELIVERED_WAIT_TYPES)[number];
+type DeliveredWaitOptions = {
   timeoutMs?: number;
-  /** urlPattern only: glob (wildcards) or a slash-delimited regex. */
   pattern?: string;
-  /** selectorVisible only: CSS selector polled for visibility. */
   selector?: string;
-  /** minElements only: minimum observed element count. */
   count?: number;
 };
+export type DeliveredWaitCondition = DeliveredWaitOptions &
+  (
+    | {
+        until: Exclude<
+          (typeof DELIVERED_WAIT_TYPES)[number],
+          'urlPattern' | 'selectorVisible' | 'minElements'
+        >;
+      }
+    | { until: 'urlPattern'; pattern: string }
+    | { until: 'selectorVisible'; selector: string }
+    | { until: 'minElements'; count: number }
+  );
 
 /**
  * Wait type
@@ -691,15 +710,22 @@ export type WaitType =
 /**
  * Observation request
  */
+export const DELIVERED_OBSERVATION_INCLUDES = ['overlays', 'fileInputs', 'formControls'] as const;
+
 export interface ObservationRequest {
-  mode?: ObservationMode;
+  mode?: (typeof DELIVERED_OBSERVATION_MODES)[number];
   maxBytes?: number;
   maxElements?: number;
   sinceRevision?: number;
   /** Resume a truncated observation from the cursor's nextOrdinal. */
   continueFrom?: number;
-  scope?: 'viewport' | 'full' | 'frame' | 'element';
-  include?: string[];
+  include?: (typeof DELIVERED_OBSERVATION_INCLUDES)[number][];
+  /**
+   * Optional readiness wait applied BEFORE the snapshot, so a slow-mounting JS
+   * SPA does not observe as empty. Reuses the same wait mechanism as
+   * browser_act (settled/networkidle/selectorVisible/minElements/...).
+   */
+  wait?: DeliveredWaitCondition;
 }
 
 /**
@@ -758,5 +784,12 @@ export interface ArtifactRef {
   type: 'screenshot' | 'pdf' | 'trace' | 'download' | 'html' | 'dom';
   contentType: string;
   sizeBytes: number;
-  url: string;
+  url?: string;
+  inline?: { contentBase64: string; byteSize: number };
+  createdAt?: number;
+  expiresAt?: number;
+  filename?: string;
+  sessionId?: string;
+  tenantId?: string;
+  warnings?: string[];
 }

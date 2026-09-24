@@ -11,9 +11,23 @@
 import type { Static, TSchema } from '@sinclair/typebox';
 import { TypeCompiler } from '@sinclair/typebox/compiler';
 import { Value } from '@sinclair/typebox/value';
+import { UsageError } from './errors.js';
 import { INTERACTION_GUIDANCE } from './interaction-guidance.js';
-import { ActionSchema, PlanStepSchema, SessionRequestSchema } from './schemas.js';
-import type { SessionRequest, SupportedAction } from './types.js';
+import {
+  ActionSchema,
+  DeliveredWaitConditionSchema,
+  ObservationRequestSchema,
+  PlanStepSchema,
+  ScreenshotRequestSchema,
+  SessionRequestSchema,
+} from './schemas.js';
+import type {
+  DeliveredWaitCondition,
+  ObservationRequest,
+  ScreenshotRequest,
+  SessionRequest,
+  SupportedAction,
+} from './types.js';
 import { validateUploadIntegrity } from './upload.js';
 
 /** One validation failure, addressed by pointer path. */
@@ -229,4 +243,74 @@ export function parseExecutionReport<S extends TSchema>(
     throw new Error(`Invalid ${operation} report. ${INTERACTION_GUIDANCE.uncertainWrite}`);
   }
   return report;
+}
+
+const captureObservation = TypeCompiler.Compile(ObservationRequestSchema);
+const captureScreenshot = TypeCompiler.Compile(ScreenshotRequestSchema);
+const deliveredWait = TypeCompiler.Compile(DeliveredWaitConditionSchema);
+
+/** Validate before starting any browser work; preserve the caller's request. */
+export function validateDeliveredWaitCondition(body: unknown): Validated<DeliveredWaitCondition> {
+  if (!deliveredWait.Check(body))
+    return {
+      ok: false,
+      issues: [...deliveredWait.Errors(body)].map(({ path, message }) => ({ path, message })),
+    };
+  const wait = body as DeliveredWaitCondition;
+  if (wait.until === 'urlPattern') {
+    const regex = /^\/(.*)\/([a-z]*)$/.exec(wait.pattern ?? '');
+    if (regex) {
+      try {
+        new RegExp(regex[1] ?? '', regex[2] ?? '');
+      } catch {
+        return {
+          ok: false,
+          issues: [{ path: '/pattern', message: "Wait 'urlPattern' regex is invalid" }],
+        };
+      }
+    }
+  }
+  return { ok: true, value: wait };
+}
+
+function validateCapture<T extends { wait?: DeliveredWaitCondition }>(
+  body: unknown,
+  schema: typeof captureObservation | typeof captureScreenshot
+): Validated<T> {
+  if (!schema.Check(body))
+    return {
+      ok: false,
+      issues: [...schema.Errors(body)].map(({ path, message }) => ({ path, message })),
+    };
+  const request = body as T;
+  if (request.wait !== undefined) {
+    const checked = validateDeliveredWaitCondition(request.wait);
+    if (!checked.ok)
+      return {
+        ok: false,
+        issues: checked.issues.map((issue) => ({ ...issue, path: `/wait${issue.path}` })),
+      };
+  }
+  return { ok: true, value: request };
+}
+
+export function validateObservationRequest(body: unknown): Validated<ObservationRequest> {
+  return validateCapture<ObservationRequest>(body, captureObservation);
+}
+export function validateScreenshotRequest(body: unknown): Validated<ScreenshotRequest> {
+  return validateCapture<ScreenshotRequest>(body, captureScreenshot);
+}
+
+function requireCapture<T>(result: Validated<T>): T {
+  if (!result.ok)
+    throw new UsageError(
+      `Invalid capture request: ${result.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; ')}`
+    );
+  return result.value;
+}
+export function parseObservationRequest(body: unknown): ObservationRequest {
+  return requireCapture(validateObservationRequest(body));
+}
+export function parseScreenshotRequest(body: unknown): ScreenshotRequest {
+  return requireCapture(validateScreenshotRequest(body));
 }

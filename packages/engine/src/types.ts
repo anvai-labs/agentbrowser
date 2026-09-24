@@ -167,8 +167,12 @@ export interface RawPageState {
    * narrow the observation (ref_id) instead.
    */
   degraded?: boolean;
-  /** Why the observation has reduced semantic coverage. */
-  degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset';
+  /**
+   * Why the observation has reduced semantic coverage.
+   * 'empty-snapshot-nonempty-dom': ariaSnapshot succeeded but surfaced no
+   * elements while the DOM holds content (JS SPA not mounted/hydrated yet).
+   */
+  degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset' | 'empty-snapshot-nonempty-dom';
 }
 
 /**
@@ -358,6 +362,8 @@ export interface BrowserEngine {
  * Engine session interface
  */
 export interface EngineSession {
+  /** Diagnostics from the engine host, shared by all consumption surfaces. */
+  readonly warnings?: readonly string[];
   /** Consume a captured download by unique ID, or an unambiguous legacy filename. */
   takeDownload?(
     pageId: string,
