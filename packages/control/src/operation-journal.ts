@@ -39,6 +39,7 @@ const noRead = (reason: JournalNoWriteReason): JournalLookupOutcome =>
 const uncertain = (reason: JournalUncertainReason) =>
   Object.freeze({ kind: 'uncertain' as const, reason });
 const equal = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
+type MutationMethod = 'reserveIntent' | 'markDispatch' | 'commitTerminal';
 function badResponse(): never {
   throw new Error('Invalid journal acknowledgment');
 }
@@ -241,8 +242,9 @@ function createJournal(
   };
   const negative = (
     value: Record<string, unknown>,
-    write: boolean
+    operation: MutationMethod | 'lookup'
   ): JournalMutationOutcome | JournalLookupOutcome | undefined => {
+    const write = operation !== 'lookup';
     if (value.kind === 'uncertain') {
       journalObject(value, ['kind', 'reason']);
       if (!uncertainReasons.includes(value.reason as string)) badResponse();
@@ -252,7 +254,11 @@ function createJournal(
     }
     if (value.kind === (write ? 'definitely_not_written' : 'definitely_not_read')) {
       journalObject(value, ['kind', 'reason']);
-      if (!noWriteReasons.includes(value.reason as string)) badResponse();
+      if (
+        !noWriteReasons.includes(value.reason as string) ||
+        (value.reason === 'admission_expired' && operation !== 'reserveIntent')
+      )
+        badResponse();
       if (['fenced', 'closed', 'expired'].includes(value.reason as string)) poisoned = true;
       return write
         ? noWrite(value.reason as JournalNoWriteReason)
@@ -332,7 +338,7 @@ function createJournal(
   }
 
   function mutate(
-    kind: 'reserveIntent' | 'markDispatch' | 'commitTerminal',
+    kind: MutationMethod,
     input: JournalTransition | JournalTerminalTransition,
     signal?: AbortSignal
   ): Promise<JournalMutationOutcome> {
@@ -342,7 +348,7 @@ function createJournal(
       (abort) => raw[kind](request as Stamped<JournalTerminalTransition>, abort),
       (rawResult) => {
         const value = unstamp(rawResult);
-        const refusal = negative(value, true);
+        const refusal = negative(value, kind);
         if (refusal) return refusal as JournalMutationOutcome;
         journalObject(value, ['kind', 'disposition', 'record']);
         if (value.kind !== 'acknowledged') badResponse();
@@ -457,7 +463,7 @@ function createJournal(
         (abort) => raw.lookup(stamp(key), abort),
         (rawResult) => {
           const value = unstamp(rawResult);
-          const refusal = negative(value, false);
+          const refusal = negative(value, 'lookup');
           if (refusal) return refusal as JournalLookupOutcome;
           if (value.kind === 'scoped_absent') {
             journalObject(value, ['kind']);

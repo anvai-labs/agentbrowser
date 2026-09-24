@@ -563,3 +563,32 @@ it.each(['namespace', 'method'] as const)(
     expect(f.raw.close).toHaveBeenCalledTimes(1);
   }
 );
+
+it.each(['markDispatch', 'commitTerminal', 'lookup'] as const)(
+  'refuses admission-only expiry returned for %s on accepted work',
+  async (method) => {
+    const f = fixture();
+    const journal = await f.open();
+    const reserved = await journal.reserveIntent(intent());
+    if (reserved.kind !== 'acknowledged') throw new Error();
+    f.raw[method].mockResolvedValueOnce(
+      f.stamp({
+        kind: method === 'lookup' ? 'definitely_not_read' : 'definitely_not_written',
+        reason: 'admission_expired',
+      }) as never
+    );
+    const result =
+      method === 'lookup'
+        ? await journal.lookup(intent().key)
+        : method === 'markDispatch'
+          ? await journal.markDispatch({ identity: reserved.record.identity, expectedRevision: 1 })
+          : await journal.commitTerminal({
+              identity: reserved.record.identity,
+              expectedRevision: 1,
+              dispatched: false,
+              terminal: { status: 'failed', evidenceRefIds: [] },
+            });
+    expect(result).toEqual({ kind: 'uncertain', reason: 'invalid_response' });
+    expect(journal.health).toBe('poisoned');
+  }
+);

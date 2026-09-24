@@ -33,8 +33,16 @@ initially poisoned the entire handle and prevented accepted records from complet
 `admission_expired` now refuses new work while retaining accepted transitions until the
 fixed retention horizon. Permanent ownership/retention loss still seals the handle.
 
-Local validation: 35 facade tests, 10 reusable adapter conformance cases and the complete
-control suite (590 tests) pass. Control type-check, test-support type-check, Biome,
+Final review also required operation-aware acknowledgment reasons: admission expiry
+returned for dispatch, terminal commit or lookup is malformed and now poisons the handle.
+All three forged-response tests failed before repair. The conformance matrix independently
+checks fingerprint-only conflict, exact reserves at later revisions, and before-write,
+committed-with-lost-ACK and never-settling faults across all three mutations. A replacement
+owner after fencing can observe retained terminal facts and verify an exact terminal retry
+without repeating an effect.
+
+Local validation: 38 facade tests, 17 reusable adapter conformance cases and the complete
+control suite (600 tests) pass. Control type-check, test-support type-check, Biome,
 826 documentation links and all 82 context selections pass. Full hooks, exact-head
 review and CI delivery references remain pending.
 Memory-model conformance cannot establish filesystem durability, process-loss behavior

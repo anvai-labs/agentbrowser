@@ -333,6 +333,11 @@ const intent = (operationId = 'op-1', actor = 'operator-a'): JournalIntent => ({
     operationId,
   },
   actor,
+  application: {
+    adapterId: 'adapter-a',
+    resourceId: 'resource-a',
+    bindingGeneration: 'binding-a',
+  },
   liveFingerprint: { algorithm: 'rest-json-v1', digest: `private-${operationId}` },
 });
 async function open(fixture: JournalConformanceFixture, configuration = namespace()) {
@@ -347,6 +352,46 @@ async function reserve(fixture: JournalConformanceFixture, operationId = 'op-1')
   expect(result.kind).toBe('acknowledged');
   if (result.kind !== 'acknowledged') throw new Error('intent was not reserved');
   return { journal, record: result.record };
+}
+
+async function prepareMutation(
+  fixture: JournalConformanceFixture,
+  method: Exclude<RawMethod, 'lookup'>
+) {
+  const journal = await open(fixture);
+  if (method === 'reserveIntent') {
+    return {
+      journal,
+      invoke: () => journal.reserveIntent(intent()),
+      beforeRevision: undefined,
+      afterRevision: 1,
+    };
+  }
+  const reserved = await journal.reserveIntent(intent());
+  if (reserved.kind !== 'acknowledged') throw new Error('intent was not reserved');
+  const dispatch: JournalTransition = { identity: reserved.record.identity, expectedRevision: 1 };
+  if (method === 'markDispatch') {
+    return {
+      journal,
+      invoke: () => journal.markDispatch(dispatch),
+      beforeRevision: 1,
+      afterRevision: 2,
+    };
+  }
+  const marked = await journal.markDispatch(dispatch);
+  if (marked.kind !== 'acknowledged') throw new Error('dispatch was not marked');
+  const terminal: JournalTerminalTransition = {
+    identity: reserved.record.identity,
+    expectedRevision: 2,
+    dispatched: true,
+    terminal: { status: 'completed', evidenceRefIds: ['evidence-1'] },
+  };
+  return {
+    journal,
+    invoke: () => journal.commitTerminal(terminal),
+    beforeRevision: 2,
+    afterRevision: 3,
+  };
 }
 
 /** Register the storage-neutral adapter contract against any independently observable fixture. */
@@ -375,6 +420,15 @@ export function operationJournalAdapterConformance(
         kind: 'conflict',
         reason: 'identity',
       });
+      const original = intent();
+      const changedFingerprint: JournalIntent = {
+        ...original,
+        liveFingerprint: { ...original.liveFingerprint, digest: 'different-private-digest' },
+      };
+      expect(await journal.reserveIntent(changedFingerprint)).toEqual({
+        kind: 'conflict',
+        reason: 'identity',
+      });
       expect(fixture.observe('deployment-a')?.records).toHaveLength(1);
       expect(fixture.observe('deployment-a')?.reservedBytes).toBe(16_384);
     });
@@ -395,6 +449,11 @@ export function operationJournalAdapterConformance(
       expect(fixture.observe('deployment-a')?.records[0]).toMatchObject({
         revision: 2,
         dispatched: true,
+      });
+      expect(await journal.reserveIntent(intent())).toMatchObject({
+        kind: 'acknowledged',
+        disposition: 'existing',
+        record: { revision: 2 },
       });
     });
 
@@ -417,6 +476,11 @@ export function operationJournalAdapterConformance(
       expect(await journal.commitTerminal(terminal)).toMatchObject({
         kind: 'acknowledged',
         disposition: 'already_applied',
+        record: { revision: 3 },
+      });
+      expect(await journal.reserveIntent(intent())).toMatchObject({
+        kind: 'acknowledged',
+        disposition: 'existing',
         record: { revision: 3 },
       });
       expect(await journal.markDispatch(dispatch)).toEqual({
@@ -465,6 +529,25 @@ export function operationJournalAdapterConformance(
         terminal: { status: 'failed' },
       });
     });
+
+    it.each(['completed', 'outcome_unknown'] as const)(
+      'refuses pre-dispatch %s without changing the reserved intent',
+      async (status) => {
+        const fixture = factory();
+        const { journal, record } = await reserve(fixture);
+        expect(
+          await journal.commitTerminal({
+            identity: record.identity,
+            expectedRevision: 1,
+            dispatched: false,
+            terminal: { status, evidenceRefIds: [] },
+          })
+        ).toEqual({ kind: 'definitely_not_written', reason: 'invalid_request' });
+        expect(fixture.observe('deployment-a')?.records).toEqual([
+          expect.objectContaining({ revision: 1, dispatched: false }),
+        ]);
+      }
+    );
 
     it('enforces one writer, full namespace descriptors, and transaction-time fences', async () => {
       const fixture = factory();
@@ -555,6 +638,34 @@ export function operationJournalAdapterConformance(
       expect(await other.lookup(record.identity.key)).toEqual({ kind: 'scoped_absent' });
     });
 
+    it('lets a replacement reconcile fenced terminal facts and retry only the terminal acknowledgment', async () => {
+      const fixture = factory();
+      const { journal: stale, record } = await reserve(fixture);
+      await stale.markDispatch({ identity: record.identity, expectedRevision: 1 });
+      const terminal: JournalTerminalTransition = {
+        identity: record.identity,
+        expectedRevision: 2,
+        dispatched: true,
+        terminal: { status: 'completed', evidenceRefIds: ['evidence-1'] },
+      };
+      await stale.commitTerminal(terminal);
+      fixture.releaseOwnership('deployment-a');
+      const replacement = await open(fixture);
+      expect(await stale.lookup(record.identity.key)).toEqual({
+        kind: 'definitely_not_read',
+        reason: 'fenced',
+      });
+      expect(await replacement.lookup(record.identity.key)).toMatchObject({
+        kind: 'found',
+        record: { revision: 3, terminal: terminal.terminal },
+      });
+      expect(await replacement.commitTerminal(terminal)).toMatchObject({
+        kind: 'acknowledged',
+        disposition: 'already_applied',
+        record: { revision: 3 },
+      });
+    });
+
     it('applies capacity and fixed horizons atomically without evicting admitted records', async () => {
       const fixture = factory();
       const configuration = namespace({ bounds: { ...namespace().bounds, maxRecords: 1 } });
@@ -596,36 +707,40 @@ export function operationJournalAdapterConformance(
       });
     });
 
-    it('distinguishes failure location through independent durable observation', async () => {
-      const before = factory();
-      const beforeJournal = await open(before);
-      before.failNext('reserveIntent', 'before_write');
-      expect(await beforeJournal.reserveIntent(intent())).toEqual({
-        kind: 'uncertain',
-        reason: 'io',
-      });
-      expect(before.observe('deployment-a')?.records).toHaveLength(0);
+    it.each(['reserveIntent', 'markDispatch', 'commitTerminal'] as const)(
+      'distinguishes before-write and committed ACK loss for %s by independent facts',
+      async (method) => {
+        const before = factory();
+        const beforeMutation = await prepareMutation(before, method);
+        before.failNext(method, 'before_write');
+        expect(await beforeMutation.invoke()).toEqual({ kind: 'uncertain', reason: 'io' });
+        expect(before.observe('deployment-a')?.records[0]?.revision).toBe(
+          beforeMutation.beforeRevision
+        );
 
-      const after = factory();
-      const afterJournal = await open(after);
-      after.failNext('reserveIntent', 'after_commit');
-      expect(await afterJournal.reserveIntent(intent())).toEqual({
-        kind: 'uncertain',
-        reason: 'io',
-      });
-      expect(after.observe('deployment-a')?.records).toHaveLength(1);
-    });
+        const after = factory();
+        const afterMutation = await prepareMutation(after, method);
+        after.failNext(method, 'after_commit');
+        expect(await afterMutation.invoke()).toEqual({ kind: 'uncertain', reason: 'io' });
+        expect(after.observe('deployment-a')?.records[0]?.revision).toBe(
+          afterMutation.afterRevision
+        );
+      }
+    );
 
-    it('keeps a never-settling store call pending and state absent after the public wait expires', async () => {
-      vi.useFakeTimers();
-      const fixture = factory();
-      const journal = await open(fixture);
-      fixture.failNext('reserveIntent', 'never_settles');
-      const result = journal.reserveIntent(intent());
-      await vi.advanceTimersByTimeAsync(26);
-      expect(await result).toEqual({ kind: 'uncertain', reason: 'wait_expired' });
-      expect(journal.pending).toBe(1);
-      expect(fixture.observe('deployment-a')?.records).toHaveLength(0);
-    });
+    it.each(['reserveIntent', 'markDispatch', 'commitTerminal'] as const)(
+      'retains never-settling %s I/O without inventing durable facts',
+      async (method) => {
+        vi.useFakeTimers();
+        const fixture = factory();
+        const mutation = await prepareMutation(fixture, method);
+        fixture.failNext(method, 'never_settles');
+        const result = mutation.invoke();
+        await vi.advanceTimersByTimeAsync(26);
+        expect(await result).toEqual({ kind: 'uncertain', reason: 'wait_expired' });
+        expect(mutation.journal.pending).toBe(1);
+        expect(fixture.observe('deployment-a')?.records[0]?.revision).toBe(mutation.beforeRevision);
+      }
+    );
   });
 }

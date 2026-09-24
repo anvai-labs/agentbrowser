@@ -176,6 +176,13 @@ See [B1/B2 evidence](../evidence/t5-journal-contract.md).
 
 ## Composition through shared authority
 
+C1 first needs a per-call actual-settlement signal backed by the facade's existing
+pending task owner. The current public promise bounds caller waiting; `pending` is
+diagnostic only. Awaiting that promise does not retain the session ticket through an
+ignored raw I/O cancellation. Add this seam with integration tests before wiring the
+journal: do not poll a count, copy the pending ledger or mistake a bounded outcome for
+raw settlement. B1/B2 intentionally remains disconnected until this gate is met.
+
 1. Reserve the existing ticket and persist intent before the business callback. Recheck
    captured entry/ticket/epoch after the wait. Timeout/cancellation seals the scope
    BEFORE late intent ACK can invoke the callback. Never acquire a second ticket.
