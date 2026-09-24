@@ -71,6 +71,26 @@ try {
       assert.equal(typeof session.pageId, 'string');
       const scope = { sessionId: session.sessionId, pageId: session.pageId };
       try {
+        const sdkView = await client.sessions.get(scope.sessionId);
+        const restView = await (await fetch(`${baseUrl}/v1/sessions/${scope.sessionId}`, {
+          headers: { authorization: `Bearer ${key}` },
+        })).json();
+        const cliResult = await runExecutable([process.execPath, join(root, 'packages/cli/dist/bin.js'), '--base-url', baseUrl, '--json', 'session', 'get', scope.sessionId], { env });
+        const cliView = JSON.parse(cliResult.stdout);
+        const inspected = await callTool('browser_session', { sessionId: scope.sessionId });
+        const listedSession = (await client.sessions.list()).find((item) => item.sessionId === scope.sessionId);
+        assert.ok(session.diagnostics, 'The creating engine captures launch diagnostics');
+        for (const view of [sdkView, restView, cliView, inspected.session, listedSession]) {
+          assert.deepEqual(view.engine, session.engine, 'All surfaces preserve selected adapter identity');
+          assert.deepEqual(view.diagnostics, session.diagnostics, 'All surfaces project the same captured facts');
+        }
+        assert.equal(session.diagnostics.attachment, 'local_launch');
+        assert.equal(session.diagnostics.launchMode, headed ? 'headed' : 'headless');
+        assert.equal(session.diagnostics.resourceModel, headed ? 'dedicated_local_browser' : 'shared_local_browser');
+        assert.equal(session.diagnostics.context.initScript, headed ? 'registered' : 'not_registered');
+        assert.equal(session.diagnostics.context.viewport.mode, headed ? 'no_viewport' : 'fixed');
+        assert.equal(typeof session.diagnostics.browserVersion, 'string');
+        assert.ok(['explicit', 'detected', 'playwright_default'].includes(session.diagnostics.executableSelection));
         for (const size of sizes) {
           const started = performance.now();
           const url = `${fixtureUrl}/${size}`;
@@ -137,6 +157,10 @@ try {
     await checkMcp([process.execPath, join(root, 'packages/mcp-server/dist/bin.js')], {
       expectedVersion: version, env: { ...env, AGENTBROWSER_API_KEY: grant.token, AGENTBROWSER_SESSION_ID: controlled.sessionId }, catalog: 'delegated', timeoutMs: 30_000,
       async exercise({ callTool, request }) {
+        const inspection = await callTool('browser_session', {});
+        assert.deepEqual(inspection.session.diagnostics, controlled.diagnostics);
+        assert.deepEqual(inspection.session.engine, controlled.engine);
+        assert.ok(inspection.control);
         const args = { url: `${fixtureUrl}/echo`, operationId: 'controlled-page-1' };
         const page = await callTool('browser_page_create', args);
         // Model a lost first result: use only known operation ID + inventory afterwards.
@@ -153,7 +177,7 @@ try {
         const wrong = await request('tools/call', { name: 'browser_page_create', arguments: { ...args, sessionId: 'other' } });
         assert.equal(wrong.isError, true);
         await client.sessions.takeover(controlled.sessionId);
-        for (const [name, arguments_] of [['browser_page_create', { operationId: 'revoked-create' }], ['browser_pages', {}]]) {
+        for (const [name, arguments_] of [['browser_page_create', { operationId: 'revoked-create' }], ['browser_pages', {}], ['browser_session', {}]]) {
           const revoked = await request('tools/call', { name, arguments: arguments_ });
           assert.equal(revoked.isError, true, 'An old grant cannot list or create after takeover');
         }
@@ -172,5 +196,5 @@ try {
   if (failures.length) throw new AggregateError(failures.map((item) => item.reason), 'Research smoke cleanup failed');
 }
 console.log(JSON.stringify({ status: 'pass', version, headed, measurements, jsonBytes: Buffer.byteLength(json),
-  coverage: 'Real Chromium + authenticated HTTP/SDK + MCP stdio; complete extraction persisted and grepped by this script',
+  coverage: 'Real Chromium + authenticated REST/SDK/CLI + MCP stdio; captured identity/diagnostics parity and complete extraction persisted and grepped by this script',
   limits: 'Synthetic local filings, not live SEC availability or installed Claude overflow-path qualification', cleanup: 'owned server, sessions, fixture and files closed' }));

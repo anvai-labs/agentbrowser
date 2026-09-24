@@ -4,7 +4,7 @@ Baseline: AgentBrowser 1.10.1 includes offline `describe`, bounded JSON input,
 plan/autofill result validation, receipt-correlated `outcome`, offline `test evaluate`,
 reusable `form prepare`, checked uploads and capture readiness waits. Synthetic
 fixture qualification does not prove production evidence or durable recovery.
-The extraction budget refinement below is pending the next release.
+The extraction budget refinement and launch diagnostics below are pending the next release.
 
 The CLI is a thin SDK client to the shared AgentBrowser service. It owns no browser
 session state or alternate executor. Use ordinary Bash/shell tools to inspect JSON;
@@ -58,6 +58,24 @@ The adapter speaks stdio to the harness and REST to the service. Port 5709 is no
 an HTTP MCP endpoint. `AGENTBROWSER_BASE_URL` configures the adapter; the CLI uses
 `--base-url`. Both support `AGENTBROWSER_API_KEY` when service authentication is
 enabled. Keep credentials out of committed project instructions and configuration.
+
+## Inspect captured session identity and launch facts
+
+```sh
+agentbrowser --base-url http://127.0.0.1:5709 session get "$SESSION_ID"
+agentbrowser --base-url http://127.0.0.1:5709 --json session get "$SESSION_ID" \
+  | jq '{sessionId, engine, diagnostics}'
+agentbrowser --base-url http://127.0.0.1:5709 --json session list
+```
+
+Create/get/list reuse the server's captured adapter identity and optional diagnostics.
+The adapter version and browser runtime version are distinct. `playwright_default`
+does not certify browser branding; `registered` confirms init-script registration,
+not its effect on every document. Remote CDP launch mode is `unknown` and its context
+is newly isolated, not an adopted logged-in profile. Missing diagnostics mean the
+adapter supplied no valid snapshot. The CLI performs no local launch detection.
+See the [shared contract](spec/design/session-launch-diagnostics.md) for ownership,
+privacy and authorization boundaries. No MCP registration is required.
 
 ## Discover only the command you need
 

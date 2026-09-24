@@ -76,6 +76,20 @@ class MockEngineSession implements EngineSession {
 }
 
 describe('SessionCoordinator', () => {
+  it('does not allocate or register a session when adapter capabilities fail', async () => {
+    const owner = new SessionCoordinator();
+    const engine = new MockEngine();
+    const failure = new Error('capabilities unavailable');
+    vi.spyOn(engine, 'capabilities').mockRejectedValue(failure);
+    const create = vi.spyOn(engine, 'createSession');
+    try {
+      await expect(owner.create({ engine: 'auto' }, engine)).rejects.toBe(failure);
+      expect(owner.getSessionCount()).toBe(0);
+      expect(create).not.toHaveBeenCalled();
+    } finally {
+      await owner.shutdown();
+    }
+  });
   it('cancels consumers when the background sweep detects expiry', async () => {
     vi.useFakeTimers();
     const owner = new SessionCoordinator({ cleanupCheckIntervalMs: 10 });

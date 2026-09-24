@@ -43,6 +43,9 @@ import {
 import {
   DELIVERED_ACTION_TYPES,
   DELIVERED_OBSERVATION_MODES,
+  type SessionDiagnostics,
+  captureBrowserVersion,
+  captureSessionDiagnostics,
   headedDisplayWarnings,
   validateUploadIntegrity,
 } from '@agentbrowser/protocol';
@@ -714,10 +717,27 @@ async function closeSessionResources(
   }
 }
 
+type BrowserFacts = Omit<SessionDiagnostics, 'context'>;
+
+interface BrowserAllocation {
+  browser: Browser;
+  facts: BrowserFacts;
+}
+
+function browserVersion(browser: Browser): string | undefined {
+  try {
+    const read = (browser as Browser & { version?: unknown }).version;
+    if (typeof read !== 'function') return undefined;
+    return captureBrowserVersion(read.call(browser));
+  } catch {
+    return undefined;
+  }
+}
+
 export class PlaywrightChromiumEngine implements BrowserEngine {
   private _name = 'playwright-chromium';
   private _version = '1.0.0';
-  private sharedBrowser: Promise<Browser> | undefined;
+  private sharedBrowser: Promise<BrowserAllocation> | undefined;
   private readonly pendingSessions = new Set<Promise<EngineSession>>();
   private closed = false;
   private closeTask: Promise<void> | undefined;
@@ -793,11 +813,24 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   }
 
   /** One engine-owned launch/connection, including while initialization is pending. */
-  private acquireSharedBrowser(): Promise<Browser> {
+  private acquireSharedBrowser(): Promise<BrowserAllocation> {
     if (this.sharedBrowser) return this.sharedBrowser;
     const pending =
       this.cdpEndpoint !== undefined
-        ? chromium.connectOverCDP(this.cdpEndpoint)
+        ? chromium.connectOverCDP(this.cdpEndpoint).then((browser) => {
+            const version = browserVersion(browser);
+            return {
+              browser,
+              facts: {
+                attachment: 'remote_cdp' as const,
+                browserFamily: 'chromium' as const,
+                ...(version !== undefined ? { browserVersion: version } : {}),
+                executableSelection: 'not_applicable' as const,
+                launchMode: 'unknown' as const,
+                resourceModel: 'shared_remote_connection' as const,
+              },
+            };
+          })
         : this.launchBrowser(true, false);
     this.sharedBrowser = pending;
     void pending.catch(() => {
@@ -825,6 +858,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     const warnings = !headless && this.cdpEndpoint === undefined ? headedDisplayWarnings() : [];
     for (const warning of warnings) console.warn(`[agentbrowser] ${warning}`);
     const ownsBrowser = !headless && this.cdpEndpoint === undefined;
+    let allocation: BrowserAllocation | undefined;
     let browser: Browser | undefined;
     let context: BrowserContext | undefined;
     try {
@@ -832,20 +866,22 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         if (this.browserFamily !== 'chromium') {
           throw new Error('cdpEndpoint requires the chromium family');
         }
-        browser = await this.acquireSharedBrowser();
+        allocation = await this.acquireSharedBrowser();
       } else if (!headless) {
-        browser = await this.launchBrowser(false, options.viewport === undefined);
+        allocation = await this.launchBrowser(false, options.viewport === undefined);
       } else {
-        browser = await this.acquireSharedBrowser();
+        allocation = await this.acquireSharedBrowser();
       }
+      browser = allocation.browser;
       this.requireOpen();
 
       const egress = options.requestPolicy ?? this.rootEgress;
 
       // Create browser context (incognito isolation)
       const locale = options.locale || 'en-US';
+      const contextViewport = resolveContextViewport(options.viewport, headless);
       context = await browser.newContext({
-        viewport: resolveContextViewport(options.viewport, headless),
+        viewport: contextViewport,
         locale,
         timezoneId: options.timezoneId || 'America/New_York',
         // Service-worker fetches bypass context.route; a choke point with a
@@ -858,6 +894,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
           : {}),
       });
       this.requireOpen();
+      let initScript: SessionDiagnostics['context']['initScript'] = 'not_registered';
       if (options.headless === false) {
         // Keep the headed overrides aligned with the context locale. Playwright
         // exposes only that locale in navigator.languages; include its base
@@ -867,6 +904,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
           const languages = Object.freeze([...new Set([locale, locale.split('-')[0]])]);
           Object.defineProperty(navigator, 'languages', { get: () => languages });
         }, locale);
+        initScript = 'registered';
       }
 
       // Request-event sink (spec 5.1 network summary, Phase 3): the route
@@ -904,6 +942,21 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       }
 
       this.requireOpen();
+      const diagnostics = captureSessionDiagnostics({
+        ...allocation.facts,
+        context: {
+          isolation: 'new_context',
+          viewport:
+            contextViewport === null
+              ? { mode: 'no_viewport' }
+              : {
+                  mode: 'fixed',
+                  width: contextViewport.width,
+                  height: contextViewport.height,
+                },
+          initScript,
+        },
+      });
       return new PlaywrightSession(
         context,
         this,
@@ -911,7 +964,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         requestSink,
         options.downloadPolicy,
         sessionSnapshotTimeout,
-        warnings
+        warnings,
+        diagnostics
       );
     } catch (error) {
       // Preserve the setup failure, even if cleanup itself fails. Shared browser
@@ -926,22 +980,47 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
    * createSession so headed (dedicated) and headless (shared) launches share
    * one code path.
    */
-  private async launchBrowser(headless: boolean, startMaximized: boolean): Promise<Browser> {
+  private async launchBrowser(
+    headless: boolean,
+    startMaximized: boolean
+  ): Promise<BrowserAllocation> {
     const launcher =
       this.browserFamily === 'firefox'
         ? (await import('playwright')).firefox
         : this.browserFamily === 'webkit'
           ? (await import('playwright')).webkit
           : chromium;
-    return launcher.launch({
+    let options: { args?: string[]; executablePath?: string } = {};
+    let executableSelection: SessionDiagnostics['executableSelection'] = 'playwright_default';
+    if (!headless) {
+      const headed = await this.headedChromiumOptions(startMaximized);
+      options = {
+        args: headed.args,
+        ...(headed.executablePath !== undefined ? { executablePath: headed.executablePath } : {}),
+      };
+      executableSelection = headed.executableSelection;
+    }
+    const browser = await launcher.launch({
       headless,
       // Headed sessions exist for human-in-the-loop flows (logins, SSO, Cloudflare
       // turnstiles). Playwright's bundled build + navigator.webdriver=true make
       // those challenges loop even with a real display and real clicks — observed
       // live against npmjs.com's turnstile. De-fingerprint headed only (ADR-013):
       // the headless pool keeps its defaults (detection there is honest).
-      ...(headless ? {} : await this.headedChromiumOptions(startMaximized)),
+      ...options,
     });
+    const version = browserVersion(browser);
+    return {
+      browser,
+      facts: {
+        attachment: 'local_launch',
+        browserFamily: this.browserFamily,
+        ...(version !== undefined ? { browserVersion: version } : {}),
+        executableSelection,
+        launchMode: headless ? 'headless' : 'headed',
+        resourceModel: headless ? 'shared_local_browser' : 'dedicated_local_browser',
+      },
+    };
   }
 
   /**
@@ -963,18 +1042,22 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   private async headedChromiumOptions(startMaximized = false): Promise<{
     args: string[];
     executablePath?: string;
+    executableSelection: SessionDiagnostics['executableSelection'];
   }> {
     // Playwright 1.62 does NOT pass --enable-automation (verified against
     // its default switch list), so there is nothing to ignoreDefaultArgs —
     // the live detectable signal was navigator.webdriver, which the init
     // script rewrites to a real browser's `false`.
     const args = ['--disable-blink-features=AutomationControlled'];
-    if (this.browserFamily !== 'chromium') return { args };
+    if (this.browserFamily !== 'chromium') {
+      return { args, executableSelection: 'playwright_default' };
+    }
     const resolved = await this.resolveHeadedExecutable();
-    console.info(`[agentbrowser] headed chromium binary: ${resolved ?? 'bundled Chromium'}`);
+    console.info(`[agentbrowser] headed chromium binary: ${resolved.path ?? 'bundled Chromium'}`);
     return {
       args: startMaximized ? [...args, '--start-maximized'] : args,
-      ...(resolved !== undefined ? { executablePath: resolved } : {}),
+      ...(resolved.path !== undefined ? { executablePath: resolved.path } : {}),
+      executableSelection: resolved.selection,
     };
   }
 
@@ -982,26 +1065,29 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
    * ADR-016 headed-binary precedence. Detection (branded candidates) runs
    * only when no explicit path is set and preferBundled is false.
    */
-  private async resolveHeadedExecutable(): Promise<string | undefined> {
+  private async resolveHeadedExecutable(): Promise<{
+    path?: string;
+    selection: 'explicit' | 'detected' | 'playwright_default';
+  }> {
     const fs = await import('node:fs/promises');
     if (this.chromeBinaryPath !== undefined) {
       try {
         await fs.access(this.chromeBinaryPath);
-        return this.chromeBinaryPath;
+        return { path: this.chromeBinaryPath, selection: 'explicit' };
       } catch {
-        return undefined;
+        return { selection: 'playwright_default' };
       }
     }
-    if (this.preferBundled) return undefined;
+    if (this.preferBundled) return { selection: 'playwright_default' };
     for (const candidate of this.brandedChromeCandidates) {
       try {
         await fs.access(candidate);
-        return candidate;
+        return { path: candidate, selection: 'detected' };
       } catch {
         // candidate absent — keep probing
       }
     }
-    return undefined;
+    return { selection: 'playwright_default' };
   }
 
   /**
@@ -1261,8 +1347,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     await Promise.allSettled(this.pendingSessions);
     const pending = this.sharedBrowser;
     this.sharedBrowser = undefined;
-    const browser = await pending?.catch(() => undefined);
-    await browser?.close();
+    const allocation = await pending?.catch(() => undefined);
+    await allocation?.browser.close();
   }
 }
 
@@ -1271,6 +1357,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
  */
 class PlaywrightSession implements EngineSession {
   readonly id: string;
+  readonly diagnostics?: SessionDiagnostics;
   private context: BrowserContext;
   private engine: PlaywrightChromiumEngine;
   private pageMap: Map<string, PlaywrightPage> = new Map();
@@ -1300,13 +1387,15 @@ class PlaywrightSession implements EngineSession {
     },
     /** Already validated/normalized by createSession(); undefined = engine default. */
     private readonly snapshotTimeoutMs?: number,
-    readonly warnings: readonly string[] = []
+    readonly warnings: readonly string[] = [],
+    diagnostics?: SessionDiagnostics
   ) {
     this.id = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     this.context = context;
     this.engine = engine;
     this.ownedBrowser = ownedBrowser;
     this.requestSink = requestSink;
+    if (diagnostics !== undefined) this.diagnostics = diagnostics;
     // F10: pages the browser opens on its own (window.open) still belong to
     // this session; pages opened via newPage() have no opener and are
     // skipped inside the handler.

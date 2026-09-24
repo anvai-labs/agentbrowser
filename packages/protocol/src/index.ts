@@ -29,3 +29,4 @@ export * from './upload.js';
 
 export * from './operator-approval.js';
 export * from './extraction.js';
+export * from './session-diagnostics.js';
