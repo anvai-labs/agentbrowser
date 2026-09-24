@@ -295,6 +295,8 @@ it('marks only the qualified routes and preserves HEAD, null receipts and static
       'GET /v1/sessions/:sessionId/application/receipts/:operationId',
       'GET /v1/sessions/:sessionId/operations/:operationId',
       'POST /v1/sessions/:sessionId/application/execute',
+      'POST /v1/sessions/:sessionId/application/reviews',
+      'POST /v1/sessions/:sessionId/control/prepare-resume',
     ]);
     const base = await server.listen({ host: '127.0.0.1', port: 0 });
     for (const suffix of ['application', 'application/receipts/missing']) {

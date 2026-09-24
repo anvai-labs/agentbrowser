@@ -1,6 +1,7 @@
 # T5 A3b: bounded application HTTP publication
 
-Status: implementation candidate on develop `89c20e6` (#282), pending review/delivery.
+Status: merged in PR #283 at develop `58e3605`, pending release.
+Continuation: [A3c/A4b browser/review publication](t5-browser-review-publication.md).
 Parent: [finalization/publication](t5-finalization-publication.md).
 Load only for the HTTP boundary. This packet does not complete A3 or A4b.
 

@@ -377,12 +377,14 @@ describe('application-scoped permission through delegated HTTP outcomes', () => 
           headers: { ...operator, 'x-agentbrowser-operation-id': 'page' },
         });
         expect(page.statusCode).toBe(201);
+        await settlePublication();
         const review = await server.inject({
           method: 'POST',
           url: `${base}/control/prepare-resume`,
           headers: operator,
         });
         expect(review.statusCode).toBe(200);
+        await settlePublication();
         const delegate = await server.inject({
           method: 'POST',
           url: `${base}/control/delegate`,
@@ -390,6 +392,7 @@ describe('application-scoped permission through delegated HTTP outcomes', () => 
           payload: { epoch: review.json().epoch, mode: mode === 'wrong-mode' ? 'forms' : 'qa' },
         });
         expect(delegate.statusCode).toBe(200);
+        await settlePublication();
         const headers = {
           authorization: `Bearer ${delegate.json().token as string}`,
           'x-agentbrowser-operation-id': 'outcome',

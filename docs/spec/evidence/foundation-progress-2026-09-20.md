@@ -1,9 +1,9 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
 Latest recheck: published 1.10.1 at `124afc35484225374bfb8739a07b87b2698d03f4`
-and develop `89c20e6941bcadf99a09db1a79c1ba9f6877383f` (#282), 2026-09-24.
+and develop `58e3605ca3aa6cfe1f25ae1e7921083a926af819` (#283), 2026-09-24.
 Release, npm, Homebrew and installed acceptance are complete; the live service was
-preserved on 1.10.0. Extraction budgets (#281) and A3a2 (#282) are develop-only.
+preserved on 1.10.0. Extraction budgets (#281), A3a2 (#282) and A3b HTTP (#283) are develop-only.
 The historical records below preserve earlier baselines; the current table and final
 checkpoint describe the latest acceptance position. No new release is required for
 the next develop slice.
@@ -21,7 +21,7 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T2 shared execution/verification | Complete, released | 100% | Production evidence belongs to T4; restart durability to T5 |
 | T3 QA regression | Complete, released | 100% | Broader provisioning and demand-backed report adapters are follow-ups |
 | T4 application operations/parity | Active | ~40% | Production UI/API oracle and evidence; U0/U1 operator UX merged; synthetic parity qualified; callback repair merged #236 |
-| T5 durable recovery | Active J0/A1/A2/A4a/A3a publication foundation | ~10% | HTTP adoption/parity, journal/recovery and process-loss qualification; no durable guarantee yet |
+| T5 durable recovery | Active J0/A1/A2/A4a/A3a publication foundation | ~10% | A3b HTTP merged; A3c/A4b candidate, then journal/recovery and process-loss qualification; no durable guarantee yet |
 | T6 forms/operations | Active | ~40% | Production sources, candidate/job eligibility and live qualification; C3c public synthetic workflow merged #257 |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
 | T8 installed harnesses | Active source repair; installed acceptance unqualified | 0% installed qualification | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |
@@ -437,3 +437,13 @@ authorities into four application/status routes. A3c browser/review routes, full
 parity and journal/recovery remain pending. Estimates remain T1~80%, T4/T6~40%,
 T5~10%, installed T8 unqualified; finite milestone count remains 3/9 (33%). T9 is
 complete for the 1.10.1 release checkpoint and recurs for subsequent releases.
+
+
+## Browser/review publication continuation — 2026-09-24
+
+PR #283 merged as `58e3605`; its candidate passed 3,891 tests (24 existing skips),
+independent review and eight PR plus eight post-merge checks without reruns. The
+[A3c/A4b candidate](t5-browser-review-publication.md) extends the same publisher to
+review and ordinary browser responses, retaining shared authority and permission owners.
+Journal B1/B2 starts only after this candidate's review and delivery gates. Main, tag,
+installed release and live headed sessions remain unchanged by this develop work.

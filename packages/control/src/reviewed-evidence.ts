@@ -27,6 +27,9 @@ export interface EvidenceReviewSource {
   readonly ownerId: string;
   readonly contract: Readonly<{ id: string; version: string }>;
   readonly permission: EvidencePermission;
+  /** Pure synchronous source permission check, valid during execution and publication.
+   * Collection owns execution-only reader guards; this callback must not read or dispatch.
+   */
   assertAuthorized(): void;
   collect(signal: AbortSignal): unknown | Promise<unknown>;
 }

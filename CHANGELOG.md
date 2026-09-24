@@ -12,7 +12,9 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - Application discovery, execution (including replay), receipts and operation status
   keep their captured publication authority through HTTP delivery. Late permission
   changes, disconnects and output deadlines suppress unsent responses without
-  rewriting committed operation facts. Browser/review HTTP adoption remains pending.
+  rewriting committed operation facts. Browser responses and captured operator reviews
+  use the same publisher after execution drains and finalizes. Prepare-resume delivery
+  failure preserves review state; collection cleanup cannot take over a replacement owner.
 
 - CLI extraction prints complete data instead of silently cutting at 4,000 characters.
   `extract --max-bytes` forwards a UTF-8 response budget through SDK/REST; optional MCP
@@ -24,8 +26,7 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 - Captured operator review views reuse shared page, application and evidence owners
   during their original publication phase. Disclosure checks cannot collect new
-  evidence, consume consent or dispatch effects. HTTP publication integration and
-  durable recovery remain separate gates.
+  evidence, consume consent or dispatch effects. Durable recovery remains unimplemented.
 
 ## [1.10.1] - 2026-09-23
 
