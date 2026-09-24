@@ -1370,7 +1370,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           const observation = await service.observe(
             sessionId,
             pageId,
-            (request.body ?? {}) as never
+            (request.body === undefined ? {} : request.body) as never
           );
           return reply.send(observation);
         },
@@ -1590,37 +1590,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           if (!requireOwnership(reply, sessionId, tenantOf(request))) {
             return reply;
           }
-          const body = (request.body ?? {}) as {
-            fullPage?: boolean;
-            format?: string;
-            quality?: number;
-            maskSensitive?: boolean;
-          };
-
-          const format = body.format ?? 'png';
-          const contentTypes: Record<string, string> = {
-            png: 'image/png',
-            jpeg: 'image/jpeg',
-            webp: 'image/webp',
-          };
-          const contentType = contentTypes[format];
-
-          if (!contentType) {
-            return reply.status(400).send({
-              error: {
-                code: 'INVALID_REQUEST',
-                message: `Unsupported screenshot format: ${format}. Supported: png, jpeg, webp`,
-                retryable: false,
-              },
-            });
-          }
-
-          const artifact = await service.screenshot(sessionId, pageId, {
-            ...(body.fullPage !== undefined ? { fullPage: body.fullPage } : {}),
-            format: format as 'png' | 'jpeg' | 'webp',
-            ...(body.quality !== undefined ? { quality: body.quality } : {}),
-            ...(body.maskSensitive !== undefined ? { maskSensitive: body.maskSensitive } : {}),
-          });
+          const artifact = await service.screenshot(
+            sessionId,
+            pageId,
+            (request.body === undefined ? {} : request.body) as never
+          );
           return reply.send(artifact);
         },
         { capability: 'page.capture', safe: true }

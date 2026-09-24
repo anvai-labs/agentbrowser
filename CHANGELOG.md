@@ -5,6 +5,43 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [1.10.1] - 2026-09-23
+
+### Added
+
+- SPA-capture robustness. `observe()` now flags an empty-but-successful
+  accessibility snapshot over a content-rich DOM (the common
+  JS-SPA-not-mounted-yet case) with `degradedReason: "empty-snapshot-nonempty-dom"`,
+  distinct from the timeout case, so callers can wait/retry or read via
+  `browser_html` instead of mistaking it for an empty page.
+- Optional readiness `wait` on `browser_observe`/`browser_screenshot` (and the
+  `observe`/`screenshot` CLI commands via `--wait-until/--wait-timeout/`
+  `--wait-selector/--wait-pattern/--wait-count`), reusing the `browser_act` wait
+  vocabulary. Applied before the snapshot/capture so slow-mounting SPAs do not
+  observe empty or screenshot blank.
+- Display diagnostics originate on the browser host and pass through REST,
+  SDK, CLI, and MCP session responses. Linux checks display environment hints;
+  a macOS launchd label alone no longer implies a missing GUI session. Operators
+  may declare availability with `AGENTBROWSER_ASSUME_DISPLAY=1` or absence with `0`.
+
+### Changed
+
+- The degraded DOM fallback (`getContentElements`) now covers more ARIA-role
+  widgets (`combobox`, `menuitem`, `tab`, `checkbox`, `option`, `contenteditable`)
+  and captures a best-effort accessible name, so a timed-out observation stays
+  addressable. Empty-DOM thresholds are tunable via
+  `AGENTBROWSER_EMPTY_DOM_MIN_TEXT` / `AGENTBROWSER_EMPTY_DOM_MIN_NODES`.
+
+- Capture requests share protocol schemas and runtime validation across REST,
+  SDK, CLI, and MCP, including condition-specific wait fields and bounded numeric
+  options. Invalid and unsupported options now fail instead of being ignored.
+- Screenshot readiness waits reach the HTTP service. MCP also exposes screenshot
+  `quality`/`maskSensitive` and observation `sinceRevision`. CLI `describe --schema`
+  and MCP output schemas expose the capture contracts; CLI human output reports
+  degraded observations. Artifact schemas describe both inline and URL delivery.
+- DOM fallback refs bind to the discovered node rather than a guessed accessible
+  name, preventing a ref from selecting a different node with a matching name.
+
 ## [1.10.0] - 2026-09-23
 
 ### Added

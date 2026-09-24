@@ -1,24 +1,29 @@
 # Release milestones and acceptance gates
 
-## Current candidate: 1.10.0 (2026-09-23)
+## Delivered checkpoint: 1.10.0 published and installed (2026-09-23)
 
 The owner authorized promotion after the LAN CIDR checkpoint (#275). Version
 1.10.0 is a minor release because the changes since 1.9.1 add public CLI/API
 capabilities. Scope and remaining limits are in the [changelog](../CHANGELOG.md).
-The [candidate evidence](spec/evidence/release-1.10.0.md) records validation.
+The [delivery evidence](spec/evidence/release-1.10.0.md) records validation.
 Release review also required narrow fixes for invalid API-key configuration and
 stored application-review authorization before promotion.
 
-This is release preparation, not publication evidence. Required sequence: reviewed
-release PR to develop, PR to protected main, verify the exact main tree and checks,
-annotated tag, release workflow, published artifact/npm verification, Homebrew tap
-PR and installation qualification, then synchronize main back into develop.
+Preparation [PR 276](https://github.com/anvai-labs/agentbrowser/pull/276) and promotion
+[PR 277](https://github.com/anvai-labs/agentbrowser/pull/277) merged through eight green
+checks each. Main `2ba4efe3992f5372881f988624dde4a9807c07e8` matches the reviewed tree;
+all eight main checks and all twelve release jobs passed. All fourteen downloadable
+artifacts, four clean server stamps and the exact npm package were verified. The
+actual Homebrew 1.9.1-to-1.10.0 upgrade, isolated installed wrapper and complete
+installed acceptance passed. Tap/main-back-sync identities are in the delivery evidence.
+The owner's existing service was preserved and still reported 1.9.0; restart it
+deliberately when its logged-in sessions can be closed.
 OIDC, inbound CIDRs, durable recovery and unfinished use-case milestones are not
 implicitly completed by this release.
 
 ## Delivered checkpoint: 1.9.1 published and installed (2026-09-20)
 
-Published baseline is **1.9.1**. T3 completed on develop through
+The prior published baseline was **1.9.1**. T3 completed on develop through
 [PR 231](https://github.com/anvai-labs/agentbrowser/pull/231), followed by the bounded
 T6 widget commitment repair in [PR 232](https://github.com/anvai-labs/agentbrowser/pull/232)
 at `d510a56d5d69e0cc9afe17dc56d27a0a11987cff`; its eight

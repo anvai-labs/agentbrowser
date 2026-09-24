@@ -10,13 +10,17 @@
  */
 
 import {
+  ArtifactRefSchema,
   AutofillReportSchema,
   AutofillRequestSchema,
   DEFAULT_AGENT_MODE,
   DELIVERED_ACTION_TYPES,
   INTERACTION_GUIDANCE,
+  ObservationRequestSchema,
+  PageStateSchema,
   PlanActionsSchema,
   PlanReportSchema,
+  ScreenshotRequestSchema,
   UsageError,
   WireActionEnvelopeSchema,
   agentModeAllows,
@@ -24,7 +28,9 @@ import {
   formatErrorForUser,
   parseAutofillReport,
   parseAutofillRequest,
+  parseObservationRequest,
   parsePlanSteps,
+  parseScreenshotRequest,
   validateWireAction,
 } from '@agentbrowser/protocol';
 import type { AgentCapability, AgentMode } from '@agentbrowser/protocol';
@@ -35,8 +41,6 @@ import type {
   ExtractRequest,
   MutationOptions,
   NavigationRequest,
-  ObservationRequest,
-  ScreenshotRequest,
   SessionRequest,
 } from '@agentbrowser/sdk-typescript';
 import { DELIVERED_EXTRACT_FORMATS, REF_PATTERN } from '@agentbrowser/sdk-typescript';
@@ -229,6 +233,7 @@ export function buildTools(client: McpClient): ToolDefinition[] {
         // Observing requires a page; create one up front so the caller's very
         // next tool call can be navigate or observe.
         const page = await client.sessions.createPage(session.sessionId);
+
         return { ...session, pageId: page.pageId };
       },
     },
@@ -390,6 +395,7 @@ export function buildTools(client: McpClient): ToolDefinition[] {
 
     {
       name: 'browser_observe',
+      outputSchema: PageStateSchema,
       requiredCapability: 'page.observe',
       description:
         'Get a semantic snapshot of the page: accessibility roles, names, form state and ' +
@@ -401,73 +407,30 @@ export function buildTools(client: McpClient): ToolDefinition[] {
         'Pass include:["fileInputs"] to mint refs for every input[type=file], hidden ones ' +
         'included, with id/accept/multiple attributes - needed to target upload at a ' +
         'specific file input when a page has several. ' +
-        'A response with degraded: true means the whole-page accessibility snapshot timed ' +
-        'out (large/complex page) and elements came from a DOM-tag-only fallback: no ' +
-        'name/value, and custom widgets with no native form control (e.g. a div-based ' +
-        'combobox) are missing entirely - do not role/name-match on it. Re-create the ' +
+        'degradedReason aria-snapshot-timeout means the accessibility snapshot timed out. ' +
+        'The DOM fallback includes best-effort names and roles, with reduced semantic coverage. Re-create the ' +
         'session with a larger snapshotTimeoutMs and retry instead. ' +
+        'degradedReason "empty-snapshot-nonempty-dom" is different: the snapshot succeeded ' +
+        'but found no elements while the DOM holds content (a JS SPA that has not mounted) - ' +
+        'pass `wait` (e.g. until:"networkidle" or "minElements") and retry, or read via ' +
+        'browser_html. ' +
         'When a response is truncated it carries `continuation` {nextOrdinal, remaining}; ' +
         'pass `continueFrom` (that nextOrdinal) on the next call to get the remaining ' +
         'elements in document order.',
       inputSchema: {
-        type: 'object',
+        ...ObservationRequestSchema,
         properties: {
-          sessionId: { type: 'string' },
-          pageId: { type: 'string' },
-          mode: {
-            type: 'string',
-            enum: ['interactive', 'content', 'accessibility'],
-            description: 'Observation mode (default: interactive).',
-          },
-          maxElements: { type: 'number', description: 'Maximum elements to return.' },
-          maxBytes: {
-            type: 'number',
-            description: 'Serialized observation budget in bytes.',
-          },
-          continueFrom: {
-            type: 'number',
-            description:
-              'Resume a truncated observation: pass the previous response ' +
-              '`continuation.nextOrdinal` to get the remaining elements in the same ' +
-              'document order.',
-          },
-          include: {
-            type: 'array',
-            items: { type: 'string', enum: ['overlays', 'fileInputs', 'formControls'] },
-            description:
-              'Optional enrichments. "overlays" adds an aggregated list of elements that ' +
-              'cover observed targets (useful when clicks would be intercepted). ' +
-              '"fileInputs" adds role:"fileinput" elements for every input[type=file] ' +
-              '(hidden ones included) so upload can target one by ref.',
-          },
+          ...ObservationRequestSchema.properties,
+          sessionId: { type: 'string', minLength: 1 },
+          pageId: { type: 'string', minLength: 1 },
         },
         required: ['sessionId', 'pageId'],
       },
       handler: async (args) => {
         const [sessionId, pageId] = sessionAndPage(args);
 
-        const request: ObservationRequest = {};
-        if (typeof args.mode === 'string') {
-          request.mode = args.mode as NonNullable<ObservationRequest['mode']>;
-        }
-        if (typeof args.maxElements === 'number') {
-          request.maxElements = args.maxElements;
-        }
-        if (typeof args.maxBytes === 'number') {
-          request.maxBytes = args.maxBytes;
-        }
-        if (typeof args.continueFrom === 'number') {
-          request.continueFrom = args.continueFrom;
-        } else if (typeof args.continueFrom === 'string' && /^\d+$/.test(args.continueFrom)) {
-          request.continueFrom = Number.parseInt(args.continueFrom, 10);
-        }
-        if (Array.isArray(args.include)) {
-          request.include = args.include.filter(
-            (token): token is string => typeof token === 'string'
-          );
-        }
-
-        return await client.sessions.observe(sessionId, pageId, request);
+        const { sessionId: _sessionId, pageId: _pageId, ...body } = args;
+        return await client.sessions.observe(sessionId, pageId, parseObservationRequest(body));
       },
     },
 
@@ -679,30 +642,27 @@ export function buildTools(client: McpClient): ToolDefinition[] {
 
     {
       name: 'browser_screenshot',
+      outputSchema: ArtifactRefSchema,
       requiredCapability: 'page.capture',
       description:
         'Capture a screenshot as optional evidence. Screenshots are not the primary ' +
-        'observation mode; use browser_observe to decide what to do next.',
+        'observation mode; use browser_observe to decide what to do next. Pass `wait` ' +
+        'to hold for readiness before capture so a JS SPA does not yield a blank image. ' +
+        'Session warnings report display limitations detected by the browser service.',
       inputSchema: {
-        type: 'object',
+        ...ScreenshotRequestSchema,
         properties: {
-          sessionId: { type: 'string' },
-          pageId: { type: 'string' },
-          fullPage: { type: 'boolean' },
-          format: { type: 'string', enum: ['png', 'jpeg', 'webp'] },
+          ...ScreenshotRequestSchema.properties,
+          sessionId: { type: 'string', minLength: 1 },
+          pageId: { type: 'string', minLength: 1 },
         },
         required: ['sessionId', 'pageId'],
       },
       handler: async (args) => {
         const [sessionId, pageId] = sessionAndPage(args);
 
-        const request: ScreenshotRequest = {};
-        if (args.fullPage === true) request.fullPage = true;
-        if (typeof args.format === 'string') {
-          request.format = args.format as NonNullable<ScreenshotRequest['format']>;
-        }
-
-        return await client.sessions.screenshot(sessionId, pageId, request);
+        const { sessionId: _sessionId, pageId: _pageId, ...body } = args;
+        return await client.sessions.screenshot(sessionId, pageId, parseScreenshotRequest(body));
       },
     },
   ];

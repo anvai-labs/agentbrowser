@@ -7,7 +7,13 @@
 
 import { Static, Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import { DELIVERED_ACTION_TYPES, DELIVERED_WAIT_TYPES, REF_PATTERN } from './types.js';
+import {
+  DELIVERED_ACTION_TYPES,
+  DELIVERED_OBSERVATION_INCLUDES,
+  DELIVERED_OBSERVATION_MODES,
+  DELIVERED_WAIT_TYPES,
+  REF_PATTERN,
+} from './types.js';
 import {
   UPLOAD_MIME_TYPE_MAX_LENGTH,
   UPLOAD_MIME_TYPE_PATTERN,
@@ -203,6 +209,7 @@ export const EngineInfoSchema = Type.Object({
 // ============================================================================
 
 export const SessionResponseSchema = Type.Object({
+  warnings: Type.Optional(Type.Array(Type.String())),
   sessionId: Type.String({ pattern: '^ses_[a-zA-Z0-9_]+$' }),
   engine: EngineInfoSchema,
   createdAt: Type.String(),
@@ -273,7 +280,7 @@ export const PageStateSchema = Type.Object({
   sessionId: Type.String(),
   pageId: Type.String(),
   revision: Type.Integer({ minimum: 1 }),
-  url: Type.String({ pattern: '^https?://[\\w\\-]+(\\.[\\w\\-]+)+\\S*$' }),
+  url: Type.String({ pattern: '^[a-zA-Z][a-zA-Z0-9+.-]*:' }),
   title: Type.String(),
   status: PageStatusSchema,
   focusedRef: Type.Optional(Type.String()),
@@ -287,7 +294,11 @@ export const PageStateSchema = Type.Object({
   continuation: Type.Optional(ContinuationCursorSchema),
   degraded: Type.Optional(Type.Boolean()),
   degradedReason: Type.Optional(
-    Type.Union([Type.Literal('aria-snapshot-timeout'), Type.Literal('dom-semantic-subset')])
+    Type.Union([
+      Type.Literal('aria-snapshot-timeout'),
+      Type.Literal('dom-semantic-subset'),
+      Type.Literal('empty-snapshot-nonempty-dom'),
+    ])
   ),
 });
 
@@ -433,13 +444,57 @@ export const WaitConditionSchema = Type.Object({
  * non-integer or out-of-range waitMs, which used to poison waitForLabel's
  * deadline arithmetic into a never-exiting poll loop.
  */
-export const DeliveredWaitConditionSchema = Type.Object({
-  until: Type.Union(DELIVERED_WAIT_TYPES.map((value) => Type.Literal(value))),
+/** Shared readiness vocabulary, including condition-specific required fields. */
+const waitProperties = {
   timeoutMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 300000 })),
-  pattern: Type.Optional(Type.String({ minLength: 1, maxLength: 2048 })),
+  pattern: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
   selector: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
   count: Type.Optional(Type.Integer({ minimum: 1, maximum: 10000 })),
-});
+};
+export const DeliveredWaitConditionSchema = Type.Union(
+  [
+    Type.Object(
+      {
+        ...waitProperties,
+        until: Type.Union(
+          DELIVERED_WAIT_TYPES.filter(
+            (until) =>
+              until !== 'urlPattern' && until !== 'selectorVisible' && until !== 'minElements'
+          ).map((until) => Type.Literal(until))
+        ),
+      },
+      { additionalProperties: false }
+    ),
+    Type.Object(
+      {
+        ...waitProperties,
+        until: Type.Literal('urlPattern'),
+        pattern: Type.String({ minLength: 1, maxLength: 512 }),
+      },
+      { additionalProperties: false }
+    ),
+    Type.Object(
+      {
+        ...waitProperties,
+        until: Type.Literal('selectorVisible'),
+        selector: Type.String({ minLength: 1, maxLength: 500 }),
+      },
+      { additionalProperties: false }
+    ),
+    Type.Object(
+      {
+        ...waitProperties,
+        until: Type.Literal('minElements'),
+        count: Type.Integer({ minimum: 1, maximum: 10000 }),
+      },
+      { additionalProperties: false }
+    ),
+  ],
+  {
+    description:
+      'Readiness wait before capture. urlPattern requires pattern (glob or /regex/flags), selectorVisible requires selector, and minElements requires count. timeoutMs defaults to 5000; zero uses a 1ms deadline.',
+  }
+);
 
 export const PlanStepSchema = Type.Object({
   action: Type.Union(DELIVERED_ACTION_TYPES.map((literal) => Type.Literal(literal))),
@@ -557,22 +612,33 @@ export const ActionSchema = Type.Union([
   DismissDialogActionSchema,
 ]);
 
-export const ObservationRequestSchema = Type.Object({
-  mode: Type.Optional(ObservationModeSchema),
-  maxBytes: Type.Optional(Type.Integer({ minimum: 0 })),
-  maxElements: Type.Optional(Type.Integer({ minimum: 0 })),
-  sinceRevision: Type.Optional(Type.Integer({ minimum: 1 })),
-  continueFrom: Type.Optional(Type.Integer({ minimum: 0 })),
-  scope: Type.Optional(
-    Type.Union([
-      Type.Literal('viewport'),
-      Type.Literal('full'),
-      Type.Literal('frame'),
-      Type.Literal('element'),
-    ])
-  ),
-  include: Type.Optional(Type.Array(Type.String())),
-});
+export const ObservationRequestSchema = Type.Object(
+  {
+    mode: Type.Optional(Type.Union(DELIVERED_OBSERVATION_MODES.map((mode) => Type.Literal(mode)))),
+    maxBytes: Type.Optional(Type.Integer({ minimum: 0 })),
+    maxElements: Type.Optional(Type.Integer({ minimum: 0 })),
+    sinceRevision: Type.Optional(Type.Integer({ minimum: 1 })),
+    continueFrom: Type.Optional(Type.Integer({ minimum: 0 })),
+    include: Type.Optional(
+      Type.Array(Type.Union(DELIVERED_OBSERVATION_INCLUDES.map((include) => Type.Literal(include))))
+    ),
+    wait: Type.Optional(DeliveredWaitConditionSchema),
+  },
+  { additionalProperties: false }
+);
+
+export const ScreenshotRequestSchema = Type.Object(
+  {
+    fullPage: Type.Optional(Type.Boolean()),
+    maskSensitive: Type.Optional(Type.Boolean()),
+    format: Type.Optional(
+      Type.Union([Type.Literal('png'), Type.Literal('jpeg'), Type.Literal('webp')])
+    ),
+    quality: Type.Optional(Type.Integer({ minimum: 0, maximum: 100 })),
+    wait: Type.Optional(DeliveredWaitConditionSchema),
+  },
+  { additionalProperties: false }
+);
 
 // ============================================================================
 // Action Request/Response Schemas
@@ -617,7 +683,16 @@ export const ArtifactRefSchema = Type.Object({
   ]),
   contentType: Type.String(),
   sizeBytes: Type.Integer({ minimum: 0 }),
-  url: Type.String(),
+  url: Type.Optional(Type.String()),
+  inline: Type.Optional(
+    Type.Object({ contentBase64: Type.String(), byteSize: Type.Integer({ minimum: 0 }) })
+  ),
+  createdAt: Type.Optional(Type.Number()),
+  expiresAt: Type.Optional(Type.Number()),
+  filename: Type.Optional(Type.String()),
+  sessionId: Type.Optional(Type.String()),
+  tenantId: Type.Optional(Type.String()),
+  warnings: Type.Optional(Type.Array(Type.String())),
 });
 
 export const ActionResultSchema = Type.Object({
