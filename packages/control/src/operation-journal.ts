@@ -12,6 +12,7 @@ import {
   parseJournalTransition,
 } from './journal-record.js';
 import type {
+  JournalCall,
   JournalCloseOutcome,
   JournalConflictReason,
   JournalIdentity,
@@ -39,6 +40,13 @@ const noRead = (reason: JournalNoWriteReason): JournalLookupOutcome =>
 const uncertain = (reason: JournalUncertainReason) =>
   Object.freeze({ kind: 'uncertain' as const, reason });
 const equal = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
+// Decorate a native promise; awaiting it retains the existing bounded-outcome contract.
+function journalCall<T>(outcome: Promise<T>, settled: Promise<void>): JournalCall<T> {
+  return Object.defineProperty(outcome, 'settled', { value: settled }) as JournalCall<T>;
+}
+function settledCall<T>(outcome: T): JournalCall<T> {
+  return journalCall(Promise.resolve(outcome), Promise.resolve());
+}
 type MutationMethod = 'reserveIntent' | 'markDispatch' | 'commitTerminal';
 function badResponse(): never {
   throw new Error('Invalid journal acknowledgment');
@@ -272,22 +280,26 @@ function createJournal(
     return undefined;
   };
 
-  async function io<T extends JournalMutationOutcome | JournalLookupOutcome>(
+  function io<T extends JournalMutationOutcome | JournalLookupOutcome>(
     write: boolean,
     invoke: (signal: AbortSignal) => PromiseLike<unknown>,
     validate: (value: unknown) => T,
     signal?: AbortSignal
-  ): Promise<T> {
+  ): JournalCall<T> {
     const refuse = (reason: JournalNoWriteReason) =>
       (write ? noWrite(reason) : noRead(reason)) as T;
     const refused =
       stateRefusal(write, signal) ??
       (slots >= namespace.bounds.maxInFlight ? 'capacity' : undefined);
-    if (refused) return refuse(refused);
+    if (refused) return settledCall(refuse(refused));
     slots++;
     let started = false;
     let task: Promise<T> | undefined;
-    const result = await within(
+    let resolveSettled!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      resolveSettled = resolve;
+    });
+    const outcome = within(
       (abortSignal) => {
         // Reservation already counted; capacity cannot invalidate its own slot.
         const stopped = stateRefusal(write, abortSignal);
@@ -322,26 +334,35 @@ function createJournal(
         void task.then(() => {
           slots--;
           pending.delete(task as Promise<T>);
+          resolveSettled();
         });
         return task;
       },
       namespace.bounds.timeoutMs,
       signal
-    );
-    if (!task) slots--;
-    if (result === TIMEOUT) {
-      if (!started) return refuse('aborted');
-      quarantined = true;
-      return uncertain('wait_expired') as T;
-    }
-    return result;
+    )
+      .then((result): T => {
+        if (result === TIMEOUT) {
+          if (!started) return refuse('aborted');
+          quarantined = true;
+          return uncertain('wait_expired') as T;
+        }
+        return result;
+      })
+      .finally(() => {
+        if (!task) {
+          slots--;
+          resolveSettled();
+        }
+      });
+    return journalCall(outcome, settled);
   }
 
   function mutate(
     kind: MutationMethod,
     input: JournalTransition | JournalTerminalTransition,
     signal?: AbortSignal
-  ): Promise<JournalMutationOutcome> {
+  ): JournalCall<JournalMutationOutcome> {
     const request = stamp(input);
     return io(
       true,
@@ -398,10 +419,7 @@ function createJournal(
     get pending() {
       return slots;
     },
-    async reserveIntent(
-      input: JournalIntent,
-      signal?: AbortSignal
-    ): Promise<JournalMutationOutcome> {
+    reserveIntent(input: JournalIntent, signal?: AbortSignal): JournalCall<JournalMutationOutcome> {
       let identity: JournalIdentity;
       try {
         const { liveFingerprint, ...base } = parseJournalIntent(input);
@@ -422,41 +440,41 @@ function createJournal(
         }) as JournalIdentity;
         assertJournalCompletionFits(identity, namespace);
       } catch {
-        return noWrite('invalid_request');
+        return settledCall(noWrite('invalid_request'));
       }
       return mutate('reserveIntent', { identity, expectedRevision: 0 }, signal);
     },
-    async markDispatch(
+    markDispatch(
       input: JournalTransition,
       signal?: AbortSignal
-    ): Promise<JournalMutationOutcome> {
+    ): JournalCall<JournalMutationOutcome> {
       let transition: JournalTransition;
       try {
         transition = parseJournalTransition(input, namespace);
-        if (transition.expectedRevision !== 1) return noWrite('invalid_request');
+        if (transition.expectedRevision !== 1) return settledCall(noWrite('invalid_request'));
       } catch {
-        return noWrite('invalid_request');
+        return settledCall(noWrite('invalid_request'));
       }
       return mutate('markDispatch', transition, signal);
     },
-    async commitTerminal(
+    commitTerminal(
       input: JournalTerminalTransition,
       signal?: AbortSignal
-    ): Promise<JournalMutationOutcome> {
+    ): JournalCall<JournalMutationOutcome> {
       let transition: JournalTerminalTransition;
       try {
         transition = parseJournalTransition(input, namespace, true);
       } catch {
-        return noWrite('invalid_request');
+        return settledCall(noWrite('invalid_request'));
       }
       return mutate('commitTerminal', transition, signal);
     },
-    async lookup(input: JournalKey, signal?: AbortSignal): Promise<JournalLookupOutcome> {
+    lookup(input: JournalKey, signal?: AbortSignal): JournalCall<JournalLookupOutcome> {
       let key: JournalKey;
       try {
         key = parseJournalKey(input);
       } catch {
-        return noRead('invalid_request');
+        return settledCall(noRead('invalid_request'));
       }
       return io(
         false,

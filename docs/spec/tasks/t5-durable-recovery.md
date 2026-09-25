@@ -1,6 +1,7 @@
 # T5: optional durable operations and recovery
 
-Status: HTTP/replay publication merged; B1/B2 journal contract merged #285; durable recovery unimplemented.
+Status: HTTP/replay publication merged; B1/B2 journal contract merged #285;
+C1a settlement prerequisite implemented locally; durable recovery unimplemented.
 Repository: agentbrowser. Depends on: T2.
 Inputs: core, contracts, execution, state-memory, security.
 
@@ -40,7 +41,9 @@ merged as PR #284 and covers the remaining bounded session routes ([evidence](..
 Its exact-head review and PR/post-merge CI are green. The current
 [J1-B1/B2 journal contract](../design/t5-journal-contract.md), merged as PR #285, adds storage-neutral
 validation and adapter conformance ([evidence](../evidence/t5-journal-contract.md)).
-C1–C4 application-only integration follows its delivery; J2–J4 remain proposed and loaded on demand.
+[C1a per-call settlement](../evidence/t5-journal-settlement.md) extends that facade without
+connecting a runtime store. C1–C4 application-only authority integration follows;
+J2–J4 remain proposed and loaded on demand.
 Browser durability waits for its existing target/policy/approval owners to support
 post-storage-wait revalidation. Do not advertise recovery from J0 or this design.
 
