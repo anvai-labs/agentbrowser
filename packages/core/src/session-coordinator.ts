@@ -128,6 +128,7 @@ export class SessionCoordinator {
 
     // Create engine session
     const sessionOptions: import('@agentbrowser/engine').EngineSessionOptions = {};
+    if (request.cdpAttach === true) sessionOptions.cdpAttach = true;
     if (request.downloadPolicy !== undefined)
       sessionOptions.downloadPolicy = request.downloadPolicy;
 
@@ -145,7 +146,7 @@ export class SessionCoordinator {
 
     if (request.headless !== undefined) {
       sessionOptions.headless = request.headless;
-    } else {
+    } else if (request.cdpAttach !== true) {
       sessionOptions.headless = true;
     }
 

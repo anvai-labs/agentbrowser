@@ -18,7 +18,7 @@
   "dependencies": {
     "@agentbrowser/engine": "workspace:*",
     "@agentbrowser/protocol": "workspace:*",
-    "playwright": "^1.49.1"
+    "playwright": "^1.62.1"
   },
   "devDependencies": {
     "@agentbrowser/testkit": "workspace:^",

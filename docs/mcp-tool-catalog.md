@@ -10,9 +10,9 @@ structured output contracts. An absent annotation is not a promise of read-only 
 Descriptions and annotations are hints, never authorization. Catalog presence does
 not prove a live backend, engine capability or current session grant.
 
-Catalog SHA-256 (complete descriptions and schemas): `6d44a29111ced2e3b9a06dc78d95e6c3921b08943a7749e986aaab2772d8a05b`
+Catalog SHA-256 (complete descriptions and schemas): `7c2a84a89a25ff23e8433bc8888347cbaea72e742e3eb768f16f4cbee5128687`
 
-## unbound/qa (16 tools; 40312 result bytes)
+## unbound/qa (16 tools; 40630 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -20,7 +20,7 @@ Catalog SHA-256 (complete descriptions and schemas): `6d44a29111ced2e3b9a06dc78d
 | `browser_autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
 | `browser_close` | sessionId | text JSON | Close a browser session. |
 | `browser_cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
-| `browser_create` | tenantId | text JSON | Create a new isolated browser session. |
+| `browser_create` | tenantId | text JSON | Create an ephemeral browser session (isolated by default). |
 | `browser_extract` | sessionId, pageId, format | text JSON | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
 | `browser_html` | sessionId, pageId | text JSON | Fetch the page's current HTML as inline text. |
 | `browser_navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
@@ -52,7 +52,7 @@ Catalog SHA-256 (complete descriptions and schemas): `6d44a29111ced2e3b9a06dc78d
 | `browser_session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## unbound/operations (16 tools; 40312 result bytes)
+## unbound/operations (16 tools; 40630 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -60,7 +60,7 @@ Catalog SHA-256 (complete descriptions and schemas): `6d44a29111ced2e3b9a06dc78d
 | `browser_autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
 | `browser_close` | sessionId | text JSON | Close a browser session. |
 | `browser_cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
-| `browser_create` | tenantId | text JSON | Create a new isolated browser session. |
+| `browser_create` | tenantId | text JSON | Create an ephemeral browser session (isolated by default). |
 | `browser_extract` | sessionId, pageId, format | text JSON | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
 | `browser_html` | sessionId, pageId | text JSON | Fetch the page's current HTML as inline text. |
 | `browser_navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
@@ -92,14 +92,14 @@ Catalog SHA-256 (complete descriptions and schemas): `6d44a29111ced2e3b9a06dc78d
 | `browser_session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## unbound/audit (15 tools; 35461 result bytes)
+## unbound/audit (15 tools; 35779 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
 | `browser_act` | sessionId, pageId, action | text JSON | Act through current element refs. |
 | `browser_close` | sessionId | text JSON | Close a browser session. |
 | `browser_cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
-| `browser_create` | tenantId | text JSON | Create a new isolated browser session. |
+| `browser_create` | tenantId | text JSON | Create an ephemeral browser session (isolated by default). |
 | `browser_extract` | sessionId, pageId, format | text JSON | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
 | `browser_html` | sessionId, pageId | text JSON | Fetch the page's current HTML as inline text. |
 | `browser_navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
@@ -130,7 +130,7 @@ Catalog SHA-256 (complete descriptions and schemas): `6d44a29111ced2e3b9a06dc78d
 | `browser_session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## unbound/appsec (16 tools; 40312 result bytes)
+## unbound/appsec (16 tools; 40630 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -138,7 +138,7 @@ Catalog SHA-256 (complete descriptions and schemas): `6d44a29111ced2e3b9a06dc78d
 | `browser_autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
 | `browser_close` | sessionId | text JSON | Close a browser session. |
 | `browser_cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
-| `browser_create` | tenantId | text JSON | Create a new isolated browser session. |
+| `browser_create` | tenantId | text JSON | Create an ephemeral browser session (isolated by default). |
 | `browser_extract` | sessionId, pageId, format | text JSON | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
 | `browser_html` | sessionId, pageId | text JSON | Fetch the page's current HTML as inline text. |
 | `browser_navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
@@ -170,7 +170,7 @@ Catalog SHA-256 (complete descriptions and schemas): `6d44a29111ced2e3b9a06dc78d
 | `browser_session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## unbound/bounty (16 tools; 40312 result bytes)
+## unbound/bounty (16 tools; 40630 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -178,7 +178,7 @@ Catalog SHA-256 (complete descriptions and schemas): `6d44a29111ced2e3b9a06dc78d
 | `browser_autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
 | `browser_close` | sessionId | text JSON | Close a browser session. |
 | `browser_cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
-| `browser_create` | tenantId | text JSON | Create a new isolated browser session. |
+| `browser_create` | tenantId | text JSON | Create an ephemeral browser session (isolated by default). |
 | `browser_extract` | sessionId, pageId, format | text JSON | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
 | `browser_html` | sessionId, pageId | text JSON | Fetch the page's current HTML as inline text. |
 | `browser_navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
@@ -210,7 +210,7 @@ Catalog SHA-256 (complete descriptions and schemas): `6d44a29111ced2e3b9a06dc78d
 | `browser_session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## unbound/forms (16 tools; 40312 result bytes)
+## unbound/forms (16 tools; 40630 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -218,7 +218,7 @@ Catalog SHA-256 (complete descriptions and schemas): `6d44a29111ced2e3b9a06dc78d
 | `browser_autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
 | `browser_close` | sessionId | text JSON | Close a browser session. |
 | `browser_cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
-| `browser_create` | tenantId | text JSON | Create a new isolated browser session. |
+| `browser_create` | tenantId | text JSON | Create an ephemeral browser session (isolated by default). |
 | `browser_extract` | sessionId, pageId, format | text JSON | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
 | `browser_html` | sessionId, pageId | text JSON | Fetch the page's current HTML as inline text. |
 | `browser_navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |

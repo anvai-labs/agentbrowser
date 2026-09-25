@@ -59,6 +59,39 @@ describe('bounded diagnostic capture', () => {
     };
     expect(captureSessionDiagnostics(source)).toBeUndefined();
   });
+  it('captures the bounded operator attachment shape without endpoint material', () => {
+    const captured = captureSessionDiagnostics({
+      attachment: 'cdp_attach',
+      browserFamily: 'chromium',
+      browserVersion: '135.0.1',
+      executableSelection: 'not_applicable',
+      launchMode: 'unknown',
+      resourceModel: 'operator_owned_browser',
+      endpointClass: 'loopback_http',
+      egress: 'navigation_preflight_only',
+      context: {
+        isolation: 'existing_default_context',
+        viewport: { mode: 'unknown' },
+        initScript: 'not_registered',
+      },
+    });
+    expect(captured).toEqual({
+      attachment: 'cdp_attach',
+      browserFamily: 'chromium',
+      browserVersion: '135.0.1',
+      executableSelection: 'not_applicable',
+      launchMode: 'unknown',
+      resourceModel: 'operator_owned_browser',
+      endpointClass: 'loopback_http',
+      egress: 'navigation_preflight_only',
+      context: {
+        isolation: 'existing_default_context',
+        viewport: { mode: 'unknown' },
+        initScript: 'not_registered',
+      },
+    });
+    expect(Object.isFrozen(captured)).toBe(true);
+  });
 });
 
 describe('lease wire compatibility', () => {
@@ -80,7 +113,7 @@ describe('lease wire compatibility', () => {
     for (const invalid of [
       { ...lease, expiresAt: -1 },
       { ...lease, sampledAt: 1.5 },
-      { ...lease, idleExpiresAt: Infinity },
+      { ...lease, idleExpiresAt: Number.POSITIVE_INFINITY },
       { ...lease, lastActivityAt: Number.MAX_SAFE_INTEGER + 1 },
       { ...lease, secret: 'private' },
       {},

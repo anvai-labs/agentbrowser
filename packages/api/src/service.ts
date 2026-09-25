@@ -1,4 +1,5 @@
 import { isNavigationFailureReason } from '@agentbrowser/protocol';
+import { type CdpAttachAdmission, requireCdpAttachAdmission } from './cdp-config.js';
 import { SessionAuthority } from './session-authority.js';
 /**
  * AgentBrowserService - the composition root
@@ -145,6 +146,7 @@ export class ServiceError extends Error {
 }
 
 export interface ServiceSessionRequest {
+  cdpAttach?: boolean;
   controlMode?: 'delegated';
   tenantId?: string;
   engine?: string;
@@ -311,6 +313,8 @@ export interface ServiceEvidenceReviewContext {
 }
 
 export interface ServiceDependencies {
+  /** Trusted startup capability. Absent means disabled. */
+  cdpAttachAdmission?: CdpAttachAdmission;
   /** Operator-owned maximum complete extraction response bytes. */
   extractMaxBytes?: number;
   approvalPolicy?: ActionRiskPolicyOptions;
@@ -462,6 +466,7 @@ export class AgentBrowserService {
    */
   readonly applicationAuthority: ApplicationAuthority;
   private readonly controlledContexts = new WeakSet<SessionContext>();
+  private readonly cdpAttachAdmission: CdpAttachAdmission;
   private readonly engine: BrowserEngine;
   private readonly extractMaxBytes: number;
   private readonly engines: Map<string, BrowserEngine> = new Map();
@@ -510,6 +515,7 @@ export class AgentBrowserService {
   private sweepTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(deps: ServiceDependencies) {
+    this.cdpAttachAdmission = deps.cdpAttachAdmission ?? 'disabled';
     this.extractMaxBytes = parseExtractMaxBytes(deps.extractMaxBytes ?? DEFAULT_EXTRACT_MAX_BYTES);
     const { evidenceReviewProvider, evidenceSourceRegistry, evidenceSourceRegistryProvider } = deps;
     if (evidenceReviewProvider !== undefined && typeof evidenceReviewProvider !== 'function')
@@ -1112,6 +1118,41 @@ export class AgentBrowserService {
         !request.tenantId)
     )
       throw new ServiceError('INVALID_REQUEST', 'Operator review requires a controlled session');
+    if (request.cdpAttach === true) {
+      if (
+        request.controlMode !== undefined ||
+        request.headless !== undefined ||
+        request.viewport !== undefined ||
+        request.locale !== undefined ||
+        request.timezoneId !== undefined ||
+        request.cookies !== undefined ||
+        request.allowDownloads === true ||
+        request.allowedHosts !== undefined ||
+        request.blockedHosts !== undefined ||
+        request.allowServiceWorkers !== undefined ||
+        request.maxDownloadBytes !== undefined ||
+        request.approval !== undefined ||
+        (request.engine !== undefined &&
+          request.engine !== 'auto' &&
+          request.engine !== this.engine.name)
+      )
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          'Operator attachment cannot apply launch, cookie, delegated-control, download, or per-session policy options. Use a normal isolated session for those options.'
+        );
+      try {
+        requireCdpAttachAdmission(this.cdpAttachAdmission);
+      } catch (error) {
+        throw this.mapError(error);
+      }
+      if ((await this.engine.capabilities()).supportsCdpAttach !== true)
+        throw new ServiceError(
+          'ENGINE_UNSUPPORTED',
+          'The configured engine does not support operator attachment.',
+          false,
+          { reason: 'CDP_ATTACH_UNSUPPORTED' }
+        );
+    }
     // Validate tenant ID format (lightweight security)
     this.validateTenantId(request.tenantId);
 
@@ -1123,6 +1164,7 @@ export class AgentBrowserService {
         ? this.networkPolicy.snapshot()
         : this.networkPolicy;
       const engineRequest: EngineSessionOptions & { engine: 'auto' } = { engine: 'auto' };
+      if (request.cdpAttach === true) engineRequest.cdpAttach = true;
       engineRequest.downloadPolicy = {
         allow: request.allowDownloads ?? false,
         maxBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,

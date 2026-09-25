@@ -9,6 +9,12 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ### Added
 
+- Opt-in local operator Chrome attachment via `session create --cdp-attach`, REST/SDK
+  `cdpAttach`, and MCP `browser_create.cdpAttach`. Requires a dedicated profile,
+  bearer authentication, a loopback endpoint and an explicit startup acknowledgement of limited network checks.
+  Shared diagnostics identify attachment and policy limitations; detach preserves
+  operator tabs and the browser. Hosted, multi-tenant and delegated use refuse.
+
 - Navigation failures carry bounded reasons across REST, SDK, CLI and MCP, distinguishing
   egress denial, unresolved names, resolver timeout/refusal, destination connection
   refusal, TLS refusal and browser error documents. CLI returns exit 1 and MCP sets

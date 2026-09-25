@@ -127,6 +127,7 @@ export const SessionCookieSchema = Type.Object({
 });
 
 export const SessionRequestSchema = Type.Object({
+  cdpAttach: Type.Optional(Type.Boolean()),
   controlMode: Type.Optional(Type.Literal('delegated')),
   tenantId: Type.Optional(Type.String({ minLength: 1 })),
   // Known engine names plus any registered engine name (TD-BROWSER-7
@@ -195,6 +196,7 @@ export const EngineCapabilitiesSchema = Type.Object({
   supportsPersistentStorage: Type.Boolean(),
   supportsAccessibilityTree: Type.Boolean(),
   supportsCdp: Type.Boolean(),
+  supportsCdpAttach: Type.Optional(Type.Boolean()),
   supportedObservationModes: Type.Array(ObservationModeSchema, { minItems: 1 }),
   supportedActionTypes: Type.Array(ActionTypeSchema, { minItems: 1 }),
 });

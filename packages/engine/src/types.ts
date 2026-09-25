@@ -37,6 +37,8 @@ export type {
  * Engine session creation options
  */
 export interface EngineSessionOptions {
+  /** Use the explicitly configured local-operator CDP attachment lane. */
+  cdpAttach?: boolean;
   downloadPolicy?: { allow: boolean; maxBytes: number };
   viewport?: Viewport;
   locale?: string;
