@@ -9,10 +9,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ### Added
 
+- Internal application journal writes revalidate authorization, consumed consent and
+  binding/input pins after the marker wait. Terminal acknowledgment gates successful
+  output and replay uses the last acknowledged facts stored beside the existing
+  operation record. Runtime selection, concrete storage and recovery remain gated.
+
 - Internal application journal composition admits work only after a fresh intent
   acknowledgment and dispatches effects only after a shared marker acknowledgment
   plus exact-scope final guards. Storage settlement retains the existing ticket;
-  application/service enablement, durable publication and recovery remain gated.
+  service enablement, concrete durable storage and recovery remain gated.
 
 - Internal journal calls expose actual storage completion separately from bounded
   caller waiting, reusing the existing task owner. Timeouts and cancellation cannot

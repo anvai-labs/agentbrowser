@@ -3,7 +3,8 @@
 Status: B1/B2 merged in PR #285 (`5ebf820`), contract commits `f9d9c58`/`ab495ce`.
 HTTP/replay publication is merged and green. C1a per-call settlement merged #297;
 [C1b authority composition](t5-journal-authority.md) is implemented internally.
-C2 application pins, C3 terminal/replay and C4 runtime qualification remain proposed.
+[C2 application pins and C3 terminal/replay](t5-journal-application-terminal.md)
+are under internal qualification. C4 runtime qualification remains proposed.
 Requires [J1-A response finalization](t5-finalization-publication.md) before runtime
 integration. Parent: [T5 J0–J4 sequence](t5-operation-journal.md). This module is
 loaded explicitly for journal work; unrelated modes do not load its structures.
@@ -279,6 +280,7 @@ settling I/O. A fake adapter alone cannot establish crash durability.
 J2 still needs one optional SQLite runtime/packaging/ownership audit and real process-loss
 tests on the supported Node/Bun matrix. J3 historical authorization/continuation and J4
 event/cursor qualification remain separate. No concrete store, public durability claim, percentage increase or release ships here.
-C1b connects the facade to internal SessionAuthority admission/dispatch. ApplicationAuthority,
-service configuration and transports remain disconnected. C2–C4, J2 runtime/storage
-qualification and J3/J4 recovery gates remain closed.
+C1b connects the facade to internal SessionAuthority admission/dispatch. C2/C3 extend
+trusted application composition and acknowledged publication; service configuration and
+transports remain disconnected. C4, J2 runtime/storage qualification and J3/J4 recovery
+gates remain closed. See the [C2/C3 packet](t5-journal-application-terminal.md).

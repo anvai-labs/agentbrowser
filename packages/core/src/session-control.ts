@@ -29,6 +29,18 @@ export interface ControlTicket {
   didDispatch: boolean;
 }
 
+type StoredOperation = {
+  fingerprint: string;
+  actor: string;
+  acknowledgmentRequired: boolean;
+  ticket: ControlTicket;
+  record: OperationRecord;
+  acknowledgment?: OperationRecord;
+};
+
+const acknowledgmentUnavailable = () =>
+  new ControlError('CONTROL_REQUIRED', 'Operation acknowledgment is unavailable');
+
 /** One ephemeral session owner. No queued work and no eviction of write identities. */
 export class SessionControl {
   private state: ControlState = 'HUMAN_ACTIVE';
@@ -36,10 +48,7 @@ export class SessionControl {
   private review = randomUUID();
   private active: ControlTicket | undefined;
   private finalized = false;
-  private readonly records = new Map<
-    string,
-    { fingerprint: string; actor: string; record: OperationRecord }
-  >();
+  private readonly records = new Map<string, StoredOperation>();
   private readonly maxOperations: number;
 
   constructor(options: { maxOperations?: number } = {}) {
@@ -67,6 +76,15 @@ export class SessionControl {
   operation(id: string): OperationRecord | undefined {
     const record = this.records.get(id)?.record;
     return record ? { ...record } : undefined;
+  }
+
+  /** Publication sees only acknowledged facts for selected operations. */
+  publicationOperation(id: string): OperationRecord | undefined {
+    const entry = this.records.get(id);
+    if (!entry) return undefined;
+    if (!entry.acknowledgmentRequired) return { ...entry.record };
+    if (!entry.acknowledgment) throw acknowledgmentUnavailable();
+    return { ...entry.acknowledgment };
   }
 
   /** Opaque control-review version, not permission or page/payload evidence. */
@@ -118,12 +136,21 @@ export class SessionControl {
     epoch?: number;
     operationId?: string;
     fingerprint?: string;
+    acknowledgmentRequired?: boolean;
   }): ControlTicket | { replay: OperationRecord } {
     if (this.state === 'STOPPED')
       throw new ControlError('CONTROL_REVOKED', 'Session control is stopped');
     if (request.actor === 'agent') this.authorizeAgent(request.epoch ?? -1);
     else if (this.state === 'AGENT_ACTIVE')
       throw new ControlError('CONTROL_REQUIRED', 'Human takeover is required');
+    if (
+      request.acknowledgmentRequired !== undefined &&
+      typeof request.acknowledgmentRequired !== 'boolean'
+    )
+      throw new ControlError('INVALID_REQUEST', 'Invalid acknowledgment selection');
+    const acknowledgmentRequired = request.acknowledgmentRequired === true;
+    if (acknowledgmentRequired && request.operationId === undefined)
+      throw new ControlError('INVALID_REQUEST', 'Acknowledgment requires an operation identity');
     if (request.operationId !== undefined) {
       if (!CONTROL_OPERATION_ID.test(request.operationId) || !request.fingerprint)
         throw new ControlError(
@@ -135,13 +162,16 @@ export class SessionControl {
         if (
           previous.fingerprint !== request.fingerprint ||
           previous.actor !== request.actor ||
-          previous.record.epoch !== this.epoch
+          previous.record.epoch !== this.epoch ||
+          previous.acknowledgmentRequired !== acknowledgmentRequired
         )
           throw new ControlError(
             'OPERATION_CONFLICT',
             'Operation ID belongs to different arguments or control generation'
           );
-        return { replay: { ...previous.record } };
+        const replay = this.publicationOperation(request.operationId);
+        if (!replay) throw acknowledgmentUnavailable();
+        return { replay };
       }
     }
     if (this.active) throw new ControlError('SESSION_BUSY', 'Session is busy');
@@ -163,6 +193,8 @@ export class SessionControl {
       this.records.set(request.operationId, {
         fingerprint: request.fingerprint ?? '',
         actor: request.actor,
+        acknowledgmentRequired,
+        ticket,
         record: {
           operationId: request.operationId,
           epoch: this.epoch,
@@ -173,6 +205,48 @@ export class SessionControl {
     this.active = ticket;
     this.finalized = false;
     return ticket;
+  }
+
+  /** Advance one exact operation's publication facts without reopening live authority. */
+  acknowledge(
+    ticket: ControlTicket,
+    projection: Pick<OperationRecord, 'status' | 'dispatched'>
+  ): void {
+    const operationId = ticket.operationId;
+    const entry = operationId === undefined ? undefined : this.records.get(operationId);
+    if (
+      this.active !== ticket ||
+      !entry ||
+      entry.ticket !== ticket ||
+      !entry.acknowledgmentRequired
+    )
+      throw acknowledgmentUnavailable();
+    const status = projection?.status;
+    const dispatched = projection?.dispatched;
+    if (
+      !['in_flight', 'completed', 'failed', 'outcome_unknown'].includes(status as string) ||
+      typeof dispatched !== 'boolean'
+    )
+      throw acknowledgmentUnavailable();
+    const previous = entry.acknowledgment;
+    if (previous?.status === status && previous.dispatched === dispatched) return;
+    const fromIntent = previous?.status === 'in_flight' && !previous.dispatched;
+    const fromMarker = previous?.status === 'in_flight' && previous.dispatched;
+    const valid =
+      previous === undefined
+        ? status === 'in_flight' && !dispatched
+        : fromIntent
+          ? (status === 'in_flight' && dispatched) || (status === 'failed' && !dispatched)
+          : fromMarker
+            ? status !== 'in_flight' && dispatched
+            : false;
+    if (!valid) throw acknowledgmentUnavailable();
+    entry.acknowledgment = {
+      operationId: entry.record.operationId,
+      epoch: entry.record.epoch,
+      status,
+      dispatched,
+    };
   }
 
   check(ticket: ControlTicket): void {

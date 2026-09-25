@@ -1,8 +1,9 @@
 # T5 C1b: intent and dispatch acknowledgment composition
 
 Base: develop `aeb7fddb52a2956507d228000645b0efa3da6cf2` (PR #297).
-Status: internal implementation and independent adversarial review complete;
-normal hooks and protected delivery pending.
+Status: merged as PR #298 (`a1443c7`), reviewed head `d68f818` and tree `7424826`.
+Normal hooks passed; pre-merge CI `36161742741` and post-merge CI `36162441704` passed 8/8.
+Independent exact-head review returned CLEAN/SHIP.
 Design: [C1b authority composition](../design/t5-journal-authority.md).
 
 SessionAuthority now composes the existing journal facade with the existing control
@@ -32,18 +33,21 @@ selections passed. The final focused suite has 46 passing cases, including valid
 descriptor refusal before admission or I/O. Test synchronization uses the adapter's
 explicit start/commit signals instead of wall-clock polling. Production-tree application acceptance
 also passed without API or browser adapters/drivers. Independent review returned
-CLEAN/SHIP. Normal hooks, exact-head review
-and CI delivery are recorded with the final PR candidate.
+CLEAN/SHIP. Normal hooks, exact-head review and both green CI runs are recorded
+on PR #298; delivery identifiers appear above.
 
-## Remaining gates
+## Remaining gates at C1b delivery
 
-This is internal composition, not runtime durability. ApplicationAuthority does not
-select the descriptor; service/env/REST/SDK/CLI/MCP have no new switch or capability.
-Journal-qualified run publication and duplicate replay refuse before C3. Separate
+The [C2/C3 packet](../design/t5-journal-application-terminal.md) now extends this
+historical checkpoint with application guards and acknowledged terminal/replay.
+
+At C1b delivery, ApplicationAuthority did not select the descriptor and journal-qualified
+publication/duplicate replay refused. C2/C3 now extend those internal paths;
+service/env/REST/SDK/CLI/MCP still have no new durability switch or capability. Separate
 low-level control status remains ephemeral execution information, not a durable ACK
 projection. The memory store cannot qualify filesystem or process-loss behavior.
 
-Next: C2 application-owned post-wait authorization, consent and binding/input pins;
-C3 terminal acknowledgment and replay projection beside the existing record owner;
-C4 shared runtime selection qualification. Real storage and restart/recovery remain
+C2/C3 now implement application-owned post-wait pins and terminal acknowledgment/replay
+projection beside the existing record owner. Next: C4 shared runtime selection
+qualification. Real storage and restart/recovery remain
 J2–J4. T5 remains approximately 10%; finite milestone completion remains 3/9 (33%).

@@ -200,8 +200,8 @@ for (const id of ['write', 'missing']) {
     let now = 0;
     const f = fixture({ now: () => now, ttlMs: 10 });
     await f.seed();
-    const operation = f.control.operation.bind(f.control);
-    vi.spyOn(f.control, 'operation').mockImplementation((key) => {
+    const operation = f.control.publicationOperation.bind(f.control);
+    vi.spyOn(f.control, 'publicationOperation').mockImplementation((key) => {
       now = 10;
       return operation(key);
     });

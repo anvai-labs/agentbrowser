@@ -1,14 +1,7 @@
 import type { EnginePage } from '@agentbrowser/engine';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createMemoryJournalFixture } from './journal-conformance.test-support.js';
-import type {
-  JournalNamespace,
-  OperationJournal,
-  RawJournalOpenOutcome,
-  RawOperationJournalAdapter,
-  RawOperationJournalHandle,
-} from './journal-types.js';
-import { openOperationJournal } from './operation-journal.js';
+import { createControllableJournalFixture, namespace } from './journal-authority.test-support.js';
+import type { OperationJournal } from './journal-types.js';
 import { SessionAuthority, type SessionPrincipal } from './session-authority.js';
 
 const operator: SessionPrincipal = { actor: 'operator', tenant: 'owner' };
@@ -24,151 +17,9 @@ const journalOperation = (id = 'application-write') => ({
   journal: { version: 1 as const, application },
 });
 
-function namespace(overrides: Partial<JournalNamespace> = {}): JournalNamespace {
-  return {
-    schemaVersion: 1,
-    namespaceId: 'session-authority-c1',
-    fingerprintVersion: 1,
-    fingerprintKeyId: 'test-key-1',
-    restoreGeneration: 'test-restore-1',
-    acceptUntil: 10_000,
-    retainUntil: 20_000,
-    maxFinalizationMs: 1_000,
-    bounds: {
-      maxRecordBytes: 16_384,
-      maxRecords: 16,
-      maxNamespaces: 2,
-      maxInFlight: 4,
-      timeoutMs: 25,
-    },
-    ...overrides,
-  };
-}
-
-type RawMutation = 'reserveIntent' | 'markDispatch' | 'commitTerminal' | 'lookup';
-type HoldPhase = 'before_write' | 'after_commit';
-
-interface HeldCall {
-  readonly started: Promise<void>;
-  readonly committed: Promise<void>;
-  release(): void;
-}
-
-/**
- * Test-only ACK transport shim. The memory adapter remains the independent state
- * authority; this wrapper can delay either the mutation or only its acknowledgment.
- */
-function controllableAdapter(base: RawOperationJournalAdapter) {
-  const queues = new Map<
-    RawMutation,
-    Array<{
-      phase: HoldPhase;
-      started: ReturnType<typeof Promise.withResolvers<void>>;
-      committed: ReturnType<typeof Promise.withResolvers<void>>;
-      release: ReturnType<typeof Promise.withResolvers<void>>;
-    }>
-  >();
-  const calls: Record<RawMutation, number> = {
-    reserveIntent: 0,
-    markDispatch: 0,
-    commitTerminal: 0,
-    lookup: 0,
-  };
-  const dispositions = new Map<RawMutation, Array<'applied' | 'already_applied' | 'existing'>>();
-  const holdNext = (method: RawMutation, phase: HoldPhase): HeldCall => {
-    const held = {
-      phase,
-      started: Promise.withResolvers<void>(),
-      committed: Promise.withResolvers<void>(),
-      release: Promise.withResolvers<void>(),
-    };
-    queues.set(method, [...(queues.get(method) ?? []), held]);
-    return {
-      started: held.started.promise,
-      committed: held.committed.promise,
-      release: () => held.release.resolve(),
-    };
-  };
-  const adapter: RawOperationJournalAdapter = {
-    async open(request, signal) {
-      const opened = (await base.open(request, signal)) as RawJournalOpenOutcome;
-      if (opened.kind !== 'opened') return opened;
-      const original = opened.handle;
-      const invoke = (
-        method: RawMutation,
-        requestValue: unknown,
-        requestSignal: AbortSignal
-      ): PromiseLike<unknown> => {
-        calls[method]++;
-        const held = queues.get(method)?.shift();
-        const disposition = dispositions.get(method)?.shift();
-        held?.started.resolve();
-        const call = original[method] as (
-          request: unknown,
-          signal: AbortSignal
-        ) => PromiseLike<unknown>;
-        const project = (result: unknown) => {
-          if (
-            disposition === undefined ||
-            !result ||
-            typeof result !== 'object' ||
-            !('value' in result) ||
-            !result.value ||
-            typeof result.value !== 'object' ||
-            !('kind' in result.value) ||
-            result.value.kind !== 'acknowledged'
-          )
-            return result;
-          return {
-            ...result,
-            value: { ...result.value, disposition },
-          };
-        };
-        if (!held) return Promise.resolve(call(requestValue, requestSignal)).then(project);
-        if (held.phase === 'before_write') {
-          return held.release.promise.then(async () => {
-            const result = project(await call(requestValue, requestSignal));
-            held.committed.resolve();
-            return result;
-          });
-        }
-        return Promise.resolve(call(requestValue, requestSignal)).then(
-          (result) => {
-            held.committed.resolve();
-            return held.release.promise.then(() => project(result));
-          },
-          (error) => {
-            held.committed.resolve();
-            return held.release.promise.then(() => Promise.reject(error));
-          }
-        );
-      };
-      const handle: RawOperationJournalHandle = {
-        reserveIntent: (value, abort) => invoke('reserveIntent', value, abort),
-        markDispatch: (value, abort) => invoke('markDispatch', value, abort),
-        commitTerminal: (value, abort) => invoke('commitTerminal', value, abort),
-        lookup: (value, abort) => invoke('lookup', value, abort),
-        close: (abort) => original.close(abort),
-      };
-      return { ...opened, handle };
-    },
-  };
-  const rewriteNextDisposition = (
-    method: RawMutation,
-    disposition: 'applied' | 'already_applied' | 'existing'
-  ) => {
-    dispositions.set(method, [...(dispositions.get(method) ?? []), disposition]);
-  };
-  return { adapter, calls, holdNext, rewriteNextDisposition };
-}
-
 async function fixture(options: { authorityTtlMs?: number } = {}) {
-  const memory = createMemoryJournalFixture();
-  const controlled = controllableAdapter(memory.adapter);
-  const opened = await openOperationJournal(controlled.adapter, namespace(), memory.fingerprintKey);
-  expect(opened.kind).toBe('opened');
-  if (opened.kind !== 'opened') throw new Error('journal fixture did not open');
-  const authority = new SessionAuthority({ now: memory.now, journal: opened.journal });
+  const { memory, controlled, journal } = await createControllableJournalFixture();
+  const authority = new SessionAuthority({ now: memory.now, journal });
   const lifetime = new AbortController();
   authority.register(
     'session',
@@ -176,7 +27,7 @@ async function fixture(options: { authorityTtlMs?: number } = {}) {
     lifetime.signal,
     options.authorityTtlMs === undefined ? {} : { ttlMs: options.authorityTtlMs }
   );
-  return { memory, controlled, journal: opened.journal, authority, lifetime };
+  return { memory, controlled, journal, authority, lifetime };
 }
 
 function record(
@@ -218,9 +69,13 @@ describe('journal intent admission', () => {
     expect(record(f.journal, f.memory)).toBeUndefined();
 
     held.release();
-    expect(await running).toBe('done');
+    await expect(running).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
     expect(callback).toHaveBeenCalledTimes(1);
-    expect(record(f.journal, f.memory)).toMatchObject({ revision: 1, dispatched: false });
+    expect(record(f.journal, f.memory)).toMatchObject({
+      revision: 2,
+      dispatched: false,
+      terminal: { status: 'failed' },
+    });
   });
 
   it.each(['late-ack', 'ack-lost'] as const)(
@@ -245,7 +100,7 @@ describe('journal intent admission', () => {
       expect(f.journal.health).toBe('quarantined');
       expect(f.authority.status('session')).toMatchObject({
         busy: true,
-        operation: { status: 'in_flight', dispatched: false },
+        operation: { status: 'failed', dispatched: false },
       });
 
       f.authority.remove('session');
@@ -287,11 +142,11 @@ describe('journal intent admission', () => {
     expect(duplicate).not.toHaveBeenCalled();
 
     held.release();
-    expect(await running).toBe('first');
+    await expect(running).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
     expect(first).toHaveBeenCalledTimes(1);
     await expect(
       f.authority.run('session', operator, journalOperation('same-id'), duplicate)
-    ).rejects.toBeInstanceOf(Error);
+    ).resolves.toMatchObject({ replay: true, operation: { status: 'failed', dispatched: false } });
     expect(f.controlled.calls.reserveIntent).toBe(1);
     expect(duplicate).not.toHaveBeenCalled();
   });
@@ -315,7 +170,9 @@ describe('journal intent admission', () => {
 
   it('stores bound application identity but never the private live fingerprint', async () => {
     const f = await fixture();
-    await f.authority.run('session', operator, journalOperation('private-input'), async () => 1);
+    await expect(
+      f.authority.run('session', operator, journalOperation('private-input'), async () => 1)
+    ).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
     const stored = record(f.journal, f.memory);
     expect(stored?.identity.application).toEqual(application);
     expect(stored?.identity.key).toMatchObject({
@@ -351,7 +208,7 @@ describe('journal intent admission', () => {
 
     await held.started;
     held.release();
-    expect(await running).toBe(1);
+    await expect(running).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
     expect(record(f.journal, f.memory)?.identity.application).toEqual({
       adapterId: 'original-adapter',
       resourceId: 'original-resource',
@@ -374,12 +231,16 @@ describe('journal intent admission', () => {
       held.release();
       expect(await running).toBeInstanceOf(Error);
       expect(callback).not.toHaveBeenCalled();
-      expect(record(f.journal, f.memory)).toMatchObject({ revision: 1, dispatched: false });
+      expect(record(f.journal, f.memory)).toMatchObject({
+        revision: 2,
+        dispatched: false,
+        terminal: { status: 'failed' },
+      });
     }
   );
 
   it.each(['publication', 'replay-publication'] as const)(
-    'refuses %s journal work before storage I/O or business execution',
+    'withholds %s when no qualified effect was dispatched',
     async (kind) => {
       const f = await fixture();
       const callback = vi.fn(async () => 'private-result');
@@ -396,8 +257,8 @@ describe('journal intent admission', () => {
           kind === 'replay-publication' ? publication : undefined
         )
       ).rejects.toBeInstanceOf(Error);
-      expect(f.controlled.calls.reserveIntent).toBe(0);
-      expect(callback).not.toHaveBeenCalled();
+      expect(f.controlled.calls.reserveIntent).toBe(1);
+      expect(callback).toHaveBeenCalledOnce();
       expect(publish).not.toHaveBeenCalled();
     }
   );
@@ -443,7 +304,11 @@ describe('journal dispatch marker and exact application qualification', () => {
     expect(await running).toBe('effect');
     expect(effect).toHaveBeenCalledTimes(1);
     expect(f.controlled.calls.markDispatch).toBe(1);
-    expect(record(f.journal, f.memory)).toMatchObject({ revision: 2, dispatched: true });
+    expect(record(f.journal, f.memory)).toMatchObject({
+      revision: 3,
+      dispatched: true,
+      terminal: { status: 'completed' },
+    });
   });
 
   it('refuses a facade-valid already-applied marker ACK with zero effects', async () => {
@@ -539,7 +404,7 @@ describe('journal dispatch marker and exact application qualification', () => {
       expect(effect).not.toHaveBeenCalled();
       expect(f.authority.status('session')).toMatchObject({
         busy: true,
-        operation: { status: 'in_flight', dispatched: false },
+        operation: { status: 'failed', dispatched: false },
       });
 
       held.release();
@@ -558,7 +423,7 @@ describe('journal dispatch marker and exact application qualification', () => {
     const effect = vi.fn();
     const control = f.authority.get('session');
     if (!control) throw new Error('missing control fixture');
-    const result = await f.authority.run(
+    const running = f.authority.run(
       'session',
       operator,
       journalOperation('abandoned-marker'),
@@ -572,7 +437,7 @@ describe('journal dispatch marker and exact application qualification', () => {
       }
     );
 
-    expect(result).toBe('bounded-response');
+    const outcome = running.catch((error) => error);
     await held.started;
     expect(effect).not.toHaveBeenCalled();
     expect(control.view()).toMatchObject({
@@ -582,13 +447,18 @@ describe('journal dispatch marker and exact application qualification', () => {
     expect(record(f.journal, f.memory)).toMatchObject({ revision: 1, dispatched: false });
 
     held.release();
+    expect(await outcome).toBeInstanceOf(Error);
     await vi.waitFor(() => expect(control.view().busy).toBe(false));
     expect(effect).not.toHaveBeenCalled();
     expect(control.operation('abandoned-marker')).toMatchObject({
       status: 'failed',
       dispatched: false,
     });
-    expect(record(f.journal, f.memory)).toMatchObject({ revision: 2, dispatched: true });
+    expect(record(f.journal, f.memory)).toMatchObject({
+      revision: 3,
+      dispatched: true,
+      terminal: { status: 'failed' },
+    });
   });
 
   it.each(['takeover', 'expiry', 'replacement'] as const)(
@@ -611,7 +481,11 @@ describe('journal dispatch marker and exact application qualification', () => {
       held.release();
       expect(await running).toBeInstanceOf(Error);
       expect(effect).not.toHaveBeenCalled();
-      expect(record(f.journal, f.memory)).toMatchObject({ revision: 2, dispatched: true });
+      expect(record(f.journal, f.memory)).toMatchObject({
+        revision: 3,
+        dispatched: true,
+        terminal: { status: 'failed' },
+      });
     }
   );
 
@@ -673,9 +547,11 @@ describe('journal dispatch marker and exact application qualification', () => {
   it('binds qualification to its exact scope and refuses forged capability objects', async () => {
     const f = await fixture();
     let escaped!: ReturnType<SessionAuthority['captureApplicationDispatchInScope']>;
-    await f.authority.run('session', operator, journalOperation('capture-scope'), async () => {
-      escaped = f.authority.captureApplicationDispatchInScope('session', () => undefined);
-    });
+    await expect(
+      f.authority.run('session', operator, journalOperation('capture-scope'), async () => {
+        escaped = f.authority.captureApplicationDispatchInScope('session', () => undefined);
+      })
+    ).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
     const effect = vi.fn();
     await f.authority
       .run('session', operator, journalOperation('different-scope'), async () => {
@@ -700,19 +576,25 @@ describe('journal dispatch marker and exact application qualification', () => {
     async (kind) => {
       const f = await fixture();
       const effect = vi.fn(async () => undefined);
-      await f.authority.run('session', operator, journalOperation(`excluded-${kind}`), async () => {
-        if (kind === 'ordinary-dispatch') {
-          expect(() => f.authority.dispatchInScope('session', effect)).toThrow();
-        } else if (kind === 'guard-page') {
-          const page = f.authority.guardPage('session', {
-            act: effect,
-          } as unknown as EnginePage);
-          expect(() => page.act({ action: 'press', key: 'Tab' })).toThrow();
-        } else expect(() => f.authority.assert('session', true)).toThrow();
-      });
+      await expect(
+        f.authority.run('session', operator, journalOperation(`excluded-${kind}`), async () => {
+          if (kind === 'ordinary-dispatch') {
+            expect(() => f.authority.dispatchInScope('session', effect)).toThrow();
+          } else if (kind === 'guard-page') {
+            const page = f.authority.guardPage('session', {
+              act: effect,
+            } as unknown as EnginePage);
+            expect(() => page.act({ action: 'press', key: 'Tab' })).toThrow();
+          } else expect(() => f.authority.assert('session', true)).toThrow();
+        })
+      ).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
       expect(effect).not.toHaveBeenCalled();
       expect(f.controlled.calls.markDispatch).toBe(0);
-      expect(record(f.journal, f.memory)).toMatchObject({ revision: 1, dispatched: false });
+      expect(record(f.journal, f.memory)).toMatchObject({
+        revision: 2,
+        dispatched: false,
+        terminal: { status: 'failed' },
+      });
     }
   );
 });
