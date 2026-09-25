@@ -1,3 +1,4 @@
+import { isNavigationFailureReason } from '@agentbrowser/protocol';
 import { SessionAuthority } from './session-authority.js';
 /**
  * AgentBrowserService - the composition root
@@ -71,7 +72,11 @@ import {
 import type { EngineSession, EngineSessionOptions, NormalizedCookie } from '@agentbrowser/engine';
 import type { RawPageState } from '@agentbrowser/engine';
 import type { RequestPolicy } from '@agentbrowser/engine';
-import { type ProtocolErrorCode, normalizeEngineError } from '@agentbrowser/engine';
+import {
+  type ProtocolErrorCode,
+  normalizeEngineError,
+  normalizeNavigationFailure,
+} from '@agentbrowser/engine';
 import { SchemaExtractor } from '@agentbrowser/extraction';
 import {
   RecordsSelectorError,
@@ -2462,7 +2467,7 @@ export class AgentBrowserService {
     sessionId: string,
     pageId: string,
     request: { url: string; waitUntil?: 'load' | 'domcontentloaded' | 'networkidle' | undefined }
-  ): Promise<{ status: string; url: string; redirectChain: string[] }> {
+  ): Promise<import('@agentbrowser/engine').NavigationResult> {
     return this.traced('navigate', { sessionId, pageId }, async (span) => {
       const page = this.requirePage(sessionId, pageId);
       this.coordinator.updateActivity(sessionId);
@@ -2479,7 +2484,7 @@ export class AgentBrowserService {
           'POLICY_DENIED',
           `Navigation accepts http(s) URLs only; '${parsed.protocol}' is not permitted.`,
           false,
-          { url: redactUrl(url) }
+          { url: redactUrl(url), reason: 'egress_policy' }
         );
       }
 
@@ -2508,6 +2513,10 @@ export class AgentBrowserService {
         throw this.mapError(error);
       }
 
+      // Dispatch invalidates public refs even if navigation commits an error
+      // document or rejects. Preflight policy refusal above leaves refs intact.
+      page.revision += 1;
+      page.lastObservation = undefined;
       let result: Awaited<ReturnType<EnginePage['navigate']>>;
       try {
         result = await page.enginePage.navigate({
@@ -2515,27 +2524,29 @@ export class AgentBrowserService {
           ...(request.waitUntil !== undefined ? { waitUntil: request.waitUntil } : {}),
         });
       } catch (error) {
-        if (this.isCrash(error)) {
+        const failure = normalizeNavigationFailure(error);
+        if (failure.code === 'ENGINE_CRASHED') {
           const errorDetail = this.secretManager.redact(
             error instanceof Error ? error.message : String(error)
           );
           await this.recoverFromCrash(sessionId, 'navigate: engine crashed', errorDetail);
           throw new ServiceError(
             'ENGINE_CRASHED',
-            'The browser engine crashed; the session has been terminated.',
+            'The browser engine closed; the session has been terminated.',
             false,
-            { sessionId, errorDetail }
+            { reason: 'engine_error' }
           );
         }
-        throw error;
+        throw new ServiceError(failure.code, failure.message, failure.retryable, failure.details);
       }
-      page.revision += 1;
-      page.lastObservation = undefined;
 
       return this.secretManager.redact({
         status: result.status,
         url: result.url,
         redirectChain: result.redirectChain,
+        ...(result.status !== 'success'
+          ? { reason: isNavigationFailureReason(result.reason) ? result.reason : 'engine_error' }
+          : {}),
       });
     });
   }

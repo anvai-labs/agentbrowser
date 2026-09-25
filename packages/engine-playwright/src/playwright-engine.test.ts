@@ -783,7 +783,7 @@ describe('engine-level egress choke point (P0-4)', () => {
       expect(blocked.length).toBeGreaterThan(0);
       for (const event of blocked) {
         expect(event.type).toBe('request.failed');
-        expect(String(event.data?.reason)).toMatch(/POLICY_DENIED/);
+        expect(event.data?.reason).toBe('egress_policy');
         expect(event.data?.hostname).toBe('10.0.0.1');
         // URL redaction: query strings (token carriers) never ride the
         // event - only origin + path are recorded.

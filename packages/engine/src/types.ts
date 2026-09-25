@@ -137,6 +137,7 @@ export interface NavigationResult {
   status: 'success' | 'timeout' | 'blocked';
   url: string;
   redirectChain: string[];
+  reason?: import('@agentbrowser/protocol').NavigationFailureReason;
 }
 
 /**

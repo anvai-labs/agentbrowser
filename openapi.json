@@ -9177,6 +9177,46 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "const": "dns_nxdomain",
+                    "type": "string"
+                  },
+                  {
+                    "const": "dns_unresolved",
+                    "type": "string"
+                  },
+                  {
+                    "const": "connection_refused",
+                    "type": "string"
+                  },
+                  {
+                    "const": "dns_timeout",
+                    "type": "string"
+                  },
+                  {
+                    "const": "dns_refused",
+                    "type": "string"
+                  },
+                  {
+                    "const": "tls_refused",
+                    "type": "string"
+                  },
+                  {
+                    "const": "egress_policy",
+                    "type": "string"
+                  },
+                  {
+                    "const": "browser_error_document",
+                    "type": "string"
+                  },
+                  {
+                    "const": "engine_error",
+                    "type": "string"
+                  }
+                ]
               }
             }
           },
@@ -9753,6 +9793,46 @@
             "items": {
               "type": "string"
             }
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "const": "dns_nxdomain",
+                "type": "string"
+              },
+              {
+                "const": "dns_unresolved",
+                "type": "string"
+              },
+              {
+                "const": "connection_refused",
+                "type": "string"
+              },
+              {
+                "const": "dns_timeout",
+                "type": "string"
+              },
+              {
+                "const": "dns_refused",
+                "type": "string"
+              },
+              {
+                "const": "tls_refused",
+                "type": "string"
+              },
+              {
+                "const": "egress_policy",
+                "type": "string"
+              },
+              {
+                "const": "browser_error_document",
+                "type": "string"
+              },
+              {
+                "const": "engine_error",
+                "type": "string"
+              }
+            ]
           }
         }
       },

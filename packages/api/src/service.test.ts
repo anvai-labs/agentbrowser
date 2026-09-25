@@ -1812,7 +1812,8 @@ describe('AgentBrowserService', () => {
         service2.navigate(sessionId, pageId, { url: 'https://x.example.com' })
       );
 
-      expect(error?.details?.errorDetail).toBe('Page crashed');
+      expect(error?.details).toEqual({ reason: 'engine_error' });
+      expect(error?.message).not.toContain('Page crashed');
 
       const log = service2.getCrashLog();
       expect(log[0]?.errorDetail).toBe('Page crashed');

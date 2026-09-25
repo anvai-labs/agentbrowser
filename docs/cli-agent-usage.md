@@ -368,3 +368,14 @@ Inspection does not refresh idle activity. TTL expires at its deadline; idle exp
 uses the existing strictly-after boundary. Grants and browser attachment can end sooner.
 Older servers or non-active session states may omit the lease: absence means unknown,
 not unlimited lifetime. See [R5a design](spec/design/session-lease-visibility.md).
+
+### Navigation failure diagnostics
+
+`agentbrowser navigate SESSION PAGE URL --json` preserves successful result JSON.
+Blocked or timeout results include `reason` and exit 1; recognized thrown navigation
+failures emit an `{ "error": { "code", "message", "retryable", "details" } }` object
+on stderr with exit 1. `details` contains the bounded reason and any valid operationId
+needed for reconciliation. Read both exit status and the JSON; do not infer a bot wall
+or automatically repeat a navigation after an ambiguous timeout. The SDK and REST
+keep the corresponding result/error fields, and MCP marks failed navigation `isError`.
+See [reason definitions and limits](spec/design/navigation-failure-reasons.md).

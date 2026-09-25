@@ -767,6 +767,67 @@ describe('AgentBrowser MCP server', () => {
       expect(textOf(response).status).toBe('success');
     });
 
+    it.each(['blocked', 'timeout'] as const)(
+      'marks a %s navigation result as an error without changing its wire shape',
+      async (status) => {
+        const result = {
+          status,
+          reason: status === 'blocked' ? 'egress_policy' : 'dns_timeout',
+          url: 'https://failure.test/',
+          redirectChain: [],
+        };
+        sessions.navigate.mockResolvedValueOnce(result);
+
+        const response = JSON.parse(
+          await call('7-failed', 'browser_navigate', {
+            sessionId: 'ses_1',
+            pageId: 'pg_1',
+            url: 'https://failure.test/',
+          })
+        ).result;
+
+        expect(response.isError).toBe(true);
+        expect(JSON.parse(response.content[0].text)).toEqual(result);
+        expect(response.structuredContent).toEqual(result);
+      }
+    );
+
+    it('projects a thrown navigation failure without arbitrary error details', async () => {
+      sessions.navigate.mockRejectedValueOnce(
+        Object.assign(new Error('private proxy URL https://secret.invalid/'), {
+          code: 'INTERNAL',
+          details: {
+            reason: 'tls_refused',
+            operationId: 'navigate-once',
+            address: '10.0.0.1',
+            url: 'https://secret.invalid/',
+          },
+        })
+      );
+
+      const response = JSON.parse(
+        await call('7-error', 'browser_navigate', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          url: 'https://failure.test/',
+        })
+      ).result;
+      const expected = {
+        error: {
+          code: 'INTERNAL',
+          message: 'Navigation failed: tls_refused',
+          retryable: false,
+          details: { reason: 'tls_refused', operationId: 'navigate-once' },
+        },
+      };
+
+      expect(response.isError).toBe(true);
+      expect(JSON.parse(response.content[0].text)).toEqual(expected);
+      expect(response.structuredContent).toEqual(expected);
+      expect(JSON.stringify(response)).not.toContain('secret');
+      expect(JSON.stringify(response)).not.toContain('10.0.0.1');
+    });
+
     it('should observe and return the semantic observation', async () => {
       const response = JSON.parse(
         await call('8', 'browser_observe', { sessionId: 'ses_1', pageId: 'pg_1' })

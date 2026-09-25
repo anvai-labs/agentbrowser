@@ -36,17 +36,21 @@ import type { RequestPolicy } from '@agentbrowser/engine';
 import {
   EngineError,
   NATIVE_FORM_EVIDENCE_LIMITS,
+  classifyNavigationFailure,
   normalizeEngineError,
+  normalizeNavigationFailure,
   parseNativeFormEvidence,
   readVerifiedUpload,
 } from '@agentbrowser/engine';
 import {
   DELIVERED_ACTION_TYPES,
   DELIVERED_OBSERVATION_MODES,
+  type NavigationFailureReason,
   type SessionDiagnostics,
   captureBrowserVersion,
   captureSessionDiagnostics,
   headedDisplayWarnings,
+  isNavigationFailureReason,
   validateUploadIntegrity,
 } from '@agentbrowser/protocol';
 import {
@@ -587,6 +591,10 @@ function canonicalFingerprint(element: StoredElement): string {
 
 /** Mutable holder for routing request events out of the egress handler. */
 export interface RequestEventSink {
+  readonly navigationFailures: WeakMap<
+    import('playwright').Request,
+    { kind: 'blocked' | 'failed'; reason: NavigationFailureReason }
+  >;
   emit:
     | ((event: {
         type: 'request.started' | 'request.finished' | 'request.failed';
@@ -913,7 +921,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       // existing event pipeline (page queue -> service pump -> replay/WS)
       // carries it with no new transport. installEgress runs before any page
       // exists, hence the mutable holder.
-      const requestSink: RequestEventSink = { emit: undefined };
+      const requestSink: RequestEventSink = { emit: undefined, navigationFailures: new WeakMap() };
       if (egress !== undefined) {
         await this.installEgress(context, egress, requestSink);
       }
@@ -1119,17 +1127,19 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       try {
         const result = await dns.lookup(hostname, { all: true });
         return result.map((entry) => entry.address);
-      } catch {
-        throw new EngineError('POLICY_DENIED', 'Cannot validate unresolved hostname');
+      } catch (error) {
+        throw new EngineError('POLICY_DENIED', 'Cannot validate unresolved hostname', false, {
+          reason: classifyNavigationFailure(error, 'dns'),
+        });
       }
     };
 
     const verdictOf = async (
       hostname: string,
       url: string
-    ): Promise<{ verdict: 'allow' | 'deny'; reason?: string }> => {
+    ): Promise<{ verdict: 'allow' | 'deny'; reason?: NavigationFailureReason }> => {
       let verdict: 'allow' | 'deny';
-      let reason: string | undefined;
+      let reason: NavigationFailureReason | undefined;
       try {
         await egress.checkRequest({ hostname, url });
         if (egress.checkResolvedAddresses !== undefined) {
@@ -1141,14 +1151,14 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         verdict = 'allow';
       } catch (error) {
         verdict = 'deny';
-        // Surface the policy's own code/rule instead of flattening to
-        // 'deny' (NetworkPolicyError carries both; anything else still
-        // gets a readable message).
-        const err = error as { code?: string; details?: { rule?: string }; message?: string };
-        reason =
-          err.code !== undefined
-            ? `${err.code}${err.details?.rule !== undefined ? ` (${err.details.rule})` : ''}`
-            : (err.message ?? 'denied by egress policy');
+        const err = error as { code?: string; details?: { reason?: unknown } };
+        reason = isNavigationFailureReason(err.details?.reason)
+          ? err.details.reason
+          : ['POLICY_DENIED', 'RESPONSE_TOO_LARGE', 'MAX_REDIRECTS', 'REDIRECT_LOOP'].includes(
+                err.code ?? ''
+              )
+            ? 'egress_policy'
+            : 'engine_error';
       }
       return reason !== undefined ? { verdict, reason } : { verdict };
     };
@@ -1231,11 +1241,16 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         return route.continue();
       };
 
+      const deny = async (reason: NavigationFailureReason) => {
+        sink.navigationFailures.set(request, { kind: 'blocked', reason });
+        await fulfill(BLOCKED_RESPONSE);
+      };
+
       try {
         const initial = await verdictOf(hostname, url);
         if (initial.verdict === 'deny') {
           emitRequest('request.failed', request, { blocked: true, reason: initial.reason });
-          await fulfill(BLOCKED_RESPONSE);
+          await deny(initial.reason ?? 'engine_error');
           return;
         }
 
@@ -1268,7 +1283,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
                 reason: hop.reason,
                 redirect: absolute.origin + absolute.pathname,
               });
-              await fulfill(BLOCKED_RESPONSE);
+              await deny(hop.reason ?? 'engine_error');
               return;
             }
           }
@@ -1283,7 +1298,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
                 blocked: true,
                 reason: 'RESPONSE_TOO_LARGE (response-size cap)',
               });
-              await fulfill(BLOCKED_RESPONSE);
+              await deny('egress_policy');
               return;
             }
           }
@@ -1299,7 +1314,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
                 blocked: true,
                 reason: 'RESPONSE_TOO_LARGE (actual-byte cap)',
               });
-              await fulfill(BLOCKED_RESPONSE);
+              await deny('egress_policy');
               return;
             }
             emitRequest('request.finished', request, {
@@ -1322,8 +1337,26 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       } catch (error) {
         emitRequest('request.failed', request, {
           blocked: false,
-          reason: error instanceof Error ? error.message : 'fetch failed',
+          reason: classifyNavigationFailure(error, 'transport'),
         });
+        if (!terminalStarted && request.isNavigationRequest()) {
+          let mainNavigation = false;
+          try {
+            mainNavigation = request.frame() === request.frame().page().mainFrame();
+          } catch {}
+          if (mainNavigation) {
+            sink.navigationFailures.set(request, {
+              kind: 'failed',
+              reason: classifyNavigationFailure(error, 'transport'),
+            });
+            await fulfill({
+              status: 502,
+              contentType: 'text/plain',
+              body: 'Navigation failed',
+            }).catch(() => {});
+            return;
+          }
+        }
         if (!terminalStarted) {
           // Best effort after recording the failure: the context may already
           // be closed, in which case abort itself rejects too.
@@ -1475,7 +1508,13 @@ class PlaywrightSession implements EngineSession {
     }
 
     const pageId = `page-${this.pageCounter++}`;
-    const page = new PlaywrightPage(pageId, playwrightPage, this.engine, this.snapshotTimeoutMs);
+    const page = new PlaywrightPage(
+      pageId,
+      playwrightPage,
+      this.engine,
+      this.snapshotTimeoutMs,
+      this.requestSink?.navigationFailures
+    );
     this.pageMap.set(pageId, page);
     page.registerRemoval(() => {
       this.pageMap.delete(pageId);
@@ -1667,7 +1706,8 @@ class PlaywrightPage implements EnginePage {
     id: string,
     page: Page,
     engine: PlaywrightChromiumEngine,
-    snapshotTimeoutMs?: number
+    snapshotTimeoutMs?: number,
+    private readonly navigationFailures?: RequestEventSink['navigationFailures']
   ) {
     this.id = id;
     this.page = page;
@@ -1869,36 +1909,28 @@ class PlaywrightPage implements EnginePage {
     try {
       return await this.performNavigation(request);
     } catch (error) {
-      const failure = normalizeEngineError(error, 'navigate');
+      const failure = normalizeNavigationFailure(error);
       throw new EngineError(failure.code, failure.message, failure.retryable, failure.details);
     }
   }
 
   private async performNavigation(request: NavigationRequest): Promise<NavigationResult> {
+    // Every dispatched navigation invalidates refs, including a rejected goto.
+    this.bumpRevision();
     const waitUntil = request.waitUntil || 'load';
     const response = await this.page.goto(request.url, {
       waitUntil: waitUntil as 'load' | 'domcontentloaded' | 'networkidle',
     });
-    // The choke point serves a marked 403 for denied navigations and
-    // denied redirect targets alike (hygiene E3: every deny path in
-    // installEgress uses route.fulfill(BLOCKED_RESPONSE), never
-    // route.abort() - the header is the only signal a denial ever
-    // produces, so it's also the only one worth matching on. A prior
-    // String(error)-regex fallback here for 'ERR_BLOCKED_BY_CLIENT'/
-    // 'net::ERR_ABORTED' didn't match anything installEgress's own
-    // abort() call actually throws (that's reason 'failed', i.e.
-    // net::ERR_FAILED, and represents a genuine fetch failure, not a
-    // policy decision - it must propagate as a real error). Its only
-    // live effect was silently relabeling any unrelated real navigation
-    // abort as a policy block.
-    if (response?.headers()?.['x-agentbrowser-blocked'] === '1') {
-      return {
-        status: 'blocked',
-        url: request.url,
-        redirectChain: [],
-      };
+    // A trusted receipt is correlated to this response, never an origin header.
+    const routedRequest = response?.request();
+    const failure = routedRequest ? this.navigationFailures?.get(routedRequest) : undefined;
+    if (routedRequest) this.navigationFailures?.delete(routedRequest);
+    if (failure?.kind === 'failed') {
+      throw new EngineError('INTERNAL', 'Navigation failed', false, { reason: failure.reason });
     }
-    this.bumpRevision();
+    if (failure) {
+      return { status: 'blocked', url: request.url, redirectChain: [], reason: failure.reason };
+    }
 
     // A resolved goto is not proof that target content loaded. Chromium can
     // commit its internal error document without rejecting the navigation.
