@@ -1,12 +1,12 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
-Latest recheck: published 1.10.1 at `124afc35484225374bfb8739a07b87b2698d03f4`
-and develop `0b1f1da76ed67a8b90d8af7c1a3058b62fab49df` (#288), 2026-09-24.
-Release, npm, Homebrew and installed acceptance are complete; the live service was
-preserved on 1.10.0. Extraction budgets (#281), A3a2 (#282) and HTTP/replay publication (#283–284) are develop-only.
-The owner has now authorized the [1.11.0 release checkpoint](release-1.11.0.md).
-Journal contracts (#285), research adapters (#286), ownership (#287) and diagnostics
-(#288) also remain unreleased until that delivery completes.
+Latest recheck: published 1.11.0 at protected main
+`e00539eca682b60e5761702d1851472bb6401b12` (2026-09-24, America/Chicago).
+Release, npm, Homebrew PR #73 and installed acceptance are complete; the live service
+was preserved on 1.10.0. Extraction budgets (#281), guarded publication (#282–284),
+journal contracts (#285), research adapters (#286), ownership (#287) and diagnostics
+(#288) are included. The [delivery evidence](release-1.11.0.md) distinguishes published
+and installed binaries from the running service and records main ancestry for the back-sync.
 The historical records below preserve earlier baselines; the current table and final
 checkpoint describe the latest acceptance position. The release does not change finite milestone completion.
 
@@ -27,7 +27,7 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T6 forms/operations | Active | ~40% | Production sources, candidate/job eligibility and live qualification; C3c public synthetic workflow merged #257 |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
 | T8 installed harnesses | Active source repair; installed acceptance unqualified | 0% installed qualification | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |
-| T9 release hardening | Recurring | 100% of 1.10.1 checkpoint | Repeat per later release |
+| T9 release hardening | Recurring | 100% of 1.11.0 checkpoint | Repeat per later release |
 
 Exact milestone count: **3 of 9 finite tasks complete (33%)**. Counting all original
 ten rows gives 30%, including recurring T9. No defensible effort-weighted overall

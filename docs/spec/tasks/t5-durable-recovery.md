@@ -32,7 +32,7 @@ A1 finalization and A2a/A2b publication primitives are implemented
 [A4a1 status lookup](../evidence/t5-operation-status-publication.md) and
 [A4a2 replay/application composition](../evidence/t5-replay-publication.md) are implemented.
 [A3a review owner pins and page/evidence disclosure](../evidence/t5-review-publication.md)
-are implemented as internal composition; A3a2 is pending release.
+are implemented as internal composition; A3a2 shipped in 1.11.0.
 The bounded [A3b application HTTP adoption](../design/t5-http-publication.md) merged
 as PR #283 ([evidence](../evidence/t5-http-publication.md)). The
 [A3c/A4b browser/review HTTP adoption](../design/t5-browser-review-publication.md)

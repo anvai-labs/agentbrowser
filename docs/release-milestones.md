@@ -1,18 +1,20 @@
 # Release milestones and acceptance gates
 
-## Current candidate: 1.11.0 research and publication checkpoint
+## Delivered checkpoint: 1.11.0 research and publication (2026-09-24)
 
-The owner authorized promotion after PR #288. Candidate base is develop `0b1f1da`,
-with all eight pre/post-merge checks green. This is a minor release: new public
-extraction budgets, MCP page provisioning and shared launch diagnostics accompany
-browser ownership and HTTP/review publication fixes. The journal remains a private,
-storage-neutral foundation with no runtime durability or recovery guarantee.
+Version 1.11.0 is published from protected main `e00539e` after preparation PR #289
+and promotion PR #290. All eight checks passed on both PRs and both merge commits.
+All twelve release jobs passed after one investigated Darwin x64 timeout retry.
+The [delivery record](spec/evidence/release-1.11.0.md) records exact identities,
+published artifact checks, npm integrity, Homebrew PR #73 and installed acceptance.
 
-The previous published release is 1.10.1 at main `124afc3`. The
-[1.11.0 delivery record](spec/evidence/release-1.11.0.md) tracks the candidate and
-separate promotion, artifact, npm and Homebrew gates. Preparation is not publication.
-Use normal PRs to develop and main, tag the verified protected-main commit only,
-and back-sync main. Existing installed sessions must be preserved during acceptance.
+This minor release adds public extraction budgets, MCP page provisioning and shared
+launch diagnostics, with browser ownership and HTTP/review publication fixes.
+The journal remains storage-neutral: no runtime durability or recovery guarantee.
+CLI/MCP remain Bun binaries; the Homebrew service uses Node 24. MCP is optional.
+All fourteen downloads, four clean server stamps, exact npm package and the actual
+Homebrew 1.10.1-to-1.11.0 upgrade passed qualification. The logged-in service was
+preserved on 1.10.0; restarting it is a separate session checkpoint.
 
 ## Delivered checkpoint: 1.10.0 published and installed (2026-09-23)
 
