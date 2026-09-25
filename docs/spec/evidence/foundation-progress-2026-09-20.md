@@ -20,8 +20,10 @@ changes installed/released version claims. Original roadmap work resumes at
 with PR and post-merge CI 8/8 green. [C1b internal authority composition](t5-journal-authority.md)
 merged #298 at `a1443c7` with clean review and pre/post-merge CI 8/8.
 [C2 application pins and C3 terminal/replay](../design/t5-journal-application-terminal.md)
-are implemented internally and under final qualification. Runtime selection, concrete
-storage and recovery remain gated. The estimates below remain unchanged.
+merged #299 at `e4b5e74` with clean exact-head review and pre/post-merge CI 8/8.
+[C4a control views](../design/t5-journal-control-views.md) now use the shared ACK
+projection. Runtime selection, concrete storage and recovery remain gated.
+The estimates below remain unchanged.
 
 ## Acceptance progress
 

@@ -2,7 +2,7 @@
 
 Status: HTTP/replay publication merged; B1/B2 journal contract merged #285;
 C1a settlement merged #297; C1b authority composition merged #298;
-C2/C3 application guards and terminal/replay under internal qualification;
+C2/C3 application guards and terminal/replay merged #299;
 runtime enablement gated and durable recovery unimplemented.
 Repository: agentbrowser. Depends on: T2.
 Inputs: core, contracts, execution, state-memory, security.
@@ -47,7 +47,8 @@ validation and adapter conformance ([evidence](../evidence/t5-journal-contract.m
 connecting a runtime store. [C1b authority composition](../design/t5-journal-authority.md)
 tracks intent/marker settlement through the existing ticket and dispatch helpers.
 [C2 application-owned pins and C3 terminal/replay](../design/t5-journal-application-terminal.md)
-now have a focused implementation/qualification packet; C4 runtime qualification follows;
+merged as #299. [C4a shared control views](../design/t5-journal-control-views.md)
+now bound status/lifecycle disclosure by ACK. C4b runtime/transport selection stays gated;
 J2–J4 remain proposed and loaded on demand.
 Browser durability waits for its existing target/policy/approval owners to support
 post-storage-wait revalidation. Do not advertise recovery from J0 or this design.

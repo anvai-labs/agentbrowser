@@ -47,6 +47,10 @@ it('holds original output behind terminal ACK while duplicates see only acknowle
   expect(f.stored()).toMatchObject({ revision: 3, terminal: { status: 'completed' } });
   expect(publish).not.toHaveBeenCalled();
   expect(f.authority.get('session')?.operation('write')).toMatchObject({ status: 'completed' });
+  expect(f.authority.status('session')).toMatchObject({
+    busy: true,
+    operation: { status: 'in_flight', dispatched: true },
+  });
   expect(await f.replay()).toMatchObject({
     replay: true,
     operation: { status: 'in_flight', dispatched: true },
@@ -73,10 +77,16 @@ it.each(['reserveIntent', 'markDispatch'] as const)(
     const lookup = () =>
       f.authority.publishOperation('session', principal, 'write', { timeoutMs: 100, publish });
     if (phase === 'reserveIntent') {
+      expect(f.authority.status('session')).toMatchObject({ busy: true });
+      expect(f.authority.status('session')).not.toHaveProperty('operation');
       await expect(f.replay()).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
       await expect(lookup()).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
       expect(publish).not.toHaveBeenCalled();
     } else {
+      expect(f.authority.status('session').operation).toMatchObject({
+        status: 'in_flight',
+        dispatched: false,
+      });
       expect(await f.replay()).toMatchObject({
         replay: true,
         operation: { status: 'in_flight', dispatched: false },
@@ -88,6 +98,32 @@ it.each(['reserveIntent', 'markDispatch'] as const)(
     held.release();
     await running;
     expect(f.effect).toHaveBeenCalledOnce();
+  }
+);
+
+it.each(['reserveIntent', 'commitTerminal'] as const)(
+  'keeps takeover available with only acknowledged facts during %s',
+  async (phase) => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    const held = f.controlled.holdNext(phase, 'after_commit');
+    const running = f.authority
+      .run('session', principal, operation, f.execute)
+      .catch((error) => error);
+    await held.committed;
+    const takeover = f.authority.takeover('session');
+    expect(takeover).toMatchObject({ state: 'PAUSE_REQUESTED', busy: true });
+    if (phase === 'reserveIntent') {
+      expect(takeover).not.toHaveProperty('operation');
+      expect(f.effect).not.toHaveBeenCalled();
+    } else {
+      expect(takeover.operation).toMatchObject({ status: 'in_flight', dispatched: true });
+      expect(f.effect).toHaveBeenCalledOnce();
+    }
+    held.release();
+    expect(await running).toBeInstanceOf(Error);
+    expect(f.authority.status('session')).toMatchObject({ state: 'HUMAN_ACTIVE', busy: false });
+    expect(f.authority.status('session')).not.toHaveProperty('operation');
   }
 );
 
@@ -104,7 +140,10 @@ it.each(['before_write', 'after_commit'] as const)(
     await (phase === 'after_commit' ? held.committed : held.started);
     await vi.advanceTimersByTimeAsync(26);
     expect(await running).toMatchObject({ code: 'CONTROL_REQUIRED' });
-    expect(f.authority.status('session').busy).toBe(true);
+    expect(f.authority.status('session')).toMatchObject({
+      busy: true,
+      operation: { status: 'in_flight', dispatched: true },
+    });
     expect(publish).not.toHaveBeenCalled();
     expect(await f.replay()).toMatchObject({
       operation: { status: 'in_flight', dispatched: true },
@@ -112,6 +151,7 @@ it.each(['before_write', 'after_commit'] as const)(
     held.release();
     await vi.advanceTimersByTimeAsync(0);
     expect(f.authority.status('session').busy).toBe(false);
+    expect(f.authority.status('session')).not.toHaveProperty('operation');
     expect(await f.replay()).toMatchObject({
       operation: { status: 'in_flight', dispatched: true },
     });

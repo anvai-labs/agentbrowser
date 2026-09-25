@@ -62,10 +62,8 @@ describe('journal intent admission', () => {
 
     await held.started;
     expect(callback).not.toHaveBeenCalled();
-    expect(f.authority.status('session')).toMatchObject({
-      busy: true,
-      operation: { status: 'in_flight', dispatched: false },
-    });
+    expect(f.authority.status('session')).toMatchObject({ busy: true });
+    expect(f.authority.status('session')).not.toHaveProperty('operation');
     expect(record(f.journal, f.memory)).toBeUndefined();
 
     held.release();
@@ -98,9 +96,11 @@ describe('journal intent admission', () => {
       expect(await running).toBeInstanceOf(Error);
       expect(callback).not.toHaveBeenCalled();
       expect(f.journal.health).toBe('quarantined');
-      expect(f.authority.status('session')).toMatchObject({
-        busy: true,
-        operation: { status: 'failed', dispatched: false },
+      expect(f.authority.status('session')).toMatchObject({ busy: true });
+      expect(f.authority.status('session')).not.toHaveProperty('operation');
+      expect(oldControl.operation('late-intent')).toMatchObject({
+        status: 'failed',
+        dispatched: false,
       });
 
       f.authority.remove('session');
@@ -404,7 +404,7 @@ describe('journal dispatch marker and exact application qualification', () => {
       expect(effect).not.toHaveBeenCalled();
       expect(f.authority.status('session')).toMatchObject({
         busy: true,
-        operation: { status: 'failed', dispatched: false },
+        operation: { status: 'in_flight', dispatched: false },
       });
 
       held.release();

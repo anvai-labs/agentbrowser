@@ -63,7 +63,7 @@ export class SessionControl {
 
   view(): ControlView {
     const operation = this.active?.operationId
-      ? this.operation(this.active.operationId)
+      ? this.projectOperation(this.records.get(this.active.operationId))
       : undefined;
     return {
       state: this.state,
@@ -73,6 +73,7 @@ export class SessionControl {
     };
   }
 
+  /** Trusted live execution diagnostics; public views use acknowledged facts. */
   operation(id: string): OperationRecord | undefined {
     const record = this.records.get(id)?.record;
     return record ? { ...record } : undefined;
@@ -81,10 +82,14 @@ export class SessionControl {
   /** Publication sees only acknowledged facts for selected operations. */
   publicationOperation(id: string): OperationRecord | undefined {
     const entry = this.records.get(id);
-    if (!entry) return undefined;
-    if (!entry.acknowledgmentRequired) return { ...entry.record };
-    if (!entry.acknowledgment) throw acknowledgmentUnavailable();
-    return { ...entry.acknowledgment };
+    const projection = this.projectOperation(entry);
+    if (entry && !projection) throw acknowledgmentUnavailable();
+    return projection;
+  }
+
+  private projectOperation(entry: StoredOperation | undefined): OperationRecord | undefined {
+    const record = entry?.acknowledgmentRequired ? entry.acknowledgment : entry?.record;
+    return record ? { ...record } : undefined;
   }
 
   /** Opaque control-review version, not permission or page/payload evidence. */

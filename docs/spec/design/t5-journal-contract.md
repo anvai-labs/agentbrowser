@@ -4,7 +4,8 @@ Status: B1/B2 merged in PR #285 (`5ebf820`), contract commits `f9d9c58`/`ab495ce
 HTTP/replay publication is merged and green. C1a per-call settlement merged #297;
 [C1b authority composition](t5-journal-authority.md) is implemented internally.
 [C2 application pins and C3 terminal/replay](t5-journal-application-terminal.md)
-are under internal qualification. C4 runtime qualification remains proposed.
+merged #299. [C4a control views](t5-journal-control-views.md) share the ACK
+projection; C4b runtime/transport qualification remains gated.
 Requires [J1-A response finalization](t5-finalization-publication.md) before runtime
 integration. Parent: [T5 J0–J4 sequence](t5-operation-journal.md). This module is
 loaded explicitly for journal work; unrelated modes do not load its structures.
@@ -269,7 +270,8 @@ I/O ignores abort without reopening that store concurrently.
 | C1 intent/dispatch | Compose into existing authority for qualified operations | No callback before intent ACK; no effect before marker ACK; takeover/expiry/replacement at each wait yields zero new effects; sibling marker sharing and late ACK never escape J0 drain |
 | C2 application pins | Retain existing final consent/binding validation at the post-wait boundary | Revoked consent/binding/input during marker wait refuses; consume called once; ordinary writes reauthorize; no browser durability accidentally enabled |
 | C3 terminal/replay | Compose J1-A finalization and status projection | Delayed/failed/lost terminal ACK withholds durable success; duplicate during every phase never reexecutes; finalized execution survives send failure |
-| C4 qualification | One shared descriptor/selection contract through existing protocol projections | Unsupported durability refused; ordinary ephemeral clients unchanged; same REST/SDK/CLI behavior; MCP optional; browser-free startup with no store installed |
+| C4a control views | Reuse acknowledged projection for status/lifecycle views | Pre-intent operation omitted without blocking takeover; terminal ACK bounds completion; ephemeral views unchanged |
+| C4b qualification | One shared descriptor/selection contract through existing protocol projections | Unsupported durability refused; ordinary ephemeral clients unchanged; same REST/SDK/CLI behavior; MCP optional; browser-free startup with no store installed |
 
 For B1/B2, use deterministic deferred ACKs and independent stored-state/effect counters;
 do not mock the same method being asserted. For C1–C3 cross every persistence boundary
@@ -282,5 +284,7 @@ tests on the supported Node/Bun matrix. J3 historical authorization/continuation
 event/cursor qualification remain separate. No concrete store, public durability claim, percentage increase or release ships here.
 C1b connects the facade to internal SessionAuthority admission/dispatch. C2/C3 extend
 trusted application composition and acknowledged publication; service configuration and
-transports remain disconnected. C4, J2 runtime/storage qualification and J3/J4 recovery
-gates remain closed. See the [C2/C3 packet](t5-journal-application-terminal.md).
+transports remain disconnected. C4a bounds all control views by the same ACK facts.
+C4b, J2 runtime/storage qualification and J3/J4 recovery gates remain closed. See the
+[C2/C3 packet](t5-journal-application-terminal.md) and
+[C4 continuation](t5-journal-control-views.md).

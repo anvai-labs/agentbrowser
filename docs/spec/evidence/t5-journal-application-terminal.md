@@ -1,7 +1,7 @@
 # T5 C2/C3: application guards and terminal acknowledgment
 
 Base: develop `a1443c7` (PR #298).
-Status: implemented internally; final candidate hooks and protected delivery pending.
+Status: merged as [PR #299](https://github.com/anvai-labs/agentbrowser/pull/299) at `e4b5e74`.
 Design: [application and terminal composition](../design/t5-journal-application-terminal.md).
 
 ## Changes and ownership
@@ -52,8 +52,11 @@ their original refusal assertions.
 Control type-check, targeted formatting, documentation links and modular-context tests
 passed. Production-tree application acceptance passed without API/browser packages.
 The first sandboxed production deployment hit registry DNS restrictions; the authorized
-rerun passed. Independent source review is clean. Exact-head hook and CI evidence belongs
-on the final PR; pending delivery is not recorded as complete here.
+rerun passed. Normal commit/pre-push hooks passed. Independent review of head
+`8736fb1c54846b0e9072fe2b2c98e37169f00327` returned CLEAN/SHIP. PR CI
+`36185686642` and post-merge CI `36186349478` passed 8/8 checks each. Merge
+`e4b5e747d9c39d2c0b40e4c22aca40a63080a117` retained reviewed tree
+`1e46cc8cae2a0200c14337329913bace5b9b354e`. No release was cut.
 
 ## Remaining gates
 

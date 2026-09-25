@@ -9,6 +9,11 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ### Added
 
+- Internal journal control views share the acknowledged operation projection with
+  replay and explicit publication. Status and takeover cannot expose terminal completion
+  before its ACK; before intent ACK they retain busy/lifecycle facts and omit operation.
+  Ephemeral clients keep existing behavior. Public durability remains gated.
+
 - Internal application journal writes revalidate authorization, consumed consent and
   binding/input pins after the marker wait. Terminal acknowledgment gates successful
   output and replay uses the last acknowledged facts stored beside the existing

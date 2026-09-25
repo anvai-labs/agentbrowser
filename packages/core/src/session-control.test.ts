@@ -192,6 +192,59 @@ describe('session control', () => {
     expect(control.publicationOperation('durable-save')?.status).toBe('in_flight');
   });
 
+  it('omits unacknowledged intent from views without blocking lifecycle control', () => {
+    const control = new SessionControl();
+    const ticket = control.begin({
+      actor: 'operator',
+      operationId: 'pending-intent',
+      fingerprint: 'digest',
+      acknowledgmentRequired: true,
+    });
+    if ('replay' in ticket) throw new Error('unexpected replay');
+    expect(control.view()).toEqual({ state: 'HUMAN_ACTIVE', epoch: 0, busy: true });
+    expect(control.takeover()).toEqual({ state: 'PAUSE_REQUESTED', epoch: 0, busy: true });
+    expect(() => control.publicationOperation('pending-intent')).toThrow(/acknowledgment/i);
+    control.stop();
+    expect(control.view()).toMatchObject({ state: 'STOPPED', busy: true });
+    expect(control.view()).not.toHaveProperty('operation');
+    expect(control.operation('pending-intent')).toMatchObject({ status: 'in_flight' });
+  });
+
+  it.each(['completed', 'failed', 'outcome_unknown'] as const)(
+    'bounds active views by ACK rather than live %s execution and returns isolated snapshots',
+    (status) => {
+      const control = new SessionControl();
+      const ticket = control.begin({
+        actor: 'operator',
+        operationId: 'pending-terminal',
+        fingerprint: 'digest',
+        acknowledgmentRequired: true,
+      });
+      if ('replay' in ticket) throw new Error('unexpected replay');
+      control.acknowledge(ticket, { status: 'in_flight', dispatched: false });
+      const intentView = control.view();
+      expect(intentView.operation).toMatchObject({ status: 'in_flight', dispatched: false });
+      control.acknowledge(ticket, { status: 'in_flight', dispatched: true });
+      // A committed marker is conservatively visible even before physical dispatch.
+      expect(control.operation('pending-terminal')?.dispatched).toBe(false);
+      expect(control.view().operation).toMatchObject({ status: 'in_flight', dispatched: true });
+      control.dispatched(ticket);
+      control.finalize(ticket, status);
+      expect(control.operation('pending-terminal')?.status).toBe(status);
+      const markerView = control.takeover();
+      expect(markerView.operation).toMatchObject({ status: 'in_flight', dispatched: true });
+      if (markerView.operation) markerView.operation.status = 'failed';
+      expect(control.view().operation?.status).toBe('in_flight');
+      expect(intentView.operation?.dispatched).toBe(false);
+      control.acknowledge(ticket, { status, dispatched: true });
+      expect(control.view().operation).toEqual(control.publicationOperation('pending-terminal'));
+      expect(control.view().operation?.status).toBe(status);
+      control.finish(ticket, status);
+      expect(control.view()).toMatchObject({ busy: false });
+      expect(control.view()).not.toHaveProperty('operation');
+    }
+  );
+
   it('binds acknowledgment selection into the existing duplicate identity in both directions', () => {
     const control = new SessionControl();
     const durable = {
@@ -386,6 +439,9 @@ describe('session control', () => {
 
     control.dispatched(ticket);
     expect(control.view().operation).toMatchObject({ dispatched: true });
+    expect(view.operation?.dispatched).toBe(false);
+    if (view.operation) view.operation.status = 'failed';
+    expect(control.view().operation?.status).toBe('in_flight');
 
     control.finish(ticket, 'completed');
     expect(control.view().operation).toBeUndefined();
