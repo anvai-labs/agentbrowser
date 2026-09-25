@@ -7,6 +7,8 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-09-24
+
 ### Added
 
 - Shared launch diagnostics on REST/SDK session create/get/list, CLI JSON and human
@@ -23,6 +25,9 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   do not gain deduplication, and inventory does not correlate an uncertain create result.
 
 ### Fixed
+
+- Release publication refuses duplicate asset names instead of replacing bytes
+  under an existing tag, preserving checksums pinned by package managers.
 
 - Session views retain the selected adapter's immutable name/version, including
   auxiliary engines, instead of reading the primary engine on later inspections.

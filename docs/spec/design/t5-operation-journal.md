@@ -1,7 +1,7 @@
 # T5: shared dispatch and optional operation journal
 
-Status: J0 and J1-A HTTP/replay publication implemented; B1/B2 contract candidate.
-Baseline: develop `5eae01d`. J1-C integration and J2–J4 remain proposed. This design does not advertise durable recovery.
+Status: J0 and J1-A HTTP/replay publication implemented; B1/B2 contract merged #285.
+Baseline: develop `5ebf820` (PR #285). J1-C integration and J2–J4 remain proposed. This design does not advertise durable recovery.
 Task: [T5](../tasks/t5-durable-recovery.md). Shared contracts remain in
 [execution](../execution.md) and [state/memory](../state-memory.md).
 
@@ -101,7 +101,7 @@ The implementation sequence is now split into demand-loaded packets:
 [J1-B port and J1-C integration](t5-journal-contract.md). The first durable qualification
 targets application writes only. Browser target/policy/approval checks need a separate
 post-storage-wait qualification through their existing owners. HTTP/replay publication is merged through [A3c/A4b](t5-browser-review-publication.md).
-The B1/B2 journal contract is a storage-neutral candidate; runtime integration, a concrete
+The B1/B2 journal contract merged as PR #285 (`5ebf820`); runtime integration, a concrete
 store and recovery remain unimplemented. See [A1 evidence](../evidence/t5-finalization.md),
 [A2a evidence](../evidence/t5-session-publication.md) and
 [A2b application access](../evidence/t5-application-publication.md).

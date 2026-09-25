@@ -1,12 +1,14 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
 Latest recheck: published 1.10.1 at `124afc35484225374bfb8739a07b87b2698d03f4`
-and develop `5eae01dca6c83be75dea3f3a8aea154dd1b0eef7` (#284), 2026-09-24.
+and develop `0b1f1da76ed67a8b90d8af7c1a3058b62fab49df` (#288), 2026-09-24.
 Release, npm, Homebrew and installed acceptance are complete; the live service was
 preserved on 1.10.0. Extraction budgets (#281), A3a2 (#282) and HTTP/replay publication (#283–284) are develop-only.
+The owner has now authorized the [1.11.0 release checkpoint](release-1.11.0.md).
+Journal contracts (#285), research adapters (#286), ownership (#287) and diagnostics
+(#288) also remain unreleased until that delivery completes.
 The historical records below preserve earlier baselines; the current table and final
-checkpoint describe the latest acceptance position. No new release is required for
-the next develop slice.
+checkpoint describe the latest acceptance position. The release does not change finite milestone completion.
 
 ## Acceptance progress
 
@@ -21,7 +23,7 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T2 shared execution/verification | Complete, released | 100% | Production evidence belongs to T4; restart durability to T5 |
 | T3 QA regression | Complete, released | 100% | Broader provisioning and demand-backed report adapters are follow-ups |
 | T4 application operations/parity | Active | ~40% | Production UI/API oracle and evidence; U0/U1 operator UX merged; synthetic parity qualified; callback repair merged #236 |
-| T5 durable recovery | Active publication/journal foundation | ~10% | HTTP/replay publication merged; B1/B2 contract candidate; runtime journal/recovery and process-loss qualification remain; no durable guarantee yet |
+| T5 durable recovery | Active publication/journal foundation | ~10% | HTTP/replay publication merged; B1/B2 contract merged; runtime journal/recovery and process-loss qualification remain; no durable guarantee yet |
 | T6 forms/operations | Active | ~40% | Production sources, candidate/job eligibility and live qualification; C3c public synthetic workflow merged #257 |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
 | T8 installed harnesses | Active source repair; installed acceptance unqualified | 0% installed qualification | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |

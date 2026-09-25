@@ -1,6 +1,6 @@
 # T5 J1-B/C: journal port and acknowledgment integration
 
-Status: B1/B2 implementation candidate from develop `5eae01d` (PR #284).
+Status: B1/B2 merged in PR #285 (`5ebf820`), contract commits `f9d9c58`/`ab495ce`.
 HTTP/replay publication is merged and green. C1–C4 runtime integration remains proposed.
 Requires [J1-A response finalization](t5-finalization-publication.md) before runtime
 integration. Parent: [T5 J0–J4 sequence](t5-operation-journal.md). This module is
@@ -263,5 +263,5 @@ settling I/O. A fake adapter alone cannot establish crash durability.
 J2 still needs one optional SQLite runtime/packaging/ownership audit and real process-loss
 tests on the supported Node/Bun matrix. J3 historical authorization/continuation and J4
 event/cursor qualification remain separate. No concrete store, public durability claim, percentage increase or release ships here.
-The B1/B2 candidate is not connected to SessionAuthority, service configuration or transports.
+The merged B1/B2 contract is not connected to SessionAuthority, service configuration or transports.
 C1–C4, J2 runtime/storage qualification and J3/J4 recovery gates remain closed.

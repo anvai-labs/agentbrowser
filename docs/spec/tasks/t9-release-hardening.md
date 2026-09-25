@@ -38,6 +38,15 @@ provide a concrete candidate and evidence before requesting any missing approval
 Never claim main promotion or release from a local version bump. Preserve concurrent
 branches and use the reviewed final commit identity for each merge.
 
+## Current release checkpoint
+
+The current published baseline is 1.10.1; the owner authorized the 1.11.0 candidate
+from develop `0b1f1da` after PR #288. Follow the [delivery record](../evidence/release-1.11.0.md)
+for current gates. The older release records below are historical, not the latest
+installed or published version. This candidate preserves all eight strict main
+checks and prohibits replacing existing release assets. No durable recovery,
+installed external-harness qualification or production-use-case completion is implied.
+
 ## Current implementation state
 
 Main is protected with required checks, admin enforcement and force-push/deletion

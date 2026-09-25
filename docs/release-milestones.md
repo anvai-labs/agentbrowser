@@ -1,5 +1,19 @@
 # Release milestones and acceptance gates
 
+## Current candidate: 1.11.0 research and publication checkpoint
+
+The owner authorized promotion after PR #288. Candidate base is develop `0b1f1da`,
+with all eight pre/post-merge checks green. This is a minor release: new public
+extraction budgets, MCP page provisioning and shared launch diagnostics accompany
+browser ownership and HTTP/review publication fixes. The journal remains a private,
+storage-neutral foundation with no runtime durability or recovery guarantee.
+
+The previous published release is 1.10.1 at main `124afc3`. The
+[1.11.0 delivery record](spec/evidence/release-1.11.0.md) tracks the candidate and
+separate promotion, artifact, npm and Homebrew gates. Preparation is not publication.
+Use normal PRs to develop and main, tag the verified protected-main commit only,
+and back-sync main. Existing installed sessions must be preserved during acceptance.
+
 ## Delivered checkpoint: 1.10.0 published and installed (2026-09-23)
 
 The owner authorized promotion after the LAN CIDR checkpoint (#275). Version

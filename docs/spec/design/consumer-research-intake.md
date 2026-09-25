@@ -4,8 +4,9 @@ Status: R1 local fixture qualification, R2 basic MCP adapter and R3 browser-erro
 classification merged in PR #286 (`1aa63f0`), with pre/post-merge CI green.
 The [R4 browser ownership prerequisite](research-browser-ownership.md) was
 merged in PR #287 (`1a1afc7`), with pre/post-merge CI green.
-[Shared launch diagnostics](session-launch-diagnostics.md) are implemented for this
-checkpoint; R5–R7 remain proposed.
+[Shared launch diagnostics](session-launch-diagnostics.md) merged in PR #288
+(`0b1f1da`) with pre/post-merge CI green. R1–R4 are included in the 1.11.0
+release candidate; R5–R7 remain proposed.
 Source: [consumer field report, 2026-09-24](../../consumer-field-handoff-2026-09-24.md).
 Code reviewed: develop `5eae01d` plus the storage-neutral journal in PR #285,
 merged as `5ebf820`. The report does not identify the exact service/MCP build used; observations
@@ -108,14 +109,14 @@ existing direct service path.
 ### R4 diagnostic boundary
 
 Expose allowlisted facts such as local/remote attachment, browser family, configured
-vs detected vs bundled selection, effective viewport mode and whether the headed
+vs detected vs Playwright-default selection, effective viewport mode and whether the headed
 init script was installed. An observed `navigator.webdriver` value is a timestamped,
 page-specific observation, not an immutable launch fact or anti-detection guarantee.
 Any such page read uses the existing read/publication boundary. Do not make an
 external IP lookup by default. Full launch arguments, executable/profile paths and
 CDP URLs can contain private data; they are not default public diagnostic fields.
-Capture the actual selected engine and version per session; current session reads
-can source the version from the primary engine even when an alternate was selected.
+The merged projection captures the selected adapter and version per session; it
+fixes the earlier primary-engine version leak when an alternate was selected.
 Follow [ADR-016](../../adr/016-branded-chrome-first-headed-launches.md).
 
 ### R5 and R6 lifecycle boundary
