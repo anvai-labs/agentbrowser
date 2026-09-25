@@ -133,20 +133,28 @@ export type RawJournalOpenOutcome =
 export interface RawOperationJournalAdapter {
   open(namespace: RawJournalNamespace, signal: AbortSignal): PromiseLike<unknown>;
 }
+/**
+ * Capture the original call before awaiting it: ordinary promise chaining does not
+ * preserve this property. Settlement means raw I/O, validation and slot cleanup
+ * finished, not that storage acknowledged a write or execution is authorized.
+ */
+export interface JournalCall<T> extends Promise<T> {
+  readonly settled: Promise<void>;
+}
 export interface OperationJournal {
   readonly namespace: JournalNamespace;
   readonly health: 'open' | 'quarantined' | 'poisoned' | 'closed';
   readonly pending: number;
-  reserveIntent(intent: JournalIntent, signal?: AbortSignal): Promise<JournalMutationOutcome>;
+  reserveIntent(intent: JournalIntent, signal?: AbortSignal): JournalCall<JournalMutationOutcome>;
   markDispatch(
     transition: JournalTransition,
     signal?: AbortSignal
-  ): Promise<JournalMutationOutcome>;
+  ): JournalCall<JournalMutationOutcome>;
   commitTerminal(
     transition: JournalTerminalTransition,
     signal?: AbortSignal
-  ): Promise<JournalMutationOutcome>;
-  lookup(key: JournalKey, signal?: AbortSignal): Promise<JournalLookupOutcome>;
+  ): JournalCall<JournalMutationOutcome>;
+  lookup(key: JournalKey, signal?: AbortSignal): JournalCall<JournalLookupOutcome>;
   close(): Promise<JournalCloseOutcome>;
 }
 export type JournalOpenOutcome =

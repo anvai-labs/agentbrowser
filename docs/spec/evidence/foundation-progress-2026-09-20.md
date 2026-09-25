@@ -10,9 +10,14 @@ and installed binaries from the running service and records main ancestry for th
 The historical records below preserve earlier baselines; the current table and final
 checkpoint describe the latest acceptance position. The release does not change finite milestone completion.
 
-Unreleased continuation: [R5a active-session leases](session-lease-visibility.md)
-extends the existing coordinator and session view. It does not complete R5b close-cause
-retention or T5 recovery, and does not change installed/released version claims.
+Develop recheck: `a06a31c745d81bc25500ff0b34e0c719f64ef1b2` (PR #296).
+Unreleased continuation through #292–296 adds navigation reasons, operator Chrome
+attachment, the EDGAR recipe, active leases, bounded terminal facts and observed
+engine disconnection. PR #296 and its post-merge CI each passed 8/8 checks; see
+[disconnect evidence](session-disconnect.md). None establishes durable recovery or
+changes installed/released version claims. Original roadmap work resumes at
+[T5 C1a journal settlement](t5-journal-settlement.md), an internal prerequisite for
+application-only journal composition. The estimates below remain unchanged.
 
 ## Acceptance progress
 

@@ -44,7 +44,12 @@ This release includes A3a2 shared page/evidence disclosure,
 [A3c/A4b browser/review adoption](../design/t5-browser-review-publication.md) (#284),
 and the storage-neutral [B1/B2 journal contract](../design/t5-journal-contract.md) (#285).
 C1+ integration, a real store and recovery remain gated. R1–R4 research adapters and
-diagnostics shipped; R5 lease/close-cause visibility is the next consumer packet.
+diagnostics shipped. The consumer continuation through #296 is merged to develop:
+navigation reasons, operator CDP attachment, the EDGAR recipe, sampled leases,
+bounded terminal facts and observed engine disconnection. These changes are not yet
+released and do not establish durable recovery. Resume T5 with the
+[C1a settlement prerequisite](../evidence/t5-journal-settlement.md), then compose
+application-only intent/dispatch through the existing authority and drain owner.
 The remaining T4/T6 production/private/live gates are still open. T8 installed
 external-harness qualification remains separate. Recheck concurrent branches first.
 

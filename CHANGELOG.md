@@ -9,6 +9,11 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ### Added
 
+- Internal journal calls expose actual storage completion separately from bounded
+  caller waiting, reusing the existing task owner. Timeouts and cancellation cannot
+  signal that outstanding storage has drained. Runtime journal integration and
+  durable recovery remain gated.
+
 - Observed browser/context disconnection ends the exact affected session, revokes
   delegated authority, and reports `engine_disconnected` through the existing
   REST/SDK/CLI/MCP terminal projection. Intentional teardown and page-only close
@@ -33,7 +38,8 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - Bounded, tenant-authorized close facts for recently ended sessions. The coordinator
   distinguishes TTL, idle, explicit and policy termination, retains only detached
   allowlisted facts, and derives remaining lease from the authoritative sample. CLI
-  and MCP share the strict terminal-error projector; engine disconnect remains gated.
+  and MCP share the strict terminal-error projector; observed engine disconnection
+  uses the same projection.
 
 ### Fixed
 
