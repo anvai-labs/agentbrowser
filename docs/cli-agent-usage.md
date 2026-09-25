@@ -369,6 +369,14 @@ uses the existing strictly-after boundary. Grants and browser attachment can end
 Older servers or non-active session states may omit the lease: absence means unknown,
 not unlimited lifetime. See [R5a design](spec/design/session-lease-visibility.md).
 
+An authenticated `session get` for a recently ended owned session keeps the existing
+not-found error and may add bounded close cause, end time and sampled deadlines.
+Terminal availability is zero; the original deadlines remain visible to explain an
+early close. Live remaining time is derived at its sample, not a countdown.
+A revoked delegated token and another tenant receive no terminal facts. Engine or
+window intent is not inferred from error text. See the
+[R5b1 design](spec/design/session-close-causes.md).
+
 ### Navigation failure diagnostics
 
 `agentbrowser navigate SESSION PAGE URL --json` preserves successful result JSON.

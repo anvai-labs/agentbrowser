@@ -27,6 +27,7 @@ import {
   agentModeAllows,
   createPlanReportParser,
   formatErrorForUser,
+  formatSessionTerminalFailure,
   navigationFailureDetail,
   parseAutofillReport,
   parseAutofillRequest,
@@ -739,7 +740,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
       name: 'browser_session',
       requiredCapabilities: ['session.control', 'page.observe'],
       description:
-        "Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. On a delegated connection, " +
+        "Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. Independently authenticated operators may receive bounded close facts for a recently ended session. On a delegated connection, " +
         'also returns current control status; human takeover revokes later delegated calls.',
       inputSchema: {
         type: 'object',
@@ -983,11 +984,14 @@ function formatToolError(error: unknown, delegated: boolean): string {
     typeof operationId === 'string'
       ? `\nReconcile under current authorization with ${delegated ? 'browser_operation' : 'SDK/REST operation status'}: ${JSON.stringify({ operationId })}`
       : '';
+  const terminal = formatSessionTerminalFailure(error);
   return (
     formatErrorForUser(
       error,
       'The element ref is stale. Call browser_observe to get fresh refs at the current revision, then act on the new ref. Do not retry the old one.'
-    ) + suffix
+    ) +
+    (terminal ? `\n${terminal}` : '') +
+    suffix
   );
 }
 

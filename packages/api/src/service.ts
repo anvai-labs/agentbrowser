@@ -1,4 +1,4 @@
-import { isNavigationFailureReason } from '@agentbrowser/protocol';
+import { isNavigationFailureReason, sessionLeaseRemainingMs } from '@agentbrowser/protocol';
 import { type CdpAttachAdmission, requireCdpAttachAdmission } from './cdp-config.js';
 import { SessionAuthority } from './session-authority.js';
 /**
@@ -1312,6 +1312,11 @@ export class AgentBrowserService {
     return inspection ? this.sessionView(inspection.context, inspection.lease, true) : undefined;
   }
 
+  /** Internal post-close lookup; transport code must authorize ownerTenant before projection. */
+  inspectTerminalSession(sessionId: string) {
+    return this.coordinator.inspectTerminal(sessionId);
+  }
+
   private sessionView(
     context: SessionContext,
     lease: import('@agentbrowser/protocol').SessionLease | undefined,
@@ -1325,6 +1330,14 @@ export class AgentBrowserService {
       ttlMs: context.metadata.ttlMs,
       idleTimeoutMs: context.metadata.idleTimeoutMs,
       ...(lease ? { lease } : {}),
+      ...(lease
+        ? {
+            leaseRemainingMs: sessionLeaseRemainingMs(lease),
+          }
+        : context.terminal
+          ? { leaseRemainingMs: 0 }
+          : {}),
+      ...(context.terminal ? { closeCause: context.terminal.closeCause } : {}),
       pages: this.countPages(context.id),
       ...(context.diagnostics !== undefined ? { diagnostics: context.diagnostics } : {}),
       ...(context.engineSession.warnings?.length

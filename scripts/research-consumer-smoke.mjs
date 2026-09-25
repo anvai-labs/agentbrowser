@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { buildServer } from '../packages/api/dist/index.js';
 import { PlaywrightChromiumEngine } from '../packages/engine-playwright/dist/index.js';
 import { NetworkPolicy } from '../packages/policy/dist/index.js';
-import { AgentBrowserClient } from '../packages/sdk-typescript/dist/index.js';
+import { AgentBrowserClient, sessionTerminalFailureDetail } from '../packages/sdk-typescript/dist/index.js';
 import { checkMcp, runExecutable } from './release-smoke.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -70,6 +70,7 @@ try {
       const session = await callTool('browser_create', { tenantId: 'research-smoke', headless: !headed });
       assert.equal(typeof session.pageId, 'string');
       const scope = { sessionId: session.sessionId, pageId: session.pageId };
+      let explicitlyClosed = false;
       try {
         const sdkView = await client.sessions.get(scope.sessionId);
         const restView = await (await fetch(`${baseUrl}/v1/sessions/${scope.sessionId}`, {
@@ -89,6 +90,7 @@ try {
           }
           assert.equal(view.lease.expiresAt, Date.parse(view.createdAt) + view.ttlMs);
           assert.equal(view.lease.idleExpiresAt, view.lease.lastActivityAt + view.idleTimeoutMs);
+          assert.equal(view.leaseRemainingMs, Math.max(0, Math.min(view.lease.expiresAt, view.lease.idleExpiresAt) - view.lease.sampledAt));
           assert.deepEqual(view.diagnostics, session.diagnostics, 'All surfaces project the same captured facts');
         }
         assert.equal(session.diagnostics.attachment, 'local_launch');
@@ -154,7 +156,24 @@ try {
         assert.equal((await callTool('browser_extract', { ...second, format: 'text' })).data.text, 'Maintenance');
         await client.sessions.closePage(scope.sessionId, page.pageId);
         assert.equal((await callTool('browser_pages', { sessionId: scope.sessionId })).pages.length, 1);
-      } finally { await client.sessions.close(scope.sessionId); }
+        await client.sessions.close(scope.sessionId);
+        explicitlyClosed = true;
+        const endedRest = await fetch(`${baseUrl}/v1/sessions/${scope.sessionId}`, { headers: { authorization: `Bearer ${key}` } });
+        assert.equal(endedRest.status, 404);
+        const terminal = (await endedRest.json()).error.details.sessionTerminal;
+        assert.equal(terminal.closeCause, 'explicit_close');
+        assert.equal(terminal.leaseRemainingMs, 0);
+        assert.ok(terminal.lease.expiresAt > terminal.endedAt);
+        await assert.rejects(client.sessions.get(scope.sessionId), (error) => {
+          assert.deepEqual(sessionTerminalFailureDetail(error), terminal);
+          return true;
+        });
+        const cliEnded = await runExecutable([process.execPath, join(root, 'packages/cli/dist/bin.js'), '--base-url', baseUrl, 'session', 'get', scope.sessionId], { env, expectedExitCode: 1 });
+        assert.match(cliEnded.stderr, /close-cause=explicit_close/);
+        const mcpEnded = await request('tools/call', { name: 'browser_session', arguments: { sessionId: scope.sessionId } });
+        assert.equal(mcpEnded.isError, true);
+        assert.match(mcpEnded.content[0].text, /close-cause=explicit_close/);
+      } finally { if (!explicitlyClosed) await client.sessions.close(scope.sessionId); }
     },
   });
   const controlled = await client.sessions.create({ tenantId: 'research-smoke', controlMode: 'delegated', headless: !headed });
@@ -199,6 +218,18 @@ try {
       },
     });
   } finally { await client.sessions.close(controlled.sessionId); }
+  for (const [expectedCause, lifetime] of [
+    ['ttl_expired', { ttlMs: 1000, idleTimeoutMs: 60_000 }],
+    ['idle_expired', { ttlMs: 60_000, idleTimeoutMs: 1000 }],
+  ]) {
+    const expiring = await client.sessions.create({ tenantId: 'research-smoke', headless: !headed, ...lifetime });
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const response = await fetch(`${baseUrl}/v1/sessions/${expiring.sessionId}`, { headers: { authorization: `Bearer ${key}` } });
+    assert.equal(response.status, 404);
+    const terminal = (await response.json()).error.details.sessionTerminal;
+    assert.equal(terminal.closeCause, expectedCause);
+    assert.equal(terminal.leaseRemainingMs, 0);
+  }
 } finally {
   fixture.closeAllConnections();
   const cleanup = await Promise.allSettled([
@@ -210,5 +241,5 @@ try {
   if (failures.length) throw new AggregateError(failures.map((item) => item.reason), 'Research smoke cleanup failed');
 }
 console.log(JSON.stringify({ status: 'pass', version, headed, measurements, jsonBytes: Buffer.byteLength(json),
-  coverage: 'Real Chromium + authenticated REST/SDK/CLI + MCP stdio; captured identity/diagnostics, sampled lease parity and complete extraction persisted and grepped by this script',
-  limits: 'Synthetic local filings, not live SEC availability or installed Claude overflow-path qualification', cleanup: 'owned server, sessions, fixture and files closed' }));
+  coverage: 'Real Chromium + authenticated REST/SDK/CLI + MCP stdio; captured identity/diagnostics, sampled lease parity, explicit/TTL/idle terminal facts and complete extraction persisted and grepped by this script',
+  limits: 'Synthetic local filings; engine-disconnect/window classification, live SEC availability and installed Claude overflow-path qualification are not covered', cleanup: 'owned server, sessions, fixture and files closed' }));

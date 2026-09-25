@@ -536,6 +536,26 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
    */
   const httpPublication = createHttpPublication();
   const principals = new WeakMap<FastifyRequest, SessionPrincipal>();
+  const terminalFailure = (
+    request: FastifyRequest,
+    sessionId: string,
+    error: unknown = new ServiceError('SESSION_NOT_FOUND', 'Session does not exist.')
+  ): unknown => {
+    const terminal = service.inspectTerminalSession(sessionId);
+    if (!terminal) return error;
+    const principal = principals.get(request);
+    // A removed delegated grant never regains disclosure authority. Requests
+    // that reach here are either independently authenticated operators or the
+    // established no-key local mode.
+    if (principal?.actor === 'agent') return error;
+    const tenant = (request as FastifyRequest & { tenant?: string }).tenant;
+    if (tenant !== undefined && terminal.ownerTenant !== tenant) return error;
+    // A transition may race an admitted handler failure. Terminal publication
+    // is a fresh static envelope and never carries arbitrary prior details.
+    return new ServiceError('SESSION_NOT_FOUND', 'Session does not exist.', false, {
+      sessionTerminal: terminal.view,
+    });
+  };
   const responseStatus = (statusCode: number, body: unknown) => responseDraft(body, statusCode);
   const executionResponse = <T extends { ok: boolean } | { status: 'success' | 'failed' }>(
     result: T
@@ -548,10 +568,16 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
   /** Shared error/tenant boundary; `on` admits drafts, `onTransport` owns explicit lifecycle/self admission. */
   const route =
-    (handler: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>) =>
+    (
+      handler: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>,
+      publishTerminal = true
+    ) =>
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
         const { sessionId } = request.params as { sessionId?: string };
+        if (publishTerminal && sessionId && service.inspectTerminalSession(sessionId)) {
+          throw terminalFailure(request, sessionId);
+        }
         const control = sessionId ? service.authority.get(sessionId) : undefined;
         if (!sessionId || !control) return await handler(request, reply);
         const principal = principals.get(request);
@@ -567,7 +593,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       } catch (error) {
         if (reply.raw.destroyed) return reply.hijack();
         if (reply.sent) return reply;
-        return fail(reply, error);
+        const { sessionId } = request.params as { sessionId?: string };
+        return fail(
+          reply,
+          publishTerminal && sessionId ? terminalFailure(request, sessionId, error) : error
+        );
       }
     };
 
@@ -721,8 +751,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       const requireOwnership = (sessionId: string, tenant: string | undefined): void => {
         if (tenant === undefined) return;
         const session = service.getSession(sessionId);
-        if (session === undefined)
+        if (session === undefined) {
+          const terminal = service.inspectTerminalSession(sessionId);
+          if (terminal?.ownerTenant === tenant) return;
           throw new ServiceError('SESSION_NOT_FOUND', 'Session does not exist.');
+        }
         if (session.tenantId !== undefined && session.tenantId !== tenant)
           throw new ServiceError('FORBIDDEN', `Session ${sessionId} belongs to another tenant.`);
       };
@@ -755,7 +788,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           ...(principal ? { principal } : {}),
         });
       };
-      type RouteMeta = { capability?: AgentCapability; safe?: boolean };
+      type RouteMeta = {
+        capability?: AgentCapability;
+        safe?: boolean;
+        terminal?: 'retained-resource';
+      };
       const onTransport = (
         method: 'GET' | 'POST' | 'PUT' | 'DELETE',
         url: string,
@@ -772,7 +809,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           ...(meta.publication
             ? { onSend: httpPublication.onSend, onError: httpPublication.onError }
             : {}),
-          handler: route(handler),
+          handler: route(handler, meta.terminal !== 'retained-resource'),
         });
 
       // Work receives no Fastify reply: only the publisher can serialize/send.
@@ -1203,13 +1240,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           const session = service.getSession(sessionId);
 
           if (!session) {
-            return responseStatus(404, {
-              error: {
-                code: 'SESSION_NOT_FOUND',
-                message: `Session ${sessionId} not found`,
-                retryable: false,
-              },
-            });
+            throw new ServiceError('SESSION_NOT_FOUND', `Session ${sessionId} not found`);
           }
 
           return responseDraft(session);
@@ -1547,7 +1578,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             contentBase64: Buffer.from(stored.bytes).toString('base64'),
           });
         },
-        { capability: 'page.capture' }
+        { capability: 'page.capture', terminal: 'retained-resource' }
       );
 
       // Collect an intercepted in-page download (spec 10)

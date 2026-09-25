@@ -1467,6 +1467,32 @@ describe('AgentBrowser CLI', () => {
       expect(out.join('\n')).toContain('2026-08-23T10:00:00Z');
     });
 
+    it('renders allowlisted terminal facts from the shared error projection', async () => {
+      const error = Object.assign(new Error('SESSION_NOT_FOUND: Session does not exist.'), {
+        code: 'SESSION_NOT_FOUND',
+        details: {
+          sessionTerminal: {
+            closeCause: 'explicit_close',
+            endedAt: 1050,
+            state: 'closed',
+            leaseRemainingMs: 0,
+            lease: {
+              sampledAt: 1050,
+              expiresAt: 2000,
+              lastActivityAt: 1000,
+              idleExpiresAt: 1500,
+            },
+          },
+          privateReason: 'secret',
+        },
+      });
+      sessions.get.mockRejectedValueOnce(error);
+      expect(await run('session', 'get', 'ses_1')).toBe(1);
+      expect(err.join('\n')).toContain('close-cause=explicit_close');
+      expect(err.join('\n')).toContain('ended-at=1050');
+      expect(err.join('\n')).not.toContain('secret');
+    });
+
     it('renders sampled leases and captured launch facts and preserves the complete JSON view', async () => {
       const view = {
         sessionId: 'ses_1',
@@ -1477,6 +1503,7 @@ describe('AgentBrowser CLI', () => {
         idleTimeoutMs: 500,
         pages: 0,
         lease: { sampledAt: 1000, expiresAt: 3000, lastActivityAt: 900, idleExpiresAt: 2000 },
+        leaseRemainingMs: 1000,
         diagnostics: {
           attachment: 'remote_cdp',
           browserFamily: 'chromium',

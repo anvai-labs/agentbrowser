@@ -35,6 +35,11 @@ export {
   parsePlanReport,
   parseAutofillReport,
 } from '@agentbrowser/protocol';
+export {
+  formatSessionTerminalFailure,
+  sessionTerminalFailureDetail,
+} from '@agentbrowser/protocol';
+export type { SessionCloseCause, SessionTerminalView } from '@agentbrowser/protocol';
 
 export type { ExportedCookie } from './client';
 
