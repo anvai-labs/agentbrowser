@@ -1,7 +1,8 @@
 # T5 A3c/A4b: browser and review HTTP publication
 
 Status: merged as PR #284 at `5eae01d`; exact reviewed tree preserved, PR and
-post-merge CI each 8/8 green. Pending a later release.
+post-merge CI each 8/8 green. Shipped in the
+[1.11.0 checkpoint](../evidence/release-1.11.0.md).
 Parents: [finalization/publication](t5-finalization-publication.md),
 [review ownership](t5-review-publication.md), [HTTP publisher](t5-http-publication.md).
 Load only for HTTP composition. This is a prerequisite for the journal, not durability.

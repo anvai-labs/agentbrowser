@@ -1,7 +1,7 @@
 # Agent implementation task packets
 
 Status: implementation activated by the user's subsequent foundation-first instruction.
-The table records the published AgentBrowser 1.10.1 checkpoint and remaining work.
+The table records the published AgentBrowser 1.11.0 checkpoint and remaining work.
 Reading this task list alone does not
 authorize implementation or publication; follow the current user-authorized scope.
 
@@ -21,7 +21,7 @@ declared files and budgets without contacting a service.
 | [T2](t2-shared-execution.md) | Complete | Shared execution/evidence shipped; 1.10.0 includes #257 synthetic G6 acceptance, with production evidence and durability still gated | T0 |
 | [T3](t3-qa-regressions.md) | Complete | First application-owned CLI regression workflow, private JUnit evidence, standalone-copy and measured-cost qualification delivered through #231 and released in 1.9.1 | T2 |
 | [T4](t4-application-parity.md) | Active | REST/SDK/CLI shipped; synthetic UI/API parity and C3c public consent qualified; P0 trusted native-read composition merged #259; U0 binding UI merged #261; U1 receipt UX merged #262; production gates remain | T2 |
-| [T5](t5-durable-recovery.md) | Active | J0/A1/A2/A4a/A3a1 shipped in 1.10.0; A3a2 review disclosure implemented, pending release; HTTP/replay publication merged #284; B1/B2 journal contract merged #285; runtime/recovery pending | T2 |
+| [T5](t5-durable-recovery.md) | Active | J0/A1/A2/A4a/A3a1 shipped in 1.10.0; A3a2 review disclosure, HTTP/replay publication (#284), and B1/B2 journal contract (#285) shipped in 1.11.0; runtime/recovery pending | T2 |
 | [T6](t6-widget-strategies.md) | Active | Mapping, uploads, native/app witnesses and C3c synthetic submission shipped in 1.10.0; E0a/E0b eligibility merged #260; N0 document read merged #263; first E0c listing-capture slice merged #264; normalization/private integration/live gates remain | T2 |
 | [T7](t7-audit-security.md) | Not started | Optional audit/security adapters and profiles | T3; T4 additionally for application-security parity |
 | [T8](t8-harness-qualification.md) | Active source repair | Victor schema repair merged #1168; installed Victor/Codex/Claude qualification remains | T0; profile/full-run slices also require T1/T3 |
@@ -34,15 +34,17 @@ acceptance infrastructure; they are not instructions to create ten packages/serv
 
 ## Current continuation
 
-AgentBrowser 1.10.1 is published and installed; its release workflow passed 12/12
-checks and Homebrew PR #70 plus post-merge validation passed 4/4 checks. The prior
-[1.10.0 delivery evidence](../evidence/release-1.10.0.md) records the foundation release. This checkpoint includes the
-bounded T4/T6 slices and T5 owner primitives through #276, without completing those
-milestones. A3a2 shared page/evidence disclosure is now implemented as internal
-composition, pending release. The [A3b application HTTP slice](../design/t5-http-publication.md) merged as #283.
-[A3c/A4b browser/review adoption](../design/t5-browser-review-publication.md) merged as #284.
-The [B1/B2 journal contract](../design/t5-journal-contract.md) merged as PR #285 and is storage-neutral;
-C1+ integration, a real store and recovery remain gated.
+AgentBrowser 1.11.0 is published and installed; its release workflow passed 12/12
+jobs after one investigated Darwin x64 timeout retry. Homebrew PR #73 and its
+post-merge validation passed 4/4 checks; published and installed package acceptance
+passed all eleven groups. The existing live service was preserved on 1.10.0. See
+[delivery evidence](../evidence/release-1.11.0.md) for identities and limits.
+This release includes A3a2 shared page/evidence disclosure,
+[A3b application HTTP adoption](../design/t5-http-publication.md) (#283),
+[A3c/A4b browser/review adoption](../design/t5-browser-review-publication.md) (#284),
+and the storage-neutral [B1/B2 journal contract](../design/t5-journal-contract.md) (#285).
+C1+ integration, a real store and recovery remain gated. R1–R4 research adapters and
+diagnostics shipped; R5 lease/close-cause visibility is the next consumer packet.
 The remaining T4/T6 production/private/live gates are still open. T8 installed
 external-harness qualification remains separate. Recheck concurrent branches first.
 

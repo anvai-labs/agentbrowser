@@ -1,7 +1,7 @@
 # Immutable session identity and shared launch diagnostics
 
 Status: merged in PR #288 (`0b1f1da`), pre/post-merge CI 8/8 green. Included in
-the 1.11.0 release candidate; publication remains a separate gate. Base: `1a1afc7`
+the published and installed [1.11.0 checkpoint](../evidence/release-1.11.0.md). Base: `1a1afc7`
 (PR #287). Load only for session inspection, launch diagnosis or the R4 packet in
 [consumer research intake](consumer-research-intake.md); no default context expansion.
 
