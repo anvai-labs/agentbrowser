@@ -1,7 +1,7 @@
 # T5 C4a: shared acknowledged control views
 
 Base: develop `e4b5e74` (PR #299).
-Status: implemented internally; final hooks and protected delivery pending.
+Status: merged as [PR #300](https://github.com/anvai-labs/agentbrowser/pull/300) at `e812fbc`.
 Design: [control views and selection seam](../design/t5-journal-control-views.md).
 
 ## Change
@@ -32,8 +32,11 @@ paths converge on the core view, while duplicate replay/explicit lookup use publ
 Full core regression passed 394 cases. Production-tree application acceptance passed
 without API/browser packages (the initial sandboxed registry DNS failure required an
 authorized network retry). Documentation checks passed 935 relative links and all
-11 modular-context tests. Final hook, exact-head review and protected CI evidence belongs
-on the delivery PR.
+11 modular-context tests. Normal pre-commit/pre-push hooks passed. Independent review of
+head `6d823eea28f4c3da1e0cd7167e30b72813990af6` returned CLEAN/SHIP. PR CI
+`36192811912` and post-merge CI `36193638244` passed 8/8 checks each. Merge
+`e812fbc83e1b1c0c25b0cb8bada71b020381980e` retained reviewed tree
+`1ff50b8180255491cbb56d1824715dd1c2c9663f`; no release or restart followed.
 
 ## Remaining scope
 

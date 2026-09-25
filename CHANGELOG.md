@@ -9,6 +9,10 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ### Added
 
+- Journal storage audit and a dependency-free SQLite mechanism probe cover competing
+  ownership, process-loss persistence and child cleanup in the existing CI Test job.
+  Concrete adapter, external commit anchor and public durability remain gated.
+
 - Internal journal control views share the acknowledged operation projection with
   replay and explicit publication. Status and takeover cannot expose terminal completion
   before its ACK; before intent ACK they retain busy/lifecycle facts and omit operation.

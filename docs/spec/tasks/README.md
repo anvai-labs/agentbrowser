@@ -55,6 +55,10 @@ intent/dispatch waits through the existing ticket and drain owner (merged #298).
 merged #299 with clean exact-head review and pre/post-merge CI 8/8.
 [C4a control views](../design/t5-journal-control-views.md) now share ACK publication;
 C4b runtime selection, concrete storage and recovery remain gated.
+C4a merged #300 at `e812fbc` with clean review and pre/post-merge CI 8/8.
+[J2a SQLite audit](../design/t5-journal-sqlite-audit.md) records local feasibility;
+[J2b qualification](../design/t5-journal-sqlite-qualification.md) is the next store packet.
+No public durability or recovery is enabled.
 The remaining T4/T6 production/private/live gates are still open. T8 installed
 external-harness qualification remains separate. Recheck concurrent branches first.
 
