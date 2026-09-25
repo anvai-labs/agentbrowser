@@ -70,22 +70,7 @@ export interface ClientOptions {
 // no caller.
 export type { SessionCookie, SessionRequest } from '@agentbrowser/protocol';
 
-export interface SessionResponse {
-  /** Diagnostics reported by the browser host. */
-  warnings?: string[];
-  sessionId: string;
-  status: string;
-  engine?: {
-    name: string;
-    version: string;
-    capabilities: Record<string, unknown>;
-  };
-  createdAt: string;
-  ttlMs?: number;
-  idleTimeoutMs?: number;
-  /** Number of live pages registered to the session right now. */
-  pages?: number;
-}
+export type SessionResponse = import('@agentbrowser/protocol').SessionView;
 
 export interface PageResponse {
   pageId: string;
@@ -128,6 +113,8 @@ export interface ActionResult {
 
 export interface ExtractRequest {
   format: 'text' | 'markdown' | 'links' | 'tables' | 'forms' | 'jsonld' | 'schema' | 'records';
+  /** Complete compact JSON response budget in UTF-8 bytes, bounded by the server ceiling. */
+  maxBytes?: number;
   /** JSON Schema constraining the extraction (format: 'schema' only). */
   schema?: Record<string, unknown>;
   /** Repeating-structure selectors (format: 'records' only). */
@@ -138,6 +125,7 @@ export interface ExtractRequest {
 // these from the SDK rather than redeclaring them.
 export {
   DELIVERED_EXTRACT_FORMATS,
+  parseExtractMaxBytesText,
   REF_PATTERN,
   parseRef,
   parseAutofillRequest,

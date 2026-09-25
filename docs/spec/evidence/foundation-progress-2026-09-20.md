@@ -1,12 +1,14 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
-Rechecked published 1.9.1 at `310e01d43982824caac2c63ed8d98355e17efdce`
-and develop `8752c6b746996802209bac2490ceb285e3569265` (PR #273; alignment
-rechecked 2026-09-23). C3c incorporates the merged #256 error-containment repair.
-The [release ladder](release-1.9.1.md) includes Bun CLI/MCP artifacts,
-Node 24 service qualification, Homebrew and develop back-sync. Existing browser
-sessions were preserved; an upgraded installed binary does not prove every running
-service was restarted. No new release is required for the next develop slice.
+Latest recheck: published 1.10.1 at `124afc35484225374bfb8739a07b87b2698d03f4`
+and develop `0b1f1da76ed67a8b90d8af7c1a3058b62fab49df` (#288), 2026-09-24.
+Release, npm, Homebrew and installed acceptance are complete; the live service was
+preserved on 1.10.0. Extraction budgets (#281), A3a2 (#282) and HTTP/replay publication (#283–284) are develop-only.
+The owner has now authorized the [1.11.0 release checkpoint](release-1.11.0.md).
+Journal contracts (#285), research adapters (#286), ownership (#287) and diagnostics
+(#288) also remain unreleased until that delivery completes.
+The historical records below preserve earlier baselines; the current table and final
+checkpoint describe the latest acceptance position. The release does not change finite milestone completion.
 
 ## Acceptance progress
 
@@ -21,11 +23,11 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T2 shared execution/verification | Complete, released | 100% | Production evidence belongs to T4; restart durability to T5 |
 | T3 QA regression | Complete, released | 100% | Broader provisioning and demand-backed report adapters are follow-ups |
 | T4 application operations/parity | Active | ~40% | Production UI/API oracle and evidence; U0/U1 operator UX merged; synthetic parity qualified; callback repair merged #236 |
-| T5 durable recovery | Active J0/A1/A2/A4a/A3a1 publication foundation | ~10% | Journal/recovery and process-loss qualification; no durable guarantee yet |
+| T5 durable recovery | Active publication/journal foundation | ~10% | HTTP/replay publication merged; B1/B2 contract merged; runtime journal/recovery and process-loss qualification remain; no durable guarantee yet |
 | T6 forms/operations | Active | ~40% | Production sources, candidate/job eligibility and live qualification; C3c public synthetic workflow merged #257 |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
 | T8 installed harnesses | Active source repair; installed acceptance unqualified | 0% installed qualification | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |
-| T9 release hardening | Recurring | 100% of 1.9.1 checkpoint | Repeat per later release |
+| T9 release hardening | Recurring | 100% of 1.10.1 checkpoint | Repeat per later release |
 
 Exact milestone count: **3 of 9 finite tasks complete (33%)**. Counting all original
 ten rows gives 30%, including recurring T9. No defensible effort-weighted overall
@@ -422,3 +424,33 @@ must retain page, evidence permission and secret-disclosure checks before HTTP a
 No new timer, executor, registry or token store is introduced. Review-view status remains
 a capture-time snapshot; ApprovalGate owns later current-state validation. T5 stays ~10%;
 3/9 finite milestones are complete. Release 1.9.1 and running services are unchanged.
+
+
+## 2026-09-24 checkpoint
+
+Release 1.10.1 at `124afc3` is published on GitHub/npm; release CI passed 12/12.
+Homebrew #70 merged `8a0c2fc`; PR and post-merge CI passed 4/4, and the actual
+installed CLI/MCP/server acceptance passed. The live service was preserved on 1.10.0.
+Develop `89c20e6` additionally contains extraction budgets (#281) and A3a2 review
+disclosure (#282), each with 8/8 PR and post-merge CI. These are not in 1.10.1.
+
+The next [A3b HTTP publication candidate](t5-http-publication.md) integrates existing
+authorities into four application/status routes. A3c browser/review routes, full A4b
+parity and journal/recovery remain pending. Estimates remain T1~80%, T4/T6~40%,
+T5~10%, installed T8 unqualified; finite milestone count remains 3/9 (33%). T9 is
+complete for the 1.10.1 release checkpoint and recurs for subsequent releases.
+
+
+## Browser/review publication continuation — 2026-09-24
+
+PR #283 merged as `58e3605`; its candidate passed 3,891 tests (24 existing skips),
+independent review and eight PR plus eight post-merge checks without reruns. The
+[A3c/A4b candidate](t5-browser-review-publication.md) extends the same publisher to
+review and ordinary browser responses, retaining shared authority and permission owners.
+Journal B1/B2 starts only after this candidate's review and delivery gates. Main, tag,
+installed release and live headed sessions remain unchanged by this develop work.
+
+HTTP/replay publication completed at #284 with an identical reviewed merge tree and
+8/8 green PR/post-merge checks ([evidence](t5-browser-review-publication.md)). The next
+[B1/B2 journal contract candidate](t5-journal-contract.md) adds validation and adapter
+conformance only. No new release, live-service restart or durable capability is included.

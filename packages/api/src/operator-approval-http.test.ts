@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
+import { setImmediate as settlePublication } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { expect, it, vi } from 'vitest';
@@ -65,6 +66,7 @@ async function fixture(
     });
     expect(denied.json().error.code).toBe('APPROVAL_REQUIRED');
     const tokenId = denied.json().error.details.tokenId as string;
+    await settlePublication();
     await test({ server, path, tokenId, sessionId, pageId, ref, dispatch });
   } finally {
     await server.close();
@@ -117,6 +119,7 @@ it.each([{ decision: 'yes' }, { decision: 'approve', extra: true }, [], null])(
         payload: payload as object,
       });
       expect(response.statusCode).toBe(400);
+      await settlePublication();
       const current = await server.inject({ method: 'GET', url, headers: operator });
       expect(current.json().status).toBe('pending');
     });

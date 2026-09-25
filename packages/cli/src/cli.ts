@@ -57,6 +57,7 @@ import {
   materializeAutofillMapping,
   parseAutofillReport,
   parseAutofillRequest,
+  parseExtractMaxBytesText,
   parseObservationRequest,
   parseOperatorApprovalView,
   parseOutcomeRunRequest,
@@ -86,6 +87,21 @@ function captureInteger(value: string, flag: string): number {
   if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)))
     throw new UsageError(`${flag} must be an integer`);
   return Number(value);
+}
+
+/** Human rendering is a projection of server facts; JSON remains the full view. */
+function sessionFacts(view: import('@agentbrowser/sdk-typescript').SessionResponse): string[] {
+  const facts = view.diagnostics;
+  return [
+    ...(view.engine ? [`  engine:  ${view.engine.name} ${view.engine.version}`] : []),
+    ...(facts
+      ? [
+          `  browser: ${facts.browserFamily} ${facts.browserVersion ?? 'unknown'} (${facts.attachment})`,
+          `  launch:  ${facts.launchMode}; executable=${facts.executableSelection}; resources=${facts.resourceModel}`,
+          `  context: ${facts.context.isolation}; viewport=${facts.context.viewport.mode === 'fixed' ? `${facts.context.viewport.width}x${facts.context.viewport.height}` : facts.context.viewport.mode}; init-script=${facts.context.initScript}`,
+        ]
+      : []),
+  ];
 }
 
 function waitFromOptions(
@@ -303,7 +319,9 @@ export function buildCli(deps: CliDependencies): Cli {
       const session = program.command('session').description('manage browser sessions');
       session
         .command('get')
-        .description('get one session')
+        .description(
+          'get one session with captured engine identity and launch diagnostics; --json preserves all server facts'
+        )
         .argument('<sessionId>')
         .action(
           action(async (ctx, sessionId: string) => {
@@ -313,6 +331,7 @@ export function buildCli(deps: CliDependencies): Cli {
               `  created: ${got.createdAt ?? 'unknown'}`,
               `  ttl:     ${got.ttlMs ?? '?'} ms`,
               `  idle:    ${got.idleTimeoutMs ?? '?'} ms`,
+              ...sessionFacts(got),
             ]);
           })
         );
@@ -573,6 +592,7 @@ export function buildCli(deps: CliDependencies): Cli {
               `Session ${created.sessionId}`,
               `  status:  ${created.status ?? 'unknown'}`,
               `  created: ${created.createdAt ?? 'unknown'}`,
+              ...sessionFacts(created),
               ...(created.warnings ?? []).map((warning) => `  Warning: ${warning}`),
             ]);
           })
@@ -1529,6 +1549,10 @@ export function buildCli(deps: CliDependencies): Cli {
         .argument('<pageId>')
         .option('--format <format>', `one of: ${DELIVERED_EXTRACT_FORMATS.join(' | ')}`)
         .option(
+          '--max-bytes <n>',
+          'complete JSON result byte budget; defaults to server ceiling (1 MiB unless configured); oversized results fail'
+        )
+        .option(
           '--schema <json>',
           'inline JSON Schema for format=schema (flat top-level properties)'
         )
@@ -1542,7 +1566,7 @@ export function buildCli(deps: CliDependencies): Cli {
               ctx,
               sessionId: string,
               pageId: string,
-              options: { format?: string; schema?: string; records?: string }
+              options: { format?: string; schema?: string; records?: string; maxBytes?: string }
             ) => {
               let schemaValue: Record<string, unknown> | undefined;
               if (options.schema !== undefined) {
@@ -1562,11 +1586,14 @@ export function buildCli(deps: CliDependencies): Cli {
               }
               const result = (await ctx.client.sessions.extract(sessionId, pageId, {
                 format: (options.format ?? 'text') as ExtractRequest['format'],
+                ...(options.maxBytes !== undefined
+                  ? { maxBytes: parseExtractMaxBytesText(options.maxBytes) }
+                  : {}),
                 ...(schemaValue !== undefined ? { schema: schemaValue } : {}),
                 ...(recordsValue !== undefined ? { records: recordsValue } : {}),
               })) as unknown;
               ctx.emit(result, () => [
-                JSON.stringify((result as { data?: unknown }).data, null, 2).slice(0, 4000),
+                JSON.stringify((result as { data?: unknown }).data, null, 2),
               ]);
             }
           )

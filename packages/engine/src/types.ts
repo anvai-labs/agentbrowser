@@ -362,6 +362,8 @@ export interface BrowserEngine {
  * Engine session interface
  */
 export interface EngineSession {
+  /** Immutable launch/context facts, captured by the adapter that owns them. */
+  readonly diagnostics?: import('@agentbrowser/protocol').SessionDiagnostics | undefined;
   /** Diagnostics from the engine host, shared by all consumption surfaces. */
   readonly warnings?: readonly string[];
   /** Consume a captured download by unique ID, or an unambiguous legacy filename. */

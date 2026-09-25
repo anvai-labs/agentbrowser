@@ -3,7 +3,73 @@ import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { apiRequest, auditDependencyClosure, resolvePackagedModules, validateArtifact, withManagedChild } from './package-acceptance.mjs';
+import {
+  apiRequest,
+  auditDependencyClosure,
+  resolvePackagedModules,
+  validateArtifact,
+  validateCompleteExtraction,
+  validatePackagedSessionParity,
+  withManagedChild,
+} from './package-acceptance.mjs';
+
+const diagnostics = Object.freeze({
+  attachment: 'local_launch',
+  browserFamily: 'chromium',
+  browserVersion: '140.0.0.0',
+  executableSelection: 'playwright_default',
+  launchMode: 'headless',
+  resourceModel: 'shared_local_browser',
+  context: Object.freeze({
+    isolation: 'new_context',
+    viewport: Object.freeze({ mode: 'fixed', width: 1280, height: 720 }),
+    initScript: 'not_registered',
+  }),
+});
+
+const sessionView = (overrides = {}) => ({
+  sessionId: 'ses_packaged',
+  status: 'active',
+  createdAt: '2026-09-24T00:00:00.000Z',
+  engine: { name: 'playwright-chromium', version: '1.11.0' },
+  diagnostics,
+  ...overrides,
+});
+
+test('packaged session parity requires bounded real launch facts and exact cross-surface identity', () => {
+  const capture = (value) => (value === diagnostics ? structuredClone(value) : undefined);
+  const created = sessionView({ pageId: 'pg_initial' });
+  assert.deepEqual(
+    validatePackagedSessionParity(created, [sessionView(), sessionView(), sessionView()], capture),
+    { engine: created.engine, diagnostics }
+  );
+  assert.throws(
+    () => validatePackagedSessionParity(created, [sessionView({ engine: { name: 'other', version: '1.11.0' } })], capture),
+    /Chromium|identity/
+  );
+  assert.throws(
+    () => validatePackagedSessionParity({ ...created, diagnostics: undefined }, [], capture),
+    /diagnostics/
+  );
+  assert.throws(
+    () => validatePackagedSessionParity({ ...created, engine: { ...created.engine, capabilities: {} } }, [], capture),
+    /capabilities/
+  );
+});
+
+test('complete extraction qualification crosses the former 4KB cut and retains its tail marker', () => {
+  const marker = 'END-PACKAGED-EXTRACT';
+  const result = {
+    data: { text: `START-${'x'.repeat(5000)}-${marker}` },
+    evidence: [{ url: 'https://fixture.invalid/large', revision: 1, hash: '1234abcd' }],
+  };
+  assert.ok(validateCompleteExtraction(result, marker) > 4096);
+  assert.throws(() => validateCompleteExtraction({ ...result, data: { text: 'short' } }, marker), /4KB/);
+  assert.throws(
+    () => validateCompleteExtraction({ ...result, data: { text: 'x'.repeat(5000) } }, marker),
+    /marker/
+  );
+});
 
 test('agent CLI spawn receives only its delegated key and explicit runtime environment', async () => {
   const { runAgentCli } = await import('./cli-outcome-acceptance.mjs');

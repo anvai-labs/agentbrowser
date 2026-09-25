@@ -29,6 +29,10 @@ const propertiesOf = (name: string): Set<string> => {
 };
 
 describe('MCP tool-schema sync', () => {
+  it('browser_session reads exactly the one advertised session identity', () => {
+    expect(propertiesOf('browser_session')).toEqual(new Set(['sessionId']));
+  });
+
   it('browser_navigate reads exactly what it advertises', () => {
     // The clean derivation candidate: handler reads url + waitUntil only.
     expect(propertiesOf('browser_navigate')).toEqual(

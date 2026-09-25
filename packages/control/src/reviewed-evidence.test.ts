@@ -4,6 +4,7 @@ import type { EvidencePermission } from './outcome-runner.js';
 import {
   type EvidenceReviewSource,
   NATIVE_FORM_REVIEW_TYPE,
+  captureReviewDisclosure,
   prepareEvidenceReview,
 } from './reviewed-evidence.js';
 import { prepareEvidencePermission } from './trusted-callback.js';
@@ -37,6 +38,7 @@ function fixture(
     ownerId?: string;
     lifecycleSignal?: AbortSignal;
     context?: ApprovalReviewBinding;
+    publication?: { assertCurrent(): void; assertPinned(): void };
   } = {}
 ) {
   const gate = options.gate ?? new ApprovalGate({ tokenTtlMs: 1_000 });
@@ -67,6 +69,7 @@ function fixture(
     assertAuthority,
     assertDisclosureSafe,
     trackRead,
+    ...(options.publication ? { publication: options.publication } : {}),
     ...(options.lifecycleSignal ? { lifecycleSignal: options.lifecycleSignal } : {}),
   });
   return {
@@ -80,6 +83,142 @@ function fixture(
     trackRead,
   };
 }
+
+describe('captured evidence review publication', () => {
+  it('preserves the existing operator-view depth budget and freezes nested data', () => {
+    let action: Record<string, unknown> = { value: 'original' };
+    for (let depth = 0; depth < 18; depth++) action = { nested: action };
+    const output = captureReviewDisclosure(
+      { tokenId: 'token-a', status: 'pending', createdAt: 1, expiresAt: 2, action },
+      {
+        assertExecution() {},
+        assertCurrent() {},
+        assertPinned() {},
+        assertDisclosureSafe() {},
+      }
+    );
+    let captured = output.view.action;
+    for (let depth = 0; depth < 18; depth++) {
+      expect(Object.isFrozen(captured)).toBe(true);
+      captured = captured.nested as Record<string, unknown>;
+    }
+    expect(Object.isFrozen(captured)).toBe(true);
+    expect(captured.value).toBe('original');
+    action.nested = { value: 'replacement' };
+    expect(captured.value).toBe('original');
+    output.assertCurrent();
+  });
+
+  it('publishes a detached captured view without fresh collection, token lookup or consent', async () => {
+    let phase = 'execute';
+    const sourceCheck = vi.fn();
+    const f = fixture({
+      assertAuthority: () => {
+        if (phase !== 'execute') throw new Error('execution closed');
+      },
+      assertAuthorized: sourceCheck,
+      publication: {
+        assertCurrent() {
+          if (phase !== 'publish') throw new Error('publication closed');
+        },
+        assertPinned() {
+          if (phase !== 'publish') throw new Error('publication closed');
+        },
+      },
+    });
+    const signal = new AbortController().signal;
+    const view = await f.prepared.generate(signal);
+    const output = f.prepared.capturePublication(view);
+    view.status = 'denied';
+    const lookup = vi.spyOn(f.gate, 'getReviewedApproval');
+    const consume = vi.spyOn(f.gate, 'consumeReviewedApproval');
+    phase = 'publish';
+    output.assertCurrent();
+    expect(output.view.status).toBe('pending');
+    expect(Object.isFrozen(output.view)).toBe(true);
+    expect(Object.isFrozen(output.view.action)).toBe(true);
+    expect(f.source.collect).toHaveBeenCalledOnce();
+    expect(lookup).not.toHaveBeenCalled();
+    expect(consume).not.toHaveBeenCalled();
+    phase = 'closed';
+    expect(output.assertCurrent).toThrow();
+    phase = 'publish';
+    expect(output.assertCurrent).toThrow();
+  });
+
+  it('refuses publication capture without a separately supplied output owner', async () => {
+    const f = fixture();
+    const view = await f.prepared.generate(new AbortController().signal);
+    expect(() => f.prepared.capturePublication(view)).toThrow('Evidence review unavailable');
+  });
+
+  for (const change of ['permission', 'source', 'secret', 'pins'] as const) {
+    it(`suppresses captured output after ${change} changes and latches refusal`, async () => {
+      let phase = 'execute';
+      let allowed = true;
+      let secret = false;
+      let pins = true;
+      const generation = { value: 7 };
+      const f = fixture({
+        generation,
+        assertAuthority() {
+          if (phase !== 'execute') throw new Error('closed');
+        },
+        assertAuthorized() {
+          if (!allowed) throw new Error('PRIVATE denied');
+        },
+        assertDisclosureSafe() {
+          if (secret) throw new Error('PRIVATE secret');
+        },
+        publication: {
+          assertCurrent() {
+            if (phase !== 'publish') throw new Error('closed');
+          },
+          assertPinned() {
+            if (!pins) throw new Error('PRIVATE replacement');
+          },
+        },
+      });
+      const output = f.prepared.capturePublication(
+        await f.prepared.generate(new AbortController().signal)
+      );
+      phase = 'publish';
+      output.assertCurrent();
+      if (change === 'permission') generation.value++;
+      if (change === 'source') allowed = false;
+      if (change === 'secret') secret = true;
+      if (change === 'pins') pins = false;
+      expect(output.assertCurrent).toThrow('Evidence review unavailable');
+      allowed = true;
+      secret = false;
+      pins = true;
+      generation.value = 7;
+      expect(output.assertCurrent).toThrow('Evidence review unavailable');
+      expect(f.source.collect).toHaveBeenCalledOnce();
+    });
+  }
+
+  it('checks newly registered secrets after source callbacks and rejects substituted views', async () => {
+    let publishing = false;
+    let secret = false;
+    const f = fixture({
+      assertAuthorized() {
+        if (publishing) secret = true;
+      },
+      assertDisclosureSafe() {
+        if (secret) throw new Error('PRIVATE secret');
+      },
+      publication: { assertCurrent() {}, assertPinned() {} },
+    });
+    const view = await f.prepared.generate(new AbortController().signal);
+    expect(() =>
+      f.prepared.capturePublication({ ...view, action: { ...view.action, pageId: 'other' } })
+    ).toThrow();
+    const output = f.prepared.capturePublication(view);
+    publishing = true;
+    expect(output.assertCurrent).toThrow('Evidence review unavailable');
+  });
+});
 
 describe('prepared evidence review', () => {
   it('stores one reserved reviewed action and atomically consumes approved current evidence', async () => {

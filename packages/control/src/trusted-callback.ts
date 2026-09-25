@@ -13,7 +13,8 @@ export function synchronousResult<T>(value: T): T {
   return value;
 }
 
-function deeplyFreezeSnapshot<T>(value: T): T {
+/** Freeze already detached, bounded data; callers own validation before this step. */
+export function deeplyFreezeSnapshot<T>(value: T): T {
   if (value === null || (typeof value !== 'object' && typeof value !== 'function')) return value;
   for (const key of Reflect.ownKeys(value)) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);

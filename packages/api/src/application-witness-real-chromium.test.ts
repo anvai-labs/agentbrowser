@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setImmediate as settlePublication } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import {
   type ApplicationReviewSelector,
@@ -339,6 +340,19 @@ async function fixture(
       destination: snapshot.destination,
       intent: snapshot.intent,
     };
+    const sourcePermission = () => {
+      const generation = permissionGeneration;
+      return {
+        permission: {
+          generation,
+          currentGeneration: () => permissionGeneration,
+        },
+        assertAuthorized() {
+          if (!permitted || permittedSession !== sessionId || permissionGeneration !== generation)
+            throw new Error('Evidence source permission unavailable');
+        },
+      };
+    };
     const autofillRequest = {
       fields: [
         { match: { dataAutomationId: 'fullName' }, value: 'Synthetic Person', verify: 'exact' },
@@ -435,14 +449,7 @@ async function fixture(
         source: {
           ownerId: permissionOwnerId,
           contract: { id: 'synthetic-native-draft', version: '1' },
-          permission: {
-            generation: permissionGeneration,
-            currentGeneration: () => permissionGeneration,
-          },
-          assertAuthorized() {
-            application.assertAuthorized();
-            page.assertAuthority();
-          },
+          ...sourcePermission(),
           collect: collector,
         },
       };
@@ -503,14 +510,7 @@ async function fixture(
         source: {
           ownerId: permissionOwnerId,
           contract: { id: 'synthetic-native-draft', version: '1' },
-          permission: {
-            generation: permissionGeneration,
-            currentGeneration: () => permissionGeneration,
-          },
-          assertAuthorized() {
-            application.assertAuthorized();
-            nativeForm.assertAuthority();
-          },
+          ...sourcePermission(),
           collect: collector,
         },
       };
@@ -632,14 +632,16 @@ async function fixture(
 
 async function publicApplicationSurface(f: Awaited<ReturnType<typeof fixture>>) {
   if (!f.baseUrl) await f.server.listen({ host: '127.0.0.1', port: 0 });
+  // The fixture's final SDK response can finish before its publication releases the ticket.
+  await settlePublication();
   const baseUrl = `http://127.0.0.1:${(f.server.server.address() as AddressInfo).port}`;
   const client = new AgentBrowserClient({ baseUrl, apiKey: 'owner' });
   const cli = fileURLToPath(new URL('../../cli/dist/bin.js', import.meta.url));
-  const invoke = (
+  const invoke = async (
     args: string[],
     options: { operationId?: string; expectedExitCode?: number } = {}
-  ) =>
-    runAgentCli(
+  ) => {
+    const result = await runAgentCli(
       [
         process.execPath,
         cli,
@@ -657,6 +659,9 @@ async function publicApplicationSurface(f: Awaited<ReturnType<typeof fixture>>) 
           : {}),
       }
     );
+    await settlePublication();
+    return result;
+  };
   return { baseUrl, client, invoke };
 }
 
@@ -919,16 +924,21 @@ it('inspects and decides qualified draft evidence through REST, SDK and compiled
     expect(inspected.statusCode).toBe(200);
     expect(inspected.headers['cache-control']).toBe('no-store');
     expect(inspected.json()).toEqual(token);
+    await settlePublication();
     await f.server.listen({ host: '127.0.0.1', port: 0 });
     const baseUrl = `http://127.0.0.1:${(f.server.server.address() as AddressInfo).port}`;
     const client = new AgentBrowserClient({ baseUrl, apiKey: 'owner' });
     expect(await client.sessions.approval(f.sessionId, token.tokenId)).toEqual(token);
+    await settlePublication();
     const cli = fileURLToPath(new URL('../../cli/dist/bin.js', import.meta.url));
-    const invoke = (args: string[]) =>
-      runAgentCli([process.execPath, cli, '--base-url', baseUrl, ...args], {
+    const invoke = async (args: string[]) => {
+      const result = await runAgentCli([process.execPath, cli, '--base-url', baseUrl, ...args], {
         env: process.env,
         token: 'owner',
       });
+      await settlePublication();
+      return result;
+    };
     const text = await invoke(['session', 'approval', f.sessionId, token.tokenId]);
     expect(text.stdout.trim()).toBe(`${token.tokenId}: pending`);
     expect(text.stderr).toBe('');
@@ -951,8 +961,10 @@ it('inspects and decides qualified draft evidence through REST, SDK and compiled
       action: token.action,
     });
     expect((await client.sessions.approval(f.sessionId, token.tokenId)).status).toBe('approved');
+    await settlePublication();
     f.setPermission(false);
     expect((await get()).statusCode).toBe(404);
+    await settlePublication();
     const replay = await f.server.inject({
       method: 'POST',
       url: path,
@@ -964,13 +976,16 @@ it('inspects and decides qualified draft evidence through REST, SDK and compiled
     expect(replay.body).not.toContain('Synthetic Person');
     expect(replay.json()).not.toHaveProperty('action');
     expect(replay.json()).not.toHaveProperty('witness');
+    await settlePublication();
     f.setPermission(true);
     expect((await get()).statusCode).toBe(404);
+    await settlePublication();
     expect(await f.review((review) => review.consume(token.tokenId, signal))).toBe(false);
     const fresh = await f.review((review) => review.generate(signal));
     expect(
       (await client.sessions.decideApproval(f.sessionId, fresh.tokenId, 'approve')).status
     ).toBe('approved');
+    await settlePublication();
     await f.backing.locator('#referral').fill('Updated after review');
     await expect.poll(f.diagnostics).toMatchObject({ pending: 0, failed: false });
     expect(await f.review((review) => review.consume(fresh.tokenId, signal))).toBe(false);
@@ -1005,6 +1020,7 @@ it('refuses foreign and delegated evidence review before invoking the trusted re
       url: `${path}/control/prepare-resume`,
       headers: owner,
     });
+    await settlePublication();
     const grant = await f.server.inject({
       method: 'POST',
       url: `${path}/control/delegate`,

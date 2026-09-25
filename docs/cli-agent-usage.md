@@ -1,11 +1,11 @@
 # AgentBrowser from shell-based agents
 
-Status: AgentBrowser 1.9.1 includes offline `describe`, bounded JSON input,
-plan/autofill result validation and receipt-correlated `outcome`. Its installed
-CLI/service qualification covers a controlled G4 fixture; it does not qualify a
-production evidence source, G6 independence or durable recovery. Offline `test
-evaluate` is included in 1.9.1. Develop adds reusable `form prepare`; the checked
-upload flags below are on develop and are not in published 1.9.1.
+Baseline: AgentBrowser 1.10.1 includes offline `describe`, bounded JSON input,
+plan/autofill result validation, receipt-correlated `outcome`, offline `test evaluate`,
+reusable `form prepare`, checked uploads and capture readiness waits. Synthetic
+fixture qualification does not prove production evidence or durable recovery.
+The 1.11.0 candidate adds extraction budgets, MCP page provisioning and captured
+launch diagnostics; publication and installed qualification are separate release gates.
 
 The CLI is a thin SDK client to the shared AgentBrowser service. It owns no browser
 session state or alternate executor. Use ordinary Bash/shell tools to inspect JSON;
@@ -60,6 +60,24 @@ an HTTP MCP endpoint. `AGENTBROWSER_BASE_URL` configures the adapter; the CLI us
 `--base-url`. Both support `AGENTBROWSER_API_KEY` when service authentication is
 enabled. Keep credentials out of committed project instructions and configuration.
 
+## Inspect captured session identity and launch facts
+
+```sh
+agentbrowser --base-url http://127.0.0.1:5709 session get "$SESSION_ID"
+agentbrowser --base-url http://127.0.0.1:5709 --json session get "$SESSION_ID" \
+  | jq '{sessionId, engine, diagnostics}'
+agentbrowser --base-url http://127.0.0.1:5709 --json session list
+```
+
+Create/get/list reuse the server's captured adapter identity and optional diagnostics.
+The adapter version and browser runtime version are distinct. `playwright_default`
+does not certify browser branding; `registered` confirms init-script registration,
+not its effect on every document. Remote CDP launch mode is `unknown` and its context
+is newly isolated, not an adopted logged-in profile. Missing diagnostics mean the
+adapter supplied no valid snapshot. The CLI performs no local launch detection.
+See the [shared contract](spec/design/session-launch-diagnostics.md) for ownership,
+privacy and authorization boundaries. No MCP registration is required.
+
 ## Discover only the command you need
 
 ```sh
@@ -96,6 +114,32 @@ Unknown paths exit 1, write a diagnostic to stderr and emit no partial JSON to s
 Discovery includes static option defaults, never supplied option values or API keys.
 
 ## Execute with bounded context and explicit outcomes
+
+### Extraction output budgets (after 1.10.1)
+
+`extract --max-bytes` passes a response budget to the service; ordinary output no
+longer silently cuts data after 4,000 characters. Use `--json` for the complete
+result envelope, including evidence:
+
+```sh
+agentbrowser --json extract "$session_id" "$page_id" --format text --max-bytes 262144
+```
+
+The budget counts UTF-8 bytes of the compact JSON envelope after redaction, including
+evidence. It does not count pretty-print whitespace or cap records; `records.limit`
+still controls record count. Omission uses the server ceiling, default 1 MiB.
+An oversized result returns `OUTPUT_TRUNCATED` with no partial output; a request above
+the server ceiling returns `INVALID_REQUEST`. Inspect the error's size metadata and
+narrow selectors or deliberately increase the budget within the ceiling.
+
+Operators may set `AGENTBROWSER_EXTRACT_MAX_BYTES=2097152` in the server process's
+startup environment for a 2 MiB ceiling. Invalid configuration aborts startup.
+It is not a per-client environment setting. A running Homebrew service keeps its
+existing environment until explicitly restarted at a session checkpoint. See the
+[design and limits](spec/design/extraction-output-budget.md); use matching upgraded
+CLI/service builds for enforcement, since older servers can ignore `maxBytes`.
+
+### Session and action usage
 
 Examples assume an authorized existing session/page and fresh element refs. Keep
 credentials in the existing `AGENTBROWSER_API_KEY` environment mechanism; avoid passing

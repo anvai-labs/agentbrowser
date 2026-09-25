@@ -4383,6 +4383,12 @@
                       "records"
                     ]
                   },
+                  "maxBytes": {
+                    "minimum": 1,
+                    "maximum": 9007199254740991,
+                    "description": "Maximum UTF-8 bytes of the complete compact JSON extraction result, including evidence. Omission uses the server ceiling (default 1048576 bytes, operator configurable). Requests cannot exceed that ceiling. Oversized results fail explicitly; no partial JSON is returned.",
+                    "type": "integer"
+                  },
                   "schema": {
                     "type": "object",
                     "description": "JSON Schema for format=schema: flat top-level properties (name -> {type, description}) + optional required array. Deterministic matching first; an injected model adapter (if configured) only fills fields the deterministic pass could not find.",
@@ -9843,19 +9849,52 @@
         "type": "object",
         "required": [
           "sessionId",
-          "status"
+          "status",
+          "engine",
+          "createdAt",
+          "ttlMs",
+          "idleTimeoutMs",
+          "pages"
         ],
         "properties": {
           "sessionId": {
             "type": "string"
           },
           "status": {
-            "type": "string",
-            "examples": [
-              "ready",
-              "active",
-              "closed"
-            ]
+            "type": "string"
+          },
+          "engine": {
+            "type": "object",
+            "required": [
+              "name",
+              "version"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            }
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "ttlMs": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "idleTimeoutMs": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "pages": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tenantId": {
+            "type": "string"
           },
           "warnings": {
             "type": "array",
@@ -9863,24 +9902,425 @@
               "type": "string"
             }
           },
-          "createdAt": {
-            "type": "string",
-            "format": "date-time"
+          "diagnostics": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "attachment",
+              "browserFamily",
+              "executableSelection",
+              "launchMode",
+              "resourceModel",
+              "context"
+            ],
+            "properties": {
+              "attachment": {
+                "anyOf": [
+                  {
+                    "const": "local_launch",
+                    "type": "string"
+                  },
+                  {
+                    "const": "remote_cdp",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unknown",
+                    "type": "string"
+                  }
+                ]
+              },
+              "browserFamily": {
+                "anyOf": [
+                  {
+                    "const": "chromium",
+                    "type": "string"
+                  },
+                  {
+                    "const": "firefox",
+                    "type": "string"
+                  },
+                  {
+                    "const": "webkit",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unknown",
+                    "type": "string"
+                  }
+                ]
+              },
+              "browserVersion": {
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-zA-Z0-9._+ -]+$",
+                "type": "string"
+              },
+              "executableSelection": {
+                "anyOf": [
+                  {
+                    "const": "explicit",
+                    "type": "string"
+                  },
+                  {
+                    "const": "detected",
+                    "type": "string"
+                  },
+                  {
+                    "const": "playwright_default",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_applicable",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unknown",
+                    "type": "string"
+                  }
+                ]
+              },
+              "launchMode": {
+                "anyOf": [
+                  {
+                    "const": "headless",
+                    "type": "string"
+                  },
+                  {
+                    "const": "headed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unknown",
+                    "type": "string"
+                  }
+                ]
+              },
+              "resourceModel": {
+                "anyOf": [
+                  {
+                    "const": "dedicated_local_browser",
+                    "type": "string"
+                  },
+                  {
+                    "const": "shared_local_browser",
+                    "type": "string"
+                  },
+                  {
+                    "const": "shared_remote_connection",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unknown",
+                    "type": "string"
+                  }
+                ]
+              },
+              "context": {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "isolation",
+                  "viewport",
+                  "initScript"
+                ],
+                "properties": {
+                  "isolation": {
+                    "anyOf": [
+                      {
+                        "const": "new_context",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unknown",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "viewport": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "mode",
+                          "width",
+                          "height"
+                        ],
+                        "properties": {
+                          "mode": {
+                            "const": "fixed",
+                            "type": "string"
+                          },
+                          "width": {
+                            "minimum": 1,
+                            "maximum": 100000,
+                            "type": "integer"
+                          },
+                          "height": {
+                            "minimum": 1,
+                            "maximum": 100000,
+                            "type": "integer"
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "mode"
+                        ],
+                        "properties": {
+                          "mode": {
+                            "const": "no_viewport",
+                            "type": "string"
+                          }
+                        }
+                      },
+                      {
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "mode"
+                        ],
+                        "properties": {
+                          "mode": {
+                            "const": "unknown",
+                            "type": "string"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "initScript": {
+                    "anyOf": [
+                      {
+                        "const": "registered",
+                        "type": "string"
+                      },
+                      {
+                        "const": "not_registered",
+                        "type": "string"
+                      },
+                      {
+                        "const": "unknown",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "SessionDiagnostics": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "attachment",
+          "browserFamily",
+          "executableSelection",
+          "launchMode",
+          "resourceModel",
+          "context"
+        ],
+        "properties": {
+          "attachment": {
+            "anyOf": [
+              {
+                "const": "local_launch",
+                "type": "string"
+              },
+              {
+                "const": "remote_cdp",
+                "type": "string"
+              },
+              {
+                "const": "unknown",
+                "type": "string"
+              }
+            ]
           },
-          "ttlMs": {
-            "type": "integer",
-            "minimum": 0
+          "browserFamily": {
+            "anyOf": [
+              {
+                "const": "chromium",
+                "type": "string"
+              },
+              {
+                "const": "firefox",
+                "type": "string"
+              },
+              {
+                "const": "webkit",
+                "type": "string"
+              },
+              {
+                "const": "unknown",
+                "type": "string"
+              }
+            ]
           },
-          "idleTimeoutMs": {
-            "type": "integer",
-            "minimum": 0
+          "browserVersion": {
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9._+ -]+$",
+            "type": "string"
           },
-          "pages": {
-            "type": "integer",
-            "minimum": 0
+          "executableSelection": {
+            "anyOf": [
+              {
+                "const": "explicit",
+                "type": "string"
+              },
+              {
+                "const": "detected",
+                "type": "string"
+              },
+              {
+                "const": "playwright_default",
+                "type": "string"
+              },
+              {
+                "const": "not_applicable",
+                "type": "string"
+              },
+              {
+                "const": "unknown",
+                "type": "string"
+              }
+            ]
           },
-          "engine": {
-            "$ref": "#/components/schemas/EngineInfo"
+          "launchMode": {
+            "anyOf": [
+              {
+                "const": "headless",
+                "type": "string"
+              },
+              {
+                "const": "headed",
+                "type": "string"
+              },
+              {
+                "const": "unknown",
+                "type": "string"
+              }
+            ]
+          },
+          "resourceModel": {
+            "anyOf": [
+              {
+                "const": "dedicated_local_browser",
+                "type": "string"
+              },
+              {
+                "const": "shared_local_browser",
+                "type": "string"
+              },
+              {
+                "const": "shared_remote_connection",
+                "type": "string"
+              },
+              {
+                "const": "unknown",
+                "type": "string"
+              }
+            ]
+          },
+          "context": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "isolation",
+              "viewport",
+              "initScript"
+            ],
+            "properties": {
+              "isolation": {
+                "anyOf": [
+                  {
+                    "const": "new_context",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unknown",
+                    "type": "string"
+                  }
+                ]
+              },
+              "viewport": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "mode",
+                      "width",
+                      "height"
+                    ],
+                    "properties": {
+                      "mode": {
+                        "const": "fixed",
+                        "type": "string"
+                      },
+                      "width": {
+                        "minimum": 1,
+                        "maximum": 100000,
+                        "type": "integer"
+                      },
+                      "height": {
+                        "minimum": 1,
+                        "maximum": 100000,
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "mode"
+                    ],
+                    "properties": {
+                      "mode": {
+                        "const": "no_viewport",
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "mode"
+                    ],
+                    "properties": {
+                      "mode": {
+                        "const": "unknown",
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              },
+              "initScript": {
+                "anyOf": [
+                  {
+                    "const": "registered",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_registered",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unknown",
+                    "type": "string"
+                  }
+                ]
+              }
+            }
           }
         }
       },

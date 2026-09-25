@@ -15,6 +15,14 @@ test('npm publication waits for tag validation and executable/server acceptance'
   assert.match(server ?? '', /^    needs: \[tag-guard, binaries\]\s*$/m);
 });
 
+test('release publication cannot replace previously published assets', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
+  const publication = workflow.slice(workflow.indexOf('      - name: Publish the release'));
+  assert.match(publication, /gh release upload/);
+  assert.doesNotMatch(publication, /--clobber/,
+    'Same-tag reruns must fail closed rather than invalidate published Homebrew hashes');
+});
+
 test('synchronizes manifests and generated runtime stamps; check is non-mutating and catches drift', () => {
   const root = mkdtempSync(join(tmpdir(), 'agentbrowser-version-test-'));
   try {

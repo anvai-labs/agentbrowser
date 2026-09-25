@@ -151,3 +151,11 @@ Run `pnpm test:application-independence` after a workspace build to deploy only
 production dependencies, reject browser packages or escaping dependency links,
 and exercise delegation, a real application callback, duplicate suppression,
 takeover, and receipt lookup from outside the source workspace.
+
+The internal `openOperationJournal` facade and journal types establish a storage-neutral
+transition contract. Trusted composition supplies fixed namespace metadata, fingerprint
+key material and an exclusive atomic adapter. The facade validates bounded snapshots and
+ACKs, retains actual I/O through caller timeouts, and quarantines uncertain writes.
+The test-only memory adapter/conformance suite proves model behavior, not persistence.
+No service option or SessionAuthority integration enables durability yet; see the
+[journal design](../../docs/spec/design/t5-journal-contract.md) for C1–C4 and J2–J4 gates.

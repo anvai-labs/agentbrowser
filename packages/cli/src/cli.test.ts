@@ -1381,6 +1381,38 @@ describe('AgentBrowser CLI', () => {
       expect(out.join('\n')).toContain('2026-08-23T10:00:00Z');
     });
 
+    it('renders captured launch facts and preserves the complete JSON view', async () => {
+      const view = {
+        sessionId: 'ses_1',
+        status: 'ready',
+        createdAt: '2026-09-24T00:00:00Z',
+        engine: { name: 'selected-adapter', version: '2.0.0' },
+        ttlMs: 1000,
+        idleTimeoutMs: 500,
+        pages: 0,
+        diagnostics: {
+          attachment: 'remote_cdp',
+          browserFamily: 'chromium',
+          browserVersion: '123.0',
+          executableSelection: 'not_applicable',
+          launchMode: 'unknown',
+          resourceModel: 'shared_remote_connection',
+          context: {
+            isolation: 'new_context',
+            viewport: { mode: 'no_viewport' },
+            initScript: 'registered',
+          },
+        },
+      };
+      sessions.get.mockResolvedValue(view);
+      expect(await run('session', 'get', 'ses_1')).toBe(0);
+      expect(out.join('\n')).toContain('remote_cdp');
+      expect(out.join('\n')).toContain('selected-adapter');
+      out.length = 0;
+      expect(await run('--json', 'session', 'get', 'ses_1')).toBe(0);
+      expect(lastJson()).toEqual(view);
+    });
+
     it('page list renders pages', async () => {
       const code = await run('page', 'list', 'ses_1');
       expect(code).toBe(0);
@@ -1439,6 +1471,26 @@ describe('AgentBrowser CLI', () => {
         })
       );
     });
+
+    it('prints complete extraction data beyond 4000 characters and forwards the byte budget', async () => {
+      const text = `${'x'.repeat(6000)}TAIL`;
+      sessions.extract = vi.fn().mockResolvedValue({ data: { text }, evidence: [] });
+      expect(await run('extract', 'ses_1', 'pg_1', '--max-bytes', '16384')).toBe(0);
+      expect(sessions.extract).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        format: 'text',
+        maxBytes: 16384,
+      });
+      expect(JSON.parse(out.join('\n'))).toEqual({ text });
+    });
+
+    it.each(['0', '-1', '1.5', '100bytes', '1e4', '9007199254740992'])(
+      'refuses an invalid extraction budget %s before contacting the service',
+      async (value) => {
+        sessions.extract = vi.fn();
+        expect(await run('extract', 'ses_1', 'pg_1', '--max-bytes', value)).toBe(1);
+        expect(sessions.extract).not.toHaveBeenCalled();
+      }
+    );
 
     it('help mentions the new commands', async () => {
       await run('--help');

@@ -23,12 +23,17 @@ import {
   type EvidenceReviewSelector,
   type EvidenceReviewSource,
   NATIVE_FORM_REVIEW_TYPE,
+  type OperationPublication,
   type PreparedApplicationConsent,
   type PreparedApplicationOperationReview,
   type PreparedEvidenceReview,
+  type PreparedReviewDisclosure,
+  type SessionPublication,
   TrustedEvidenceSourceRegistry,
   type TrustedVerifierRegistry,
   captureEvidenceReviewSource,
+  captureReviewDisclosure,
+  composePublicationContext,
   defineApplicationReadEvidenceSource,
   defineApplicationReceiptEvidenceSource,
   prepareEvidenceReview,
@@ -36,6 +41,7 @@ import {
   selectApplicationReview,
   selectEvidenceReview,
   snapshotAuthorizationInput,
+  snapshotPublication,
   synchronousResult,
 } from '@agentbrowser/control';
 import {
@@ -91,6 +97,7 @@ import type {
   ScreenshotRequest,
 } from '@agentbrowser/protocol';
 import {
+  DEFAULT_EXTRACT_MAX_BYTES,
   DELIVERED_EXTRACT_FORMATS,
   DELIVERED_OBSERVATION_INCLUDES,
   DELIVERED_WAIT_TYPES,
@@ -99,6 +106,7 @@ import {
   VERIFICATION_SNAPSHOT_LIMITS,
   createOutcomeRunReportParser,
   decodeWireAction,
+  parseExtractMaxBytes,
   parseOutcomeRunRequest,
   parseRef,
   snapshotJsonData,
@@ -167,20 +175,7 @@ export interface ServiceSessionRequest {
   snapshotTimeoutMs?: number;
 }
 
-export interface ServiceSessionView {
-  /** Diagnostics reported by the browser host. */
-  warnings?: string[];
-  sessionId: string;
-  status: string;
-  engine: { name: string; version: string };
-  createdAt: string;
-  ttlMs: number;
-  idleTimeoutMs: number;
-  /** Number of live pages registered to the session right now. */
-  pages: number;
-  /** Owning tenant, when the session was created under one. */
-  tenantId?: string;
-}
+export type ServiceSessionView = import('@agentbrowser/protocol').SessionView;
 
 export interface ServicePageView {
   pageId: string;
@@ -311,6 +306,8 @@ export interface ServiceEvidenceReviewContext {
 }
 
 export interface ServiceDependencies {
+  /** Operator-owned maximum complete extraction response bytes. */
+  extractMaxBytes?: number;
   approvalPolicy?: ActionRiskPolicyOptions;
   engine: BrowserEngine;
   /**
@@ -402,6 +399,7 @@ export interface PreparedNativeFormRead {
     sessionIncarnation: string;
   }>;
   assertAuthority(): void;
+  readonly publication: Readonly<{ assertCurrent(): void }>;
   read(signal?: AbortSignal): Promise<NativeFormEvidence>;
 }
 
@@ -460,6 +458,7 @@ export class AgentBrowserService {
   readonly applicationAuthority: ApplicationAuthority;
   private readonly controlledContexts = new WeakSet<SessionContext>();
   private readonly engine: BrowserEngine;
+  private readonly extractMaxBytes: number;
   private readonly engines: Map<string, BrowserEngine> = new Map();
   private readonly coordinator: SessionCoordinator;
   private readonly normalizer: ObservationNormalizer;
@@ -506,6 +505,7 @@ export class AgentBrowserService {
   private sweepTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(deps: ServiceDependencies) {
+    this.extractMaxBytes = parseExtractMaxBytes(deps.extractMaxBytes ?? DEFAULT_EXTRACT_MAX_BYTES);
     const { evidenceReviewProvider, evidenceSourceRegistry, evidenceSourceRegistryProvider } = deps;
     if (evidenceReviewProvider !== undefined && typeof evidenceReviewProvider !== 'function')
       throw new Error('Invalid evidence review provider');
@@ -1206,19 +1206,7 @@ export class AgentBrowserService {
       this.sessionPolicies.set(session.sessionId, sessionPolicy);
       this.sessionApprovalPolicies.set(session.sessionId, { ...request.approval });
 
-      return {
-        sessionId: session.sessionId,
-        status: 'ready',
-        engine: { name: session.engine.name, version: session.engine.version },
-        createdAt: session.createdAt,
-        ttlMs: session.ttlMs,
-        idleTimeoutMs: session.idleTimeoutMs,
-        pages: 0,
-        ...(context.engineSession.warnings?.length
-          ? { warnings: [...context.engineSession.warnings] }
-          : {}),
-        ...(request.tenantId !== undefined ? { tenantId: request.tenantId } : {}),
-      };
+      return this.sessionView(context, true);
     });
   }
 
@@ -1244,23 +1232,33 @@ export class AgentBrowserService {
     return count;
   }
 
+  /** Internal lifetime classification; authority removal never makes a controlled session legacy. */
+  requiresSessionAuthority(sessionId: string): boolean {
+    const context = this.coordinator.get(sessionId);
+    return context !== undefined && this.controlledContexts.has(context);
+  }
+
   getSession(sessionId: string): ServiceSessionView | undefined {
     const context = this.coordinator.get(sessionId);
-    if (!context) {
-      return undefined;
-    }
+    return context ? this.sessionView(context, true) : undefined;
+  }
+
+  private sessionView(context: SessionContext, includeTenant: boolean): ServiceSessionView {
     return {
       sessionId: context.id,
       status: context.state.toLowerCase(),
-      engine: { name: context.metadata.engineName, version: this.engine.version },
+      engine: { ...context.engineIdentity },
       createdAt: new Date(context.metadata.createdAt).toISOString(),
       ttlMs: context.metadata.ttlMs,
       idleTimeoutMs: context.metadata.idleTimeoutMs,
-      pages: this.countPages(sessionId),
+      pages: this.countPages(context.id),
+      ...(context.diagnostics !== undefined ? { diagnostics: context.diagnostics } : {}),
       ...(context.engineSession.warnings?.length
         ? { warnings: [...context.engineSession.warnings] }
         : {}),
-      ...(context.metadata.tenantId !== undefined ? { tenantId: context.metadata.tenantId } : {}),
+      ...(includeTenant && context.metadata.tenantId !== undefined
+        ? { tenantId: context.metadata.tenantId }
+        : {}),
     };
   }
 
@@ -1268,18 +1266,10 @@ export class AgentBrowserService {
     return this.coordinator
       .getAllSessions()
       .filter((metadata) => tenantId === undefined || metadata.tenantId === tenantId)
-      .map((metadata) => ({
-        sessionId: metadata.id,
-        status: metadata.state.toLowerCase(),
-        engine: { name: metadata.engineName, version: this.engine.version },
-        createdAt: new Date(metadata.createdAt).toISOString(),
-        ttlMs: metadata.ttlMs,
-        idleTimeoutMs: metadata.idleTimeoutMs,
-        pages: this.countPages(metadata.id),
-        ...(this.getSession(metadata.id)?.warnings
-          ? { warnings: this.getSession(metadata.id)?.warnings ?? [] }
-          : {}),
-      }));
+      .flatMap((metadata) => {
+        const context = this.coordinator.get(metadata.id);
+        return context ? [this.sessionView(context, false)] : [];
+      });
   }
 
   async closeSession(sessionId: string): Promise<void> {
@@ -1765,11 +1755,10 @@ export class AgentBrowserService {
   }
 
   /**
-   * Prepare an admission-owned native-form read without exposing the page,
-   * engine callback or authority scope to its consumer. This is an internal
-   * composition seam; no public route grants it independently.
+   * Capture one physical page owner with separate execution and publication checks.
+   * Internal only: publication conveys no engine read or dispatch authority.
    */
-  prepareNativeFormReadInScope(sessionId: string, pageId: string): PreparedNativeFormRead {
+  private capturePageOwnerInScope(sessionId: string, pageId: string) {
     const session = this.requireSession(sessionId);
     const page = this.requirePage(sessionId, pageId);
     const enginePage = page.enginePage;
@@ -1777,14 +1766,12 @@ export class AgentBrowserService {
     const admission = this.authority.admissionInScope(sessionId);
     const sessionIncarnation = this.authority.sessionIncarnation(sessionId);
     const ownerSignal = this.authority.signal(sessionId);
+    const publicationGuard = this.authority.publicationGuardInScope(sessionId);
     let revoked: unknown;
-
-    const assertOwner = () => {
-      if (revoked !== undefined) throw revoked;
+    let ownerRevoked: unknown;
+    const assertPinned = () => {
+      if (ownerRevoked !== undefined) throw ownerRevoked;
       try {
-        guard();
-        if (this.authority.admissionInScope(sessionId) !== admission)
-          throw new ServiceError('CONTROL_REVOKED', 'Native form read admission changed.');
         if (
           this.authority.sessionIncarnation(sessionId) !== sessionIncarnation ||
           this.coordinator.get(sessionId) !== session ||
@@ -1795,10 +1782,49 @@ export class AgentBrowserService {
         )
           throw new ServiceError('CONTROL_REVOKED', 'Native form read owner changed.');
       } catch (error) {
+        ownerRevoked = error;
+        throw error;
+      }
+    };
+    const assertOwner = () => {
+      if (revoked !== undefined) throw revoked;
+      try {
+        guard();
+        if (this.authority.admissionInScope(sessionId) !== admission)
+          throw new ServiceError('CONTROL_REVOKED', 'Native form read admission changed.');
+        assertPinned();
+      } catch (error) {
         revoked = error;
         throw error;
       }
     };
+    let publicationRevoked = false;
+    const publication = Object.freeze({
+      assertCurrent: () => {
+        if (publicationRevoked)
+          throw new ServiceError('CONTROL_REVOKED', 'Page publication revoked.');
+        try {
+          publicationGuard();
+          assertPinned();
+        } catch (error) {
+          publicationRevoked = true;
+          throw error;
+        }
+      },
+    });
+    assertOwner();
+    return Object.freeze({
+      identity: Object.freeze({ sessionId, pageId, sessionIncarnation }),
+      enginePage,
+      ownerSignal,
+      assertAuthority: assertOwner,
+      publication,
+    });
+  }
+
+  prepareNativeFormReadInScope(sessionId: string, pageId: string): PreparedNativeFormRead {
+    const owner = this.capturePageOwnerInScope(sessionId, pageId);
+    const { enginePage, ownerSignal, assertAuthority: assertOwner } = owner;
     const assertRead = (signal?: AbortSignal) => {
       assertOwner();
       if (signal?.aborted)
@@ -1816,11 +1842,10 @@ export class AgentBrowserService {
     if (typeof capture !== 'function')
       throw new ServiceError('ENGINE_UNSUPPORTED', 'Native form evidence capture is unavailable.');
     const captureNativeForm = capture;
-    const identity = Object.freeze({ sessionId, pageId, sessionIncarnation });
-
     return Object.freeze({
-      identity,
+      identity: owner.identity,
       assertAuthority: () => assertOwner(),
+      publication: owner.publication,
       read: async (signal?: AbortSignal) => {
         assertRead(signal);
         const combinedSignal = signal ? AbortSignal.any([ownerSignal, signal]) : ownerSignal;
@@ -1878,7 +1903,7 @@ export class AgentBrowserService {
       sessionId,
       pageId,
       { action: review.action, source },
-      review.assertCurrent
+      review
     );
   }
 
@@ -1886,7 +1911,8 @@ export class AgentBrowserService {
     sessionId: string,
     pageId: string,
     options: { action: Readonly<Record<string, unknown>>; source: EvidenceReviewSource },
-    assertApplication?: () => void
+    application?: PreparedApplicationOperationReview,
+    capturedPage?: PreparedNativeFormRead
   ): PreparedEvidenceReview {
     try {
       const context = this.reviewContext(sessionId);
@@ -1895,9 +1921,10 @@ export class AgentBrowserService {
         canonicalJson(snapshotJsonData(options.action, VERIFICATION_SNAPSHOT_LIMITS))
       ) as Record<string, unknown>;
       // Reuse the existing page/admission owner, without performing another native read.
-      const page = this.prepareNativeFormReadInScope(sessionId, pageId);
+      const page = capturedPage ?? this.prepareNativeFormReadInScope(sessionId, pageId);
+      const publication = this.authority.captureReviewPublicationInScope(sessionId);
       const assertAuthority = () => {
-        assertApplication?.();
+        application?.assertCurrent();
         page.assertAuthority();
         if (canonicalJson(this.reviewContext(sessionId)) !== contextKey)
           throw new ServiceError('CONTROL_REVOKED', 'Review authority changed.');
@@ -1909,6 +1936,18 @@ export class AgentBrowserService {
         action,
         source: options.source,
         assertAuthority,
+        publication: {
+          assertCurrent: () => {
+            application?.publication.assertCurrent();
+            page.publication.assertCurrent();
+            publication.assertCurrent();
+          },
+          assertPinned: () => {
+            application?.publication.assertPinned();
+            page.publication.assertCurrent();
+            publication.assertCurrent();
+          },
+        },
         assertDisclosureSafe: (value) => this.assertReviewDisclosureSafe(value),
         trackRead: (read) => this.authority.trackReadInScope(sessionId, read),
         lifecycleSignal: this.authority.signal(sessionId),
@@ -1998,64 +2037,95 @@ export class AgentBrowserService {
   /** Discovery: the bound adapter's operations, or null when nothing is bound. */
   async applicationDiscover(
     sessionId: string,
-    principal: SessionPrincipal
+    principal: SessionPrincipal,
+    publication?: Parameters<ApplicationAuthority['discover']>[2]
   ): Promise<Awaited<ReturnType<ApplicationAuthority['discover']>>> {
-    return this.applicationAuthority.discover(sessionId, principal);
+    return this.applicationAuthority.discover(sessionId, principal, publication);
   }
 
   /** Allocate one pending review; no execution identity is reserved or dispatched. */
   async applicationReview(
     sessionId: string,
     principal: SessionPrincipal,
-    input: unknown
+    input: unknown,
+    publicationOptions?: SessionPublication<OperatorApprovalView>
   ): Promise<OperatorApprovalView> {
+    const publication =
+      publicationOptions === undefined ? undefined : snapshotPublication(publicationOptions);
+    let disclosure: PreparedReviewDisclosure | undefined;
     if (principal.actor !== 'operator')
       throw new ServiceError('FORBIDDEN', 'Operator authority is required');
     const validated = validateApplicationReview(input);
     if (!validated.ok)
       throw new ServiceError('INVALID_REQUEST', 'Invalid application review request');
-    const body = validated.value;
-    const result = await this.authority.run(sessionId, principal, {}, async () => {
-      const context = this.reviewContext(sessionId);
-      const originalPage = this.prepareNativeFormReadInScope(sessionId, body.pageId);
-      const intent = this.applicationAuthority.prepareOperationReviewInScope(
-        sessionId,
-        body.request
-      );
-      const assertIntent = () => {
-        intent.assertCurrent();
-        originalPage.assertAuthority();
-        this.assertReviewContext(sessionId, context);
-      };
-      assertIntent();
-      const application = selectApplicationReview(intent.action);
-      if (!application) throw new ServiceError('INVALID_REQUEST', 'Application review unavailable');
-      const { prepared, assertPinned } = this.prepareConfiguredEvidenceReview(
-        sessionId,
-        context,
-        { pageId: body.pageId, source: body.source, application },
-        intent.action,
-        assertIntent
-      );
-      const view = await prepared.generate(this.authority.signal(sessionId));
-      assertPinned();
-      // Application callbacks run before the final evidence generation check.
-      // Finish with captured-owner checks that cannot call host authorization again.
-      prepared.assertCurrent(this.authority.signal(sessionId));
-      intent.assertPinned();
-      originalPage.assertAuthority();
-      this.assertReviewContext(sessionId, context);
-      return view;
-    });
+    const result = await this.authority.run(
+      sessionId,
+      principal,
+      {},
+      async () => {
+        disclosure = await this.prepareApplicationReviewInScope(sessionId, validated.value);
+        return disclosure.view;
+      },
+      undefined,
+      publication
+        ? {
+            ...publication,
+            publish: async (value, context) => {
+              if (!disclosure)
+                throw new ServiceError('CONTROL_REVOKED', 'Review publication unavailable');
+              const output = composePublicationContext(context, disclosure.assertCurrent);
+              output.assertCurrent();
+              await publication.publish(value, output);
+              output.assertCurrent();
+            },
+          }
+        : undefined
+    );
     if ('replay' in result) throw new ServiceError('INTERNAL', 'Application review unavailable');
     return result;
+  }
+
+  /** Internal inert disclosure for an already admitted review; no transport or new ticket. */
+  async prepareApplicationReviewInScope(
+    sessionId: string,
+    input: unknown
+  ): Promise<PreparedReviewDisclosure> {
+    const validated = validateApplicationReview(input);
+    if (!validated.ok)
+      throw new ServiceError('INVALID_REQUEST', 'Invalid application review request');
+    const body = validated.value;
+    const context = this.reviewContext(sessionId);
+    const originalPage = this.prepareNativeFormReadInScope(sessionId, body.pageId);
+    const intent = this.applicationAuthority.prepareOperationReviewInScope(sessionId, body.request);
+    intent.assertCurrent();
+    originalPage.assertAuthority();
+    this.assertReviewContext(sessionId, context);
+    const application = selectApplicationReview(intent.action);
+    if (!application) throw new ServiceError('INVALID_REQUEST', 'Application review unavailable');
+    const { prepared, assertPinned, assertOwners } = this.prepareConfiguredEvidenceReview(
+      sessionId,
+      context,
+      { pageId: body.pageId, source: body.source, application },
+      intent,
+      originalPage
+    );
+    const view = await prepared.generate(this.authority.signal(sessionId));
+    assertPinned();
+    const disclosure = prepared.capturePublication(view);
+    // Finish with captured-owner comparisons after all source/application callbacks.
+    assertOwners();
+    this.assertReviewDisclosureSafe(disclosure.view);
+    assertOwners();
+    return disclosure;
   }
 
   /** Dispatch one application operation. Writes require operation ID + expected version. */
   async applicationExecute(
     sessionId: string,
     principal: SessionPrincipal,
-    input: unknown
+    input: unknown,
+    publication?: Parameters<ApplicationAuthority['execute']>[3],
+    replay?: OperationPublication
   ): Promise<Awaited<ReturnType<ApplicationAuthority['execute']>>> {
     const validated = validateApplicationExecute(input);
     if (!validated.ok) {
@@ -2066,16 +2136,23 @@ export class AgentBrowserService {
           .join('; ')}`
       );
     }
-    return this.applicationAuthority.execute(sessionId, principal, validated.value);
+    return this.applicationAuthority.execute(
+      sessionId,
+      principal,
+      validated.value,
+      publication,
+      replay
+    );
   }
 
   /** Read one application receipt by its operation ID. */
   async applicationReceipt(
     sessionId: string,
     principal: SessionPrincipal,
-    operationId: string
+    operationId: string,
+    publication?: SessionPublication<unknown>
   ): Promise<unknown> {
-    return this.applicationAuthority.lookupReceipt(sessionId, principal, operationId);
+    return this.applicationAuthority.lookupReceipt(sessionId, principal, operationId, publication);
   }
 
   /**
@@ -3474,11 +3551,27 @@ export class AgentBrowserService {
     pageId: string,
     request: {
       format?: DeliveredExtractFormat;
+      maxBytes?: number;
       schema?: Record<string, unknown>;
       records?: { container: string; fields: Record<string, string>; limit?: number };
     }
   ): Promise<import('@agentbrowser/engine').ExtractionResult> {
     return this.traced('extract', { sessionId, pageId, format: request.format }, async () => {
+      let maxBytes: number;
+      try {
+        maxBytes =
+          request.maxBytes === undefined
+            ? this.extractMaxBytes
+            : parseExtractMaxBytes(request.maxBytes);
+        if (maxBytes > this.extractMaxBytes) throw new Error();
+      } catch {
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          'Extraction maxBytes must be a positive safe integer within the server ceiling.',
+          false,
+          { serverMaxBytes: this.extractMaxBytes }
+        );
+      }
       const raw = await this.readPageSource(
         sessionId,
         pageId,
@@ -3493,47 +3586,60 @@ export class AgentBrowserService {
         metadata: { ...(raw.metadata ?? {}), revision: page.revision },
       };
 
-      switch (request.format) {
-        case 'text':
-          return this.secretManager.redact(extractVisibleText(sourced));
-        case 'markdown':
-          return this.secretManager.redact(extractMarkdown(sourced));
-        case 'links':
-          return this.secretManager.redact(extractLinks(sourced));
-        case 'tables':
-          return this.secretManager.redact(extractTables(sourced));
-        case 'forms':
-          return this.secretManager.redact(extractForms(sourced));
-        case 'jsonld': {
-          const result = this.secretManager.redact(extractJsonLd(sourced));
-          return { ...result, data: this.secretManager.redactUntrusted(result.data) };
-        }
-        case 'schema': {
-          this.validateExtractSchema(request.schema);
-          const extractor = new SchemaExtractor({
-            ...(this.secretManager !== undefined ? { secretManager: this.secretManager } : {}),
-          });
-          return await extractor.extract(sourced, request.schema as Record<string, unknown>);
-        }
-        case 'records': {
-          const recordsRequest = this.validateRecordsRequest(request.records);
-          try {
-            return this.secretManager.redact(extractRecords(sourced, recordsRequest));
-          } catch (error) {
-            // Caller-supplied selectors that are not valid CSS are a
-            // request-shape problem: 400, never the parser's raw 500.
-            if (error instanceof RecordsSelectorError) {
-              throw new ServiceError('INVALID_REQUEST', error.message, false);
-            }
-            throw error;
+      const result = await (async () => {
+        switch (request.format) {
+          case 'text':
+            return this.secretManager.redact(extractVisibleText(sourced));
+          case 'markdown':
+            return this.secretManager.redact(extractMarkdown(sourced));
+          case 'links':
+            return this.secretManager.redact(extractLinks(sourced));
+          case 'tables':
+            return this.secretManager.redact(extractTables(sourced));
+          case 'forms':
+            return this.secretManager.redact(extractForms(sourced));
+          case 'jsonld': {
+            const result = this.secretManager.redact(extractJsonLd(sourced));
+            return { ...result, data: this.secretManager.redactUntrusted(result.data) };
           }
+          case 'schema': {
+            this.validateExtractSchema(request.schema);
+            const extractor = new SchemaExtractor({
+              ...(this.secretManager !== undefined ? { secretManager: this.secretManager } : {}),
+            });
+            return await extractor.extract(sourced, request.schema as Record<string, unknown>);
+          }
+          case 'records': {
+            const recordsRequest = this.validateRecordsRequest(request.records);
+            try {
+              return this.secretManager.redact(extractRecords(sourced, recordsRequest));
+            } catch (error) {
+              // Caller-supplied selectors that are not valid CSS are a
+              // request-shape problem: 400, never the parser's raw 500.
+              if (error instanceof RecordsSelectorError) {
+                throw new ServiceError('INVALID_REQUEST', error.message, false);
+              }
+              throw error;
+            }
+          }
+          default:
+            throw new ServiceError(
+              'INVALID_REQUEST',
+              `Unknown extraction format: ${String(request.format)}. Supported: text, markdown, links, tables, forms, jsonld, schema, records.`
+            );
         }
-        default:
-          throw new ServiceError(
-            'INVALID_REQUEST',
-            `Unknown extraction format: ${String(request.format)}. Supported: text, markdown, links, tables, forms, jsonld, schema, records.`
-          );
-      }
+      })();
+      // One budget owner across all formats, measured after redaction. Never slice JSON,
+      // structured records or evidence independently of their source result.
+      const actualBytes = Buffer.byteLength(JSON.stringify(result), 'utf8');
+      if (actualBytes > maxBytes)
+        throw new ServiceError(
+          'OUTPUT_TRUNCATED',
+          'Extraction exceeds maxBytes; no partial result returned. Increase the limit within the server ceiling or narrow the extraction.',
+          false,
+          { maxBytes, serverMaxBytes: this.extractMaxBytes, actualBytes }
+        );
+      return result;
     });
   }
 
@@ -3752,7 +3858,12 @@ export class AgentBrowserService {
     for (const sessionId of this.sessionDownloadPolicy.keys()) this.deleteSessionState(sessionId);
     this.pages.clear();
     await this.approvalGate.shutdown();
-    await this.engine.close();
+    // Registry aliases may point to the same engine instance. Every distinct
+    // owner must release its pool/connection even if another close fails.
+    const engines = new Set([this.engine, ...this.engines.values()]);
+    const results = await Promise.allSettled([...engines].map(async (engine) => engine.close()));
+    const failure = results.find((result) => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
   }
 
   // ---- internals ----------------------------------------------------------
@@ -3859,13 +3970,7 @@ export class AgentBrowserService {
       context,
       current,
       application,
-      ...this.prepareConfiguredEvidenceReview(
-        sessionId,
-        context,
-        selector,
-        application?.action,
-        application?.assertCurrent
-      ),
+      ...this.prepareConfiguredEvidenceReview(sessionId, context, selector, application),
     };
   }
 
@@ -3874,16 +3979,16 @@ export class AgentBrowserService {
     sessionId: string,
     context: ApprovalReviewBinding,
     selector: EvidenceReviewSelector,
-    expectedAction?: Readonly<Record<string, unknown>>,
-    assertApplication?: () => void
-  ): { prepared: PreparedEvidenceReview; assertPinned: () => void } {
+    application?: PreparedApplicationOperationReview,
+    capturedPage?: PreparedNativeFormRead
+  ): { prepared: PreparedEvidenceReview; assertPinned: () => void; assertOwners: () => void } {
     let assertPinned: (() => void) | undefined;
     try {
       const provider = this.evidenceReviewProvider;
       if (!provider) throw new Error('Unavailable provider');
-      const page = this.prepareNativeFormReadInScope(sessionId, selector.pageId);
+      const page = capturedPage ?? this.prepareNativeFormReadInScope(sessionId, selector.pageId);
       assertPinned = () => {
-        assertApplication?.();
+        application?.assertCurrent();
         page.assertAuthority();
         this.assertReviewContext(sessionId, context);
       };
@@ -3927,7 +4032,7 @@ export class AgentBrowserService {
       const action = snapshotAuthorizationInput(own.action.value);
       if (!action || typeof action !== 'object' || Array.isArray(action))
         throw new Error('Unavailable provider action');
-      if (expectedAction && canonicalJson(action) !== canonicalJson(expectedAction))
+      if (application && canonicalJson(action) !== canonicalJson(application.action))
         throw new Error('Approval does not match intended application operation');
       const source = captureEvidenceReviewSource(own.source.value);
       assertPinned();
@@ -3940,10 +4045,16 @@ export class AgentBrowserService {
         sessionId,
         selector.pageId,
         { action: action as Record<string, unknown>, source },
-        assertPinned
+        application,
+        page
       );
       assertPinned();
-      return { prepared, assertPinned };
+      const assertOwners = () => {
+        application?.assertPinned();
+        page.assertAuthority();
+        this.assertReviewContext(sessionId, context);
+      };
+      return { prepared, assertPinned, assertOwners };
     } catch {
       try {
         assertPinned?.();
@@ -3954,64 +4065,81 @@ export class AgentBrowserService {
     }
   }
 
-  /** Private action projection; only admitted operators may inspect reviewed challenges. */
-  async getApproval(
-    sessionId: string,
-    tokenId: string
-  ): Promise<import('@agentbrowser/protocol').OperatorApprovalView> {
-    const resolved = await this.resolveApproval(sessionId, tokenId);
-    this.assertReviewContext(sessionId, resolved.context);
-    if (resolved.prepared) {
-      try {
-        const result = await resolved.prepared.get(tokenId, this.authority.signal(sessionId));
-        if (result) {
-          resolved.application?.assertPinned();
-          return result;
-        }
-      } catch {
-        // Source permission and authority failures are indistinguishable from absence.
-      }
-      throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
-    }
-    this.assertReviewDisclosureSafe(resolved.current);
-    return resolved.current;
+  /** Existing wire callers share preparation with later guarded publishers. */
+  async getApproval(sessionId: string, tokenId: string): Promise<OperatorApprovalView> {
+    return (await this.prepareApprovalDisclosureInScope(sessionId, tokenId)).view;
   }
 
   async decideApproval(
     sessionId: string,
     tokenId: string,
     decision: 'approve' | 'deny'
-  ): Promise<import('@agentbrowser/protocol').OperatorApprovalView> {
+  ): Promise<OperatorApprovalView> {
+    if (decision !== 'approve' && decision !== 'deny')
+      throw new ServiceError('INVALID_REQUEST', 'Approval decision must be approve or deny');
+    return (await this.prepareApprovalDisclosureInScope(sessionId, tokenId, decision)).view;
+  }
+
+  /** Capture a stored view while executing; later checks never repeat the lookup/decision. */
+  async prepareApprovalDisclosureInScope(
+    sessionId: string,
+    tokenId: string,
+    decision?: 'approve' | 'deny'
+  ): Promise<PreparedReviewDisclosure> {
     const resolved = await this.resolveApproval(sessionId, tokenId);
     this.assertReviewContext(sessionId, resolved.context);
     if (resolved.prepared) {
       try {
-        const result = await resolved.prepared.decide(
-          tokenId,
-          decision,
-          this.authority.signal(sessionId)
-        );
+        const signal = this.authority.signal(sessionId);
+        const result =
+          decision === undefined
+            ? await resolved.prepared.get(tokenId, signal)
+            : await resolved.prepared.decide(tokenId, decision, signal);
         if (result) {
-          resolved.application?.assertPinned();
-          return result;
+          const disclosure = resolved.prepared.capturePublication(result);
+          resolved.assertOwners();
+          this.assertReviewDisclosureSafe(disclosure.view);
+          resolved.assertOwners();
+          return disclosure;
         }
       } catch {
         // Source permission and authority failures are indistinguishable from absence.
       }
       throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
     }
-    // A legacy decision must not approve data that the operator cannot safely inspect.
+    const review = this.authority.captureReviewPublicationInScope(sessionId);
+    const pageId = resolved.current.action.pageId;
+    if (pageId !== undefined && typeof pageId !== 'string')
+      throw new ServiceError('NOT_FOUND', 'Current approval is unavailable');
+    const page = pageId === undefined ? undefined : this.capturePageOwnerInScope(sessionId, pageId);
     this.assertReviewDisclosureSafe(resolved.current);
-    const result = await this.approvalGate.decideReviewedApproval(
-      tokenId,
-      resolved.context,
-      decision
-    );
+    const result =
+      decision === undefined
+        ? resolved.current
+        : await this.approvalGate.decideReviewedApproval(tokenId, resolved.context, decision);
     this.authority.assert(sessionId);
     if (!result)
       throw new ServiceError('NOT_FOUND', 'Current approval cannot accept that decision');
-    this.assertReviewDisclosureSafe(result);
-    return result;
+    this.assertReviewContext(sessionId, resolved.context);
+    page?.assertAuthority();
+    const assertPublication = () => {
+      review.assertCurrent();
+      page?.publication.assertCurrent();
+    };
+    const assertExecution = () => {
+      this.assertReviewContext(sessionId, resolved.context);
+      page?.assertAuthority();
+    };
+    const disclosure = captureReviewDisclosure(result, {
+      assertExecution,
+      assertCurrent: assertPublication,
+      assertPinned: assertPublication,
+      assertDisclosureSafe: (view) => this.assertReviewDisclosureSafe(view),
+    });
+    // Legacy wire callers unwrap the view before publication adoption. Pin their
+    // execution owners after the last secret callback, without invoking host policy.
+    assertExecution();
+    return disclosure;
   }
 
   private async checkApproval(
