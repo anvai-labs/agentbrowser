@@ -365,6 +365,12 @@ export interface BrowserEngine {
  * Engine session interface
  */
 export interface EngineSession {
+  /**
+   * One-shot evidence that this session's backing browser or context became
+   * unusable outside its intentional close path. Consumers must not inspect
+   * or publish AbortSignal.reason.
+   */
+  readonly disconnected?: AbortSignal | undefined;
   /** Immutable launch/context facts, captured by the adapter that owns them. */
   readonly diagnostics?: import('@agentbrowser/protocol').SessionDiagnostics | undefined;
   /** Diagnostics from the engine host, shared by all consumption surfaces. */

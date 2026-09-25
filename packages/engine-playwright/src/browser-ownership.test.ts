@@ -17,6 +17,7 @@ function deferred<T>() {
 function context() {
   return {
     on: vi.fn(),
+    off: vi.fn(),
     close: vi.fn().mockResolvedValue(undefined),
     addInitScript: vi.fn().mockResolvedValue(undefined),
     route: vi.fn().mockResolvedValue(undefined),
@@ -27,6 +28,9 @@ function context() {
 function browser() {
   return {
     newContext: vi.fn().mockImplementation(async () => context()),
+    on: vi.fn(),
+    off: vi.fn(),
+    isConnected: vi.fn().mockReturnValue(true),
     close: vi.fn().mockResolvedValue(undefined),
   };
 }

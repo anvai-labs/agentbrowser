@@ -46,7 +46,8 @@ per-request authorized and MCP aggregation is not atomic guarded publication.
 
 R5b1 is implemented in the [bounded close-cause candidate](session-close-causes.md):
 typed TTL/idle/explicit/policy facts, scoped retention, stale-callback fencing and
-transport authorization after removal. Typed engine-disconnect evidence remains R5b2.
+transport authorization after removal. [R5b2](session-disconnect.md) supplies observed
+browser/context loss through the same terminal projection.
 Preserve current page-close semantics (including the last page); do not equate renderer
 crash or target-closed exceptions with operator intent or browser termination.
 This lease slice does not complete R5 or T5 recovery.

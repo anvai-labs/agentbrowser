@@ -741,6 +741,38 @@ async function closeSessionResources(
   }
 }
 
+/** One bounded owner for browser/context loss and its exact listener cleanup. */
+class SessionDisconnectObserver {
+  private readonly controller = new AbortController();
+  private armed = true;
+  readonly signal = this.controller.signal;
+  private readonly onUnexpectedLoss = () => {
+    if (this.armed) this.controller.abort();
+  };
+
+  constructor(
+    private readonly browser: Browser,
+    private readonly context: BrowserContext
+  ) {
+    this.browser.on('disconnected', this.onUnexpectedLoss);
+    this.context.on('close', this.onUnexpectedLoss);
+    if (!this.browser.isConnected()) this.onUnexpectedLoss();
+  }
+
+  disarm(): void {
+    if (!this.armed) return;
+    this.armed = false;
+    this.browser.off('disconnected', this.onUnexpectedLoss);
+    this.context.off('close', this.onUnexpectedLoss);
+  }
+}
+
+function assertSessionConnected(observer: SessionDisconnectObserver): void {
+  if (observer.signal.aborted) {
+    throw new EngineError('ENGINE_CRASHED', 'Browser session disconnected during creation.', false);
+  }
+}
+
 type BrowserFacts = Omit<SessionDiagnostics, 'context'>;
 
 interface BrowserAllocation {
@@ -903,6 +935,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     let allocation: BrowserAllocation | undefined;
     let browser: Browser | undefined;
     let context: BrowserContext | undefined;
+    let disconnectObserver: SessionDisconnectObserver | undefined;
+    let session: PlaywrightSession | undefined;
     try {
       if (this.cdpEndpoint !== undefined) {
         if (this.browserFamily !== 'chromium') {
@@ -935,6 +969,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
           ? { serviceWorkers: 'block' as const }
           : {}),
       });
+      disconnectObserver = new SessionDisconnectObserver(browser, context);
+      assertSessionConnected(disconnectObserver);
       this.requireOpen();
       let initScript: SessionDiagnostics['context']['initScript'] = 'not_registered';
       if (options.headless === false) {
@@ -999,20 +1035,29 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
           initScript,
         },
       });
-      return new PlaywrightSession(
+      assertSessionConnected(disconnectObserver);
+      session = new PlaywrightSession(
         context,
         this,
+        disconnectObserver,
         ownsBrowser ? browser : undefined,
         requestSink,
         options.downloadPolicy,
         sessionSnapshotTimeout,
         warnings,
-        diagnostics
+        diagnostics,
+        undefined
       );
+      assertSessionConnected(disconnectObserver);
+      return session;
     } catch (error) {
       // Preserve the setup failure, even if cleanup itself fails. Shared browser
       // ownership remains with the engine; never disconnect sibling sessions.
-      await closeSessionResources(context, ownsBrowser ? browser : undefined).catch(() => {});
+      if (session !== undefined) await session.close().catch(() => {});
+      else {
+        disconnectObserver?.disarm();
+        await closeSessionResources(context, ownsBrowser ? browser : undefined).catch(() => {});
+      }
       throw error;
     }
   }
@@ -1063,6 +1108,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     this.operatorAttachReserved = true;
     let browser: Browser | undefined;
     let session: PlaywrightSession | undefined;
+    let disconnectObserver: SessionDisconnectObserver | undefined;
     try {
       // Preserve the operator context's download, focus and media settings.
       browser = await chromium.connectOverCDP(configured.endpoint, { noDefaults: true });
@@ -1080,6 +1126,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
           }
         );
       }
+      disconnectObserver = new SessionDisconnectObserver(browser, context);
+      assertSessionConnected(disconnectObserver);
       const version = browserVersion(browser);
       const diagnostics = captureSessionDiagnostics({
         attachment: 'cdp_attach',
@@ -1107,6 +1155,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       session = new PlaywrightSession(
         context,
         this,
+        disconnectObserver,
         undefined,
         undefined,
         options.downloadPolicy ?? { allow: false, maxBytes: 10 * 1024 * 1024 },
@@ -1119,12 +1168,16 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
           ...(navigationPreflight !== undefined ? { navigationPreflight } : {}),
         }
       );
+      assertSessionConnected(disconnectObserver);
       this.requireOpen();
       this.activeAttachedSession = session;
       return session;
     } catch (error) {
       if (session !== undefined) await session.close().catch(() => {});
-      else await browser?.close().catch(() => {});
+      else {
+        disconnectObserver?.disarm();
+        await browser?.close().catch(() => {});
+      }
       this.operatorAttachReserved = false;
       if (error instanceof EngineError) throw error;
       throw new EngineError('ENGINE_UNSUPPORTED', 'Operator CDP attachment failed.', false, {
@@ -1542,6 +1595,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
 class PlaywrightSession implements EngineSession {
   readonly id: string;
   readonly diagnostics?: SessionDiagnostics;
+  readonly disconnected: AbortSignal;
   private context: BrowserContext;
   private engine: PlaywrightChromiumEngine;
   private pageMap: Map<string, PlaywrightPage> = new Map();
@@ -1555,7 +1609,7 @@ class PlaywrightSession implements EngineSession {
   >();
   private pageCounter = 0;
   private closed = false;
-  private attachedCloseTask: Promise<void> | undefined;
+  private closeTask: Promise<void> | undefined;
 
   private ownedBrowser: Browser | undefined;
   private readonly attached:
@@ -1564,7 +1618,7 @@ class PlaywrightSession implements EngineSession {
   private readonly onContextPage = (page: Page) => {
     void this.adoptPopupPage(page);
   };
-  private readonly onAttachedDisconnect = () => {
+  private readonly onDisconnected = () => {
     void this.close().catch(() => {});
   };
 
@@ -1574,6 +1628,7 @@ class PlaywrightSession implements EngineSession {
   constructor(
     context: BrowserContext,
     engine: PlaywrightChromiumEngine,
+    private readonly disconnectObserver: SessionDisconnectObserver,
     ownedBrowser?: Browser,
     requestSink?: RequestEventSink,
     private readonly downloadPolicy: EngineSessionOptions['downloadPolicy'] = {
@@ -1592,12 +1647,17 @@ class PlaywrightSession implements EngineSession {
     this.ownedBrowser = ownedBrowser;
     this.requestSink = requestSink;
     this.attached = attached;
+    this.disconnected = disconnectObserver.signal;
     if (diagnostics !== undefined) this.diagnostics = diagnostics;
     // F10: pages the browser opens on its own (window.open) still belong to
     // this session; pages opened via newPage() have no opener and are
     // skipped inside the handler.
     this.context.on('page', this.onContextPage);
-    this.attached?.browser.on('disconnected', this.onAttachedDisconnect);
+    this.disconnected.addEventListener('abort', this.onDisconnected, { once: true });
+    // AbortSignal does not notify listeners registered after it was aborted.
+    // Close synchronously enough to publish the single cleanup owner before
+    // createSession performs its final connected assertion.
+    if (this.disconnected.aborted) this.onDisconnected();
     if (requestSink !== undefined) {
       requestSink.emit = (event) => {
         const page = this.pageForPlaywrightPage(event.playwrightPage);
@@ -1800,16 +1860,27 @@ class PlaywrightSession implements EngineSession {
   }
 
   async close(reason?: string): Promise<void> {
-    if (this.attachedCloseTask !== undefined) return this.attachedCloseTask;
-    if (this.closed) {
-      return;
-    }
+    if (this.closeTask !== undefined) return this.closeTask;
     this.closed = true;
-    if (this.attached !== undefined) {
-      const task = this.closeAttached();
-      this.attachedCloseTask = task;
-      return task;
-    }
+    this.disconnectObserver.disarm();
+    this.disconnected.removeEventListener('abort', this.onDisconnected);
+    this.context.off('page', this.onContextPage);
+    let resolveOwner!: () => void;
+    let rejectOwner!: (error: unknown) => void;
+    const owner = new Promise<void>((resolve, reject) => {
+      resolveOwner = resolve;
+      rejectOwner = reject;
+    });
+    this.closeTask = owner;
+    this.disposeSession(reason).then(resolveOwner, (error) => {
+      if (this.closeTask === owner) this.closeTask = undefined;
+      rejectOwner(error);
+    });
+    return owner;
+  }
+
+  private async disposeSession(_reason?: string): Promise<void> {
+    if (this.attached !== undefined) return this.closeAttached();
     try {
       for (const page of this.pageMap.values()) {
         await page.close();
@@ -1833,10 +1904,8 @@ class PlaywrightSession implements EngineSession {
         firstFailure ??= error;
       }
     }
-    this.context.off('page', this.onContextPage);
     this.pageMap.clear();
     this.downloads.clear();
-    this.attached.browser.off('disconnected', this.onAttachedDisconnect);
     try {
       await this.attached.browser.close();
     } catch (error) {

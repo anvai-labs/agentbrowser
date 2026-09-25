@@ -84,13 +84,13 @@ CLI and MCP use one protocol-owned projector that validates and copies the stric
 terminal shape before rendering. Arbitrary sibling detail keys, callbacks and private
 reasons never reach their text output. No new route, capability or MCP tool is added.
 
-## Engine-signal follow-up
+## Engine-signal extension
 
-R5b2 remains separate and must land after the current CDP attachment work resolves the
-engine overlap. It may emit `engine_disconnected` only from a typed session-level
-disconnect signal, captured against the exact current context. Page close and passive
-page crash remain page facts. `engine_crash` still requires a stronger typed signal.
-This packet does not reconnect, replay operations, restore profile state or complete
-T5 durable recovery.
+[R5b2](session-disconnect.md) adds an optional persistent adapter signal and produces
+`engine_disconnected` only from observed backing browser/context loss, captured against
+the exact allocation. Page close and passive page crash remain page facts.
+`engine_crash` still requires stronger evidence. This extension does not reconnect,
+replay operations, restore profile state or complete T5 durable recovery. Its separate
+[qualification](../evidence/session-disconnect.md) records the headed loss smoke.
 
 Qualification is recorded in the [R5b1 evidence](../evidence/session-close-causes.md).

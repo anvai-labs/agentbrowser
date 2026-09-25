@@ -9,6 +9,11 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ### Added
 
+- Observed browser/context disconnection ends the exact affected session, revokes
+  delegated authority, and reports `engine_disconnected` through the existing
+  REST/SDK/CLI/MCP terminal projection. Intentional teardown and page-only close
+  remain distinct; no operator intent, crash diagnosis, reconnect or replay is inferred.
+
 - Opt-in local operator Chrome attachment via `session create --cdp-attach`, REST/SDK
   `cdpAttach`, and MCP `browser_create.cdpAttach`. Requires a dedicated profile,
   bearer authentication, a loopback endpoint and an explicit startup acknowledgement of limited network checks.

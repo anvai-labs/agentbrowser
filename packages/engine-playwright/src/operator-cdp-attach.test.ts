@@ -40,6 +40,10 @@ function context() {
     newPage: vi.fn(),
     close: vi.fn().mockResolvedValue(undefined),
     cookies: vi.fn().mockResolvedValue([]),
+    browser: vi.fn(),
+    emitClose() {
+      listeners.get('close')?.(undefined as never);
+    },
     emitPage(value: unknown) {
       listeners.get('page')?.(value as never);
     },
@@ -48,13 +52,21 @@ function context() {
 
 function browser(ctx = context()) {
   const listeners = new Map<string, () => void>();
+  let connected = true;
+  ctx.browser.mockReturnValue(undefined);
   return {
     contexts: vi.fn().mockReturnValue([ctx]),
-    close: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn(async () => {
+      if (!connected) return;
+      connected = false;
+      listeners.get('disconnected')?.();
+    }),
+    isConnected: vi.fn(() => connected),
     version: vi.fn().mockReturnValue('135.0.1'),
     on: vi.fn((name: string, listener: () => void) => listeners.set(name, listener)),
     off: vi.fn((name: string) => listeners.delete(name)),
     emitDisconnected() {
+      connected = false;
       listeners.get('disconnected')?.();
     },
   };
@@ -242,12 +254,40 @@ describe('operator CDP ownership', () => {
     driver.connectOverCDP.mockResolvedValue(host);
     const engine = configured();
     const session = await engine.createSession({ cdpAttach: true });
+    expect(session.disconnected?.aborted).toBe(false);
     await session.newPage();
     owned.emit('close');
     expect(await session.pages()).toHaveLength(0);
     host.emitDisconnected();
+    expect(session.disconnected?.aborted).toBe(true);
     await vi.waitFor(() => expect(host.close).toHaveBeenCalled());
     driver.connectOverCDP.mockResolvedValue(browser());
+    await expect(engine.createSession({ cdpAttach: true })).resolves.toBeDefined();
+  });
+
+  it('does not report intentional operator detach as a disconnect', async () => {
+    const ctx = context();
+    const host = browser(ctx);
+    driver.connectOverCDP.mockResolvedValue(host);
+    const session = await configured().createSession({ cdpAttach: true });
+    const signal = session.disconnected;
+
+    await session.close();
+    expect(signal?.aborted).toBe(false);
+    expect(host.off).toHaveBeenCalledWith('disconnected', expect.any(Function));
+    expect(ctx.off).toHaveBeenCalledWith('close', expect.any(Function));
+  });
+
+  it('reports default-context loss and releases the operator attachment', async () => {
+    const ctx = context();
+    const host = browser(ctx);
+    driver.connectOverCDP.mockResolvedValueOnce(host).mockResolvedValueOnce(browser());
+    const engine = configured();
+    const session = await engine.createSession({ cdpAttach: true });
+
+    ctx.emitClose();
+    expect(session.disconnected?.aborted).toBe(true);
+    await vi.waitFor(() => expect(host.close).toHaveBeenCalledTimes(1));
     await expect(engine.createSession({ cdpAttach: true })).resolves.toBeDefined();
   });
 

@@ -19,7 +19,7 @@ import type { StructuredLogger } from './logger.js';
 const MAX_SESSION_TIME = 8_640_000_000_000_000;
 const MAX_TERMINAL_RETENTION_MS = Number.MAX_SAFE_INTEGER - MAX_SESSION_TIME;
 
-type ProducedSessionCloseCause = Exclude<SessionCloseCause, 'engine_disconnected' | 'engine_crash'>;
+type ProducedSessionCloseCause = Exclude<SessionCloseCause, 'engine_crash'>;
 
 /**
  * Session states
@@ -280,6 +280,31 @@ export class SessionCoordinator {
         await engineSession.close('session_id_collision').catch(() => {});
         throw new Error('SESSION_ID_COLLISION');
       }
+      // Capture the persistent signal once. Listener lifetime follows the
+      // existing allocation cancellation owner, never the retained record.
+      let lifecycleFailure: EngineError | undefined;
+      try {
+        const disconnected = engineSession.disconnected;
+        if (disconnected !== undefined) {
+          const onDisconnected = () => {
+            void this.terminateDisconnectedIfCurrent(session);
+          };
+          const remove = () => disconnected.removeEventListener('abort', onDisconnected);
+          session.signal.addEventListener('abort', remove, { once: true });
+          disconnected.addEventListener('abort', onDisconnected, { once: true });
+          // addEventListener does not replay an earlier abort. There is no
+          // await between this check and live-map publication below.
+          if (disconnected.aborted)
+            lifecycleFailure = new EngineError('ENGINE_CRASHED', 'Engine session disconnected');
+        }
+      } catch {
+        lifecycleFailure = new EngineError('ENGINE_CRASHED', 'Engine lifecycle signal unavailable');
+      }
+      if (lifecycleFailure) {
+        session.cancellation.abort(lifecycleFailure);
+        await engineSession.close('lifecycle_unavailable').catch(() => {});
+        throw lifecycleFailure;
+      }
       this.terminalSessions.delete(sessionId);
       this.sessions.set(sessionId, session);
 
@@ -490,6 +515,19 @@ export class SessionCoordinator {
     if (current !== session) return false;
     await this.terminateContext(current, state, reason, abnormalCloseCause(state), true);
     return true;
+  }
+
+  /** Only the captured adapter signal can produce this observed cause. */
+  private async terminateDisconnectedIfCurrent(context: SessionContext): Promise<void> {
+    const current = this.sessions.get(context.id);
+    if (current !== context) return;
+    await this.terminateContext(
+      current,
+      SessionState.ENGINE_CRASHED,
+      'engine_disconnected',
+      'engine_disconnected',
+      true
+    );
   }
 
   private async terminateContext(
@@ -750,11 +788,10 @@ export interface SessionContext {
     lease: SessionLease;
   }>;
   /**
-   * Listener ownership (D2): engine event listeners are attached by the
-   * CONSUMER that needs them (e.g. the API service's per-page pump), not by
-   * this coordinator - close() releases the session's engine resources but
-   * does not (and cannot) deregister consumer-side listeners; consumers must
-   * tie their listeners to the page/session teardown they observe.
+   * Listener ownership (D2): the coordinator owns only the typed session
+   * disconnect listener, removed by this allocation's cancellation signal.
+   * Page-event listeners belong to their consumers (e.g. the API per-page
+   * pump), which must bind cleanup to page/session teardown.
    */
 }
 
@@ -777,6 +814,7 @@ function terminalStateOf(
   if (closeCause === 'explicit_close') return 'closed';
   if (closeCause === 'ttl_expired' || closeCause === 'idle_expired') return 'expired';
   if (closeCause === 'policy_terminated') return 'policy_terminated';
+  if (closeCause === 'engine_disconnected') return 'engine_disconnected';
   switch (state) {
     case SessionState.CLOSED:
       return 'closed';
