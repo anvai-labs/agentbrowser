@@ -4,7 +4,8 @@ Baseline: AgentBrowser 1.10.1 includes offline `describe`, bounded JSON input,
 plan/autofill result validation, receipt-correlated `outcome`, offline `test evaluate`,
 reusable `form prepare`, checked uploads and capture readiness waits. Synthetic
 fixture qualification does not prove production evidence or durable recovery.
-The extraction budget refinement and launch diagnostics below are pending the next release.
+The 1.11.0 candidate adds extraction budgets, MCP page provisioning and captured
+launch diagnostics; publication and installed qualification are separate release gates.
 
 The CLI is a thin SDK client to the shared AgentBrowser service. It owns no browser
 session state or alternate executor. Use ordinary Bash/shell tools to inspect JSON;

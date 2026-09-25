@@ -1,6 +1,7 @@
 # Extraction response budgets
 
-Status: implementation candidate after 1.10.1; no release or service restart implied.
+Status: merged in PR #281; included in the 1.11.0 release candidate.
+Publication and service restart are separate gates.
 Base: develop `124afc3`, including SPA-capture contract alignment (#279–#280).
 Scope: shared extraction service plus CLI/SDK/REST and optional MCP adapters.
 
