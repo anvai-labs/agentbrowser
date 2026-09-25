@@ -1,7 +1,6 @@
 # T5 C2/C3: application guards and acknowledged terminal replay
 
-Status: internally implemented and regression-qualified on develop `a1443c7`;
-final candidate review and protected delivery pending.
+Status: merged as PR #299 at `e4b5e74`; clean exact-head review and pre/post-merge CI 8/8.
 Evidence: [C2/C3 qualification](../evidence/t5-journal-application-terminal.md).
 Parent: [journal authority](t5-journal-authority.md) and [journal contract](t5-journal-contract.md).
 This internal module is loaded only for journal work. It adds no service, environment,
@@ -32,9 +31,10 @@ operation by omitting selection, or upgrade an old ephemeral record by adding se
 Before intent ACK publication is withheld. Intent projects `in_flight/false`; marker
 projects `in_flight/true`; terminal projects its acknowledged status and dispatch fact.
 The marker records potential dispatch even if the final application guard prevents the
-physical effect. Core's existing live status remains an explicitly ephemeral execution
-observation until C4. Duplicate replay and explicit status publication use the same
-acknowledged projection, return copies, and retain fresh disclosure authorization.
+physical effect. [C4a control views](t5-journal-control-views.md) extend the same
+acknowledged projection to lifecycle/status views. The trusted `operation(id)` diagnostic
+remains a live execution observation. Duplicate replay and explicit status publication
+return copies and retain fresh disclosure authorization.
 A replay-only application guard runs between shared status-owner checks outside ambient
 execution scope. It never prepares an operation or consumes consent again.
 

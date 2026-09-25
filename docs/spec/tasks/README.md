@@ -43,7 +43,7 @@ This release includes A3a2 shared page/evidence disclosure,
 [A3b application HTTP adoption](../design/t5-http-publication.md) (#283),
 [A3c/A4b browser/review adoption](../design/t5-browser-review-publication.md) (#284),
 and the storage-neutral [B1/B2 journal contract](../design/t5-journal-contract.md) (#285).
-C1+ integration, a real store and recovery remain gated. R1–R4 research adapters and
+C1–C3 internal integration is merged; runtime enablement, a real store and recovery remain gated. R1–R4 research adapters and
 diagnostics shipped. The consumer continuation through #296 is merged to develop:
 navigation reasons, operator CDP attachment, the EDGAR recipe, sampled leases,
 bounded terminal facts and observed engine disconnection. These changes are not yet
@@ -52,8 +52,9 @@ released and do not establish durable recovery. Resume T5 with the
 [C1b authority composition](../design/t5-journal-authority.md) now integrates internal
 intent/dispatch waits through the existing ticket and drain owner (merged #298).
 [C2 application pins and C3 terminal/replay](../design/t5-journal-application-terminal.md)
-are implemented internally and under final qualification. C4 runtime selection,
-concrete storage and recovery remain gated.
+merged #299 with clean exact-head review and pre/post-merge CI 8/8.
+[C4a control views](../design/t5-journal-control-views.md) now share ACK publication;
+C4b runtime selection, concrete storage and recovery remain gated.
 The remaining T4/T6 production/private/live gates are still open. T8 installed
 external-harness qualification remains separate. Recheck concurrent branches first.
 
