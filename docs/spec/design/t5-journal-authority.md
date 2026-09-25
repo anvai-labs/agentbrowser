@@ -1,9 +1,12 @@
 # T5 C1b: journal intent and dispatch composition
 
-Status: internally implemented; final review and delivery pending. Base: PR #297 (`aeb7fdd`).
+Status: merged in PR #298 (`a1443c7`), with clean exact-head review and pre/post-merge CI 8/8.
+Base: PR #297 (`aeb7fdd`).
 Parent: [journal contract](t5-journal-contract.md). This module is loaded explicitly
 for T5 work. It adds no service configuration, wire capability or durable guarantee.
 Validation is recorded in [C1b evidence](../evidence/t5-journal-authority.md).
+The publication refusals below describe C1b at merge; [C2/C3](t5-journal-application-terminal.md)
+replaces them with acknowledged status/replay while keeping runtime configuration gated.
 
 ## Shared ownership
 

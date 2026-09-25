@@ -161,6 +161,174 @@ describe('session control', () => {
     expect(control.operation('save-1')).not.toHaveProperty('fingerprint');
   });
 
+  it('withholds acknowledgment-required replay and publication until intent is acknowledged', () => {
+    const control = new SessionControl();
+    const request = {
+      actor: 'operator' as const,
+      operationId: 'durable-save',
+      fingerprint: 'digest',
+      acknowledgmentRequired: true,
+    };
+    const ticket = control.begin(request);
+    if ('replay' in ticket) throw new Error('unexpected replay');
+
+    expect(control.operation('durable-save')).toMatchObject({
+      status: 'in_flight',
+      dispatched: false,
+    });
+    expect(() => control.publicationOperation('durable-save')).toThrow(/acknowledgment/i);
+    expect(() => control.begin(request)).toThrow(/acknowledgment/i);
+
+    control.acknowledge(ticket, { status: 'in_flight', dispatched: false });
+    const published = control.publicationOperation('durable-save');
+    expect(published).toEqual({
+      operationId: 'durable-save',
+      epoch: 0,
+      status: 'in_flight',
+      dispatched: false,
+    });
+    expect(control.begin(request)).toEqual({ replay: published });
+    if (published) published.status = 'completed';
+    expect(control.publicationOperation('durable-save')?.status).toBe('in_flight');
+  });
+
+  it('binds acknowledgment selection into the existing duplicate identity in both directions', () => {
+    const control = new SessionControl();
+    const durable = {
+      actor: 'operator' as const,
+      operationId: 'durable',
+      fingerprint: 'same',
+      acknowledgmentRequired: true,
+    };
+    const durableTicket = control.begin(durable);
+    if ('replay' in durableTicket) throw new Error('unexpected replay');
+    expect(() =>
+      control.begin({ actor: 'operator', operationId: 'durable', fingerprint: 'same' })
+    ).toThrow(/different/i);
+    control.finish(durableTicket, 'failed');
+
+    const ephemeral = {
+      actor: 'operator' as const,
+      operationId: 'ephemeral-selection',
+      fingerprint: 'same',
+    };
+    const ephemeralTicket = control.begin(ephemeral);
+    if ('replay' in ephemeralTicket) throw new Error('unexpected replay');
+    expect(() => control.begin({ ...ephemeral, acknowledgmentRequired: true })).toThrow(
+      /different/i
+    );
+    expect(control.publicationOperation('ephemeral-selection')).toMatchObject({
+      status: 'in_flight',
+      dispatched: false,
+    });
+  });
+
+  it.each(['completed', 'failed', 'outcome_unknown'] as const)(
+    'advances an acknowledged marker to immutable %s terminal facts after revocation',
+    (status) => {
+      const control = new SessionControl();
+      const request = {
+        actor: 'operator' as const,
+        operationId: `durable-${status}`,
+        fingerprint: 'digest',
+        acknowledgmentRequired: true,
+      };
+      const ticket = control.begin(request);
+      if ('replay' in ticket) throw new Error('unexpected replay');
+      control.acknowledge(ticket, { status: 'in_flight', dispatched: false });
+      control.acknowledge(ticket, { status: 'in_flight', dispatched: true });
+      control.dispatched(ticket);
+      control.finalize(ticket, status);
+      expect(control.takeover().state).toBe('PAUSE_REQUESTED');
+
+      control.acknowledge(ticket, { status, dispatched: true });
+      expect(control.publicationOperation(request.operationId)).toMatchObject({
+        status,
+        dispatched: true,
+      });
+      expect(() =>
+        control.acknowledge(ticket, {
+          status: status === 'completed' ? 'failed' : 'completed',
+          dispatched: true,
+        })
+      ).toThrow(/acknowledgment/i);
+      control.finish(ticket, 'failed');
+      expect(control.publicationOperation(request.operationId)).toMatchObject({
+        status,
+        dispatched: true,
+      });
+    }
+  );
+
+  it('allows only failed terminal facts before a dispatch marker', () => {
+    const control = new SessionControl();
+    const request = {
+      actor: 'operator' as const,
+      operationId: 'predispatch-failure',
+      fingerprint: 'digest',
+      acknowledgmentRequired: true,
+    };
+    const ticket = control.begin(request);
+    if ('replay' in ticket) throw new Error('unexpected replay');
+    control.acknowledge(ticket, { status: 'in_flight', dispatched: false });
+    expect(() => control.acknowledge(ticket, { status: 'completed', dispatched: false })).toThrow(
+      /acknowledgment/i
+    );
+    expect(() =>
+      control.acknowledge(ticket, { status: 'outcome_unknown', dispatched: false })
+    ).toThrow(/acknowledgment/i);
+    expect(() => control.acknowledge(ticket, { status: 'failed', dispatched: true })).toThrow(
+      /acknowledgment/i
+    );
+
+    control.acknowledge(ticket, { status: 'failed', dispatched: false });
+    control.finalize(ticket, 'completed');
+    control.finish(ticket, 'completed');
+    expect(control.operation('predispatch-failure')).toMatchObject({ status: 'completed' });
+    expect(control.publicationOperation('predispatch-failure')).toMatchObject({
+      status: 'failed',
+      dispatched: false,
+    });
+  });
+
+  it('refuses skipped, regressed, copied, foreign and released acknowledgment owners', () => {
+    const control = new SessionControl();
+    const request = {
+      actor: 'operator' as const,
+      operationId: 'ack-owner',
+      fingerprint: 'digest',
+      acknowledgmentRequired: true,
+    };
+    const ticket = control.begin(request);
+    const foreign = new SessionControl().begin({
+      actor: 'operator',
+      operationId: 'foreign',
+      fingerprint: 'digest',
+      acknowledgmentRequired: true,
+    });
+    if ('replay' in ticket || 'replay' in foreign) throw new Error('unexpected replay');
+
+    for (const invalid of [
+      { owner: ticket, projection: { status: 'in_flight' as const, dispatched: true } },
+      { owner: { ...ticket }, projection: { status: 'in_flight' as const, dispatched: false } },
+      { owner: foreign, projection: { status: 'in_flight' as const, dispatched: false } },
+    ])
+      expect(() => control.acknowledge(invalid.owner, invalid.projection)).toThrow(
+        /acknowledgment/i
+      );
+    expect(() => control.publicationOperation('ack-owner')).toThrow(/acknowledgment/i);
+
+    control.acknowledge(ticket, { status: 'in_flight', dispatched: false });
+    control.acknowledge(ticket, { status: 'in_flight', dispatched: true });
+    expect(() => control.acknowledge(ticket, { status: 'in_flight', dispatched: false })).toThrow(
+      /acknowledgment/i
+    );
+    control.finish(ticket, 'outcome_unknown');
+    expect(() =>
+      control.acknowledge(ticket, { status: 'outcome_unknown', dispatched: true })
+    ).toThrow(/acknowledgment/i);
+  });
+
   it('never evicts deduplication records to admit a new write', () => {
     const { control, epoch } = delegated(new SessionControl({ maxOperations: 1 }));
     const ticket = control.begin({ actor: 'agent', epoch, operationId: 'one', fingerprint: 'a' });

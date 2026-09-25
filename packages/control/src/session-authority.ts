@@ -40,7 +40,7 @@ export type {
 } from './publication.js';
 import { deeplyFreezeSnapshot, synchronousResult } from './trusted-callback.js';
 
-/** Internal C1 composition only; not selected by application/service or wire options. */
+/** Trusted internal composition; never accepted from service or wire options. */
 export interface ApplicationJournalOperation {
   readonly version: 1;
   readonly application: JournalApplication;
@@ -285,15 +285,10 @@ export class SessionAuthority {
     fn: () => Promise<T>,
     failed: () => boolean | 'rejected' = () => false,
     publicationOptions?: SessionPublication<T>,
-    replayOptions?: OperationPublication
+    replayOptions?: OperationPublication,
+    assertReplay?: () => void
   ): Promise<T | { replay: true; operation: unknown }> {
     const { id, fingerprint, journal: selection } = operation;
-    // C3 must supply acknowledged terminal/replay projection before publication is enabled.
-    if (
-      selection !== undefined &&
-      (publicationOptions !== undefined || replayOptions !== undefined)
-    )
-      throw journalUnavailable();
     const publication =
       publicationOptions === undefined ? undefined : snapshotPublication(publicationOptions);
     const replayPublication =
@@ -304,7 +299,7 @@ export class SessionAuthority {
     let intent: JournalIntent | undefined;
     if (selection !== undefined) {
       try {
-        if (!this.journal || this.journal.health !== 'open') throw journalUnavailable();
+        if (!this.journal) throw journalUnavailable();
         const descriptor = journalObject(journalData(selection), ['version', 'application']);
         if (descriptor.version !== 1) throw journalUnavailable();
         intent = parseJournalIntent({
@@ -323,16 +318,26 @@ export class SessionAuthority {
         throw journalUnavailable();
       }
     }
-    const assertReplayOwner = replayPublication
-      ? this.statusOwner(sessionId, candidate, entry)
-      : undefined;
+    const assertReplayOwner =
+      replayPublication || assertReplay ? this.statusOwner(sessionId, candidate, entry) : undefined;
     const ticket = entry.control.begin({
       actor: admission.actor,
+      acknowledgmentRequired: intent !== undefined,
       ...(admitted.epoch !== undefined ? { epoch: admitted.epoch } : {}),
       ...(id ? { operationId: id, fingerprint: fingerprint ?? '' } : {}),
     });
     if ('replay' in ticket) {
-      if (intent) throw journalUnavailable();
+      if (assertReplay && assertReplayOwner) {
+        try {
+          this.scope.exit(() => {
+            assertReplayOwner();
+            if (synchronousResult(assertReplay()) !== undefined) throw journalUnavailable();
+            assertReplayOwner();
+          });
+        } catch {
+          throw new ControlError('CONTROL_REQUIRED', 'Operation replay is not permitted');
+        }
+      }
       const record =
         replayPublication && assertReplayOwner
           ? await this.publishStatus(ticket.replay, replayPublication, assertReplayOwner)
@@ -405,6 +410,35 @@ export class SessionAuthority {
         // Never release another incarnation's ticket.
         entry.control.finish(ticket, status);
       };
+      if (scope.journal) {
+        try {
+          // The bounded marker outcome may fail while its raw I/O is still pending.
+          // Never wait for that abandoned I/O before returning a refusal.
+          await scope.journal.marker?.catch(() => undefined);
+          if (this.journal?.health === 'open' && scope.pending.size > 0)
+            await Promise.allSettled([...scope.pending]);
+          if (status === 'completed' && !ticket.didDispatch) {
+            status = 'failed';
+            succeeded = false;
+            executionError = journalUnavailable();
+          }
+          finalize();
+          await this.acknowledgeJournal(scope, 'terminal', status);
+          if (!succeeded) throw executionError;
+          if (status === 'outcome_unknown') throw journalUnavailable();
+          this.checkScopeOwner(scope);
+          if (publication) await this.publish(scope, result, status, publication);
+          return result;
+        } finally {
+          // Terminal timeout cannot free a store transaction or a different owner.
+          const release = () => entry.control.finish(ticket, status);
+          if (scope.pending.size === 0) release();
+          else
+            void Promise.allSettled([...scope.pending])
+              .then(release)
+              .catch(() => undefined);
+        }
+      }
       if (!publication) {
         if (scope.pending.size === 0) finish();
         else
@@ -445,14 +479,31 @@ export class SessionAuthority {
     return call;
   }
 
-  private async acknowledgeJournal(scope: Scope, phase: 'intent' | 'dispatch'): Promise<void> {
+  private async acknowledgeJournal(
+    scope: Scope,
+    phase: 'intent' | 'dispatch' | 'terminal',
+    terminalStatus?: TerminalStatus
+  ): Promise<void> {
     const state = scope.journal;
     if (!state || !this.journal) throw journalUnavailable();
     try {
-      this.checkJournalScope(scope);
+      // Terminal persistence is bookkeeping for the captured record, including
+      // revoked owners. It grants no effect or output authority.
+      if (phase === 'terminal') {
+        if (this.journal.health !== 'open' || !state.record || !terminalStatus)
+          throw journalUnavailable();
+      } else this.checkJournalScope(scope);
       let call: JournalCall<JournalMutationOutcome>;
       if (phase === 'intent') {
         call = this.journal.reserveIntent(state.intent, scope.entry.signal);
+      } else if (phase === 'terminal') {
+        if (!state.record || !terminalStatus) throw journalUnavailable();
+        call = this.journal.commitTerminal({
+          identity: state.record.identity,
+          expectedRevision: state.record.revision,
+          dispatched: state.record.dispatched,
+          terminal: { status: terminalStatus, evidenceRefIds: [] },
+        });
       } else {
         if (!state.record) throw journalUnavailable();
         call = this.journal.markDispatch(
@@ -460,15 +511,21 @@ export class SessionAuthority {
           scope.entry.signal
         );
       }
+      const expectedRevision =
+        phase === 'intent' ? 1 : phase === 'dispatch' ? 2 : (state.record?.revision ?? 0) + 1;
       const outcome = await this.retainJournalCall(scope, call);
-      this.checkJournalScope(scope);
       if (
         outcome.kind !== 'acknowledged' ||
         outcome.disposition !== 'applied' ||
-        outcome.record.revision !== (phase === 'intent' ? 1 : 2)
+        outcome.record.revision !== expectedRevision
       )
         throw journalUnavailable();
       state.record = outcome.record;
+      scope.entry.control.acknowledge(scope.ticket, {
+        status: outcome.record.terminal?.status ?? 'in_flight',
+        dispatched: outcome.record.dispatched,
+      });
+      if (phase !== 'terminal') this.checkJournalScope(scope);
     } catch {
       state.failed = true;
       throw journalUnavailable();
@@ -511,7 +568,7 @@ export class SessionAuthority {
     const { entry, admission, epoch: agentEpoch } = this.admit(sessionId, candidate);
     const assertOwner = this.statusOwner(sessionId, candidate, entry);
     assertOwner();
-    const record = entry.control.operation(operationId);
+    const record = entry.control.publicationOperation(operationId);
     assertOwner();
     if (!record) return undefined;
     if (admission.actor === 'agent' && record.epoch !== agentEpoch)

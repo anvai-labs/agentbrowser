@@ -18,8 +18,10 @@ engine disconnection. PR #296 and its post-merge CI each passed 8/8 checks; see
 changes installed/released version claims. Original roadmap work resumes at
 [T5 C1a journal settlement](t5-journal-settlement.md), merged #297 at `aeb7fdd`
 with PR and post-merge CI 8/8 green. [C1b internal authority composition](t5-journal-authority.md)
-now integrates intent/marker waits; application pins, terminal/replay, runtime
-qualification and recovery remain gated. The estimates below remain unchanged.
+merged #298 at `a1443c7` with clean review and pre/post-merge CI 8/8.
+[C2 application pins and C3 terminal/replay](../design/t5-journal-application-terminal.md)
+are implemented internally and under final qualification. Runtime selection, concrete
+storage and recovery remain gated. The estimates below remain unchanged.
 
 ## Acceptance progress
 
