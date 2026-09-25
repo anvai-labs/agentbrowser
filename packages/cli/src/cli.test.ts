@@ -1381,7 +1381,7 @@ describe('AgentBrowser CLI', () => {
       expect(out.join('\n')).toContain('2026-08-23T10:00:00Z');
     });
 
-    it('renders captured launch facts and preserves the complete JSON view', async () => {
+    it('renders sampled leases and captured launch facts and preserves the complete JSON view', async () => {
       const view = {
         sessionId: 'ses_1',
         status: 'ready',
@@ -1390,6 +1390,7 @@ describe('AgentBrowser CLI', () => {
         ttlMs: 1000,
         idleTimeoutMs: 500,
         pages: 0,
+        lease: { sampledAt: 1000, expiresAt: 3000, lastActivityAt: 900, idleExpiresAt: 2000 },
         diagnostics: {
           attachment: 'remote_cdp',
           browserFamily: 'chromium',
@@ -1408,6 +1409,10 @@ describe('AgentBrowser CLI', () => {
       expect(await run('session', 'get', 'ses_1')).toBe(0);
       expect(out.join('\n')).toContain('remote_cdp');
       expect(out.join('\n')).toContain('selected-adapter');
+      expect(out.join('\n')).toContain('lease:');
+      expect(out.join('\n')).toContain('sampled=1000');
+      expect(out.join('\n')).toContain('ttl-expires=3000');
+      expect(out.join('\n')).toContain('idle-expires=2000');
       out.length = 0;
       expect(await run('--json', 'session', 'get', 'ses_1')).toBe(0);
       expect(lastJson()).toEqual(view);

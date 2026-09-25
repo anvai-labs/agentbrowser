@@ -10111,6 +10111,38 @@
                 }
               }
             }
+          },
+          "lease": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "sampledAt",
+              "expiresAt",
+              "lastActivityAt",
+              "idleExpiresAt"
+            ],
+            "properties": {
+              "sampledAt": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "expiresAt": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "lastActivityAt": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "idleExpiresAt": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              }
+            }
           }
         }
       },

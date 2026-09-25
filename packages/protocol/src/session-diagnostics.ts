@@ -90,6 +90,18 @@ export function captureSessionDiagnostics(value: unknown): SessionDiagnostics | 
   }
 }
 
+/** Service-session deadlines, sampled together; independent of delegated grants. */
+export const SessionLeaseSchema = Type.Object(
+  {
+    sampledAt: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+    expiresAt: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+    lastActivityAt: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+    idleExpiresAt: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+  },
+  strict
+);
+export type SessionLease = Readonly<Static<typeof SessionLeaseSchema>>;
+
 /** The HTTP session view; distinct from the coordinator's capability-bearing result. */
 export const SessionViewSchema = Type.Object({
   sessionId: Type.String(),
@@ -102,5 +114,6 @@ export const SessionViewSchema = Type.Object({
   tenantId: Type.Optional(Type.String()),
   warnings: Type.Optional(Type.Array(Type.String())),
   diagnostics: Type.Optional(SessionDiagnosticsSchema),
+  lease: Type.Optional(SessionLeaseSchema),
 });
 export type SessionView = Static<typeof SessionViewSchema>;

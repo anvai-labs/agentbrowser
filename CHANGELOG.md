@@ -7,6 +7,20 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added
+
+- Sampled active-session lease deadlines on REST/SDK create/get/list, CLI and MCP
+  inspection. A shared coordinator clock reports absolute TTL and idle deadlines;
+  reading session status does not renew idle lifetime. Closing/failed sessions and
+  older servers may omit the lease. No terminal history or recovery is implied.
+
+### Fixed
+
+- Session initialization rolls back its captured allocation on lifetime-inspection
+  failure. Expiry shares teardown ownership, avoids a concurrent second close and
+  preserves the existing retry after a settled close failure. A delayed old close
+  cannot remove a replacement session.
+
 ## [1.11.0] - 2026-09-24
 
 ### Added

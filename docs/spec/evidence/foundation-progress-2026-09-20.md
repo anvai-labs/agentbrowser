@@ -10,6 +10,10 @@ and installed binaries from the running service and records main ancestry for th
 The historical records below preserve earlier baselines; the current table and final
 checkpoint describe the latest acceptance position. The release does not change finite milestone completion.
 
+Unreleased continuation: [R5a active-session leases](session-lease-visibility.md)
+extends the existing coordinator and session view. It does not complete R5b close-cause
+retention or T5 recovery, and does not change installed/released version claims.
+
 ## Acceptance progress
 
 Percentages below are coarse engineering estimates of each task's acceptance scope,

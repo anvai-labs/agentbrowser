@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { MetricsRegistry, SessionCoordinator } from '@agentbrowser/core';
 import { SessionViewSchema } from '@agentbrowser/protocol';
 import { FakeEngine } from '@agentbrowser/testkit';
 import Ajv2020 from 'ajv/dist/2020';
@@ -55,6 +56,12 @@ describe('captured session identity and diagnostics', () => {
       for (const value of [view, read.json(), ...list.json().sessions]) {
         expect(new Ajv2020({ strict: false }).compile(SessionViewSchema)(value)).toBe(true);
         expect(value.diagnostics).toEqual(facts());
+        expect(value.lease).toMatchObject({
+          expiresAt: Date.parse(view.createdAt) + view.ttlMs,
+          idleExpiresAt: Date.parse(view.createdAt) + view.idleTimeoutMs,
+          lastActivityAt: Date.parse(view.createdAt),
+        });
+        expect(value.lease.sampledAt).toBeGreaterThanOrEqual(Date.parse(view.createdAt));
         expect(value.engine).toEqual(view.engine);
         expect(value.engine).not.toHaveProperty('capabilities');
       }
@@ -65,6 +72,7 @@ describe('captured session identity and diagnostics', () => {
       });
       expect(denied.statusCode).toBe(403);
       expect(denied.body).not.toContain('diagnostics');
+      expect(denied.body).not.toContain('idleExpiresAt');
       const otherList = await server.inject({
         method: 'GET',
         url: '/v1/sessions',
@@ -156,3 +164,72 @@ describe('captured session identity and diagnostics', () => {
     }
   );
 });
+
+describe('session lease view', () => {
+  it('projects create/get/list without refreshing idle activity', async () => {
+    let now = 10_000;
+    const coordinator = new SessionCoordinator({ now: () => now });
+    const service = new AgentBrowserService({ engine: new FakeEngine(), coordinator });
+    try {
+      const created = await service.createSession({
+        tenantId: 'owner',
+        ttlMs: 1000,
+        idleTimeoutMs: 100,
+      });
+      expect(created.lease).toEqual({
+        sampledAt: 10_000,
+        expiresAt: 11_000,
+        lastActivityAt: 10_000,
+        idleExpiresAt: 10_100,
+      });
+      now = 10_050;
+      for (const view of [
+        service.getSession(created.sessionId),
+        ...service.listSessions('owner'),
+      ]) {
+        expect(view?.lease).toEqual({ ...created.lease, sampledAt: now });
+      }
+      expect(service.listSessions('other')).toEqual([]);
+      now = 10_101;
+      expect(service.getSession(created.sessionId)).toBeUndefined();
+      expect(service.listSessions('owner')).toEqual([]);
+    } finally {
+      await service.shutdown();
+    }
+  });
+});
+
+it.each([2, 3])(
+  'releases session allocation when clock sample %s fails during service creation',
+  async (failAt) => {
+    let calls = 0;
+    const coordinator = new SessionCoordinator({
+      now: () => (++calls === failAt ? Number.NaN : 1000),
+    });
+    const engine = new FakeEngine();
+    const create = engine.createSession.bind(engine);
+    let close: ReturnType<typeof vi.spyOn>;
+    let allocated: Awaited<ReturnType<typeof create>>;
+    vi.spyOn(engine, 'createSession').mockImplementation(async (options) => {
+      const session = await create(options);
+      allocated = session;
+      close = vi.spyOn(session, 'close');
+      return session;
+    });
+    const metrics = new MetricsRegistry();
+    const increment = vi.spyOn(metrics, 'incrementCounter');
+    const service = new AgentBrowserService({ engine, coordinator, metrics });
+    try {
+      await expect(
+        service.createSession({ tenantId: 'owner', controlMode: 'delegated', allowDownloads: true })
+      ).rejects.toThrow('An unexpected engine error occurred');
+      expect(coordinator.getSessionCount()).toBe(0);
+      expect(close!).toHaveBeenCalledTimes(1);
+      await expect(allocated!.newPage()).rejects.toThrow('Session is closed');
+      expect(increment).not.toHaveBeenCalledWith('sessions_created_total');
+      expect(service.listSessions('owner')).toEqual([]);
+    } finally {
+      await service.shutdown();
+    }
+  }
+);

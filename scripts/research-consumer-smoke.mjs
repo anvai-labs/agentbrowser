@@ -80,8 +80,15 @@ try {
         const inspected = await callTool('browser_session', { sessionId: scope.sessionId });
         const listedSession = (await client.sessions.list()).find((item) => item.sessionId === scope.sessionId);
         assert.ok(session.diagnostics, 'The creating engine captures launch diagnostics');
+        assert.ok(sdkView.lease, 'Service lease must be visible');
         for (const view of [sdkView, restView, cliView, inspected.session, listedSession]) {
           assert.deepEqual(view.engine, session.engine, 'All surfaces preserve selected adapter identity');
+          assert.ok(Number.isSafeInteger(view.lease?.sampledAt));
+          for (const field of ['expiresAt', 'lastActivityAt', 'idleExpiresAt']) {
+            assert.equal(view.lease[field], sdkView.lease[field], 'Inspection must not renew or invent lease facts');
+          }
+          assert.equal(view.lease.expiresAt, Date.parse(view.createdAt) + view.ttlMs);
+          assert.equal(view.lease.idleExpiresAt, view.lease.lastActivityAt + view.idleTimeoutMs);
           assert.deepEqual(view.diagnostics, session.diagnostics, 'All surfaces project the same captured facts');
         }
         assert.equal(session.diagnostics.attachment, 'local_launch');
@@ -161,6 +168,8 @@ try {
         assert.deepEqual(inspection.session.diagnostics, controlled.diagnostics);
         assert.deepEqual(inspection.session.engine, controlled.engine);
         assert.ok(inspection.control);
+        assert.equal(inspection.session.lease.expiresAt, controlled.lease.expiresAt);
+        assert.ok(Number.isSafeInteger(inspection.session.lease.sampledAt));
         const args = { url: `${fixtureUrl}/echo`, operationId: 'controlled-page-1' };
         const page = await callTool('browser_page_create', args);
         // Model a lost first result: use only known operation ID + inventory afterwards.
@@ -180,7 +189,12 @@ try {
         for (const [name, arguments_] of [['browser_page_create', { operationId: 'revoked-create' }], ['browser_pages', {}], ['browser_session', {}]]) {
           const revoked = await request('tools/call', { name, arguments: arguments_ });
           assert.equal(revoked.isError, true, 'An old grant cannot list or create after takeover');
+          assert.ok(!JSON.stringify(revoked).includes('idleExpiresAt'));
+
         }
+        const refused = await fetch(`${baseUrl}/v1/sessions/${controlled.sessionId}`, { headers: { authorization: `Bearer ${grant.token}` } });
+        assert.equal(refused.status, 401);
+        assert.ok(!(await refused.text()).includes('idleExpiresAt'));
         assert.deepEqual((await client.sessions.listPages(controlled.sessionId)).map((p) => p.pageId), [page.pageId]);
       },
     });
@@ -196,5 +210,5 @@ try {
   if (failures.length) throw new AggregateError(failures.map((item) => item.reason), 'Research smoke cleanup failed');
 }
 console.log(JSON.stringify({ status: 'pass', version, headed, measurements, jsonBytes: Buffer.byteLength(json),
-  coverage: 'Real Chromium + authenticated REST/SDK/CLI + MCP stdio; captured identity/diagnostics parity and complete extraction persisted and grepped by this script',
+  coverage: 'Real Chromium + authenticated REST/SDK/CLI + MCP stdio; captured identity/diagnostics, sampled lease parity and complete extraction persisted and grepped by this script',
   limits: 'Synthetic local filings, not live SEC availability or installed Claude overflow-path qualification', cleanup: 'owned server, sessions, fixture and files closed' }));
