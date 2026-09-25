@@ -7,6 +7,7 @@
 
 import { Static, Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
+import { NavigationFailureReasonSchema } from './navigation-failure.js';
 import {
   DELIVERED_ACTION_TYPES,
   DELIVERED_OBSERVATION_INCLUDES,
@@ -657,6 +658,7 @@ export const NavigationStatusSchema = Type.Object({
   status: Type.Union([Type.Literal('success'), Type.Literal('timeout'), Type.Literal('blocked')]),
   url: Type.String({ pattern: '^https?://[\\w\\-]+(\\.[\\w\\-]+)+\\S*$' }),
   redirectChain: Type.Array(Type.String()),
+  reason: Type.Optional(NavigationFailureReasonSchema),
 });
 
 export const PolicyDecisionSchema = Type.Object({

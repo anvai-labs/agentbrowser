@@ -9,12 +9,22 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ### Added
 
+- Navigation failures carry bounded reasons across REST, SDK, CLI and MCP, distinguishing
+  egress denial, unresolved names, resolver timeout/refusal, destination connection
+  refusal, TLS refusal and browser error documents. CLI returns exit 1 and MCP sets
+  `isError` for blocked/timeout results. Unknown causes remain `engine_error`.
+
 - Sampled active-session lease deadlines on REST/SDK create/get/list, CLI and MCP
   inspection. A shared coordinator clock reports absolute TTL and idle deadlines;
   reading session status does not renew idle lifetime. Closing/failed sessions and
   older servers may omit the lease. No terminal history or recovery is implied.
 
 ### Fixed
+
+- Navigation diagnostics come from the trusted routed request, not origin-supplied
+  headers. Failed dispatched navigation invalidates old refs, connection errors
+  cannot impersonate a browser crash through URL text, and bounded failure output
+  retains valid operation IDs for reconciliation without raw transport topology.
 
 - Session initialization rolls back its captured allocation on lifetime-inspection
   failure. Expiry shares teardown ownership, avoids a concurrent second close and

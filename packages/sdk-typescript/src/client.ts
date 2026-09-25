@@ -89,6 +89,7 @@ export interface NavigationResponse {
   status: string;
   url: string;
   redirectChain: string[];
+  reason?: import('@agentbrowser/protocol').NavigationFailureReason;
 }
 
 export type { ObservationRequest, ScreenshotRequest } from '@agentbrowser/protocol';
@@ -131,7 +132,7 @@ export {
   parseAutofillRequest,
 } from '@agentbrowser/protocol';
 export type { DeliveredExtractFormat } from '@agentbrowser/protocol';
-export { UsageError, formatErrorForUser } from '@agentbrowser/protocol';
+export { UsageError, formatErrorForUser, navigationFailureDetail } from '@agentbrowser/protocol';
 
 export interface ExtractResult {
   data: unknown;

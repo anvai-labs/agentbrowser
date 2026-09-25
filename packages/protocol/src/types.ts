@@ -756,6 +756,7 @@ export interface NavigationStatus {
   status: 'success' | 'timeout' | 'blocked';
   url: string;
   redirectChain: string[];
+  reason?: import('./navigation-failure.js').NavigationFailureReason;
 }
 
 /**

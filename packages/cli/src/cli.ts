@@ -55,6 +55,7 @@ import {
   isAgentMode,
   isPassingOutcome,
   materializeAutofillMapping,
+  navigationFailureDetail,
   parseAutofillReport,
   parseAutofillRequest,
   parseExtractMaxBytesText,
@@ -998,7 +999,9 @@ export function buildCli(deps: CliDependencies): Cli {
       // ---- navigate --------------------------------------------------------
       program
         .command('navigate')
-        .description('navigate a page to a URL')
+        .description(
+          'navigate a page to a URL; failed navigation exits 1 with a bounded reason (--json preserves structured details)'
+        )
         .argument('<sessionId>')
         .argument('<pageId>')
         .argument('<url>')
@@ -1018,10 +1021,22 @@ export function buildCli(deps: CliDependencies): Cli {
                   NavigationRequest['waitUntil']
                 >;
               }
-
-              const result = await ctx.client.sessions.navigate(sessionId, pageId, request);
-
-              ctx.emit(result, () => [`${result.status ?? 'unknown'} -> ${result.url ?? url}`]);
+              try {
+                const result = await ctx.client.sessions.navigate(sessionId, pageId, request);
+                if (result.status === 'blocked' || result.status === 'timeout') exitCode = 1;
+                ctx.emit(result, () => [
+                  `${result.status ?? 'unknown'}${'reason' in result && typeof result.reason === 'string' ? ` (${result.reason})` : ''} -> ${result.url ?? url}`,
+                ]);
+              } catch (error) {
+                const detail = navigationFailureDetail(error);
+                if (detail === undefined) throw error;
+                exitCode = 1;
+                deps.err(
+                  ctx.json
+                    ? JSON.stringify({ error: detail }, null, 2)
+                    : `${detail.code}: ${detail.message}`
+                );
+              }
             }
           )
         );

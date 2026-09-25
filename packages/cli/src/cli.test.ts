@@ -527,6 +527,85 @@ describe('AgentBrowser CLI', () => {
         waitUntil: 'networkidle',
       });
     });
+
+    it.each(['blocked', 'timeout'] as const)(
+      'preserves a %s result with its reason and exits non-zero',
+      async (status) => {
+        sessions.navigate.mockResolvedValueOnce({
+          status,
+          reason: status === 'blocked' ? 'egress_policy' : 'dns_timeout',
+          url: 'https://failure.test/',
+          redirectChain: [],
+        });
+
+        const code = await run('--json', 'navigate', 'ses_1', 'pg_1', 'https://failure.test/');
+
+        expect(code).toBe(1);
+        expect(lastJson()).toEqual({
+          status,
+          reason: status === 'blocked' ? 'egress_policy' : 'dns_timeout',
+          url: 'https://failure.test/',
+          redirectChain: [],
+        });
+        expect(err).toEqual([]);
+      }
+    );
+
+    it('projects only the bounded navigation failure in JSON error output', async () => {
+      sessions.navigate.mockRejectedValueOnce(
+        Object.assign(new Error('private proxy URL https://secret.invalid/'), {
+          code: 'INTERNAL',
+          details: {
+            reason: 'tls_refused',
+            operationId: 'navigate-once',
+            address: '10.0.0.1',
+            url: 'https://secret.invalid/',
+          },
+        })
+      );
+
+      const code = await run('--json', 'navigate', 'ses_1', 'pg_1', 'https://failure.test/');
+
+      expect(code).toBe(1);
+      expect(out).toEqual([]);
+      expect(JSON.parse(err.join('\n'))).toEqual({
+        error: {
+          code: 'INTERNAL',
+          message: 'Navigation failed: tls_refused',
+          retryable: false,
+          details: { reason: 'tls_refused', operationId: 'navigate-once' },
+        },
+      });
+      expect(err.join('\n')).not.toContain('secret');
+      expect(err.join('\n')).not.toContain('10.0.0.1');
+    });
+
+    it('prints the fixed reason for a human-readable navigation failure', async () => {
+      sessions.navigate.mockRejectedValueOnce(
+        Object.assign(new Error('private adapter prose'), {
+          code: 'INTERNAL',
+          details: { reason: 'browser_error_document', url: 'chrome-error://private/' },
+        })
+      );
+
+      const code = await run('navigate', 'ses_1', 'pg_1', 'https://failure.test/');
+
+      expect(code).toBe(1);
+      expect(err).toEqual(['INTERNAL: Navigation failed: browser_error_document']);
+      expect(err.join('\n')).not.toContain('chrome-error');
+    });
+
+    it('keeps ordinary navigation errors on the existing human error path', async () => {
+      sessions.navigate.mockRejectedValueOnce(
+        Object.assign(new Error('PAGE_NOT_FOUND: Page is missing'), { code: 'PAGE_NOT_FOUND' })
+      );
+
+      const code = await run('--json', 'navigate', 'ses_1', 'pg_1', 'https://failure.test/');
+
+      expect(code).toBe(1);
+      expect(err.join('\n')).toContain('PAGE_NOT_FOUND');
+      expect(() => JSON.parse(err.join('\n'))).toThrow();
+    });
   });
 
   describe('observe command', () => {

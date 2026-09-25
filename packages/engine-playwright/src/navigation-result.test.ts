@@ -38,18 +38,25 @@ it('refuses internal browser error documents even when goto resolves', async () 
   }
 });
 
-it('preserves explicit policy denial and successful HTTP error documents', async () => {
+it('does not trust origin headers as policy decisions and preserves HTTP error documents', async () => {
   const engine = new PlaywrightChromiumEngine();
   try {
     const session = await engine.createSession();
     const page = await session.newPage();
     const native = (page as unknown as { backingPage(): Page }).backingPage();
     const goto = vi.spyOn(native, 'goto');
-    goto.mockResolvedValue({ headers: () => ({ 'x-agentbrowser-blocked': '1' }) } as never);
+    goto.mockResolvedValue({
+      headers: () => ({ 'x-agentbrowser-blocked': '1' }),
+      request: () => ({}),
+    } as never);
     await expect(page.navigate({ url: 'https://example.com/' })).resolves.toMatchObject({
-      status: 'blocked',
+      status: 'success',
     });
-    goto.mockResolvedValue({ headers: () => ({}), status: () => 503 } as never);
+    goto.mockResolvedValue({
+      headers: () => ({}),
+      status: () => 503,
+      request: () => ({}),
+    } as never);
     vi.spyOn(native, 'url').mockReturnValue('https://example.com/maintenance');
     await expect(page.navigate({ url: 'https://example.com/' })).resolves.toMatchObject({
       status: 'success',
