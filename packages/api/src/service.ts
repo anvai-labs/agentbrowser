@@ -624,15 +624,21 @@ export class AgentBrowserService {
     for (const sessionId of tracked) {
       // coordinator.get() lazily expires TTL/idle-lapsed sessions.
       if (this.coordinator.get(sessionId) === undefined) {
-        // Notify subscribers once: the session expired (spec: expiry events
-        // on the stream), then drop the listeners with the session.
+        // Report only the retained cause; missing history does not prove expiry.
+        const cause = this.coordinator.inspectTerminal(sessionId)?.view.closeCause;
+        const reason =
+          cause === 'engine_disconnected'
+            ? 'engine-disconnected'
+            : cause === 'ttl_expired' || cause === 'idle_expired'
+              ? 'session-expired'
+              : 'session-ended';
         const listeners = this.eventListeners.get(sessionId);
         if (listeners !== undefined) {
           const expiredEvent: EngineEvent = {
             type: 'page.destroyed',
             timestamp: new Date().toISOString(),
             sessionId,
-            data: { reason: 'session-expired' },
+            data: { reason },
           };
           for (const listener of [...listeners]) {
             try {

@@ -166,6 +166,15 @@ describe('terminal session wire compatibility', () => {
       },
     };
     expect(Value.Check(SessionTerminalViewSchema, terminal)).toBe(true);
+    const disconnected = {
+      ...terminal,
+      closeCause: 'engine_disconnected',
+      state: 'engine_disconnected',
+    };
+    expect(Value.Check(SessionTerminalViewSchema, disconnected)).toBe(true);
+    expect(sessionTerminalFailureDetail({ details: { sessionTerminal: disconnected } })).toEqual(
+      disconnected
+    );
     expect(sessionLeaseRemainingMs(terminal.lease)).toBe(450);
     expect(sessionLeaseRemainingMs({ ...terminal.lease, sampledAt: 1600 })).toBe(0);
     expect(Value.Check(SessionTerminalViewSchema, { ...terminal, leaseRemainingMs: 1 })).toBe(

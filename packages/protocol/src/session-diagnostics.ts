@@ -129,7 +129,14 @@ export const SessionTerminalViewSchema = Type.Object(
   {
     closeCause: SessionCloseCauseSchema,
     endedAt: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
-    state: choice(['closed', 'expired', 'policy_terminated', 'engine_crashed', 'quota_terminated']),
+    state: choice([
+      'closed',
+      'expired',
+      'policy_terminated',
+      'engine_disconnected',
+      'engine_crashed',
+      'quota_terminated',
+    ]),
     leaseRemainingMs: Type.Literal(0),
     lease: SessionLeaseSchema,
   },
