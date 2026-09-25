@@ -92,8 +92,14 @@ function captureInteger(value: string, flag: string): number {
 /** Human rendering is a projection of server facts; JSON remains the full view. */
 function sessionFacts(view: import('@agentbrowser/sdk-typescript').SessionResponse): string[] {
   const facts = view.diagnostics;
+  const lease = view.lease;
   return [
     ...(view.engine ? [`  engine:  ${view.engine.name} ${view.engine.version}`] : []),
+    ...(lease
+      ? [
+          `  lease: sampled=${lease.sampledAt}; ttl-expires=${lease.expiresAt}; idle-expires=${lease.idleExpiresAt} (Unix ms)`,
+        ]
+      : []),
     ...(facts
       ? [
           `  browser: ${facts.browserFamily} ${facts.browserVersion ?? 'unknown'} (${facts.attachment})`,
@@ -320,7 +326,7 @@ export function buildCli(deps: CliDependencies): Cli {
       session
         .command('get')
         .description(
-          'get one session with captured engine identity and launch diagnostics; --json preserves all server facts'
+          'get one session with captured engine identity, launch diagnostics and sampled lease deadlines; --json preserves all server facts'
         )
         .argument('<sessionId>')
         .action(

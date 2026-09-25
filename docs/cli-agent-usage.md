@@ -358,3 +358,13 @@ by this slice. A later internal consumption recollects evidence and refuses drif
 atomic app-owned submission and independent acceptance remain separate gates. See the
 [public review design](spec/design/t6-public-evidence-review.md) and
 [qualification evidence](spec/evidence/t6-public-evidence-review.md).
+
+### Sampled session lifetime
+
+`agentbrowser session get SESSION_ID` displays the server's sampled lease deadlines;
+`--json` preserves the optional `lease` object on create/get/list. All four timestamps
+(`sampledAt`, `expiresAt`, `lastActivityAt`, `idleExpiresAt`) are Unix epoch milliseconds.
+Inspection does not refresh idle activity. TTL expires at its deadline; idle expiry
+uses the existing strictly-after boundary. Grants and browser attachment can end sooner.
+Older servers or non-active session states may omit the lease: absence means unknown,
+not unlimited lifetime. See [R5a design](spec/design/session-lease-visibility.md).

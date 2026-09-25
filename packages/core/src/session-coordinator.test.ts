@@ -829,3 +829,253 @@ describe('SessionState Enum', () => {
     expect(uniqueValues.size).toBe(values.length);
   });
 });
+
+describe('authoritative active-session lease inspection', () => {
+  it('samples the injected clock once, detaches snapshots, and does not keep sessions alive', async () => {
+    let now = 10_000;
+    const clock = vi.fn(() => now);
+    const coordinator = new SessionCoordinator({ now: clock });
+    try {
+      const { sessionId } = await coordinator.create(
+        { ttlMs: 1000, idleTimeoutMs: 100 },
+        new MockEngine()
+      );
+      clock.mockClear();
+      const first = coordinator.inspect(sessionId)!;
+      expect(clock).toHaveBeenCalledTimes(1);
+      expect(first.lease).toEqual({
+        sampledAt: 10_000,
+        expiresAt: 11_000,
+        lastActivityAt: 10_000,
+        idleExpiresAt: 10_100,
+      });
+      expect(Object.isFrozen(first.lease)).toBe(true);
+      now = 10_100;
+      expect(coordinator.inspect(sessionId)?.lease.lastActivityAt).toBe(10_000);
+      now++;
+      expect(coordinator.inspect(sessionId)).toBeUndefined();
+      expect(first.context.signal.aborted).toBe(true);
+      expect(first.lease.sampledAt).toBe(10_000);
+    } finally {
+      await coordinator.shutdown();
+    }
+  });
+
+  it('refreshes only activity and expires at the exact absolute TTL boundary', async () => {
+    let now = 10_000;
+    const coordinator = new SessionCoordinator({ now: () => now });
+    try {
+      const { sessionId } = await coordinator.create(
+        { ttlMs: 100, idleTimeoutMs: 80 },
+        new MockEngine()
+      );
+      now = 10_050;
+      coordinator.updateActivity(sessionId);
+      expect(coordinator.inspect(sessionId)?.lease).toEqual({
+        sampledAt: now,
+        expiresAt: 10_100,
+        lastActivityAt: now,
+        idleExpiresAt: 10_130,
+      });
+      now = 10_100;
+      expect(coordinator.inspect(sessionId)).toBeUndefined();
+    } finally {
+      await coordinator.shutdown();
+    }
+  });
+
+  it('uses the same clock for timer cleanup and never inspects closed sessions', async () => {
+    vi.useFakeTimers();
+    let now = 10_000;
+    const coordinator = new SessionCoordinator({ now: () => now, cleanupCheckIntervalMs: 50 });
+    try {
+      const expired = await coordinator.create(
+        { ttlMs: 100, idleTimeoutMs: 500 },
+        new MockEngine()
+      );
+      const closed = await coordinator.create({ ttlMs: 1000 }, new MockEngine());
+      await coordinator.close(closed.sessionId);
+      expect(coordinator.inspect(closed.sessionId)).toBeUndefined();
+      now = 10_100;
+      await vi.advanceTimersByTimeAsync(50);
+      expect(coordinator.getAllSessions()).toEqual([]);
+      expect(coordinator.inspect(expired.sessionId)).toBeUndefined();
+    } finally {
+      await coordinator.shutdown();
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('lease lifecycle boundaries', () => {
+  it('preserves a closing view without a lease and expiration cannot close it twice', async () => {
+    let now = 1000;
+    const coordinator = new SessionCoordinator({ now: () => now });
+    let release!: () => void;
+    try {
+      const { sessionId } = await coordinator.create({ ttlMs: 100 }, new MockEngine());
+      const context = coordinator.get(sessionId)!;
+      const close = vi.spyOn(context.engineSession, 'close').mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            release = resolve;
+          })
+      );
+      const closing = coordinator.close(sessionId);
+      expect(coordinator.inspect(sessionId)?.context.state).toBe(SessionState.CLOSING);
+      expect(coordinator.inspect(sessionId)).not.toHaveProperty('lease');
+      now = 1100;
+      expect(coordinator.inspect(sessionId)).toBeUndefined();
+      expect(close).toHaveBeenCalledTimes(1);
+      release();
+      await closing;
+    } finally {
+      release?.();
+      await coordinator.shutdown();
+    }
+  });
+
+  it('retains failed-close status without advertising an active lease', async () => {
+    const coordinator = new SessionCoordinator({ now: () => 1000 });
+    try {
+      const { sessionId } = await coordinator.create({}, new MockEngine());
+      vi.spyOn(coordinator.get(sessionId)!.engineSession, 'close').mockRejectedValueOnce(
+        new Error('failed')
+      );
+      await expect(coordinator.close(sessionId)).rejects.toThrow('failed');
+      expect(coordinator.inspect(sessionId)?.context.state).toBe(SessionState.ENGINE_CRASHED);
+      expect(coordinator.inspect(sessionId)).not.toHaveProperty('lease');
+    } finally {
+      await coordinator.shutdown();
+    }
+  });
+
+  it('samples an entire scoped list once and expires sessions through the same owner', async () => {
+    let now = 1000;
+    const clock = vi.fn(() => now);
+    const coordinator = new SessionCoordinator({ now: clock });
+    try {
+      const a = await coordinator.create({ tenantId: 'a', ttlMs: 100 }, new MockEngine());
+      await coordinator.create({ tenantId: 'b' }, new MockEngine());
+      const close = vi.spyOn(coordinator.get(a.sessionId)!.engineSession, 'close');
+      clock.mockClear();
+      expect(coordinator.inspectAll('a').map((view) => view.context.id)).toEqual([a.sessionId]);
+      expect(clock).toHaveBeenCalledTimes(1);
+      now = 1100;
+      expect(coordinator.inspectAll('a')).toEqual([]);
+      expect(coordinator.inspect(a.sessionId)).toBeUndefined();
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(coordinator.inspectAll('b')).toHaveLength(1);
+    } finally {
+      await coordinator.shutdown();
+    }
+  });
+});
+
+it.each([NaN, Infinity, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+  'refuses invalid clock %s without leaking an allocated engine session',
+  async (now) => {
+    const coordinator = new SessionCoordinator({ now: () => now });
+    const engine = new MockEngine();
+    const engineSession = new MockEngineSession();
+    vi.spyOn(engine, 'createSession').mockResolvedValue(engineSession);
+    try {
+      await expect(coordinator.create({}, engine)).rejects.toThrow('Invalid session clock');
+      expect(engineSession.closed).toBe(true);
+      expect(coordinator.getSessionCount()).toBe(0);
+    } finally {
+      await coordinator.shutdown();
+    }
+  }
+);
+
+it('refuses unsafe lifetime addition without leaking an allocated engine session', async () => {
+  const coordinator = new SessionCoordinator({ now: () => 1000 });
+  const engine = new MockEngine();
+  const engineSession = new MockEngineSession();
+  vi.spyOn(engine, 'createSession').mockResolvedValue(engineSession);
+  try {
+    await expect(coordinator.create({ ttlMs: Number.MAX_SAFE_INTEGER }, engine)).rejects.toThrow(
+      'Invalid session lifetime'
+    );
+    expect(engineSession.closed).toBe(true);
+    expect(coordinator.getSessionCount()).toBe(0);
+  } finally {
+    await coordinator.shutdown();
+  }
+});
+
+it('retries settled failed-close cleanup at expiry without overlapping teardown', async () => {
+  let now = 1000;
+  const coordinator = new SessionCoordinator({ now: () => now });
+  try {
+    const { sessionId } = await coordinator.create({ ttlMs: 100 }, new MockEngine());
+    const close = vi
+      .spyOn(coordinator.get(sessionId)!.engineSession, 'close')
+      .mockRejectedValueOnce(new Error('failed'))
+      .mockResolvedValue(undefined);
+    await expect(coordinator.close(sessionId)).rejects.toThrow('failed');
+    now = 1100;
+    expect(coordinator.inspect(sessionId)).toBeUndefined();
+    expect(close).toHaveBeenCalledTimes(2);
+    expect(close).toHaveBeenLastCalledWith('expired');
+  } finally {
+    await coordinator.shutdown();
+  }
+});
+
+it('does not discard a replacement when an old close settles', async () => {
+  const coordinator = new SessionCoordinator({ now: () => 1000 });
+  vi.spyOn(
+    coordinator as unknown as { generateSessionId(): string },
+    'generateSessionId'
+  ).mockReturnValue('same-id');
+  let release!: () => void;
+  try {
+    await coordinator.create({}, new MockEngine());
+    const original = coordinator.captureForCleanup('same-id')!;
+    vi.spyOn(original.engineSession, 'close').mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        })
+    );
+    const closing = coordinator.close('same-id');
+    await coordinator.create({}, new MockEngine());
+    const replacement = coordinator.captureForCleanup('same-id')!;
+    expect(replacement).not.toBe(original);
+    expect(await coordinator.discardIfCurrent(original, 'creation_failed')).toBe(false);
+    release();
+    await closing;
+    expect(coordinator.captureForCleanup('same-id')).toBe(replacement);
+    expect(replacement.signal.aborted).toBe(false);
+  } finally {
+    release?.();
+    await coordinator.shutdown();
+  }
+});
+
+it('discards a current allocation without duplicating its pending close', async () => {
+  const coordinator = new SessionCoordinator({ now: () => 1000 });
+  let release!: () => void;
+  try {
+    const { sessionId } = await coordinator.create({}, new MockEngine());
+    const original = coordinator.captureForCleanup(sessionId)!;
+    const close = vi.spyOn(original.engineSession, 'close').mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        })
+    );
+    const closing = coordinator.close(sessionId);
+    const discarded = coordinator.discardIfCurrent(original, 'creation_failed');
+    expect(close).toHaveBeenCalledTimes(1);
+    release();
+    await closing;
+    expect(await discarded).toBe(true);
+    expect(coordinator.captureForCleanup(sessionId)).toBeUndefined();
+  } finally {
+    release?.();
+    await coordinator.shutdown();
+  }
+});

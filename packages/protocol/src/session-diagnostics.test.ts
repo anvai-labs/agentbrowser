@@ -60,3 +60,32 @@ describe('bounded diagnostic capture', () => {
     expect(captureSessionDiagnostics(source)).toBeUndefined();
   });
 });
+
+describe('lease wire compatibility', () => {
+  it('accepts absent legacy leases and rejects malformed lease facts', async () => {
+    const { SessionViewSchema } = await import('./session-diagnostics.js');
+    const { Value } = await import('@sinclair/typebox/value');
+    const view = {
+      sessionId: 's',
+      status: 'ready',
+      engine: { name: 'fake', version: '1' },
+      createdAt: '2026-09-24T00:00:00Z',
+      ttlMs: 100,
+      idleTimeoutMs: 80,
+      pages: 0,
+    };
+    expect(Value.Check(SessionViewSchema, view)).toBe(true);
+    const lease = { sampledAt: 1000, expiresAt: 1100, lastActivityAt: 1000, idleExpiresAt: 1080 };
+    expect(Value.Check(SessionViewSchema, { ...view, lease })).toBe(true);
+    for (const invalid of [
+      { ...lease, expiresAt: -1 },
+      { ...lease, sampledAt: 1.5 },
+      { ...lease, idleExpiresAt: Infinity },
+      { ...lease, lastActivityAt: Number.MAX_SAFE_INTEGER + 1 },
+      { ...lease, secret: 'private' },
+      {},
+    ]) {
+      expect(Value.Check(SessionViewSchema, { ...view, lease: invalid })).toBe(false);
+    }
+  });
+});

@@ -7,7 +7,11 @@
 
 import { type BrowserEngine, EngineError } from '@agentbrowser/engine';
 import type { SessionRequest, SessionResponse } from '@agentbrowser/protocol';
-import { type SessionDiagnostics, captureSessionDiagnostics } from '@agentbrowser/protocol';
+import {
+  type SessionDiagnostics,
+  type SessionLease,
+  captureSessionDiagnostics,
+} from '@agentbrowser/protocol';
 import type { StructuredLogger } from './logger.js';
 
 /**
@@ -46,6 +50,8 @@ export interface SessionMetadata {
  * Session coordinator configuration
  */
 export interface CoordinatorConfig {
+  /** Trusted lifetime clock; shared by expiration and sampled inspection. */
+  now?: () => number;
   maxSessions?: number;
   defaultTtlMs?: number;
   defaultIdleTimeoutMs?: number;
@@ -67,9 +73,10 @@ export interface CoordinatorConfig {
  */
 export class SessionCoordinator {
   private sessions = new Map<string, SessionContext & { cancellation: AbortController }>();
-  private config: Required<Omit<CoordinatorConfig, 'logger'>>;
+  private config: Required<Omit<CoordinatorConfig, 'logger' | 'now'>>;
   private readonly logger: StructuredLogger | undefined;
   private cleanupTimer?: NodeJS.Timeout;
+  private readonly now: () => number;
 
   constructor(config: CoordinatorConfig = {}) {
     this.config = {
@@ -84,6 +91,13 @@ export class SessionCoordinator {
       cleanupCheckIntervalMs: config.cleanupCheckIntervalMs ?? 30000, // 30 seconds
     };
     this.logger = config.logger;
+    const clock = config.now ?? (() => Date.now());
+    this.now = () => {
+      const value = clock();
+      if (!Number.isSafeInteger(value) || value < 0 || value > 8_640_000_000_000_000)
+        throw new Error('Invalid session clock');
+      return value;
+    };
 
     // Start cleanup timer
     this.startCleanupTimer();
@@ -93,15 +107,17 @@ export class SessionCoordinator {
    * Create a new session
    */
   async create(
-    request: SessionRequest & {
-      requestPolicy?: import('@agentbrowser/engine').RequestPolicy;
-      downloadPolicy?: import('@agentbrowser/engine').EngineSessionOptions['downloadPolicy'];
-      allowServiceWorkers?: import(
-        '@agentbrowser/engine'
-      ).EngineSessionOptions['allowServiceWorkers'];
-    },
+    request: CoordinatedSessionRequest,
     engine: BrowserEngine
   ): Promise<SessionResponse> {
+    return (await this.createOwned(request, engine)).response;
+  }
+
+  /** Internal allocation identity travels with its response across the await boundary. */
+  async createOwned(
+    request: CoordinatedSessionRequest,
+    engine: BrowserEngine
+  ): Promise<{ response: SessionResponse; context: SessionContext }> {
     // Check session limit
     if (this.sessions.size >= this.config.maxSessions) {
       throw new Error('QUOTA_EXCEEDED: Maximum session limit reached');
@@ -171,9 +187,21 @@ export class SessionCoordinator {
     }
 
     // Calculate expiration times
-    const now = Date.now();
+    let now: number;
     const ttlMs = request.ttlMs ?? this.config.defaultTtlMs;
     const idleTimeoutMs = request.idleTimeoutMs ?? this.config.defaultIdleTimeoutMs;
+    try {
+      now = this.now();
+      if (
+        ![ttlMs, idleTimeoutMs, now + ttlMs, now + idleTimeoutMs].every(
+          (value) => Number.isSafeInteger(value) && value >= 0
+        )
+      )
+        throw new Error('Invalid session lifetime');
+    } catch (error) {
+      await engineSession.close('invalid_lifetime').catch(() => {});
+      throw error;
+    }
 
     // Create session context
     const cancellation = new AbortController();
@@ -204,14 +232,14 @@ export class SessionCoordinator {
     this.sessions.set(sessionId, session);
 
     return {
-      sessionId,
-      engine: {
-        ...engineIdentity,
-        capabilities,
+      context: session,
+      response: {
+        sessionId,
+        engine: { ...engineIdentity, capabilities },
+        createdAt: new Date(now).toISOString(),
+        ttlMs,
+        idleTimeoutMs,
       },
-      createdAt: new Date(now).toISOString(),
-      ttlMs,
-      idleTimeoutMs,
     };
   }
 
@@ -232,24 +260,86 @@ export class SessionCoordinator {
    * Get session by ID
    */
   get(sessionId: string): SessionContext | undefined {
-    const session = this.sessions.get(sessionId);
+    return this.getAt(sessionId, this.now());
+  }
 
-    if (session) {
-      // Check expiration and don't return expired sessions
-      if (this.isSessionExpired(session)) {
-        // Mark as expired and remove
-        this.setState(session, SessionState.EXPIRED);
-        this.sessions.delete(sessionId);
-        session.cancellation.abort(new EngineError('SESSION_EXPIRED', 'Session expired'));
-        // Close engine session asynchronously without calling close()
-        session.engineSession.close('expired').catch(() => {
-          // Ignore close errors during expiration
-        });
-        return undefined;
-      }
+  /** Capture identity for trusted teardown composition only; NOT a liveness/auth read. */
+  captureForCleanup(sessionId: string): SessionContext | undefined {
+    return this.sessions.get(sessionId);
+  }
+
+  /** Remove only the captured allocation; terminate owns cancellation and best-effort close. */
+  async discardIfCurrent(context: SessionContext, reason: string): Promise<boolean> {
+    if (this.sessions.get(context.id) !== context) return false;
+    await this.terminate(context.id, SessionState.CLOSED, reason);
+    return true;
+  }
+
+  /** Inspect without refreshing activity; closing/failed contexts have no active lease. */
+  inspect(sessionId: string): SessionInspection | undefined {
+    return this.inspectAt(sessionId, this.now());
+  }
+
+  inspectAll(tenantId?: string): SessionInspection[] {
+    const sampledAt = this.now();
+    const result: SessionInspection[] = [];
+    for (const session of this.sessions.values()) {
+      if (tenantId !== undefined && session.metadata.tenantId !== tenantId) continue;
+      const inspected = this.inspectAt(session.id, sampledAt);
+      if (inspected) result.push(inspected);
     }
+    return result;
+  }
 
+  private inspectAt(sessionId: string, sampledAt: number): SessionInspection | undefined {
+    const context = this.getAt(sessionId, sampledAt);
+    if (!context) return undefined;
+    if (
+      context.signal.aborted ||
+      ![SessionState.READY, SessionState.ACTIVE].includes(context.state)
+    )
+      return { context };
+    const { expiresAt, lastActivityAt, idleTimeoutMs } = context.metadata;
+    const idleExpiresAt = lastActivityAt + idleTimeoutMs;
+    if (
+      ![expiresAt, lastActivityAt, idleExpiresAt].every(
+        (value) => Number.isSafeInteger(value) && value >= 0
+      )
+    )
+      throw new Error('Invalid session lifetime');
+    return {
+      context,
+      lease: Object.freeze({ sampledAt, expiresAt, lastActivityAt, idleExpiresAt }),
+    };
+  }
+
+  private getAt(sessionId: string, now: number): SessionContext | undefined {
+    const session = this.sessions.get(sessionId);
+    if (session && this.isSessionExpired(session, now)) {
+      this.expire(session, false);
+      return undefined;
+    }
     return session;
+  }
+
+  /** Remove before cancellation callbacks; the original close owner keeps pending teardown. */
+  private expire(
+    session: SessionContext & { cancellation: AbortController },
+    logFailure: boolean
+  ): void {
+    if (this.sessions.get(session.id) !== session) return;
+    const alreadyClosing = session.state === SessionState.CLOSING;
+    this.setState(session, SessionState.EXPIRED);
+    this.sessions.delete(session.id);
+    session.cancellation.abort(new EngineError('SESSION_EXPIRED', 'Session expired'));
+    if (alreadyClosing) return;
+    session.engineSession.close('expired').catch((error) => {
+      if (logFailure)
+        this.logger?.error('session.cleanup-close-failed', {
+          sessionId: session.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+    });
   }
 
   /**
@@ -271,7 +361,7 @@ export class SessionCoordinator {
       await session.engineSession.close(reason);
 
       // Remove from tracking
-      this.sessions.delete(sessionId);
+      if (this.sessions.get(sessionId) === session) this.sessions.delete(sessionId);
 
       // Update state
       this.setState(session, SessionState.CLOSED);
@@ -292,6 +382,7 @@ export class SessionCoordinator {
       throw new Error('SESSION_NOT_FOUND');
     }
 
+    const alreadyClosing = session.state === SessionState.CLOSING;
     this.setState(session, state);
     this.sessions.delete(sessionId);
     session.cancellation.abort(
@@ -301,6 +392,7 @@ export class SessionCoordinator {
       )
     );
 
+    if (alreadyClosing) return;
     try {
       await session.engineSession.close(`terminated:${reason}`);
     } catch {
@@ -315,7 +407,10 @@ export class SessionCoordinator {
     const session = this.sessions.get(sessionId);
 
     if (session) {
-      session.metadata.lastActivityAt = Date.now();
+      const now = this.now();
+      if (!Number.isSafeInteger(now + session.metadata.idleTimeoutMs))
+        throw new Error('Invalid session lifetime');
+      session.metadata.lastActivityAt = now;
 
       // Transition to ACTIVE if in READY state
       if (session.state === SessionState.READY) {
@@ -368,21 +463,9 @@ export class SessionCoordinator {
    * Run cleanup pass
    */
   private runCleanup(): void {
-    // Clean up expired sessions in a single pass
-    for (const [id, session] of this.sessions.entries()) {
-      if (this.isSessionExpired(session)) {
-        this.setState(session, SessionState.EXPIRED);
-        // Remove from sessions map first
-        this.sessions.delete(id);
-        session.cancellation.abort(new EngineError('SESSION_EXPIRED', 'Session expired'));
-        // Then close the engine session asynchronously without calling close()
-        session.engineSession.close('expired').catch((error) => {
-          this.logger?.error('session.cleanup-close-failed', {
-            sessionId: id,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        });
-      }
+    const now = this.now();
+    for (const session of this.sessions.values()) {
+      if (this.isSessionExpired(session, now)) this.expire(session, true);
     }
   }
 
@@ -395,9 +478,7 @@ export class SessionCoordinator {
   /**
    * Check if session is expired
    */
-  private isSessionExpired(session: SessionContext): boolean {
-    const now = Date.now();
-
+  private isSessionExpired(session: SessionContext, now: number): boolean {
     // Check TTL expiration
     if (session.metadata.expiresAt <= now) {
       return true;
@@ -424,6 +505,17 @@ export class SessionCoordinator {
 /**
  * Session context
  */
+export type CoordinatedSessionRequest = SessionRequest & {
+  requestPolicy?: import('@agentbrowser/engine').RequestPolicy;
+  downloadPolicy?: import('@agentbrowser/engine').EngineSessionOptions['downloadPolicy'];
+  allowServiceWorkers?: import('@agentbrowser/engine').EngineSessionOptions['allowServiceWorkers'];
+};
+
+export interface SessionInspection {
+  context: SessionContext;
+  lease?: SessionLease;
+}
+
 export interface SessionContext {
   readonly engineIdentity: Readonly<{ name: string; version: string }>;
   readonly diagnostics?: SessionDiagnostics;

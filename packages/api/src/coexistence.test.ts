@@ -150,10 +150,14 @@ describe('delegated coexistence', () => {
         await server.inject({ method: 'POST', url: `${url}/control/takeover`, headers: operator })
       ).json().state
     ).toBe('HUMAN_ACTIVE');
-    expect((await server.inject({ url, headers: agent })).statusCode).toBe(401);
+    const revoked = await server.inject({ url, headers: agent });
+    expect(revoked.statusCode).toBe(401);
+    expect(revoked.body).not.toContain('idleExpiresAt');
     const next = await delegate(server, url);
     expect(next.authorization).not.toBe(agent.authorization);
-    expect((await server.inject({ url, headers: next })).statusCode).toBe(200);
+    const resumed = await server.inject({ url, headers: next });
+    expect(resumed.statusCode).toBe(200);
+    expect(resumed.json().lease).toHaveProperty('sampledAt');
     expect((await server.inject({ url, headers: agent })).statusCode).toBe(401);
   });
 

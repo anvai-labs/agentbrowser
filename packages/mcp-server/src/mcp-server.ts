@@ -725,7 +725,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
       name: 'browser_session',
       requiredCapabilities: ['session.control', 'page.observe'],
       description:
-        "Inspect one session's metadata and available pages. On a delegated connection, " +
+        "Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. On a delegated connection, " +
         'also returns current control status; human takeover revokes later delegated calls.',
       inputSchema: {
         type: 'object',
