@@ -44,11 +44,11 @@ Closed or expired sessions remain not found;
 there is no post-close tombstone or raw error disclosure. Session reads remain
 per-request authorized and MCP aggregation is not atomic guarded publication.
 
-R5b remains a separate design/implementation packet: typed TTL/idle/explicit-close
-and observed engine-event causes, scoped bounded retention, incarnation checks for
-late events, and transport authorization after removal. Preserve current page-close
-semantics (including the last page); do not equate renderer crash or target-closed
-exceptions with operator intent or browser termination. Reuse lifecycle/event owners.
+R5b1 is implemented in the [bounded close-cause candidate](session-close-causes.md):
+typed TTL/idle/explicit/policy facts, scoped retention, stale-callback fencing and
+transport authorization after removal. Typed engine-disconnect evidence remains R5b2.
+Preserve current page-close semantics (including the last page); do not equate renderer
+crash or target-closed exceptions with operator intent or browser termination.
 This lease slice does not complete R5 or T5 recovery.
 
 ## Failing-first acceptance and delivery

@@ -25,6 +25,11 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   reading session status does not renew idle lifetime. Closing/failed sessions and
   older servers may omit the lease. No terminal history or recovery is implied.
 
+- Bounded, tenant-authorized close facts for recently ended sessions. The coordinator
+  distinguishes TTL, idle, explicit and policy termination, retains only detached
+  allowlisted facts, and derives remaining lease from the authoritative sample. CLI
+  and MCP share the strict terminal-error projector; engine disconnect remains gated.
+
 ### Fixed
 
 - Navigation diagnostics come from the trusted routed request, not origin-supplied
@@ -36,6 +41,9 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   failure. Expiry shares teardown ownership, avoids a concurrent second close and
   preserves the existing retry after a settled close failure. A delayed old close
   cannot remove a replacement session.
+
+- Session ID allocation refuses bounded collisions, and late abnormal-teardown
+  callbacks use captured context identity before touching a replacement allocation.
 
 ## [1.11.0] - 2026-09-24
 

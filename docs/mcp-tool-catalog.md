@@ -10,9 +10,9 @@ structured output contracts. An absent annotation is not a promise of read-only 
 Descriptions and annotations are hints, never authorization. Catalog presence does
 not prove a live backend, engine capability or current session grant.
 
-Catalog SHA-256 (complete descriptions and schemas): `7c2a84a89a25ff23e8433bc8888347cbaea72e742e3eb768f16f4cbee5128687`
+Catalog SHA-256 (complete descriptions and schemas): `f9dbb22d232b01da09b93c60e27c8b625735f2ca83dfb39d31e399cda51ee194`
 
-## unbound/qa (16 tools; 40630 result bytes)
+## unbound/qa (16 tools; 40730 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -33,7 +33,7 @@ Catalog SHA-256 (complete descriptions and schemas): `7c2a84a89a25ff23e8433bc888
 | `browser_session` | sessionId | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `browser_snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## delegated/qa (14 tools; 37452 result bytes)
+## delegated/qa (14 tools; 37552 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -52,7 +52,7 @@ Catalog SHA-256 (complete descriptions and schemas): `7c2a84a89a25ff23e8433bc888
 | `browser_session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## unbound/operations (16 tools; 40630 result bytes)
+## unbound/operations (16 tools; 40730 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -73,7 +73,7 @@ Catalog SHA-256 (complete descriptions and schemas): `7c2a84a89a25ff23e8433bc888
 | `browser_session` | sessionId | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `browser_snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## delegated/operations (14 tools; 37452 result bytes)
+## delegated/operations (14 tools; 37552 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -92,7 +92,7 @@ Catalog SHA-256 (complete descriptions and schemas): `7c2a84a89a25ff23e8433bc888
 | `browser_session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## unbound/audit (15 tools; 35779 result bytes)
+## unbound/audit (15 tools; 35879 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -112,7 +112,7 @@ Catalog SHA-256 (complete descriptions and schemas): `7c2a84a89a25ff23e8433bc888
 | `browser_session` | sessionId | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `browser_snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## delegated/audit (13 tools; 32599 result bytes)
+## delegated/audit (13 tools; 32699 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -130,7 +130,7 @@ Catalog SHA-256 (complete descriptions and schemas): `7c2a84a89a25ff23e8433bc888
 | `browser_session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## unbound/appsec (16 tools; 40630 result bytes)
+## unbound/appsec (16 tools; 40730 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -151,47 +151,7 @@ Catalog SHA-256 (complete descriptions and schemas): `7c2a84a89a25ff23e8433bc888
 | `browser_session` | sessionId | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `browser_snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## delegated/appsec (14 tools; 37452 result bytes)
-
-| Tool | Required arguments | Output contract | Purpose |
-| --- | --- | --- | --- |
-| `browser_act` | pageId, action, operationId | text JSON | Act through current element refs. |
-| `browser_autofill` | pageId, fields, operationId | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
-| `browser_extract` | pageId, format | text JSON | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
-| `browser_html` | pageId | text JSON | Fetch the page's current HTML as inline text. |
-| `browser_navigate` | pageId, url, operationId | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
-| `browser_observe` | pageId | text JSON | Get a semantic snapshot of the page: accessibility roles, names, form state and stable element refs. |
-| `browser_operation` | operationId | text JSON | Reconcile a lost response using its operationId. |
-| `browser_page_create` | operationId | text JSON | Create a page in an existing session, sharing its cookies and policy. |
-| `browser_pages` | none | text JSON | List current pages in a session, including adopted popups, using server-generated page IDs. |
-| `browser_pdf` | pageId | text JSON | Print the page to PDF and store it as a session artifact. |
-| `browser_plan` | pageId, actions, operationId | urn:agentbrowser:plan-report:v1 | Execute explicit ordered steps in one server call. |
-| `browser_screenshot` | pageId | text JSON | Capture a screenshot as optional evidence. |
-| `browser_session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
-| `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
-
-## unbound/bounty (16 tools; 40630 result bytes)
-
-| Tool | Required arguments | Output contract | Purpose |
-| --- | --- | --- | --- |
-| `browser_act` | sessionId, pageId, action | text JSON | Act through current element refs. |
-| `browser_autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
-| `browser_close` | sessionId | text JSON | Close a browser session. |
-| `browser_cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
-| `browser_create` | tenantId | text JSON | Create an ephemeral browser session (isolated by default). |
-| `browser_extract` | sessionId, pageId, format | text JSON | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
-| `browser_html` | sessionId, pageId | text JSON | Fetch the page's current HTML as inline text. |
-| `browser_navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
-| `browser_observe` | sessionId, pageId | text JSON | Get a semantic snapshot of the page: accessibility roles, names, form state and stable element refs. |
-| `browser_page_create` | sessionId | text JSON | Create a page in an existing session, sharing its cookies and policy. |
-| `browser_pages` | sessionId | text JSON | List current pages in a session, including adopted popups, using server-generated page IDs. |
-| `browser_pdf` | sessionId, pageId | text JSON | Print the page to PDF and store it as a session artifact. |
-| `browser_plan` | sessionId, pageId, actions | urn:agentbrowser:plan-report:v1 | Execute explicit ordered steps in one server call. |
-| `browser_screenshot` | sessionId, pageId | text JSON | Capture a screenshot as optional evidence. |
-| `browser_session` | sessionId | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
-| `browser_snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
-
-## delegated/bounty (14 tools; 37452 result bytes)
+## delegated/appsec (14 tools; 37552 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -210,7 +170,7 @@ Catalog SHA-256 (complete descriptions and schemas): `7c2a84a89a25ff23e8433bc888
 | `browser_session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## unbound/forms (16 tools; 40630 result bytes)
+## unbound/bounty (16 tools; 40730 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -231,7 +191,47 @@ Catalog SHA-256 (complete descriptions and schemas): `7c2a84a89a25ff23e8433bc888
 | `browser_session` | sessionId | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `browser_snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## delegated/forms (14 tools; 37452 result bytes)
+## delegated/bounty (14 tools; 37552 result bytes)
+
+| Tool | Required arguments | Output contract | Purpose |
+| --- | --- | --- | --- |
+| `browser_act` | pageId, action, operationId | text JSON | Act through current element refs. |
+| `browser_autofill` | pageId, fields, operationId | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
+| `browser_extract` | pageId, format | text JSON | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
+| `browser_html` | pageId | text JSON | Fetch the page's current HTML as inline text. |
+| `browser_navigate` | pageId, url, operationId | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
+| `browser_observe` | pageId | text JSON | Get a semantic snapshot of the page: accessibility roles, names, form state and stable element refs. |
+| `browser_operation` | operationId | text JSON | Reconcile a lost response using its operationId. |
+| `browser_page_create` | operationId | text JSON | Create a page in an existing session, sharing its cookies and policy. |
+| `browser_pages` | none | text JSON | List current pages in a session, including adopted popups, using server-generated page IDs. |
+| `browser_pdf` | pageId | text JSON | Print the page to PDF and store it as a session artifact. |
+| `browser_plan` | pageId, actions, operationId | urn:agentbrowser:plan-report:v1 | Execute explicit ordered steps in one server call. |
+| `browser_screenshot` | pageId | text JSON | Capture a screenshot as optional evidence. |
+| `browser_session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
+| `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
+
+## unbound/forms (16 tools; 40730 result bytes)
+
+| Tool | Required arguments | Output contract | Purpose |
+| --- | --- | --- | --- |
+| `browser_act` | sessionId, pageId, action | text JSON | Act through current element refs. |
+| `browser_autofill` | sessionId, pageId, fields | urn:agentbrowser:autofill-report:v1 | Fill and verify structured fields in one serial server operation. |
+| `browser_close` | sessionId | text JSON | Close a browser session. |
+| `browser_cookies` | sessionId | text JSON | Export the session context cookies (TD-BROWSER-6). |
+| `browser_create` | tenantId | text JSON | Create an ephemeral browser session (isolated by default). |
+| `browser_extract` | sessionId, pageId, format | text JSON | Extract deterministic structured data from the page: visible text, article markdown, links (text/URL/rel), tables (headers + rows), observed form controls with refs, or JSON-LD. |
+| `browser_html` | sessionId, pageId | text JSON | Fetch the page's current HTML as inline text. |
+| `browser_navigate` | sessionId, pageId, url | text JSON | Navigate a page to an http(s) URL and wait for it to load. |
+| `browser_observe` | sessionId, pageId | text JSON | Get a semantic snapshot of the page: accessibility roles, names, form state and stable element refs. |
+| `browser_page_create` | sessionId | text JSON | Create a page in an existing session, sharing its cookies and policy. |
+| `browser_pages` | sessionId | text JSON | List current pages in a session, including adopted popups, using server-generated page IDs. |
+| `browser_pdf` | sessionId, pageId | text JSON | Print the page to PDF and store it as a session artifact. |
+| `browser_plan` | sessionId, pageId, actions | urn:agentbrowser:plan-report:v1 | Execute explicit ordered steps in one server call. |
+| `browser_screenshot` | sessionId, pageId | text JSON | Capture a screenshot as optional evidence. |
+| `browser_session` | sessionId | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
+| `browser_snapshot` | sessionId, pageId | text JSON | Read a self-contained page snapshot with current refs. |
+
+## delegated/forms (14 tools; 37552 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |

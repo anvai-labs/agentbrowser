@@ -10255,6 +10255,43 @@
                 "type": "integer"
               }
             }
+          },
+          "closeCause": {
+            "anyOf": [
+              {
+                "const": "ttl_expired",
+                "type": "string"
+              },
+              {
+                "const": "idle_expired",
+                "type": "string"
+              },
+              {
+                "const": "explicit_close",
+                "type": "string"
+              },
+              {
+                "const": "policy_terminated",
+                "type": "string"
+              },
+              {
+                "const": "engine_disconnected",
+                "type": "string"
+              },
+              {
+                "const": "engine_crash",
+                "type": "string"
+              },
+              {
+                "const": "unknown",
+                "type": "string"
+              }
+            ]
+          },
+          "leaseRemainingMs": {
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
           }
         }
       },

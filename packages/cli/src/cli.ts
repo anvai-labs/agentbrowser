@@ -52,6 +52,7 @@ import {
   createPlanReportParser,
   evaluateTestCaseRun,
   formatErrorForUser,
+  formatSessionTerminalFailure,
   isAgentMode,
   isPassingOutcome,
   materializeAutofillMapping,
@@ -327,7 +328,7 @@ export function buildCli(deps: CliDependencies): Cli {
       session
         .command('get')
         .description(
-          'get one session with captured engine identity, launch diagnostics and sampled lease deadlines; --json preserves all server facts'
+          'get one session with captured engine identity, launch diagnostics and sampled lease deadlines; recently ended sessions may report bounded close facts'
         )
         .argument('<sessionId>')
         .action(
@@ -2322,8 +2323,10 @@ function formatError(error: unknown): string {
       return `${formatErrorForUser(error)}\nApproval token: ${tokenId}\n${guidance}`;
     }
   }
-  return formatErrorForUser(
+  const base = formatErrorForUser(
     error,
     'The element ref is stale. Run observe again to get fresh refs at the current revision, then act on the new ref. Do not retry the old one.'
   );
+  const terminal = formatSessionTerminalFailure(error);
+  return terminal ? `${base}\n${terminal}` : base;
 }

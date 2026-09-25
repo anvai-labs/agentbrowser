@@ -16,6 +16,7 @@ start with the [root README](../README.md).
 | Install the service / MCP binary, wire up a client | [README](../README.md#install-homebrew) |
 | Run, configure, monitor, or troubleshoot the service | [Operations guide](operations.md) |
 | Drive a long interactive form (custom comboboxes, repeated sections) | [Recipe: interactive forms](recipes/interactive-forms.md) |
+| Research SEC filings through the machine-readable EDGAR endpoints | [Recipe: EDGAR filings](recipes/edgar-filings.md) |
 | Choose or implement an engine | [Engine matrix](engines.md) |
 | Call the REST API | `GET /openapi.json` on a running service |
 | Understand why a design decision was made | ADRs, below |
