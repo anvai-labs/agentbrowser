@@ -40,12 +40,15 @@ branches and use the reviewed final commit identity for each merge.
 
 ## Current release checkpoint
 
-The current published baseline is 1.10.1; the owner authorized the 1.11.0 candidate
-from develop `0b1f1da` after PR #288. Follow the [delivery record](../evidence/release-1.11.0.md)
-for current gates. The older release records below are historical, not the latest
-installed or published version. This candidate preserves all eight strict main
-checks and prohibits replacing existing release assets. No durable recovery,
-installed external-harness qualification or production-use-case completion is implied.
+The current published and installed baseline is 1.11.0 from protected main
+`e00539e`. The [delivery record](../evidence/release-1.11.0.md) records the twelve green
+release jobs, investigated Rosetta timeout retry, fourteen verified downloads, npm
+integrity, Homebrew PR #73 and eleven installed acceptance groups. The existing
+service remains on 1.10.0 until a deliberate session checkpoint. The older records
+below are historical. All eight strict main checks and immutable release assets
+remain required. Label acceptance phases and measure their timing before changing
+budgets. No durable recovery, installed external-harness qualification or production
+use-case completion is implied.
 
 ## Current implementation state
 
