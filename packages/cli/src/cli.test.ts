@@ -22,6 +22,13 @@ describe('AgentBrowser CLI', () => {
 
   const lastJson = () => JSON.parse(out.join('\n'));
 
+  it('selects operator attachment without sending launch options or an endpoint', async () => {
+    expect(await run('session', 'create', '--tenant', 'tenant_1', '--cdp-attach', '--json')).toBe(
+      0
+    );
+    expect(sessions.create).toHaveBeenCalledWith({ tenantId: 'tenant_1', cdpAttach: true });
+  });
+
   it('reports the product version without constructing a service client', async () => {
     expect(await run('--version')).toBe(0);
     expect(out).toEqual([PRODUCT_VERSION]);

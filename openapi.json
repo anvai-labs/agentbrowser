@@ -6091,6 +6091,9 @@
       "SessionRequest": {
         "type": "object",
         "properties": {
+          "cdpAttach": {
+            "type": "boolean"
+          },
           "controlMode": {
             "const": "delegated",
             "type": "string"
@@ -6369,6 +6372,9 @@
                   "supportsCdp": {
                     "type": "boolean"
                   },
+                  "supportsCdpAttach": {
+                    "type": "boolean"
+                  },
                   "supportedObservationModes": {
                     "minItems": 1,
                     "type": "array",
@@ -6567,6 +6573,9 @@
               "supportsCdp": {
                 "type": "boolean"
               },
+              "supportsCdpAttach": {
+                "type": "boolean"
+              },
               "supportedObservationModes": {
                 "minItems": 1,
                 "type": "array",
@@ -6736,6 +6745,9 @@
             "type": "boolean"
           },
           "supportsCdp": {
+            "type": "boolean"
+          },
+          "supportsCdpAttach": {
             "type": "boolean"
           },
           "supportedObservationModes": {
@@ -10005,6 +10017,10 @@
                     "type": "string"
                   },
                   {
+                    "const": "cdp_attach",
+                    "type": "string"
+                  },
+                  {
                     "const": "unknown",
                     "type": "string"
                   }
@@ -10091,10 +10107,22 @@
                     "type": "string"
                   },
                   {
+                    "const": "operator_owned_browser",
+                    "type": "string"
+                  },
+                  {
                     "const": "unknown",
                     "type": "string"
                   }
                 ]
+              },
+              "endpointClass": {
+                "const": "loopback_http",
+                "type": "string"
+              },
+              "egress": {
+                "const": "navigation_preflight_only",
+                "type": "string"
               },
               "context": {
                 "additionalProperties": false,
@@ -10109,6 +10137,10 @@
                     "anyOf": [
                       {
                         "const": "new_context",
+                        "type": "string"
+                      },
+                      {
+                        "const": "existing_default_context",
                         "type": "string"
                       },
                       {
@@ -10249,6 +10281,10 @@
                 "type": "string"
               },
               {
+                "const": "cdp_attach",
+                "type": "string"
+              },
+              {
                 "const": "unknown",
                 "type": "string"
               }
@@ -10335,10 +10371,22 @@
                 "type": "string"
               },
               {
+                "const": "operator_owned_browser",
+                "type": "string"
+              },
+              {
                 "const": "unknown",
                 "type": "string"
               }
             ]
+          },
+          "endpointClass": {
+            "const": "loopback_http",
+            "type": "string"
+          },
+          "egress": {
+            "const": "navigation_preflight_only",
+            "type": "string"
           },
           "context": {
             "additionalProperties": false,
@@ -10353,6 +10401,10 @@
                 "anyOf": [
                   {
                     "const": "new_context",
+                    "type": "string"
+                  },
+                  {
+                    "const": "existing_default_context",
                     "type": "string"
                   },
                   {

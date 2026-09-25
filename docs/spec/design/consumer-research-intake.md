@@ -8,7 +8,7 @@ merged in PR #287 (`1a1afc7`), with pre/post-merge CI green.
 (`0b1f1da`) with pre/post-merge CI green. R1–R4 shipped in the
 [1.11.0 checkpoint](../evidence/release-1.11.0.md); R5a [active lease visibility](session-lease-visibility.md) is implemented in source, unreleased;
 R3 [navigation reasons](navigation-failure-reasons.md) is an unreleased candidate extension.
-R5b close-cause retention and R6–R7 remain proposed.
+R5b close-cause retention remains a separate candidate. R6 [operator CDP attachment](operator-cdp-attach.md) has an unreleased implementation candidate with explicit local authentication and policy limits; R7 is the recipe packet.
 Source: [consumer field report, 2026-09-24](../../consumer-field-handoff-2026-09-24.md).
 Code reviewed: develop `5eae01d` plus the storage-neutral journal in PR #285,
 merged as `5ebf820`. The report does not identify the exact service/MCP build used; observations

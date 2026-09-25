@@ -158,7 +158,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
       name: 'browser_create',
       requiredCapabilities: ['session.manage'],
       description:
-        'Create a new isolated browser session. Sessions are ephemeral; element refs are ' +
+        'Create an ephemeral browser session (isolated by default). The opt-in cdpAttach lane shares a dedicated operator profile and checks only initial explicit navigation URLs; it requires local startup configuration. Element refs are ' +
         'scoped to a single session and page. Returns the sessionId.',
       inputSchema: {
         type: 'object',
@@ -166,6 +166,11 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
           tenantId: { type: 'string', description: 'Tenant that owns the session.' },
           engine: { type: 'string', description: 'Engine to use, e.g. playwright-chromium.' },
           headless: { type: 'boolean' },
+          cdpAttach: {
+            type: 'boolean',
+            description:
+              'Select the local startup-configured operator Chrome profile. No endpoint input; incompatible with launch/cookie settings.',
+          },
           ttlMs: {
             type: 'number',
             description:
@@ -229,6 +234,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
           throw new UsageError('tenantId is required and must be a non-empty string.');
         }
         const request: SessionRequest = { tenantId: args.tenantId };
+        if (typeof args.cdpAttach === 'boolean') request.cdpAttach = args.cdpAttach;
         if (typeof args.engine === 'string') request.engine = args.engine;
         if (typeof args.headless === 'boolean') request.headless = args.headless;
         if (typeof args.ttlMs === 'number') request.ttlMs = args.ttlMs;
@@ -249,9 +255,15 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
 
         // Observing requires a page; create one up front so the caller's very
         // next tool call can be navigate or observe.
-        const page = await client.sessions.createPage(session.sessionId);
-
-        return { ...session, pageId: page.pageId };
+        try {
+          const page = await client.sessions.createPage(session.sessionId);
+          return { ...session, pageId: page.pageId };
+        } catch (error) {
+          // Provisioning owns this new session; do not strand its resources (or
+          // the exclusive operator attachment) when the first page fails.
+          await client.sessions.close(session.sessionId).catch(() => {});
+          throw error;
+        }
       },
     },
 

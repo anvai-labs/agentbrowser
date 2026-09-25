@@ -1,4 +1,11 @@
 import { ControlError } from '@agentbrowser/core';
+import {
+  type OperatorCdpAdmissionOptions,
+  cdpAttachAdmission,
+  deploymentModeFromEnvironment,
+  isOperatorLoopback,
+  requireCdpAttachAdmission,
+} from './cdp-config.js';
 import { operatorCsp, operatorHtml } from './operator-panel.js';
 import type { SessionPrincipal } from './session-authority.js';
 /**
@@ -74,7 +81,7 @@ declare module 'fastify' {
   }
 }
 
-export interface ServerOptions {
+export interface ServerOptions extends OperatorCdpAdmissionOptions {
   /** Maximum compact JSON extraction response bytes; defaults to 1 MiB. */
   extractMaxBytes?: number;
   /** Trusted embedding source selection for private evidence-backed approval records. */
@@ -224,6 +231,17 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   // caller clearing it later cannot switch a running service into local mode.
   const configuredKeys = options.apiKeys ?? apiKeysFromEnv();
   const apiKeys = configuredKeys === undefined ? undefined : new Map(configuredKeys);
+  const attachAdmission = cdpAttachAdmission(
+    {
+      ...options,
+      host: options.host ?? process.env.HOST ?? '127.0.0.1',
+      deploymentMode:
+        deploymentModeFromEnvironment(process.env) === 'hosted'
+          ? 'hosted'
+          : (options.deploymentMode ?? 'local'),
+    },
+    apiKeys?.values() ?? []
+  );
   const fastify = Fastify({
     logger: false, // Disable logging for cleaner test output
   });
@@ -406,6 +424,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       ...(options.secretManager ? { secretManager: options.secretManager } : {}),
     });
   const service = new AgentBrowserService({
+    cdpAttachAdmission: attachAdmission,
     extractMaxBytes,
     engine,
     ...(options.evidenceReviewProvider !== undefined
@@ -863,6 +882,25 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               retryable: false,
             },
           });
+        }
+        if ('cdpEndpoint' in (body as object) || 'operatorCdp' in (body as object))
+          throw new ServiceError(
+            'INVALID_REQUEST',
+            'CDP endpoints are trusted startup configuration, never session input.'
+          );
+        if (validated.value.cdpAttach === true) {
+          const address = fastify.server.address();
+          if (
+            !isOperatorLoopback(request.ip) ||
+            (address !== null &&
+              (typeof address === 'string' || !isOperatorLoopback(address.address)))
+          )
+            try {
+              requireCdpAttachAdmission('local_only');
+            } catch (error) {
+              const refusal = error as { message: string; details: Record<string, unknown> };
+              throw new ServiceError('ENGINE_UNSUPPORTED', refusal.message, false, refusal.details);
+            }
         }
         const { cookies, ...validatedRequest } = validated.value;
         const policy = (body as { policy?: SessionPolicy }).policy;

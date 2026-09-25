@@ -17,7 +17,7 @@ export function captureBrowserVersion(value: unknown): string | undefined {
 
 export const SessionDiagnosticsSchema = Type.Object(
   {
-    attachment: choice(['local_launch', 'remote_cdp', 'unknown']),
+    attachment: choice(['local_launch', 'remote_cdp', 'cdp_attach', 'unknown']),
     browserFamily: choice(['chromium', 'firefox', 'webkit', 'unknown']),
     browserVersion: Type.Optional(BrowserVersionSchema),
     executableSelection: choice([
@@ -32,11 +32,14 @@ export const SessionDiagnosticsSchema = Type.Object(
       'dedicated_local_browser',
       'shared_local_browser',
       'shared_remote_connection',
+      'operator_owned_browser',
       'unknown',
     ]),
+    endpointClass: Type.Optional(choice(['loopback_http'])),
+    egress: Type.Optional(choice(['navigation_preflight_only'])),
     context: Type.Object(
       {
-        isolation: choice(['new_context', 'unknown']),
+        isolation: choice(['new_context', 'existing_default_context', 'unknown']),
         viewport: Type.Union([
           Type.Object(
             {
@@ -71,6 +74,8 @@ export function captureSessionDiagnostics(value: unknown): SessionDiagnostics | 
       executableSelection: value.executableSelection,
       launchMode: value.launchMode,
       resourceModel: value.resourceModel,
+      ...(value.endpointClass !== undefined ? { endpointClass: value.endpointClass } : {}),
+      ...(value.egress !== undefined ? { egress: value.egress } : {}),
       context: {
         isolation: value.context.isolation,
         viewport:

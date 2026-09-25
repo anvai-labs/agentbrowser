@@ -441,6 +441,10 @@ export function buildCli(deps: CliDependencies): Cli {
           'require independent operator approval of challenged actions; requires --delegated'
         )
         .option('--engine <name>', 'engine to use')
+        .option(
+          '--cdp-attach',
+          'attach to the startup-configured dedicated operator Chrome profile; local only, initial navigation policy checks only'
+        )
         .option('--headless', 'run headless (the server default; explicit)')
         .option(
           '--no-headless',
@@ -498,6 +502,7 @@ export function buildCli(deps: CliDependencies): Cli {
               throw new UsageError('--reviewed-approval requires --delegated');
             if (options.delegated) request.controlMode = 'delegated';
 
+            if (options.cdpAttach) request.cdpAttach = true;
             if (options.engine) {
               request.engine = String(options.engine);
             }
