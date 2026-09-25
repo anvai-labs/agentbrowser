@@ -48,8 +48,10 @@ diagnostics shipped. The consumer continuation through #296 is merged to develop
 navigation reasons, operator CDP attachment, the EDGAR recipe, sampled leases,
 bounded terminal facts and observed engine disconnection. These changes are not yet
 released and do not establish durable recovery. Resume T5 with the
-[C1a settlement prerequisite](../evidence/t5-journal-settlement.md), then compose
-application-only intent/dispatch through the existing authority and drain owner.
+[C1a settlement prerequisite](../evidence/t5-journal-settlement.md) merged #297.
+[C1b authority composition](../design/t5-journal-authority.md) now integrates internal
+intent/dispatch waits through the existing ticket and drain owner. C2 application pins,
+C3 terminal/replay and C4 qualification remain prerequisites for runtime enablement.
 The remaining T4/T6 production/private/live gates are still open. T8 installed
 external-harness qualification remains separate. Recheck concurrent branches first.
 

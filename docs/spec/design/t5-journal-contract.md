@@ -1,8 +1,9 @@
 # T5 J1-B/C: journal port and acknowledgment integration
 
 Status: B1/B2 merged in PR #285 (`5ebf820`), contract commits `f9d9c58`/`ab495ce`.
-HTTP/replay publication is merged and green. C1a per-call settlement is implemented
-as an internal prerequisite; C1–C4 authority/runtime integration remains proposed.
+HTTP/replay publication is merged and green. C1a per-call settlement merged #297;
+[C1b authority composition](t5-journal-authority.md) is implemented internally.
+C2 application pins, C3 terminal/replay and C4 runtime qualification remain proposed.
 Requires [J1-A response finalization](t5-finalization-publication.md) before runtime
 integration. Parent: [T5 J0–J4 sequence](t5-operation-journal.md). This module is
 loaded explicitly for journal work; unrelated modes do not load its structures.
@@ -190,11 +191,12 @@ settlement pending even after cancellation, timeout or close. A pre-I/O refusal 
 without invoking storage. Each signal belongs to one call, not the whole namespace.
 
 The existing pending set remains the sole storage task ledger; `pending` remains a
-diagnostic count. C1 must track the captured settlement promise through the existing
-SessionAuthority drain before awaiting intent/dispatch outcomes. Integration tests
-must prove ticket retention through ignored cancellation and old-owner replacement
-before wiring a store. This prerequisite alone does not retain session tickets,
-connect the journal or qualify durable execution. See [C1a evidence](../evidence/t5-journal-settlement.md).
+diagnostic count. C1b tracks the captured settlement promise through the existing
+SessionAuthority drain before awaiting intent/dispatch outcomes, with ticket retention
+tests across ignored cancellation and old-owner replacement. The C1a prerequisite
+alone does not retain session tickets; C1b supplies that internal composition without
+connecting service configuration or qualifying durable execution. See
+[C1a evidence](../evidence/t5-journal-settlement.md) and [C1b design](t5-journal-authority.md).
 
 1. Reserve the existing ticket and persist intent before the business callback. Recheck
    captured entry/ticket/epoch after the wait. Timeout/cancellation seals the scope
@@ -277,5 +279,6 @@ settling I/O. A fake adapter alone cannot establish crash durability.
 J2 still needs one optional SQLite runtime/packaging/ownership audit and real process-loss
 tests on the supported Node/Bun matrix. J3 historical authorization/continuation and J4
 event/cursor qualification remain separate. No concrete store, public durability claim, percentage increase or release ships here.
-The merged B1/B2 contract is not connected to SessionAuthority, service configuration or transports.
-C1–C4, J2 runtime/storage qualification and J3/J4 recovery gates remain closed.
+C1b connects the facade to internal SessionAuthority admission/dispatch. ApplicationAuthority,
+service configuration and transports remain disconnected. C2–C4, J2 runtime/storage
+qualification and J3/J4 recovery gates remain closed.

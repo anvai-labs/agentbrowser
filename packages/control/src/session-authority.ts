@@ -16,6 +16,15 @@ import {
   type RunCursor,
   agentModeProfile,
 } from '@agentbrowser/protocol';
+import { journalData, journalObject, parseJournalIntent } from './journal-record.js';
+import type {
+  JournalApplication,
+  JournalCall,
+  JournalIntent,
+  JournalMutationOutcome,
+  JournalRecord,
+  OperationJournal,
+} from './journal-types.js';
 import {
   type OperationPublication,
   type SessionPublication,
@@ -29,7 +38,13 @@ export type {
   SessionPublication,
   SessionPublicationContext,
 } from './publication.js';
-import { synchronousResult } from './trusted-callback.js';
+import { deeplyFreezeSnapshot, synchronousResult } from './trusted-callback.js';
+
+/** Internal C1 composition only; not selected by application/service or wire options. */
+export interface ApplicationJournalOperation {
+  readonly version: 1;
+  readonly application: JournalApplication;
+}
 
 export type SessionPrincipal =
   | { actor: 'operator'; tenant?: string }
@@ -66,10 +81,47 @@ type Scope = {
   open: boolean;
   pending: Set<Promise<unknown>>;
   pendingDispatches: number;
+  guardingDispatch: boolean;
+  dispatchGuardViolated: boolean;
+  journal?: {
+    readonly intent: JournalIntent;
+    record?: JournalRecord;
+    marker?: Promise<void>;
+    failed: boolean;
+  };
   /** Actual bounded output lifetime, never borrowed from a caller-supplied context. */
   publicationGuard: (() => void) | undefined;
 };
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
+const journalUnavailable = () =>
+  new ControlError('CONTROL_REQUIRED', 'Journal execution is not qualified or acknowledged');
+
+/** Runtime brand and exact scope binding, without another capability registry. */
+class CapturedApplicationDispatch {
+  readonly #scope: Scope;
+  readonly #guard: () => void;
+
+  constructor(scope: Scope, guard: () => void) {
+    this.#scope = scope;
+    this.#guard = guard;
+    Object.freeze(this);
+  }
+
+  static check(value: ApplicationDispatchQualification, scope: Scope): void {
+    if (!value || typeof value !== 'object' || !(#scope in value) || value.#scope !== scope)
+      throw journalUnavailable();
+  }
+
+  static invoke(value: ApplicationDispatchQualification, scope: Scope): void {
+    CapturedApplicationDispatch.check(value, scope);
+    try {
+      if (synchronousResult(value.#guard()) !== undefined) throw journalUnavailable();
+    } catch {
+      throw journalUnavailable();
+    }
+  }
+}
+export type ApplicationDispatchQualification = CapturedApplicationDispatch;
 
 /** Read caller-owned fields once before consulting mutable authority state. */
 function snapshotPrincipal(principal: SessionPrincipal): SessionPrincipal {
@@ -96,10 +148,12 @@ export class SessionAuthority {
   private readonly grants = new Map<string, Extract<SessionPrincipal, { actor: 'agent' }>>();
   private readonly scope = new AsyncLocalStorage<Scope>();
   private readonly now: () => number;
+  private readonly journal: OperationJournal | undefined;
   private readonly serviceGeneration = randomBytes(16).toString('base64url');
 
-  constructor(options: { now?: () => number } = {}) {
+  constructor(options: { now?: () => number; journal?: OperationJournal } = {}) {
     this.now = options.now ?? (() => performance.now());
+    this.journal = options.journal;
   }
 
   register(
@@ -227,12 +281,19 @@ export class SessionAuthority {
   async run<T>(
     sessionId: string,
     principal: SessionPrincipal,
-    operation: { id?: string; fingerprint?: string },
+    operation: { id?: string; fingerprint?: string; journal?: ApplicationJournalOperation },
     fn: () => Promise<T>,
     failed: () => boolean | 'rejected' = () => false,
     publicationOptions?: SessionPublication<T>,
     replayOptions?: OperationPublication
   ): Promise<T | { replay: true; operation: unknown }> {
+    const { id, fingerprint, journal: selection } = operation;
+    // C3 must supply acknowledged terminal/replay projection before publication is enabled.
+    if (
+      selection !== undefined &&
+      (publicationOptions !== undefined || replayOptions !== undefined)
+    )
+      throw journalUnavailable();
     const publication =
       publicationOptions === undefined ? undefined : snapshotPublication(publicationOptions);
     const replayPublication =
@@ -240,17 +301,38 @@ export class SessionAuthority {
     const candidate = Object.freeze(snapshotPrincipal(principal));
     const admitted = this.admit(sessionId, candidate);
     const { entry, admission } = admitted;
+    let intent: JournalIntent | undefined;
+    if (selection !== undefined) {
+      try {
+        if (!this.journal || this.journal.health !== 'open') throw journalUnavailable();
+        const descriptor = journalObject(journalData(selection), ['version', 'application']);
+        if (descriptor.version !== 1) throw journalUnavailable();
+        intent = parseJournalIntent({
+          key: {
+            serviceGeneration: this.serviceGeneration,
+            tenantId: admission.tenant,
+            sessionIncarnation: entry.incarnation,
+            epoch: entry.control.view().epoch,
+            operationId: id,
+          },
+          actor: admission.actor,
+          application: descriptor.application,
+          liveFingerprint: { algorithm: 'application-operation:v1', digest: fingerprint },
+        });
+      } catch {
+        throw journalUnavailable();
+      }
+    }
     const assertReplayOwner = replayPublication
       ? this.statusOwner(sessionId, candidate, entry)
       : undefined;
     const ticket = entry.control.begin({
       actor: admission.actor,
       ...(admitted.epoch !== undefined ? { epoch: admitted.epoch } : {}),
-      ...(operation.id
-        ? { operationId: operation.id, fingerprint: operation.fingerprint ?? '' }
-        : {}),
+      ...(id ? { operationId: id, fingerprint: fingerprint ?? '' } : {}),
     });
     if ('replay' in ticket) {
+      if (intent) throw journalUnavailable();
       const record =
         replayPublication && assertReplayOwner
           ? await this.publishStatus(ticket.replay, replayPublication, assertReplayOwner)
@@ -265,6 +347,19 @@ export class SessionAuthority {
       open: true,
       pending: new Set(),
       pendingDispatches: 0,
+      guardingDispatch: false,
+      dispatchGuardViolated: false,
+      ...(intent
+        ? {
+            journal: {
+              intent: deeplyFreezeSnapshot({
+                ...intent,
+                key: { ...intent.key, epoch: ticket.epoch },
+              }),
+              failed: false,
+            },
+          }
+        : {}),
       publicationGuard: undefined,
     };
     return this.scope.run(scope, async () => {
@@ -273,9 +368,12 @@ export class SessionAuthority {
       let executionError: unknown;
       let succeeded = false;
       try {
+        if (scope.journal) await this.acknowledgeJournal(scope, 'intent');
         result = await fn();
         this.checkScopeOwner(scope);
-        const failure = failed();
+        if (scope.journal) this.checkJournalScope(scope);
+        const failure = scope.journal ? synchronousResult(failed()) : failed();
+        if (scope.journal) this.checkJournalScope(scope);
         status =
           failure === 'rejected'
             ? 'failed'
@@ -296,6 +394,7 @@ export class SessionAuthority {
       const finalize = () => {
         try {
           this.checkScopeOwner(scope);
+          if (scope.journal?.failed) throw journalUnavailable();
         } catch {
           status = ticket.didDispatch ? 'outcome_unknown' : 'failed';
         }
@@ -332,6 +431,48 @@ export class SessionAuthority {
     if (this.active(scope.sessionId) !== scope.entry)
       throw new ControlError('CONTROL_REVOKED', 'Session owner changed');
     scope.entry.control.check(scope.ticket);
+  }
+
+  private checkJournalScope(scope: Scope): void {
+    if (!scope.open || scope.journal?.failed || this.journal?.health !== 'open')
+      throw journalUnavailable();
+    this.checkScopeOwner(scope);
+  }
+
+  /** Storage settlement, not bounded caller waiting, owns the existing scope's drain. */
+  private retainJournalCall<T>(scope: Scope, call: JournalCall<T>): JournalCall<T> {
+    this.retainTask(scope, call.settled);
+    return call;
+  }
+
+  private async acknowledgeJournal(scope: Scope, phase: 'intent' | 'dispatch'): Promise<void> {
+    const state = scope.journal;
+    if (!state || !this.journal) throw journalUnavailable();
+    try {
+      this.checkJournalScope(scope);
+      let call: JournalCall<JournalMutationOutcome>;
+      if (phase === 'intent') {
+        call = this.journal.reserveIntent(state.intent, scope.entry.signal);
+      } else {
+        if (!state.record) throw journalUnavailable();
+        call = this.journal.markDispatch(
+          { identity: state.record.identity, expectedRevision: 1 },
+          scope.entry.signal
+        );
+      }
+      const outcome = await this.retainJournalCall(scope, call);
+      this.checkJournalScope(scope);
+      if (
+        outcome.kind !== 'acknowledged' ||
+        outcome.disposition !== 'applied' ||
+        outcome.record.revision !== (phase === 'intent' ? 1 : 2)
+      )
+        throw journalUnavailable();
+      state.record = outcome.record;
+    } catch {
+      state.failed = true;
+      throw journalUnavailable();
+    }
   }
 
   private async publish<T>(
@@ -415,37 +556,107 @@ export class SessionAuthority {
     return this.trackInScope(sessionId, callback, false);
   }
 
-  /** One effect boundary: check and mark synchronously, then retain work through drain. */
-  dispatchInScope<T>(sessionId: string, callback: () => T | PromiseLike<T>): Promise<T> {
-    return this.trackInScope(sessionId, callback, true);
+  /** Exact-scope capability for a trusted application owner's synchronous final pins. */
+  captureApplicationDispatchInScope(
+    sessionId: string,
+    assertCurrent: () => void
+  ): ApplicationDispatchQualification {
+    this.assert(sessionId);
+    const scope = this.scope.getStore();
+    if (!scope?.journal?.intent.application || typeof assertCurrent !== 'function')
+      throw journalUnavailable();
+    this.checkJournalScope(scope);
+    return new CapturedApplicationDispatch(scope, assertCurrent);
+  }
+
+  /** One effect boundary and drain owner for ephemeral and qualified journal work. */
+  dispatchInScope<T>(
+    sessionId: string,
+    callback: () => T | PromiseLike<T>,
+    qualification?: ApplicationDispatchQualification
+  ): Promise<T> {
+    return this.trackInScope(sessionId, callback, true, qualification);
+  }
+
+  private retainTask(scope: Scope, task: Promise<unknown>, onSettled?: () => void): void {
+    scope.pending.add(task);
+    const settled = () => {
+      scope.pending.delete(task);
+      onSettled?.();
+    };
+    // Both branches: task tracking must never introduce an unhandled rejection.
+    void task.then(settled, settled);
+  }
+
+  private checkDispatchGuardBoundary(scope: Scope): void {
+    if (scope.guardingDispatch) scope.dispatchGuardViolated = true;
+    if (scope.dispatchGuardViolated) throw journalUnavailable();
   }
 
   private trackInScope<T>(
     sessionId: string,
     callback: () => T | PromiseLike<T>,
-    dispatch: boolean
+    dispatch: boolean,
+    qualification?: ApplicationDispatchQualification
   ): Promise<T> {
-    this.assert(sessionId, dispatch);
+    this.assert(sessionId);
     const scope = this.scope.getStore();
     if (!scope) throw new ControlError('CONTROL_REQUIRED', 'Missing operation authority');
+    if (dispatch) {
+      this.checkDispatchGuardBoundary(scope);
+      if (scope.journal && !qualification) throw journalUnavailable();
+      if (qualification) CapturedApplicationDispatch.check(qualification, scope);
+      if (scope.journal) this.checkJournalScope(scope);
+    }
+    let dispatched = false;
+    const invoke = () => {
+      this.assert(sessionId);
+      if (dispatch) {
+        this.checkDispatchGuardBoundary(scope);
+        if (scope.journal) this.checkJournalScope(scope);
+        if (qualification) {
+          scope.guardingDispatch = true;
+          try {
+            CapturedApplicationDispatch.invoke(qualification, scope);
+          } finally {
+            scope.guardingDispatch = false;
+          }
+        }
+        this.checkDispatchGuardBoundary(scope);
+        if (scope.journal) this.checkJournalScope(scope);
+        this.assert(sessionId);
+        scope.entry.control.dispatched(scope.ticket);
+        scope.pendingDispatches++;
+        dispatched = true;
+      }
+      return callback();
+    };
     let start: () => void = () => {};
     const task = new Promise<T>((resolve, reject) => {
       start = () => {
         try {
-          resolve(callback());
+          if (dispatch && scope.journal) {
+            scope.journal.marker ??= this.acknowledgeJournal(scope, 'dispatch');
+            resolve(
+              scope.journal.marker.then(invoke).catch((error) => {
+                // Before-effect failure seals further journal work. An effect's own
+                // rejection retains the existing handled-error execution semantics.
+                if (!dispatched && scope.journal) scope.journal.failed = true;
+                throw error;
+              })
+            );
+          } else {
+            resolve(invoke());
+          }
         } catch (error) {
+          if (!dispatched && scope.journal) scope.journal.failed = true;
           reject(error);
         }
       };
     });
-    scope.pending.add(task);
-    if (dispatch) scope.pendingDispatches++;
-    const settled = () => {
-      scope.pending.delete(task);
-      if (dispatch) scope.pendingDispatches--;
-    };
-    // Attach both handlers immediately: tracking must never introduce unhandled rejection.
-    void task.then(settled, settled);
+    this.retainTask(scope, task, () => {
+      if (dispatched) scope.pendingDispatches--;
+    });
     // Register before invocation while preserving the caller's synchronous admission checks.
     start();
     return task;
@@ -502,8 +713,11 @@ export class SessionAuthority {
         'CONTROL_REQUIRED',
         'Controlled browser access requires an admitted principal'
       );
-    if (dispatch) entry.control.dispatched(scope.ticket);
-    else entry.control.check(scope.ticket);
+    if (dispatch) {
+      this.checkDispatchGuardBoundary(scope);
+      if (scope.journal) throw journalUnavailable();
+      entry.control.dispatched(scope.ticket);
+    } else entry.control.check(scope.ticket);
   }
 
   /** Read-only dispatch classification for composition helpers in the admitted operation scope. */
