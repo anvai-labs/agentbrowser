@@ -1,6 +1,7 @@
 # T5 J2b.1: SQLite owner and anchored transaction foundation
 
-Base: develop `83b747b` (PR #301). Status: implemented locally; review/delivery pending.
+Base: develop `83b747b` (PR #301). Status: merged to develop in PR #303
+at `7ccddb21a627c9019f58c99fa11848456b98492c`.
 Scope: internal storage primitive, not a raw journal adapter or public durability.
 Design and remaining gates: [J2b qualification](../design/t5-journal-sqlite-qualification.md).
 
@@ -91,3 +92,13 @@ extraction and other target filesystems remain J2b gates. No source/public runti
 or recovery is enabled. Process loss is not power-loss qualification, and restoring both
 DB and anchor together is undetectable. The operator quarantine/reconciliation procedure
 remains required before C4b. T5 stays approximately 10%; finite completion stays 3/9.
+
+## Delivery
+
+[PR #303](https://github.com/anvai-labs/agentbrowser/pull/303) merged after independent
+review of `4601a71835e3ae34e095a5c34f6224a19694f0ca`, normal hooks and all eight
+[PR checks](https://github.com/anvai-labs/agentbrowser/actions/runs/36209836864).
+The merge tree matches reviewed tree `96b07c110035e7c1bc5864dc8f4ea5b63671e2b1`;
+all eight [post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/36210212870)
+passed, including the 43 storage cases in the Linux Test job. Publication is separate;
+these results do not close the remaining raw-adapter, manager or recovery gates.

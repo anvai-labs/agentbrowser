@@ -7,35 +7,9 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-09-25
+
 ### Added
-
-- Internal SQLite storage-child ownership and external commit witness foundation,
-  with process-loss tests for acknowledgment ordering and stale-pair refusal. The
-  raw journal adapter, service enablement and durable recovery remain gated.
-
-- Journal storage audit and a dependency-free SQLite mechanism probe cover competing
-  ownership, process-loss persistence and child cleanup in the existing CI Test job.
-  Concrete adapter, external commit anchor and public durability remain gated.
-
-- Internal journal control views share the acknowledged operation projection with
-  replay and explicit publication. Status and takeover cannot expose terminal completion
-  before its ACK; before intent ACK they retain busy/lifecycle facts and omit operation.
-  Ephemeral clients keep existing behavior. Public durability remains gated.
-
-- Internal application journal writes revalidate authorization, consumed consent and
-  binding/input pins after the marker wait. Terminal acknowledgment gates successful
-  output and replay uses the last acknowledged facts stored beside the existing
-  operation record. Runtime selection, concrete storage and recovery remain gated.
-
-- Internal application journal composition admits work only after a fresh intent
-  acknowledgment and dispatches effects only after a shared marker acknowledgment
-  plus exact-scope final guards. Storage settlement retains the existing ticket;
-  service enablement, concrete durable storage and recovery remain gated.
-
-- Internal journal calls expose actual storage completion separately from bounded
-  caller waiting, reusing the existing task owner. Timeouts and cancellation cannot
-  signal that outstanding storage has drained. Runtime journal integration and
-  durable recovery remain gated.
 
 - Observed browser/context disconnection ends the exact affected session, revokes
   delegated authority, and reports `engine_disconnected` through the existing
@@ -78,6 +52,21 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 - Session ID allocation refuses bounded collisions, and late abnormal-teardown
   callbacks use captured context identity before touching a replacement allocation.
+
+### Internal qualification
+
+- Journal intent/dispatch and terminal acknowledgments share authority, replay and
+  control-view projections. Application execution revalidates authorization, consent
+  and binding pins after storage waits. The SQLite child owner and external commit
+  witness have process-loss tests; the raw adapter, runtime selection, bounded manager
+  and restart recovery remain gated. This release exposes no durable execution promise.
+- Packaged acceptance records bounded phase timings through child cleanup and names
+  the active phase on deadline failure. Existing deadlines and behavioral gates stay
+  unchanged. Falsy/non-Error callback rejections fail acceptance after owned cleanup.
+  Consumer smoke scripts can qualify extracted services with actual Bun
+  CLI/MCP binaries through the existing package resolver and workflows.
+- The EDGAR research recipe documents JSON submissions, filing discovery, throttling
+  etiquette and complete persisted-output inspection.
 
 ## [1.11.0] - 2026-09-24
 

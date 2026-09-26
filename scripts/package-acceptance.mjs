@@ -222,6 +222,28 @@ async function within(promise, timeoutMs, label) {
 
 /** Owns one process. A forced API kill is a failure: browser descendants are not proven drained. */
 export async function withManagedChild(command, options, exercise) {
+  const label = options.label ?? 'managed-child';
+  const validLabel = (value) => typeof value === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(value);
+  assert.ok(validLabel(label), 'Invalid acceptance phase label');
+  assert.ok(options.timings === undefined || Array.isArray(options.timings), 'Invalid acceptance timing sink');
+  const started = performance.now();
+  let phaseStarted = started;
+  let activePhase = 'startup';
+  let failurePhase;
+  let acceptingPhases = true;
+  const phases = [];
+  const mark = (next) => {
+    const now = performance.now();
+    phases.push({ phase: activePhase, elapsedMs: Math.round(now - phaseStarted) });
+    activePhase = next; phaseStarted = now;
+  };
+  const phase = (name) => {
+    assert.ok(validLabel(name), 'Invalid acceptance phase label');
+    // Leave room for the final body/drain/shutdown observations. Instrumentation
+    // never introduces another timeout, retries work or releases process ownership.
+    assert.ok(phases.length < 60, 'Acceptance phase count exceeded');
+    if (acceptingPhases) mark(name);
+  };
   const child = spawn(command[0], command.slice(1), {
     env: options.env ?? process.env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
@@ -230,7 +252,14 @@ export async function withManagedChild(command, options, exercise) {
   let failureError;
   const failure = new Promise((_, reject) => { rejectFailure = reject; });
   failure.catch(() => {});
-  const failed = (error) => {
+  const normalizeFailure = (error) => {
+    // Rejection values may be proxies whose prototype access itself throws.
+    try { if (error instanceof Error) return error; } catch {}
+    return new Error('Non-Error acceptance failure');
+  };
+  const failed = (reason) => {
+    const error = normalizeFailure(reason);
+    failurePhase ??= activePhase;
     failureError ??= error;
     controller.abort(error);
     rejectFailure(error);
@@ -270,19 +299,25 @@ export async function withManagedChild(command, options, exercise) {
     assert.ok(!reply.error, `Instrumented child failed: ${reply.error}`);
     return reply.result;
   };
-  const timer = setTimeout(() => failed(new Error('API acceptance deadline exceeded')), options.timeoutMs ?? 90_000);
+  const timer = setTimeout(() => failed(new Error(`${label}/${activePhase} deadline exceeded after ${Math.round(performance.now() - phaseStarted)}ms in phase`)), options.timeoutMs ?? 90_000);
   let bodyError;
   let value;
-  const body = Promise.resolve().then(() => exercise({ child, guard, message, rpc, signal: controller.signal }));
+  const body = Promise.resolve().then(() => exercise({ child, guard, message, rpc, phase, signal: controller.signal }));
   body.catch(() => {});
   try { value = await guard(body); }
-  catch (error) { bodyError = error; controller.abort(error); }
+  catch (reason) {
+    const error = normalizeFailure(reason);
+    failurePhase ??= activePhase; bodyError = error; controller.abort(error);
+  }
   let cleanupError;
+  acceptingPhases = false;
+  mark('workflow-drain');
   try {
     // The callback must settle too: a deadline cannot leave a workflow running
     // behind a PASS/FAIL result while its fixtures are being destroyed.
     await within(body.catch(() => {}), 5000, 'Workflow callback cleanup');
-  } catch (error) { cleanupError = error; }
+  } catch (error) { failurePhase ??= activePhase; cleanupError = error; }
+  mark('shutdown');
   try {
     clearTimeout(timer);
     if (!ended) {
@@ -301,11 +336,20 @@ export async function withManagedChild(command, options, exercise) {
     } else if (!bodyError) {
       assert.equal((await closed).code, 0, 'API cleanup exited unsuccessfully');
     }
-  } catch (error) { cleanupError = error; }
+  } catch (error) { failurePhase ??= activePhase; cleanupError = error; }
   controller.abort(new Error('API process ownership ended'));
-  if (cleanupError) throw new Error(`${cleanupError.message}${bodyError ? `; ${bodyError.message}` : ''}`, { cause: cleanupError });
-  if (bodyError) throw bodyError;
-  if (failureError) throw failureError;
+  mark('settled');
+  const error = cleanupError
+    ? new Error(`${cleanupError.message}${bodyError ? `; ${bodyError.message}` : ''}`, { cause: cleanupError })
+    : bodyError ?? failureError;
+  const timing = { label, status: error ? 'failed' : 'passed', elapsedMs: Math.round(performance.now() - started),
+    ...(failurePhase ? { failurePhase } : {}), phases };
+  options.timings?.push(timing);
+  if (error) {
+    const reported = new Error(`${label}/${failurePhase ?? activePhase}: ${error.message}`, { cause: error });
+    reported.acceptanceTiming = timing;
+    throw reported;
+  }
   return value;
 }
 
@@ -707,8 +751,9 @@ async function workflow(baseUrl, key, fixture, process, options, report) {
 
 export async function checkPackagedServer(options) {
   const started = performance.now();
+  const managedChildren = [];
   assert.ok(['candidate', 'baseline'].includes(options.profile ?? 'candidate'), 'Unknown acceptance profile');
-  options = { ...options, profile: options.profile ?? 'candidate' };
+  options = { ...options, profile: options.profile ?? 'candidate', managedChildren };
   const modules = await resolvePackagedModules(options.serverRoot, options.expectedVersion, options);
   if (options.profile === 'candidate') {
     assert.ok(modules.protocol, 'Candidate package omitted its protocol dependency');
@@ -782,21 +827,23 @@ export async function checkPackagedServer(options) {
         : {}),
     };
     const baseUrl = `http://127.0.0.1:${port}`;
-    await withManagedChild([join(modules.root, 'agentbrowser-server')], { env: stockEnv }, async (process) => {
+    await withManagedChild([join(modules.root, 'agentbrowser-server')], { env: stockEnv, label: 'stock-server', timings: managedChildren }, async (process) => {
       await waitFor(async () => {
         try { await apiRequest(baseUrl, '/health', { timeoutMs: 300 }); return true; } catch { return false; }
       }, process.guard, 'Stock API readiness');
+      process.phase('browser-workflow');
       await workflow(baseUrl, key, fixture, process, { ...options, stock: true }, report);
     });
     if (options.profile === 'baseline') {
       report.push({ check: 'injected-packaged-workflow', status: 'unsupported', reason: '1.8.4 lacks trusted ServerOptions.networkPolicy passthrough; no workspace fallback' });
     } else {
       await withManagedChild([process.execPath, childScript, modules.root, options.expectedVersion, modules.commit, options.allowDirty ? 'allow-dirty' : 'clean'], {
-        env: { ...env, NODE_EXTRA_CA_CERTS: fixture.certPath },
+        env: { ...env, NODE_EXTRA_CA_CERTS: fixture.certPath }, label: 'injected-server', timings: managedChildren,
       }, async (process) => {
         const ready = await process.message();
         assert.equal(ready.kind, 'ready', 'Packaged child did not become ready');
         assert.deepEqual(ready.modules, modules, 'Packaged child resolved unexpected dependencies');
+        process.phase('browser-workflow');
         await workflow(ready.baseUrl, key, fixture, process, options, report);
       });
       const { checkCliApplicationOutcome } = await import('./cli-outcome-acceptance.mjs');
@@ -810,7 +857,7 @@ export async function checkPackagedServer(options) {
     try { await fixture?.close(); }
     finally { await rm(directory, { recursive: true, force: true }); }
   }
-  return { expectedVersion: options.expectedVersion, profile: options.profile, releaseEvidence: !modules.dirty && report.every((check) => check.status === 'pass'), platform: process.platform, arch: process.arch, node: process.version, modules, executables: { cli, mcp }, checks: report, measurements: { sampleCount: 1, elapsedMs: Math.round(performance.now() - started), scope: 'extracted-package acceptance through cleanup; excludes build, packaging and report serialization' }, cleanup: 'graceful API exits and fixture closure verified' };
+  return { expectedVersion: options.expectedVersion, profile: options.profile, releaseEvidence: !modules.dirty && report.every((check) => check.status === 'pass'), platform: process.platform, arch: process.arch, node: process.version, modules, executables: { cli, mcp }, checks: report, measurements: { sampleCount: 1, managedChildren, elapsedMs: Math.round(performance.now() - started), scope: 'extracted-package acceptance through cleanup; excludes build, packaging and report serialization' }, cleanup: 'graceful API exits and fixture closure verified' };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
@@ -838,5 +885,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     const output = JSON.stringify({ acceptance: report.checks.some((check) => check.status !== 'pass') ? 'PARTIAL' : 'PASS', ...report });
     if (args.has('--report')) await writeFile(resolve(args.get('--report')), `${output}\n`, { flag: 'wx', mode: 0o600 });
     console.log(output);
-  } catch (error) { console.error(`package acceptance: FAIL - ${error.message}`); process.exitCode = 1; }
+  } catch (error) { console.error(`package acceptance: FAIL - ${error.message}`); if (error.acceptanceTiming) console.error(JSON.stringify({ acceptanceTiming: error.acceptanceTiming })); process.exitCode = 1; }
 }

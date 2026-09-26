@@ -29,6 +29,9 @@ with clean review and pre/post-merge CI 8/8.
 [J2b qualification](../design/t5-journal-sqlite-qualification.md) now has an internal
 [owner/anchor primitive](t5-journal-sqlite-owner.md); raw adapter, bounded
 child manager and remaining qualification gates are next.
+The primitive merged in PR #303 at `7ccddb2`; PR and post-merge CI each passed
+8/8 checks after exact-head independent review. The [1.12.0 candidate](release-1.12.0.md)
+qualifies the completed browsing/session checkpoint without enabling journal recovery.
 No public durability or recovery is enabled.
 The estimates below remain unchanged.
 

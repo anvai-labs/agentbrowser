@@ -707,3 +707,83 @@ test('shared checker qualifies actual native JUnit and fixed digest comments for
   }
   assert.throws(() => applicationRecipeTestName('PRIVATE_UNKNOWN_CASE'));
 });
+
+test('managed child records bounded named phases through graceful cleanup without process inputs', async () => {
+  const timings = [];
+  const command = [process.execPath, '-e', 'process.on("SIGTERM",()=>process.exit(0));process.send({ready:true});setInterval(()=>{},1000)', 'PRIVATE-ARG'];
+  const result = await withManagedChild(command, { label: 'outcome', timings, env: { ...process.env, PRIVATE_ENV: 'PRIVATE-ENV' } }, async ({ message, phase }) => {
+    await message();
+    phase('case-pass');
+    return 'done';
+  });
+  assert.equal(result, 'done');
+  assert.equal(timings.length, 1);
+  assert.equal(timings[0].label, 'outcome');
+  assert.equal(timings[0].status, 'passed');
+  assert.deepEqual(timings[0].phases.map(({ phase }) => phase), ['startup', 'case-pass', 'workflow-drain', 'shutdown']);
+  assert.ok(timings[0].phases.every(({ elapsedMs }) => Number.isFinite(elapsedMs) && elapsedMs >= 0));
+  assert.doesNotMatch(JSON.stringify(timings), /PRIVATE|process\.on|node/);
+});
+
+test('managed deadline identifies the active phase and records failure only after child exit', async () => {
+  const timings = [];
+  let pid;
+  await assert.rejects(withManagedChild([process.execPath, '-e', 'process.on("SIGTERM",()=>process.exit(0));process.send({ready:true});setInterval(()=>{},1000)'], {
+    label: 'outcome', timings, timeoutMs: 500,
+  }, async ({ child, message, phase, guard }) => {
+    pid = child.pid;
+    await message();
+    phase('case-navigation-reset');
+    await guard(new Promise(() => {}));
+  }), (error) => {
+    assert.match(error.message, /outcome\/case-navigation-reset.*deadline exceeded/);
+    assert.equal(error.acceptanceTiming.status, 'failed');
+    assert.equal(error.acceptanceTiming.failurePhase, 'case-navigation-reset');
+    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+    return true;
+  });
+  assert.equal(timings.length, 1);
+  assert.equal(timings[0].status, 'failed');
+});
+
+test('invalid or excessive phase labels fail without leaving child ownership behind', async () => {
+  for (const bad of ['private/path', 'x'.repeat(65), 'excessive']) {
+    let pid;
+    await assert.rejects(withManagedChild([process.execPath, '-e', 'process.on("SIGTERM",()=>process.exit(0));process.send({ready:true});setInterval(()=>{},1000)'], {}, async ({ child, message, phase }) => {
+      pid = child.pid; await message();
+      if (bad === 'excessive') for (let i = 0; i < 65; i++) phase('case-pass');
+      else phase(bad);
+    }), /phase/);
+    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+  }
+});
+
+test('managed child rejects every falsy or non-Error callback failure after cleanup', async () => {
+  for (const reason of [undefined, null, false, 0, '', 'PRIVATE-REJECTION', { secret: 'PRIVATE-REJECTION' }, new Proxy({}, { getPrototypeOf() { throw new Error('PRIVATE-REJECTION'); } })]) {
+    const timings = [];
+    let pid;
+    let ownedChild;
+    try {
+      await assert.rejects(withManagedChild([process.execPath, '-e', 'process.on("SIGTERM",()=>process.exit(0));process.send({ready:true});setInterval(()=>{},1000)'], { timings }, async ({ child, message, phase }) => {
+        ownedChild = child; pid = child.pid; await message(); phase('case-reject');
+        throw reason;
+      }), (error) => {
+        assert.match(error.message, /Non-Error acceptance failure/);
+        assert.doesNotMatch(error.message, /PRIVATE-REJECTION/);
+        assert.equal(error.acceptanceTiming.status, 'failed');
+        assert.equal(error.acceptanceTiming.failurePhase, 'case-reject');
+        assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+        return true;
+      });
+      assert.equal(timings.length, 1);
+      assert.equal(timings[0].status, 'failed');
+    } finally {
+      // Negative controls still own their fixture if the cleanup assertion regresses.
+      if (ownedChild && ownedChild.exitCode === null && ownedChild.signalCode === null) {
+        const exited = new Promise((resolve) => ownedChild.once('close', resolve));
+        ownedChild.kill('SIGKILL');
+        await exited;
+      }
+    }
+  }
+});
