@@ -4,25 +4,28 @@ import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { fileURLToPath } from 'node:url';
-import { buildServer } from '../packages/api/dist/index.js';
-import { PlaywrightChromiumEngine } from '../packages/engine-playwright/dist/index.js';
-import { NetworkPolicy } from '../packages/policy/dist/index.js';
-import { AgentBrowserClient } from '../packages/sdk-typescript/dist/index.js';
+import { loadConsumerSmokeRuntime } from './consumer-smoke-runtime.mjs';
 import { checkMcp, runExecutable } from './release-smoke.mjs';
-const require = createRequire(
-  new URL('../packages/engine-playwright/package.json', import.meta.url)
-);
-const { chromium } = require('playwright');
-const root = fileURLToPath(new URL('../', import.meta.url));
-const version = JSON.parse(await readFile(new URL('../package.json', import.meta.url))).version;
-const live = process.argv.includes('--live');
-const disconnect = process.argv.includes('--disconnect');
-assert.ok(process.argv.slice(2).every((arg) => arg === '--live' || arg === '--disconnect'));
+
+const runtime = await loadConsumerSmokeRuntime({
+    live: { type: 'boolean', default: false },
+    disconnect: { type: 'boolean', default: false },
+});
+const {
+  values: { live, disconnect },
+  version,
+  buildServer,
+  PlaywrightChromiumEngine,
+  NetworkPolicy,
+  cliCommand,
+  mcpCommand,
+  provenance,
+} = runtime;
+const { AgentBrowserClient } = runtime.sdk;
+const { chromium } = runtime.playwright;
 const profile = await mkdtemp(join(tmpdir(), 'agentbrowser-cdp-smoke-'));
 const chrome = spawn(
   process.env.AGENTBROWSER_CHROME_PATH ??
@@ -38,6 +41,13 @@ const chrome = spawn(
   ],
   { stdio: 'ignore' }
 );
+let chromeDidClose = false;
+const chromeClosed = new Promise((resolve) =>
+  chrome.once('close', (...args) => {
+    chromeDidClose = true;
+    resolve(args);
+  })
+);
 let spawnError;
 chrome.on('error', (error) => {
   spawnError = error;
@@ -51,6 +61,10 @@ const fixture = createServer((request, response) => {
     `<title>CDP profile fixture</title><button>${request.headers.cookie?.includes('operator-marker=shared') ? 'Shared profile confirmed' : 'No profile marker'}</button>`
   );
 });
+let qualificationReport;
+let disconnectReport;
+let workflowError;
+let workflowFailed = false;
 try {
   let port;
   for (let attempt = 0; attempt < 150; attempt++) {
@@ -98,8 +112,7 @@ try {
   const cli = async (...args) => {
     const result = await runExecutable(
       [
-        process.execPath,
-        join(root, 'packages/cli/dist/bin.js'),
+        ...cliCommand,
         '--base-url',
         baseUrl,
         '--timeout',
@@ -177,7 +190,7 @@ try {
   await client.sessions.close(session.sessionId);
   assert.equal(sentinel.isClosed(), false);
   assert.equal((await fetch(`${endpoint}/json/version`)).status, 200);
-  await checkMcp([process.execPath, join(root, 'packages/mcp-server/dist/bin.js')], {
+  await checkMcp(mcpCommand, {
     expectedVersion: version,
     env,
     timeoutMs: 120000,
@@ -213,9 +226,8 @@ try {
     assert.equal((await client.sessions.listPages(attached.sessionId)).length, 0);
     assert.equal((await client.sessions.get(attached.sessionId)).sessionId, attached.sessionId);
     await client.sessions.createPage(attached.sessionId);
-    const exited = new Promise((resolve) => chrome.once('exit', resolve));
     chrome.kill('SIGTERM');
-    await Promise.race([exited, delay(5000)]);
+    await Promise.race([chromeClosed, delay(5000)]);
     assert.ok(
       chrome.exitCode !== null || chrome.signalCode !== null,
       'Fixture Chrome did not stop'
@@ -244,8 +256,7 @@ try {
     assert.equal((await fetch(`${baseUrl}/v1/sessions/${attached.sessionId}`)).status, 401);
     const command = await runExecutable(
       [
-        process.execPath,
-        join(root, 'packages/cli/dist/bin.js'),
+        ...cliCommand,
         '--base-url',
         baseUrl,
         'session',
@@ -255,7 +266,7 @@ try {
       { env, expectedExitCode: 1 }
     );
     assert.match(command.stderr, /close-cause=engine_disconnected/);
-    await checkMcp([process.execPath, join(root, 'packages/mcp-server/dist/bin.js')], {
+    await checkMcp(mcpCommand, {
       expectedVersion: version,
       env,
       timeoutMs: 120000,
@@ -272,38 +283,76 @@ try {
       JSON.stringify(envelope),
       /operator_window_closed|"closeCause":"engine_crash"|DevToolsActivePort/
     );
-    console.log(
-      JSON.stringify({
-        disconnectQualification: 'PASS',
-        closeCause: 'engine_disconnected',
-        lastPageClosePreservesSession: true,
-        transports: ['REST', 'SDK', 'CLI', 'MCP'],
-      })
-    );
+    disconnectReport = {
+      disconnectQualification: 'PASS',
+      closeCause: 'engine_disconnected',
+      lastPageClosePreservesSession: true,
+      transports: ['REST', 'SDK', 'CLI', 'MCP'],
+    };
   }
-  console.log(
-    JSON.stringify({
-      qualification: 'PASS',
-      productVersion: version,
-      browserVersion,
-      endpointClass: 'loopback_http',
-      profileSharing: true,
-      unownedTabsPreserved: true,
-      ownedPopupAdopted: true,
-      detachPreservedBrowser: true,
-      disabledRefusal: refused.error.details.reason,
-    })
-  );
-} finally {
-  await disabled?.close();
-  await server?.close();
-  await observer?.close();
-  fixture.closeAllConnections();
-  await new Promise((resolve) => fixture.close(resolve));
-  if (chrome.exitCode === null && chrome.signalCode === null) {
-    chrome.kill('SIGTERM');
-    await Promise.race([new Promise((resolve) => chrome.once('exit', resolve)), delay(5000)]);
-    if (chrome.exitCode === null && chrome.signalCode === null) chrome.kill('SIGKILL');
-  }
-  await rm(profile, { recursive: true, force: true });
+  qualificationReport = {
+    qualification: 'PASS',
+    productVersion: version,
+    ...provenance,
+    browserVersion,
+    endpointClass: 'loopback_http',
+    profileSharing: true,
+    unownedTabsPreserved: true,
+    ownedPopupAdopted: true,
+    detachPreservedBrowser: true,
+    disabledRefusal: refused.error.details.reason,
+  };
+} catch (error) {
+  workflowFailed = true;
+  workflowError = error;
 }
+
+const cleanupErrors = [];
+for (const cleanup of [
+  () => disabled?.close(),
+  () => server?.close(),
+  () => observer?.close(),
+  async () => {
+    fixture.closeAllConnections();
+    if (fixture.listening) {
+      await new Promise((resolve, reject) =>
+        fixture.close((error) => (error ? reject(error) : resolve()))
+      );
+    }
+  },
+]) {
+  try {
+    await cleanup();
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+}
+try {
+  if (chrome.pid && chrome.exitCode === null && chrome.signalCode === null) {
+    chrome.kill('SIGTERM');
+    await Promise.race([chromeClosed, delay(5000)]);
+    if (chrome.exitCode === null && chrome.signalCode === null) {
+      chrome.kill('SIGKILL');
+      await Promise.race([chromeClosed, delay(5000)]);
+      throw new Error('Forced Chrome cleanup: browser descendants remain unverified');
+    }
+  }
+  if (!chromeDidClose) await Promise.race([chromeClosed, delay(5000)]);
+  assert.ok(chromeDidClose, 'Fixture Chrome did not fully close after cleanup');
+} catch (error) {
+  cleanupErrors.push(error);
+}
+try {
+  await rm(profile, { recursive: true, force: true });
+} catch (error) {
+  cleanupErrors.push(error);
+}
+if (cleanupErrors.length > 0) {
+  throw new AggregateError(
+    [...(workflowFailed ? [workflowError] : []), ...cleanupErrors],
+    'CDP smoke cleanup failed'
+  );
+}
+if (workflowFailed) throw workflowError;
+if (disconnectReport) console.log(JSON.stringify(disconnectReport));
+console.log(JSON.stringify(qualificationReport));

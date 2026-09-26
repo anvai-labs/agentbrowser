@@ -2,21 +2,25 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
-import { join } from 'node:path';
-import { buildServer } from '../packages/api/dist/index.js';
-import { PlaywrightChromiumEngine } from '../packages/engine-playwright/dist/index.js';
-import { NetworkPolicy } from '../packages/policy/dist/index.js';
-import { isNavigationFailureReason } from '../packages/protocol/dist/index.js';
-import { AgentBrowserClient } from '../packages/sdk-typescript/dist/index.js';
+import { loadConsumerSmokeRuntime } from './consumer-smoke-runtime.mjs';
 import { checkMcp, runExecutable } from './release-smoke.mjs';
 
-const root = fileURLToPath(new URL('../', import.meta.url));
-const version = JSON.parse(await readFile(new URL('../package.json', import.meta.url))).version;
-const headed = process.argv.includes('--headed');
-const live = process.argv.includes('--live');
-assert.ok(process.argv.slice(2).every(arg => ['--headed', '--live'].includes(arg)));
+const runtime = await loadConsumerSmokeRuntime({
+    headed: { type: 'boolean', default: false },
+    live: { type: 'boolean', default: false },
+});
+const {
+  values: { headed, live },
+  version,
+  buildServer,
+  PlaywrightChromiumEngine,
+  NetworkPolicy,
+  cliCommand,
+  mcpCommand,
+  provenance,
+} = runtime;
+const { AgentBrowserClient } = runtime.sdk;
+const { isNavigationFailureReason } = runtime.protocol;
 const fixture = createServer((_request, response) => {
   response.writeHead(502, { 'x-agentbrowser-blocked': '1', 'x-agentbrowser-reason': 'dns_nxdomain' });
   response.end('<!doctype html><button>Ordinary origin content</button>');
@@ -54,7 +58,7 @@ try {
   const session = await client.sessions.create({tenantId:'navigation-smoke',headless:!headed,ttlMs:900000,idleTimeoutMs:300000});
   const page = await client.sessions.createPage(session.sessionId);
   try {
-    await checkMcp([process.execPath,join(root,'packages/mcp-server/dist/bin.js')],{
+    await checkMcp(mcpCommand,{
       expectedVersion:version,env,timeoutMs:600000,
       async exercise({request}) {
         for(const target of targets) {
@@ -65,7 +69,7 @@ try {
           const mcp = await request('tools/call',{name:'browser_navigate',arguments:{sessionId:session.sessionId,pageId:page.pageId,url:target.url,waitUntil:'domcontentloaded'}});
           const mcpValue = mcp.structuredContent ?? JSON.parse(mcp.content[0].text);
           const expected = classify(rest);
-          const cli = await runExecutable([process.execPath,join(root,'packages/cli/dist/bin.js'),'--base-url',baseUrl,'--timeout','60000','--json','navigate',session.sessionId,page.pageId,target.url,'--wait-until','domcontentloaded'],{env,timeoutMs:65000,expectedExitCode: expected === 'success' ? 0 : 1});
+          const cli = await runExecutable([...cliCommand,'--base-url',baseUrl,'--timeout','60000','--json','navigate',session.sessionId,page.pageId,target.url,'--wait-until','domcontentloaded'],{env,timeoutMs:65000,expectedExitCode: expected === 'success' ? 0 : 1});
           const cliValue = JSON.parse(cli.stdout.trim() || cli.stderr.trim());
           const outcomes = {rest:expected,sdk:classify(sdk),mcp:classify(mcpValue),cli:classify(cliValue)};
           assert.equal(mcp.isError === true, outcomes.mcp !== 'success');
@@ -77,7 +81,17 @@ try {
     });
   } finally {await client.sessions.close(session.sessionId);}
 } finally {
-  fixture.closeAllConnections();
-  await Promise.all([server.close(),new Promise(resolve=>fixture.close(resolve))]);
+  const cleanup = await Promise.allSettled([
+    Promise.resolve().then(() => server.close()),
+    Promise.resolve().then(async () => {
+      fixture.closeAllConnections();
+      if (fixture.listening) await new Promise((resolve, reject) =>
+        fixture.close((error) => error ? reject(error) : resolve()));
+    }),
+  ]);
+  const failures = cleanup.filter((entry) => entry.status === 'rejected');
+  if (failures.length) throw new AggregateError(failures.map((entry) => entry.reason), 'Navigation smoke cleanup failed');
 }
-console.log(JSON.stringify({status:'pass',version,headed,live,observations,limits:'Live targets are observations, not deterministic wall/DNS fixtures. No bot-wall inference; owned service/session only.'}));
+console.log(JSON.stringify({status:'pass',version,headed,live,
+  ...provenance,
+  observations,limits:'Live targets are observations, not deterministic wall/DNS fixtures. No bot-wall inference; owned service/session only.'}));

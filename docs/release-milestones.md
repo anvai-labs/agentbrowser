@@ -1,5 +1,13 @@
 # Release milestones and acceptance gates
 
+## Candidate checkpoint: 1.12.0 browsing/session reliability
+
+Preparation starts from develop `7ccddb2` (PR #303). Public navigation reasons,
+active leases, bounded terminal facts and opt-in operator Chrome attachment form a
+minor-release checkpoint. Internal journal work remains gated. The
+[candidate evidence](spec/evidence/release-1.12.0.md) separates preparation from
+publication; 1.11.0 remains the published baseline until delivery is verified.
+
 ## Delivered checkpoint: 1.11.0 research and publication (2026-09-24)
 
 Version 1.11.0 is published from protected main `e00539e` after preparation PR #289
