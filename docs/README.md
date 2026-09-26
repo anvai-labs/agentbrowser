@@ -16,6 +16,7 @@ start with the [root README](../README.md).
 | Install the service / MCP binary, wire up a client | [README](../README.md#install-homebrew) |
 | Run, configure, monitor, or troubleshoot the service | [Operations guide](operations.md) |
 | Drive a long interactive form (custom comboboxes, repeated sections) | [Recipe: interactive forms](recipes/interactive-forms.md) |
+| Research SEC EDGAR filings (inventories, full documents, earnings metrics) | [Recipe: EDGAR filings](recipes/edgar-filings.md) |
 | Choose or implement an engine | [Engine matrix](engines.md) |
 | Call the REST API | `GET /openapi.json` on a running service |
 | Understand why a design decision was made | ADRs, below |
@@ -28,6 +29,9 @@ start with the [root README](../README.md).
 | Resume active work: local functional validation, priorities and release sequence | [Release milestones and local-functional pivot](release-milestones.md#local-functional-pivot-priority-and-sequence) |
 | Review deferred transport work and unresolved limitations | [Integration contract](transport-integration-contract.md) and [remediation tracker](engineering-review-remediation.md) |
 | Understand the completed connection-policy prerequisite and transport boundary | [T2a connection-authority design](connection-authority-design.md) |
+| See field findings from an intensive MCP consumer run (tabs, bot walls, session lifecycle) | [Consumer field handoff — 2026-09-24](consumer-field-handoff-2026-09-24.md) |
+| Implement the open consumer findings (paste-ready prompts, TDD + smoke gates) | [Consumer handoff: implementation briefs — 2026-09-25](consumer-field-handoff-2026-09-25-implementation-briefs.md) |
+| Implement the research-workload follow-ups through existing shared owners | [Consumer research intake and acceptance tasks](spec/design/consumer-research-intake.md) |
 
 ## Architecture Decision Records (ADRs)
 
