@@ -191,9 +191,9 @@ describe('Schema Validation - Error Codes', () => {
       'ENGINE_CRASHED',
     ];
 
-    requiredCodes.forEach((code) => {
+    for (const code of requiredCodes) {
       expect(Object.values(ErrorCode).includes(code as ErrorCode)).toBe(true);
-    });
+    }
   });
 
   it('should validate valid error envelope', () => {

@@ -5,7 +5,7 @@
  * All types in this file should be kept in sync with types.ts
  */
 
-import { Static, Type } from '@sinclair/typebox';
+import { Static, type TSchema, Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import { DELIVERED_ACTION_TYPES, DELIVERED_WAIT_TYPES, REF_PATTERN } from './types.js';
 import {
@@ -649,12 +649,12 @@ export function validate<T extends object>(
 ): { success: boolean; errors?: string[] } {
   try {
     // Check if value matches schema
-    const isValid = Value.Check(schema as any, value);
+    const isValid = Value.Check(schema as TSchema, value);
 
     if (!isValid) {
       // Collect validation errors
       const errors: string[] = [];
-      const errorsAny = Value.Errors(schema as any, value);
+      const errorsAny = Value.Errors(schema as TSchema, value);
 
       for (const error of errorsAny) {
         errors.push(`${error.path}/${error.message}`);
@@ -680,7 +680,7 @@ export function validate<T extends object>(
  */
 export function isValid(schema: object, value: unknown): boolean {
   try {
-    return Value.Check(schema as any, value);
+    return Value.Check(schema as TSchema, value);
   } catch {
     return false;
   }

@@ -89,7 +89,7 @@ export class SecretManager {
       // and may itself be a pasted credential.
       throw new SecretError(
         'SECRET_NOT_FOUND',
-        `No secret registered for that reference (input withheld)`
+        'No secret registered for that reference (input withheld)'
       );
     }
     return value;
