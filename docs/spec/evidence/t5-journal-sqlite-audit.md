@@ -1,7 +1,8 @@
 # T5 J2a: SQLite feasibility evidence
 
 Base: develop `e812fbc` (PR #300). Date: 2026-09-25.
-Status: local feasibility passed; delivery/CI pending. No concrete adapter implemented.
+Status: merged as PR #301 at `83b747b`; clean exact-head review and pre/post-merge
+CI 8/8 green. No concrete adapter implemented by this audit.
 Design: [runtime and ownership audit](../design/t5-journal-sqlite-audit.md).
 Next: [real adapter qualification](../design/t5-journal-sqlite-qualification.md).
 

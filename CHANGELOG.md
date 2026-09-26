@@ -9,6 +9,10 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ### Added
 
+- Internal SQLite storage-child ownership and external commit witness foundation,
+  with process-loss tests for acknowledgment ordering and stale-pair refusal. The
+  raw journal adapter, service enablement and durable recovery remain gated.
+
 - Journal storage audit and a dependency-free SQLite mechanism probe cover competing
   ownership, process-loss persistence and child cleanup in the existing CI Test job.
   Concrete adapter, external commit anchor and public durability remain gated.
