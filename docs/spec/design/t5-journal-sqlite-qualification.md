@@ -1,8 +1,27 @@
 # T5 J2b: concrete store implementation and qualification packet
 
-Status: planned; blocked on the explicit acceptance below, not authorized as a public
-capability by this document. Read [J2a architecture](t5-journal-sqlite-audit.md) and existing
+Status: J2b.1 ownership/anchor primitive implemented; full raw adapter qualification
+remains blocked on the acceptance below, with no public capability enabled. Read [J2a architecture](t5-journal-sqlite-audit.md) and existing
 [journal port](t5-journal-contract.md). Reuse their owners; do not invent a durable executor.
+
+## Current bounded implementation
+
+[J2b.1 evidence](../evidence/t5-journal-sqlite-owner.md) records the internal child-only
+owner/anchored-transaction primitive and real process-loss tests. It does not yet provide
+a manager or implement RawOperationJournalAdapter. Initialization fixes sequence zero,
+reserves the final anchor name exclusively before data initialization, and refuses any
+interrupted layout. Mutation callbacks use a revocable SQL facade with no raw connection or statement
+handles; authorization denies transaction/PRAGMA/attachment/witness-table changes and
+results reuse the bounded journalData snapshot. Retained methods expire before commit.
+Two derived rollback locks (store then anchor, busy timeout zero) prevent cloned data
+stores from sharing a live anchor. Close checkpoints successfully before closing data
+and releasing store then anchor ownership. Each commit syncs the store directory before
+anchor replacement, including a newly recreated WAL.
+
+Next J2b.2: compose the bounded child/IPC manager and existing raw port over this owner,
+reuse record validation and state semantics, then run unchanged adapter conformance.
+Physical resource, clock/key/retention, packaging and remaining crash gates still apply.
+Do not export or wire the primitive through the public service as an intermediate step.
 
 ## Delivery sequence for the implementing agent
 

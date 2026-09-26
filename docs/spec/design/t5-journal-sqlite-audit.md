@@ -44,6 +44,8 @@ workflow executor, browser adapter, transport selector or business retry loop.
 The future optional implementation lives under `control` behind an explicit factory;
 it is not eagerly re-exported by the default runtime entry point. One dedicated child
 process per canonical local store owns both SQLite connections and prepared statements.
+J2b.1 refines this to three connections: store lock, separate anchor lock, and data,
+preventing cloned stores from sharing a live anchor. See the qualification packet.
 A thread is not the selected design: process isolation also separates SQLite locks from
 unrelated in-process file closes or additional SQLite library copies. The child is an
 internal storage worker, not a network service or agent harness.

@@ -3,7 +3,8 @@
 Status: HTTP/replay publication merged; B1/B2 journal contract merged #285;
 C1a settlement merged #297; C1b authority composition merged #298;
 C2/C3 application guards and terminal/replay merged #299;
-C4a control views merged #300; J2a SQLite feasibility/audit prepared;
+C4a control views merged #300; J2a SQLite feasibility/audit merged #301;
+J2b.1 internal owner/anchor primitive implemented;
 runtime enablement gated and durable recovery unimplemented.
 Repository: agentbrowser. Depends on: T2.
 Inputs: core, contracts, execution, state-memory, security.
@@ -52,7 +53,10 @@ merged as #299. [C4a shared control views](../design/t5-journal-control-views.md
 now bound status/lifecycle disclosure by ACK. C4b runtime/transport selection stays gated;
 [J2a SQLite audit](../design/t5-journal-sqlite-audit.md) selects a built-in candidate
 without enabling it; [J2b qualification](../design/t5-journal-sqlite-qualification.md)
-loads the concrete ownership/anchor/crash/runtime gates. J3/J4 remain proposed.
+loads the concrete ownership/anchor/crash/runtime gates.
+[J2b.1 owner/anchor evidence](../evidence/t5-journal-sqlite-owner.md) records the first
+storage primitive; next compose the raw adapter and bounded child manager, qualify
+unchanged conformance, then remaining resource/runtime gates. J3/J4 remain proposed.
 Browser durability waits for its existing target/policy/approval owners to support
 post-storage-wait revalidation. Do not advertise recovery from J0 or this design.
 
