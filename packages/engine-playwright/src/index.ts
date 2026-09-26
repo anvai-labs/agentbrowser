@@ -698,6 +698,23 @@ function preferBundledEnv(): boolean {
   return value === '1' || value === 'true';
 }
 
+/**
+ * Parse AGENTBROWSER_CHROMIUM_ARGS into Chromium launch flags.
+ *
+ * Operator escape hatch for engine-level Chromium policies the page stack
+ * cannot override. Live case (2026-09-25): Chrome's Local Network Access
+ * enforcement kills same-origin XHR from pages ON a private IP — a
+ * LAN-hosted console's fetch to its own origin throws without reaching
+ * the server — defeating the CIDR allowlist for exactly the flows the
+ * operator opted into.
+ *
+ * Space-separated; unset or blank yields no flags. Only applies on the
+ * LAUNCH path: see the cdpEndpoint warning in the constructor.
+ */
+export function extraChromiumArgs(raw: string | undefined): string[] {
+  return (raw ?? '').trim().split(/\s+/).filter(Boolean);
+}
+
 export class PlaywrightChromiumEngine implements BrowserEngine {
   private _name = 'playwright-chromium';
   private _version = '1.0.0';
@@ -718,6 +735,19 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     this.webSocketPolicy = options.webSocketPolicy;
     this.browserFamily = options.browser ?? 'chromium';
     this.cdpEndpoint = options.cdpEndpoint;
+    // A CDP-connected engine ATTACHES to a browser someone else started,
+    // so no launch argument can apply — launch args are fixed at browser
+    // start. AGENTBROWSER_CHROMIUM_ARGS is therefore silently inert here,
+    // and the silence is the defect: an operator who sets the variable to
+    // work around an engine-level Chromium policy has no way to learn it
+    // did nothing. Say so once, at construction.
+    if (this.cdpEndpoint !== undefined && process.env.AGENTBROWSER_CHROMIUM_ARGS?.trim()) {
+      console.warn(
+        '[agentbrowser] AGENTBROWSER_CHROMIUM_ARGS is set but this engine connects over ' +
+          'CDP to an already-running browser; launch flags cannot apply. Pass the flags to ' +
+          'that browser when it starts, or drop cdpEndpoint to let agentbrowser launch it.'
+      );
+    }
     this.chromeBinaryPath = options.chromeBinaryPath ?? process.env.AGENTBROWSER_CHROME_PATH;
     this.preferBundled = options.preferBundled ?? preferBundledEnv();
     this.brandedChromeCandidates =
@@ -909,6 +939,14 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     // the live detectable signal was navigator.webdriver, which the init
     // script rewrites to a real browser's `false`.
     const args = ['--disable-blink-features=AutomationControlled'];
+    // Operator escape hatch for engine-level Chromium policies the page
+    // stack cannot override. Live case (2026-09-25): Chrome's Local
+    // Network Access enforcement kills same-origin XHR from pages ON a
+    // private IP (a LAN-hosted console's fetch to its own origin throws
+    // without reaching the server), defeating the CIDR allowlist for
+    // exactly the flows the operator opted into. Space-separated; empty
+    // unset means no extra flags.
+    args.push(...extraChromiumArgs(process.env.AGENTBROWSER_CHROMIUM_ARGS));
     if (this.browserFamily !== 'chromium') return { args };
     const resolved = await this.resolveHeadedExecutable();
     console.info(`[agentbrowser] headed chromium binary: ${resolved ?? 'bundled Chromium'}`);
