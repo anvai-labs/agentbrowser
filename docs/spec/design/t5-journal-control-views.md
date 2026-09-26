@@ -1,6 +1,6 @@
 # T5 C4a: acknowledged control views and the C4b selection seam
 
-Status: C4a internally implemented and regression-qualified; protected delivery pending.
+Status: C4a merged #300 at `e812fbc`; clean exact-head review and pre/post-merge CI 8/8.
 Parent: [journal contract](t5-journal-contract.md).
 Evidence: [control-view qualification](../evidence/t5-journal-control-views.md).
 Load this module only for T5 journal continuation. No additional mode context is required.
@@ -82,7 +82,8 @@ browser-free and ephemeral; no mandatory database, broker or hosted dependency.
 
 ## Agent continuation and gates
 
-1. J2: audit one optional SQLite store against supported Node/Bun packaging, exclusive
+1. J2: follow the [SQLite audit](t5-journal-sqlite-audit.md) and
+   [qualification packet](t5-journal-sqlite-qualification.md). Audit one optional SQLite store against supported Node/Bun packaging, exclusive
    ownership, bounded I/O and actual process-loss/corruption/disk-full tests. Write the
    concrete design and failing-first acceptance before choosing a runtime dependency.
 2. C4b: introduce one trusted qualification/configuration owner consumed by service

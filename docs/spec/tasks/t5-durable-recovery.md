@@ -3,6 +3,7 @@
 Status: HTTP/replay publication merged; B1/B2 journal contract merged #285;
 C1a settlement merged #297; C1b authority composition merged #298;
 C2/C3 application guards and terminal/replay merged #299;
+C4a control views merged #300; J2a SQLite feasibility/audit prepared;
 runtime enablement gated and durable recovery unimplemented.
 Repository: agentbrowser. Depends on: T2.
 Inputs: core, contracts, execution, state-memory, security.
@@ -49,7 +50,9 @@ tracks intent/marker settlement through the existing ticket and dispatch helpers
 [C2 application-owned pins and C3 terminal/replay](../design/t5-journal-application-terminal.md)
 merged as #299. [C4a shared control views](../design/t5-journal-control-views.md)
 now bound status/lifecycle disclosure by ACK. C4b runtime/transport selection stays gated;
-J2–J4 remain proposed and loaded on demand.
+[J2a SQLite audit](../design/t5-journal-sqlite-audit.md) selects a built-in candidate
+without enabling it; [J2b qualification](../design/t5-journal-sqlite-qualification.md)
+loads the concrete ownership/anchor/crash/runtime gates. J3/J4 remain proposed.
 Browser durability waits for its existing target/policy/approval owners to support
 post-storage-wait revalidation. Do not advertise recovery from J0 or this design.
 
