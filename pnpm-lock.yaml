@@ -245,7 +245,7 @@ importers:
         specifier: workspace:*
         version: link:../protocol
       playwright:
-        specifier: ^1.49.1
+        specifier: ^1.62.1
         version: 1.62.1
     devDependencies:
       '@agentbrowser/testkit':

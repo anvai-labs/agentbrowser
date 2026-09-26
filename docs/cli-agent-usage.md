@@ -358,3 +358,32 @@ by this slice. A later internal consumption recollects evidence and refuses drif
 atomic app-owned submission and independent acceptance remain separate gates. See the
 [public review design](spec/design/t6-public-evidence-review.md) and
 [qualification evidence](spec/evidence/t6-public-evidence-review.md).
+
+### Sampled session lifetime
+
+`agentbrowser session get SESSION_ID` displays the server's sampled lease deadlines;
+`--json` preserves the optional `lease` object on create/get/list. All four timestamps
+(`sampledAt`, `expiresAt`, `lastActivityAt`, `idleExpiresAt`) are Unix epoch milliseconds.
+Inspection does not refresh idle activity. TTL expires at its deadline; idle expiry
+uses the existing strictly-after boundary. Grants and browser attachment can end sooner.
+Older servers or non-active session states may omit the lease: absence means unknown,
+not unlimited lifetime. See [R5a design](spec/design/session-lease-visibility.md).
+
+An authenticated `session get` for a recently ended owned session keeps the existing
+not-found error and may add bounded close cause, end time and sampled deadlines.
+Terminal availability is zero; the original deadlines remain visible to explain an
+early close. Live remaining time is derived at its sample, not a countdown.
+A revoked delegated token and another tenant receive no terminal facts. Engine or
+window intent is not inferred from error text. See the
+[R5b1 design](spec/design/session-close-causes.md).
+
+### Navigation failure diagnostics
+
+`agentbrowser navigate SESSION PAGE URL --json` preserves successful result JSON.
+Blocked or timeout results include `reason` and exit 1; recognized thrown navigation
+failures emit an `{ "error": { "code", "message", "retryable", "details" } }` object
+on stderr with exit 1. `details` contains the bounded reason and any valid operationId
+needed for reconciliation. Read both exit status and the JSON; do not infer a bot wall
+or automatically repeat a navigation after an ambiguous timeout. The SDK and REST
+keep the corresponding result/error fields, and MCP marks failed navigation `isError`.
+See [reason definitions and limits](spec/design/navigation-failure-reasons.md).

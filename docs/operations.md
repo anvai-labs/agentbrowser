@@ -573,3 +573,47 @@ authority model and the acceptance fixture
 | Observation shows a combobox as selected but you cannot tell what, or a checkbox state you cannot see | Custom-widget selections live in the DOM, not the accessibility output: read `browser_html` (inline, maxBytes-bounded, not secret-redacted). Checkbox/radio elements carry `checked` on observations; React-controlled widgets can still hide state in the DOM attribute, so trust the observation field over the raw HTML attribute. |
 | Browser download slow/failing | First service start bootstraps Chromium; on Homebrew installs it lands in `$(brew --prefix)/var/agentbrowser/browsers`. |
 | Engine crash loops | Check `sessions_crashed_total` and the JSON error log for the crash reason; the session is terminated cleanly — retry with a new session, and file an issue with the log line if it reproduces. |
+
+
+## Attach to a dedicated operator Chrome profile
+
+This local compatibility lane shares an operator-launched Chrome profile. It does not
+guarantee login, device trust, residential routing, or passage through site challenges.
+Use a dedicated non-daily profile: its credentials and state are intentionally shared.
+Never expose Chrome's debugging port to the LAN. Normal sessions remain isolated.
+
+On macOS, launch a separate Chrome profile, then start a separate AgentBrowser service:
+
+```bash
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 \
+  --user-data-dir="$HOME/agentbrowser-operator-profile"
+```
+
+```bash
+# Set AGENTBROWSER_API_KEY to a strong private bearer credential first.
+AGENTBROWSER_API_KEYS="$AGENTBROWSER_API_KEY:local" \
+AGENTBROWSER_CDP_ENDPOINT=http://127.0.0.1:9222 \
+AGENTBROWSER_CDP_ALLOW_UNENFORCED_EGRESS=true \
+HOST=127.0.0.1 PORT=5710 agentbrowser-server
+agentbrowser --base-url http://127.0.0.1:5710 session create --tenant local --cdp-attach --json
+```
+
+The acknowledgement means **existing-profile network traffic is not contained by
+AgentBrowser**. Only initial explicit navigation URLs are checked. Redirects, page
+scripts, workers, subresources, click/form navigation, popups and downloads are outside
+that guarantee. Use an external network perimeter where required, or keep using normal
+isolated sessions. Cookie export/seed, launch overrides, per-session policy overrides,
+delegated sessions and download enablement refuse in this lane.
+
+`AGENTBROWSER_HOSTED=true` disables attachment. Multi-tenant credentials, remote clients
+and non-loopback listeners also refuse. Bearer API keys for one tenant are mandatory;
+export the same AGENTBROWSER_API_KEY for CLI/SDK/MCP clients. All requests use the existing
+authentication/ownership checks. This is a local single trust domain. Both endpoint and explicit acknowledgement are required at startup.
+Requests can select `cdpAttach: true` but cannot supply endpoints or acknowledgements.
+
+Expect `diagnostics.attachment=cdp_attach`, `endpointClass=loopback_http`, and
+`egress=navigation_preflight_only`, plus persistent warnings. Only newly created owned
+tabs appear in page inventory. Closing the session closes those tabs and disconnects;
+Chrome and pre-existing tabs remain. One attached session per service engine is admitted at a time.
+See the [design and qualification contract](spec/design/operator-cdp-attach.md).

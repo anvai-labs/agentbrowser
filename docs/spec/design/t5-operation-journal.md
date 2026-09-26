@@ -1,7 +1,8 @@
 # T5: shared dispatch and optional operation journal
 
-Status: J0 and J1-A HTTP/replay publication implemented; B1/B2 contract merged #285.
-Baseline: develop `5ebf820` (PR #285). J1-C integration and J2–J4 remain proposed. This design does not advertise durable recovery.
+Status: J0/publication and J1 contract/composition through C4a merged through #300.
+Current baseline: develop `e812fbc`. J2a SQLite feasibility is recorded; concrete storage,
+C4b runtime enablement and J3/J4 recovery remain gated. This design advertises no recovery.
 Task: [T5](../tasks/t5-durable-recovery.md). Shared contracts remain in
 [execution](../execution.md) and [state/memory](../state-memory.md).
 
@@ -101,8 +102,8 @@ The implementation sequence is now split into demand-loaded packets:
 [J1-B port and J1-C integration](t5-journal-contract.md). The first durable qualification
 targets application writes only. Browser target/policy/approval checks need a separate
 post-storage-wait qualification through their existing owners. HTTP/replay publication is merged through [A3c/A4b](t5-browser-review-publication.md).
-The B1/B2 journal contract merged as PR #285 (`5ebf820`); runtime integration, a concrete
-store and recovery remain unimplemented. See [A1 evidence](../evidence/t5-finalization.md),
+B1/B2 merged #285 and internal authority/application/ACK composition merged through
+#300. Service enablement, a concrete store and recovery remain unimplemented. See [A1 evidence](../evidence/t5-finalization.md),
 [A2a evidence](../evidence/t5-session-publication.md) and
 [A2b application access](../evidence/t5-application-publication.md).
 
@@ -122,7 +123,9 @@ a durable marker can conservatively remain unknown even when no effect ran.
 
 ## J2: optional local store and retention
 
-Begin with one exclusively owned local SQLite adapter only after auditing the supported
+Follow the demand-loaded [SQLite audit](t5-journal-sqlite-audit.md) and
+[qualification packet](t5-journal-sqlite-qualification.md). Begin with one exclusively
+owned local SQLite adapter only after auditing the supported
 Node/Bun build and distribution matrix. Select one implementation, with lazy loading;
 browser-free ephemeral startup must not require it. No mandatory broker/database.
 Document transaction and filesystem acknowledgment semantics, ownership fencing,

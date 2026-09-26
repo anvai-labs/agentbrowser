@@ -5,8 +5,16 @@ classification merged in PR #286 (`1aa63f0`), with pre/post-merge CI green.
 The [R4 browser ownership prerequisite](research-browser-ownership.md) was
 merged in PR #287 (`1a1afc7`), with pre/post-merge CI green.
 [Shared launch diagnostics](session-launch-diagnostics.md) merged in PR #288
-(`0b1f1da`) with pre/post-merge CI green. R1–R4 are included in the 1.11.0
-release candidate; R5–R7 remain proposed.
+(`0b1f1da`) with pre/post-merge CI green. R1–R4 shipped in the
+ [1.11.0 checkpoint](../evidence/release-1.11.0.md). R5a
+ [active lease visibility](session-lease-visibility.md) merged in PR #292 (`b80211d`),
+ and R3 [navigation reasons](navigation-failure-reasons.md) merged in PR #293
+ (`26a863d`); both are unreleased. R5b1 [bounded close causes](session-close-causes.md)
+ and the [R7 EDGAR recipe](../../recipes/edgar-filings.md) are delivered through PR #295.
+ R6 [operator CDP attachment](operator-cdp-attach.md)
+ merged in PR #294 (`752da5e`) and is unreleased.
+ R5b2 [typed disconnect evidence](session-disconnect.md) is an unreleased source candidate
+ with a qualified headed process-loss smoke across REST, SDK, CLI and MCP.
 Source: [consumer field report, 2026-09-24](../../consumer-field-handoff-2026-09-24.md).
 Code reviewed: develop `5eae01d` plus the storage-neutral journal in PR #285,
 merged as `5ebf820`. The report does not identify the exact service/MCP build used; observations
@@ -175,5 +183,8 @@ the general page budget and result-to-page correlation still require their own
 shared-owner design and tests. R3 uses the existing `INTERNAL` error with a static
 `browser_error_document` reason; it does not add HTTP status or redirect-chain fields.
 R4 diagnostics are implemented in the [bounded shared contract](session-launch-diagnostics.md).
-R5 lifecycle projection, R6 profile attachment and R7 recipe remain next packets in
-that order. Installed-harness overflow qualification remains T8.
+R5b1 lifecycle projection and the R7 recipe are delivered through PR #295. R6
+operator attachment merged in PR #294 (`752da5e`). R5b2 typed engine-disconnect
+evidence is implemented in the separate source candidate linked above. These additions
+are unreleased; none adds durable recovery or proves operator intent behind browser loss.
+Installed-harness overflow qualification remains T8.

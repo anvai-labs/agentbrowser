@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { MetricsRegistry, SessionCoordinator } from '@agentbrowser/core';
+import { EngineError } from '@agentbrowser/engine';
 import { SessionViewSchema } from '@agentbrowser/protocol';
 import { FakeEngine } from '@agentbrowser/testkit';
 import Ajv2020 from 'ajv/dist/2020';
@@ -55,6 +57,18 @@ describe('captured session identity and diagnostics', () => {
       for (const value of [view, read.json(), ...list.json().sessions]) {
         expect(new Ajv2020({ strict: false }).compile(SessionViewSchema)(value)).toBe(true);
         expect(value.diagnostics).toEqual(facts());
+        expect(value.lease).toMatchObject({
+          expiresAt: Date.parse(view.createdAt) + view.ttlMs,
+          idleExpiresAt: Date.parse(view.createdAt) + view.idleTimeoutMs,
+          lastActivityAt: Date.parse(view.createdAt),
+        });
+        expect(value.lease.sampledAt).toBeGreaterThanOrEqual(Date.parse(view.createdAt));
+        expect(value.leaseRemainingMs).toBe(
+          Math.max(
+            0,
+            Math.min(value.lease.expiresAt, value.lease.idleExpiresAt) - value.lease.sampledAt
+          )
+        );
         expect(value.engine).toEqual(view.engine);
         expect(value.engine).not.toHaveProperty('capabilities');
       }
@@ -65,6 +79,7 @@ describe('captured session identity and diagnostics', () => {
       });
       expect(denied.statusCode).toBe(403);
       expect(denied.body).not.toContain('diagnostics');
+      expect(denied.body).not.toContain('idleExpiresAt');
       const otherList = await server.inject({
         method: 'GET',
         url: '/v1/sessions',
@@ -156,3 +171,227 @@ describe('captured session identity and diagnostics', () => {
     }
   );
 });
+
+describe('session lease view', () => {
+  it('projects create/get/list without refreshing idle activity', async () => {
+    let now = 10_000;
+    const coordinator = new SessionCoordinator({ now: () => now });
+    const service = new AgentBrowserService({ engine: new FakeEngine(), coordinator });
+    try {
+      const created = await service.createSession({
+        tenantId: 'owner',
+        ttlMs: 1000,
+        idleTimeoutMs: 100,
+      });
+      expect(created.lease).toEqual({
+        sampledAt: 10_000,
+        expiresAt: 11_000,
+        lastActivityAt: 10_000,
+        idleExpiresAt: 10_100,
+      });
+      expect(created.leaseRemainingMs).toBe(100);
+      now = 10_050;
+      for (const view of [
+        service.getSession(created.sessionId),
+        ...service.listSessions('owner'),
+      ]) {
+        expect(view?.lease).toEqual({ ...created.lease, sampledAt: now });
+        expect(view?.leaseRemainingMs).toBe(50);
+      }
+      expect(service.listSessions('other')).toEqual([]);
+      now = 10_101;
+      expect(service.getSession(created.sessionId)).toBeUndefined();
+      expect(service.listSessions('owner')).toEqual([]);
+    } finally {
+      await service.shutdown();
+    }
+  });
+
+  it('projects zero availability after an explicit close starts even if cleanup fails', async () => {
+    const coordinator = new SessionCoordinator({ now: () => 10_000 });
+    const service = new AgentBrowserService({ engine: new FakeEngine(), coordinator });
+    try {
+      const created = await service.createSession({ tenantId: 'owner' });
+      const context = coordinator.captureForCleanup(created.sessionId);
+      if (!context) throw new Error('Expected live session');
+      vi.spyOn(context.engineSession, 'close').mockRejectedValueOnce(new Error('cleanup failed'));
+      await expect(service.closeSession(created.sessionId)).rejects.toThrow();
+      expect(service.getSession(created.sessionId)).toMatchObject({
+        status: 'engine_crashed',
+        closeCause: 'explicit_close',
+        leaseRemainingMs: 0,
+      });
+      expect(service.getSession(created.sessionId)).not.toHaveProperty('lease');
+    } finally {
+      await service.shutdown();
+    }
+  });
+});
+
+describe('bounded terminal session projection', () => {
+  it('adds terminal facts only for the matching independently authenticated tenant', async () => {
+    const server = await buildServer({
+      engine: new FakeEngine(),
+      apiKeys: new Map([
+        [createHash('sha256').update('owner-key').digest('hex'), 'owner'],
+        [createHash('sha256').update('other-key').digest('hex'), 'other'],
+      ]),
+    });
+    const owner = { authorization: 'Bearer owner-key' };
+    try {
+      const created = await server.inject({
+        method: 'POST',
+        url: '/v1/sessions',
+        headers: owner,
+        payload: { tenantId: 'owner' },
+      });
+      const { sessionId } = created.json();
+      expect(
+        (
+          await server.inject({
+            method: 'DELETE',
+            url: `/v1/sessions/${sessionId}`,
+            headers: owner,
+          })
+        ).statusCode
+      ).toBe(200);
+
+      const ended = await server.inject({
+        method: 'GET',
+        url: `/v1/sessions/${sessionId}`,
+        headers: owner,
+      });
+      expect(ended.statusCode).toBe(404);
+      expect(ended.json()).toMatchObject({
+        error: {
+          code: 'SESSION_NOT_FOUND',
+          details: {
+            sessionTerminal: {
+              closeCause: 'explicit_close',
+              state: 'closed',
+              leaseRemainingMs: 0,
+            },
+          },
+        },
+      });
+
+      const denied = await server.inject({
+        method: 'GET',
+        url: `/v1/sessions/${sessionId}`,
+        headers: { authorization: 'Bearer other-key' },
+      });
+      const missing = await server.inject({
+        method: 'GET',
+        url: '/v1/sessions/ses_missing',
+        headers: { authorization: 'Bearer other-key' },
+      });
+      expect(denied.statusCode).toBe(404);
+      expect(denied.json()).toEqual(missing.json());
+      expect(denied.body).not.toContain('explicit_close');
+      expect(denied.body).not.toContain('sessionTerminal');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('replaces a raced handler failure with a static terminal-only envelope', async () => {
+    const engine = new FakeEngine();
+    const server = await buildServer({
+      engine,
+      apiKeys: new Map([[createHash('sha256').update('owner-key').digest('hex'), 'owner']]),
+    });
+    const owner = { authorization: 'Bearer owner-key' };
+    const release = Promise.withResolvers<void>();
+    try {
+      const created = await server.inject({
+        method: 'POST',
+        url: '/v1/sessions',
+        headers: owner,
+        payload: { tenantId: 'owner' },
+      });
+      const sessionId = created.json().sessionId as string;
+      const page = await server.inject({
+        method: 'POST',
+        url: `/v1/sessions/${sessionId}/pages`,
+        headers: owner,
+      });
+      const raw = engine.getFakePage(engine.getSessionIds()[0] as string, page.json().pageId);
+      if (!raw) throw new Error('Expected fake page');
+      const entered = Promise.withResolvers<void>();
+      vi.spyOn(raw, 'observe').mockImplementation(async () => {
+        entered.resolve();
+        await release.promise;
+        throw new EngineError('SESSION_NOT_FOUND', 'private late message', false, {
+          privateReason: 'secret-late-detail',
+        });
+      });
+
+      const pending = server.inject({
+        method: 'POST',
+        url: `/v1/sessions/${sessionId}/pages/${page.json().pageId}/observe`,
+        headers: owner,
+        payload: {},
+      });
+      await entered.promise;
+      expect(
+        (
+          await server.inject({
+            method: 'DELETE',
+            url: `/v1/sessions/${sessionId}`,
+            headers: owner,
+          })
+        ).statusCode
+      ).toBe(200);
+      release.resolve();
+      const raced = await pending;
+      expect(raced.statusCode).toBe(404);
+      expect(raced.json().error).toMatchObject({
+        code: 'SESSION_NOT_FOUND',
+        message: 'Session does not exist.',
+        retryable: false,
+        details: { sessionTerminal: { closeCause: 'explicit_close', state: 'closed' } },
+      });
+      expect(Object.keys(raced.json().error.details)).toEqual(['sessionTerminal']);
+      expect(raced.body).not.toContain('private late message');
+      expect(raced.body).not.toContain('secret-late-detail');
+    } finally {
+      release.resolve();
+      await server.close();
+    }
+  });
+});
+
+it.each([2, 3])(
+  'releases session allocation when clock sample %s fails during service creation',
+  async (failAt) => {
+    let calls = 0;
+    const coordinator = new SessionCoordinator({
+      now: () => (++calls === failAt ? Number.NaN : 1000),
+    });
+    const engine = new FakeEngine();
+    const create = engine.createSession.bind(engine);
+    let close: ReturnType<typeof vi.spyOn>;
+    let allocated: Awaited<ReturnType<typeof create>>;
+    vi.spyOn(engine, 'createSession').mockImplementation(async (options) => {
+      const session = await create(options);
+      allocated = session;
+      close = vi.spyOn(session, 'close');
+      return session;
+    });
+    const metrics = new MetricsRegistry();
+    const increment = vi.spyOn(metrics, 'incrementCounter');
+    const service = new AgentBrowserService({ engine, coordinator, metrics });
+    try {
+      await expect(
+        service.createSession({ tenantId: 'owner', controlMode: 'delegated', allowDownloads: true })
+      ).rejects.toThrow('An unexpected engine error occurred');
+      expect(coordinator.getSessionCount()).toBe(0);
+      expect(close!).toHaveBeenCalledTimes(1);
+      await expect(allocated!.newPage()).rejects.toThrow('Session is closed');
+      expect(increment).not.toHaveBeenCalledWith('sessions_created_total');
+      expect(service.listSessions('owner')).toEqual([]);
+    } finally {
+      await service.shutdown();
+    }
+  }
+);

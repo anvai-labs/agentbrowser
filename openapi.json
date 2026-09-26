@@ -6091,6 +6091,9 @@
       "SessionRequest": {
         "type": "object",
         "properties": {
+          "cdpAttach": {
+            "type": "boolean"
+          },
           "controlMode": {
             "const": "delegated",
             "type": "string"
@@ -6369,6 +6372,9 @@
                   "supportsCdp": {
                     "type": "boolean"
                   },
+                  "supportsCdpAttach": {
+                    "type": "boolean"
+                  },
                   "supportedObservationModes": {
                     "minItems": 1,
                     "type": "array",
@@ -6567,6 +6573,9 @@
               "supportsCdp": {
                 "type": "boolean"
               },
+              "supportsCdpAttach": {
+                "type": "boolean"
+              },
               "supportedObservationModes": {
                 "minItems": 1,
                 "type": "array",
@@ -6736,6 +6745,9 @@
             "type": "boolean"
           },
           "supportsCdp": {
+            "type": "boolean"
+          },
+          "supportsCdpAttach": {
             "type": "boolean"
           },
           "supportedObservationModes": {
@@ -9177,6 +9189,46 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "const": "dns_nxdomain",
+                    "type": "string"
+                  },
+                  {
+                    "const": "dns_unresolved",
+                    "type": "string"
+                  },
+                  {
+                    "const": "connection_refused",
+                    "type": "string"
+                  },
+                  {
+                    "const": "dns_timeout",
+                    "type": "string"
+                  },
+                  {
+                    "const": "dns_refused",
+                    "type": "string"
+                  },
+                  {
+                    "const": "tls_refused",
+                    "type": "string"
+                  },
+                  {
+                    "const": "egress_policy",
+                    "type": "string"
+                  },
+                  {
+                    "const": "browser_error_document",
+                    "type": "string"
+                  },
+                  {
+                    "const": "engine_error",
+                    "type": "string"
+                  }
+                ]
               }
             }
           },
@@ -9753,6 +9805,46 @@
             "items": {
               "type": "string"
             }
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "const": "dns_nxdomain",
+                "type": "string"
+              },
+              {
+                "const": "dns_unresolved",
+                "type": "string"
+              },
+              {
+                "const": "connection_refused",
+                "type": "string"
+              },
+              {
+                "const": "dns_timeout",
+                "type": "string"
+              },
+              {
+                "const": "dns_refused",
+                "type": "string"
+              },
+              {
+                "const": "tls_refused",
+                "type": "string"
+              },
+              {
+                "const": "egress_policy",
+                "type": "string"
+              },
+              {
+                "const": "browser_error_document",
+                "type": "string"
+              },
+              {
+                "const": "engine_error",
+                "type": "string"
+              }
+            ]
           }
         }
       },
@@ -9925,6 +10017,10 @@
                     "type": "string"
                   },
                   {
+                    "const": "cdp_attach",
+                    "type": "string"
+                  },
+                  {
                     "const": "unknown",
                     "type": "string"
                   }
@@ -10011,10 +10107,22 @@
                     "type": "string"
                   },
                   {
+                    "const": "operator_owned_browser",
+                    "type": "string"
+                  },
+                  {
                     "const": "unknown",
                     "type": "string"
                   }
                 ]
+              },
+              "endpointClass": {
+                "const": "loopback_http",
+                "type": "string"
+              },
+              "egress": {
+                "const": "navigation_preflight_only",
+                "type": "string"
               },
               "context": {
                 "additionalProperties": false,
@@ -10029,6 +10137,10 @@
                     "anyOf": [
                       {
                         "const": "new_context",
+                        "type": "string"
+                      },
+                      {
+                        "const": "existing_default_context",
                         "type": "string"
                       },
                       {
@@ -10111,6 +10223,75 @@
                 }
               }
             }
+          },
+          "lease": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "sampledAt",
+              "expiresAt",
+              "lastActivityAt",
+              "idleExpiresAt"
+            ],
+            "properties": {
+              "sampledAt": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "expiresAt": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "lastActivityAt": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "idleExpiresAt": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              }
+            }
+          },
+          "closeCause": {
+            "anyOf": [
+              {
+                "const": "ttl_expired",
+                "type": "string"
+              },
+              {
+                "const": "idle_expired",
+                "type": "string"
+              },
+              {
+                "const": "explicit_close",
+                "type": "string"
+              },
+              {
+                "const": "policy_terminated",
+                "type": "string"
+              },
+              {
+                "const": "engine_disconnected",
+                "type": "string"
+              },
+              {
+                "const": "engine_crash",
+                "type": "string"
+              },
+              {
+                "const": "unknown",
+                "type": "string"
+              }
+            ]
+          },
+          "leaseRemainingMs": {
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
           }
         }
       },
@@ -10134,6 +10315,10 @@
               },
               {
                 "const": "remote_cdp",
+                "type": "string"
+              },
+              {
+                "const": "cdp_attach",
                 "type": "string"
               },
               {
@@ -10223,10 +10408,22 @@
                 "type": "string"
               },
               {
+                "const": "operator_owned_browser",
+                "type": "string"
+              },
+              {
                 "const": "unknown",
                 "type": "string"
               }
             ]
+          },
+          "endpointClass": {
+            "const": "loopback_http",
+            "type": "string"
+          },
+          "egress": {
+            "const": "navigation_preflight_only",
+            "type": "string"
           },
           "context": {
             "additionalProperties": false,
@@ -10241,6 +10438,10 @@
                 "anyOf": [
                   {
                     "const": "new_context",
+                    "type": "string"
+                  },
+                  {
+                    "const": "existing_default_context",
                     "type": "string"
                   },
                   {

@@ -91,6 +91,184 @@ function fixture() {
 
 afterEach(() => vi.useRealTimers());
 
+describe('journal call settlement', () => {
+  it('publishes quarantine before settlement when storage responds during timeout abort', async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    const journal = await f.open();
+    f.raw.lookup.mockImplementationOnce(
+      (_request: unknown, signal: AbortSignal) =>
+        new Promise((resolve) => {
+          signal.addEventListener('abort', () => resolve(f.stamp({ kind: 'scoped_absent' })), {
+            once: true,
+          });
+        }) as never
+    );
+    const call = journal.lookup(intent().key);
+    const observation = call.settled.then(() => ({
+      health: journal.health,
+      pending: journal.pending,
+    }));
+    await vi.advanceTimersByTimeAsync(51);
+    expect(await call).toEqual({ kind: 'uncertain', reason: 'wait_expired' });
+    expect(await observation).toEqual({ health: 'quarantined', pending: 0 });
+  });
+
+  it.each(['reserveIntent', 'markDispatch', 'commitTerminal', 'lookup'] as const)(
+    '%s retains its own settlement through timeout and releases it after validation',
+    async (method) => {
+      vi.useFakeTimers();
+      const f = fixture();
+      const journal = await f.open();
+      const reserved = await journal.reserveIntent(intent());
+      if (reserved.kind !== 'acknowledged') throw new Error('fixture intent');
+      const delayed = deferred<unknown>();
+      f.raw[method].mockImplementationOnce(() => delayed.promise as never);
+      const transition = { identity: reserved.record.identity, expectedRevision: 1 };
+      const call =
+        method === 'reserveIntent'
+          ? journal.reserveIntent(intent())
+          : method === 'markDispatch'
+            ? journal.markDispatch(transition)
+            : method === 'commitTerminal'
+              ? journal.commitTerminal({
+                  ...transition,
+                  dispatched: false,
+                  terminal: { status: 'failed', evidenceRefIds: [] },
+                })
+              : journal.lookup(intent().key);
+      expect(call.settled).toBeInstanceOf(Promise);
+      expect(Object.getOwnPropertyDescriptor(call, 'settled')?.writable).toBe(false);
+      let drained = false;
+      void call.settled.then(() => {
+        expect(journal.pending).toBe(0);
+        expect(journal.health).toBe('poisoned');
+        drained = true;
+      });
+      await vi.advanceTimersByTimeAsync(51);
+      expect(await call).toEqual({ kind: 'uncertain', reason: 'wait_expired' });
+      expect(drained).toBe(false);
+      expect(journal.pending).toBe(1);
+      // Raw settlement alone is insufficient: validate and poison before notifying the owner.
+      delayed.resolve({ private: 'invalid acknowledgment' });
+      expect(await call.settled).toBeUndefined();
+      expect(drained).toBe(true);
+      expect(await call).toEqual({ kind: 'uncertain', reason: 'wait_expired' });
+    }
+  );
+
+  it('does not wait for a different call or restore health after a late valid ACK', async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    const journal = await f.open();
+    const first = deferred<unknown>();
+    const second = deferred<unknown>();
+    f.raw.lookup.mockImplementationOnce(() => first.promise as never);
+    f.raw.lookup.mockImplementationOnce(() => second.promise as never);
+    const a = journal.lookup(intent().key);
+    const b = journal.lookup({ ...intent().key, operationId: 'op-2' });
+    expect(a.settled).toBeInstanceOf(Promise);
+    expect(b.settled).toBeInstanceOf(Promise);
+    let bSettled = false;
+    void b.settled.then(() => {
+      bSettled = true;
+    });
+    await vi.advanceTimersByTimeAsync(51);
+    first.resolve(f.stamp({ kind: 'scoped_absent' }));
+    await a.settled;
+    expect(journal.pending).toBe(1);
+    expect(bSettled).toBe(false);
+    expect(journal.health).toBe('quarantined');
+    second.reject(new Error('PRIVATE storage failure'));
+    expect(await b.settled).toBeUndefined();
+    expect(journal.pending).toBe(0);
+    expect(await b).toEqual({ kind: 'uncertain', reason: 'wait_expired' });
+  });
+
+  it('settles pre-I/O refusals without invoking the adapter', async () => {
+    const f = fixture();
+    const journal = await f.open();
+    const abort = new AbortController();
+    abort.abort();
+    const calls = [
+      journal.reserveIntent({ ...intent(), actor: '' }),
+      journal.markDispatch({} as never),
+      journal.commitTerminal({} as never),
+      journal.lookup({} as never),
+      journal.reserveIntent(intent(), abort.signal),
+    ];
+    for (const call of calls) {
+      expect(call.settled).toBeInstanceOf(Promise);
+      expect(await call.settled).toBeUndefined();
+      expect((await call).kind).toMatch(/^definitely_not_/);
+    }
+    expect(journal.pending).toBe(0);
+    expect(f.raw.reserveIntent).not.toHaveBeenCalled();
+    expect(f.raw.markDispatch).not.toHaveBeenCalled();
+    expect(f.raw.commitTerminal).not.toHaveBeenCalled();
+    expect(f.raw.lookup).not.toHaveBeenCalled();
+  });
+
+  it('keeps cancellation and close wait expiration separate from actual settlement', async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    const journal = await f.open();
+    const delayed = deferred<unknown>();
+    f.raw.reserveIntent.mockImplementationOnce(() => delayed.promise as never);
+    const abort = new AbortController();
+    const call = journal.reserveIntent(intent(), abort.signal);
+    expect(call.settled).toBeInstanceOf(Promise);
+    let settled = false;
+    void call.settled.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    abort.abort();
+    expect(await call).toEqual({ kind: 'uncertain', reason: 'wait_expired' });
+    const closing = journal.close();
+    await vi.advanceTimersByTimeAsync(51);
+    expect(await closing).toEqual({ kind: 'uncertain', reason: 'wait_expired' });
+    expect(settled).toBe(false);
+    expect(f.raw.close).not.toHaveBeenCalled();
+    delayed.reject(new Error('PRIVATE'));
+    await call.settled;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(journal.pending).toBe(0);
+    expect(f.raw.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('settles capacity and queued cancellation refusals without draining another call', async () => {
+    const f = fixture();
+    f.ns.bounds.maxInFlight = 1;
+    const journal = await f.open();
+    const abort = new AbortController();
+    const queued = journal.lookup(intent().key, abort.signal);
+    const refused = journal.reserveIntent(intent());
+    abort.abort();
+    expect(await refused.settled).toBeUndefined();
+    expect(await refused).toEqual({ kind: 'definitely_not_written', reason: 'capacity' });
+    await queued.settled;
+    expect(await queued).toEqual({ kind: 'definitely_not_read', reason: 'aborted' });
+    expect(journal.pending).toBe(0);
+    expect(f.raw.lookup).not.toHaveBeenCalled();
+    expect(f.raw.reserveIntent).not.toHaveBeenCalled();
+  });
+
+  it.each(['success', 'throw'] as const)('settles immediate raw %s after cleanup', async (kind) => {
+    const f = fixture();
+    const journal = await f.open();
+    if (kind === 'throw')
+      f.raw.reserveIntent.mockImplementationOnce(() => {
+        throw new Error('PRIVATE');
+      });
+    const call = journal.reserveIntent(intent());
+    await call.settled;
+    expect(journal.pending).toBe(0);
+    expect(journal.health).toBe(kind === 'success' ? 'open' : 'quarantined');
+    expect((await call).kind).toBe(kind === 'success' ? 'acknowledged' : 'uncertain');
+  });
+});
+
 describe('bounded journal facade', () => {
   it('binds the namespace to the actual key material without sending the key to storage', async () => {
     const f = fixture();

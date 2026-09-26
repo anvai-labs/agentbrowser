@@ -7,6 +7,67 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-09-25
+
+### Added
+
+- Observed browser/context disconnection ends the exact affected session, revokes
+  delegated authority, and reports `engine_disconnected` through the existing
+  REST/SDK/CLI/MCP terminal projection. Intentional teardown and page-only close
+  remain distinct; no operator intent, crash diagnosis, reconnect or replay is inferred.
+
+- Opt-in local operator Chrome attachment via `session create --cdp-attach`, REST/SDK
+  `cdpAttach`, and MCP `browser_create.cdpAttach`. Requires a dedicated profile,
+  bearer authentication, a loopback endpoint and an explicit startup acknowledgement of limited network checks.
+  Shared diagnostics identify attachment and policy limitations; detach preserves
+  operator tabs and the browser. Hosted, multi-tenant and delegated use refuse.
+
+- Navigation failures carry bounded reasons across REST, SDK, CLI and MCP, distinguishing
+  egress denial, unresolved names, resolver timeout/refusal, destination connection
+  refusal, TLS refusal and browser error documents. CLI returns exit 1 and MCP sets
+  `isError` for blocked/timeout results. Unknown causes remain `engine_error`.
+
+- Sampled active-session lease deadlines on REST/SDK create/get/list, CLI and MCP
+  inspection. A shared coordinator clock reports absolute TTL and idle deadlines;
+  reading session status does not renew idle lifetime. Closing/failed sessions and
+  older servers may omit the lease. No terminal history or recovery is implied.
+
+- Bounded, tenant-authorized close facts for recently ended sessions. The coordinator
+  distinguishes TTL, idle, explicit and policy termination, retains only detached
+  allowlisted facts, and derives remaining lease from the authoritative sample. CLI
+  and MCP share the strict terminal-error projector; observed engine disconnection
+  uses the same projection.
+
+### Fixed
+
+- Navigation diagnostics come from the trusted routed request, not origin-supplied
+  headers. Failed dispatched navigation invalidates old refs, connection errors
+  cannot impersonate a browser crash through URL text, and bounded failure output
+  retains valid operation IDs for reconciliation without raw transport topology.
+
+- Session initialization rolls back its captured allocation on lifetime-inspection
+  failure. Expiry shares teardown ownership, avoids a concurrent second close and
+  preserves the existing retry after a settled close failure. A delayed old close
+  cannot remove a replacement session.
+
+- Session ID allocation refuses bounded collisions, and late abnormal-teardown
+  callbacks use captured context identity before touching a replacement allocation.
+
+### Internal qualification
+
+- Journal intent/dispatch and terminal acknowledgments share authority, replay and
+  control-view projections. Application execution revalidates authorization, consent
+  and binding pins after storage waits. The SQLite child owner and external commit
+  witness have process-loss tests; the raw adapter, runtime selection, bounded manager
+  and restart recovery remain gated. This release exposes no durable execution promise.
+- Packaged acceptance records bounded phase timings through child cleanup and names
+  the active phase on deadline failure. Existing deadlines and behavioral gates stay
+  unchanged. Falsy/non-Error callback rejections fail acceptance after owned cleanup.
+  Consumer smoke scripts can qualify extracted services with actual Bun
+  CLI/MCP binaries through the existing package resolver and workflows.
+- The EDGAR research recipe documents JSON submissions, filing discovery, throttling
+  etiquette and complete persisted-output inspection.
+
 ## [1.11.0] - 2026-09-24
 
 ### Added

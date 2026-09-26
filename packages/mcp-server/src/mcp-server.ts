@@ -27,6 +27,8 @@ import {
   agentModeAllows,
   createPlanReportParser,
   formatErrorForUser,
+  formatSessionTerminalFailure,
+  navigationFailureDetail,
   parseAutofillReport,
   parseAutofillRequest,
   parseExtractMaxBytes,
@@ -157,7 +159,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
       name: 'browser_create',
       requiredCapabilities: ['session.manage'],
       description:
-        'Create a new isolated browser session. Sessions are ephemeral; element refs are ' +
+        'Create an ephemeral browser session (isolated by default). The opt-in cdpAttach lane shares a dedicated operator profile and checks only initial explicit navigation URLs; it requires local startup configuration. Element refs are ' +
         'scoped to a single session and page. Returns the sessionId.',
       inputSchema: {
         type: 'object',
@@ -165,6 +167,11 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
           tenantId: { type: 'string', description: 'Tenant that owns the session.' },
           engine: { type: 'string', description: 'Engine to use, e.g. playwright-chromium.' },
           headless: { type: 'boolean' },
+          cdpAttach: {
+            type: 'boolean',
+            description:
+              'Select the local startup-configured operator Chrome profile. No endpoint input; incompatible with launch/cookie settings.',
+          },
           ttlMs: {
             type: 'number',
             description:
@@ -228,6 +235,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
           throw new UsageError('tenantId is required and must be a non-empty string.');
         }
         const request: SessionRequest = { tenantId: args.tenantId };
+        if (typeof args.cdpAttach === 'boolean') request.cdpAttach = args.cdpAttach;
         if (typeof args.engine === 'string') request.engine = args.engine;
         if (typeof args.headless === 'boolean') request.headless = args.headless;
         if (typeof args.ttlMs === 'number') request.ttlMs = args.ttlMs;
@@ -248,9 +256,15 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
 
         // Observing requires a page; create one up front so the caller's very
         // next tool call can be navigate or observe.
-        const page = await client.sessions.createPage(session.sessionId);
-
-        return { ...session, pageId: page.pageId };
+        try {
+          const page = await client.sessions.createPage(session.sessionId);
+          return { ...session, pageId: page.pageId };
+        } catch (error) {
+          // Provisioning owns this new session; do not strand its resources (or
+          // the exclusive operator attachment) when the first page fails.
+          await client.sessions.close(session.sessionId).catch(() => {});
+          throw error;
+        }
       },
     },
 
@@ -414,7 +428,8 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
     {
       name: 'browser_navigate',
       requiredCapabilities: ['page.navigate'],
-      description: 'Navigate a page to an http(s) URL and wait for it to load.',
+      description:
+        'Navigate a page to an http(s) URL and wait for it to load. Failures set isError and carry a bounded reason; transport errors do not prove a bot wall.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -725,7 +740,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
       name: 'browser_session',
       requiredCapabilities: ['session.control', 'page.observe'],
       description:
-        "Inspect one session's metadata and available pages. On a delegated connection, " +
+        "Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. Independently authenticated operators may receive bounded close facts for a recently ended session. On a delegated connection, " +
         'also returns current control status; human takeover revokes later delegated calls.',
       inputSchema: {
         type: 'object',
@@ -897,8 +912,14 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
               const result = await tool.handler(
                 deps.sessionId ? { ...args, sessionId: deps.sessionId } : args
               );
-              return ok(message.id, textResult(result, structured));
+              const navigationFailed =
+                name === 'browser_navigate' && isFailedNavigationResult(result);
+              return ok(message.id, textResult(result, structured, navigationFailed));
             } catch (err) {
+              const navigationFailure =
+                name === 'browser_navigate' ? navigationFailureDetail(err) : undefined;
+              if (navigationFailure !== undefined)
+                return ok(message.id, navigationErrorResult(navigationFailure));
               return ok(message.id, errorResult(formatToolError(err, !!deps.sessionId)));
             }
           }
@@ -923,13 +944,29 @@ function requireHttpUrl(value: unknown): string {
   return url;
 }
 
-function textResult(value: unknown, structured = false) {
+function isFailedNavigationResult(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const status = (value as { status?: unknown }).status;
+  return status === 'blocked' || status === 'timeout';
+}
+
+function textResult(value: unknown, structured = false, forceError = false) {
   return {
     content: [{ type: 'text', text: JSON.stringify(value, null, 2) }],
-    ...(structured ? { structuredContent: value } : {}),
-    ...(typeof value === 'object' && value !== null && 'ok' in value && value.ok === false
+    ...(structured || forceError ? { structuredContent: value } : {}),
+    ...(forceError ||
+    (typeof value === 'object' && value !== null && 'ok' in value && value.ok === false)
       ? { isError: true }
       : {}),
+  };
+}
+
+function navigationErrorResult(detail: NonNullable<ReturnType<typeof navigationFailureDetail>>) {
+  const value = { error: detail };
+  return {
+    content: [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    structuredContent: value,
+    isError: true,
   };
 }
 
@@ -947,11 +984,14 @@ function formatToolError(error: unknown, delegated: boolean): string {
     typeof operationId === 'string'
       ? `\nReconcile under current authorization with ${delegated ? 'browser_operation' : 'SDK/REST operation status'}: ${JSON.stringify({ operationId })}`
       : '';
+  const terminal = formatSessionTerminalFailure(error);
   return (
     formatErrorForUser(
       error,
       'The element ref is stale. Call browser_observe to get fresh refs at the current revision, then act on the new ref. Do not retry the old one.'
-    ) + suffix
+    ) +
+    (terminal ? `\n${terminal}` : '') +
+    suffix
   );
 }
 

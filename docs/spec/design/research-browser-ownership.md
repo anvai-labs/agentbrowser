@@ -1,6 +1,7 @@
 # Research sessions: browser ownership prerequisite
 
-Status: merged in PR #287 (`1a1afc7`), with pre/post-merge CI green; unreleased.
+Status: merged in PR #287 (`1a1afc7`), with pre/post-merge CI green; shipped in
+the [1.11.0 checkpoint](../evidence/release-1.11.0.md).
 The follow-on [launch diagnostics contract](session-launch-diagnostics.md) builds on this owner.
 Load only for [research follow-ups](consumer-research-intake.md), session lifecycle
 or engine ownership work. This does not expand default mode context.

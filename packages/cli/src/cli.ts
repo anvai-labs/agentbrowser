@@ -52,9 +52,11 @@ import {
   createPlanReportParser,
   evaluateTestCaseRun,
   formatErrorForUser,
+  formatSessionTerminalFailure,
   isAgentMode,
   isPassingOutcome,
   materializeAutofillMapping,
+  navigationFailureDetail,
   parseAutofillReport,
   parseAutofillRequest,
   parseExtractMaxBytesText,
@@ -92,8 +94,14 @@ function captureInteger(value: string, flag: string): number {
 /** Human rendering is a projection of server facts; JSON remains the full view. */
 function sessionFacts(view: import('@agentbrowser/sdk-typescript').SessionResponse): string[] {
   const facts = view.diagnostics;
+  const lease = view.lease;
   return [
     ...(view.engine ? [`  engine:  ${view.engine.name} ${view.engine.version}`] : []),
+    ...(lease
+      ? [
+          `  lease: sampled=${lease.sampledAt}; ttl-expires=${lease.expiresAt}; idle-expires=${lease.idleExpiresAt} (Unix ms)`,
+        ]
+      : []),
     ...(facts
       ? [
           `  browser: ${facts.browserFamily} ${facts.browserVersion ?? 'unknown'} (${facts.attachment})`,
@@ -320,7 +328,7 @@ export function buildCli(deps: CliDependencies): Cli {
       session
         .command('get')
         .description(
-          'get one session with captured engine identity and launch diagnostics; --json preserves all server facts'
+          'get one session with captured engine identity, launch diagnostics and sampled lease deadlines; recently ended sessions may report bounded close facts'
         )
         .argument('<sessionId>')
         .action(
@@ -434,6 +442,10 @@ export function buildCli(deps: CliDependencies): Cli {
           'require independent operator approval of challenged actions; requires --delegated'
         )
         .option('--engine <name>', 'engine to use')
+        .option(
+          '--cdp-attach',
+          'attach to the startup-configured dedicated operator Chrome profile; local only, initial navigation policy checks only'
+        )
         .option('--headless', 'run headless (the server default; explicit)')
         .option(
           '--no-headless',
@@ -491,6 +503,7 @@ export function buildCli(deps: CliDependencies): Cli {
               throw new UsageError('--reviewed-approval requires --delegated');
             if (options.delegated) request.controlMode = 'delegated';
 
+            if (options.cdpAttach) request.cdpAttach = true;
             if (options.engine) {
               request.engine = String(options.engine);
             }
@@ -992,7 +1005,9 @@ export function buildCli(deps: CliDependencies): Cli {
       // ---- navigate --------------------------------------------------------
       program
         .command('navigate')
-        .description('navigate a page to a URL')
+        .description(
+          'navigate a page to a URL; failed navigation exits 1 with a bounded reason (--json preserves structured details)'
+        )
         .argument('<sessionId>')
         .argument('<pageId>')
         .argument('<url>')
@@ -1012,10 +1027,22 @@ export function buildCli(deps: CliDependencies): Cli {
                   NavigationRequest['waitUntil']
                 >;
               }
-
-              const result = await ctx.client.sessions.navigate(sessionId, pageId, request);
-
-              ctx.emit(result, () => [`${result.status ?? 'unknown'} -> ${result.url ?? url}`]);
+              try {
+                const result = await ctx.client.sessions.navigate(sessionId, pageId, request);
+                if (result.status === 'blocked' || result.status === 'timeout') exitCode = 1;
+                ctx.emit(result, () => [
+                  `${result.status ?? 'unknown'}${'reason' in result && typeof result.reason === 'string' ? ` (${result.reason})` : ''} -> ${result.url ?? url}`,
+                ]);
+              } catch (error) {
+                const detail = navigationFailureDetail(error);
+                if (detail === undefined) throw error;
+                exitCode = 1;
+                deps.err(
+                  ctx.json
+                    ? JSON.stringify({ error: detail }, null, 2)
+                    : `${detail.code}: ${detail.message}`
+                );
+              }
             }
           )
         );
@@ -2296,8 +2323,10 @@ function formatError(error: unknown): string {
       return `${formatErrorForUser(error)}\nApproval token: ${tokenId}\n${guidance}`;
     }
   }
-  return formatErrorForUser(
+  const base = formatErrorForUser(
     error,
     'The element ref is stale. Run observe again to get fresh refs at the current revision, then act on the new ref. Do not retry the old one.'
   );
+  const terminal = formatSessionTerminalFailure(error);
+  return terminal ? `${base}\n${terminal}` : base;
 }

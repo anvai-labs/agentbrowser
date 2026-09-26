@@ -1,7 +1,11 @@
 # T5 J1-B/C: journal port and acknowledgment integration
 
 Status: B1/B2 merged in PR #285 (`5ebf820`), contract commits `f9d9c58`/`ab495ce`.
-HTTP/replay publication is merged and green. C1–C4 runtime integration remains proposed.
+HTTP/replay publication is merged and green. C1a per-call settlement merged #297;
+[C1b authority composition](t5-journal-authority.md) is implemented internally.
+[C2 application pins and C3 terminal/replay](t5-journal-application-terminal.md)
+merged #299. [C4a control views](t5-journal-control-views.md) share the ACK
+projection; C4b runtime/transport qualification remains gated.
 Requires [J1-A response finalization](t5-finalization-publication.md) before runtime
 integration. Parent: [T5 J0–J4 sequence](t5-operation-journal.md). This module is
 loaded explicitly for journal work; unrelated modes do not load its structures.
@@ -176,12 +180,25 @@ See [B1/B2 evidence](../evidence/t5-journal-contract.md).
 
 ## Composition through shared authority
 
-C1 first needs a per-call actual-settlement signal backed by the facade's existing
-pending task owner. The current public promise bounds caller waiting; `pending` is
-diagnostic only. Awaiting that promise does not retain the session ticket through an
-ignored raw I/O cancellation. Add this seam with integration tests before wiring the
-journal: do not poll a count, copy the pending ledger or mistake a bounded outcome for
-raw settlement. B1/B2 intentionally remains disconnected until this gate is met.
+C1a supplies a per-call actual-settlement signal backed by the facade's existing
+pending task owner. The four data methods synchronously return `JournalCall<T>`,
+a native promise with an immutable, non-enumerable `settled: Promise<void>` property.
+Awaiting the call retains the bounded outcome contract. Capture the original call
+before awaiting or chaining it: ordinary promise wrappers do not retain `settled`.
+Awaiting `settled` means raw I/O, response validation and pending-slot cleanup have
+finished. It never returns an ACK, rejects with a storage error, clears quarantine or
+grants permission. It may precede the bounded outcome's promise continuation; callers
+must still inspect that outcome and revalidate authority. Never-settling storage leaves
+settlement pending even after cancellation, timeout or close. A pre-I/O refusal settles
+without invoking storage. Each signal belongs to one call, not the whole namespace.
+
+The existing pending set remains the sole storage task ledger; `pending` remains a
+diagnostic count. C1b tracks the captured settlement promise through the existing
+SessionAuthority drain before awaiting intent/dispatch outcomes, with ticket retention
+tests across ignored cancellation and old-owner replacement. The C1a prerequisite
+alone does not retain session tickets; C1b supplies that internal composition without
+connecting service configuration or qualifying durable execution. See
+[C1a evidence](../evidence/t5-journal-settlement.md) and [C1b design](t5-journal-authority.md).
 
 1. Reserve the existing ticket and persist intent before the business callback. Recheck
    captured entry/ticket/epoch after the wait. Timeout/cancellation seals the scope
@@ -249,10 +266,12 @@ I/O ignores abort without reopening that store concurrently.
 | --- | --- | --- |
 | B1 contract | One control-owned immutable metadata validator/port, test-only scripted adapter | Illegal transitions, forged ACK/key/revision, hostile values and bounds refuse; exact duplicate ACK idempotent; no credentials in records/errors |
 | B2 contract suite | Reusable adapter conformance suite using real state observations | Intent/dispatch/terminal CAS, conflicting fingerprints, immutable terminal, not-written vs uncertain; reusable by the eventual real store |
+| C1a settlement prerequisite | Existing data-call promise exposes actual completion independently of bounded waiting | Timeout/abort cannot release settlement; validation/slot cleanup precede notification; unrelated calls and close retain their existing ownership |
 | C1 intent/dispatch | Compose into existing authority for qualified operations | No callback before intent ACK; no effect before marker ACK; takeover/expiry/replacement at each wait yields zero new effects; sibling marker sharing and late ACK never escape J0 drain |
 | C2 application pins | Retain existing final consent/binding validation at the post-wait boundary | Revoked consent/binding/input during marker wait refuses; consume called once; ordinary writes reauthorize; no browser durability accidentally enabled |
 | C3 terminal/replay | Compose J1-A finalization and status projection | Delayed/failed/lost terminal ACK withholds durable success; duplicate during every phase never reexecutes; finalized execution survives send failure |
-| C4 qualification | One shared descriptor/selection contract through existing protocol projections | Unsupported durability refused; ordinary ephemeral clients unchanged; same REST/SDK/CLI behavior; MCP optional; browser-free startup with no store installed |
+| C4a control views | Reuse acknowledged projection for status/lifecycle views | Pre-intent operation omitted without blocking takeover; terminal ACK bounds completion; ephemeral views unchanged |
+| C4b qualification | One shared descriptor/selection contract through existing protocol projections | Unsupported durability refused; ordinary ephemeral clients unchanged; same REST/SDK/CLI behavior; MCP optional; browser-free startup with no store installed |
 
 For B1/B2, use deterministic deferred ACKs and independent stored-state/effect counters;
 do not mock the same method being asserted. For C1–C3 cross every persistence boundary
@@ -263,5 +282,9 @@ settling I/O. A fake adapter alone cannot establish crash durability.
 J2 still needs one optional SQLite runtime/packaging/ownership audit and real process-loss
 tests on the supported Node/Bun matrix. J3 historical authorization/continuation and J4
 event/cursor qualification remain separate. No concrete store, public durability claim, percentage increase or release ships here.
-The merged B1/B2 contract is not connected to SessionAuthority, service configuration or transports.
-C1–C4, J2 runtime/storage qualification and J3/J4 recovery gates remain closed.
+C1b connects the facade to internal SessionAuthority admission/dispatch. C2/C3 extend
+trusted application composition and acknowledged publication; service configuration and
+transports remain disconnected. C4a bounds all control views by the same ACK facts.
+C4b, J2 runtime/storage qualification and J3/J4 recovery gates remain closed. See the
+[C2/C3 packet](t5-journal-application-terminal.md) and
+[C4 continuation](t5-journal-control-views.md).

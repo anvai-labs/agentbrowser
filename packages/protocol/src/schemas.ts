@@ -7,6 +7,7 @@
 
 import { Static, Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
+import { NavigationFailureReasonSchema } from './navigation-failure.js';
 import {
   DELIVERED_ACTION_TYPES,
   DELIVERED_OBSERVATION_INCLUDES,
@@ -126,6 +127,7 @@ export const SessionCookieSchema = Type.Object({
 });
 
 export const SessionRequestSchema = Type.Object({
+  cdpAttach: Type.Optional(Type.Boolean()),
   controlMode: Type.Optional(Type.Literal('delegated')),
   tenantId: Type.Optional(Type.String({ minLength: 1 })),
   // Known engine names plus any registered engine name (TD-BROWSER-7
@@ -194,6 +196,7 @@ export const EngineCapabilitiesSchema = Type.Object({
   supportsPersistentStorage: Type.Boolean(),
   supportsAccessibilityTree: Type.Boolean(),
   supportsCdp: Type.Boolean(),
+  supportsCdpAttach: Type.Optional(Type.Boolean()),
   supportedObservationModes: Type.Array(ObservationModeSchema, { minItems: 1 }),
   supportedActionTypes: Type.Array(ActionTypeSchema, { minItems: 1 }),
 });
@@ -657,6 +660,7 @@ export const NavigationStatusSchema = Type.Object({
   status: Type.Union([Type.Literal('success'), Type.Literal('timeout'), Type.Literal('blocked')]),
   url: Type.String({ pattern: '^https?://[\\w\\-]+(\\.[\\w\\-]+)+\\S*$' }),
   redirectChain: Type.Array(Type.String()),
+  reason: Type.Optional(NavigationFailureReasonSchema),
 });
 
 export const PolicyDecisionSchema = Type.Object({

@@ -36,17 +36,21 @@ import type { RequestPolicy } from '@agentbrowser/engine';
 import {
   EngineError,
   NATIVE_FORM_EVIDENCE_LIMITS,
+  classifyNavigationFailure,
   normalizeEngineError,
+  normalizeNavigationFailure,
   parseNativeFormEvidence,
   readVerifiedUpload,
 } from '@agentbrowser/engine';
 import {
   DELIVERED_ACTION_TYPES,
   DELIVERED_OBSERVATION_MODES,
+  type NavigationFailureReason,
   type SessionDiagnostics,
   captureBrowserVersion,
   captureSessionDiagnostics,
   headedDisplayWarnings,
+  isNavigationFailureReason,
   validateUploadIntegrity,
 } from '@agentbrowser/protocol';
 import {
@@ -587,6 +591,10 @@ function canonicalFingerprint(element: StoredElement): string {
 
 /** Mutable holder for routing request events out of the egress handler. */
 export interface RequestEventSink {
+  readonly navigationFailures: WeakMap<
+    import('playwright').Request,
+    { kind: 'blocked' | 'failed'; reason: NavigationFailureReason }
+  >;
   emit:
     | ((event: {
         type: 'request.started' | 'request.finished' | 'request.failed';
@@ -619,6 +627,8 @@ export interface PlaywrightEngineOptions {
    * path (browser pools, container isolation). Requires chromium.
    */
   cdpEndpoint?: string;
+  /** Explicit local-operator attachment to an already-running Chromium profile. */
+  operatorCdp?: { endpoint: string; allowUnenforcedEgress?: boolean };
   /**
    * WebSocket handling. With no egress policy the default is 'off'
    * (upgrades untouched). With egress installed the default becomes
@@ -670,6 +680,20 @@ export interface PlaywrightEngineOptions {
   snapshotTimeoutMs?: number;
 }
 
+/** Validate and normalize the only endpoint class accepted by operator attachment. */
+export function parseOperatorCdpEndpoint(value: string): string {
+  if (value.length === 0 || value.length > 2048) throw new Error('Invalid operator CDP endpoint');
+  const match = /^http:\/\/(127\.0\.0\.1|\[::1\]):([0-9]{1,5})\/?$/.exec(value);
+  if (match === null) {
+    throw new Error('Invalid operator CDP endpoint');
+  }
+  const port = Number(match[2]);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error('Invalid operator CDP endpoint');
+  }
+  return `http://${match[1]}:${port}`;
+}
+
 /**
  * ADR-016 context viewport policy: an explicit viewport always pins;
  * otherwise headless keeps the historical 1280x720 while headed renders
@@ -717,6 +741,38 @@ async function closeSessionResources(
   }
 }
 
+/** One bounded owner for browser/context loss and its exact listener cleanup. */
+class SessionDisconnectObserver {
+  private readonly controller = new AbortController();
+  private armed = true;
+  readonly signal = this.controller.signal;
+  private readonly onUnexpectedLoss = () => {
+    if (this.armed) this.controller.abort();
+  };
+
+  constructor(
+    private readonly browser: Browser,
+    private readonly context: BrowserContext
+  ) {
+    this.browser.on('disconnected', this.onUnexpectedLoss);
+    this.context.on('close', this.onUnexpectedLoss);
+    if (!this.browser.isConnected()) this.onUnexpectedLoss();
+  }
+
+  disarm(): void {
+    if (!this.armed) return;
+    this.armed = false;
+    this.browser.off('disconnected', this.onUnexpectedLoss);
+    this.context.off('close', this.onUnexpectedLoss);
+  }
+}
+
+function assertSessionConnected(observer: SessionDisconnectObserver): void {
+  if (observer.signal.aborted) {
+    throw new EngineError('ENGINE_CRASHED', 'Browser session disconnected during creation.', false);
+  }
+}
+
 type BrowserFacts = Omit<SessionDiagnostics, 'context'>;
 
 interface BrowserAllocation {
@@ -746,6 +802,9 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   private readonly webSocketPolicy: 'off' | 'deny-all' | undefined;
   private readonly browserFamily: 'chromium' | 'firefox' | 'webkit';
   private readonly cdpEndpoint: string | undefined;
+  private readonly operatorCdp: { endpoint: string; allowUnenforcedEgress: boolean } | undefined;
+  private operatorAttachReserved = false;
+  private activeAttachedSession: PlaywrightSession | undefined;
   private readonly chromeBinaryPath: string | undefined;
   private readonly preferBundled: boolean;
   private readonly brandedChromeCandidates: string[];
@@ -757,6 +816,13 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     this.webSocketPolicy = options.webSocketPolicy;
     this.browserFamily = options.browser ?? 'chromium';
     this.cdpEndpoint = options.cdpEndpoint;
+    this.operatorCdp =
+      options.operatorCdp === undefined
+        ? undefined
+        : {
+            endpoint: parseOperatorCdpEndpoint(options.operatorCdp.endpoint),
+            allowUnenforcedEgress: options.operatorCdp.allowUnenforcedEgress === true,
+          };
     this.chromeBinaryPath = options.chromeBinaryPath ?? process.env.AGENTBROWSER_CHROME_PATH;
     this.preferBundled = options.preferBundled ?? preferBundledEnv();
     this.brandedChromeCandidates =
@@ -789,6 +855,11 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       supportsPersistentStorage: true,
       supportsAccessibilityTree: true,
       supportsCdp: this.browserFamily === 'chromium',
+      ...(this.operatorCdp?.allowUnenforcedEgress &&
+      this.browserFamily === 'chromium' &&
+      this.cdpEndpoint === undefined
+        ? { supportsCdpAttach: true }
+        : {}),
       supportedObservationModes: [...DELIVERED_OBSERVATION_MODES],
       // Derived from the protocol single source of truth: drift is
       // impossible by construction.
@@ -845,6 +916,9 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       options.snapshotTimeoutMs !== undefined
         ? snapshotTimeout(options.snapshotTimeoutMs)
         : undefined;
+    if (options.cdpAttach === true) {
+      return this.initializeOperatorCdpSession(options, sessionSnapshotTimeout);
+    }
     // Launch (or connect) the browser family if not already active.
     // TD-BROWSER-6: an explicitly headed session gets a DEDICATED browser.
     // The shared browser is the throughput story for the (default) headless
@@ -861,6 +935,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     let allocation: BrowserAllocation | undefined;
     let browser: Browser | undefined;
     let context: BrowserContext | undefined;
+    let disconnectObserver: SessionDisconnectObserver | undefined;
+    let session: PlaywrightSession | undefined;
     try {
       if (this.cdpEndpoint !== undefined) {
         if (this.browserFamily !== 'chromium') {
@@ -893,6 +969,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
           ? { serviceWorkers: 'block' as const }
           : {}),
       });
+      disconnectObserver = new SessionDisconnectObserver(browser, context);
+      assertSessionConnected(disconnectObserver);
       this.requireOpen();
       let initScript: SessionDiagnostics['context']['initScript'] = 'not_registered';
       if (options.headless === false) {
@@ -913,7 +991,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       // existing event pipeline (page queue -> service pump -> replay/WS)
       // carries it with no new transport. installEgress runs before any page
       // exists, hence the mutable holder.
-      const requestSink: RequestEventSink = { emit: undefined };
+      const requestSink: RequestEventSink = { emit: undefined, navigationFailures: new WeakMap() };
       if (egress !== undefined) {
         await this.installEgress(context, egress, requestSink);
       }
@@ -957,21 +1035,154 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
           initScript,
         },
       });
-      return new PlaywrightSession(
+      assertSessionConnected(disconnectObserver);
+      session = new PlaywrightSession(
         context,
         this,
+        disconnectObserver,
         ownsBrowser ? browser : undefined,
         requestSink,
         options.downloadPolicy,
         sessionSnapshotTimeout,
         warnings,
-        diagnostics
+        diagnostics,
+        undefined
       );
+      assertSessionConnected(disconnectObserver);
+      return session;
     } catch (error) {
       // Preserve the setup failure, even if cleanup itself fails. Shared browser
       // ownership remains with the engine; never disconnect sibling sessions.
-      await closeSessionResources(context, ownsBrowser ? browser : undefined).catch(() => {});
+      if (session !== undefined) await session.close().catch(() => {});
+      else {
+        disconnectObserver?.disarm();
+        await closeSessionResources(context, ownsBrowser ? browser : undefined).catch(() => {});
+      }
       throw error;
+    }
+  }
+
+  private async initializeOperatorCdpSession(
+    options: EngineSessionOptions,
+    sessionSnapshotTimeout: number | undefined
+  ): Promise<EngineSession> {
+    const configured = this.operatorCdp;
+    if (configured === undefined || this.browserFamily !== 'chromium' || this.cdpEndpoint) {
+      throw new EngineError(
+        'ENGINE_UNSUPPORTED',
+        'Operator CDP attachment is disabled; configure AGENTBROWSER_CDP_ENDPOINT and AGENTBROWSER_CDP_ALLOW_UNENFORCED_EGRESS=true.',
+        false,
+        { reason: 'CDP_ATTACH_DISABLED' }
+      );
+    }
+    if (
+      options.headless !== undefined ||
+      options.viewport !== undefined ||
+      options.locale !== undefined ||
+      options.timezoneId !== undefined ||
+      options.cookies !== undefined ||
+      options.allowServiceWorkers !== undefined ||
+      options.downloadPolicy?.allow === true
+    ) {
+      throw new EngineError(
+        'ENGINE_UNSUPPORTED',
+        'Operator CDP attachment cannot apply isolated-context options.',
+        false,
+        { reason: 'PROFILE_OPTIONS_UNSUPPORTED' }
+      );
+    }
+    const navigationPreflight = options.requestPolicy ?? this.rootEgress;
+    if (navigationPreflight === undefined || !configured.allowUnenforcedEgress) {
+      throw new EngineError(
+        'ENGINE_UNSUPPORTED',
+        'Operator CDP attachment requires explicit acceptance of navigation-only egress checks.',
+        false,
+        { reason: 'EGRESS_UNSUPPORTED' }
+      );
+    }
+    if (this.operatorAttachReserved) {
+      throw new EngineError('SESSION_BUSY', 'An operator CDP attachment is already active.', true, {
+        reason: 'CDP_ATTACH_BUSY',
+      });
+    }
+    this.operatorAttachReserved = true;
+    let browser: Browser | undefined;
+    let session: PlaywrightSession | undefined;
+    let disconnectObserver: SessionDisconnectObserver | undefined;
+    try {
+      // Preserve the operator context's download, focus and media settings.
+      browser = await chromium.connectOverCDP(configured.endpoint, { noDefaults: true });
+      this.requireOpen();
+      const contexts = browser.contexts();
+      const context = contexts[0];
+      if (contexts.length !== 1 || context === undefined) {
+        throw new EngineError(
+          'ENGINE_UNSUPPORTED',
+          'Operator browser must expose exactly one existing context.',
+          false,
+          {
+            reason:
+              contexts.length === 0 ? 'PROFILE_CONTEXT_UNAVAILABLE' : 'PROFILE_CONTEXT_AMBIGUOUS',
+          }
+        );
+      }
+      disconnectObserver = new SessionDisconnectObserver(browser, context);
+      assertSessionConnected(disconnectObserver);
+      const version = browserVersion(browser);
+      const diagnostics = captureSessionDiagnostics({
+        attachment: 'cdp_attach',
+        browserFamily: 'chromium',
+        ...(version !== undefined ? { browserVersion: version } : {}),
+        executableSelection: 'not_applicable',
+        launchMode: 'unknown',
+        resourceModel: 'operator_owned_browser',
+        endpointClass: 'loopback_http',
+        egress: 'navigation_preflight_only',
+        context: {
+          isolation: 'existing_default_context',
+          viewport: { mode: 'unknown' },
+          initScript: 'not_registered',
+        },
+      });
+      const warnings = Object.freeze([
+        'Operator CDP attachment shares the existing browser profile and storage; only fresh pages opened by this session and their popups are owned.',
+        'Use a dedicated profile. Egress preflight covers only explicit HTTP(S) navigation targets, not redirects, DNS pinning, subresources, clicks, forms, popups, workers, or downloads.',
+      ]);
+      const release = () => {
+        if (this.activeAttachedSession === session) this.activeAttachedSession = undefined;
+        this.operatorAttachReserved = false;
+      };
+      session = new PlaywrightSession(
+        context,
+        this,
+        disconnectObserver,
+        undefined,
+        undefined,
+        options.downloadPolicy ?? { allow: false, maxBytes: 10 * 1024 * 1024 },
+        sessionSnapshotTimeout,
+        warnings,
+        diagnostics,
+        {
+          browser,
+          release,
+          ...(navigationPreflight !== undefined ? { navigationPreflight } : {}),
+        }
+      );
+      assertSessionConnected(disconnectObserver);
+      this.requireOpen();
+      this.activeAttachedSession = session;
+      return session;
+    } catch (error) {
+      if (session !== undefined) await session.close().catch(() => {});
+      else {
+        disconnectObserver?.disarm();
+        await browser?.close().catch(() => {});
+      }
+      this.operatorAttachReserved = false;
+      if (error instanceof EngineError) throw error;
+      throw new EngineError('ENGINE_UNSUPPORTED', 'Operator CDP attachment failed.', false, {
+        reason: 'CDP_ATTACH_FAILED',
+      });
     }
   }
 
@@ -1119,17 +1330,19 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       try {
         const result = await dns.lookup(hostname, { all: true });
         return result.map((entry) => entry.address);
-      } catch {
-        throw new EngineError('POLICY_DENIED', 'Cannot validate unresolved hostname');
+      } catch (error) {
+        throw new EngineError('POLICY_DENIED', 'Cannot validate unresolved hostname', false, {
+          reason: classifyNavigationFailure(error, 'dns'),
+        });
       }
     };
 
     const verdictOf = async (
       hostname: string,
       url: string
-    ): Promise<{ verdict: 'allow' | 'deny'; reason?: string }> => {
+    ): Promise<{ verdict: 'allow' | 'deny'; reason?: NavigationFailureReason }> => {
       let verdict: 'allow' | 'deny';
-      let reason: string | undefined;
+      let reason: NavigationFailureReason | undefined;
       try {
         await egress.checkRequest({ hostname, url });
         if (egress.checkResolvedAddresses !== undefined) {
@@ -1141,14 +1354,14 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         verdict = 'allow';
       } catch (error) {
         verdict = 'deny';
-        // Surface the policy's own code/rule instead of flattening to
-        // 'deny' (NetworkPolicyError carries both; anything else still
-        // gets a readable message).
-        const err = error as { code?: string; details?: { rule?: string }; message?: string };
-        reason =
-          err.code !== undefined
-            ? `${err.code}${err.details?.rule !== undefined ? ` (${err.details.rule})` : ''}`
-            : (err.message ?? 'denied by egress policy');
+        const err = error as { code?: string; details?: { reason?: unknown } };
+        reason = isNavigationFailureReason(err.details?.reason)
+          ? err.details.reason
+          : ['POLICY_DENIED', 'RESPONSE_TOO_LARGE', 'MAX_REDIRECTS', 'REDIRECT_LOOP'].includes(
+                err.code ?? ''
+              )
+            ? 'egress_policy'
+            : 'engine_error';
       }
       return reason !== undefined ? { verdict, reason } : { verdict };
     };
@@ -1231,11 +1444,16 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         return route.continue();
       };
 
+      const deny = async (reason: NavigationFailureReason) => {
+        sink.navigationFailures.set(request, { kind: 'blocked', reason });
+        await fulfill(BLOCKED_RESPONSE);
+      };
+
       try {
         const initial = await verdictOf(hostname, url);
         if (initial.verdict === 'deny') {
           emitRequest('request.failed', request, { blocked: true, reason: initial.reason });
-          await fulfill(BLOCKED_RESPONSE);
+          await deny(initial.reason ?? 'engine_error');
           return;
         }
 
@@ -1268,7 +1486,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
                 reason: hop.reason,
                 redirect: absolute.origin + absolute.pathname,
               });
-              await fulfill(BLOCKED_RESPONSE);
+              await deny(hop.reason ?? 'engine_error');
               return;
             }
           }
@@ -1283,7 +1501,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
                 blocked: true,
                 reason: 'RESPONSE_TOO_LARGE (response-size cap)',
               });
-              await fulfill(BLOCKED_RESPONSE);
+              await deny('egress_policy');
               return;
             }
           }
@@ -1299,7 +1517,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
                 blocked: true,
                 reason: 'RESPONSE_TOO_LARGE (actual-byte cap)',
               });
-              await fulfill(BLOCKED_RESPONSE);
+              await deny('egress_policy');
               return;
             }
             emitRequest('request.finished', request, {
@@ -1322,8 +1540,26 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       } catch (error) {
         emitRequest('request.failed', request, {
           blocked: false,
-          reason: error instanceof Error ? error.message : 'fetch failed',
+          reason: classifyNavigationFailure(error, 'transport'),
         });
+        if (!terminalStarted && request.isNavigationRequest()) {
+          let mainNavigation = false;
+          try {
+            mainNavigation = request.frame() === request.frame().page().mainFrame();
+          } catch {}
+          if (mainNavigation) {
+            sink.navigationFailures.set(request, {
+              kind: 'failed',
+              reason: classifyNavigationFailure(error, 'transport'),
+            });
+            await fulfill({
+              status: 502,
+              contentType: 'text/plain',
+              body: 'Navigation failed',
+            }).catch(() => {});
+            return;
+          }
+        }
         if (!terminalStarted) {
           // Best effort after recording the failure: the context may already
           // be closed, in which case abort itself rejects too.
@@ -1345,6 +1581,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     // A late launch/context cannot escape shutdown. Existing dedicated sessions
     // remain session-owned; the coordinator closes live sessions before engines.
     await Promise.allSettled(this.pendingSessions);
+    await this.activeAttachedSession?.close().catch(() => {});
     const pending = this.sharedBrowser;
     this.sharedBrowser = undefined;
     const allocation = await pending?.catch(() => undefined);
@@ -1358,9 +1595,11 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
 class PlaywrightSession implements EngineSession {
   readonly id: string;
   readonly diagnostics?: SessionDiagnostics;
+  readonly disconnected: AbortSignal;
   private context: BrowserContext;
   private engine: PlaywrightChromiumEngine;
   private pageMap: Map<string, PlaywrightPage> = new Map();
+  private readonly ownedPlaywrightPages = new WeakSet<Page>();
   private readonly downloads = new Map<
     string,
     {
@@ -1370,8 +1609,18 @@ class PlaywrightSession implements EngineSession {
   >();
   private pageCounter = 0;
   private closed = false;
+  private closeTask: Promise<void> | undefined;
 
   private ownedBrowser: Browser | undefined;
+  private readonly attached:
+    | { browser: Browser; release: () => void; navigationPreflight?: RequestPolicy }
+    | undefined;
+  private readonly onContextPage = (page: Page) => {
+    void this.adoptPopupPage(page);
+  };
+  private readonly onDisconnected = () => {
+    void this.close().catch(() => {});
+  };
 
   /** The page-routing request-event sink installed by createSession. */
   private readonly requestSink: RequestEventSink | undefined;
@@ -1379,6 +1628,7 @@ class PlaywrightSession implements EngineSession {
   constructor(
     context: BrowserContext,
     engine: PlaywrightChromiumEngine,
+    private readonly disconnectObserver: SessionDisconnectObserver,
     ownedBrowser?: Browser,
     requestSink?: RequestEventSink,
     private readonly downloadPolicy: EngineSessionOptions['downloadPolicy'] = {
@@ -1388,20 +1638,26 @@ class PlaywrightSession implements EngineSession {
     /** Already validated/normalized by createSession(); undefined = engine default. */
     private readonly snapshotTimeoutMs?: number,
     readonly warnings: readonly string[] = [],
-    diagnostics?: SessionDiagnostics
+    diagnostics?: SessionDiagnostics,
+    attached?: { browser: Browser; release: () => void; navigationPreflight?: RequestPolicy }
   ) {
     this.id = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     this.context = context;
     this.engine = engine;
     this.ownedBrowser = ownedBrowser;
     this.requestSink = requestSink;
+    this.attached = attached;
+    this.disconnected = disconnectObserver.signal;
     if (diagnostics !== undefined) this.diagnostics = diagnostics;
     // F10: pages the browser opens on its own (window.open) still belong to
     // this session; pages opened via newPage() have no opener and are
     // skipped inside the handler.
-    this.context.on('page', (page) => {
-      void this.adoptPopupPage(page);
-    });
+    this.context.on('page', this.onContextPage);
+    this.disconnected.addEventListener('abort', this.onDisconnected, { once: true });
+    // AbortSignal does not notify listeners registered after it was aborted.
+    // Close synchronously enough to publish the single cleanup owner before
+    // createSession performs its final connected assertion.
+    if (this.disconnected.aborted) this.onDisconnected();
     if (requestSink !== undefined) {
       requestSink.emit = (event) => {
         const page = this.pageForPlaywrightPage(event.playwrightPage);
@@ -1436,17 +1692,21 @@ class PlaywrightSession implements EngineSession {
    * from there.
    */
   private async adoptPopupPage(playwrightPage: Page): Promise<void> {
-    if (this.closed) {
-      return;
-    }
+    let owned = false;
     try {
       const opener = await playwrightPage.opener();
       if (opener === null) {
         return;
       }
-      const popup = await this.registerPlaywrightPage(playwrightPage);
+      if (!this.ownedPlaywrightPages.has(opener)) return;
+      owned = true;
       const openerPage = this.pageForPlaywrightPage(opener);
-      openerPage?.emitExternalEvent({
+      if (this.closed || openerPage === undefined) {
+        await playwrightPage.close().catch(() => {});
+        return;
+      }
+      const popup = await this.registerPlaywrightPage(playwrightPage);
+      openerPage.emitExternalEvent({
         type: 'page.created',
         timestamp: new Date().toISOString(),
         sessionId: this.id,
@@ -1454,7 +1714,8 @@ class PlaywrightSession implements EngineSession {
         data: { openerPageId: openerPage.id, pageId: popup.id, url: playwrightPage.url() },
       });
     } catch {
-      // Adoption is best-effort; an unadoptable popup stays browser-side.
+      // Once its opener proves ownership, do not leak a late popup past close.
+      if (owned) await playwrightPage.close().catch(() => {});
     }
   }
 
@@ -1463,26 +1724,43 @@ class PlaywrightSession implements EngineSession {
       throw new Error('Session is closed');
     }
     const playwrightPage = await this.context.newPage();
-    return this.registerPlaywrightPage(playwrightPage, options?.viewport);
+    try {
+      return await this.registerPlaywrightPage(playwrightPage, options?.viewport);
+    } catch (error) {
+      await playwrightPage.close().catch(() => {});
+      throw error;
+    }
   }
 
   private async registerPlaywrightPage(
     playwrightPage: Page,
     viewport?: NewPageOptions['viewport']
   ): Promise<PlaywrightPage> {
+    if (this.closed) throw new Error('Session is closed');
     if (viewport) {
       await playwrightPage.setViewportSize(viewport);
     }
+    if (this.closed) throw new Error('Session is closed');
 
     const pageId = `page-${this.pageCounter++}`;
-    const page = new PlaywrightPage(pageId, playwrightPage, this.engine, this.snapshotTimeoutMs);
+    this.ownedPlaywrightPages.add(playwrightPage);
+    const page = new PlaywrightPage(
+      pageId,
+      playwrightPage,
+      this.engine,
+      this.snapshotTimeoutMs,
+      this.requestSink?.navigationFailures,
+      this.attached?.navigationPreflight
+    );
     this.pageMap.set(pageId, page);
     page.registerRemoval(() => {
       this.pageMap.delete(pageId);
       this.downloads.delete(pageId);
-      playwrightPage.off('download', onDownload);
+      if (this.attached === undefined) playwrightPage.off('download', onDownload);
     });
-    this.downloads.set(pageId, { entries: new Map(), bytes: 0 });
+    if (this.attached === undefined) {
+      this.downloads.set(pageId, { entries: new Map(), bytes: 0 });
+    }
 
     // In-page download interception (spec 10): accept the download, hold
     // its bytes, and surface created/finished events on the page stream.
@@ -1531,7 +1809,9 @@ class PlaywrightSession implements EngineSession {
         )
         .finally(() => download.delete().catch(() => {}));
     };
-    playwrightPage.on('download', onDownload);
+    // Existing-profile download behavior belongs to the operator browser.
+    // Do not intercept, cancel, retain, or claim attached-profile downloads.
+    if (this.attached === undefined) playwrightPage.on('download', onDownload);
 
     return page;
   }
@@ -1541,6 +1821,16 @@ class PlaywrightSession implements EngineSession {
   }
 
   async cookies(): Promise<NormalizedCookie[]> {
+    if (this.attached !== undefined) {
+      throw new EngineError(
+        'ENGINE_UNSUPPORTED',
+        'Cookie export is unavailable for attached profiles',
+        false,
+        {
+          reason: 'PROFILE_COOKIE_EXPORT_UNSUPPORTED',
+        }
+      );
+    }
     return (await this.context.cookies()) as NormalizedCookie[];
   }
 
@@ -1570,10 +1860,27 @@ class PlaywrightSession implements EngineSession {
   }
 
   async close(reason?: string): Promise<void> {
-    if (this.closed) {
-      return;
-    }
+    if (this.closeTask !== undefined) return this.closeTask;
     this.closed = true;
+    this.disconnectObserver.disarm();
+    this.disconnected.removeEventListener('abort', this.onDisconnected);
+    this.context.off('page', this.onContextPage);
+    let resolveOwner!: () => void;
+    let rejectOwner!: (error: unknown) => void;
+    const owner = new Promise<void>((resolve, reject) => {
+      resolveOwner = resolve;
+      rejectOwner = reject;
+    });
+    this.closeTask = owner;
+    this.disposeSession(reason).then(resolveOwner, (error) => {
+      if (this.closeTask === owner) this.closeTask = undefined;
+      rejectOwner(error);
+    });
+    return owner;
+  }
+
+  private async disposeSession(_reason?: string): Promise<void> {
+    if (this.attached !== undefined) return this.closeAttached();
     try {
       for (const page of this.pageMap.values()) {
         await page.close();
@@ -1585,6 +1892,28 @@ class PlaywrightSession implements EngineSession {
       this.ownedBrowser = undefined;
       await closeSessionResources(this.context, ownedBrowser);
     }
+  }
+
+  private async closeAttached(): Promise<void> {
+    if (this.attached === undefined) return;
+    let firstFailure: unknown;
+    for (const page of [...this.pageMap.values()]) {
+      try {
+        await page.close();
+      } catch (error) {
+        firstFailure ??= error;
+      }
+    }
+    this.pageMap.clear();
+    this.downloads.clear();
+    try {
+      await this.attached.browser.close();
+    } catch (error) {
+      firstFailure ??= error;
+    } finally {
+      this.attached.release();
+    }
+    if (firstFailure !== undefined) throw firstFailure;
   }
 }
 
@@ -1667,7 +1996,9 @@ class PlaywrightPage implements EnginePage {
     id: string,
     page: Page,
     engine: PlaywrightChromiumEngine,
-    snapshotTimeoutMs?: number
+    snapshotTimeoutMs?: number,
+    private readonly navigationFailures?: RequestEventSink['navigationFailures'],
+    private readonly navigationPreflight?: RequestPolicy
   ) {
     this.id = id;
     this.page = page;
@@ -1683,6 +2014,7 @@ class PlaywrightPage implements EnginePage {
     // The browser can close pages without PlaywrightPage.close() running
     // (engine.close()); Playwright's own close event ends the iterator.
     this.onPageClose = () => {
+      this.removeSelf();
       this.eventsClosed = true;
       const waiters = this.eventWaiters;
       this.eventWaiters = [];
@@ -1869,36 +2201,47 @@ class PlaywrightPage implements EnginePage {
     try {
       return await this.performNavigation(request);
     } catch (error) {
-      const failure = normalizeEngineError(error, 'navigate');
+      const failure = normalizeNavigationFailure(error);
       throw new EngineError(failure.code, failure.message, failure.retryable, failure.details);
     }
   }
 
   private async performNavigation(request: NavigationRequest): Promise<NavigationResult> {
+    // Every dispatched navigation invalidates refs, including a rejected goto.
+    this.bumpRevision();
+    if (this.navigationPreflight !== undefined) {
+      let parsed: URL;
+      try {
+        parsed = new URL(request.url);
+      } catch {
+        throw new EngineError('POLICY_DENIED', 'Navigation target must be HTTP or HTTPS.', false, {
+          reason: 'egress_policy',
+        });
+      }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new EngineError('POLICY_DENIED', 'Navigation target must be HTTP or HTTPS.', false, {
+          reason: 'egress_policy',
+        });
+      }
+      await this.navigationPreflight.checkRequest({
+        hostname: parsed.hostname,
+        url: parsed.toString(),
+      });
+    }
     const waitUntil = request.waitUntil || 'load';
     const response = await this.page.goto(request.url, {
       waitUntil: waitUntil as 'load' | 'domcontentloaded' | 'networkidle',
     });
-    // The choke point serves a marked 403 for denied navigations and
-    // denied redirect targets alike (hygiene E3: every deny path in
-    // installEgress uses route.fulfill(BLOCKED_RESPONSE), never
-    // route.abort() - the header is the only signal a denial ever
-    // produces, so it's also the only one worth matching on. A prior
-    // String(error)-regex fallback here for 'ERR_BLOCKED_BY_CLIENT'/
-    // 'net::ERR_ABORTED' didn't match anything installEgress's own
-    // abort() call actually throws (that's reason 'failed', i.e.
-    // net::ERR_FAILED, and represents a genuine fetch failure, not a
-    // policy decision - it must propagate as a real error). Its only
-    // live effect was silently relabeling any unrelated real navigation
-    // abort as a policy block.
-    if (response?.headers()?.['x-agentbrowser-blocked'] === '1') {
-      return {
-        status: 'blocked',
-        url: request.url,
-        redirectChain: [],
-      };
+    // A trusted receipt is correlated to this response, never an origin header.
+    const routedRequest = response?.request();
+    const failure = routedRequest ? this.navigationFailures?.get(routedRequest) : undefined;
+    if (routedRequest) this.navigationFailures?.delete(routedRequest);
+    if (failure?.kind === 'failed') {
+      throw new EngineError('INTERNAL', 'Navigation failed', false, { reason: failure.reason });
     }
-    this.bumpRevision();
+    if (failure) {
+      return { status: 'blocked', url: request.url, redirectChain: [], reason: failure.reason };
+    }
 
     // A resolved goto is not proof that target content loaded. Chromium can
     // commit its internal error document without rejecting the navigation.

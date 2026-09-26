@@ -1,3 +1,5 @@
+import { isNavigationFailureReason, sessionLeaseRemainingMs } from '@agentbrowser/protocol';
+import { type CdpAttachAdmission, requireCdpAttachAdmission } from './cdp-config.js';
 import { SessionAuthority } from './session-authority.js';
 /**
  * AgentBrowserService - the composition root
@@ -71,7 +73,11 @@ import {
 import type { EngineSession, EngineSessionOptions, NormalizedCookie } from '@agentbrowser/engine';
 import type { RawPageState } from '@agentbrowser/engine';
 import type { RequestPolicy } from '@agentbrowser/engine';
-import { type ProtocolErrorCode, normalizeEngineError } from '@agentbrowser/engine';
+import {
+  type ProtocolErrorCode,
+  normalizeEngineError,
+  normalizeNavigationFailure,
+} from '@agentbrowser/engine';
 import { SchemaExtractor } from '@agentbrowser/extraction';
 import {
   RecordsSelectorError,
@@ -140,6 +146,7 @@ export class ServiceError extends Error {
 }
 
 export interface ServiceSessionRequest {
+  cdpAttach?: boolean;
   controlMode?: 'delegated';
   tenantId?: string;
   engine?: string;
@@ -306,6 +313,8 @@ export interface ServiceEvidenceReviewContext {
 }
 
 export interface ServiceDependencies {
+  /** Trusted startup capability. Absent means disabled. */
+  cdpAttachAdmission?: CdpAttachAdmission;
   /** Operator-owned maximum complete extraction response bytes. */
   extractMaxBytes?: number;
   approvalPolicy?: ActionRiskPolicyOptions;
@@ -457,6 +466,7 @@ export class AgentBrowserService {
    */
   readonly applicationAuthority: ApplicationAuthority;
   private readonly controlledContexts = new WeakSet<SessionContext>();
+  private readonly cdpAttachAdmission: CdpAttachAdmission;
   private readonly engine: BrowserEngine;
   private readonly extractMaxBytes: number;
   private readonly engines: Map<string, BrowserEngine> = new Map();
@@ -505,6 +515,7 @@ export class AgentBrowserService {
   private sweepTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(deps: ServiceDependencies) {
+    this.cdpAttachAdmission = deps.cdpAttachAdmission ?? 'disabled';
     this.extractMaxBytes = parseExtractMaxBytes(deps.extractMaxBytes ?? DEFAULT_EXTRACT_MAX_BYTES);
     const { evidenceReviewProvider, evidenceSourceRegistry, evidenceSourceRegistryProvider } = deps;
     if (evidenceReviewProvider !== undefined && typeof evidenceReviewProvider !== 'function')
@@ -613,15 +624,21 @@ export class AgentBrowserService {
     for (const sessionId of tracked) {
       // coordinator.get() lazily expires TTL/idle-lapsed sessions.
       if (this.coordinator.get(sessionId) === undefined) {
-        // Notify subscribers once: the session expired (spec: expiry events
-        // on the stream), then drop the listeners with the session.
+        // Report only the retained cause; missing history does not prove expiry.
+        const cause = this.coordinator.inspectTerminal(sessionId)?.view.closeCause;
+        const reason =
+          cause === 'engine_disconnected'
+            ? 'engine-disconnected'
+            : cause === 'ttl_expired' || cause === 'idle_expired'
+              ? 'session-expired'
+              : 'session-ended';
         const listeners = this.eventListeners.get(sessionId);
         if (listeners !== undefined) {
           const expiredEvent: EngineEvent = {
             type: 'page.destroyed',
             timestamp: new Date().toISOString(),
             sessionId,
-            data: { reason: 'session-expired' },
+            data: { reason },
           };
           for (const listener of [...listeners]) {
             try {
@@ -1107,6 +1124,41 @@ export class AgentBrowserService {
         !request.tenantId)
     )
       throw new ServiceError('INVALID_REQUEST', 'Operator review requires a controlled session');
+    if (request.cdpAttach === true) {
+      if (
+        request.controlMode !== undefined ||
+        request.headless !== undefined ||
+        request.viewport !== undefined ||
+        request.locale !== undefined ||
+        request.timezoneId !== undefined ||
+        request.cookies !== undefined ||
+        request.allowDownloads === true ||
+        request.allowedHosts !== undefined ||
+        request.blockedHosts !== undefined ||
+        request.allowServiceWorkers !== undefined ||
+        request.maxDownloadBytes !== undefined ||
+        request.approval !== undefined ||
+        (request.engine !== undefined &&
+          request.engine !== 'auto' &&
+          request.engine !== this.engine.name)
+      )
+        throw new ServiceError(
+          'INVALID_REQUEST',
+          'Operator attachment cannot apply launch, cookie, delegated-control, download, or per-session policy options. Use a normal isolated session for those options.'
+        );
+      try {
+        requireCdpAttachAdmission(this.cdpAttachAdmission);
+      } catch (error) {
+        throw this.mapError(error);
+      }
+      if ((await this.engine.capabilities()).supportsCdpAttach !== true)
+        throw new ServiceError(
+          'ENGINE_UNSUPPORTED',
+          'The configured engine does not support operator attachment.',
+          false,
+          { reason: 'CDP_ATTACH_UNSUPPORTED' }
+        );
+    }
     // Validate tenant ID format (lightweight security)
     this.validateTenantId(request.tenantId);
 
@@ -1118,6 +1170,7 @@ export class AgentBrowserService {
         ? this.networkPolicy.snapshot()
         : this.networkPolicy;
       const engineRequest: EngineSessionOptions & { engine: 'auto' } = { engine: 'auto' };
+      if (request.cdpAttach === true) engineRequest.cdpAttach = true;
       engineRequest.downloadPolicy = {
         allow: request.allowDownloads ?? false,
         maxBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
@@ -1142,9 +1195,9 @@ export class AgentBrowserService {
             })
           : basePolicy;
 
-      let session: import('@agentbrowser/protocol').SessionResponse;
+      let allocation: Awaited<ReturnType<SessionCoordinator['createOwned']>>;
       try {
-        session = await this.coordinator.create(
+        allocation = await this.coordinator.createOwned(
           {
             ...engineRequest,
             ...(request.tenantId !== undefined ? { tenantId: request.tenantId } : {}),
@@ -1160,53 +1213,75 @@ export class AgentBrowserService {
         throw this.mapError(error);
       }
 
-      const context = this.coordinator.get(session.sessionId);
-      if (this.shuttingDown || !context || context.signal.aborted) {
-        await this.coordinator.close(session.sessionId).catch(() => {});
-        throw new ServiceError('SESSION_NOT_FOUND', 'Session ended during creation');
-      }
-      if (request.allowDownloads)
-        this.downloads.set(
-          session.sessionId,
-          new DownloadTransport(
-            {
-              policy: sessionPolicy,
-              budget: this.downloadBudget,
-              admission: this.downloadBudget.connections.createSessionScope(8, context.signal),
-              signal: context.signal,
-              onOutcome: (outcome) => {
-                const fields = this.secretManager.redact({
-                  sessionId: session.sessionId,
-                  ...outcome,
-                });
-                if (outcome.outcome === 'error') this.logger?.warn('download.transport', fields);
-                else this.logger?.info('download.transport', fields);
+      const { response: session, context } = allocation;
+      try {
+        const inspection = this.coordinator.inspect(session.sessionId);
+        if (
+          this.shuttingDown ||
+          !context ||
+          inspection?.context !== context ||
+          context.signal.aborted
+        ) {
+          throw new ServiceError('SESSION_NOT_FOUND', 'Session ended during creation');
+        }
+        if (request.allowDownloads)
+          this.downloads.set(
+            session.sessionId,
+            new DownloadTransport(
+              {
+                policy: sessionPolicy,
+                budget: this.downloadBudget,
+                admission: this.downloadBudget.connections.createSessionScope(8, context.signal),
+                signal: context.signal,
+                onOutcome: (outcome) => {
+                  const fields = this.secretManager.redact({
+                    sessionId: session.sessionId,
+                    ...outcome,
+                  });
+                  if (outcome.outcome === 'error') this.logger?.warn('download.transport', fields);
+                  else this.logger?.info('download.transport', fields);
+                },
+                onCleanupFailure: (fields) =>
+                  this.logger?.warn(
+                    'download.cleanup-failed',
+                    this.secretManager.redact({ sessionId: session.sessionId, ...fields })
+                  ),
               },
-              onCleanupFailure: (fields) =>
-                this.logger?.warn(
-                  'download.cleanup-failed',
-                  this.secretManager.redact({ sessionId: session.sessionId, ...fields })
-                ),
-            },
-            this.downloader ? { fetch: this.downloader } : {}
-          )
-        );
+              this.downloader ? { fetch: this.downloader } : {}
+            )
+          );
 
-      if (request.controlMode === 'delegated') {
-        this.authority.register(session.sessionId, request.tenantId ?? '', context.signal);
-        this.controlledContexts.add(context);
+        if (request.controlMode === 'delegated') {
+          this.authority.register(session.sessionId, request.tenantId ?? '', context.signal);
+          this.controlledContexts.add(context);
+        }
+
+        this.sessionDownloadPolicy.set(session.sessionId, {
+          allowDownloads: request.allowDownloads === true,
+          maxDownloadBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
+        });
+        this.sessionPolicies.set(session.sessionId, sessionPolicy);
+        this.sessionApprovalPolicies.set(session.sessionId, { ...request.approval });
+
+        const finalInspection = this.coordinator.inspect(session.sessionId);
+        if (!finalInspection || finalInspection.context !== context || context.signal.aborted) {
+          throw new ServiceError('SESSION_NOT_FOUND', 'Session ended during creation');
+        }
+        const result = this.sessionView(context, finalInspection.lease, true);
+        this.metrics?.incrementCounter('sessions_created_total');
+        this.metrics?.setGauge('sessions_active', this.coordinator.getSessionCount());
+        return result;
+      } catch (error) {
+        const current = this.coordinator.captureForCleanup(session.sessionId);
+        if (context && (current === context || current === undefined)) {
+          try {
+            this.deleteSessionState(session.sessionId);
+          } finally {
+            await this.coordinator.discardIfCurrent(context, 'creation_failed');
+          }
+        }
+        throw error;
       }
-      this.metrics?.incrementCounter('sessions_created_total');
-      this.metrics?.setGauge('sessions_active', this.coordinator.getSessionCount());
-
-      this.sessionDownloadPolicy.set(session.sessionId, {
-        allowDownloads: request.allowDownloads === true,
-        maxDownloadBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
-      });
-      this.sessionPolicies.set(session.sessionId, sessionPolicy);
-      this.sessionApprovalPolicies.set(session.sessionId, { ...request.approval });
-
-      return this.sessionView(context, true);
     });
   }
 
@@ -1239,11 +1314,20 @@ export class AgentBrowserService {
   }
 
   getSession(sessionId: string): ServiceSessionView | undefined {
-    const context = this.coordinator.get(sessionId);
-    return context ? this.sessionView(context, true) : undefined;
+    const inspection = this.coordinator.inspect(sessionId);
+    return inspection ? this.sessionView(inspection.context, inspection.lease, true) : undefined;
   }
 
-  private sessionView(context: SessionContext, includeTenant: boolean): ServiceSessionView {
+  /** Internal post-close lookup; transport code must authorize ownerTenant before projection. */
+  inspectTerminalSession(sessionId: string) {
+    return this.coordinator.inspectTerminal(sessionId);
+  }
+
+  private sessionView(
+    context: SessionContext,
+    lease: import('@agentbrowser/protocol').SessionLease | undefined,
+    includeTenant: boolean
+  ): ServiceSessionView {
     return {
       sessionId: context.id,
       status: context.state.toLowerCase(),
@@ -1251,6 +1335,15 @@ export class AgentBrowserService {
       createdAt: new Date(context.metadata.createdAt).toISOString(),
       ttlMs: context.metadata.ttlMs,
       idleTimeoutMs: context.metadata.idleTimeoutMs,
+      ...(lease ? { lease } : {}),
+      ...(lease
+        ? {
+            leaseRemainingMs: sessionLeaseRemainingMs(lease),
+          }
+        : context.terminal
+          ? { leaseRemainingMs: 0 }
+          : {}),
+      ...(context.terminal ? { closeCause: context.terminal.closeCause } : {}),
       pages: this.countPages(context.id),
       ...(context.diagnostics !== undefined ? { diagnostics: context.diagnostics } : {}),
       ...(context.engineSession.warnings?.length
@@ -1264,12 +1357,8 @@ export class AgentBrowserService {
 
   listSessions(tenantId?: string): ServiceSessionView[] {
     return this.coordinator
-      .getAllSessions()
-      .filter((metadata) => tenantId === undefined || metadata.tenantId === tenantId)
-      .flatMap((metadata) => {
-        const context = this.coordinator.get(metadata.id);
-        return context ? [this.sessionView(context, false)] : [];
-      });
+      .inspectAll(tenantId)
+      .map(({ context, lease }) => this.sessionView(context, lease, false));
   }
 
   async closeSession(sessionId: string): Promise<void> {
@@ -2439,7 +2528,7 @@ export class AgentBrowserService {
     sessionId: string,
     pageId: string,
     request: { url: string; waitUntil?: 'load' | 'domcontentloaded' | 'networkidle' | undefined }
-  ): Promise<{ status: string; url: string; redirectChain: string[] }> {
+  ): Promise<import('@agentbrowser/engine').NavigationResult> {
     return this.traced('navigate', { sessionId, pageId }, async (span) => {
       const page = this.requirePage(sessionId, pageId);
       this.coordinator.updateActivity(sessionId);
@@ -2456,7 +2545,7 @@ export class AgentBrowserService {
           'POLICY_DENIED',
           `Navigation accepts http(s) URLs only; '${parsed.protocol}' is not permitted.`,
           false,
-          { url: redactUrl(url) }
+          { url: redactUrl(url), reason: 'egress_policy' }
         );
       }
 
@@ -2485,6 +2574,10 @@ export class AgentBrowserService {
         throw this.mapError(error);
       }
 
+      // Dispatch invalidates public refs even if navigation commits an error
+      // document or rejects. Preflight policy refusal above leaves refs intact.
+      page.revision += 1;
+      page.lastObservation = undefined;
       let result: Awaited<ReturnType<EnginePage['navigate']>>;
       try {
         result = await page.enginePage.navigate({
@@ -2492,27 +2585,29 @@ export class AgentBrowserService {
           ...(request.waitUntil !== undefined ? { waitUntil: request.waitUntil } : {}),
         });
       } catch (error) {
-        if (this.isCrash(error)) {
+        const failure = normalizeNavigationFailure(error);
+        if (failure.code === 'ENGINE_CRASHED') {
           const errorDetail = this.secretManager.redact(
             error instanceof Error ? error.message : String(error)
           );
           await this.recoverFromCrash(sessionId, 'navigate: engine crashed', errorDetail);
           throw new ServiceError(
             'ENGINE_CRASHED',
-            'The browser engine crashed; the session has been terminated.',
+            'The browser engine closed; the session has been terminated.',
             false,
-            { sessionId, errorDetail }
+            { reason: 'engine_error' }
           );
         }
-        throw error;
+        throw new ServiceError(failure.code, failure.message, failure.retryable, failure.details);
       }
-      page.revision += 1;
-      page.lastObservation = undefined;
 
       return this.secretManager.redact({
         status: result.status,
         url: result.url,
         redirectChain: result.redirectChain,
+        ...(result.status !== 'success'
+          ? { reason: isNavigationFailureReason(result.reason) ? result.reason : 'engine_error' }
+          : {}),
       });
     });
   }

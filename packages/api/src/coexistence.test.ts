@@ -150,11 +150,37 @@ describe('delegated coexistence', () => {
         await server.inject({ method: 'POST', url: `${url}/control/takeover`, headers: operator })
       ).json().state
     ).toBe('HUMAN_ACTIVE');
-    expect((await server.inject({ url, headers: agent })).statusCode).toBe(401);
+    const revoked = await server.inject({ url, headers: agent });
+    expect(revoked.statusCode).toBe(401);
+    expect(revoked.body).not.toContain('idleExpiresAt');
     const next = await delegate(server, url);
     expect(next.authorization).not.toBe(agent.authorization);
-    expect((await server.inject({ url, headers: next })).statusCode).toBe(200);
+    const resumed = await server.inject({ url, headers: next });
+    expect(resumed.statusCode).toBe(200);
+    expect(resumed.json().lease).toHaveProperty('sampledAt');
     expect((await server.inject({ url, headers: agent })).statusCode).toBe(401);
+  });
+
+  it('does not disclose retained terminal facts through a revoked delegated token', async () => {
+    const { server, url } = await setup();
+    const agent = await delegate(server, url);
+
+    const closed = await server.inject({ method: 'DELETE', url, headers: operator });
+    expect(closed.statusCode).toBe(200);
+    await settlePublication();
+
+    const revoked = await server.inject({ url, headers: agent });
+    expect(revoked.statusCode).toBe(401);
+    expect(revoked.body).not.toContain('sessionTerminal');
+    expect(revoked.body).not.toContain('explicit_close');
+
+    const owner = await server.inject({ url, headers: operator });
+    expect(owner.statusCode).toBe(404);
+    expect(owner.json().error.details.sessionTerminal).toMatchObject({
+      closeCause: 'explicit_close',
+      state: 'closed',
+      leaseRemainingMs: 0,
+    });
   });
 
   it('requires an operation ID and never repeats an already recorded page creation', async () => {

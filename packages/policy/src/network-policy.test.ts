@@ -497,3 +497,9 @@ describe('SessionHostPolicy (per-session composite)', () => {
     ).resolves.toBeUndefined();
   });
 });
+
+it('stamps genuine policy failures with the shared egress reason', async () => {
+  await expect(
+    new NetworkPolicy({ blockLoopback: true }).checkRequest({ hostname: '127.0.0.1' })
+  ).rejects.toMatchObject({ code: 'POLICY_DENIED', details: { reason: 'egress_policy' } });
+});

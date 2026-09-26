@@ -9,6 +9,8 @@ function fixture(options: { sessionId?: string; mode?: (typeof AGENT_MODE_IDS)[n
     engine: { name: 'selected-engine', version: '2.0.0' },
     createdAt: '2026-09-24T00:00:00.000Z',
     pages: 1,
+    lease: { sampledAt: 1000, expiresAt: 3000, lastActivityAt: 900, idleExpiresAt: 2000 },
+    leaseRemainingMs: 1000,
   };
   const pages = [{ pageId: 'pg_1', sessionId: session.sessionId, status: 'ready' }];
   const control = { state: 'AGENT_ACTIVE' };
@@ -120,14 +122,46 @@ describe('browser_session inspection', () => {
     expect(bound.sessions.listPages).not.toHaveBeenCalled();
   });
 
-  it('does not publish partial inspection data when an HTTP dependency refuses', async () => {
+  it.each(['get', 'listPages'] as const)(
+    'does not publish partial inspection data when %s refuses',
+    async (method) => {
+      const f = fixture();
+      f.sessions.listPages.mockResolvedValue([{ pageId: 'private-page' }]);
+      f.sessions[method].mockRejectedValue(new Error('FORBIDDEN'));
+      const response = await f.call({ sessionId: 'ses_1' });
+      expect(response.result.isError).toBe(true);
+      expect(JSON.stringify(response)).not.toContain('private-page');
+      expect(JSON.stringify(response)).not.toContain('idleExpiresAt');
+      expect(f.sessions.get).toHaveBeenCalledTimes(1);
+      expect(f.sessions.listPages).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('renders only allowlisted terminal facts from the shared error projection', async () => {
     const f = fixture();
-    f.sessions.get.mockRejectedValue(new Error('FORBIDDEN'));
-    f.sessions.listPages.mockResolvedValue([{ pageId: 'private-page' }]);
+    f.sessions.get.mockRejectedValue(
+      Object.assign(new Error('SESSION_NOT_FOUND'), {
+        code: 'SESSION_NOT_FOUND',
+        details: {
+          sessionTerminal: {
+            closeCause: 'idle_expired',
+            endedAt: 1050,
+            state: 'expired',
+            leaseRemainingMs: 0,
+            lease: {
+              sampledAt: 1050,
+              expiresAt: 2000,
+              lastActivityAt: 1000,
+              idleExpiresAt: 1049,
+            },
+          },
+          privateReason: 'secret',
+        },
+      })
+    );
     const response = await f.call({ sessionId: 'ses_1' });
     expect(response.result.isError).toBe(true);
-    expect(JSON.stringify(response)).not.toContain('private-page');
-    expect(f.sessions.get).toHaveBeenCalledTimes(1);
-    expect(f.sessions.listPages).toHaveBeenCalledTimes(1);
+    expect(response.result.content[0].text).toContain('close-cause=idle_expired');
+    expect(JSON.stringify(response)).not.toContain('secret');
   });
 });

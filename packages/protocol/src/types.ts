@@ -39,6 +39,8 @@ export interface Viewport {
  * Session creation request
  */
 export interface SessionRequest {
+  /** Select a trusted, startup-configured operator profile attachment. */
+  cdpAttach?: boolean;
   controlMode?: 'delegated';
   /** Engine selection; omitted = server default. */
   engine?: EngineSelection;
@@ -160,6 +162,7 @@ export interface EngineCapabilities {
   supportsPersistentStorage: boolean;
   supportsAccessibilityTree: boolean;
   supportsCdp: boolean;
+  supportsCdpAttach?: boolean;
   supportedObservationModes: ObservationMode[];
   supportedActionTypes: ActionType[];
   /**
@@ -756,6 +759,7 @@ export interface NavigationStatus {
   status: 'success' | 'timeout' | 'blocked';
   url: string;
   redirectChain: string[];
+  reason?: import('./navigation-failure.js').NavigationFailureReason;
 }
 
 /**

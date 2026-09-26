@@ -1,15 +1,11 @@
 import { type Static, Type } from '@sinclair/typebox';
 import { AgentModeSchema } from './mode-profile.js';
+import { CONTROL_OPERATION_ID, OperationIdSchema } from './operation-id.js';
 import { parseExecutionReport } from './validators.js';
 
+export { CONTROL_OPERATION_ID, OperationIdSchema };
+
 const strict = { additionalProperties: false };
-const OPERATION_ID_PATTERN = '^[a-zA-Z0-9_-]{1,128}$';
-export const CONTROL_OPERATION_ID = new RegExp(OPERATION_ID_PATTERN);
-export const OperationIdSchema = Type.String({
-  minLength: 1,
-  maxLength: 128,
-  pattern: OPERATION_ID_PATTERN,
-});
 
 export const ControlStateSchema = Type.Union([
   Type.Literal('HUMAN_ACTIVE'),
