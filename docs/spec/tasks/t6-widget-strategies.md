@@ -35,6 +35,11 @@ generic keyboard guesser, unrestricted regex or site-specific engine fork to pas
 
 ## Current implementation state
 
+The post-1.10.1 [extraction budget refinement](../design/extraction-output-budget.md)
+removes silent CLI truncation and adds a shared server-owned output ceiling with
+per-request limits. It is a bounded document-extraction usability slice; T6 live
+workflow and production qualification gates remain open.
+
 AgentBrowser 1.8.19 extends the existing autofill strategy registry with explicit
 `react-select` and `chip-multiselect` strategies. Both reuse the same scoped field
 resolution, action executor, receipt assembly and verification loop; they do not add a

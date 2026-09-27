@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
+import { setImmediate as settlePublication } from 'node:timers/promises';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { expect, it, vi } from 'vitest';
 import { buildServer } from './server.js';
@@ -28,17 +29,20 @@ it('keeps an aborted HTTP mutation draining until the actual browser promise set
       headers: { ...headers, 'x-agentbrowser-operation-id': 'page' },
     });
     const pageId = page.json().pageId;
+    await settlePublication();
     const review = await server.inject({
       method: 'POST',
       url: `${path}/control/prepare-resume`,
       headers,
     });
+    await settlePublication();
     const grant = await server.inject({
       method: 'POST',
       url: `${path}/control/delegate`,
       headers,
       payload: { epoch: review.json().epoch },
     });
+    await settlePublication();
     const raw = engine.getFakePage(engine.getSessionIds()[0]!, pageId)!;
     const act = raw.act.bind(raw);
     const entered = Promise.withResolvers<void>();

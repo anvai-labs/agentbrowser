@@ -49,6 +49,44 @@ export function snapshotDigest(value: string | undefined): string | undefined {
   return value === undefined ? undefined : createHash('sha256').update(value).digest('hex');
 }
 
+// An ariaSnapshot can succeed quickly yet yield no addressable elements while
+// the live DOM is full of content - the common failure mode for a JS SPA whose
+// React/Vue tree has mounted role-less markup that the accessibility tree does
+// not surface. That is NOT a timeout, so it never trips SnapshotBudget; without
+// this classifier observe() would report `elements: []` indistinguishably from a
+// genuinely empty page. When true, callers get degradedReason
+// 'empty-snapshot-nonempty-dom' - a signal to wait/retry or fall back to HTML.
+const DEFAULT_EMPTY_DOM_MIN_TEXT = 200;
+const DEFAULT_EMPTY_DOM_MIN_NODES = 150;
+
+function positiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim() ?? '';
+  const parsed = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export interface EmptyObservationInput {
+  /** Elements the accessibility tree actually surfaced. */
+  elementCount: number;
+  /** Length of document.body.innerText at observation time. */
+  bodyTextLength: number;
+  /** Count of element nodes under document.body at observation time. */
+  domNodeCount: number;
+}
+
+/**
+ * True when the accessibility snapshot surfaced nothing but the DOM plainly
+ * holds content - i.e. an empty-but-successful snapshot over a non-empty DOM.
+ * Thresholds are overridable via AGENTBROWSER_EMPTY_DOM_MIN_TEXT /
+ * AGENTBROWSER_EMPTY_DOM_MIN_NODES.
+ */
+export function classifyEmptyObservation(input: EmptyObservationInput): boolean {
+  if (input.elementCount > 0) return false;
+  const minText = positiveIntEnv('AGENTBROWSER_EMPTY_DOM_MIN_TEXT', DEFAULT_EMPTY_DOM_MIN_TEXT);
+  const minNodes = positiveIntEnv('AGENTBROWSER_EMPTY_DOM_MIN_NODES', DEFAULT_EMPTY_DOM_MIN_NODES);
+  return input.bodyTextLength >= minText || input.domNodeCount >= minNodes;
+}
+
 export interface SnapshotEvidence {
   /** Undefined means unavailable, not an empty or unchanged snapshot. */
   snapshot: string | undefined;

@@ -11,6 +11,7 @@ import {
 } from '@agentbrowser/protocol';
 import type { EvidencePermission } from './outcome-runner.js';
 import {
+  deeplyFreezeSnapshot,
   prepareEvidencePermission,
   snapshotAuthorizationInput,
   synchronousResult,
@@ -26,11 +27,16 @@ export interface EvidenceReviewSource {
   readonly ownerId: string;
   readonly contract: Readonly<{ id: string; version: string }>;
   readonly permission: EvidencePermission;
+  /** Pure synchronous source permission check, valid during execution and publication.
+   * Collection owns execution-only reader guards; this callback must not read or dispatch.
+   */
   assertAuthorized(): void;
   collect(signal: AbortSignal): unknown | Promise<unknown>;
 }
 
 export interface PreparedEvidenceReview {
+  /** Capture while executing; disclose only in that admission's publication phase. */
+  capturePublication(view: OperatorApprovalView): PreparedReviewDisclosure;
   /** Recheck the captured owner after consumption, inside the original admission only. */
   assertCurrent(signal: AbortSignal): void;
   generate(signal: AbortSignal): Promise<OperatorApprovalView>;
@@ -41,6 +47,12 @@ export interface PreparedEvidenceReview {
     signal: AbortSignal
   ): Promise<OperatorApprovalView | undefined>;
   consume(tokenId: string, signal: AbortSignal): Promise<boolean>;
+}
+
+/** Immutable capture-time view; checking it conveys no read or consent authority. */
+export interface PreparedReviewDisclosure {
+  readonly view: OperatorApprovalView;
+  assertCurrent(): void;
 }
 
 /** Public-safe selector for resolving a stored native-form review through trusted config. */
@@ -72,6 +84,11 @@ export interface PrepareEvidenceReviewOptions {
   assertDisclosureSafe(value: unknown): void;
   trackRead<T>(read: () => Promise<T>): Promise<T>;
   readonly lifecycleSignal?: AbortSignal;
+  readonly publication?: Readonly<{
+    assertCurrent(): void;
+    /** Final owner comparisons only: must not invoke host authorization callbacks. */
+    assertPinned(): void;
+  }>;
 }
 
 function unavailable(): Error {
@@ -82,6 +99,55 @@ function snapshot<T>(value: T): T {
   const detached = snapshotAuthorizationInput(value);
   canonicalJson(detached);
   return detached as T;
+}
+
+function invokeSync(callback: unknown, receiver: unknown, args: readonly unknown[] = []) {
+  if (typeof callback !== 'function') throw unavailable();
+  return synchronousResult(Reflect.apply(callback, receiver, args));
+}
+
+/** Shared inert view capture for ordinary and evidence-backed operator reviews. */
+export function captureReviewDisclosure(
+  value: OperatorApprovalView,
+  checks: Readonly<{
+    assertExecution(): void;
+    assertCurrent(): void;
+    assertPinned(): void;
+    assertDisclosureSafe(value: unknown): void;
+  }>
+): PreparedReviewDisclosure {
+  try {
+    const { assertExecution, assertCurrent, assertPinned, assertDisclosureSafe } = checks;
+    if (
+      ![assertExecution, assertCurrent, assertPinned, assertDisclosureSafe].every(
+        (callback) => typeof callback === 'function'
+      )
+    )
+      throw unavailable();
+    invokeSync(assertExecution, checks);
+    const view = deeplyFreezeSnapshot(parseOperatorApprovalView(value));
+    invokeSync(assertExecution, checks);
+    invokeSync(assertDisclosureSafe, checks, [view]);
+    let revoked = false;
+    return Object.freeze({
+      view,
+      assertCurrent() {
+        if (revoked) throw unavailable();
+        try {
+          invokeSync(assertCurrent, checks);
+          // Host permission callbacks run before the current secret policy check.
+          // No host authorization callback may follow these final owner pins.
+          invokeSync(assertDisclosureSafe, checks, [view]);
+          invokeSync(assertPinned, checks);
+        } catch {
+          revoked = true;
+          throw unavailable();
+        }
+      },
+    });
+  } catch {
+    throw unavailable();
+  }
 }
 
 function dataProperties(value: unknown, keys: readonly string[]): Record<string, unknown> {
@@ -251,6 +317,9 @@ export function prepareEvidenceReview(
     const assertDisclosureSafeCallback = options.assertDisclosureSafe;
     const trackReadCallback = options.trackRead;
     const lifecycleSignal = options.lifecycleSignal;
+    const publication = options.publication;
+    const assertPublication = publication?.assertCurrent;
+    const assertPublicationPinned = publication?.assertPinned;
     const generateReviewedApproval = gate.generateReviewedApproval;
     const getReviewedApproval = gate.getReviewedApproval;
     const decideReviewedApproval = gate.decideReviewedApproval;
@@ -268,7 +337,9 @@ export function prepareEvidenceReview(
       typeof pageId !== 'string' ||
       pageId.length < 1 ||
       pageId.length > 255 ||
-      (lifecycleSignal !== undefined && !(lifecycleSignal instanceof AbortSignal))
+      (lifecycleSignal !== undefined && !(lifecycleSignal instanceof AbortSignal)) ||
+      (publication !== undefined &&
+        (typeof assertPublication !== 'function' || typeof assertPublicationPinned !== 'function'))
     )
       throw unavailable();
 
@@ -287,23 +358,22 @@ export function prepareEvidenceReview(
     const actionFingerprint = canonicalJson(action);
     const sourceFingerprint = canonicalJson(sourceBinding);
 
-    const invokeSync = (callback: unknown, receiver: unknown, args: readonly unknown[] = []) => {
-      if (typeof callback !== 'function') throw unavailable();
-      return synchronousResult(Reflect.apply(callback, receiver, args));
-    };
     const combinedSignal = (signal: AbortSignal): AbortSignal => {
       if (!(signal instanceof AbortSignal)) throw unavailable();
       return lifecycleSignal ? AbortSignal.any([signal, lifecycleSignal]) : signal;
     };
     let ownerRevoked = false;
-    const assertOwner = (): void => {
+    const assertOwner = (
+      authorityCallback = assertAuthorityCallback,
+      receiver: unknown = options
+    ): void => {
       if (ownerRevoked) throw unavailable();
       try {
-        invokeSync(assertAuthorityCallback, options);
+        invokeSync(authorityCallback, receiver);
         invokeSync(assertSourceCallback, source);
         permission.assertAuthorized();
         invokeSync(assertSourceCallback, source);
-        invokeSync(assertAuthorityCallback, options);
+        invokeSync(authorityCallback, receiver);
         // Either callback may revoke the generation after its earlier check.
         permission.assertAuthorized();
       } catch {
@@ -384,6 +454,29 @@ export function prepareEvidenceReview(
     };
 
     const prepared: PreparedEvidenceReview = {
+      capturePublication(value) {
+        try {
+          guard(lifecycleSignal);
+          if (!assertPublication || !assertPublicationPinned) throw unavailable();
+          const validated = validateView(value);
+          if (!validated) throw unavailable();
+          return captureReviewDisclosure(validated, {
+            assertExecution: () => guard(lifecycleSignal),
+            assertCurrent: () => {
+              if (lifecycleSignal?.aborted) throw unavailable();
+              assertOwner(assertPublication, publication);
+            },
+            assertPinned: () => {
+              invokeSync(assertPublicationPinned, publication);
+              if (lifecycleSignal?.aborted) throw unavailable();
+            },
+            assertDisclosureSafe: (view) =>
+              invokeSync(assertDisclosureSafeCallback, options, [view]),
+          });
+        } catch {
+          throw unavailable();
+        }
+      },
       assertCurrent(signal) {
         guard(combinedSignal(signal));
       },

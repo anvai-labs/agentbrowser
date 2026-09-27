@@ -4,6 +4,7 @@ import { type IncomingMessage, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setImmediate as settlePublication } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
 import { NetworkPolicy } from '@agentbrowser/policy';
@@ -128,6 +129,7 @@ it('qualifies a mapped application draft and digest-checked PDF upload without s
     });
     expect(page.statusCode).toBe(201);
     const pageId = page.json().pageId as string;
+    await settlePublication();
     const navigation = await server.inject({
       method: 'POST',
       url: `${sessionPath}/pages/${pageId}/navigate`,
@@ -135,11 +137,13 @@ it('qualifies a mapped application draft and digest-checked PDF upload without s
       payload: { url: fixtureUrl },
     });
     expect(navigation.statusCode).toBe(200);
+    await settlePublication();
     const review = await server.inject({
       method: 'POST',
       url: `${sessionPath}/control/prepare-resume`,
       headers: ownerHeaders,
     });
+    await settlePublication();
     const delegated = await server.inject({
       method: 'POST',
       url: `${sessionPath}/control/delegate`,
@@ -147,12 +151,13 @@ it('qualifies a mapped application draft and digest-checked PDF upload without s
       payload: { epoch: review.json().epoch },
     });
     expect(delegated.statusCode).toBe(200);
+    await settlePublication();
     const token = delegated.json().token as string;
-    const invoke = (
+    const invoke = async (
       args: string[],
       options: { operationId?: string; stdin?: string; expectedExitCode?: number } = {}
-    ) =>
-      runAgentCli(
+    ) => {
+      const result = await runAgentCli(
         [
           process.execPath,
           cli,
@@ -171,6 +176,9 @@ it('qualifies a mapped application draft and digest-checked PDF upload without s
             : {}),
         }
       );
+      await settlePublication();
+      return result;
+    };
 
     const mapping = {
       schemaVersion: 1,

@@ -161,13 +161,14 @@ describe('AgentBrowser MCP server edge branches', () => {
       });
     });
 
-    it('browser_observe accepts a string continueFrom for clients that stringify numbers', async () => {
-      await call('e7', 'browser_observe', {
+    it('browser_observe rejects string cursors consistently with the canonical schema', async () => {
+      const response = await call('e7', 'browser_observe', {
         sessionId: 'ses_1',
         pageId: 'pg_1',
         continueFrom: '40',
       });
-      expect(sessions.observe).toHaveBeenCalledWith('ses_1', 'pg_1', { continueFrom: 40 });
+      expect(JSON.parse(response).result.isError).toBe(true);
+      expect(sessions.observe).not.toHaveBeenCalled();
     });
 
     it('browser_pdf forwards every print option', async () => {

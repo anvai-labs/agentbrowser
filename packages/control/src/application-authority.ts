@@ -217,16 +217,21 @@ export class ApplicationAuthority {
   private readonly adapters = new Map<string, ApplicationAdapter>();
   private readonly bindings = new WeakMap<SessionControl, Binding>();
   private readonly consentPolicy: ApplicationConsentPolicy | undefined;
+  private readonly journalWrites: boolean;
 
   constructor(
     private readonly authority: SessionAuthority,
     adapters: readonly ApplicationAdapter[] = [],
-    options: { consentPolicy?: ApplicationConsentPolicy } = {}
+    options: { consentPolicy?: ApplicationConsentPolicy; journalWrites?: boolean } = {}
   ) {
     const consentPolicy = options.consentPolicy;
     if (consentPolicy !== undefined && typeof consentPolicy !== 'function')
       throw new ControlError('INVALID_REQUEST', 'Invalid application consent policy');
     this.consentPolicy = consentPolicy;
+    const journalWrites = options.journalWrites;
+    if (journalWrites !== undefined && typeof journalWrites !== 'boolean')
+      throw new ControlError('INVALID_REQUEST', 'Invalid application journal selection');
+    this.journalWrites = journalWrites ?? false;
     for (const adapter of adapters) {
       try {
         const id = adapter.id;
@@ -482,9 +487,10 @@ export class ApplicationAuthority {
     const { request, serialized } = normalizeApplicationRequest(callerRequest);
     this.authority.assertPrincipal(sessionId, principal);
     const { binding, adapter, operation, write } = this.captureOperation(sessionId, request);
-    const replayOwner = replay
-      ? { binding, adapter, scope: this.scope(sessionId, binding, request) }
-      : undefined;
+    const replayOwner =
+      replay || (this.journalWrites && write)
+        ? { binding, adapter, scope: this.scope(sessionId, binding, request) }
+        : undefined;
     const protectedWrite = operation.review === 'operator-submit';
     const fingerprint = write
       ? createHash('sha256')
@@ -507,7 +513,24 @@ export class ApplicationAuthority {
     return this.authority.run(
       sessionId,
       principal,
-      write && request.operationId && fingerprint ? { id: request.operationId, fingerprint } : {},
+      write && request.operationId && fingerprint
+        ? {
+            id: request.operationId,
+            fingerprint,
+            ...(this.journalWrites
+              ? {
+                  journal: {
+                    version: 1 as const,
+                    application: {
+                      adapterId: binding.adapter,
+                      resourceId: binding.resource,
+                      bindingGeneration: binding.generation,
+                    },
+                  },
+                }
+              : {}),
+          }
+        : {},
       async () => {
         output?.captureInScope(binding);
         const scope = this.scope(sessionId, binding, request);
@@ -515,6 +538,10 @@ export class ApplicationAuthority {
           this.authority.assert(sessionId);
           if (this.binding(sessionId) !== binding)
             throw new ControlError('CONTROL_REVOKED', 'Application binding changed');
+        };
+        let assertDispatch = () => {
+          assertApplicationAuthorized(adapter, scope);
+          assertBinding();
         };
         const owned = protectedWrite
           ? this.operationReview(sessionId, request, binding)
@@ -572,9 +599,12 @@ export class ApplicationAuthority {
             owned.assertPinned();
             if ((await Reflect.apply(consume, consent, [])) !== true) throw unavailable();
             // Adapter callbacks precede the final consent guard. The following pin check is callback-free.
-            owned.review.assertCurrent();
-            assertConsent();
-            owned.assertPinned();
+            assertDispatch = () => {
+              owned.review.assertCurrent();
+              assertConsent();
+              owned.assertPinned();
+            };
+            assertDispatch();
           } catch {
             try {
               owned.review.assertCurrent();
@@ -583,13 +613,16 @@ export class ApplicationAuthority {
             }
             throw unavailable();
           }
-        } else {
-          assertApplicationAuthorized(adapter, scope);
-          assertBinding();
-        }
+        } else assertDispatch();
         this.authority.assert(sessionId);
         const result = await (write
-          ? this.authority.dispatchInScope(sessionId, () => execute(scope))
+          ? this.authority.dispatchInScope(
+              sessionId,
+              () => execute(scope),
+              this.journalWrites
+                ? this.authority.captureApplicationDispatchInScope(sessionId, assertDispatch)
+                : undefined
+            )
           : execute(scope));
         rejected = result.status === 'rejected';
         if (!rejected && result.status !== (write ? 'committed' : 'read'))
@@ -604,6 +637,9 @@ export class ApplicationAuthority {
             publish: (value, context) =>
               this.publishApplication(sessionId, replayOwner, value, context, replay.publish),
           }
+        : undefined,
+      this.journalWrites && write && replayOwner
+        ? () => this.applicationAccess(sessionId, replayOwner, () => {}).assertAuthority()
         : undefined
     );
   }

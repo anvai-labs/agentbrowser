@@ -811,7 +811,7 @@ describe('AgentBrowser REST API', () => {
       });
       expect(response.status).toBe(400);
       const body = await response.json();
-      expect(body.error.message).toMatch(/not delivered/);
+      expect(body.error.message).toContain('/mode');
     });
 
     it('should reject an unsupported format', async () => {

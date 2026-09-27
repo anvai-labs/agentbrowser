@@ -35,6 +35,11 @@ export {
   parsePlanReport,
   parseAutofillReport,
 } from '@agentbrowser/protocol';
+export {
+  formatSessionTerminalFailure,
+  sessionTerminalFailureDetail,
+} from '@agentbrowser/protocol';
+export type { SessionCloseCause, SessionTerminalView } from '@agentbrowser/protocol';
 
 export type { ExportedCookie } from './client';
 
@@ -63,3 +68,17 @@ export {
   validateOperatorApprovalDecision,
 } from '@agentbrowser/protocol';
 export type { OperatorApprovalView, OperatorApprovalDecision } from '@agentbrowser/protocol';
+
+export {
+  ObservationRequestSchema,
+  ScreenshotRequestSchema,
+  DeliveredWaitConditionSchema,
+  PageStateSchema,
+  ArtifactRefSchema,
+  DELIVERED_WAIT_TYPES,
+  parseObservationRequest,
+  parseScreenshotRequest,
+  validateObservationRequest,
+  validateScreenshotRequest,
+} from '@agentbrowser/protocol';
+export type { DeliveredWaitCondition } from '@agentbrowser/protocol';

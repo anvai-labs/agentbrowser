@@ -407,3 +407,38 @@ it('sanitizes capture and malformed-output failures while preserving revocation'
     await service.shutdown();
   }
 });
+
+it('separates captured page publication from native reads after execution seals', async () => {
+  const capture = vi.fn(async () => evidence());
+  const f = await fixture(capture);
+  let retained!: ReturnType<AgentBrowserService['prepareNativeFormReadInScope']>;
+  try {
+    await f.service.authority.run(
+      f.sessionId,
+      operator,
+      {},
+      async () => {
+        retained = f.service.prepareNativeFormReadInScope(f.sessionId, f.pageId);
+        await retained.read();
+      },
+      undefined,
+      {
+        timeoutMs: 1000,
+        publish: async () => {
+          retained.publication.assertCurrent();
+          await expect(retained.read()).rejects.toThrow();
+          expect(retained.assertAuthority).toThrow();
+          retained.publication.assertCurrent();
+        },
+      }
+    );
+    expect(capture).toHaveBeenCalledOnce();
+    expect(retained.publication.assertCurrent).toThrow();
+    await f.service.authority.run(f.sessionId, operator, {}, async () => undefined, undefined, {
+      timeoutMs: 1000,
+      publish: () => expect(retained.publication.assertCurrent).toThrow(),
+    });
+  } finally {
+    await f.service.shutdown();
+  }
+});

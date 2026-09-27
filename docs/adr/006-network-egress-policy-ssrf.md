@@ -20,6 +20,21 @@ The system must enforce network policy at a choke point where all outbound traff
 
 **All network access passes through a single enforceable policy boundary with SSRF defenses.**
 
+### Explicit local operator attachment exception
+
+The opt-in [operator CDP lane](../spec/design/operator-cdp-attach.md) is outside the
+full egress-containment guarantee above. It requires an independently configured
+loopback endpoint and `AGENTBROWSER_CDP_ALLOW_UNENFORCED_EGRESS=true`, loopback API
+listener/client, mandatory bearer authentication for a single trust domain, and a dedicated non-daily Chrome profile.
+Hosted, multi-tenant and delegated use refuse. Defaults remain unchanged.
+
+Only initial explicit agent navigation URLs are preflight checked. Redirects,
+subresources, workers, page scripts, clicks/forms, downloads and operator activity
+remain outside containment; authenticated profile data can leave through those paths.
+Create/get/list carry fixed warnings and `egress: navigation_preflight_only` diagnostics.
+Without the startup acknowledgement, refuse before connecting. This exception does not
+claim that a warning alone enforces policy or that the dedicated profile is attested.
+
 ### Core principles
 
 1. **Allowlist by default**: Only explicitly allowed hosts can be accessed

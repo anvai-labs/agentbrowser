@@ -1,7 +1,8 @@
 # T5: shared dispatch and optional operation journal
 
-Status: J0, A1/A2 and A4a1 status primitives implemented; remaining J1–J4 proposed.
-Baseline: develop `b01a51b`. This design does not advertise durable recovery.
+Status: J0/publication and J1 contract/composition through C4a merged through #300.
+Current baseline: develop `e812fbc`. J2a SQLite feasibility is recorded; concrete storage,
+C4b runtime enablement and J3/J4 recovery remain gated. This design advertises no recovery.
 Task: [T5](../tasks/t5-durable-recovery.md). Shared contracts remain in
 [execution](../execution.md) and [state/memory](../state-memory.md).
 
@@ -91,18 +92,18 @@ The lifecycle in durable mode is:
    terminal result. A persistence failure cannot be translated into successful durable
    completion, even when the external effect already committed.
 
-The existing HTTP wrapper sends a reply inside `authority.run`, before finalization.
-J1 therefore also needs an explicit response/finalization composition design. An async
-write added to the current `finally` or background drain is not sufficient. Ephemeral
-mode keeps its documented behavior; REST and CLI cannot invent a durable guarantee.
+The shared HTTP publisher now sends controlled results after execution finalization and
+retains publication guards through transport completion (PR #284). Future terminal journal
+ACKs must precede that publication; adding an async write to `finally` or a background drain
+is insufficient. REST and CLI cannot independently invent a durable guarantee.
 
 The implementation sequence is now split into demand-loaded packets:
 [J1-A finalization/publication](t5-finalization-publication.md), then
 [J1-B port and J1-C integration](t5-journal-contract.md). The first durable qualification
 targets application writes only. Browser target/policy/approval checks need a separate
-post-storage-wait qualification through their existing owners. These packets are
-designs except A1/A2 publication and [A4a1 status lookup](t5-status-publication.md). HTTP/replay
-publication and journal/recovery remain unimplemented. See [A1 evidence](../evidence/t5-finalization.md),
+post-storage-wait qualification through their existing owners. HTTP/replay publication is merged through [A3c/A4b](t5-browser-review-publication.md).
+B1/B2 merged #285 and internal authority/application/ACK composition merged through
+#300. Service enablement, a concrete store and recovery remain unimplemented. See [A1 evidence](../evidence/t5-finalization.md),
 [A2a evidence](../evidence/t5-session-publication.md) and
 [A2b application access](../evidence/t5-application-publication.md).
 
@@ -122,7 +123,9 @@ a durable marker can conservatively remain unknown even when no effect ran.
 
 ## J2: optional local store and retention
 
-Begin with one exclusively owned local SQLite adapter only after auditing the supported
+Follow the demand-loaded [SQLite audit](t5-journal-sqlite-audit.md) and
+[qualification packet](t5-journal-sqlite-qualification.md). Begin with one exclusively
+owned local SQLite adapter only after auditing the supported
 Node/Bun build and distribution matrix. Select one implementation, with lazy loading;
 browser-free ephemeral startup must not require it. No mandatory broker/database.
 Document transaction and filesystem acknowledgment semantics, ownership fencing,

@@ -161,6 +161,227 @@ describe('session control', () => {
     expect(control.operation('save-1')).not.toHaveProperty('fingerprint');
   });
 
+  it('withholds acknowledgment-required replay and publication until intent is acknowledged', () => {
+    const control = new SessionControl();
+    const request = {
+      actor: 'operator' as const,
+      operationId: 'durable-save',
+      fingerprint: 'digest',
+      acknowledgmentRequired: true,
+    };
+    const ticket = control.begin(request);
+    if ('replay' in ticket) throw new Error('unexpected replay');
+
+    expect(control.operation('durable-save')).toMatchObject({
+      status: 'in_flight',
+      dispatched: false,
+    });
+    expect(() => control.publicationOperation('durable-save')).toThrow(/acknowledgment/i);
+    expect(() => control.begin(request)).toThrow(/acknowledgment/i);
+
+    control.acknowledge(ticket, { status: 'in_flight', dispatched: false });
+    const published = control.publicationOperation('durable-save');
+    expect(published).toEqual({
+      operationId: 'durable-save',
+      epoch: 0,
+      status: 'in_flight',
+      dispatched: false,
+    });
+    expect(control.begin(request)).toEqual({ replay: published });
+    if (published) published.status = 'completed';
+    expect(control.publicationOperation('durable-save')?.status).toBe('in_flight');
+  });
+
+  it('omits unacknowledged intent from views without blocking lifecycle control', () => {
+    const control = new SessionControl();
+    const ticket = control.begin({
+      actor: 'operator',
+      operationId: 'pending-intent',
+      fingerprint: 'digest',
+      acknowledgmentRequired: true,
+    });
+    if ('replay' in ticket) throw new Error('unexpected replay');
+    expect(control.view()).toEqual({ state: 'HUMAN_ACTIVE', epoch: 0, busy: true });
+    expect(control.takeover()).toEqual({ state: 'PAUSE_REQUESTED', epoch: 0, busy: true });
+    expect(() => control.publicationOperation('pending-intent')).toThrow(/acknowledgment/i);
+    control.stop();
+    expect(control.view()).toMatchObject({ state: 'STOPPED', busy: true });
+    expect(control.view()).not.toHaveProperty('operation');
+    expect(control.operation('pending-intent')).toMatchObject({ status: 'in_flight' });
+  });
+
+  it.each(['completed', 'failed', 'outcome_unknown'] as const)(
+    'bounds active views by ACK rather than live %s execution and returns isolated snapshots',
+    (status) => {
+      const control = new SessionControl();
+      const ticket = control.begin({
+        actor: 'operator',
+        operationId: 'pending-terminal',
+        fingerprint: 'digest',
+        acknowledgmentRequired: true,
+      });
+      if ('replay' in ticket) throw new Error('unexpected replay');
+      control.acknowledge(ticket, { status: 'in_flight', dispatched: false });
+      const intentView = control.view();
+      expect(intentView.operation).toMatchObject({ status: 'in_flight', dispatched: false });
+      control.acknowledge(ticket, { status: 'in_flight', dispatched: true });
+      // A committed marker is conservatively visible even before physical dispatch.
+      expect(control.operation('pending-terminal')?.dispatched).toBe(false);
+      expect(control.view().operation).toMatchObject({ status: 'in_flight', dispatched: true });
+      control.dispatched(ticket);
+      control.finalize(ticket, status);
+      expect(control.operation('pending-terminal')?.status).toBe(status);
+      const markerView = control.takeover();
+      expect(markerView.operation).toMatchObject({ status: 'in_flight', dispatched: true });
+      if (markerView.operation) markerView.operation.status = 'failed';
+      expect(control.view().operation?.status).toBe('in_flight');
+      expect(intentView.operation?.dispatched).toBe(false);
+      control.acknowledge(ticket, { status, dispatched: true });
+      expect(control.view().operation).toEqual(control.publicationOperation('pending-terminal'));
+      expect(control.view().operation?.status).toBe(status);
+      control.finish(ticket, status);
+      expect(control.view()).toMatchObject({ busy: false });
+      expect(control.view()).not.toHaveProperty('operation');
+    }
+  );
+
+  it('binds acknowledgment selection into the existing duplicate identity in both directions', () => {
+    const control = new SessionControl();
+    const durable = {
+      actor: 'operator' as const,
+      operationId: 'durable',
+      fingerprint: 'same',
+      acknowledgmentRequired: true,
+    };
+    const durableTicket = control.begin(durable);
+    if ('replay' in durableTicket) throw new Error('unexpected replay');
+    expect(() =>
+      control.begin({ actor: 'operator', operationId: 'durable', fingerprint: 'same' })
+    ).toThrow(/different/i);
+    control.finish(durableTicket, 'failed');
+
+    const ephemeral = {
+      actor: 'operator' as const,
+      operationId: 'ephemeral-selection',
+      fingerprint: 'same',
+    };
+    const ephemeralTicket = control.begin(ephemeral);
+    if ('replay' in ephemeralTicket) throw new Error('unexpected replay');
+    expect(() => control.begin({ ...ephemeral, acknowledgmentRequired: true })).toThrow(
+      /different/i
+    );
+    expect(control.publicationOperation('ephemeral-selection')).toMatchObject({
+      status: 'in_flight',
+      dispatched: false,
+    });
+  });
+
+  it.each(['completed', 'failed', 'outcome_unknown'] as const)(
+    'advances an acknowledged marker to immutable %s terminal facts after revocation',
+    (status) => {
+      const control = new SessionControl();
+      const request = {
+        actor: 'operator' as const,
+        operationId: `durable-${status}`,
+        fingerprint: 'digest',
+        acknowledgmentRequired: true,
+      };
+      const ticket = control.begin(request);
+      if ('replay' in ticket) throw new Error('unexpected replay');
+      control.acknowledge(ticket, { status: 'in_flight', dispatched: false });
+      control.acknowledge(ticket, { status: 'in_flight', dispatched: true });
+      control.dispatched(ticket);
+      control.finalize(ticket, status);
+      expect(control.takeover().state).toBe('PAUSE_REQUESTED');
+
+      control.acknowledge(ticket, { status, dispatched: true });
+      expect(control.publicationOperation(request.operationId)).toMatchObject({
+        status,
+        dispatched: true,
+      });
+      expect(() =>
+        control.acknowledge(ticket, {
+          status: status === 'completed' ? 'failed' : 'completed',
+          dispatched: true,
+        })
+      ).toThrow(/acknowledgment/i);
+      control.finish(ticket, 'failed');
+      expect(control.publicationOperation(request.operationId)).toMatchObject({
+        status,
+        dispatched: true,
+      });
+    }
+  );
+
+  it('allows only failed terminal facts before a dispatch marker', () => {
+    const control = new SessionControl();
+    const request = {
+      actor: 'operator' as const,
+      operationId: 'predispatch-failure',
+      fingerprint: 'digest',
+      acknowledgmentRequired: true,
+    };
+    const ticket = control.begin(request);
+    if ('replay' in ticket) throw new Error('unexpected replay');
+    control.acknowledge(ticket, { status: 'in_flight', dispatched: false });
+    expect(() => control.acknowledge(ticket, { status: 'completed', dispatched: false })).toThrow(
+      /acknowledgment/i
+    );
+    expect(() =>
+      control.acknowledge(ticket, { status: 'outcome_unknown', dispatched: false })
+    ).toThrow(/acknowledgment/i);
+    expect(() => control.acknowledge(ticket, { status: 'failed', dispatched: true })).toThrow(
+      /acknowledgment/i
+    );
+
+    control.acknowledge(ticket, { status: 'failed', dispatched: false });
+    control.finalize(ticket, 'completed');
+    control.finish(ticket, 'completed');
+    expect(control.operation('predispatch-failure')).toMatchObject({ status: 'completed' });
+    expect(control.publicationOperation('predispatch-failure')).toMatchObject({
+      status: 'failed',
+      dispatched: false,
+    });
+  });
+
+  it('refuses skipped, regressed, copied, foreign and released acknowledgment owners', () => {
+    const control = new SessionControl();
+    const request = {
+      actor: 'operator' as const,
+      operationId: 'ack-owner',
+      fingerprint: 'digest',
+      acknowledgmentRequired: true,
+    };
+    const ticket = control.begin(request);
+    const foreign = new SessionControl().begin({
+      actor: 'operator',
+      operationId: 'foreign',
+      fingerprint: 'digest',
+      acknowledgmentRequired: true,
+    });
+    if ('replay' in ticket || 'replay' in foreign) throw new Error('unexpected replay');
+
+    for (const invalid of [
+      { owner: ticket, projection: { status: 'in_flight' as const, dispatched: true } },
+      { owner: { ...ticket }, projection: { status: 'in_flight' as const, dispatched: false } },
+      { owner: foreign, projection: { status: 'in_flight' as const, dispatched: false } },
+    ])
+      expect(() => control.acknowledge(invalid.owner, invalid.projection)).toThrow(
+        /acknowledgment/i
+      );
+    expect(() => control.publicationOperation('ack-owner')).toThrow(/acknowledgment/i);
+
+    control.acknowledge(ticket, { status: 'in_flight', dispatched: false });
+    control.acknowledge(ticket, { status: 'in_flight', dispatched: true });
+    expect(() => control.acknowledge(ticket, { status: 'in_flight', dispatched: false })).toThrow(
+      /acknowledgment/i
+    );
+    control.finish(ticket, 'outcome_unknown');
+    expect(() =>
+      control.acknowledge(ticket, { status: 'outcome_unknown', dispatched: true })
+    ).toThrow(/acknowledgment/i);
+  });
+
   it('never evicts deduplication records to admit a new write', () => {
     const { control, epoch } = delegated(new SessionControl({ maxOperations: 1 }));
     const ticket = control.begin({ actor: 'agent', epoch, operationId: 'one', fingerprint: 'a' });
@@ -218,6 +439,9 @@ describe('session control', () => {
 
     control.dispatched(ticket);
     expect(control.view().operation).toMatchObject({ dispatched: true });
+    expect(view.operation?.dispatched).toBe(false);
+    if (view.operation) view.operation.status = 'failed';
+    expect(control.view().operation?.status).toBe('in_flight');
 
     control.finish(ticket, 'completed');
     expect(control.view().operation).toBeUndefined();

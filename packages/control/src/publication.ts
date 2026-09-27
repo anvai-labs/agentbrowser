@@ -1,6 +1,7 @@
 import { ControlError } from '@agentbrowser/core';
 import type { OperationRecord } from '@agentbrowser/protocol';
 import { TIMEOUT, within } from './bounded-wait.js';
+import { synchronousResult } from './trusted-callback.js';
 
 export type TerminalStatus = Exclude<OperationRecord['status'], 'in_flight'>;
 export interface PublicationContext {
@@ -24,6 +25,28 @@ interface Publication<T, Context extends PublicationContext = PublicationContext
 export interface SessionPublication<T> extends Publication<T, SessionPublicationContext> {}
 /** Core-owned status lookup or replay only; never an arbitrary payload or effect. */
 export interface OperationPublication extends Publication<Readonly<OperationRecord>> {}
+
+/** Add an output-only owner without widening the original publication lifetime. */
+export function composePublicationContext<T extends PublicationContext>(
+  context: Readonly<T>,
+  assertOwner: () => void
+): Readonly<T> {
+  let revoked = false;
+  return Object.freeze({
+    ...context,
+    assertCurrent() {
+      if (revoked) throw new ControlError('CONTROL_REVOKED', 'Publication expired or revoked');
+      try {
+        context.assertCurrent();
+        synchronousResult(assertOwner());
+        context.assertCurrent();
+      } catch (error) {
+        revoked = true;
+        throw error;
+      }
+    },
+  });
+}
 
 export function snapshotPublication<T, Context extends PublicationContext>(
   options: Publication<T, Context>

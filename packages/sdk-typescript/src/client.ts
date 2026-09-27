@@ -70,20 +70,7 @@ export interface ClientOptions {
 // no caller.
 export type { SessionCookie, SessionRequest } from '@agentbrowser/protocol';
 
-export interface SessionResponse {
-  sessionId: string;
-  status: string;
-  engine?: {
-    name: string;
-    version: string;
-    capabilities: Record<string, unknown>;
-  };
-  createdAt: string;
-  ttlMs?: number;
-  idleTimeoutMs?: number;
-  /** Number of live pages registered to the session right now. */
-  pages?: number;
-}
+export type SessionResponse = import('@agentbrowser/protocol').SessionView;
 
 export interface PageResponse {
   pageId: string;
@@ -102,75 +89,15 @@ export interface NavigationResponse {
   status: string;
   url: string;
   redirectChain: string[];
+  reason?: import('@agentbrowser/protocol').NavigationFailureReason;
 }
 
-export interface ObservationRequest {
-  mode?: 'interactive' | 'content' | 'accessibility';
-  maxElements?: number;
-  maxBytes?: number;
-  /** Return only what changed since this revision. */
-  sinceRevision?: number;
-  /** Resume a truncated observation from the cursor's nextOrdinal. */
-  continueFrom?: number;
-  /** Optional enrichments, e.g. ["overlays"] or ["fileInputs"]. */
-  include?: string[];
-}
+export type { ObservationRequest, ScreenshotRequest } from '@agentbrowser/protocol';
+import type { ObservationRequest, ScreenshotRequest } from '@agentbrowser/protocol';
+import { validateObservationRequest, validateScreenshotRequest } from '@agentbrowser/protocol';
 
-export interface ObservationResponse {
-  sessionId: string;
-  pageId: string;
-  revision: number;
-  url: string;
-  title: string;
-  status: string;
-  summary: string;
-  elements: Array<{
-    ref: string;
-    role: string;
-    name?: string;
-    visible: boolean;
-    enabled: boolean;
-    value?: string;
-    /** Link destination, present on role:"link" elements. */
-    href?: string;
-    /** True when the captured href exceeded the 2048-char capture limit. */
-    hrefTruncated?: boolean;
-    /**
-     * Engine-captured attributes; populated for role:"fileinput" elements
-     * requested via include:["fileInputs"] (carries id, accept, and multiple
-     * so callers can tell ambiguous file inputs apart).
-     */
-    attributes?: Record<string, string>;
-    /**
-     * Checked state for checkbox/radio/switch roles: true/false from the
-     * engine's authoritative read; absent when unknowable (tri-state mixed,
-     * or degraded observations without bound handles).
-     */
-    checked?: boolean | undefined;
-  }>;
-  truncated: boolean;
-  untrustedContent: boolean;
-  /** Present only when requested via include:["overlays"]. */
-  overlays?: Array<{
-    tag: string;
-    role?: string;
-    name?: string;
-    covers: number;
-  }>;
-  /** Present only when the observation is truncated. */
-  continuation?: { nextOrdinal: number; remaining: number };
-  /**
-   * True when the whole-page ariaSnapshot budget was exceeded and `elements`
-   * came from a DOM-tag-only fallback: roles are bare HTML tags with no
-   * name/value, and any custom widget with no native form control (e.g. a
-   * div-based combobox) is entirely absent. Do not trust role/name matching
-   * on this observation - retry with a larger snapshotTimeoutMs on the
-   * session, or narrow the observation instead.
-   */
-  degraded?: boolean;
-  /** Why `degraded` is set, when it is. Currently only one cause exists. */
-  degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset';
-}
+/** Canonical observation response, shared with REST and MCP output schemas. */
+export type ObservationResponse = import('@agentbrowser/protocol').PageState;
 
 /** The delivered action set, derived from the protocol source of truth. */
 export type DeliveredAction = (typeof DELIVERED_ACTION_TYPES)[number];
@@ -187,6 +114,8 @@ export interface ActionResult {
 
 export interface ExtractRequest {
   format: 'text' | 'markdown' | 'links' | 'tables' | 'forms' | 'jsonld' | 'schema' | 'records';
+  /** Complete compact JSON response budget in UTF-8 bytes, bounded by the server ceiling. */
+  maxBytes?: number;
   /** JSON Schema constraining the extraction (format: 'schema' only). */
   schema?: Record<string, unknown>;
   /** Repeating-structure selectors (format: 'records' only). */
@@ -197,12 +126,13 @@ export interface ExtractRequest {
 // these from the SDK rather than redeclaring them.
 export {
   DELIVERED_EXTRACT_FORMATS,
+  parseExtractMaxBytesText,
   REF_PATTERN,
   parseRef,
   parseAutofillRequest,
 } from '@agentbrowser/protocol';
 export type { DeliveredExtractFormat } from '@agentbrowser/protocol';
-export { UsageError, formatErrorForUser } from '@agentbrowser/protocol';
+export { UsageError, formatErrorForUser, navigationFailureDetail } from '@agentbrowser/protocol';
 
 export interface ExtractResult {
   data: unknown;
@@ -220,20 +150,8 @@ export interface ExtractResult {
   tokenUsage?: Record<string, unknown>;
 }
 
-export interface ScreenshotRequest {
-  fullPage?: boolean;
-  format?: 'png' | 'jpeg' | 'webp';
-  quality?: number;
-  maskSensitive?: boolean;
-}
-
-export interface ArtifactRef {
-  artifactId: string;
-  type: string;
-  contentType: string;
-  sizeBytes: number;
-  url: string;
-}
+export type { ArtifactRef } from '@agentbrowser/protocol';
+import type { ArtifactRef } from '@agentbrowser/protocol';
 
 export interface PdfRequest {
   landscape?: boolean;
@@ -302,8 +220,8 @@ export interface PageSnapshot {
    * either way. Retry with a larger snapshotTimeoutMs on the session.
    */
   degraded?: boolean;
-  /** Why `degraded` is set, when it is. Currently only one cause exists. */
-  degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset';
+  /** Why `degraded` is set, when it is. */
+  degradedReason?: import('@agentbrowser/protocol').PageState['degradedReason'];
 }
 
 /**
@@ -764,6 +682,13 @@ export class SessionsClient {
     pageId: string,
     request: ObservationRequest = {}
   ): Promise<ObservationResponse> {
+    const checked = validateObservationRequest(request);
+    if (!checked.ok)
+      throw new AgentBrowserError(
+        'INVALID_REQUEST',
+        checked.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; '),
+        false
+      );
     return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/observe`, {
       method: 'POST',
       body: request,
@@ -788,6 +713,13 @@ export class SessionsClient {
     pageId: string,
     request: ScreenshotRequest = {}
   ): Promise<ArtifactRef> {
+    const checked = validateScreenshotRequest(request);
+    if (!checked.ok)
+      throw new AgentBrowserError(
+        'INVALID_REQUEST',
+        checked.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; '),
+        false
+      );
     return this.http.requestJson(`/v1/sessions/${sessionId}/pages/${pageId}/screenshot`, {
       method: 'POST',
       body: request,

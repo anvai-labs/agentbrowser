@@ -154,11 +154,12 @@ export async function checkCliApplicationOutcome(
       modules.commit,
       modules.dirty ? 'allow-dirty' : 'clean',
     ],
-    { env: { ...env, AGENTBROWSER_API_KEY: key } },
+    { env: { ...env, AGENTBROWSER_API_KEY: key }, label: 'cli-outcome', timings: options.managedChildren },
     async (proc) => {
       const ready = await proc.message();
       assert.equal(ready.kind, 'ready');
       assert.deepEqual(ready.modules, modules, 'CLI host must use the audited extracted package');
+      proc.phase('case-setup');
       const matrixStarted = performance.now();
       const request = (path, args = {}) =>
         proc.guard(apiRequest(ready.baseUrl, path, { key, signal: proc.signal, ...args }));
@@ -226,6 +227,7 @@ export async function checkCliApplicationOutcome(
       let firstFailure;
       try {
         for (const name of cases) {
+          proc.phase(`case-${name}`);
           let session;
           let setup = 'failed';
           let cleanup = 'unknown';
@@ -562,6 +564,7 @@ export async function checkCliApplicationOutcome(
         assert.equal(closedFixtures.size, cases.length);
       }
       matrixElapsedMs = Math.round(performance.now() - matrixStarted);
+      proc.phase('application-recipe');
       applicationRecipe = await qualifyApplicationRecipe({
         proc, cli, directory, env, key, baseUrl: ready.baseUrl,
         fixture: ready.fixture, expectedVersion,

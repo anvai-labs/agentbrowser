@@ -7,6 +7,7 @@ async function fixture(
   test: (f: {
     service: AgentBrowserService;
     gate: ApprovalGate;
+    secrets: SecretManager;
     sessionId: string;
     pageId: string;
     action: ServiceActRequest;
@@ -17,10 +18,11 @@ async function fixture(
 ) {
   const engine = new FakeEngine();
   const gate = new ApprovalGate();
+  const secrets = new SecretManager({ 'vault://private': 'BOUND-SECRET' });
   const service = new AgentBrowserService({
     engine,
     approvalGate: gate,
-    secretManager: new SecretManager({ 'vault://private': 'BOUND-SECRET' }),
+    secretManager: secrets,
   });
   try {
     const { sessionId } = await service.createSession({
@@ -49,6 +51,7 @@ async function fixture(
     await test({
       service,
       gate,
+      secrets,
       sessionId,
       pageId,
       action: { action: 'click', target: { ref } },
@@ -224,6 +227,110 @@ it('sanitizes exceptions during reviewed input capture before tracing starts', a
         error.code === 'INVALID_REQUEST' &&
         !error.message.includes('BOUND-SECRET')
     );
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+});
+
+it('refuses an omitted decision instead of silently inspecting the approval', async () => {
+  await fixture(async ({ service, sessionId, pageId, action, run, dispatch }) => {
+    const token = await challenge(() => run(() => service.act(sessionId, pageId, action)));
+    await expect(
+      run(() => service.decideApproval(sessionId, token, undefined as never))
+    ).rejects.toThrow();
+    expect(await run(() => service.getApproval(sessionId, token))).toMatchObject({
+      status: 'pending',
+    });
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+});
+
+for (const decision of [undefined, 'approve', 'deny'] as const) {
+  it(`refuses an ordinary ${decision ?? 'get'} view when its terminal secret check replaces the page`, async () => {
+    await fixture(async ({ service, sessionId, pageId, action, run, dispatch, secrets }) => {
+      const token = await challenge(() => run(() => service.act(sessionId, pageId, action)));
+      const redact = secrets.redactUntrusted.bind(secrets);
+      const pages = (service as unknown as { pages: Map<string, object> }).pages;
+      const original = pages.get(pageId);
+      let replaced = false;
+      const spy = vi.spyOn(secrets, 'redactUntrusted').mockImplementation((value) => {
+        // Only the final captured view is deeply frozen; earlier checks must pass.
+        if (Object.isFrozen(value)) {
+          pages.set(pageId, { ...original });
+          replaced = true;
+        }
+        return redact(value);
+      });
+      try {
+        await expect(
+          run(() =>
+            decision === undefined
+              ? service.getApproval(sessionId, token)
+              : service.decideApproval(sessionId, token, decision)
+          )
+        ).rejects.toThrow();
+        expect(replaced).toBe(true);
+        expect(dispatch).not.toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+        if (original) pages.set(pageId, original);
+      }
+    });
+  });
+
+  it(`publishes an ordinary ${decision ?? 'get'} review without a native-form engine capability`, async () => {
+    await fixture(async ({ service, sessionId, pageId, action, run, dispatch }) => {
+      const token = await challenge(() => run(() => service.act(sessionId, pageId, action)));
+      const sent = vi.fn();
+      await service.authority.run(
+        sessionId,
+        { actor: 'operator', tenant: 'owner' },
+        {},
+        () => service.prepareApprovalDisclosureInScope(sessionId, token, decision),
+        undefined,
+        {
+          timeoutMs: 1000,
+          publish: async (output) => {
+            await Promise.resolve();
+            output.assertCurrent();
+            sent(output.view);
+          },
+        }
+      );
+      expect(sent).toHaveBeenCalledOnce();
+      expect(sent.mock.calls[0]?.[0].status).toBe(
+        decision === 'approve' ? 'approved' : decision === 'deny' ? 'denied' : 'pending'
+      );
+      expect(dispatch).not.toHaveBeenCalled();
+    });
+  });
+}
+
+it('rejects delayed ordinary-review disclosure when its captured page object is replaced', async () => {
+  await fixture(async ({ service, sessionId, pageId, action, run, dispatch }) => {
+    const token = await challenge(() => run(() => service.act(sessionId, pageId, action)));
+    const sent = vi.fn();
+    await expect(
+      service.authority.run(
+        sessionId,
+        { actor: 'operator', tenant: 'owner' },
+        {},
+        () => service.prepareApprovalDisclosureInScope(sessionId, token),
+        undefined,
+        {
+          timeoutMs: 1000,
+          publish: (output) => {
+            const pages = (service as unknown as { pages: Map<string, object> }).pages;
+            const original = pages.get(pageId)!;
+            pages.set(pageId, { ...original });
+            expect(output.assertCurrent).toThrow();
+            pages.set(pageId, original);
+            output.assertCurrent();
+            sent();
+          },
+        }
+      )
+    ).rejects.toThrow();
+    expect(sent).not.toHaveBeenCalled();
     expect(dispatch).not.toHaveBeenCalled();
   });
 });

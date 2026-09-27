@@ -559,7 +559,6 @@ describe('Schema Validation - Observation Request', () => {
       maxBytes: 65536,
       maxElements: 500,
       sinceRevision: 15,
-      scope: 'full',
     };
 
     const result = validate(ObservationRequestSchema, validObservation);

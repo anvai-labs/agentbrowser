@@ -1023,22 +1023,11 @@ describe('AgentBrowser SDK', () => {
       );
     });
 
-    it('should surface a screenshot error as AgentBrowserError', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 400,
-        json: async () => ({
-          error: {
-            code: 'INVALID_REQUEST',
-            message: 'Unsupported screenshot format: bmp',
-            retryable: false,
-          },
-        }),
-      });
-
+    it('rejects unsupported screenshot formats before network dispatch', async () => {
       await expect(
         client.sessions.screenshot('ses_1', 'pg_1', { format: 'bmp' as never })
       ).rejects.toThrow('INVALID_REQUEST');
+      expect(mockFetch).not.toHaveBeenCalled();
     });
   });
 
@@ -1402,6 +1391,7 @@ describe('SessionsClient.extract schema passthrough', () => {
 
     const localClient = new AgentBrowserClient({ baseUrl: 'http://localhost:5709' });
     await localClient.sessions.extract('ses_1', 'pg_1', {
+      maxBytes: 65536,
       format: 'schema',
       schema: { properties: { price: { type: 'string' } } },
     });
@@ -1411,6 +1401,7 @@ describe('SessionsClient.extract schema passthrough', () => {
     const call = calls[calls.length - 1] as unknown[];
     const body = JSON.parse((call[1] as { body: string }).body);
     expect(body).toEqual({
+      maxBytes: 65536,
       format: 'schema',
       schema: { properties: { price: { type: 'string' } } },
     });

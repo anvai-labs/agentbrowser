@@ -1,8 +1,8 @@
 # T5 A3a: review publication ownership
 
-Status: A3a1 session/application owner pins implemented; A3a2 page/evidence composition
-and A3 HTTP adoption remain gated.
-Base: develop `8752c6b` (A4a2, PR #273).
+Status: A3a1 session/application owner pins and A3a2 page/evidence composition
+implemented and locally qualified; A3 HTTP adoption remains gated.
+A3a1 base: develop `8752c6b` (A4a2, PR #273). A3a2 base: `e123a4d` (#281).
 Parent: [finalization/publication](t5-finalization-publication.md).
 Load explicitly for review disclosure; unrelated modes need no additional context.
 
@@ -111,6 +111,46 @@ held through publication. A later asynchronous onSend hook cannot bypass the fin
 output abort must prevent a late send, not merely substitute a stale 409 body.
 
 Implementation and validation: [A3a1 evidence](../evidence/t5-review-publication.md).
+
+## A3a2 implementation contract
+
+Extend `PreparedEvidenceReview` with `capturePublication(view)`, captured during
+execution. It returns a frozen, detached view plus an output-only `assertCurrent`.
+Reuse the original source callbacks and permission-generation fence. Publication
+must not collect a witness, reread a token, consume consent or dispatch an effect.
+Validate the complete captured view and check current secret disclosure after host
+authorization callbacks, then finish with callback-free page/application owner pins.
+Publication authority is optional trusted composition: absence must refuse capture,
+never fall back to the execution guard. Retained guards expire with their original run.
+
+Extract native-page identity checks from the reader's admission check, keeping one
+captured coordinator session/page/engine-page owner. The reader retains its execution
+guard; its publication check uses the existing captured publication lifetime. Neither
+check resolves a replacement page or calls the engine to disclose a view.
+
+Service `prepareApplicationReviewInScope` and `prepareApprovalDisclosureInScope`
+produce these inert views inside the existing admission. Existing applicationReview,
+getApproval and decideApproval consume the same preparation path and preserve their
+wire results. Ordinary action reviews reuse captured session/page ownership and the
+same secret-disclosure check without requiring native-form engine support. This
+slice supplies trusted internal composition only; A3 adopts it in HTTP separately.
+
+### Trusted owner consistency
+
+Callbacks may reenter; repeated checks do not confine trusted host code. Every
+change that can revoke evidence authorization must advance its existing permission
+generation, including revoke/regrant. Application binding or policy replacement
+must invalidate its existing authority owner through configure/invalidation.
+The terminal callback-free pins detect those owner changes, including changes
+made by the last permission callback. Secret disclosure is checked after callbacks.
+
+A host that changes evidence authorization while returning the old generation
+violates the permission-owner contract. Unversioned, out-of-band Boolean application
+policy mutation is not covered by the owner guarantee; observed denials still latch.
+No finite ordering of mutually mutating callbacks can prove otherwise. This slice
+does not introduce a policy registry or claim arbitrary callback confinement. A
+future requirement for independent application policy revisions needs a versioned
+application permission owner, not more callback passes.
 
 ## Release 1.10.0 prerequisite repair
 

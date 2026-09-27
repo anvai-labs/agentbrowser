@@ -1,12 +1,39 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
-Rechecked published 1.9.1 at `310e01d43982824caac2c63ed8d98355e17efdce`
-and develop `8752c6b746996802209bac2490ceb285e3569265` (PR #273; alignment
-rechecked 2026-09-23). C3c incorporates the merged #256 error-containment repair.
-The [release ladder](release-1.9.1.md) includes Bun CLI/MCP artifacts,
-Node 24 service qualification, Homebrew and develop back-sync. Existing browser
-sessions were preserved; an upgraded installed binary does not prove every running
-service was restarted. No new release is required for the next develop slice.
+Latest recheck: published 1.11.0 at protected main
+`e00539eca682b60e5761702d1851472bb6401b12` (2026-09-24, America/Chicago).
+Release, npm, Homebrew PR #73 and installed acceptance are complete; the live service
+was preserved on 1.10.0. Extraction budgets (#281), guarded publication (#282–284),
+journal contracts (#285), research adapters (#286), ownership (#287) and diagnostics
+(#288) are included. The [delivery evidence](release-1.11.0.md) distinguishes published
+and installed binaries from the running service and records main ancestry for the back-sync.
+The historical records below preserve earlier baselines; the current table and final
+checkpoint describe the latest acceptance position. The release does not change finite milestone completion.
+
+Develop recheck: `a06a31c745d81bc25500ff0b34e0c719f64ef1b2` (PR #296).
+Unreleased continuation through #292–296 adds navigation reasons, operator Chrome
+attachment, the EDGAR recipe, active leases, bounded terminal facts and observed
+engine disconnection. PR #296 and its post-merge CI each passed 8/8 checks; see
+[disconnect evidence](session-disconnect.md). None establishes durable recovery or
+changes installed/released version claims. Original roadmap work resumes at
+[T5 C1a journal settlement](t5-journal-settlement.md), merged #297 at `aeb7fdd`
+with PR and post-merge CI 8/8 green. [C1b internal authority composition](t5-journal-authority.md)
+merged #298 at `a1443c7` with clean review and pre/post-merge CI 8/8.
+[C2 application pins and C3 terminal/replay](../design/t5-journal-application-terminal.md)
+merged #299 at `e4b5e74` with clean exact-head review and pre/post-merge CI 8/8.
+[C4a control views](../design/t5-journal-control-views.md) now use the shared ACK
+projection. Runtime selection, concrete storage and recovery remain gated.
+C4a merged #300 at `e812fbc` with clean review and pre/post-merge CI 8/8.
+[J2a SQLite audit](../design/t5-journal-sqlite-audit.md) merged #301 at `83b747b`
+with clean review and pre/post-merge CI 8/8.
+[J2b qualification](../design/t5-journal-sqlite-qualification.md) now has an internal
+[owner/anchor primitive](t5-journal-sqlite-owner.md); raw adapter, bounded
+child manager and remaining qualification gates are next.
+The primitive merged in PR #303 at `7ccddb2`; PR and post-merge CI each passed
+8/8 checks after exact-head independent review. The [1.12.0 candidate](release-1.12.0.md)
+qualifies the completed browsing/session checkpoint without enabling journal recovery.
+No public durability or recovery is enabled.
+The estimates below remain unchanged.
 
 ## Acceptance progress
 
@@ -21,11 +48,11 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T2 shared execution/verification | Complete, released | 100% | Production evidence belongs to T4; restart durability to T5 |
 | T3 QA regression | Complete, released | 100% | Broader provisioning and demand-backed report adapters are follow-ups |
 | T4 application operations/parity | Active | ~40% | Production UI/API oracle and evidence; U0/U1 operator UX merged; synthetic parity qualified; callback repair merged #236 |
-| T5 durable recovery | Active J0/A1/A2/A4a/A3a1 publication foundation | ~10% | Journal/recovery and process-loss qualification; no durable guarantee yet |
+| T5 durable recovery | Active publication/journal foundation | ~10% | HTTP/replay publication merged; B1/B2 contract merged; runtime journal/recovery and process-loss qualification remain; no durable guarantee yet |
 | T6 forms/operations | Active | ~40% | Production sources, candidate/job eligibility and live qualification; C3c public synthetic workflow merged #257 |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
 | T8 installed harnesses | Active source repair; installed acceptance unqualified | 0% installed qualification | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |
-| T9 release hardening | Recurring | 100% of 1.9.1 checkpoint | Repeat per later release |
+| T9 release hardening | Recurring | 100% of 1.11.0 checkpoint | Repeat per later release |
 
 Exact milestone count: **3 of 9 finite tasks complete (33%)**. Counting all original
 ten rows gives 30%, including recurring T9. No defensible effort-weighted overall
@@ -422,3 +449,33 @@ must retain page, evidence permission and secret-disclosure checks before HTTP a
 No new timer, executor, registry or token store is introduced. Review-view status remains
 a capture-time snapshot; ApprovalGate owns later current-state validation. T5 stays ~10%;
 3/9 finite milestones are complete. Release 1.9.1 and running services are unchanged.
+
+
+## 2026-09-24 checkpoint
+
+Release 1.10.1 at `124afc3` is published on GitHub/npm; release CI passed 12/12.
+Homebrew #70 merged `8a0c2fc`; PR and post-merge CI passed 4/4, and the actual
+installed CLI/MCP/server acceptance passed. The live service was preserved on 1.10.0.
+Develop `89c20e6` additionally contains extraction budgets (#281) and A3a2 review
+disclosure (#282), each with 8/8 PR and post-merge CI. These are not in 1.10.1.
+
+The next [A3b HTTP publication candidate](t5-http-publication.md) integrates existing
+authorities into four application/status routes. A3c browser/review routes, full A4b
+parity and journal/recovery remain pending. Estimates remain T1~80%, T4/T6~40%,
+T5~10%, installed T8 unqualified; finite milestone count remains 3/9 (33%). T9 is
+complete for the 1.10.1 release checkpoint and recurs for subsequent releases.
+
+
+## Browser/review publication continuation — 2026-09-24
+
+PR #283 merged as `58e3605`; its candidate passed 3,891 tests (24 existing skips),
+independent review and eight PR plus eight post-merge checks without reruns. The
+[A3c/A4b candidate](t5-browser-review-publication.md) extends the same publisher to
+review and ordinary browser responses, retaining shared authority and permission owners.
+Journal B1/B2 starts only after this candidate's review and delivery gates. Main, tag,
+installed release and live headed sessions remain unchanged by this develop work.
+
+HTTP/replay publication completed at #284 with an identical reviewed merge tree and
+8/8 green PR/post-merge checks ([evidence](t5-browser-review-publication.md)). The next
+[B1/B2 journal contract candidate](t5-journal-contract.md) adds validation and adapter
+conformance only. No new release, live-service restart or durable capability is included.

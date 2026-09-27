@@ -1,7 +1,14 @@
 import { expect, it, vi } from 'vitest';
 import { type McpClient, buildMcpServer } from './mcp-server.js';
 it('binds an agent to an existing session without exposing owner or cookie tools', async () => {
+  const session = {
+    sessionId: 's',
+    status: 'ready',
+    engine: { name: 'fake-engine', version: '1.0.0' },
+    createdAt: '2026-09-24T00:00:00.000Z',
+  };
   const sessions = {
+    get: vi.fn().mockResolvedValue(session),
     control: vi.fn().mockResolvedValue({ state: 'AGENT_ACTIVE' }),
     listPages: vi.fn().mockResolvedValue([{ pageId: 'p' }]),
     snapshot: vi.fn(),
@@ -21,6 +28,7 @@ it('binds an agent to an existing session without exposing owner or cookie tools
   const attached = await call('tools/call', { name: 'browser_session', arguments: {} });
   expect(JSON.parse(attached.result.content[0].text)).toMatchObject({
     sessionId: 's',
+    session,
     pages: [{ pageId: 'p' }],
   });
   const wrong = await call('tools/call', {

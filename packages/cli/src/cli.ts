@@ -27,19 +27,24 @@ import {
   ApplicationExecuteRequestSchema,
   ApplicationOperationResultSchema,
   ApplicationReviewRequestSchema,
+  ArtifactRefSchema,
   AutofillReportSchema,
   AutofillRequestSchema,
   DELIVERED_EXTRACT_FORMATS,
+  DELIVERED_WAIT_TYPES,
   FormMappingSchema,
   FormValuesSchema,
   INTERACTION_GUIDANCE,
+  ObservationRequestSchema,
   OperatorApprovalDecisionSchema,
   OperatorApprovalViewSchema,
   OutcomeRunReportSchema,
   OutcomeRunRequestSchema,
+  PageStateSchema,
   PlanActionsSchema,
   PlanReportSchema,
   REF_PATTERN,
+  ScreenshotRequestSchema,
   TestCaseEvaluationInputSchema,
   TestCaseEvaluationReportSchema,
   UsageError,
@@ -47,14 +52,19 @@ import {
   createPlanReportParser,
   evaluateTestCaseRun,
   formatErrorForUser,
+  formatSessionTerminalFailure,
   isAgentMode,
   isPassingOutcome,
   materializeAutofillMapping,
+  navigationFailureDetail,
   parseAutofillReport,
   parseAutofillRequest,
+  parseExtractMaxBytesText,
+  parseObservationRequest,
   parseOperatorApprovalView,
   parseOutcomeRunRequest,
   parsePlanSteps,
+  parseScreenshotRequest,
   validateApplicationReview,
   validateOperatorApprovalDecision,
   validateWireAction,
@@ -63,6 +73,69 @@ import { Command, type Option } from 'commander';
 import { assertCookieRequestSize, readCookieFile, writeCookieFile } from './cookie-file.js';
 import { type JsonInputStream, createJsonArgumentReader } from './json-input.js';
 import { PRODUCT_VERSION } from './product-version.js';
+
+/** Shared --wait-* flags for observe/screenshot readiness (SPA hydration). */
+interface WaitFlagOptions {
+  waitUntil?: string;
+  waitTimeout?: string;
+  waitSelector?: string;
+  waitPattern?: string;
+  waitCount?: string;
+}
+
+const WAIT_UNTIL_VALUES = new Set<string>(DELIVERED_WAIT_TYPES);
+
+function captureInteger(value: string, flag: string): number {
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)))
+    throw new UsageError(`${flag} must be an integer`);
+  return Number(value);
+}
+
+/** Human rendering is a projection of server facts; JSON remains the full view. */
+function sessionFacts(view: import('@agentbrowser/sdk-typescript').SessionResponse): string[] {
+  const facts = view.diagnostics;
+  const lease = view.lease;
+  return [
+    ...(view.engine ? [`  engine:  ${view.engine.name} ${view.engine.version}`] : []),
+    ...(lease
+      ? [
+          `  lease: sampled=${lease.sampledAt}; ttl-expires=${lease.expiresAt}; idle-expires=${lease.idleExpiresAt} (Unix ms)`,
+        ]
+      : []),
+    ...(facts
+      ? [
+          `  browser: ${facts.browserFamily} ${facts.browserVersion ?? 'unknown'} (${facts.attachment})`,
+          `  launch:  ${facts.launchMode}; executable=${facts.executableSelection}; resources=${facts.resourceModel}`,
+          `  context: ${facts.context.isolation}; viewport=${facts.context.viewport.mode === 'fixed' ? `${facts.context.viewport.width}x${facts.context.viewport.height}` : facts.context.viewport.mode}; init-script=${facts.context.initScript}`,
+        ]
+      : []),
+  ];
+}
+
+function waitFromOptions(
+  options: WaitFlagOptions
+): NonNullable<ObservationRequest['wait']> | undefined {
+  if (!options.waitUntil) {
+    if (
+      [options.waitTimeout, options.waitSelector, options.waitPattern, options.waitCount].some(
+        (value) => value !== undefined
+      )
+    )
+      throw new UsageError('--wait-until is required with other --wait-* options');
+    return undefined;
+  }
+  if (!WAIT_UNTIL_VALUES.has(options.waitUntil)) {
+    throw new UsageError(`--wait-until must be one of: ${[...WAIT_UNTIL_VALUES].join(', ')}`);
+  }
+  const wait = { until: options.waitUntil } as NonNullable<ObservationRequest['wait']>;
+  if (options.waitTimeout !== undefined)
+    wait.timeoutMs = captureInteger(options.waitTimeout, '--wait-timeout');
+  if (options.waitSelector !== undefined) wait.selector = options.waitSelector;
+  if (options.waitPattern !== undefined) wait.pattern = options.waitPattern;
+  if (options.waitCount !== undefined)
+    wait.count = captureInteger(options.waitCount, '--wait-count');
+  return wait;
+}
 
 /** SDK-owned signatures; optional families still permit partial test stand-ins. */
 export interface CliClient
@@ -254,7 +327,9 @@ export function buildCli(deps: CliDependencies): Cli {
       const session = program.command('session').description('manage browser sessions');
       session
         .command('get')
-        .description('get one session')
+        .description(
+          'get one session with captured engine identity, launch diagnostics and sampled lease deadlines; recently ended sessions may report bounded close facts'
+        )
         .argument('<sessionId>')
         .action(
           action(async (ctx, sessionId: string) => {
@@ -264,6 +339,7 @@ export function buildCli(deps: CliDependencies): Cli {
               `  created: ${got.createdAt ?? 'unknown'}`,
               `  ttl:     ${got.ttlMs ?? '?'} ms`,
               `  idle:    ${got.idleTimeoutMs ?? '?'} ms`,
+              ...sessionFacts(got),
             ]);
           })
         );
@@ -366,6 +442,10 @@ export function buildCli(deps: CliDependencies): Cli {
           'require independent operator approval of challenged actions; requires --delegated'
         )
         .option('--engine <name>', 'engine to use')
+        .option(
+          '--cdp-attach',
+          'attach to the startup-configured dedicated operator Chrome profile; local only, initial navigation policy checks only'
+        )
         .option('--headless', 'run headless (the server default; explicit)')
         .option(
           '--no-headless',
@@ -423,6 +503,7 @@ export function buildCli(deps: CliDependencies): Cli {
               throw new UsageError('--reviewed-approval requires --delegated');
             if (options.delegated) request.controlMode = 'delegated';
 
+            if (options.cdpAttach) request.cdpAttach = true;
             if (options.engine) {
               request.engine = String(options.engine);
             }
@@ -524,6 +605,8 @@ export function buildCli(deps: CliDependencies): Cli {
               `Session ${created.sessionId}`,
               `  status:  ${created.status ?? 'unknown'}`,
               `  created: ${created.createdAt ?? 'unknown'}`,
+              ...sessionFacts(created),
+              ...(created.warnings ?? []).map((warning) => `  Warning: ${warning}`),
             ]);
           })
         );
@@ -922,7 +1005,9 @@ export function buildCli(deps: CliDependencies): Cli {
       // ---- navigate --------------------------------------------------------
       program
         .command('navigate')
-        .description('navigate a page to a URL')
+        .description(
+          'navigate a page to a URL; failed navigation exits 1 with a bounded reason (--json preserves structured details)'
+        )
         .argument('<sessionId>')
         .argument('<pageId>')
         .argument('<url>')
@@ -942,16 +1027,28 @@ export function buildCli(deps: CliDependencies): Cli {
                   NavigationRequest['waitUntil']
                 >;
               }
-
-              const result = await ctx.client.sessions.navigate(sessionId, pageId, request);
-
-              ctx.emit(result, () => [`${result.status ?? 'unknown'} -> ${result.url ?? url}`]);
+              try {
+                const result = await ctx.client.sessions.navigate(sessionId, pageId, request);
+                if (result.status === 'blocked' || result.status === 'timeout') exitCode = 1;
+                ctx.emit(result, () => [
+                  `${result.status ?? 'unknown'}${'reason' in result && typeof result.reason === 'string' ? ` (${result.reason})` : ''} -> ${result.url ?? url}`,
+                ]);
+              } catch (error) {
+                const detail = navigationFailureDetail(error);
+                if (detail === undefined) throw error;
+                exitCode = 1;
+                deps.err(
+                  ctx.json
+                    ? JSON.stringify({ error: detail }, null, 2)
+                    : `${detail.code}: ${detail.message}`
+                );
+              }
             }
           )
         );
 
       // ---- observe ---------------------------------------------------------
-      program
+      const observe = program
         .command('observe')
         .description('capture a semantic observation of a page')
         .argument('<sessionId>')
@@ -973,6 +1070,14 @@ export function buildCli(deps: CliDependencies): Cli {
           '--since-revision <n>',
           'only observe if the page revision is newer than this (else the previous observation stands)'
         )
+        .option(
+          '--wait-until <until>',
+          'readiness wait before observing: settled|domcontentloaded|load|networkidle|urlPattern|selectorVisible|minElements'
+        )
+        .option('--wait-timeout <ms>', 'wait timeout in milliseconds')
+        .option('--wait-selector <css>', 'selectorVisible: CSS selector to wait for')
+        .option('--wait-pattern <glob>', 'urlPattern: glob or /regex/ to wait for')
+        .option('--wait-count <n>', 'minElements: minimum observed element count')
         .action(
           action(
             async (
@@ -986,34 +1091,44 @@ export function buildCli(deps: CliDependencies): Cli {
                 include?: string[];
                 continueFrom?: string;
                 sinceRevision?: string;
-              }
+              } & WaitFlagOptions
             ) => {
               const request: ObservationRequest = {};
               if (options.mode) {
                 request.mode = options.mode as NonNullable<ObservationRequest['mode']>;
               }
-              if (options.maxElements) {
-                request.maxElements = Number.parseInt(options.maxElements, 10);
+              if (options.maxElements !== undefined) {
+                request.maxElements = captureInteger(options.maxElements, '--max-elements');
               }
-              if (options.maxBytes) {
-                request.maxBytes = Number.parseInt(options.maxBytes, 10);
+              if (options.maxBytes !== undefined) {
+                request.maxBytes = captureInteger(options.maxBytes, '--max-bytes');
               }
               if (options.include && options.include.length > 0) {
-                request.include = options.include;
+                request.include = options.include as NonNullable<ObservationRequest['include']>;
               }
-              if (options.continueFrom) {
-                request.continueFrom = Number.parseInt(options.continueFrom, 10);
+              if (options.continueFrom !== undefined) {
+                request.continueFrom = captureInteger(options.continueFrom, '--continue-from');
               }
-              if (options.sinceRevision) {
-                request.sinceRevision = Number.parseInt(options.sinceRevision, 10);
+              if (options.sinceRevision !== undefined) {
+                request.sinceRevision = captureInteger(options.sinceRevision, '--since-revision');
+              }
+              const observeWait = waitFromOptions(options);
+              if (observeWait) {
+                request.wait = observeWait;
               }
 
-              const observation = await ctx.client.sessions.observe(sessionId, pageId, request);
+              const observation = await ctx.client.sessions.observe(
+                sessionId,
+                pageId,
+                parseObservationRequest(request)
+              );
 
               ctx.emit(observation, () => renderObservation(observation));
             }
           )
         );
+
+      advertiseWireSchema(observe, { input: ObservationRequestSchema, output: PageStateSchema });
 
       // ---- snapshot (TD-BROWSER-8) -------------------------------------------
       program
@@ -1461,6 +1576,10 @@ export function buildCli(deps: CliDependencies): Cli {
         .argument('<pageId>')
         .option('--format <format>', `one of: ${DELIVERED_EXTRACT_FORMATS.join(' | ')}`)
         .option(
+          '--max-bytes <n>',
+          'complete JSON result byte budget; defaults to server ceiling (1 MiB unless configured); oversized results fail'
+        )
+        .option(
           '--schema <json>',
           'inline JSON Schema for format=schema (flat top-level properties)'
         )
@@ -1474,7 +1593,7 @@ export function buildCli(deps: CliDependencies): Cli {
               ctx,
               sessionId: string,
               pageId: string,
-              options: { format?: string; schema?: string; records?: string }
+              options: { format?: string; schema?: string; records?: string; maxBytes?: string }
             ) => {
               let schemaValue: Record<string, unknown> | undefined;
               if (options.schema !== undefined) {
@@ -1494,11 +1613,14 @@ export function buildCli(deps: CliDependencies): Cli {
               }
               const result = (await ctx.client.sessions.extract(sessionId, pageId, {
                 format: (options.format ?? 'text') as ExtractRequest['format'],
+                ...(options.maxBytes !== undefined
+                  ? { maxBytes: parseExtractMaxBytesText(options.maxBytes) }
+                  : {}),
                 ...(schemaValue !== undefined ? { schema: schemaValue } : {}),
                 ...(recordsValue !== undefined ? { records: recordsValue } : {}),
               })) as unknown;
               ctx.emit(result, () => [
-                JSON.stringify((result as { data?: unknown }).data, null, 2).slice(0, 4000),
+                JSON.stringify((result as { data?: unknown }).data, null, 2),
               ]);
             }
           )
@@ -1513,7 +1635,7 @@ export function buildCli(deps: CliDependencies): Cli {
       );
 
       // ---- screenshot ------------------------------------------------------
-      program
+      const screenshot = program
         .command('screenshot')
         .description('capture a screenshot artifact')
         .argument('<sessionId>')
@@ -1523,6 +1645,14 @@ export function buildCli(deps: CliDependencies): Cli {
         .option('--quality <n>', 'jpeg/webp quality (0-100)')
         .option('--mask-sensitive', 'mask sensitive fields in the capture')
         .option('--out <file>', 'save the screenshot bytes to a file')
+        .option(
+          '--wait-until <until>',
+          'readiness wait before capture: settled|domcontentloaded|load|networkidle|urlPattern|selectorVisible|minElements'
+        )
+        .option('--wait-timeout <ms>', 'wait timeout in milliseconds')
+        .option('--wait-selector <css>', 'selectorVisible: CSS selector to wait for')
+        .option('--wait-pattern <glob>', 'urlPattern: glob or /regex/ to wait for')
+        .option('--wait-count <n>', 'minElements: minimum observed element count')
         .action(
           action(
             async (
@@ -1535,7 +1665,7 @@ export function buildCli(deps: CliDependencies): Cli {
                 quality?: string;
                 maskSensitive?: boolean;
                 out?: string;
-              }
+              } & WaitFlagOptions
             ) => {
               const request: ScreenshotRequest = {};
               if (options.fullPage) {
@@ -1545,13 +1675,21 @@ export function buildCli(deps: CliDependencies): Cli {
                 request.format = options.format as NonNullable<ScreenshotRequest['format']>;
               }
               if (options.quality !== undefined) {
-                request.quality = Number(options.quality);
+                request.quality = captureInteger(options.quality, '--quality');
               }
               if (options.maskSensitive) {
                 request.maskSensitive = true;
               }
+              const screenshotWait = waitFromOptions(options);
+              if (screenshotWait) {
+                request.wait = screenshotWait;
+              }
 
-              const artifact = await ctx.client.sessions.screenshot(sessionId, pageId, request);
+              const artifact = await ctx.client.sessions.screenshot(
+                sessionId,
+                pageId,
+                parseScreenshotRequest(request)
+              );
 
               ctx.emit(artifact, () => [
                 `Screenshot ${artifact.artifactId}`,
@@ -1568,6 +1706,11 @@ export function buildCli(deps: CliDependencies): Cli {
             }
           )
         );
+
+      advertiseWireSchema(screenshot, {
+        input: ScreenshotRequestSchema,
+        output: ArtifactRefSchema,
+      });
 
       program
         .command('pdf')
@@ -2123,6 +2266,11 @@ function renderObservation(observation: ObservationResponse): string[] {
     lines.push(`  summary:  ${observation.summary}`);
   }
 
+  if (observation.degraded)
+    lines.push(
+      `  Warning: degraded observation (${observation.degradedReason ?? 'unknown'}). Wait for readiness or inspect HTML before acting.`
+    );
+
   lines.push('', 'Elements:');
 
   for (const element of observation.elements) {
@@ -2175,8 +2323,10 @@ function formatError(error: unknown): string {
       return `${formatErrorForUser(error)}\nApproval token: ${tokenId}\n${guidance}`;
     }
   }
-  return formatErrorForUser(
+  const base = formatErrorForUser(
     error,
     'The element ref is stale. Run observe again to get fresh refs at the current revision, then act on the new ref. Do not retry the old one.'
   );
+  const terminal = formatSessionTerminalFailure(error);
+  return terminal ? `${base}\n${terminal}` : base;
 }

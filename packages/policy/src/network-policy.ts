@@ -74,6 +74,8 @@ export class NetworkPolicyError extends Error {
   ) {
     super(message);
     this.name = 'NetworkPolicyError';
+    if (['POLICY_DENIED', 'RESPONSE_TOO_LARGE', 'MAX_REDIRECTS', 'REDIRECT_LOOP'].includes(code))
+      this.details = { ...details, reason: 'egress_policy' };
   }
 }
 

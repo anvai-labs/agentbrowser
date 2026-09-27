@@ -27,6 +27,7 @@ import {
   ElementTargetSchema,
   EngineCapabilitiesSchema,
   EngineInfoSchema,
+  ExtractMaxBytesSchema,
   NavigationStatusSchema,
   ObservationRequestSchema,
   OperationRecordSchema,
@@ -40,8 +41,11 @@ import {
   PlanReportSchema,
   PlanRequestSchema,
   PlanStepSchema,
+  ScreenshotRequestSchema,
+  SessionDiagnosticsSchema,
   SessionRequestSchema,
   SessionResponseSchema,
+  SessionViewSchema,
   ViewportSchema,
   WireActionEnvelopeSchema,
 } from '@agentbrowser/protocol';
@@ -1017,6 +1021,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             '200': { description: 'The observation.', content: json(ref('PageState')) },
             '400': INVALID_REQUEST,
             '404': NOT_FOUND,
+            '504': errorResponse('The readiness wait timed out.'),
             '500': INTERNAL,
           },
         },
@@ -1214,6 +1219,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                   type: 'string',
                   enum: [...DELIVERED_EXTRACT_FORMATS],
                 },
+                maxBytes: ExtractMaxBytesSchema,
                 schema: {
                   type: 'object',
                   description:
@@ -1306,20 +1312,13 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
           parameters: [sessionIdParam, pageIdParam],
           requestBody: {
             required: false,
-            content: json({
-              type: 'object',
-              properties: {
-                fullPage: { type: 'boolean' },
-                format: { type: 'string', enum: ['png', 'jpeg', 'webp'] },
-                quality: { type: 'integer', minimum: 0, maximum: 100 },
-                maskSensitive: { type: 'boolean' },
-              },
-            }),
+            content: json(ref('ScreenshotRequest')),
           },
           responses: {
             '200': { description: 'The captured artifact.', content: json(ref('ArtifactRef')) },
             '400': INVALID_REQUEST,
             '404': NOT_FOUND,
+            '504': errorResponse('The readiness wait timed out.'),
             '500': INTERNAL,
           },
         },
@@ -1361,6 +1360,7 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         PageElement: PageElementSchema,
         ElementTarget: ElementTargetSchema,
         ObservationRequest: ObservationRequestSchema,
+        ScreenshotRequest: ScreenshotRequestSchema,
         PlanStep: PlanStepSchema,
         PlanReport: PlanReportSchema,
         OutcomeRunRequest: OutcomeRunRequestSchema,
@@ -1370,19 +1370,8 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         ArtifactRef: ArtifactRefSchema,
 
         // Transport-level shapes the HTTP surface returns today.
-        SessionSummary: {
-          type: 'object',
-          required: ['sessionId', 'status'],
-          properties: {
-            sessionId: { type: 'string' },
-            status: { type: 'string', examples: ['ready', 'active', 'closed'] },
-            createdAt: { type: 'string', format: 'date-time' },
-            ttlMs: { type: 'integer', minimum: 0 },
-            idleTimeoutMs: { type: 'integer', minimum: 0 },
-            pages: { type: 'integer', minimum: 0 },
-            engine: { $ref: '#/components/schemas/EngineInfo' },
-          },
-        },
+        SessionSummary: SessionViewSchema,
+        SessionDiagnostics: SessionDiagnosticsSchema,
         PageSummary: {
           type: 'object',
           required: ['pageId', 'sessionId', 'status'],

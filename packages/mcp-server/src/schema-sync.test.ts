@@ -10,7 +10,11 @@
  * Each reviewed absence carries its reason inline.
  */
 
-import { ObservationRequestSchema, SessionRequestSchema } from '@agentbrowser/protocol';
+import {
+  ObservationRequestSchema,
+  ScreenshotRequestSchema,
+  SessionRequestSchema,
+} from '@agentbrowser/protocol';
 import { describe, expect, it } from 'vitest';
 import { type McpClient, buildTools } from './mcp-server.js';
 
@@ -25,6 +29,10 @@ const propertiesOf = (name: string): Set<string> => {
 };
 
 describe('MCP tool-schema sync', () => {
+  it('browser_session reads exactly the one advertised session identity', () => {
+    expect(propertiesOf('browser_session')).toEqual(new Set(['sessionId']));
+  });
+
   it('browser_navigate reads exactly what it advertises', () => {
     // The clean derivation candidate: handler reads url + waitUntil only.
     expect(propertiesOf('browser_navigate')).toEqual(
@@ -38,13 +46,17 @@ describe('MCP tool-schema sync', () => {
     );
   });
 
-  it('browser_screenshot stays within its delivered surface', () => {
-    // quality and maskSensitive are delivered REST/CLI options, not yet
-    // projected here; adding them requires the handler to read them (same
-    // PR), never the schema alone.
-    expect(propertiesOf('browser_screenshot')).toEqual(
-      new Set(['sessionId', 'pageId', 'fullPage', 'format'])
-    );
+  it.each([
+    ['browser_observe', ObservationRequestSchema],
+    ['browser_screenshot', ScreenshotRequestSchema],
+  ] as const)('%s projects the complete canonical request schema', (name, canonical) => {
+    const schema = toolSchemas.get(name) as {
+      properties: Record<string, unknown>;
+      additionalProperties: boolean;
+    };
+    const { sessionId, pageId, ...body } = schema.properties;
+    expect(body).toEqual(canonical.properties);
+    expect(schema.additionalProperties).toBe(false);
   });
 
   it('browser_create advertises a subset of the session request contract', () => {
@@ -75,9 +87,8 @@ describe('MCP tool-schema sync', () => {
     const advertised = propertiesOf('browser_observe');
     advertised.delete('sessionId');
     advertised.delete('pageId');
-    // Reviewed absence: sinceRevision is the REST diffing path; MCP flows
-    // re-observe or pass continueFrom (which IS advertised).
-    expect(advertised.has('sinceRevision')).toBe(false);
+    // The MCP projection includes the REST diff and pagination vocabulary.
+    expect(advertised.has('sinceRevision')).toBe(true);
     for (const property of advertised) {
       expect(
         observationProperties.has(property),

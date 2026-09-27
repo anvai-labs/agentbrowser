@@ -1,5 +1,29 @@
 # Release milestones and acceptance gates
 
+## Candidate checkpoint: 1.12.0 browsing/session reliability
+
+Preparation starts from develop `7ccddb2` (PR #303). Public navigation reasons,
+active leases, bounded terminal facts and opt-in operator Chrome attachment form a
+minor-release checkpoint. Internal journal work remains gated. The
+[candidate evidence](spec/evidence/release-1.12.0.md) separates preparation from
+publication; 1.11.0 remains the published baseline until delivery is verified.
+
+## Delivered checkpoint: 1.11.0 research and publication (2026-09-24)
+
+Version 1.11.0 is published from protected main `e00539e` after preparation PR #289
+and promotion PR #290. All eight checks passed on both PRs and both merge commits.
+All twelve release jobs passed after one investigated Darwin x64 timeout retry.
+The [delivery record](spec/evidence/release-1.11.0.md) records exact identities,
+published artifact checks, npm integrity, Homebrew PR #73 and installed acceptance.
+
+This minor release adds public extraction budgets, MCP page provisioning and shared
+launch diagnostics, with browser ownership and HTTP/review publication fixes.
+The journal remains storage-neutral: no runtime durability or recovery guarantee.
+CLI/MCP remain Bun binaries; the Homebrew service uses Node 24. MCP is optional.
+All fourteen downloads, four clean server stamps, exact npm package and the actual
+Homebrew 1.10.1-to-1.11.0 upgrade passed qualification. The logged-in service was
+preserved on 1.10.0; restarting it is a separate session checkpoint.
+
 ## Delivered checkpoint: 1.10.0 published and installed (2026-09-23)
 
 The owner authorized promotion after the LAN CIDR checkpoint (#275). Version

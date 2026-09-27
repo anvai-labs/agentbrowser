@@ -1,7 +1,11 @@
 # T5 J1-B/C: journal port and acknowledgment integration
 
-Status: proposed, not implemented. Baseline: develop `dbe23b5`.
-A1/A2/A4a1 primitives ship separately; HTTP/replay publication remains gated.
+Status: B1/B2 merged in PR #285 (`5ebf820`), contract commits `f9d9c58`/`ab495ce`.
+HTTP/replay publication is merged and green. C1a per-call settlement merged #297;
+[C1b authority composition](t5-journal-authority.md) is implemented internally.
+[C2 application pins and C3 terminal/replay](t5-journal-application-terminal.md)
+merged #299. [C4a control views](t5-journal-control-views.md) share the ACK
+projection; C4b runtime/transport qualification remains gated.
 Requires [J1-A response finalization](t5-finalization-publication.md) before runtime
 integration. Parent: [T5 J0–J4 sequence](t5-operation-journal.md). This module is
 loaded explicitly for journal work; unrelated modes do not load its structures.
@@ -27,7 +31,7 @@ Derive one owner-local validator/type source.
 | Namespace | Opened exclusively by trusted service configuration; schema version, owner fencing identity, key version, fixed acceptance horizon |
 | Operation key | Original service generation, tenant scope, session incarnation, epoch, operation ID; no caller-supplied tenant/generation |
 | Actor/binding | Captured admission and application binding/version; tenant/resource IDs remain potentially sensitive metadata |
-| Fingerprint | Versioned keyed digest of bounded canonical identity, operation schema and input; only digest/key ID retained |
+| Fingerprint | Versioned HMAC of bounded trusted identity and the existing opaque live fingerprint; only digest/key ID retained |
 | Revision | Store-owned monotonically advancing revision used for compare-and-set, not client time |
 | Facts | Intent acknowledged; dispatch acknowledged; optional terminal execution status; authorized bounded evidence locators |
 | Retention | Namespace horizon and tombstone policy; wall-clock metadata never extends grants or reopens an expired namespace |
@@ -58,7 +62,7 @@ Agent/tool input cannot inject the port.
 | Operation | Preconditions | Repetition and refusal |
 | --- | --- | --- |
 | reserveIntent | Namespace open, key absent, budget/horizon valid | Exact existing immutable identity returns its stored revision/facts; differing identity conflicts |
-| markDispatch | Intent exists at expected revision, no terminal | Exact duplicate marker returns same acknowledged facts; unknown/mismatched revision requires lookup, never effect retry |
+| markDispatch | Intent exists at expected revision, no terminal | Exact retry at predecessor revision 1 ACKs only while dispatched and nonterminal; any terminal returns operation_terminal conflict; never effect retry |
 | commitTerminal | Expected revision and consistent existing dispatch fact | Exact same terminal facts idempotent; different terminal/status/identity refuses; terminal is immutable |
 | lookup | Trusted caller scoped to original namespace/key | Returns bounded stored facts or scoped absent; absence does not establish non-execution |
 
@@ -73,7 +77,128 @@ Outcomes: acknowledged, definitely-not-written, conflict, uncertain. Not-written
 requires positive evidence; generic I/O exceptions/timeouts are uncertain. Use existing
 static error diagnostics; no blanket `retryable=true` after ambiguous writes. ACK does not prove external business outcome or artifact availability.
 
+## B1/B2 storage boundary
+
+The control-owned [types](../../../packages/control/src/journal-types.ts),
+[validators](../../../packages/control/src/journal-record.ts) and
+[facade](../../../packages/control/src/operation-journal.ts) are internal constructor
+interfaces. They are not REST payloads, agent capabilities or a durable execution mode.
+Trusted composition supplies identity; shape validation cannot establish authority.
+The eventual adapter implements atomic transitions. The facade never emulates CAS by
+lookup followed by write, admits a session, invokes an effect or restores a grant.
+
+### Fixed namespace and keys
+
+A stable configured namespace spans service restarts. `serviceGeneration` and
+`sessionIncarnation` remain separate parts of each operation key, never a replacement
+for the namespace. Namespace schema/version, fingerprint key ID, restore generation,
+acceptance/retention horizons and bounds are immutable. An adapter atomically opens one
+exclusive writer and issues an opaque fence, checked within every data transaction.
+A second writer refuses; a replacement must independently prove exclusive ownership.
+Store-wide namespace capacity cannot be widened by another namespace's configuration.
+
+The facade copies a 32–64 byte key from trusted configuration; no environment defaults
+or rotation API ship here. It derives two SHA-256 HMACs using separate versioned domains:
+
+- Key verification: `agentbrowser:operation-journal:key-check:v1\0`, followed by
+  canonical namespace ID and key ID. The adapter persists the complete raw namespace
+  descriptor, including this verification value; different material under the same
+  key ID fails descriptor matching on reopen.
+- Retained fingerprint: `agentbrowser:operation-journal:fingerprint:v1\0`, followed by
+  canonical namespace ID, key ID, trusted identity and the explicitly versioned opaque
+  live fingerprint. Raw application/HTTP inputs are not recanonicalized. Only this keyed
+  digest, key ID and durable fingerprint version reach stored records.
+
+Key bytes and the unkeyed live digest never reach the raw adapter. The JavaScript key
+copy is not described as secure zeroization. Key replacement during the fixed namespace
+horizon is refused; a future key-ring/rotation design must retain old verification
+material through retention. A DB and keys restored together cannot detect their own
+rollback. `restoreGeneration` must come from an externally trusted anchor or an
+operator-managed restore procedure that quarantines writes. B1 does not implement or
+claim automatic rollback detection.
+
+`acceptUntil` bounds new intent admission; `retainUntil` bounds retained facts and
+completion of accepted transitions. New intent after `acceptUntil` returns
+`admission_expired`, preserving accepted transitions through `retainUntil`; `expired`
+means the retained handle itself is no longer usable. Both horizons are persisted and never recomputed at restart;
+the difference must cover `maxFinalizationMs`. At intent admission reserve space for
+`maxRecordBytes`, including the maximum bounded terminal evidence list. Refuse capacity
+instead of evicting accepted records. Expiry never makes an old identity acceptable again.
+
+### Legal schema-1 states and retries
+
+| Revision | Dispatched | Terminal | Meaning |
+| --- | --- | --- | --- |
+| 1 | false | absent | Intent |
+| 2 | true | absent | Dispatch marker |
+| 2 | false | failed | Known pre-dispatch failure |
+| 3 | true | completed / failed / outcome_unknown | Terminal execution classification |
+
+There is no revision-0 record. Reserve expects absence (revision 0); an exact immutable
+duplicate returns `existing` at its current legal revision. First dispatch expects 1;
+its exact retry also expects 1 and returns `already_applied` only while nonterminal.
+**After any terminal, markDispatch returns `operation_terminal`, never a dispatch ACK.**
+Terminal commit expects 1 without dispatch or 2 with dispatch. Exact retry uses that
+same predecessor revision and identical status/evidence; it never appends evidence or
+increments revision. Another terminal or a current-revision retry refuses.
+
+`acknowledged`, `definitely_not_written`, `conflict`, and `uncertain` are closed static
+outcomes. Lookup returns `found`, `scoped_absent`, `definitely_not_read`, or `uncertain`.
+Absence is scoped storage information, never proof of non-execution. All raw data results
+carry the captured namespace and fence; ACKs additionally match full immutable identity,
+expected revision and legal facts. Raw errors, paths, SQL and private values are omitted.
+
+### Shared validation and I/O lifetime
+
+One validator path reuses `snapshotJsonData`, `canonicalJson`, `CONTROL_OPERATION_ID`,
+protocol terminal statuses/evidence-reference validation and `deeplyFreezeSnapshot`.
+It rejects extra or hidden properties, symbols, accessors, custom prototypes, sparse
+arrays, undefined/nonfinite values and excess depth/nodes/encoded UTF-8 bytes. Configuration,
+requests and results are detached; callbacks are captured once as own data methods on
+plain objects. Numeric deployment bounds are required, with universal validator ceilings;
+J2 must choose and qualify deployable defaults.
+
+The facade reserves a bounded I/O slot before invoking the adapter and retains it until
+the actual raw task settles. The existing `within` helper bounds only caller waiting.
+Pre-abort/validation/capacity refusal happens before I/O and is positively not written.
+Once invoked, a generic exception, timeout or abort is uncertain. Uncertainty latches
+write quarantine; bounded diagnostic lookup may continue. Malformed ACKs poison the
+handle and stop all data I/O. Positive fenced/closed/expired refusals also seal that old
+handle. A late valid ACK releases its slot but cannot clear quarantine or authorize work;
+a malformed late ACK poisons it.
+
+`close` seals locally and is once-only. Backend close waits for actual outstanding data
+transactions; a caller timeout cannot free the exclusive owner early. Opening has the
+same lifetime discipline: a successful open arriving after timeout is closed exactly
+once, including a usable close capability accompanied by malformed metadata. Never-settling
+open/close remains uncertain; replacement still requires store-proven exclusivity.
+
+The B2 suite is test-only and observes independent stored state, including before-write
+failure, commit-with-lost-ACK and never-settling I/O. Its memory adapter is not exported
+from the runtime entry point and makes no disk/process-loss durability claim.
+See [B1/B2 evidence](../evidence/t5-journal-contract.md).
+
 ## Composition through shared authority
+
+C1a supplies a per-call actual-settlement signal backed by the facade's existing
+pending task owner. The four data methods synchronously return `JournalCall<T>`,
+a native promise with an immutable, non-enumerable `settled: Promise<void>` property.
+Awaiting the call retains the bounded outcome contract. Capture the original call
+before awaiting or chaining it: ordinary promise wrappers do not retain `settled`.
+Awaiting `settled` means raw I/O, response validation and pending-slot cleanup have
+finished. It never returns an ACK, rejects with a storage error, clears quarantine or
+grants permission. It may precede the bounded outcome's promise continuation; callers
+must still inspect that outcome and revalidate authority. Never-settling storage leaves
+settlement pending even after cancellation, timeout or close. A pre-I/O refusal settles
+without invoking storage. Each signal belongs to one call, not the whole namespace.
+
+The existing pending set remains the sole storage task ledger; `pending` remains a
+diagnostic count. C1b tracks the captured settlement promise through the existing
+SessionAuthority drain before awaiting intent/dispatch outcomes, with ticket retention
+tests across ignored cancellation and old-owner replacement. The C1a prerequisite
+alone does not retain session tickets; C1b supplies that internal composition without
+connecting service configuration or qualifying durable execution. See
+[C1a evidence](../evidence/t5-journal-settlement.md) and [C1b design](t5-journal-authority.md).
 
 1. Reserve the existing ticket and persist intent before the business callback. Recheck
    captured entry/ticket/epoch after the wait. Timeout/cancellation seals the scope
@@ -82,7 +207,9 @@ static error diagnostics; no blanket `retryable=true` after ambiguous writes. AC
    The first dispatch creates one per-scope marker-ACK promise. Concurrent/nested
    dispatches share it; no sibling may bypass an uncertain/failed marker. Once ACKed,
    subsequent steps use the fact without writing another operation marker.
-3. Every effect independently rechecks current scope/entry/ticket after the await. Run
+3. Every effect independently rechecks current scope/entry/ticket and that its journal
+   handle remains open (not closed/quarantined/poisoned) after the await. An ACK is a
+   stored fact, not execution permission. Run
    the owning composition's synchronous final precondition guard, then recheck authority
    before mark/invoke with no further await. A guard that throws, returns a thenable or
    mutates the owner causes refusal, zero effects and conservative retained facts.
@@ -139,10 +266,12 @@ I/O ignores abort without reopening that store concurrently.
 | --- | --- | --- |
 | B1 contract | One control-owned immutable metadata validator/port, test-only scripted adapter | Illegal transitions, forged ACK/key/revision, hostile values and bounds refuse; exact duplicate ACK idempotent; no credentials in records/errors |
 | B2 contract suite | Reusable adapter conformance suite using real state observations | Intent/dispatch/terminal CAS, conflicting fingerprints, immutable terminal, not-written vs uncertain; reusable by the eventual real store |
+| C1a settlement prerequisite | Existing data-call promise exposes actual completion independently of bounded waiting | Timeout/abort cannot release settlement; validation/slot cleanup precede notification; unrelated calls and close retain their existing ownership |
 | C1 intent/dispatch | Compose into existing authority for qualified operations | No callback before intent ACK; no effect before marker ACK; takeover/expiry/replacement at each wait yields zero new effects; sibling marker sharing and late ACK never escape J0 drain |
 | C2 application pins | Retain existing final consent/binding validation at the post-wait boundary | Revoked consent/binding/input during marker wait refuses; consume called once; ordinary writes reauthorize; no browser durability accidentally enabled |
 | C3 terminal/replay | Compose J1-A finalization and status projection | Delayed/failed/lost terminal ACK withholds durable success; duplicate during every phase never reexecutes; finalized execution survives send failure |
-| C4 qualification | One shared descriptor/selection contract through existing protocol projections | Unsupported durability refused; ordinary ephemeral clients unchanged; same REST/SDK/CLI behavior; MCP optional; browser-free startup with no store installed |
+| C4a control views | Reuse acknowledged projection for status/lifecycle views | Pre-intent operation omitted without blocking takeover; terminal ACK bounds completion; ephemeral views unchanged |
+| C4b qualification | One shared descriptor/selection contract through existing protocol projections | Unsupported durability refused; ordinary ephemeral clients unchanged; same REST/SDK/CLI behavior; MCP optional; browser-free startup with no store installed |
 
 For B1/B2, use deterministic deferred ACKs and independent stored-state/effect counters;
 do not mock the same method being asserted. For C1–C3 cross every persistence boundary
@@ -152,5 +281,10 @@ settling I/O. A fake adapter alone cannot establish crash durability.
 
 J2 still needs one optional SQLite runtime/packaging/ownership audit and real process-loss
 tests on the supported Node/Bun matrix. J3 historical authorization/continuation and J4
-event/cursor qualification remain separate. No store, public durability claim, percentage increase or release ships here.
-Runtime has J0, A1/A2 publication and A4a1 status lookup only.
+event/cursor qualification remain separate. No concrete store, public durability claim, percentage increase or release ships here.
+C1b connects the facade to internal SessionAuthority admission/dispatch. C2/C3 extend
+trusted application composition and acknowledged publication; service configuration and
+transports remain disconnected. C4a bounds all control views by the same ACK facts.
+C4b, J2 runtime/storage qualification and J3/J4 recovery gates remain closed. See the
+[C2/C3 packet](t5-journal-application-terminal.md) and
+[C4 continuation](t5-journal-control-views.md).

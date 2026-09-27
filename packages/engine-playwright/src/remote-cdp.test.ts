@@ -44,7 +44,9 @@ describe('remote CDP engine', () => {
       try {
         expect(engine.name).toBe('playwright-chromium-remote');
 
-        const first = await engine.createSession({ headless: true });
+        // A headed request changes context options, never ownership of the
+        // external browser or the engine's shared CDP connection.
+        const first = await engine.createSession({ headless: false });
         const page = await first.newPage();
         await page.navigate({ url: 'data:text/html,<title>Remote</title><button>Go</button>' });
         const state = await page.observe({});
@@ -56,14 +58,21 @@ describe('remote CDP engine', () => {
         expect(await second.pages()).toHaveLength(0);
         expect((await first.pages()).map((p) => p.id)).toEqual([page.id]);
 
-        await second.close();
+        const sibling = await second.newPage();
+        await sibling.navigate({ url: 'data:text/html,<button>Still connected</button>' });
         await first.close();
+        expect(
+          (await sibling.observe({})).elements.some((el) => el.name === 'Still connected')
+        ).toBe(true);
+        expect(host.isConnected()).toBe(true);
+        await second.close();
       } finally {
         await engine.close();
       }
+      // Releasing our CDP connection does not terminate the external host.
+      expect(host.isConnected()).toBe(true);
     } finally {
-      // Depending on Playwright semantics the connected browser may already
-      // have been disconnected by engine.close(); never let that fail cleanup.
+      // This probe owns the external host and must reap it even on a failed assertion.
       await host.close().catch(() => {});
     }
   }, 30_000);

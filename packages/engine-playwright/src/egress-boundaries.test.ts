@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PlaywrightChromiumEngine } from './index.js';
+import { PlaywrightChromiumEngine, type RequestEventSink } from './index.js';
 
+const sink = (): RequestEventSink => ({ emit: undefined, navigationFailures: new WeakMap() });
 const dnsLookup = vi.hoisted(() => vi.fn());
 vi.mock('node:dns/promises', () => ({ lookup: dnsLookup }));
 
@@ -28,7 +29,7 @@ describe('egress revalidation', () => {
         },
         checkBodySize: async () => {},
       },
-      {}
+      sink()
     );
     const dispose = vi.fn(async () => {});
     const response = {
@@ -80,7 +81,7 @@ describe('egress body-bearing request passthrough', () => {
         },
       },
       policy,
-      {}
+      sink()
     );
     if (!routeHandler) throw new Error('Missing route handler');
     return routeHandler;

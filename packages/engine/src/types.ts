@@ -37,6 +37,8 @@ export type {
  * Engine session creation options
  */
 export interface EngineSessionOptions {
+  /** Use the explicitly configured local-operator CDP attachment lane. */
+  cdpAttach?: boolean;
   downloadPolicy?: { allow: boolean; maxBytes: number };
   viewport?: Viewport;
   locale?: string;
@@ -137,6 +139,7 @@ export interface NavigationResult {
   status: 'success' | 'timeout' | 'blocked';
   url: string;
   redirectChain: string[];
+  reason?: import('@agentbrowser/protocol').NavigationFailureReason;
 }
 
 /**
@@ -167,8 +170,12 @@ export interface RawPageState {
    * narrow the observation (ref_id) instead.
    */
   degraded?: boolean;
-  /** Why the observation has reduced semantic coverage. */
-  degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset';
+  /**
+   * Why the observation has reduced semantic coverage.
+   * 'empty-snapshot-nonempty-dom': ariaSnapshot succeeded but surfaced no
+   * elements while the DOM holds content (JS SPA not mounted/hydrated yet).
+   */
+  degradedReason?: 'aria-snapshot-timeout' | 'dom-semantic-subset' | 'empty-snapshot-nonempty-dom';
 }
 
 /**
@@ -358,6 +365,16 @@ export interface BrowserEngine {
  * Engine session interface
  */
 export interface EngineSession {
+  /**
+   * One-shot evidence that this session's backing browser or context became
+   * unusable outside its intentional close path. Consumers must not inspect
+   * or publish AbortSignal.reason.
+   */
+  readonly disconnected?: AbortSignal | undefined;
+  /** Immutable launch/context facts, captured by the adapter that owns them. */
+  readonly diagnostics?: import('@agentbrowser/protocol').SessionDiagnostics | undefined;
+  /** Diagnostics from the engine host, shared by all consumption surfaces. */
+  readonly warnings?: readonly string[];
   /** Consume a captured download by unique ID, or an unambiguous legacy filename. */
   takeDownload?(
     pageId: string,

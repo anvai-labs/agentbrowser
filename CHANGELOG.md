@@ -5,6 +5,170 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [Unreleased]
+
+## [1.12.0] - 2026-09-25
+
+### Added
+
+- Observed browser/context disconnection ends the exact affected session, revokes
+  delegated authority, and reports `engine_disconnected` through the existing
+  REST/SDK/CLI/MCP terminal projection. Intentional teardown and page-only close
+  remain distinct; no operator intent, crash diagnosis, reconnect or replay is inferred.
+
+- Opt-in local operator Chrome attachment via `session create --cdp-attach`, REST/SDK
+  `cdpAttach`, and MCP `browser_create.cdpAttach`. Requires a dedicated profile,
+  bearer authentication, a loopback endpoint and an explicit startup acknowledgement of limited network checks.
+  Shared diagnostics identify attachment and policy limitations; detach preserves
+  operator tabs and the browser. Hosted, multi-tenant and delegated use refuse.
+
+- Navigation failures carry bounded reasons across REST, SDK, CLI and MCP, distinguishing
+  egress denial, unresolved names, resolver timeout/refusal, destination connection
+  refusal, TLS refusal and browser error documents. CLI returns exit 1 and MCP sets
+  `isError` for blocked/timeout results. Unknown causes remain `engine_error`.
+
+- Sampled active-session lease deadlines on REST/SDK create/get/list, CLI and MCP
+  inspection. A shared coordinator clock reports absolute TTL and idle deadlines;
+  reading session status does not renew idle lifetime. Closing/failed sessions and
+  older servers may omit the lease. No terminal history or recovery is implied.
+
+- Bounded, tenant-authorized close facts for recently ended sessions. The coordinator
+  distinguishes TTL, idle, explicit and policy termination, retains only detached
+  allowlisted facts, and derives remaining lease from the authoritative sample. CLI
+  and MCP share the strict terminal-error projector; observed engine disconnection
+  uses the same projection.
+
+### Fixed
+
+- Navigation diagnostics come from the trusted routed request, not origin-supplied
+  headers. Failed dispatched navigation invalidates old refs, connection errors
+  cannot impersonate a browser crash through URL text, and bounded failure output
+  retains valid operation IDs for reconciliation without raw transport topology.
+
+- Session initialization rolls back its captured allocation on lifetime-inspection
+  failure. Expiry shares teardown ownership, avoids a concurrent second close and
+  preserves the existing retry after a settled close failure. A delayed old close
+  cannot remove a replacement session.
+
+- Session ID allocation refuses bounded collisions, and late abnormal-teardown
+  callbacks use captured context identity before touching a replacement allocation.
+
+### Internal qualification
+
+- Journal intent/dispatch and terminal acknowledgments share authority, replay and
+  control-view projections. Application execution revalidates authorization, consent
+  and binding pins after storage waits. The SQLite child owner and external commit
+  witness have process-loss tests; the raw adapter, runtime selection, bounded manager
+  and restart recovery remain gated. This release exposes no durable execution promise.
+- Packaged acceptance records bounded phase timings through child cleanup and names
+  the active phase on deadline failure. Existing deadlines and behavioral gates stay
+  unchanged. Falsy/non-Error callback rejections fail acceptance after owned cleanup.
+  Consumer smoke scripts can qualify extracted services with actual Bun
+  CLI/MCP binaries through the existing package resolver and workflows.
+- The EDGAR research recipe documents JSON submissions, filing discovery, throttling
+  etiquette and complete persisted-output inspection.
+
+## [1.11.0] - 2026-09-24
+
+### Added
+
+- Shared launch diagnostics on REST/SDK session create/get/list, CLI JSON and human
+  inspection, and MCP `browser_session`. Facts describe actual browser allocation,
+  executable selection, viewport policy and init-script registration without paths,
+  launch arguments or endpoint credentials. Unsupported adapters omit diagnostics.
+- MCP `browser_session` also works without a bound session, using an explicit session
+  ID. Inspection requires both `session.control` and `page.observe`; bound inspection
+  retains its control and page fields and adds session metadata.
+
+- MCP `browser_page_create` and `browser_pages` reuse the existing SDK/service page
+  lifecycle. Pages share their session's cookies and policy; callers use returned IDs.
+  Controlled-session creation carries caller-selected operation IDs. Ordinary sessions
+  do not gain deduplication, and inventory does not correlate an uncertain create result.
+
+### Fixed
+
+- Release publication refuses duplicate asset names instead of replacing bytes
+  under an existing tag, preserving checksums pinned by package managers.
+
+- Session views retain the selected adapter's immutable name/version, including
+  auxiliary engines, instead of reading the primary engine on later inspections.
+  Capability lookup failures occur before browser allocation and cannot leave an
+  unreachable registered session.
+- TypeScript SDK `SessionResponse` now reuses the canonical HTTP session view.
+  This corrects its previous compile-time claim that `engine.capabilities` was
+  returned by these endpoints; that field was never present on the HTTP wire.
+
+- Concurrent Playwright headless/CDP sessions share one pending browser initialization.
+  Closing a remote session releases only its context, preserving sibling sessions.
+  Failed setup cleans up owned resources; engine shutdown drains pending setup and
+  refuses further creates on that engine instance. Service shutdown releases every
+  distinct registered engine, including auxiliary pools and connections.
+
+- A resolved Playwright navigation to an internal browser error document now fails
+  instead of reporting success. Its diagnostic reason is `browser_error_document`;
+  it does not infer a bot wall, disclose the error URL or retry automatically.
+
+- Application discovery, execution (including replay), receipts and operation status
+  keep their captured publication authority through HTTP delivery. Late permission
+  changes, disconnects and output deadlines suppress unsent responses without
+  rewriting committed operation facts. Browser responses and captured operator reviews
+  use the same publisher after execution drains and finalizes. Prepare-resume delivery
+  failure preserves review state; collection cleanup cannot take over a replacement owner.
+
+- CLI extraction prints complete data instead of silently cutting at 4,000 characters.
+  `extract --max-bytes` forwards a UTF-8 response budget through SDK/REST; optional MCP
+  exposes the same field. The server enforces one ceiling across all formats (default
+  1 MiB, configured at startup with `AGENTBROWSER_EXTRACT_MAX_BYTES`). Oversized results
+  fail explicitly without returning partial JSON or evidence.
+
+### Internal foundations
+
+- Storage-neutral operation journal contract with immutable metadata, keyed fingerprints,
+  bounded acknowledgment validation and shared adapter conformance tests. Unknown writes
+  quarantine further mutations; late acknowledgments cannot restore authority. No concrete
+  store, runtime durability setting or restart recovery is enabled.
+
+- Captured operator review views reuse shared page, application and evidence owners
+  during their original publication phase. Disclosure checks cannot collect new
+  evidence, consume consent or dispatch effects. Durable recovery remains unimplemented.
+
+## [1.10.1] - 2026-09-23
+
+### Added
+
+- SPA-capture robustness. `observe()` now flags an empty-but-successful
+  accessibility snapshot over a content-rich DOM (the common
+  JS-SPA-not-mounted-yet case) with `degradedReason: "empty-snapshot-nonempty-dom"`,
+  distinct from the timeout case, so callers can wait/retry or read via
+  `browser_html` instead of mistaking it for an empty page.
+- Optional readiness `wait` on `browser_observe`/`browser_screenshot` (and the
+  `observe`/`screenshot` CLI commands via `--wait-until/--wait-timeout/`
+  `--wait-selector/--wait-pattern/--wait-count`), reusing the `browser_act` wait
+  vocabulary. Applied before the snapshot/capture so slow-mounting SPAs do not
+  observe empty or screenshot blank.
+- Display diagnostics originate on the browser host and pass through REST,
+  SDK, CLI, and MCP session responses. Linux checks display environment hints;
+  a macOS launchd label alone no longer implies a missing GUI session. Operators
+  may declare availability with `AGENTBROWSER_ASSUME_DISPLAY=1` or absence with `0`.
+
+### Changed
+
+- The degraded DOM fallback (`getContentElements`) now covers more ARIA-role
+  widgets (`combobox`, `menuitem`, `tab`, `checkbox`, `option`, `contenteditable`)
+  and captures a best-effort accessible name, so a timed-out observation stays
+  addressable. Empty-DOM thresholds are tunable via
+  `AGENTBROWSER_EMPTY_DOM_MIN_TEXT` / `AGENTBROWSER_EMPTY_DOM_MIN_NODES`.
+
+- Capture requests share protocol schemas and runtime validation across REST,
+  SDK, CLI, and MCP, including condition-specific wait fields and bounded numeric
+  options. Invalid and unsupported options now fail instead of being ignored.
+- Screenshot readiness waits reach the HTTP service. MCP also exposes screenshot
+  `quality`/`maskSensitive` and observation `sinceRevision`. CLI `describe --schema`
+  and MCP output schemas expose the capture contracts; CLI human output reports
+  degraded observations. Artifact schemas describe both inline and URL delivery.
+- DOM fallback refs bind to the discovered node rather than a guessed accessible
+  name, preventing a ref from selecting a different node with a matching name.
+
 ## [1.10.0] - 2026-09-23
 
 ### Added

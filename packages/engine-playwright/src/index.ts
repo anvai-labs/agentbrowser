@@ -36,13 +36,21 @@ import type { RequestPolicy } from '@agentbrowser/engine';
 import {
   EngineError,
   NATIVE_FORM_EVIDENCE_LIMITS,
+  classifyNavigationFailure,
   normalizeEngineError,
+  normalizeNavigationFailure,
   parseNativeFormEvidence,
   readVerifiedUpload,
 } from '@agentbrowser/engine';
 import {
   DELIVERED_ACTION_TYPES,
   DELIVERED_OBSERVATION_MODES,
+  type NavigationFailureReason,
+  type SessionDiagnostics,
+  captureBrowserVersion,
+  captureSessionDiagnostics,
+  headedDisplayWarnings,
+  isNavigationFailureReason,
   validateUploadIntegrity,
 } from '@agentbrowser/protocol';
 import {
@@ -57,6 +65,7 @@ import {
 import {
   SnapshotBudget,
   type SnapshotEvidence,
+  classifyEmptyObservation,
   sameSnapshotEvidence,
   snapshotDigest,
   snapshotTimeout,
@@ -582,6 +591,10 @@ function canonicalFingerprint(element: StoredElement): string {
 
 /** Mutable holder for routing request events out of the egress handler. */
 export interface RequestEventSink {
+  readonly navigationFailures: WeakMap<
+    import('playwright').Request,
+    { kind: 'blocked' | 'failed'; reason: NavigationFailureReason }
+  >;
   emit:
     | ((event: {
         type: 'request.started' | 'request.finished' | 'request.failed';
@@ -614,6 +627,8 @@ export interface PlaywrightEngineOptions {
    * path (browser pools, container isolation). Requires chromium.
    */
   cdpEndpoint?: string;
+  /** Explicit local-operator attachment to an already-running Chromium profile. */
+  operatorCdp?: { endpoint: string; allowUnenforcedEgress?: boolean };
   /**
    * WebSocket handling. With no egress policy the default is 'off'
    * (upgrades untouched). With egress installed the default becomes
@@ -665,6 +680,20 @@ export interface PlaywrightEngineOptions {
   snapshotTimeoutMs?: number;
 }
 
+/** Validate and normalize the only endpoint class accepted by operator attachment. */
+export function parseOperatorCdpEndpoint(value: string): string {
+  if (value.length === 0 || value.length > 2048) throw new Error('Invalid operator CDP endpoint');
+  const match = /^http:\/\/(127\.0\.0\.1|\[::1\]):([0-9]{1,5})\/?$/.exec(value);
+  if (match === null) {
+    throw new Error('Invalid operator CDP endpoint');
+  }
+  const port = Number(match[2]);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error('Invalid operator CDP endpoint');
+  }
+  return `http://${match[1]}:${port}`;
+}
+
 /**
  * ADR-016 context viewport policy: an explicit viewport always pins;
  * otherwise headless keeps the historical 1280x720 while headed renders
@@ -709,21 +738,91 @@ function preferBundledEnv(): boolean {
  * operator opted into.
  *
  * Space-separated; unset or blank yields no flags. Only applies on the
- * LAUNCH path: see the cdpEndpoint warning in the constructor.
+ * LAUNCH path: see the constructor warning for the two ATTACH paths
+ * (cdpEndpoint, operatorCdp), where launch flags cannot apply.
  */
 export function extraChromiumArgs(raw: string | undefined): string[] {
   return (raw ?? '').trim().split(/\s+/).filter(Boolean);
 }
 
+/** A session owns its context and, only for a local headed launch, its browser. */
+async function closeSessionResources(
+  context?: BrowserContext,
+  ownedBrowser?: Browser
+): Promise<void> {
+  try {
+    await context?.close();
+  } finally {
+    // Still attempt browser cleanup when context close fails. Preserve the
+    // existing session-close contract for an already disconnected browser.
+    await ownedBrowser?.close().catch(() => {});
+  }
+}
+
+/** One bounded owner for browser/context loss and its exact listener cleanup. */
+class SessionDisconnectObserver {
+  private readonly controller = new AbortController();
+  private armed = true;
+  readonly signal = this.controller.signal;
+  private readonly onUnexpectedLoss = () => {
+    if (this.armed) this.controller.abort();
+  };
+
+  constructor(
+    private readonly browser: Browser,
+    private readonly context: BrowserContext
+  ) {
+    this.browser.on('disconnected', this.onUnexpectedLoss);
+    this.context.on('close', this.onUnexpectedLoss);
+    if (!this.browser.isConnected()) this.onUnexpectedLoss();
+  }
+
+  disarm(): void {
+    if (!this.armed) return;
+    this.armed = false;
+    this.browser.off('disconnected', this.onUnexpectedLoss);
+    this.context.off('close', this.onUnexpectedLoss);
+  }
+}
+
+function assertSessionConnected(observer: SessionDisconnectObserver): void {
+  if (observer.signal.aborted) {
+    throw new EngineError('ENGINE_CRASHED', 'Browser session disconnected during creation.', false);
+  }
+}
+
+type BrowserFacts = Omit<SessionDiagnostics, 'context'>;
+
+interface BrowserAllocation {
+  browser: Browser;
+  facts: BrowserFacts;
+}
+
+function browserVersion(browser: Browser): string | undefined {
+  try {
+    const read = (browser as Browser & { version?: unknown }).version;
+    if (typeof read !== 'function') return undefined;
+    return captureBrowserVersion(read.call(browser));
+  } catch {
+    return undefined;
+  }
+}
+
 export class PlaywrightChromiumEngine implements BrowserEngine {
   private _name = 'playwright-chromium';
   private _version = '1.0.0';
-  private browser: Browser | undefined;
+  private sharedBrowser: Promise<BrowserAllocation> | undefined;
+  private readonly pendingSessions = new Set<Promise<EngineSession>>();
+  private closed = false;
+  private closeTask: Promise<void> | undefined;
   readonly dialogGraceMs: number;
   private readonly rootEgress: RequestPolicy | undefined;
   private readonly webSocketPolicy: 'off' | 'deny-all' | undefined;
   private readonly browserFamily: 'chromium' | 'firefox' | 'webkit';
   private readonly cdpEndpoint: string | undefined;
+  private readonly operatorCdp: { endpoint: string; allowUnenforcedEgress: boolean } | undefined;
+  private operatorAttachReserved = false;
+  private activeAttachedSession: PlaywrightSession | undefined;
   private readonly chromeBinaryPath: string | undefined;
   private readonly preferBundled: boolean;
   private readonly brandedChromeCandidates: string[];
@@ -735,17 +834,26 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     this.webSocketPolicy = options.webSocketPolicy;
     this.browserFamily = options.browser ?? 'chromium';
     this.cdpEndpoint = options.cdpEndpoint;
+    this.operatorCdp =
+      options.operatorCdp === undefined
+        ? undefined
+        : {
+            endpoint: parseOperatorCdpEndpoint(options.operatorCdp.endpoint),
+            allowUnenforcedEgress: options.operatorCdp.allowUnenforcedEgress === true,
+          };
     // A CDP-connected engine ATTACHES to a browser someone else started,
     // so no launch argument can apply — launch args are fixed at browser
     // start. AGENTBROWSER_CHROMIUM_ARGS is therefore silently inert here,
     // and the silence is the defect: an operator who sets the variable to
     // work around an engine-level Chromium policy has no way to learn it
-    // did nothing. Say so once, at construction.
-    if (this.cdpEndpoint !== undefined && process.env.AGENTBROWSER_CHROMIUM_ARGS?.trim()) {
+    // did nothing. Say so once, at construction. Both attach paths
+    // (cdpEndpoint and operatorCdp) have this property.
+    const attachedEndpoint = this.cdpEndpoint ?? this.operatorCdp?.endpoint;
+    if (attachedEndpoint !== undefined && process.env.AGENTBROWSER_CHROMIUM_ARGS?.trim()) {
       console.warn(
-        '[agentbrowser] AGENTBROWSER_CHROMIUM_ARGS is set but this engine connects over ' +
+        '[agentbrowser] AGENTBROWSER_CHROMIUM_ARGS is set but this engine attaches over ' +
           'CDP to an already-running browser; launch flags cannot apply. Pass the flags to ' +
-          'that browser when it starts, or drop cdpEndpoint to let agentbrowser launch it.'
+          'that browser when it starts, or drop the CDP endpoint to let agentbrowser launch it.'
       );
     }
     this.chromeBinaryPath = options.chromeBinaryPath ?? process.env.AGENTBROWSER_CHROME_PATH;
@@ -780,6 +888,11 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       supportsPersistentStorage: true,
       supportsAccessibilityTree: true,
       supportsCdp: this.browserFamily === 'chromium',
+      ...(this.operatorCdp?.allowUnenforcedEgress &&
+      this.browserFamily === 'chromium' &&
+      this.cdpEndpoint === undefined
+        ? { supportsCdpAttach: true }
+        : {}),
       supportedObservationModes: [...DELIVERED_OBSERVATION_MODES],
       // Derived from the protocol single source of truth: drift is
       // impossible by construction.
@@ -787,7 +900,58 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     };
   }
 
-  async createSession(options: EngineSessionOptions = {}): Promise<EngineSession> {
+  createSession(options: EngineSessionOptions = {}): Promise<EngineSession> {
+    if (this.closed)
+      return Promise.reject(new EngineError('INTERNAL', 'Browser engine is closed', false));
+    const pending = this.initializeSession(options);
+    this.pendingSessions.add(pending);
+    void pending.then(
+      () => this.pendingSessions.delete(pending),
+      () => this.pendingSessions.delete(pending)
+    );
+    return pending;
+  }
+
+  private requireOpen(): void {
+    if (this.closed) throw new EngineError('INTERNAL', 'Browser engine is closed', false);
+  }
+
+  /** One engine-owned launch/connection, including while initialization is pending. */
+  private acquireSharedBrowser(): Promise<BrowserAllocation> {
+    if (this.sharedBrowser) return this.sharedBrowser;
+    const pending =
+      this.cdpEndpoint !== undefined
+        ? chromium.connectOverCDP(this.cdpEndpoint).then((browser) => {
+            const version = browserVersion(browser);
+            return {
+              browser,
+              facts: {
+                attachment: 'remote_cdp' as const,
+                browserFamily: 'chromium' as const,
+                ...(version !== undefined ? { browserVersion: version } : {}),
+                executableSelection: 'not_applicable' as const,
+                launchMode: 'unknown' as const,
+                resourceModel: 'shared_remote_connection' as const,
+              },
+            };
+          })
+        : this.launchBrowser(true, false);
+    this.sharedBrowser = pending;
+    void pending.catch(() => {
+      if (this.sharedBrowser === pending) this.sharedBrowser = undefined;
+    });
+    return pending;
+  }
+
+  private async initializeSession(options: EngineSessionOptions): Promise<EngineSession> {
+    // Reject bad input before allocating a browser or context.
+    const sessionSnapshotTimeout =
+      options.snapshotTimeoutMs !== undefined
+        ? snapshotTimeout(options.snapshotTimeoutMs)
+        : undefined;
+    if (options.cdpAttach === true) {
+      return this.initializeOperatorCdpSession(options, sessionSnapshotTimeout);
+    }
     // Launch (or connect) the browser family if not already active.
     // TD-BROWSER-6: an explicitly headed session gets a DEDICATED browser.
     // The shared browser is the throughput story for the (default) headless
@@ -797,98 +961,262 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     // headless). The dedicated browser is owned by the session and closed
     // with it, so an interactive crash cannot take the pool down.
     const headless = options.headless !== false;
-    let browser: Browser;
-    if (this.cdpEndpoint !== undefined) {
-      if (this.browserFamily !== 'chromium') {
-        throw new Error('cdpEndpoint requires the chromium family');
-      }
-      if (!this.browser) {
-        this.browser = await chromium.connectOverCDP(this.cdpEndpoint);
-      }
-      browser = this.browser;
-    } else if (!headless) {
-      browser = await this.launchBrowser(false, options.viewport === undefined);
-    } else {
-      if (!this.browser) {
-        this.browser = await this.launchBrowser(true, false);
-      }
-      browser = this.browser;
-    }
-
-    const egress = options.requestPolicy ?? this.rootEgress;
-
-    // Create browser context (incognito isolation)
-    const locale = options.locale || 'en-US';
-    const context = await browser.newContext({
-      viewport: resolveContextViewport(options.viewport, headless),
-      locale,
-      timezoneId: options.timezoneId || 'America/New_York',
-      // Service-worker fetches bypass context.route; a choke point with a
-      // bypass hole is not a choke point. ADR-019: a caller may explicitly
-      // accept that hole for one session via allowServiceWorkers - e.g. a
-      // destination whose anti-fraud tooling keys off service-worker
-      // presence and rejects sessions that block it. Off by default.
-      ...(egress !== undefined && options.allowServiceWorkers !== true
-        ? { serviceWorkers: 'block' as const }
-        : {}),
-    });
-    if (options.headless === false) {
-      // Keep the headed overrides aligned with the context locale. Playwright
-      // exposes only that locale in navigator.languages; include its base
-      // language as a fallback, without duplicating a language-only locale.
-      await context.addInitScript((locale: string) => {
-        Object.defineProperty(navigator, 'webdriver', { get: () => false });
-        const languages = Object.freeze([...new Set([locale, locale.split('-')[0]])]);
-        Object.defineProperty(navigator, 'languages', { get: () => languages });
-      }, locale);
-    }
-
-    // Request-event sink (spec 5.1 network summary, Phase 3): the route
-    // handler below emits request.started/finished/failed through this
-    // holder; the session routes each event to its originating page so the
-    // existing event pipeline (page queue -> service pump -> replay/WS)
-    // carries it with no new transport. installEgress runs before any page
-    // exists, hence the mutable holder.
-    const requestSink: RequestEventSink = { emit: undefined };
-    if (egress !== undefined) {
-      await this.installEgress(context, egress, requestSink);
-    }
-
-    // Seed cookies so a caller can reuse an already-authenticated session
-    // (e.g. to skip an SSO / device-trust login the headless browser cannot
-    // satisfy). `__Host-`/`__Secure-`-prefixed cookies MUST be host-only and
-    // Secure or Chromium silently rejects them; Playwright expresses host-only
-    // cookies via `url` (not `domain`/`path`), so convert those here.
-    if (options.cookies !== undefined && options.cookies.length > 0) {
-      const toAdd = options.cookies.map((c) => {
-        if (c.name.startsWith('__Host-')) {
-          return {
-            name: c.name,
-            value: c.value,
-            url: `https://${c.domain}/`,
-            secure: true,
-            ...(c.httpOnly !== undefined ? { httpOnly: c.httpOnly } : {}),
-            ...(c.sameSite !== undefined ? { sameSite: c.sameSite } : {}),
-            ...(c.expires !== undefined ? { expires: c.expires } : {}),
-          };
+    // Remote CDP browsers have their own host; local environment says nothing about them.
+    const warnings = !headless && this.cdpEndpoint === undefined ? headedDisplayWarnings() : [];
+    for (const warning of warnings) console.warn(`[agentbrowser] ${warning}`);
+    const ownsBrowser = !headless && this.cdpEndpoint === undefined;
+    let allocation: BrowserAllocation | undefined;
+    let browser: Browser | undefined;
+    let context: BrowserContext | undefined;
+    let disconnectObserver: SessionDisconnectObserver | undefined;
+    let session: PlaywrightSession | undefined;
+    try {
+      if (this.cdpEndpoint !== undefined) {
+        if (this.browserFamily !== 'chromium') {
+          throw new Error('cdpEndpoint requires the chromium family');
         }
-        return c;
-      });
-      await context.addCookies(toAdd as Parameters<typeof context.addCookies>[0]);
-    }
+        allocation = await this.acquireSharedBrowser();
+      } else if (!headless) {
+        allocation = await this.launchBrowser(false, options.viewport === undefined);
+      } else {
+        allocation = await this.acquireSharedBrowser();
+      }
+      browser = allocation.browser;
+      this.requireOpen();
 
-    return new PlaywrightSession(
-      context,
-      this,
-      options.headless === false ? browser : undefined,
-      requestSink,
-      options.downloadPolicy,
-      // Validate/normalize eagerly (throws RangeError at session-creation
-      // time for a bad explicit value, not silently on the first observe()).
-      options.snapshotTimeoutMs !== undefined
-        ? snapshotTimeout(options.snapshotTimeoutMs)
-        : undefined
-    );
+      const egress = options.requestPolicy ?? this.rootEgress;
+
+      // Create browser context (incognito isolation)
+      const locale = options.locale || 'en-US';
+      const contextViewport = resolveContextViewport(options.viewport, headless);
+      context = await browser.newContext({
+        viewport: contextViewport,
+        locale,
+        timezoneId: options.timezoneId || 'America/New_York',
+        // Service-worker fetches bypass context.route; a choke point with a
+        // bypass hole is not a choke point. ADR-019: a caller may explicitly
+        // accept that hole for one session via allowServiceWorkers - e.g. a
+        // destination whose anti-fraud tooling keys off service-worker
+        // presence and rejects sessions that block it. Off by default.
+        ...(egress !== undefined && options.allowServiceWorkers !== true
+          ? { serviceWorkers: 'block' as const }
+          : {}),
+      });
+      disconnectObserver = new SessionDisconnectObserver(browser, context);
+      assertSessionConnected(disconnectObserver);
+      this.requireOpen();
+      let initScript: SessionDiagnostics['context']['initScript'] = 'not_registered';
+      if (options.headless === false) {
+        // Keep the headed overrides aligned with the context locale. Playwright
+        // exposes only that locale in navigator.languages; include its base
+        // language as a fallback, without duplicating a language-only locale.
+        await context.addInitScript((locale: string) => {
+          Object.defineProperty(navigator, 'webdriver', { get: () => false });
+          const languages = Object.freeze([...new Set([locale, locale.split('-')[0]])]);
+          Object.defineProperty(navigator, 'languages', { get: () => languages });
+        }, locale);
+        initScript = 'registered';
+      }
+
+      // Request-event sink (spec 5.1 network summary, Phase 3): the route
+      // handler below emits request.started/finished/failed through this
+      // holder; the session routes each event to its originating page so the
+      // existing event pipeline (page queue -> service pump -> replay/WS)
+      // carries it with no new transport. installEgress runs before any page
+      // exists, hence the mutable holder.
+      const requestSink: RequestEventSink = { emit: undefined, navigationFailures: new WeakMap() };
+      if (egress !== undefined) {
+        await this.installEgress(context, egress, requestSink);
+      }
+
+      // Seed cookies so a caller can reuse an already-authenticated session
+      // (e.g. to skip an SSO / device-trust login the headless browser cannot
+      // satisfy). `__Host-`/`__Secure-`-prefixed cookies MUST be host-only and
+      // Secure or Chromium silently rejects them; Playwright expresses host-only
+      // cookies via `url` (not `domain`/`path`), so convert those here.
+      if (options.cookies !== undefined && options.cookies.length > 0) {
+        const toAdd = options.cookies.map((c) => {
+          if (c.name.startsWith('__Host-')) {
+            return {
+              name: c.name,
+              value: c.value,
+              url: `https://${c.domain}/`,
+              secure: true,
+              ...(c.httpOnly !== undefined ? { httpOnly: c.httpOnly } : {}),
+              ...(c.sameSite !== undefined ? { sameSite: c.sameSite } : {}),
+              ...(c.expires !== undefined ? { expires: c.expires } : {}),
+            };
+          }
+          return c;
+        });
+        await context.addCookies(toAdd as Parameters<typeof context.addCookies>[0]);
+      }
+
+      this.requireOpen();
+      const diagnostics = captureSessionDiagnostics({
+        ...allocation.facts,
+        context: {
+          isolation: 'new_context',
+          viewport:
+            contextViewport === null
+              ? { mode: 'no_viewport' }
+              : {
+                  mode: 'fixed',
+                  width: contextViewport.width,
+                  height: contextViewport.height,
+                },
+          initScript,
+        },
+      });
+      assertSessionConnected(disconnectObserver);
+      session = new PlaywrightSession(
+        context,
+        this,
+        disconnectObserver,
+        ownsBrowser ? browser : undefined,
+        requestSink,
+        options.downloadPolicy,
+        sessionSnapshotTimeout,
+        warnings,
+        diagnostics,
+        undefined
+      );
+      assertSessionConnected(disconnectObserver);
+      return session;
+    } catch (error) {
+      // Preserve the setup failure, even if cleanup itself fails. Shared browser
+      // ownership remains with the engine; never disconnect sibling sessions.
+      if (session !== undefined) await session.close().catch(() => {});
+      else {
+        disconnectObserver?.disarm();
+        await closeSessionResources(context, ownsBrowser ? browser : undefined).catch(() => {});
+      }
+      throw error;
+    }
+  }
+
+  private async initializeOperatorCdpSession(
+    options: EngineSessionOptions,
+    sessionSnapshotTimeout: number | undefined
+  ): Promise<EngineSession> {
+    const configured = this.operatorCdp;
+    if (configured === undefined || this.browserFamily !== 'chromium' || this.cdpEndpoint) {
+      throw new EngineError(
+        'ENGINE_UNSUPPORTED',
+        'Operator CDP attachment is disabled; configure AGENTBROWSER_CDP_ENDPOINT and AGENTBROWSER_CDP_ALLOW_UNENFORCED_EGRESS=true.',
+        false,
+        { reason: 'CDP_ATTACH_DISABLED' }
+      );
+    }
+    if (
+      options.headless !== undefined ||
+      options.viewport !== undefined ||
+      options.locale !== undefined ||
+      options.timezoneId !== undefined ||
+      options.cookies !== undefined ||
+      options.allowServiceWorkers !== undefined ||
+      options.downloadPolicy?.allow === true
+    ) {
+      throw new EngineError(
+        'ENGINE_UNSUPPORTED',
+        'Operator CDP attachment cannot apply isolated-context options.',
+        false,
+        { reason: 'PROFILE_OPTIONS_UNSUPPORTED' }
+      );
+    }
+    const navigationPreflight = options.requestPolicy ?? this.rootEgress;
+    if (navigationPreflight === undefined || !configured.allowUnenforcedEgress) {
+      throw new EngineError(
+        'ENGINE_UNSUPPORTED',
+        'Operator CDP attachment requires explicit acceptance of navigation-only egress checks.',
+        false,
+        { reason: 'EGRESS_UNSUPPORTED' }
+      );
+    }
+    if (this.operatorAttachReserved) {
+      throw new EngineError('SESSION_BUSY', 'An operator CDP attachment is already active.', true, {
+        reason: 'CDP_ATTACH_BUSY',
+      });
+    }
+    this.operatorAttachReserved = true;
+    let browser: Browser | undefined;
+    let session: PlaywrightSession | undefined;
+    let disconnectObserver: SessionDisconnectObserver | undefined;
+    try {
+      // Preserve the operator context's download, focus and media settings.
+      browser = await chromium.connectOverCDP(configured.endpoint, { noDefaults: true });
+      this.requireOpen();
+      const contexts = browser.contexts();
+      const context = contexts[0];
+      if (contexts.length !== 1 || context === undefined) {
+        throw new EngineError(
+          'ENGINE_UNSUPPORTED',
+          'Operator browser must expose exactly one existing context.',
+          false,
+          {
+            reason:
+              contexts.length === 0 ? 'PROFILE_CONTEXT_UNAVAILABLE' : 'PROFILE_CONTEXT_AMBIGUOUS',
+          }
+        );
+      }
+      disconnectObserver = new SessionDisconnectObserver(browser, context);
+      assertSessionConnected(disconnectObserver);
+      const version = browserVersion(browser);
+      const diagnostics = captureSessionDiagnostics({
+        attachment: 'cdp_attach',
+        browserFamily: 'chromium',
+        ...(version !== undefined ? { browserVersion: version } : {}),
+        executableSelection: 'not_applicable',
+        launchMode: 'unknown',
+        resourceModel: 'operator_owned_browser',
+        endpointClass: 'loopback_http',
+        egress: 'navigation_preflight_only',
+        context: {
+          isolation: 'existing_default_context',
+          viewport: { mode: 'unknown' },
+          initScript: 'not_registered',
+        },
+      });
+      const warnings = Object.freeze([
+        'Operator CDP attachment shares the existing browser profile and storage; only fresh pages opened by this session and their popups are owned.',
+        'Use a dedicated profile. Egress preflight covers only explicit HTTP(S) navigation targets, not redirects, DNS pinning, subresources, clicks, forms, popups, workers, or downloads.',
+      ]);
+      const release = () => {
+        if (this.activeAttachedSession === session) this.activeAttachedSession = undefined;
+        this.operatorAttachReserved = false;
+      };
+      session = new PlaywrightSession(
+        context,
+        this,
+        disconnectObserver,
+        undefined,
+        undefined,
+        options.downloadPolicy ?? { allow: false, maxBytes: 10 * 1024 * 1024 },
+        sessionSnapshotTimeout,
+        warnings,
+        diagnostics,
+        {
+          browser,
+          release,
+          ...(navigationPreflight !== undefined ? { navigationPreflight } : {}),
+        }
+      );
+      assertSessionConnected(disconnectObserver);
+      this.requireOpen();
+      this.activeAttachedSession = session;
+      return session;
+    } catch (error) {
+      if (session !== undefined) await session.close().catch(() => {});
+      else {
+        disconnectObserver?.disarm();
+        await browser?.close().catch(() => {});
+      }
+      this.operatorAttachReserved = false;
+      if (error instanceof EngineError) throw error;
+      throw new EngineError('ENGINE_UNSUPPORTED', 'Operator CDP attachment failed.', false, {
+        reason: 'CDP_ATTACH_FAILED',
+      });
+    }
   }
 
   /**
@@ -896,22 +1224,47 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
    * createSession so headed (dedicated) and headless (shared) launches share
    * one code path.
    */
-  private async launchBrowser(headless: boolean, startMaximized: boolean): Promise<Browser> {
+  private async launchBrowser(
+    headless: boolean,
+    startMaximized: boolean
+  ): Promise<BrowserAllocation> {
     const launcher =
       this.browserFamily === 'firefox'
         ? (await import('playwright')).firefox
         : this.browserFamily === 'webkit'
           ? (await import('playwright')).webkit
           : chromium;
-    return launcher.launch({
+    let options: { args?: string[]; executablePath?: string } = {};
+    let executableSelection: SessionDiagnostics['executableSelection'] = 'playwright_default';
+    if (!headless) {
+      const headed = await this.headedChromiumOptions(startMaximized);
+      options = {
+        args: headed.args,
+        ...(headed.executablePath !== undefined ? { executablePath: headed.executablePath } : {}),
+      };
+      executableSelection = headed.executableSelection;
+    }
+    const browser = await launcher.launch({
       headless,
       // Headed sessions exist for human-in-the-loop flows (logins, SSO, Cloudflare
       // turnstiles). Playwright's bundled build + navigator.webdriver=true make
       // those challenges loop even with a real display and real clicks — observed
       // live against npmjs.com's turnstile. De-fingerprint headed only (ADR-013):
       // the headless pool keeps its defaults (detection there is honest).
-      ...(headless ? {} : await this.headedChromiumOptions(startMaximized)),
+      ...options,
     });
+    const version = browserVersion(browser);
+    return {
+      browser,
+      facts: {
+        attachment: 'local_launch',
+        browserFamily: this.browserFamily,
+        ...(version !== undefined ? { browserVersion: version } : {}),
+        executableSelection,
+        launchMode: headless ? 'headless' : 'headed',
+        resourceModel: headless ? 'shared_local_browser' : 'dedicated_local_browser',
+      },
+    };
   }
 
   /**
@@ -933,26 +1286,32 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   private async headedChromiumOptions(startMaximized = false): Promise<{
     args: string[];
     executablePath?: string;
+    executableSelection: SessionDiagnostics['executableSelection'];
   }> {
     // Playwright 1.62 does NOT pass --enable-automation (verified against
     // its default switch list), so there is nothing to ignoreDefaultArgs —
     // the live detectable signal was navigator.webdriver, which the init
     // script rewrites to a real browser's `false`.
     const args = ['--disable-blink-features=AutomationControlled'];
+    if (this.browserFamily !== 'chromium') {
+      return { args, executableSelection: 'playwright_default' };
+    }
     // Operator escape hatch for engine-level Chromium policies the page
     // stack cannot override. Live case (2026-09-25): Chrome's Local
     // Network Access enforcement kills same-origin XHR from pages ON a
     // private IP (a LAN-hosted console's fetch to its own origin throws
     // without reaching the server), defeating the CIDR allowlist for
-    // exactly the flows the operator opted into. Space-separated; empty
-    // unset means no extra flags.
+    // exactly the flows the operator opted into. Space-separated; unset
+    // or blank means no extra flags. Chromium-family launches only: the
+    // variable names Chromium, so firefox/webkit headed launches never
+    // receive these flags.
     args.push(...extraChromiumArgs(process.env.AGENTBROWSER_CHROMIUM_ARGS));
-    if (this.browserFamily !== 'chromium') return { args };
     const resolved = await this.resolveHeadedExecutable();
-    console.info(`[agentbrowser] headed chromium binary: ${resolved ?? 'bundled Chromium'}`);
+    console.info(`[agentbrowser] headed chromium binary: ${resolved.path ?? 'bundled Chromium'}`);
     return {
       args: startMaximized ? [...args, '--start-maximized'] : args,
-      ...(resolved !== undefined ? { executablePath: resolved } : {}),
+      ...(resolved.path !== undefined ? { executablePath: resolved.path } : {}),
+      executableSelection: resolved.selection,
     };
   }
 
@@ -960,26 +1319,29 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
    * ADR-016 headed-binary precedence. Detection (branded candidates) runs
    * only when no explicit path is set and preferBundled is false.
    */
-  private async resolveHeadedExecutable(): Promise<string | undefined> {
+  private async resolveHeadedExecutable(): Promise<{
+    path?: string;
+    selection: 'explicit' | 'detected' | 'playwright_default';
+  }> {
     const fs = await import('node:fs/promises');
     if (this.chromeBinaryPath !== undefined) {
       try {
         await fs.access(this.chromeBinaryPath);
-        return this.chromeBinaryPath;
+        return { path: this.chromeBinaryPath, selection: 'explicit' };
       } catch {
-        return undefined;
+        return { selection: 'playwright_default' };
       }
     }
-    if (this.preferBundled) return undefined;
+    if (this.preferBundled) return { selection: 'playwright_default' };
     for (const candidate of this.brandedChromeCandidates) {
       try {
         await fs.access(candidate);
-        return candidate;
+        return { path: candidate, selection: 'detected' };
       } catch {
         // candidate absent — keep probing
       }
     }
-    return undefined;
+    return { selection: 'playwright_default' };
   }
 
   /**
@@ -1011,17 +1373,19 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       try {
         const result = await dns.lookup(hostname, { all: true });
         return result.map((entry) => entry.address);
-      } catch {
-        throw new EngineError('POLICY_DENIED', 'Cannot validate unresolved hostname');
+      } catch (error) {
+        throw new EngineError('POLICY_DENIED', 'Cannot validate unresolved hostname', false, {
+          reason: classifyNavigationFailure(error, 'dns'),
+        });
       }
     };
 
     const verdictOf = async (
       hostname: string,
       url: string
-    ): Promise<{ verdict: 'allow' | 'deny'; reason?: string }> => {
+    ): Promise<{ verdict: 'allow' | 'deny'; reason?: NavigationFailureReason }> => {
       let verdict: 'allow' | 'deny';
-      let reason: string | undefined;
+      let reason: NavigationFailureReason | undefined;
       try {
         await egress.checkRequest({ hostname, url });
         if (egress.checkResolvedAddresses !== undefined) {
@@ -1033,14 +1397,14 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         verdict = 'allow';
       } catch (error) {
         verdict = 'deny';
-        // Surface the policy's own code/rule instead of flattening to
-        // 'deny' (NetworkPolicyError carries both; anything else still
-        // gets a readable message).
-        const err = error as { code?: string; details?: { rule?: string }; message?: string };
-        reason =
-          err.code !== undefined
-            ? `${err.code}${err.details?.rule !== undefined ? ` (${err.details.rule})` : ''}`
-            : (err.message ?? 'denied by egress policy');
+        const err = error as { code?: string; details?: { reason?: unknown } };
+        reason = isNavigationFailureReason(err.details?.reason)
+          ? err.details.reason
+          : ['POLICY_DENIED', 'RESPONSE_TOO_LARGE', 'MAX_REDIRECTS', 'REDIRECT_LOOP'].includes(
+                err.code ?? ''
+              )
+            ? 'egress_policy'
+            : 'engine_error';
       }
       return reason !== undefined ? { verdict, reason } : { verdict };
     };
@@ -1123,11 +1487,16 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         return route.continue();
       };
 
+      const deny = async (reason: NavigationFailureReason) => {
+        sink.navigationFailures.set(request, { kind: 'blocked', reason });
+        await fulfill(BLOCKED_RESPONSE);
+      };
+
       try {
         const initial = await verdictOf(hostname, url);
         if (initial.verdict === 'deny') {
           emitRequest('request.failed', request, { blocked: true, reason: initial.reason });
-          await fulfill(BLOCKED_RESPONSE);
+          await deny(initial.reason ?? 'engine_error');
           return;
         }
 
@@ -1160,7 +1529,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
                 reason: hop.reason,
                 redirect: absolute.origin + absolute.pathname,
               });
-              await fulfill(BLOCKED_RESPONSE);
+              await deny(hop.reason ?? 'engine_error');
               return;
             }
           }
@@ -1175,7 +1544,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
                 blocked: true,
                 reason: 'RESPONSE_TOO_LARGE (response-size cap)',
               });
-              await fulfill(BLOCKED_RESPONSE);
+              await deny('egress_policy');
               return;
             }
           }
@@ -1191,7 +1560,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
                 blocked: true,
                 reason: 'RESPONSE_TOO_LARGE (actual-byte cap)',
               });
-              await fulfill(BLOCKED_RESPONSE);
+              await deny('egress_policy');
               return;
             }
             emitRequest('request.finished', request, {
@@ -1214,8 +1583,26 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       } catch (error) {
         emitRequest('request.failed', request, {
           blocked: false,
-          reason: error instanceof Error ? error.message : 'fetch failed',
+          reason: classifyNavigationFailure(error, 'transport'),
         });
+        if (!terminalStarted && request.isNavigationRequest()) {
+          let mainNavigation = false;
+          try {
+            mainNavigation = request.frame() === request.frame().page().mainFrame();
+          } catch {}
+          if (mainNavigation) {
+            sink.navigationFailures.set(request, {
+              kind: 'failed',
+              reason: classifyNavigationFailure(error, 'transport'),
+            });
+            await fulfill({
+              status: 502,
+              contentType: 'text/plain',
+              body: 'Navigation failed',
+            }).catch(() => {});
+            return;
+          }
+        }
         if (!terminalStarted) {
           // Best effort after recording the failure: the context may already
           // be closed, in which case abort itself rejects too.
@@ -1225,11 +1612,23 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
     });
   }
 
-  async close(): Promise<void> {
-    if (this.browser) {
-      await this.browser.close();
-      this.browser = undefined;
+  close(): Promise<void> {
+    if (!this.closeTask) {
+      this.closed = true;
+      this.closeTask = this.dispose();
     }
+    return this.closeTask;
+  }
+
+  private async dispose(): Promise<void> {
+    // A late launch/context cannot escape shutdown. Existing dedicated sessions
+    // remain session-owned; the coordinator closes live sessions before engines.
+    await Promise.allSettled(this.pendingSessions);
+    await this.activeAttachedSession?.close().catch(() => {});
+    const pending = this.sharedBrowser;
+    this.sharedBrowser = undefined;
+    const allocation = await pending?.catch(() => undefined);
+    await allocation?.browser.close();
   }
 }
 
@@ -1238,9 +1637,12 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
  */
 class PlaywrightSession implements EngineSession {
   readonly id: string;
+  readonly diagnostics?: SessionDiagnostics;
+  readonly disconnected: AbortSignal;
   private context: BrowserContext;
   private engine: PlaywrightChromiumEngine;
   private pageMap: Map<string, PlaywrightPage> = new Map();
+  private readonly ownedPlaywrightPages = new WeakSet<Page>();
   private readonly downloads = new Map<
     string,
     {
@@ -1250,8 +1652,18 @@ class PlaywrightSession implements EngineSession {
   >();
   private pageCounter = 0;
   private closed = false;
+  private closeTask: Promise<void> | undefined;
 
   private ownedBrowser: Browser | undefined;
+  private readonly attached:
+    | { browser: Browser; release: () => void; navigationPreflight?: RequestPolicy }
+    | undefined;
+  private readonly onContextPage = (page: Page) => {
+    void this.adoptPopupPage(page);
+  };
+  private readonly onDisconnected = () => {
+    void this.close().catch(() => {});
+  };
 
   /** The page-routing request-event sink installed by createSession. */
   private readonly requestSink: RequestEventSink | undefined;
@@ -1259,6 +1671,7 @@ class PlaywrightSession implements EngineSession {
   constructor(
     context: BrowserContext,
     engine: PlaywrightChromiumEngine,
+    private readonly disconnectObserver: SessionDisconnectObserver,
     ownedBrowser?: Browser,
     requestSink?: RequestEventSink,
     private readonly downloadPolicy: EngineSessionOptions['downloadPolicy'] = {
@@ -1266,19 +1679,28 @@ class PlaywrightSession implements EngineSession {
       maxBytes: 10 * 1024 * 1024,
     },
     /** Already validated/normalized by createSession(); undefined = engine default. */
-    private readonly snapshotTimeoutMs?: number
+    private readonly snapshotTimeoutMs?: number,
+    readonly warnings: readonly string[] = [],
+    diagnostics?: SessionDiagnostics,
+    attached?: { browser: Browser; release: () => void; navigationPreflight?: RequestPolicy }
   ) {
     this.id = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     this.context = context;
     this.engine = engine;
     this.ownedBrowser = ownedBrowser;
     this.requestSink = requestSink;
+    this.attached = attached;
+    this.disconnected = disconnectObserver.signal;
+    if (diagnostics !== undefined) this.diagnostics = diagnostics;
     // F10: pages the browser opens on its own (window.open) still belong to
     // this session; pages opened via newPage() have no opener and are
     // skipped inside the handler.
-    this.context.on('page', (page) => {
-      void this.adoptPopupPage(page);
-    });
+    this.context.on('page', this.onContextPage);
+    this.disconnected.addEventListener('abort', this.onDisconnected, { once: true });
+    // AbortSignal does not notify listeners registered after it was aborted.
+    // Close synchronously enough to publish the single cleanup owner before
+    // createSession performs its final connected assertion.
+    if (this.disconnected.aborted) this.onDisconnected();
     if (requestSink !== undefined) {
       requestSink.emit = (event) => {
         const page = this.pageForPlaywrightPage(event.playwrightPage);
@@ -1313,17 +1735,21 @@ class PlaywrightSession implements EngineSession {
    * from there.
    */
   private async adoptPopupPage(playwrightPage: Page): Promise<void> {
-    if (this.closed) {
-      return;
-    }
+    let owned = false;
     try {
       const opener = await playwrightPage.opener();
       if (opener === null) {
         return;
       }
-      const popup = await this.registerPlaywrightPage(playwrightPage);
+      if (!this.ownedPlaywrightPages.has(opener)) return;
+      owned = true;
       const openerPage = this.pageForPlaywrightPage(opener);
-      openerPage?.emitExternalEvent({
+      if (this.closed || openerPage === undefined) {
+        await playwrightPage.close().catch(() => {});
+        return;
+      }
+      const popup = await this.registerPlaywrightPage(playwrightPage);
+      openerPage.emitExternalEvent({
         type: 'page.created',
         timestamp: new Date().toISOString(),
         sessionId: this.id,
@@ -1331,7 +1757,8 @@ class PlaywrightSession implements EngineSession {
         data: { openerPageId: openerPage.id, pageId: popup.id, url: playwrightPage.url() },
       });
     } catch {
-      // Adoption is best-effort; an unadoptable popup stays browser-side.
+      // Once its opener proves ownership, do not leak a late popup past close.
+      if (owned) await playwrightPage.close().catch(() => {});
     }
   }
 
@@ -1340,26 +1767,43 @@ class PlaywrightSession implements EngineSession {
       throw new Error('Session is closed');
     }
     const playwrightPage = await this.context.newPage();
-    return this.registerPlaywrightPage(playwrightPage, options?.viewport);
+    try {
+      return await this.registerPlaywrightPage(playwrightPage, options?.viewport);
+    } catch (error) {
+      await playwrightPage.close().catch(() => {});
+      throw error;
+    }
   }
 
   private async registerPlaywrightPage(
     playwrightPage: Page,
     viewport?: NewPageOptions['viewport']
   ): Promise<PlaywrightPage> {
+    if (this.closed) throw new Error('Session is closed');
     if (viewport) {
       await playwrightPage.setViewportSize(viewport);
     }
+    if (this.closed) throw new Error('Session is closed');
 
     const pageId = `page-${this.pageCounter++}`;
-    const page = new PlaywrightPage(pageId, playwrightPage, this.engine, this.snapshotTimeoutMs);
+    this.ownedPlaywrightPages.add(playwrightPage);
+    const page = new PlaywrightPage(
+      pageId,
+      playwrightPage,
+      this.engine,
+      this.snapshotTimeoutMs,
+      this.requestSink?.navigationFailures,
+      this.attached?.navigationPreflight
+    );
     this.pageMap.set(pageId, page);
     page.registerRemoval(() => {
       this.pageMap.delete(pageId);
       this.downloads.delete(pageId);
-      playwrightPage.off('download', onDownload);
+      if (this.attached === undefined) playwrightPage.off('download', onDownload);
     });
-    this.downloads.set(pageId, { entries: new Map(), bytes: 0 });
+    if (this.attached === undefined) {
+      this.downloads.set(pageId, { entries: new Map(), bytes: 0 });
+    }
 
     // In-page download interception (spec 10): accept the download, hold
     // its bytes, and surface created/finished events on the page stream.
@@ -1408,7 +1852,9 @@ class PlaywrightSession implements EngineSession {
         )
         .finally(() => download.delete().catch(() => {}));
     };
-    playwrightPage.on('download', onDownload);
+    // Existing-profile download behavior belongs to the operator browser.
+    // Do not intercept, cancel, retain, or claim attached-profile downloads.
+    if (this.attached === undefined) playwrightPage.on('download', onDownload);
 
     return page;
   }
@@ -1418,6 +1864,16 @@ class PlaywrightSession implements EngineSession {
   }
 
   async cookies(): Promise<NormalizedCookie[]> {
+    if (this.attached !== undefined) {
+      throw new EngineError(
+        'ENGINE_UNSUPPORTED',
+        'Cookie export is unavailable for attached profiles',
+        false,
+        {
+          reason: 'PROFILE_COOKIE_EXPORT_UNSUPPORTED',
+        }
+      );
+    }
     return (await this.context.cookies()) as NormalizedCookie[];
   }
 
@@ -1447,30 +1903,60 @@ class PlaywrightSession implements EngineSession {
   }
 
   async close(reason?: string): Promise<void> {
-    if (this.closed) {
-      return;
-    }
+    if (this.closeTask !== undefined) return this.closeTask;
     this.closed = true;
-    // Close all pages
-    for (const page of this.pageMap.values()) {
-      await page.close();
+    this.disconnectObserver.disarm();
+    this.disconnected.removeEventListener('abort', this.onDisconnected);
+    this.context.off('page', this.onContextPage);
+    let resolveOwner!: () => void;
+    let rejectOwner!: (error: unknown) => void;
+    const owner = new Promise<void>((resolve, reject) => {
+      resolveOwner = resolve;
+      rejectOwner = reject;
+    });
+    this.closeTask = owner;
+    this.disposeSession(reason).then(resolveOwner, (error) => {
+      if (this.closeTask === owner) this.closeTask = undefined;
+      rejectOwner(error);
+    });
+    return owner;
+  }
+
+  private async disposeSession(_reason?: string): Promise<void> {
+    if (this.attached !== undefined) return this.closeAttached();
+    try {
+      for (const page of this.pageMap.values()) {
+        await page.close();
+      }
+    } finally {
+      this.pageMap.clear();
+      this.downloads.clear();
+      const ownedBrowser = this.ownedBrowser;
+      this.ownedBrowser = undefined;
+      await closeSessionResources(this.context, ownedBrowser);
+    }
+  }
+
+  private async closeAttached(): Promise<void> {
+    if (this.attached === undefined) return;
+    let firstFailure: unknown;
+    for (const page of [...this.pageMap.values()]) {
+      try {
+        await page.close();
+      } catch (error) {
+        firstFailure ??= error;
+      }
     }
     this.pageMap.clear();
     this.downloads.clear();
-
-    // Close context
-    await this.context.close();
-
-    // TD-BROWSER-6: a headed session owns its browser; dispose it. Failure to
-    // close must not fail the session close (the OS reaps the process).
-    if (this.ownedBrowser !== undefined) {
-      try {
-        await this.ownedBrowser.close();
-      } catch {
-        // already gone or unresponsive; nothing further to release
-      }
-      this.ownedBrowser = undefined;
+    try {
+      await this.attached.browser.close();
+    } catch (error) {
+      firstFailure ??= error;
+    } finally {
+      this.attached.release();
     }
+    if (firstFailure !== undefined) throw firstFailure;
   }
 }
 
@@ -1505,8 +1991,12 @@ class PlaywrightPage implements EnginePage {
    */
   private revision = 1;
   /** Include tokens the most recent observe ran with (tryRemap re-observes with them). */
-  private lastObservationInclude: string[] | undefined = undefined;
+  private lastObservationInclude: ObservationRequest['include'] = undefined;
   private refStore = new Map<string, StoredElement>();
+  private readonly fallbackNodes = new WeakMap<
+    StoredElement,
+    { handle: ElementHandle; locator: Locator }
+  >();
   private bindings = new Map<string, NodeBinding>();
   private eventWaiters: Array<() => void> = [];
   private eventsClosed = false;
@@ -1549,7 +2039,9 @@ class PlaywrightPage implements EnginePage {
     id: string,
     page: Page,
     engine: PlaywrightChromiumEngine,
-    snapshotTimeoutMs?: number
+    snapshotTimeoutMs?: number,
+    private readonly navigationFailures?: RequestEventSink['navigationFailures'],
+    private readonly navigationPreflight?: RequestPolicy
   ) {
     this.id = id;
     this.page = page;
@@ -1565,6 +2057,7 @@ class PlaywrightPage implements EnginePage {
     // The browser can close pages without PlaywrightPage.close() running
     // (engine.close()); Playwright's own close event ends the iterator.
     this.onPageClose = () => {
+      this.removeSelf();
       this.eventsClosed = true;
       const waiters = this.eventWaiters;
       this.eventWaiters = [];
@@ -1751,40 +2244,61 @@ class PlaywrightPage implements EnginePage {
     try {
       return await this.performNavigation(request);
     } catch (error) {
-      const failure = normalizeEngineError(error, 'navigate');
+      const failure = normalizeNavigationFailure(error);
       throw new EngineError(failure.code, failure.message, failure.retryable, failure.details);
     }
   }
 
   private async performNavigation(request: NavigationRequest): Promise<NavigationResult> {
+    // Every dispatched navigation invalidates refs, including a rejected goto.
+    this.bumpRevision();
+    if (this.navigationPreflight !== undefined) {
+      let parsed: URL;
+      try {
+        parsed = new URL(request.url);
+      } catch {
+        throw new EngineError('POLICY_DENIED', 'Navigation target must be HTTP or HTTPS.', false, {
+          reason: 'egress_policy',
+        });
+      }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new EngineError('POLICY_DENIED', 'Navigation target must be HTTP or HTTPS.', false, {
+          reason: 'egress_policy',
+        });
+      }
+      await this.navigationPreflight.checkRequest({
+        hostname: parsed.hostname,
+        url: parsed.toString(),
+      });
+    }
     const waitUntil = request.waitUntil || 'load';
     const response = await this.page.goto(request.url, {
       waitUntil: waitUntil as 'load' | 'domcontentloaded' | 'networkidle',
     });
-    // The choke point serves a marked 403 for denied navigations and
-    // denied redirect targets alike (hygiene E3: every deny path in
-    // installEgress uses route.fulfill(BLOCKED_RESPONSE), never
-    // route.abort() - the header is the only signal a denial ever
-    // produces, so it's also the only one worth matching on. A prior
-    // String(error)-regex fallback here for 'ERR_BLOCKED_BY_CLIENT'/
-    // 'net::ERR_ABORTED' didn't match anything installEgress's own
-    // abort() call actually throws (that's reason 'failed', i.e.
-    // net::ERR_FAILED, and represents a genuine fetch failure, not a
-    // policy decision - it must propagate as a real error). Its only
-    // live effect was silently relabeling any unrelated real navigation
-    // abort as a policy block.
-    if (response?.headers()?.['x-agentbrowser-blocked'] === '1') {
-      return {
-        status: 'blocked',
-        url: request.url,
-        redirectChain: [],
-      };
+    // A trusted receipt is correlated to this response, never an origin header.
+    const routedRequest = response?.request();
+    const failure = routedRequest ? this.navigationFailures?.get(routedRequest) : undefined;
+    if (routedRequest) this.navigationFailures?.delete(routedRequest);
+    if (failure?.kind === 'failed') {
+      throw new EngineError('INTERNAL', 'Navigation failed', false, { reason: failure.reason });
     }
-    this.bumpRevision();
+    if (failure) {
+      return { status: 'blocked', url: request.url, redirectChain: [], reason: failure.reason };
+    }
+
+    // A resolved goto is not proof that target content loaded. Chromium can
+    // commit its internal error document without rejecting the navigation.
+    // Do not label this as a policy wall or expose its potentially private URL.
+    const url = this.page.url();
+    if (/^(?:chrome-error:|edge-error:|about:(?:neterror|certerror)(?:[?#]|$))/i.test(url)) {
+      throw new EngineError('INTERNAL', 'Browser navigation produced an error document', false, {
+        reason: 'browser_error_document',
+      });
+    }
 
     return {
       status: 'success',
-      url: this.page.url(),
+      url,
       redirectChain: [],
     };
   }
@@ -1813,15 +2327,21 @@ class PlaywrightPage implements EnginePage {
     // Set only when the whole-body ariaSnapshot budget was actually spent
     // and exceeded (never merely because mode skipped this branch) - a
     // caller-visible signal that `elements` came from getContentElements()'s
-    // DOM-tag-only fallback (no name/value, no ARIA-only custom widgets)
+    // DOM fallback (best-effort names and roles, reduced semantic coverage)
     // rather than the real accessibility tree.
     let ariaSnapshotDegraded = false;
+
+    // True when the ariaSnapshot itself succeeded (no timeout). Distinguishes an
+    // empty-but-successful snapshot (JS SPA not mounted -> empty-snapshot-nonempty-dom)
+    // from a timed-out one (aria-snapshot-timeout, handled via getContentElements).
+    let ariaSnapshotSucceeded = false;
 
     if (mode === 'interactive' || mode === 'accessibility' || mode === 'content') {
       // Only timeouts can recover. Transport/context errors are not evidence.
       const yaml = await snapshotBudget.capture(this.page.locator('body'));
       documentSnapshot = snapshotDigest(yaml);
       if (yaml !== undefined) {
+        ariaSnapshotSucceeded = true;
         elements = this.parseAriaSnapshot(yaml, this.revision);
       } else {
         ariaSnapshotDegraded = true;
@@ -1833,47 +2353,62 @@ class PlaywrightPage implements EnginePage {
     // upload can attach to them through a bound ref - so include:["fileInputs"]
     // scans the DOM for every file input, hidden ones included, and appends
     // bindable elements after the accessibility-derived set.
-    this.lastObservationInclude = request.include;
-    if (request.include?.includes('fileInputs') === true) {
-      for (const info of await this.describeFileInputs()) {
-        elements.push({
-          ref: `e${this.revision}_${elements.length}`,
-          role: 'fileinput',
-          ...(info.name !== undefined ? { name: info.name } : {}),
-          visible: info.visible,
-          enabled: true,
-          fileInputIndex: info.index,
-          attributes: {
-            ...(info.id !== undefined ? { id: info.id } : {}),
-            ...(info.accept !== undefined ? { accept: info.accept } : {}),
-            ...(info.multiple ? { multiple: 'true' } : {}),
-          },
-        });
+    try {
+      this.lastObservationInclude = request.include;
+      if (request.include?.includes('fileInputs') === true) {
+        for (const info of await this.describeFileInputs()) {
+          elements.push({
+            ref: `e${this.revision}_${elements.length}`,
+            role: 'fileinput',
+            ...(info.name !== undefined ? { name: info.name } : {}),
+            visible: info.visible,
+            enabled: true,
+            fileInputIndex: info.index,
+            attributes: {
+              ...(info.id !== undefined ? { id: info.id } : {}),
+              ...(info.accept !== undefined ? { accept: info.accept } : {}),
+              ...(info.multiple ? { multiple: 'true' } : {}),
+            },
+          });
+        }
       }
-    }
 
-    // The ARIA snapshot only emits role-carrying elements, so interactive
-    // controls built as role-less div/span widgets (automation-attributed
-    // dropdown triggers, click-handler tiles) are invisible to observations.
-    // include:["formControls"] scans the DOM for those and mints bindable
-    // refs; the :not([role]) candidate filter keeps elements the snapshot
-    // covered from being minted twice.
-    if (request.include?.includes('formControls') === true) {
-      for (const info of await this.describeFormControls()) {
-        elements.push({
-          ref: `e${this.revision}_${elements.length}`,
-          role: 'control',
-          ...(info.name !== undefined ? { name: info.name } : {}),
-          visible: info.visible,
-          enabled: true,
-          formControlIndex: info.index,
-          attributes: {
-            tag: info.tag,
-            ...(info.id !== undefined ? { id: info.id } : {}),
-            ...(info.automationId !== undefined ? { 'data-automation-id': info.automationId } : {}),
-          },
-        });
+      // The ARIA snapshot only emits role-carrying elements, so interactive
+      // controls built as role-less div/span widgets (automation-attributed
+      // dropdown triggers, click-handler tiles) are invisible to observations.
+      // include:["formControls"] scans the DOM for those and mints bindable
+      // refs; the :not([role]) candidate filter keeps elements the snapshot
+      // covered from being minted twice.
+      if (request.include?.includes('formControls') === true) {
+        for (const info of await this.describeFormControls()) {
+          elements.push({
+            ref: `e${this.revision}_${elements.length}`,
+            role: 'control',
+            ...(info.name !== undefined ? { name: info.name } : {}),
+            visible: info.visible,
+            enabled: true,
+            formControlIndex: info.index,
+            attributes: {
+              tag: info.tag,
+              ...(info.id !== undefined ? { id: info.id } : {}),
+              ...(info.automationId !== undefined
+                ? { 'data-automation-id': info.automationId }
+                : {}),
+            },
+          });
+        }
       }
+    } catch (error) {
+      // An enrichment failure occurs before the ref-binding transaction adopts
+      // fallback handles. Release discovery-owned handles on this path too.
+      for (const element of elements) {
+        await this.fallbackNodes
+          .get(element)
+          ?.handle.dispose()
+          .catch(() => {});
+        this.fallbackNodes.delete(element);
+      }
+      throw error;
     }
 
     // Rebuild the ref store from this observation: refs are deterministic
@@ -1906,17 +2441,19 @@ class PlaywrightPage implements EnginePage {
         // Role resolution excludes hidden nodes and role-less widgets, so
         // file inputs and form controls bind by ordinal over their candidate
         // selectors instead of via getByRole.
+        const fallback = this.fallbackNodes.get(element);
         const locator =
-          element.fileInputIndex !== undefined
+          fallback?.locator ??
+          (element.fileInputIndex !== undefined
             ? this.page.locator('input[type=file]').nth(element.fileInputIndex)
             : element.formControlIndex !== undefined
               ? this.page.locator(FORM_CONTROL_SELECTOR).nth(element.formControlIndex)
               : this.page
                   .getByRole(element.role as never, { name: element.name ?? '', exact: true })
-                  .nth(ordinal);
+                  .nth(ordinal));
         // Bind once to an actual node. An ordinal is never resolved anew at act time.
         if (await locator.count()) {
-          const handle = await locator.elementHandle();
+          const handle = fallback?.handle ?? (await locator.elementHandle());
           if (handle) {
             // Register the handle before more I/O so a capture failure releases it.
             const binding: NodeBinding = {
@@ -2029,6 +2566,14 @@ class PlaywrightPage implements EnginePage {
       this.bumpRevision();
       throw error;
     } finally {
+      // Discovery owns fallback handles until a ref binding adopts them.
+      const retained = new Set([...this.bindings.values()].map((binding) => binding.handle));
+      for (const element of elements) {
+        const fallback = this.fallbackNodes.get(element);
+        if (fallback && !retained.has(fallback.handle))
+          void fallback.handle.dispose().catch(() => {});
+        this.fallbackNodes.delete(element);
+      }
       for (const { handle } of previous.values()) void handle.dispose().catch(() => {});
     }
     if (changed) {
@@ -2053,6 +2598,21 @@ class PlaywrightPage implements EnginePage {
         ? await this.collectOverlays(elements)
         : undefined;
 
+    // An empty-but-successful ariaSnapshot over a content-rich DOM is the common
+    // JS-SPA-not-mounted-yet case; it never trips SnapshotBudget, so without this
+    // check it would look identical to a genuinely empty page. Surface it as its
+    // own degraded reason so callers can wait/retry or read via HTML. Only probe
+    // the DOM when there is nothing to lose (no elements) to avoid per-observe cost.
+    let emptyOverNonEmptyDom = false;
+    if (!ariaSnapshotDegraded && ariaSnapshotSucceeded && elements.length === 0) {
+      const { bodyTextLength, domNodeCount } = await this.measureDomContent();
+      emptyOverNonEmptyDom = classifyEmptyObservation({
+        elementCount: 0,
+        bodyTextLength,
+        domNodeCount,
+      });
+    }
+
     return {
       revision: this.revision,
       url: this.page.url(),
@@ -2063,8 +2623,30 @@ class PlaywrightPage implements EnginePage {
       ...(overlays !== undefined ? { overlays } : {}),
       ...(ariaSnapshotDegraded
         ? { degraded: true, degradedReason: 'aria-snapshot-timeout' as const }
-        : {}),
+        : emptyOverNonEmptyDom
+          ? { degraded: true, degradedReason: 'empty-snapshot-nonempty-dom' as const }
+          : {}),
     };
+  }
+
+  /**
+   * Cheap DOM-content measurement for the empty-snapshot-nonempty-dom signal.
+   * Best-effort: a detached/navigating page yields zeros rather than throwing.
+   */
+  private async measureDomContent(): Promise<{ bodyTextLength: number; domNodeCount: number }> {
+    try {
+      const body = this.page.locator('body');
+      const [text, domNodeCount] = await Promise.all([
+        body.innerText({ timeout: 1000 }).catch(() => ''),
+        this.page
+          .locator('body *')
+          .count()
+          .catch(() => 0),
+      ]);
+      return { bodyTextLength: text.length, domNodeCount };
+    } catch {
+      return { bodyTextLength: 0, domNodeCount: 0 };
+    }
   }
 
   /**
@@ -2161,46 +2743,95 @@ class PlaywrightPage implements EnginePage {
   }
 
   private async getContentElements(): Promise<StoredElement[]> {
-    // Get interactive elements using query selectors
+    // One selector preserves document order and avoids duplicate refs for native
+    // controls that also declare an ARIA role. Bind the discovered node itself;
+    // best-effort names are display metadata, never identity evidence.
     const selectors = [
       'button',
-      'a',
+      'a[href]',
       'input',
-      'select',
       'textarea',
+      'select',
       '[role="button"]',
       '[role="link"]',
       '[role="textbox"]',
+      '[role="combobox"]',
+      '[role="menuitem"]',
+      '[role="tab"]',
+      '[role="checkbox"]',
+      '[role="option"]',
+      '[contenteditable]:not([contenteditable="false"])',
     ];
-
     const elements: StoredElement[] = [];
-
-    for (const selector of selectors) {
-      try {
-        const nodes = await this.page.locator(selector).all();
-        for (const node of nodes) {
-          const isVisible = await node.isVisible().catch(() => false);
-          if (isVisible) {
-            // A bracketed attribute selector (`[role="button"]`) has no bare
-            // tag name to fall back to: stripping the whole bracket left
-            // role as '' here, which crashes rebindRefs's getByRole('')
-            // the moment the ARIA snapshot times out and this DOM fallback
-            // fires (observed live against LinkedIn's auth wall).
-            const bracketRole = /\[role="([^"]+)"\]/.exec(selector)?.[1];
-            elements.push({
-              ref: `e${this.revision}_${elements.length}`,
-              role: bracketRole ?? selector.replace(/[^a-zA-Z]/g, ''),
-              visible: true,
-              enabled: await node.isEnabled().catch(() => true),
-            });
-          }
+    try {
+      for (const locator of await this.page.locator(selectors.join(',')).all()) {
+        const handle = await locator.elementHandle({ timeout: 1000 });
+        if (!handle) continue;
+        let retained = false;
+        try {
+          if (!(await handle.isVisible())) continue;
+          const info = await handle.evaluate((node) => {
+            const tag = node.tagName.toLowerCase();
+            const inputType = node.getAttribute('type')?.toLowerCase();
+            const role =
+              node.getAttribute('role') ||
+              (tag === 'a'
+                ? 'link'
+                : tag === 'select'
+                  ? 'combobox'
+                  : tag === 'input'
+                    ? inputType === 'checkbox' || inputType === 'radio'
+                      ? inputType
+                      : ['button', 'submit', 'reset'].includes(inputType ?? '')
+                        ? 'button'
+                        : 'textbox'
+                    : tag === 'textarea' || node.hasAttribute('contenteditable')
+                      ? 'textbox'
+                      : tag);
+            const labelledBy = (node.getAttribute('aria-labelledby') ?? '')
+              .split(/\s+/)
+              .map((id: string) => node.ownerDocument.getElementById(id)?.textContent ?? '')
+              .join(' ')
+              .trim();
+            const name =
+              labelledBy ||
+              node.getAttribute('aria-label') ||
+              ('labels' in node
+                ? Array.from(node.labels ?? [])
+                    .map((label: unknown) => (label as { textContent: string | null }).textContent)
+                    .join(' ')
+                : '') ||
+              (tag === 'input' && ['button', 'submit', 'reset'].includes(inputType ?? '')
+                ? node.value
+                : node.textContent) ||
+              '';
+            return { role, name: name.replace(/\s+/g, ' ').trim().slice(0, 200) };
+          });
+          const element: StoredElement = {
+            ref: `e${this.revision}_${elements.length}`,
+            role: info.role,
+            ...(info.name ? { name: info.name } : {}),
+            visible: true,
+            enabled: await handle.isEnabled(),
+          };
+          this.fallbackNodes.set(element, { handle, locator });
+          elements.push(element);
+          retained = true;
+        } finally {
+          if (!retained) await handle.dispose().catch(() => {});
         }
-      } catch {
-        // Selector might not match anything, continue
       }
+      return elements;
+    } catch (error) {
+      for (const element of elements) {
+        await this.fallbackNodes
+          .get(element)
+          ?.handle.dispose()
+          .catch(() => {});
+        this.fallbackNodes.delete(element);
+      }
+      throw error;
     }
-
-    return elements;
   }
 
   /**
@@ -2488,7 +3119,7 @@ class PlaywrightPage implements EnginePage {
    */
   private async tryRemap(
     action: EngineAction,
-    includeTokens?: string[] | undefined
+    includeTokens?: ObservationRequest['include']
   ): Promise<{ action: EngineAction; to: string } | { candidates: number }> {
     const target = action.target;
     if (target === undefined) {

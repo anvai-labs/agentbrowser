@@ -127,7 +127,7 @@ describe('egress resolution gates', () => {
       const denied = seen.find((event) => event.type === 'request.failed');
       expect(denied?.data).toMatchObject({
         blocked: true,
-        reason: 'POLICY_DENIED',
+        reason: 'dns_unresolved',
         hostname: host,
       });
     } finally {
@@ -153,7 +153,7 @@ describe('egress resolution gates', () => {
       const { seen } = await requestEvents(page);
 
       await expect(page.navigate({ url: `http://127.0.0.1:${deadPort}/` })).rejects.toThrow(
-        /net::ERR_/
+        /Navigation failed: connection_refused/
       );
 
       await vi.waitFor(() => {

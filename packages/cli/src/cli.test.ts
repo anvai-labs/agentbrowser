@@ -22,6 +22,13 @@ describe('AgentBrowser CLI', () => {
 
   const lastJson = () => JSON.parse(out.join('\n'));
 
+  it('selects operator attachment without sending launch options or an endpoint', async () => {
+    expect(await run('session', 'create', '--tenant', 'tenant_1', '--cdp-attach', '--json')).toBe(
+      0
+    );
+    expect(sessions.create).toHaveBeenCalledWith({ tenantId: 'tenant_1', cdpAttach: true });
+  });
+
   it('reports the product version without constructing a service client', async () => {
     expect(await run('--version')).toBe(0);
     expect(out).toEqual([PRODUCT_VERSION]);
@@ -526,6 +533,85 @@ describe('AgentBrowser CLI', () => {
         url: 'https://example.com',
         waitUntil: 'networkidle',
       });
+    });
+
+    it.each(['blocked', 'timeout'] as const)(
+      'preserves a %s result with its reason and exits non-zero',
+      async (status) => {
+        sessions.navigate.mockResolvedValueOnce({
+          status,
+          reason: status === 'blocked' ? 'egress_policy' : 'dns_timeout',
+          url: 'https://failure.test/',
+          redirectChain: [],
+        });
+
+        const code = await run('--json', 'navigate', 'ses_1', 'pg_1', 'https://failure.test/');
+
+        expect(code).toBe(1);
+        expect(lastJson()).toEqual({
+          status,
+          reason: status === 'blocked' ? 'egress_policy' : 'dns_timeout',
+          url: 'https://failure.test/',
+          redirectChain: [],
+        });
+        expect(err).toEqual([]);
+      }
+    );
+
+    it('projects only the bounded navigation failure in JSON error output', async () => {
+      sessions.navigate.mockRejectedValueOnce(
+        Object.assign(new Error('private proxy URL https://secret.invalid/'), {
+          code: 'INTERNAL',
+          details: {
+            reason: 'tls_refused',
+            operationId: 'navigate-once',
+            address: '10.0.0.1',
+            url: 'https://secret.invalid/',
+          },
+        })
+      );
+
+      const code = await run('--json', 'navigate', 'ses_1', 'pg_1', 'https://failure.test/');
+
+      expect(code).toBe(1);
+      expect(out).toEqual([]);
+      expect(JSON.parse(err.join('\n'))).toEqual({
+        error: {
+          code: 'INTERNAL',
+          message: 'Navigation failed: tls_refused',
+          retryable: false,
+          details: { reason: 'tls_refused', operationId: 'navigate-once' },
+        },
+      });
+      expect(err.join('\n')).not.toContain('secret');
+      expect(err.join('\n')).not.toContain('10.0.0.1');
+    });
+
+    it('prints the fixed reason for a human-readable navigation failure', async () => {
+      sessions.navigate.mockRejectedValueOnce(
+        Object.assign(new Error('private adapter prose'), {
+          code: 'INTERNAL',
+          details: { reason: 'browser_error_document', url: 'chrome-error://private/' },
+        })
+      );
+
+      const code = await run('navigate', 'ses_1', 'pg_1', 'https://failure.test/');
+
+      expect(code).toBe(1);
+      expect(err).toEqual(['INTERNAL: Navigation failed: browser_error_document']);
+      expect(err.join('\n')).not.toContain('chrome-error');
+    });
+
+    it('keeps ordinary navigation errors on the existing human error path', async () => {
+      sessions.navigate.mockRejectedValueOnce(
+        Object.assign(new Error('PAGE_NOT_FOUND: Page is missing'), { code: 'PAGE_NOT_FOUND' })
+      );
+
+      const code = await run('--json', 'navigate', 'ses_1', 'pg_1', 'https://failure.test/');
+
+      expect(code).toBe(1);
+      expect(err.join('\n')).toContain('PAGE_NOT_FOUND');
+      expect(() => JSON.parse(err.join('\n'))).toThrow();
     });
   });
 
@@ -1381,6 +1467,70 @@ describe('AgentBrowser CLI', () => {
       expect(out.join('\n')).toContain('2026-08-23T10:00:00Z');
     });
 
+    it('renders allowlisted terminal facts from the shared error projection', async () => {
+      const error = Object.assign(new Error('SESSION_NOT_FOUND: Session does not exist.'), {
+        code: 'SESSION_NOT_FOUND',
+        details: {
+          sessionTerminal: {
+            closeCause: 'explicit_close',
+            endedAt: 1050,
+            state: 'closed',
+            leaseRemainingMs: 0,
+            lease: {
+              sampledAt: 1050,
+              expiresAt: 2000,
+              lastActivityAt: 1000,
+              idleExpiresAt: 1500,
+            },
+          },
+          privateReason: 'secret',
+        },
+      });
+      sessions.get.mockRejectedValueOnce(error);
+      expect(await run('session', 'get', 'ses_1')).toBe(1);
+      expect(err.join('\n')).toContain('close-cause=explicit_close');
+      expect(err.join('\n')).toContain('ended-at=1050');
+      expect(err.join('\n')).not.toContain('secret');
+    });
+
+    it('renders sampled leases and captured launch facts and preserves the complete JSON view', async () => {
+      const view = {
+        sessionId: 'ses_1',
+        status: 'ready',
+        createdAt: '2026-09-24T00:00:00Z',
+        engine: { name: 'selected-adapter', version: '2.0.0' },
+        ttlMs: 1000,
+        idleTimeoutMs: 500,
+        pages: 0,
+        lease: { sampledAt: 1000, expiresAt: 3000, lastActivityAt: 900, idleExpiresAt: 2000 },
+        leaseRemainingMs: 1000,
+        diagnostics: {
+          attachment: 'remote_cdp',
+          browserFamily: 'chromium',
+          browserVersion: '123.0',
+          executableSelection: 'not_applicable',
+          launchMode: 'unknown',
+          resourceModel: 'shared_remote_connection',
+          context: {
+            isolation: 'new_context',
+            viewport: { mode: 'no_viewport' },
+            initScript: 'registered',
+          },
+        },
+      };
+      sessions.get.mockResolvedValue(view);
+      expect(await run('session', 'get', 'ses_1')).toBe(0);
+      expect(out.join('\n')).toContain('remote_cdp');
+      expect(out.join('\n')).toContain('selected-adapter');
+      expect(out.join('\n')).toContain('lease:');
+      expect(out.join('\n')).toContain('sampled=1000');
+      expect(out.join('\n')).toContain('ttl-expires=3000');
+      expect(out.join('\n')).toContain('idle-expires=2000');
+      out.length = 0;
+      expect(await run('--json', 'session', 'get', 'ses_1')).toBe(0);
+      expect(lastJson()).toEqual(view);
+    });
+
     it('page list renders pages', async () => {
       const code = await run('page', 'list', 'ses_1');
       expect(code).toBe(0);
@@ -1439,6 +1589,26 @@ describe('AgentBrowser CLI', () => {
         })
       );
     });
+
+    it('prints complete extraction data beyond 4000 characters and forwards the byte budget', async () => {
+      const text = `${'x'.repeat(6000)}TAIL`;
+      sessions.extract = vi.fn().mockResolvedValue({ data: { text }, evidence: [] });
+      expect(await run('extract', 'ses_1', 'pg_1', '--max-bytes', '16384')).toBe(0);
+      expect(sessions.extract).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        format: 'text',
+        maxBytes: 16384,
+      });
+      expect(JSON.parse(out.join('\n'))).toEqual({ text });
+    });
+
+    it.each(['0', '-1', '1.5', '100bytes', '1e4', '9007199254740992'])(
+      'refuses an invalid extraction budget %s before contacting the service',
+      async (value) => {
+        sessions.extract = vi.fn();
+        expect(await run('extract', 'ses_1', 'pg_1', '--max-bytes', value)).toBe(1);
+        expect(sessions.extract).not.toHaveBeenCalled();
+      }
+    );
 
     it('help mentions the new commands', async () => {
       await run('--help');

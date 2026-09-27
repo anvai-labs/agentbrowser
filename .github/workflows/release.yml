@@ -77,7 +77,7 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       # Workspace packages resolve each other through dist/; a clean checkout
       # has none. Same shape as the CI build job.
@@ -376,7 +376,7 @@ jobs:
           targets/omissions as the MCP binary).
 
           Each smoke ran `initialize` + `tools/list` against the compiled
-          artifact and required the full 13-tool unbound catalog and the exact release version
+          artifact and required the complete unbound catalog and the exact release version
           in `serverInfo`.
 
           Server acceptance uses Node 24.21.0 on native Linux x64/ARM and Darwin ARM.
@@ -409,7 +409,8 @@ jobs:
         run: |
           TAG="${GITHUB_REF_NAME}"
           REPO="${GITHUB_REPOSITORY}"
-          # Create-or-update keeps re-runs of the same tag idempotent.
+          # Published bytes are immutable: duplicate asset names fail closed.
+          # Do not rerun publication over an existing release or replace its assets.
           gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 || \
             gh release create "$TAG" --repo "$REPO" --title "$TAG" --notes-file notes.md
-          gh release upload "$TAG" --repo "$REPO" release-assets/* --clobber
+          gh release upload "$TAG" --repo "$REPO" release-assets/*

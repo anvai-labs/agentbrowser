@@ -38,6 +38,18 @@ provide a concrete candidate and evidence before requesting any missing approval
 Never claim main promotion or release from a local version bump. Preserve concurrent
 branches and use the reviewed final commit identity for each merge.
 
+## Current release checkpoint
+
+The current published and installed baseline is 1.11.0 from protected main
+`e00539e`. The [delivery record](../evidence/release-1.11.0.md) records the twelve green
+release jobs, investigated Rosetta timeout retry, fourteen verified downloads, npm
+integrity, Homebrew PR #73 and eleven installed acceptance groups. The existing
+service remains on 1.10.0 until a deliberate session checkpoint. The older records
+below are historical. All eight strict main checks and immutable release assets
+remain required. Label acceptance phases and measure their timing before changing
+budgets. No durable recovery, installed external-harness qualification or production
+use-case completion is implied.
+
 ## Current implementation state
 
 Main is protected with required checks, admin enforcement and force-push/deletion

@@ -5,7 +5,7 @@ import type {
   ApplicationRequest,
   EvidenceReviewSource,
 } from '@agentbrowser/control';
-import { ApprovalGate } from '@agentbrowser/core';
+import { ApprovalGate, SecretManager } from '@agentbrowser/core';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { afterEach, expect, it, vi } from 'vitest';
 import {
@@ -46,6 +46,7 @@ async function fixture(
   });
   const expected = owner.read();
   const gate = new ApprovalGate(options.maxTokens ? { maxTokens: options.maxTokens } : {});
+  const secrets = new SecretManager();
   const engine = new FakeEngine();
   let action: Record<string, unknown> = {};
   let generation = 1;
@@ -121,6 +122,7 @@ async function fixture(
   const service = new AgentBrowserService({
     engine,
     approvalGate: gate,
+    secretManager: secrets,
     applicationAdapters: [
       {
         ...owner.adapter,
@@ -189,6 +191,7 @@ async function fixture(
       ...(tokenId === undefined ? {} : { approvalToken: tokenId }),
     });
   return {
+    secrets,
     owner,
     gate,
     service,
@@ -926,3 +929,205 @@ it.each(['get', 'approve'] as const)(
     expect(f.owner.submissionCount()).toBe(0);
   }
 );
+
+for (const mode of ['generate', 'get', 'approve', 'deny'] as const) {
+  it(`captures ${mode} disclosure for the original publisher without extra effects or reads`, async () => {
+    const f = await fixture({ publicProvider: true });
+    const token =
+      mode === 'generate'
+        ? undefined
+        : await f.service.applicationReview(f.sessionId, operator, reviewBody(f));
+    const reads = f.collect.mock.calls.length;
+    const sent = vi.fn();
+    let retained!: () => void;
+    await f.service.authority.run(
+      f.sessionId,
+      operator,
+      { id: 'review-output', fingerprint: 'review-output' },
+      async () => {
+        const output =
+          mode === 'generate'
+            ? await f.service.prepareApplicationReviewInScope(f.sessionId, reviewBody(f))
+            : await f.service.prepareApprovalDisclosureInScope(
+                f.sessionId,
+                token!.tokenId,
+                mode === 'get' ? undefined : mode
+              );
+        retained = output.assertCurrent;
+        return output;
+      },
+      undefined,
+      {
+        timeoutMs: 1000,
+        publish: async (output) => {
+          expect(f.service.authority.get(f.sessionId)?.operation('review-output')?.status).toBe(
+            'completed'
+          );
+          expect(f.service.authority.get(f.sessionId)?.view().busy).toBe(true);
+          output.assertCurrent();
+          await Promise.resolve();
+          output.assertCurrent();
+          expect(Object.isFrozen(output.view)).toBe(true);
+          expect(output.view.status).toBe(
+            mode === 'approve' ? 'approved' : mode === 'deny' ? 'denied' : 'pending'
+          );
+          sent(output.view);
+        },
+      }
+    );
+    expect(sent).toHaveBeenCalledOnce();
+    expect(retained).toThrow();
+    expect(f.collect).toHaveBeenCalledTimes(reads + (mode === 'generate' ? 1 : 0));
+    expect(f.raw.captureNativeForm).not.toHaveBeenCalled();
+    expect(f.owner.read().version).toBe(2);
+    expect(f.service.authority.get(f.sessionId)?.operation('submit-once')).toBeUndefined();
+    await f.service.authority.run(f.sessionId, operator, {}, async () => undefined, undefined, {
+      timeoutMs: 1000,
+      publish: () => expect(retained).toThrow(),
+    });
+  });
+
+  for (const changed of ['application', 'source', 'page', 'secret'] as const) {
+    it(`suppresses delayed ${mode} disclosure after ${changed} changes`, async () => {
+      const f = await fixture({ publicProvider: true });
+      const token =
+        mode === 'generate'
+          ? undefined
+          : await f.service.applicationReview(f.sessionId, operator, reviewBody(f));
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const sent = vi.fn();
+      const result = f.service.authority
+        .run(
+          f.sessionId,
+          operator,
+          { id: 'review-output', fingerprint: 'review-output' },
+          () =>
+            mode === 'generate'
+              ? f.service.prepareApplicationReviewInScope(f.sessionId, reviewBody(f))
+              : f.service.prepareApprovalDisclosureInScope(
+                  f.sessionId,
+                  token!.tokenId,
+                  mode === 'get' ? undefined : mode
+                ),
+          undefined,
+          {
+            timeoutMs: 1000,
+            publish: async (output) => {
+              entered.resolve();
+              await release.promise;
+              output.assertCurrent();
+              sent(output.view);
+            },
+          }
+        )
+        .catch((error) => error);
+      await Promise.race([entered.promise, result]);
+      if (changed === 'application') f.denyApplication();
+      if (changed === 'source') f.revoke();
+      if (changed === 'page') {
+        const pages = (f.service as unknown as { pages: Map<string, object> }).pages;
+        pages.set(f.pageId, { ...pages.get(f.pageId) });
+      }
+      if (changed === 'secret') {
+        const policy = new SecretManager({ 'vault://new-policy': 'Synthetic Person' });
+        vi.spyOn(f.secrets, 'redactUntrusted').mockImplementation((value) =>
+          policy.redactUntrusted(value)
+        );
+      }
+      release.resolve();
+      expect(await result).toBeInstanceOf(Error);
+      expect(sent).not.toHaveBeenCalled();
+      expect(f.service.authority.get(f.sessionId)?.operation('review-output')?.status).toBe(
+        'completed'
+      );
+      expect(f.service.authority.get(f.sessionId)?.view().busy).toBe(false);
+      expect(f.owner.read().version).toBe(2);
+    });
+  }
+}
+
+for (const mutation of ['source-regrant', 'page-replacement'] as const) {
+  it(`refuses ${mutation} during the terminal publication permission callback`, async () => {
+    const f = await fixture({ publicProvider: true });
+    let checks = 0;
+    const sent = vi.fn();
+    await expect(
+      f.service.authority.run(
+        f.sessionId,
+        operator,
+        { id: 'terminal-revocation', fingerprint: mutation },
+        () => f.service.prepareApplicationReviewInScope(f.sessionId, reviewBody(f)),
+        undefined,
+        {
+          timeoutMs: 1000,
+          publish: (output) => {
+            // Arm only during publication, after every execution/capture check.
+            f.onGeneration(() => {
+              if (++checks !== 2) return;
+              if (mutation === 'source-regrant') {
+                f.revoke();
+                f.regrant();
+              } else {
+                const pages = (f.service as unknown as { pages: Map<string, object> }).pages;
+                pages.set(f.pageId, { ...pages.get(f.pageId) });
+              }
+            });
+            output.assertCurrent();
+            sent(output.view);
+          },
+        }
+      )
+    ).rejects.toThrow();
+    expect(checks).toBe(2);
+    expect(sent).not.toHaveBeenCalled();
+    expect(f.collect).toHaveBeenCalledOnce();
+    expect(f.owner.submissionCount()).toBe(0);
+    expect(f.service.authority.get(f.sessionId)?.operation('terminal-revocation')?.status).toBe(
+      'completed'
+    );
+  });
+}
+
+it('keeps finalized approval facts while a timed-out publisher cannot send its retained view', async () => {
+  const f = await fixture({ publicProvider: true });
+  const token = await f.service.applicationReview(f.sessionId, operator, reviewBody(f));
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const late = Promise.withResolvers<void>();
+  const sent = vi.fn();
+  const result = f.service.authority
+    .run(
+      f.sessionId,
+      operator,
+      { id: 'decide-output', fingerprint: 'decide-output' },
+      () => f.service.prepareApprovalDisclosureInScope(f.sessionId, token.tokenId, 'approve'),
+      undefined,
+      {
+        timeoutMs: 20,
+        publish: async (output) => {
+          entered.resolve();
+          await release.promise;
+          try {
+            output.assertCurrent();
+            sent();
+          } finally {
+            late.resolve();
+          }
+        },
+      }
+    )
+    .catch((error) => error);
+  await Promise.race([entered.promise, result]);
+  expect(await result).toBeInstanceOf(Error);
+  expect(f.service.authority.get(f.sessionId)?.operation('decide-output')?.status).toBe(
+    'completed'
+  );
+  expect(await f.run(() => f.service.getApproval(f.sessionId, token.tokenId))).toMatchObject({
+    status: 'approved',
+  });
+  release.resolve();
+  await late.promise;
+  expect(sent).not.toHaveBeenCalled();
+  expect(f.owner.read().version).toBe(2);
+});

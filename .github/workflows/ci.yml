@@ -84,7 +84,7 @@ jobs:
         run: node --test scripts/release-smoke.test.mjs
 
       - name: Test candidate packaging and acceptance failure controls
-        run: node --test scripts/package-server.test.mjs scripts/package-acceptance.test.mjs scripts/application-recipe.test.mjs scripts/application-recipe-lifecycle.test.mjs
+        run: node --test scripts/package-server.test.mjs scripts/package-acceptance.test.mjs scripts/consumer-smoke-candidate.test.mjs scripts/application-recipe.test.mjs scripts/application-recipe-lifecycle.test.mjs
 
       # Offline evidence validation only; does not certify browser containment.
       - name: Check worker feasibility evidence verifier
@@ -133,6 +133,8 @@ jobs:
         # Bound both scheduler layers: parallel packages each spawning a full
         # Vitest pool can starve native browser startup on shared runners.
         run: |
+          pnpm exec biome check scripts/probe-journal-sqlite.mjs
+          node scripts/probe-journal-sqlite.mjs
           pnpm test:job-eligibility
           pnpm -r --workspace-concurrency=1 run test --maxWorkers=2 --minWorkers=1
 

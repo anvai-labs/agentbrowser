@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { setImmediate as settlePublication } from 'node:timers/promises';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildServer } from './server.js';
@@ -39,12 +40,15 @@ async function delegate(
   url: string,
   mode?: string
 ) {
+  // inject resolves at response finish before publication's release continuation.
+  await settlePublication();
   const review = await server.inject({
     method: 'POST',
     url: `${url}/control/prepare-resume`,
     headers: operator,
   });
   expect(review.statusCode).toBe(200);
+  await settlePublication();
   const granted = await server.inject({
     method: 'POST',
     url: `${url}/control/delegate`,
@@ -61,6 +65,7 @@ async function delegate(
     profileRevision: 1,
   });
   expect(JSON.stringify(granted.json().cursor)).not.toContain(granted.json().token);
+  await settlePublication();
   return { authorization: `Bearer ${granted.json().token}` };
 }
 
@@ -145,11 +150,37 @@ describe('delegated coexistence', () => {
         await server.inject({ method: 'POST', url: `${url}/control/takeover`, headers: operator })
       ).json().state
     ).toBe('HUMAN_ACTIVE');
-    expect((await server.inject({ url, headers: agent })).statusCode).toBe(401);
+    const revoked = await server.inject({ url, headers: agent });
+    expect(revoked.statusCode).toBe(401);
+    expect(revoked.body).not.toContain('idleExpiresAt');
     const next = await delegate(server, url);
     expect(next.authorization).not.toBe(agent.authorization);
-    expect((await server.inject({ url, headers: next })).statusCode).toBe(200);
+    const resumed = await server.inject({ url, headers: next });
+    expect(resumed.statusCode).toBe(200);
+    expect(resumed.json().lease).toHaveProperty('sampledAt');
     expect((await server.inject({ url, headers: agent })).statusCode).toBe(401);
+  });
+
+  it('does not disclose retained terminal facts through a revoked delegated token', async () => {
+    const { server, url } = await setup();
+    const agent = await delegate(server, url);
+
+    const closed = await server.inject({ method: 'DELETE', url, headers: operator });
+    expect(closed.statusCode).toBe(200);
+    await settlePublication();
+
+    const revoked = await server.inject({ url, headers: agent });
+    expect(revoked.statusCode).toBe(401);
+    expect(revoked.body).not.toContain('sessionTerminal');
+    expect(revoked.body).not.toContain('explicit_close');
+
+    const owner = await server.inject({ url, headers: operator });
+    expect(owner.statusCode).toBe(404);
+    expect(owner.json().error.details.sessionTerminal).toMatchObject({
+      closeCause: 'explicit_close',
+      state: 'closed',
+      leaseRemainingMs: 0,
+    });
   });
 
   it('requires an operation ID and never repeats an already recorded page creation', async () => {
@@ -175,6 +206,7 @@ describe('delegated coexistence', () => {
       headers: { ...operator, 'x-agentbrowser-operation-id': 'owner-page' },
     });
     const pageId = privatePage.json().pageId;
+    await settlePublication();
     const capture = await server.inject({
       method: 'POST',
       url: `${url}/pages/${pageId}/screenshot`,

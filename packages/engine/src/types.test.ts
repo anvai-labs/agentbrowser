@@ -125,6 +125,15 @@ describe('Engine Interface Types', () => {
   });
 
   describe('EngineSession interface', () => {
+    it('allows one persistent optional disconnect signal', () => {
+      type SessionDisconnect = Pick<EngineSession, 'disconnected'>;
+      const controller = new AbortController();
+      const session: SessionDisconnect = { disconnected: controller.signal };
+
+      expect(session.disconnected).toBe(controller.signal);
+      expect(session.disconnected?.aborted).toBe(false);
+    });
+
     it('should require id property', () => {
       type SessionProperties = Pick<EngineSession, 'id'>;
 

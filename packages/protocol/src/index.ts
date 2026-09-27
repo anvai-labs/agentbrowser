@@ -8,6 +8,7 @@
 // Re-export all schemas and types
 export * from './schemas.js';
 export * from './types.js';
+export * from './display.js';
 export * from './validators.js';
 export * from './contracts.js';
 export * from './errors.js';
@@ -27,3 +28,6 @@ export * from './form-mapping.js';
 export * from './upload.js';
 
 export * from './operator-approval.js';
+export * from './extraction.js';
+export * from './session-diagnostics.js';
+export * from './navigation-failure.js';

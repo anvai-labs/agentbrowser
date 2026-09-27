@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { setImmediate as settlePublication } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
 import { NetworkPolicy } from '@agentbrowser/policy';
@@ -129,6 +130,7 @@ it.each(transports)(
         headers: { ...ownerHeaders, 'x-agentbrowser-operation-id': 'create' },
       });
       const pageId = page.json().pageId;
+      await settlePublication();
       const nav = await server.inject({
         method: 'POST',
         url: `${path}/pages/${pageId}/navigate`,
@@ -136,17 +138,20 @@ it.each(transports)(
         payload: { url: `http://127.0.0.1:${(fixture.address() as AddressInfo).port}/` },
       });
       expect(nav.statusCode).toBe(200);
+      await settlePublication();
       const review = await server.inject({
         method: 'POST',
         url: `${path}/control/prepare-resume`,
         headers: ownerHeaders,
       });
+      await settlePublication();
       const grant = await server.inject({
         method: 'POST',
         url: `${path}/control/delegate`,
         headers: ownerHeaders,
         payload: { epoch: review.json().epoch },
       });
+      await settlePublication();
       if (transport !== 'cli')
         bridge = await openHarness({
           transport,
@@ -156,31 +161,38 @@ it.each(transports)(
           requestTimeoutMs: 30_000,
         });
       const callAutofill = async (args: Record<string, unknown>, expectedExitCode = 0) => {
-        if (bridge)
-          return bridge.request('tools/call', { name: 'browser_autofill', arguments: args });
-        const { pageId: requestedPage, operationId, ...payload } = args;
-        const result = await runAgentCli(
-          [
-            process.execPath,
-            fileURLToPath(new URL('../../cli/dist/bin.js', import.meta.url)),
-            '--base-url',
-            `http://127.0.0.1:${(server.server.address() as AddressInfo).port}`,
-            '--json',
-            '--operation-id',
-            operationId,
-            'autofill',
-            sessionId,
-            requestedPage,
-            '-',
-          ],
-          {
-            env: process.env,
-            token: grant.json().token,
-            stdin: JSON.stringify(payload),
-            expectedExitCode,
-          }
-        );
-        return { isError: result.code !== 0, content: [{ text: result.stdout || result.stderr }] };
+        const result = bridge
+          ? await bridge.request('tools/call', { name: 'browser_autofill', arguments: args })
+          : await (async () => {
+              const { pageId: requestedPage, operationId, ...payload } = args;
+              const cliResult = await runAgentCli(
+                [
+                  process.execPath,
+                  fileURLToPath(new URL('../../cli/dist/bin.js', import.meta.url)),
+                  '--base-url',
+                  `http://127.0.0.1:${(server.server.address() as AddressInfo).port}`,
+                  '--json',
+                  '--operation-id',
+                  operationId,
+                  'autofill',
+                  sessionId,
+                  requestedPage,
+                  '-',
+                ],
+                {
+                  env: process.env,
+                  token: grant.json().token,
+                  stdin: JSON.stringify(payload),
+                  expectedExitCode,
+                }
+              );
+              return {
+                isError: cliResult.code !== 0,
+                content: [{ text: cliResult.stdout || cliResult.stderr }],
+              };
+            })();
+        await settlePublication();
+        return result;
       };
       let args = {
         scope: { url: `http://127.0.0.1:${(fixture.address() as AddressInfo).port}/` },

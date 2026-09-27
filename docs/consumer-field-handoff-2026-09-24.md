@@ -6,6 +6,12 @@
 > [Consumer Handoff: Implementation Briefs, 2026-09-25](consumer-field-handoff-2026-09-25-implementation-briefs.md).
 > The verification table at the bottom of this document records what
 > 1.11.0 already closed.
+>
+> **Update 2026-09-26:** 1.12.0 shipped the rows this table still lists
+> as open — F7 typed navigation reasons, F2.2 operator CDP attachment,
+> and F3 close-cause classification with lease visibility (see the
+> 1.12.0 changelog). The table below is preserved as the 1.11.0-era
+> snapshot.
 
 ## Verification against 1.11.0 (2026-09-25, brew service restarted on v1.11.0)
 
