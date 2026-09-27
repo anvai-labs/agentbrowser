@@ -7,6 +7,25 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added
+
+- `AGENTBROWSER_CHROMIUM_ARGS` operator escape hatch: extra Chromium launch flags,
+  space-separated, applied to **headed chromium launches** only. Motivated by Chrome's
+  Local Network Access enforcement against LAN-hosted consoles. The headless pool keeps
+  stock launch defaults, firefox/webkit launches never receive the flags, and both CDP
+  attach paths (`cdpEndpoint`, operator attachment) cannot apply launch flags at all —
+  the engine logs a one-time warning at construction when the variable is set there.
+
+### Changed
+
+- Biome warnings cleared across the repo: every `warn`-level finding in production
+  sources is fixed individually, `noExplicitAny`/`noNonNullAssertion` are promoted from
+  `warn` to `error` in source, and both rules are scoped off for `**/*.test.ts` and
+  `**/test-support/**` (test assertions rely on `!` throwing and test doubles need
+  `any`; biome's autofix for nonNull is semantics-changing). All 16 workspace packages
+  now declare a `lint` script, so `pnpm -r lint` actually checks the previously
+  unlinted core/engine/protocol/testkit packages.
+
 ## [1.12.0] - 2026-09-25
 
 ### Added

@@ -731,15 +731,18 @@ function preferBundledEnv(): boolean {
  * Parse AGENTBROWSER_CHROMIUM_ARGS into Chromium launch flags.
  *
  * Operator escape hatch for engine-level Chromium policies the page stack
- * cannot override. Live case (2026-09-25): Chrome's Local Network Access
- * enforcement kills same-origin XHR from pages ON a private IP — a
- * LAN-hosted console's fetch to its own origin throws without reaching
- * the server — defeating the CIDR allowlist for exactly the flows the
- * operator opted into.
+ * cannot override. Motivating case (2026-09-25 field run): Chrome's Local
+ * Network Access enforcement kills same-origin XHR from pages ON a private
+ * IP — a LAN-hosted console's fetch to its own origin throws without
+ * reaching the server — defeating the CIDR allowlist for exactly the flows
+ * the operator opted into.
  *
- * Space-separated; unset or blank yields no flags. Only applies on the
- * LAUNCH path: see the constructor warning for the two ATTACH paths
- * (cdpEndpoint, operatorCdp), where launch flags cannot apply.
+ * Space-separated; unset or blank yields no flags. Scope: HEADED CHROMIUM
+ * launches only. The headless pool keeps stock launch defaults on purpose
+ * (ADR-013: headless detection is honest and desired), firefox/webkit
+ * launches never receive Chromium flags, and both CDP attach paths
+ * (cdpEndpoint, operatorCdp) cannot apply launch flags at all — the
+ * constructor warns on those two when the variable is set.
  */
 export function extraChromiumArgs(raw: string | undefined): string[] {
   return (raw ?? '').trim().split(/\s+/).filter(Boolean);
