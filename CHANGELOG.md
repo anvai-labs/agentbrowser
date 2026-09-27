@@ -7,6 +7,8 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-09-27
+
 ### Added
 
 - `AGENTBROWSER_CHROMIUM_ARGS` operator escape hatch: extra Chromium launch flags,
