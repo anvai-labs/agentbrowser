@@ -136,6 +136,14 @@ from the accession only, and convert the padded CIK through a number before plac
 in the archive path. Removing a single leading zero produces a plausible but wrong
 URL.
 
+## Check for amendments across the peer set in one query
+
+Amendments need no per-company loop: run one full-text search with `forms=10-K/A` and a
+query term certain to appear in any filing of the class (`q=insurance` for an insurance
+peer set) over the review window. An issuer absent from the hits has no amendment in
+the window, so the single query replaces a per-issuer check. This technique is from the
+2026-09-24 field run.
+
 ## Download once, then search locally
 
 Earnings 8-K EX-99.1 releases are compact carriers for segment metrics. Download the

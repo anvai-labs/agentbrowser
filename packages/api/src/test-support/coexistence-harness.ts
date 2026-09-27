@@ -46,10 +46,11 @@ export async function openHarness(options: {
   const root = fileURLToPath(new URL('../../../../', import.meta.url));
   const victor = options.transport === 'victor';
   const victorRoot = victor ? realpathSync(process.env.AGENTBROWSER_VICTOR_ROOT || '') : '';
-  if (victor && !process.env.AGENTBROWSER_VICTOR_PYTHON)
+  const victorPython = process.env.AGENTBROWSER_VICTOR_PYTHON ?? '';
+  if (victor && !victorPython)
     throw new Error('Set AGENTBROWSER_VICTOR_PYTHON to Victor’s Python environment');
   const child = spawn(
-    victor ? process.env.AGENTBROWSER_VICTOR_PYTHON! : process.execPath,
+    victor ? victorPython : process.execPath,
     victor
       ? [resolve(root, 'scripts/victor-coexistence-bridge.py')]
       : [resolve(root, 'packages/mcp-server/dist/bin.js')],

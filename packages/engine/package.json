@@ -8,6 +8,7 @@
   "scripts": {
     "build": "tsc",
     "type-check": "tsc --noEmit",
+    "lint": "biome check src/",
     "test": "vitest run",
     "clean": "rm -rf dist *.tsbuildinfo",
     "test:watch": "vitest"

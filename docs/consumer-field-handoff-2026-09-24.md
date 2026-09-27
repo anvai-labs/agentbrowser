@@ -1,5 +1,34 @@
 # Consumer Field Handoff — MCP Research Workload, 2026-09-24
 
+> **Follow-up:** open findings from this handoff are now
+> implementation-ready briefs with paste-ready onscreen prompts, TDD
+> plans, and smoke gates — see
+> [Consumer Handoff: Implementation Briefs, 2026-09-25](consumer-field-handoff-2026-09-25-implementation-briefs.md).
+> The verification table at the bottom of this document records what
+> 1.11.0 already closed.
+>
+> **Update 2026-09-26:** 1.12.0 shipped the rows this table still lists
+> as open — F7 typed navigation reasons, F2.2 operator CDP attachment,
+> and F3 close-cause classification with lease visibility (see the
+> 1.12.0 changelog). The table below is preserved as the 1.11.0-era
+> snapshot.
+
+## Verification against 1.11.0 (2026-09-25, brew service restarted on v1.11.0)
+
+| Finding | 1.11.0 disposition | Evidence |
+| --- | --- | --- |
+| F1 tab provisioning | **VERIFIED FIXED** | Changelog ships MCP `browser_page_create` / `browser_pages` (PR #286 `fix/research-consumer-workflow`); page lifecycle re-verified live via CLI (two active pages in one session). Navigate auto-provisioning intentionally absent — the explicit verbs are the contract. New-session MCP consumers get the tools. |
+| F2.1 launch diagnostics | **VERIFIED FIXED** | `session create` response now carries a `diagnostics` block: `executableSelection: detected` (branded Chrome per ADR-016), `launchMode: headed`, `viewport.mode: no_viewport` (window-true), `initScript: registered` (ADR-013 scrub) — exactly the "what actually launched" visibility requested. |
+| F7 blocked/no-reason | **FIXED ON DEVELOP, PENDING RELEASE** | 1.11.0 typed the browser-error-document case; develop goes further — `classifyNavigationFailure` (engine/src/navigation-failure.ts) maps DNS/TLS/transport errors to the full reason taxonomy with unit + integration + MCP payload tests (verified on 2026-09-25). The brew release still shows bare `blocked` on NXDOMAIN until the next tag. |
+| F3 session lifecycle | **PARTIALLY FIXED** | Remote-session close now preserves sibling sessions; engine shutdown drains pending setups. Close-cause classification and remaining-lease visibility not yet shipped. |
+| F8 headed screenshot timeout | **VERIFIED FIXED** | Headed `screenshot` captured immediately on 1.11.0 (previously two consecutive timeouts on the same host/page); artifact retrieval via `artifact get --json` works. Visual look-and-feel audits are unblocked (used same-day on the AnvaiOps control plane). |
+| F2.2 CDP-attach lane | **NOT SHIPPED** | Absent from the 1.11.0 changelog. |
+
+Smoke regression after the service restart: consumer's 24-check UI suite
+passed 19/19 public checks (unauthenticated variant), 0 failures.
+
+
+
 **Status:** Field report (input to backlog; makes no decisions)
 **Context:** 2026-09-24
 **Producer:** Claude Code consumer session driving `agentbrowser-mcp` (headed
@@ -58,20 +87,45 @@ large-text extraction with reliance on the persisted-output overflow files
 when the service provisions them at `create` (always exactly one,
 `pg_N_page-0`).
 
-**Impact.** The natural consumer model — one browser, N tabs, shared cookie
-jar — is unavailable. To parallelize a crawl we were forced into N parallel
-sessions, i.e. N independent cookie jars and N fingerprints, plus N windows
-on the operator's desktop (three were needed; each is also a separate
-thing that can die mid-task, see F4).
+**Update 2026-09-24 (later run).** The service **already supports multi-page
+sessions** — `agentbrowser page create <sessionId>` (plus `page list/get/
+close`) works against a live session and returns a second active page.
+F1 is therefore confirmed as purely an **MCP adapter gap**: the tool catalog
+lacks the page CRUD verbs the CLI/REST surface has. Exposing them closes
+this finding.
 
-**Request.** Expose page provisioning on the MCP surface: either an explicit
-`session_page_create` tool or implicit auto-provisioning when
-`browser_navigate` targets a new `pageId` within a session page budget.
+**Impact.** The natural consumer model — one browser, N tabs, shared cookie
+jar — is unavailable to MCP consumers. To parallelize a crawl we were forced
+into N parallel sessions, i.e. N independent cookie jars and N fingerprints,
+plus N windows on the operator's desktop (three were needed; each is also a
+separate thing that can die mid-task, see F4).
+
+**Request.** Expose page provisioning on the MCP surface: an explicit
+`session_page_create`/`page_close` tool pair (mirroring the existing CLI
+verbs) or implicit auto-provisioning when `browser_navigate` targets a new
+`pageId` within a session page budget.
 [Shared session infrastructure](shared-session-infrastructure.md) already
 frames sessions/pages/agents as first-class shared infrastructure and notes
 "MCP compatibility is an adapter concern" — this is the adapter gap. The
 `create` response already implies a page set (`pg_N_page-0` naming); make the
 set growable and report provisioned `pageId`s in `create`'s response.
+
+### F8 — Headed-session `screenshot` times out (P3)
+
+**Observed.** Two consecutive `screenshot` calls (jpeg, then jpeg with
+`wait: settled/15s`) against a healthy headed session on a fully rendered
+page both returned `TIMEOUT: Request timeout; outcome may be unknown`.
+Navigate/observe/extract on the same page kept working. Reproduced only on
+the headed Windows-less macOS host so far; headless sessions were not
+exercised for screenshots in the same window.
+
+**Impact.** Visual look-and-feel audits — the thing screenshots exist for —
+are unavailable in headed sessions; consumers fall back to semantic
+snapshots, which cannot judge aesthetics.
+
+**Request.** Investigate the headed capture path (compositor/window-occlusion
+on macOS?), and return a typed capture-failed error instead of a timeout
+when the frame cannot be produced.
 
 ### F2 — Bot-walled sites: confirm ADR-013 in the field, then give consumers visibility and an escape lane (P1)
 
@@ -134,6 +188,34 @@ JSON endpoints, keep ~1 rps, use FTS `_id` (`accession:filename`) to build
 primary-document URLs directly. Happy to draft it from today's working
 patterns.
 
+### F7 — `navigate` reports `blocked` without a reason; NXDOMAIN and policy denial are indistinguishable (P1, small)
+
+**Observed.** Same session, same egress:
+
+* `https://docs.montecarlodata.com/docs/` → `{"status": "blocked", "url": <unchanged>}`
+* `https://www.montecarlodata.com/` → `{"status": "success"}` (redirects to montecarlo.ai)
+
+**Investigated to root cause** (2026-09-24): `docs.montecarlodata.com` does
+not resolve **at all** — NXDOMAIN from any resolver (confirmed with `dig`
+and `curl` exit 6 outside agentbrowser; the subdomain is dead after Monte
+Carlo migrated docs to `docs.getmontecarlo.com`, which navigates
+successfully). So this instance of `blocked` was a **destination that no
+longer exists**, surfaced with the same one-word status a policy denial
+would use.
+
+**Impact.** The consumer cannot distinguish (a) a dead/stale URL
+(NXDOMAIN), (b) a TLS-layer refusal, (c) an agentbrowser egress-policy
+block, or (d) a site-side wall — and today (a) and (c) produce the
+identical `blocked` status with no payload. Debugging required a
+second resolver outside the service.
+
+**Request.** Enrich the `blocked` response: `{"status": "blocked",
+"reason": "dns_nxdomain" | "dns_timeout" | "tls_refused" |
+"egress_policy", "detail": …}` — the DNS failure class is already known
+at the point of classification, and the egress-policy choke point
+(ADR-006) knows when *it* is the blocker. Lowest-cost fix, highest
+consumer-debugging value of everything in this handoff.
+
 ## 4. Non-goals noted explicitly
 
 Per ADR-013: we are **not** asking the service to enter an arms race against
@@ -153,13 +235,16 @@ turnstile.
 | 2026-09-24 ~12:4xZ | Yahoo wall | navigate returns `success`, `url: chrome-error://chromewebdata/`, empty DOM |
 | 2026-09-24 ~14:0xZ | Three fresh sessions died within ~2 calls each | `SESSION_NOT_FOUND` ops `39816079-faaa-46b4-…`, `fb84e1a0-…`, `ea150507-…` (partial IDs logged) |
 | 2026-09-24 ~14:5xZ | Death immediately after successful navigate | op `81dddd37-…`; same URL then succeeded on a fresh session |
+| 2026-09-24 ~18:5xZ | `blocked` on a dead subdomain | `docs.montecarlodata.com` → `{"status":"blocked"}`; NXDOMAIN confirmed outside agentbrowser; `www.montecarlodata.com` → success; live successor `docs.getmontecarlo.com` → success |
 
 ## 6. Suggested priority
 
 1. **P1** F1 tab/page provisioning on the MCP surface (blocks the
    single-browser-multi-tab operating model).
-2. **P1** F2.1 launch-profile diagnostics (small, unblocks consumer
+2. **P1** F7 `blocked` reason classification (small; NXDOMAIN vs policy
+   denial cost a live debugging session today).
+3. **P1** F2.1 launch-profile diagnostics (small, unblocks consumer
    reasoning about walls; complements ADR-016).
-3. **P2** F2.2 CDP-attach session type (opt-in, loud scoping).
-4. **P2** F3 close-cause distinction + remaining-lease visibility.
-5. **P3** F4 EDGAR/filings recipe page.
+4. **P2** F2.2 CDP-attach session type (opt-in, loud scoping).
+5. **P2** F3 close-cause distinction + remaining-lease visibility.
+6. **P3** F4 EDGAR/filings recipe page.

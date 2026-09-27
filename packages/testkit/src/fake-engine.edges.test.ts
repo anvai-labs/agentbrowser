@@ -110,14 +110,14 @@ describe('FakeEngine edges', () => {
     });
 
     it('session.openPopup refuses a closed session and an unknown opener', async () => {
-      await expect(
-        (session as unknown as SessionHooks).openPopup('fake-page-999')
-      ).rejects.toThrow(/Unknown opener page/);
+      await expect((session as unknown as SessionHooks).openPopup('fake-page-999')).rejects.toThrow(
+        /Unknown opener page/
+      );
 
       await session.close();
-      await expect(
-        (session as unknown as SessionHooks).openPopup(page.id)
-      ).rejects.toThrow('Session is closed');
+      await expect((session as unknown as SessionHooks).openPopup(page.id)).rejects.toThrow(
+        'Session is closed'
+      );
     });
 
     it('page.openPopup delegates to the owning session', async () => {
@@ -243,9 +243,9 @@ describe('FakeEngine edges', () => {
       fakePage.setElements([{ ref: 'r1', role: 'button', name: 'Gone' }]);
       fakePage.setElements([{ ref: 'r2', role: 'button', name: 'Other' }]);
       const before = revision();
-      await expect(
-        page.act({ type: 'click', target: { ref: 'r1' }, remap: true })
-      ).rejects.toThrow(/Element not found: 0 remap candidate/);
+      await expect(page.act({ type: 'click', target: { ref: 'r1' }, remap: true })).rejects.toThrow(
+        /Element not found: 0 remap candidate/
+      );
       expect(revision()).toBe(before);
 
       // Two survivors: ambiguous, refuse rather than guess.
@@ -254,9 +254,9 @@ describe('FakeEngine edges', () => {
         { ref: 'r2', role: 'button', name: 'Dual' },
         { ref: 'r3', role: 'button', name: 'Dual' },
       ]);
-      await expect(
-        page.act({ type: 'click', target: { ref: 'r1' }, remap: true })
-      ).rejects.toThrow(/Element not found: 2 remap candidate/);
+      await expect(page.act({ type: 'click', target: { ref: 'r1' }, remap: true })).rejects.toThrow(
+        /Element not found: 2 remap candidate/
+      );
       expect(revision()).toBe(before);
     });
   });

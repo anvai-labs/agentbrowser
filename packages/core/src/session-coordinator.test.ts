@@ -1265,7 +1265,7 @@ describe('lease lifecycle boundaries', () => {
   });
 });
 
-it.each([NaN, Infinity, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+it.each([Number.NaN, Number.POSITIVE_INFINITY, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
   'refuses invalid clock %s without leaking an allocated engine session',
   async (now) => {
     const coordinator = new SessionCoordinator({ now: () => now });
