@@ -20,8 +20,14 @@ async function clickAdd(page: EnginePage) {
     () => page.observe({ mode: 'interactive' }),
     (state) => state.elements.some((element) => element.name === 'Add' && element.enabled)
   );
-  const target = observation.elements.find((element) => element.name === 'Add')!;
-  await page.act({ type: 'click', target: { ref: target.ref! } });
+  const target = observation.elements.find((element) => element.name === 'Add');
+  // This is a parity QUALIFIER: a missing element or ref means the engine
+  // failed the fixture, and a thrown diagnostic beats an `undefined` ref
+  // arriving at act() as an opaque protocol error.
+  if (target?.ref === undefined) {
+    throw new Error('parity fixture: no enabled "Add" element with a ref after observe()');
+  }
+  await page.act({ type: 'click', target: { ref: target.ref } });
 }
 
 /** Same executable fixture for every engine; application state is measured out of band. */
@@ -47,9 +53,13 @@ export async function qualifyApplicationParity(engine: BrowserEngine): Promise<v
       () => page.observe({ mode: 'interactive' }),
       (state) => state.elements.some((element) => element.name?.startsWith('Recorded '))
     );
-    const operationId = recovered.elements
-      .find((element) => element.name?.startsWith('Recorded '))!
-      .name!.slice('Recorded '.length);
+    const recordedName = recovered.elements.find((element) =>
+      element.name?.startsWith('Recorded ')
+    )?.name;
+    if (recordedName === undefined) {
+      throw new Error('parity fixture: no "Recorded <id>" element after reconciliation');
+    }
+    const operationId = recordedName.slice('Recorded '.length);
     assertCounterOutcome(app.oracle, { operationId, expectedVersion: 0, amount: 1 });
     if (app.oracle.snapshot().version !== 1)
       throw new Error('UI reconciliation duplicated the effect');

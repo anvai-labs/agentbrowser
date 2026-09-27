@@ -29,7 +29,6 @@ describe('runEngineContractSuite', () => {
             }
             const value = Reflect.get(target, prop);
             return typeof value === 'function' ? value.bind(target) : value;
-            void 0;
           },
         }) as never;
       }

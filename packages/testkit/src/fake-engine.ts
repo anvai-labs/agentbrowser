@@ -25,6 +25,7 @@ import type {
   NormalizedCookie,
   ObservationRequest,
   PdfRequest,
+  RawElement,
   RawPageState,
   ResolvedTarget,
   ScreenshotRequest,
@@ -449,7 +450,7 @@ class FakePage implements EnginePage {
         this.contentOverride ??
         `<html><head><title>${this.currentTitle}</title></head><body></body></html>`,
       elements: observed.map((el) => {
-        const element: any = {
+        const element: RawElement = {
           ref: el.ref,
           role: el.role,
           visible: el.visible,
@@ -548,11 +549,10 @@ class FakePage implements EnginePage {
         throw new Error(`Element not found: ${candidates.length} remap candidate(s)`);
       }
       const healed = candidates[0] as FakeElement;
-      const retried: Record<string, unknown> = {
-        ...(action as Record<string, unknown>),
-        target: { ref: healed.ref },
-      };
-      delete retried.remap;
+      // Destructure `remap` out rather than `delete`-ing it: `delete`
+      // deoptimizes the object's shape, and the intent reads better.
+      const { remap: _remap, ...rest } = action as Record<string, unknown>;
+      const retried: Record<string, unknown> = { ...rest, target: { ref: healed.ref } };
       const effect = await this.act(retried as EngineAction);
       return { ...effect, remap: { from: target.ref, to: healed.ref } };
     }

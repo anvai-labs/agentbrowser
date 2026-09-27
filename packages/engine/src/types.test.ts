@@ -481,7 +481,7 @@ describe('Engine Event Types', () => {
     ];
 
     // Verify that all event types can be used
-    eventTypes.forEach((type) => {
+    for (const type of eventTypes) {
       const event: EngineEvent = {
         type: type as any,
         timestamp: new Date().toISOString(),
@@ -489,7 +489,7 @@ describe('Engine Event Types', () => {
       };
 
       expect(event.type).toBeDefined();
-    });
+    }
   });
 });
 

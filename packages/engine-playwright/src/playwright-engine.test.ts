@@ -6,7 +6,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PlaywrightChromiumEngine, resolveContextViewport } from './index';
+import { PlaywrightChromiumEngine, extraChromiumArgs, resolveContextViewport } from './index';
 
 describe('PlaywrightChromiumEngine', () => {
   let engine: PlaywrightChromiumEngine;
@@ -153,6 +153,13 @@ describe('PlaywrightChromiumEngine', () => {
         engine as unknown as { headedChromiumOptions(): Promise<Record<string, unknown>> }
       ).headedChromiumOptions();
 
+    // Failure-safe: a mid-test assertion must not leak the env stub or the
+    // console.warn mock into later tests in this file.
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      vi.restoreAllMocks();
+    });
+
     it('headed chromium gets the stripped-flags base plus executablePath when the probe path exists', async () => {
       const probed = new PlaywrightChromiumEngine({
         chromeBinaryPath: import.meta.url.replace('file://', ''),
@@ -179,6 +186,65 @@ describe('PlaywrightChromiumEngine', () => {
       const options = await opts(probed);
       expect(options.executablePath).toBeUndefined();
       expect(options.args).toContain('--disable-blink-features=AutomationControlled');
+    });
+
+    // The operator escape hatch, introduced together with its guard rails:
+    // launch flags are fixed at browser start, so an engine that ATTACHES
+    // over CDP can never apply them — the constructor warning exists so the
+    // operator learns that at construction instead of by debugging silence.
+    // These cases pin the working path, the family scoping, and the warning
+    // on both attach paths.
+    it('AGENTBROWSER_CHROMIUM_ARGS reaches the headed launch args', async () => {
+      vi.stubEnv(
+        'AGENTBROWSER_CHROMIUM_ARGS',
+        '--unsafely-treat-insecure-origin-as-secure=http://192.168.1.89:8090 --disable-features=LocalNetworkAccessChecks'
+      );
+      const options = await opts(new PlaywrightChromiumEngine({ preferBundled: true }));
+      expect(options.args).toContain(
+        '--unsafely-treat-insecure-origin-as-secure=http://192.168.1.89:8090'
+      );
+      expect(options.args).toContain('--disable-features=LocalNetworkAccessChecks');
+      // the de-fingerprinting base must survive alongside the extras
+      expect(options.args).toContain('--disable-blink-features=AutomationControlled');
+    });
+
+    it('an unset or blank AGENTBROWSER_CHROMIUM_ARGS adds no flags', async () => {
+      vi.stubEnv('AGENTBROWSER_CHROMIUM_ARGS', '   ');
+      const blank = await opts(new PlaywrightChromiumEngine({ preferBundled: true }));
+      expect(blank.args).toEqual(['--disable-blink-features=AutomationControlled']);
+      // the unset (undefined) case takes the same no-flags path through the
+      // pure parser the launch wiring feeds from process.env
+      expect(extraChromiumArgs(undefined)).toEqual([]);
+    });
+
+    it('a Chromium-named variable never reaches firefox/webkit headed launches', async () => {
+      vi.stubEnv('AGENTBROWSER_CHROMIUM_ARGS', '--disable-features=LocalNetworkAccessChecks');
+      const options = await opts(
+        new PlaywrightChromiumEngine({ browser: 'firefox', preferBundled: true })
+      );
+      expect(options.args).not.toContain('--disable-features=LocalNetworkAccessChecks');
+      expect(options.args).toEqual(['--disable-blink-features=AutomationControlled']);
+    });
+
+    it('warns that AGENTBROWSER_CHROMIUM_ARGS cannot apply to a CDP-attached engine', () => {
+      vi.stubEnv('AGENTBROWSER_CHROMIUM_ARGS', '--disable-features=LocalNetworkAccessChecks');
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      new PlaywrightChromiumEngine({ cdpEndpoint: 'http://127.0.0.1:9222' });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('cannot apply'));
+    });
+
+    it('warns on the operator CDP attach path too', () => {
+      vi.stubEnv('AGENTBROWSER_CHROMIUM_ARGS', '--disable-features=LocalNetworkAccessChecks');
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      new PlaywrightChromiumEngine({ operatorCdp: { endpoint: 'http://127.0.0.1:9222' } });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('cannot apply'));
+    });
+
+    it('does not warn about the flag when the engine launches its own browser', () => {
+      vi.stubEnv('AGENTBROWSER_CHROMIUM_ARGS', '--disable-features=LocalNetworkAccessChecks');
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      new PlaywrightChromiumEngine({ preferBundled: true });
+      expect(warn).not.toHaveBeenCalled();
     });
 
     it('headless launches never consult the headed options (pinned: the pool stays honest)', async () => {
