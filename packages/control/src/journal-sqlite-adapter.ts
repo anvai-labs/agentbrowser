@@ -38,6 +38,8 @@ interface ChildReply {
 }
 
 const READY_TIMEOUT_MS = 30_000;
+const DISPOSE_DRAIN_MS = 5_000;
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function openJournalSqliteOperationJournalAdapter(
   options: JournalSqliteAdapterOptions
@@ -248,8 +250,10 @@ export async function openJournalSqliteOperationJournalAdapter(
     async dispose() {
       // Explicit teardown for a manager with no in-flight work: graceful shutdown
       // is the child's own last-handle-close exit; this reclaims a straggler.
+      // Bounded: a child that failed to spawn never emits 'exit', so awaiting
+      // `exited` unconditionally would hang the caller forever.
       if (!dead && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
-      await exited;
+      await Promise.race([exited, sleep(DISPOSE_DRAIN_MS)]);
     },
   };
 }
