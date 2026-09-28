@@ -12,7 +12,7 @@ current user scope and the [task protocol](tasks/README.md).
 | Shared authority | 1.9.0 shared result/verifier, receipt admission/drain and evidence-permission foundation with controlled G4 qualification | Production/G6 qualification and optional durable recovery |
 | Native bulk forms | 1.8.19 native, react-select and chip-multiselect strategies, scoped identities and readback | Broader widget/cross-engine and transfer/deadline qualification |
 | Application-only path | Typed authority plus bounded authenticated REST/SDK/CLI surface released in 1.8.20 | Production receipt-predicate qualification and binding UX, independent UI/API parity and durable receipt recovery |
-| Agent surfaces | CLI and SDK are first-class HTTP clients; stdio MCP remains optional with 13 unbound/12 delegated tools | Generated profiles, typed results and qualified context reduction |
+| Agent surfaces | CLI and SDK are first-class HTTP clients; stdio MCP remains optional with 16 unbound/14 delegated tools per profile (qa, operations, audit, appsec, bounty — audit excludes `browser_autofill`), including MCP page provisioning, session inspection and operator Chrome attachment | Generated profiles, typed results and qualified context reduction |
 | QA | T3 complete through #231, released in 1.9.1: application-owned CLI recipe, native JUnit/private evidence and standalone/cost qualification | General provisioning, artifact API/HTML only if justified, and T9 automatic impact selection |
 | Security | Policy and known engine limitations | Scoped external scanner adapters after enforcement qualification |
 | Memory | Ephemeral bounded control state; artifact store | Optional journal and explicit mode-scoped context lifecycle |
@@ -27,7 +27,7 @@ current user scope and the [task protocol](tasks/README.md).
 | Application parity | First T4 public-interface slice released in 1.8.20 by PR #201: application bind, discovery, execute and receipt operations over REST, SDK and CLI | Qualify the scoped receipt predicate in a production fixture, binding UX, independent UI/API parity and T5 durable restart receipts |
 | QA and durable runs | T3 complete through #231: 13-case foundation, offline CLI evaluation, native JUnit/private links and standalone application-owned recipe; Node 24 qualification with Node 22 compatibility | General provisioning and justified report adapters remain separate; durable recovery stays under T5 |
 | Audit, appsec and bounty | Mode contracts and profiles exist; no scanner/product vertical | T3 now permits audit task context; appsec/bounty still require T4 and qualified scope enforcement |
-| MCP | Existing generated catalog remains 13 unbound/12 delegated in QA; outcome and application operations have no MCP tools | Add only if measured harness demand justifies another optional projection |
+| MCP | Generated catalogs cover 16 unbound/14 delegated tools per profile (qa, operations, audit, appsec, bounty), with page provisioning, session/lease inspection and operator attachment exposed over MCP since 1.12.0 | Add only if measured harness demand justifies another optional projection |
 
 ## Dependency order
 
