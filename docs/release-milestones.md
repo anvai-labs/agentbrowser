@@ -1,12 +1,26 @@
 # Release milestones and acceptance gates
 
-## Candidate checkpoint: 1.12.0 browsing/session reliability
+## Delivered checkpoint: 1.13.0 chromium args and lint enforcement (2026-09-27)
 
-Preparation starts from develop `7ccddb2` (PR #303). Public navigation reasons,
-active leases, bounded terminal facts and opt-in operator Chrome attachment form a
-minor-release checkpoint. Internal journal work remains gated. The
-[candidate evidence](spec/evidence/release-1.12.0.md) separates preparation from
-publication; 1.11.0 remains the published baseline until delivery is verified.
+Version 1.13.0 is published from protected main `feddad9` after preparation
+PR #307 and promotion PR #308, with the feature PR #306 corrected pre-merge
+per its independent adversarial review. All twelve release jobs passed; npm
+`latest` = 1.13.0; Homebrew PR anvai-labs/homebrew-tap#79 merged after gated
+CI approval and the local 1.12.0-to-1.13.0 upgrade passed with the service
+restarted on 5709. The
+[delivery record](spec/evidence/release-1.13.0.md) records exact identities,
+published artifact checks and installed acceptance.
+
+## Delivered checkpoint: 1.12.0 browsing/session reliability (2026-09-26)
+
+Version 1.12.0 is published from protected main `34b9b1b` (promotion PR #305;
+preparation PR #304). npm published 2026-09-26T11:27:23Z; Homebrew formula
+PR anvai-labs/homebrew-tap#77 (victor bump #76 merged first so the live PyPI
+contract test passes for sibling PRs). The local 1.11.0-to-1.12.0 upgrade and
+service restart were verified the same day. The
+[candidate evidence](spec/evidence/release-1.12.0.md) records the preparation
+scope: public navigation reasons, active leases, bounded terminal facts and
+opt-in operator Chrome attachment; internal journal work stays gated.
 
 ## Delivered checkpoint: 1.11.0 research and publication (2026-09-24)
 

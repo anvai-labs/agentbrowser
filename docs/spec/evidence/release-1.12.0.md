@@ -1,5 +1,11 @@
 # AgentBrowser 1.12.0 release checkpoint
 
+> **Delivered 2026-09-26:** published from protected main `34b9b1b`
+> (promotion PR #305), npm publication 2026-09-26T11:27:23Z, Homebrew
+> anvai-labs/homebrew-tap#77; local upgrade and service restart verified the
+> same day. The "pending" status below is the pre-publication preparation
+> record and is preserved as written.
+
 Status: candidate preparation; publication and installation are pending.
 Candidate base: develop `7ccddb21a627c9019f58c99fa11848456b98492c` (PR #303).
 Previous published baseline: 1.11.0 at protected main
