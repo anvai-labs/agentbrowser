@@ -48,6 +48,12 @@ jobs:
           pnpm -r type-check
           node --test scripts/sdk-client-contract.test.mjs
 
+      # T5 J2b.2 step-2 gates over the concrete journal manager/child/adapter stack
+      # (real forked child, durable commits); run in this job because it owns the
+      # built dist the storage child is spawned from.
+      - name: Journal SQLite manager/child qualification gates
+        run: node --test scripts/journal-sqlite-adapter-qualification.mjs
+
       - name: Verify built product versions
         run: pnpm release:artifacts
 
