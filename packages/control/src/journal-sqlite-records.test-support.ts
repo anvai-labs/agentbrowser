@@ -86,7 +86,10 @@ try {
         if (test.test === 'ready') {
           send({ test: 'ready_ack' });
         } else if (test.test === 'advance') {
-          clock += test.milliseconds as number;
+          const milliseconds = test.milliseconds as number;
+          if (!Number.isSafeInteger(milliseconds) || milliseconds < 0)
+            throw new Error('invalid clock advance');
+          clock += milliseconds;
           send({ test: 'advanced', clock });
         } else if (test.test === 'observe') {
           const snapshot = observeJournalSqliteNamespace(
@@ -162,6 +165,15 @@ try {
       );
       const read = message.kind === 'lookup';
       if (!handle || handle.closed) {
+        if (message.kind === 'close') {
+          // The memory oracle's close is idempotent even for a forgotten handle.
+          send({
+            kind: 'outcome',
+            correlationId,
+            outcome: envelope(message.namespaceId, message.ownerFence, { kind: 'closed' }),
+          });
+          return;
+        }
         send({
           kind: 'outcome',
           correlationId,
@@ -178,64 +190,91 @@ try {
         return;
       }
       if (fault === 'never_settles') return; // the call stays unresolved; storage untouched
-      let outcome: unknown;
-      if (message.kind === 'close') {
-        handle.closed = true;
-        outcome = store.mutate((tx) => {
-          closeJournalSqliteNamespace(tx, message.namespaceId, message.ownerFence);
-          return { kind: 'closed' };
-        });
-      } else if (read) {
-        outcome = lookupJournalSqliteRecord(
-          { get: get(readConnection()) },
+      try {
+        const outcome = dispatchCall(
+          message.kind,
+          handle,
           message.namespaceId,
           message.ownerFence,
-          message.value as Parameters<typeof lookupJournalSqliteRecord>[3],
-          clock
+          message.value,
+          read,
+          fault
         );
-      } else {
-        outcome = store.mutate((tx) => {
-          if (message.kind === 'reserveIntent')
-            return reserveJournalSqliteIntent(
-              tx,
-              message.namespaceId,
-              message.ownerFence,
-              message.value as Parameters<typeof reserveJournalSqliteIntent>[3],
-              clock
-            );
-          if (message.kind === 'markDispatch')
-            return markJournalSqliteDispatch(
-              tx,
-              message.namespaceId,
-              message.ownerFence,
-              message.value as Parameters<typeof markJournalSqliteDispatch>[3],
-              clock
-            );
-          if (message.kind === 'commitTerminal')
-            return commitJournalSqliteTerminal(
-              tx,
-              message.namespaceId,
-              message.ownerFence,
-              message.value as Parameters<typeof commitJournalSqliteTerminal>[3],
-              clock
-            );
-          throw new Error('unreachable mutation kind');
+        send({
+          kind: 'outcome',
+          correlationId,
+          outcome: envelope(message.namespaceId, message.ownerFence, outcome),
         });
-      }
-      if (fault === 'after_commit') {
+      } catch {
+        // Includes anchor/fsync failures after COMMIT: the call must settle as
+        // faulted under its own correlation, never as a lost -1 broadcast.
         send(faulted(correlationId));
-        return;
       }
-      send({
-        kind: 'outcome',
-        correlationId,
-        outcome: envelope(message.namespaceId, message.ownerFence, outcome),
-      });
+      return;
     } catch {
       send({ kind: 'faulted', correlationId: -1 });
     }
   });
+
+  function dispatchCall(
+    kind: string,
+    handle: LiveHandle,
+    namespaceId: string,
+    ownerFence: string,
+    value: unknown,
+    read: boolean,
+    fault: FaultPoint | undefined
+  ): unknown {
+    let outcome: unknown;
+    if (kind === 'close') {
+      handle.closed = true;
+      outcome = store.mutate((tx: JournalSqliteTransaction) => {
+        closeJournalSqliteNamespace(tx, namespaceId, ownerFence);
+        return { kind: 'closed' };
+      });
+    } else if (read) {
+      outcome = lookupJournalSqliteRecord(
+        { get: get(readConnection()) },
+        namespaceId,
+        ownerFence,
+        value as Parameters<typeof lookupJournalSqliteRecord>[3],
+        clock
+      );
+    } else {
+      outcome = store.mutate((tx: JournalSqliteTransaction) => {
+        if (kind === 'reserveIntent')
+          return reserveJournalSqliteIntent(
+            tx,
+            namespaceId,
+            ownerFence,
+            value as Parameters<typeof reserveJournalSqliteIntent>[3],
+            clock
+          );
+        if (kind === 'markDispatch')
+          return markJournalSqliteDispatch(
+            tx,
+            namespaceId,
+            ownerFence,
+            value as Parameters<typeof markJournalSqliteDispatch>[3],
+            clock
+          );
+        if (kind === 'commitTerminal')
+          return commitJournalSqliteTerminal(
+            tx,
+            namespaceId,
+            ownerFence,
+            value as Parameters<typeof commitJournalSqliteTerminal>[3],
+            clock
+          );
+        throw new Error('unreachable mutation kind');
+      });
+    }
+    if (fault === 'after_commit') {
+      throw new Error('committed acknowledgment loss');
+    }
+    return outcome;
+  }
 } catch (error) {
-  send({ phase: 'child_refused', error: (error as Error).stack ?? (error as Error).message });
+  send({ phase: 'child_refused', error: (error as Error).message });
   disconnect();
 }

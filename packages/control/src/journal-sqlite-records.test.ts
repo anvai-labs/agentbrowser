@@ -163,6 +163,8 @@ function spawnChild(options: Record<string, unknown>): ChildLink {
   );
   const exited = once(child, 'exit');
   void exited.catch(() => {});
+  // TEMP-DEBUG
+  child.stderr?.on('data', (d) => console.log('CHILD_ERR', String(d).slice(0, 300)));
   children.push({ child, exited });
   return new ChildLink(child);
 }
@@ -320,6 +322,10 @@ function createDirectSqliteJournalFixture(startTime = 1_000): JournalConformance
   mkdirSync(join(base, 'store'), { mode: 0o700 });
   const connection = new DatabaseSync(join(base, 'store', 'journal.sqlite'));
   connection.exec('PRAGMA foreign_keys=ON');
+  // The conformance tier pins record semantics, not durability: synchronous=OFF keeps
+  // every case safely inside its fixed 25 ms namespace on slow CI disks. The anchor/
+  // fsync commit unit is qualified by the owner's suite and the child-hosted tests.
+  connection.exec('PRAGMA synchronous=OFF');
   const reader = new DatabaseSync(join(base, 'store', 'journal.sqlite'), {
     readOnly: true,
   });
@@ -506,6 +512,59 @@ describe('concrete SQLite record storage (J2b.2 step 1)', () => {
   // storage; the storage owner's durability unit (anchor, fsync, child host) is
   // qualified by the owner's own real-child suite and the child-hosted tests below.
   operationJournalAdapterConformance(() => createDirectSqliteJournalFixture());
+
+  it('issues strictly monotonic fences so a stale generation can never write', async () => {
+    // Three ownership generations: the conformance never reopens a namespace twice,
+    // so a repeating fence sequence (which would let a stale generation write under
+    // a live owner) is only visible here.
+    const fixture = createDirectSqliteJournalFixture();
+    const open = async () => {
+      const result = await openOperationJournal(
+        fixture.adapter,
+        namespaceConfiguration('fences-a'),
+        fixture.fingerprintKey
+      );
+      expect(result.kind).toBe('opened');
+      if (result.kind !== 'opened') throw new Error('journal did not open');
+      return result.journal;
+    };
+    const first = await open();
+    const fenceAfterFirst = fixture.observe('fences-a')?.activeFence;
+    await first.close();
+    const second = await open();
+    const fenceAfterSecond = fixture.observe('fences-a')?.activeFence;
+    fixture.releaseOwnership('fences-a');
+    const third = await open();
+    const fenceAfterThird = fixture.observe('fences-a')?.activeFence;
+    const serial = (fence: string) => Number(fence.replace('sqlite-fence-', ''));
+    expect(serial(fenceAfterSecond!)).toBeGreaterThan(serial(fenceAfterFirst!));
+    expect(serial(fenceAfterThird!)).toBeGreaterThan(serial(fenceAfterSecond!));
+    const key = {
+      serviceGeneration: 's'.repeat(22),
+      tenantId: 'tenant-a',
+      sessionIncarnation: 'i'.repeat(22),
+      epoch: 1,
+      operationId: 'op-stale',
+    };
+    await second
+      .reserveIntent({
+        key,
+        actor: 'operator-a',
+        liveFingerprint: { algorithm: 'rest-json-v1', digest: 'stale-generation' },
+      })
+      .then((outcome) =>
+        expect(outcome).toEqual({ kind: 'definitely_not_written', reason: 'fenced' })
+      );
+    await third
+      .reserveIntent({
+        key,
+        actor: 'operator-a',
+        liveFingerprint: { algorithm: 'rest-json-v1', digest: 'stale-generation' },
+      })
+      .then((outcome) =>
+        expect(outcome).toMatchObject({ kind: 'acknowledged', disposition: 'applied' })
+      );
+  });
 
   it('persists acknowledged records across a child restart and reopens with a fresh fence', async () => {
     const paths = freshPaths('journal-restart-');

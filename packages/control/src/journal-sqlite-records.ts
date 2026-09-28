@@ -86,12 +86,6 @@ const recordKey = (key: JournalKey): string => canonicalJson(key);
 const same = (left: unknown, right: unknown): boolean =>
   canonicalJson(left) === canonicalJson(right);
 
-const readDescriptor = (reader: JournalSqliteReader, namespaceId: string, now: number) => {
-  const state = row(reader, namespaceId);
-  if (!state) return undefined;
-  return { state, expired: now > state.descriptor.retainUntil } as const;
-};
-
 /**
  * Claim or rejoin one namespace. Runs inside a mutate unit: refusals still advance
  * the commit witness because the unit already opened; callers read-check first so the
@@ -103,6 +97,9 @@ export function openJournalSqliteRecords(
   descriptor: RawJournalNamespace,
   now: number
 ): JournalSqliteOpenOutcome {
+  // Stricter than the memory oracle, which never validates schemaVersion on its new
+  // namespace path: unreachable through the port (parseJournalNamespace enforces 1)
+  // and the safe direction for a direct caller.
   if (descriptor.schemaVersion !== 1) return { kind: 'refused', reason: 'configuration' };
   ensureJournalSqliteRecordSchema(transaction);
   const state = row(transaction, descriptor.namespaceId);
@@ -112,8 +109,9 @@ export function openJournalSqliteRecords(
     if (state.activeFence !== undefined) return { kind: 'refused', reason: 'ownership' };
     const fence = `sqlite-fence-${state.fenceSerial + 1}`;
     transaction.run(
-      'UPDATE journal_namespace SET active_fence = ?, clock_high_water = ? WHERE namespace_id = ?',
+      'UPDATE journal_namespace SET active_fence = ?, fence_serial = ?, clock_high_water = ? WHERE namespace_id = ?',
       fence,
+      state.fenceSerial + 1,
       Math.max(now, state.clockHighWater),
       descriptor.namespaceId
     );
