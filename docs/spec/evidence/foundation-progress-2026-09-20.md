@@ -1,6 +1,16 @@
 # Foundation and use-case checkpoint — 2026-09-20
 
-Latest recheck: published 1.11.0 at protected main
+Latest recheck: published 1.13.0; protected main `d634d6d` (tag `v1.13.0` at
+`feddad9`), 2026-09-27. 1.12.0 (2026-09-26) and 1.13.0 (2026-09-27) are both
+delivered and installed, with delivery records in
+[release-1.12.0.md](release-1.12.0.md) and
+[release-1.13.0.md](release-1.13.0.md); the live Homebrew service runs 1.13.0.
+The "unreleased continuation through #292–296" and journal paragraphs below
+shipped in 1.12.0 and are preserved as written. Task states and next
+dependency-ready slices are tracked in [../tasks/README.md](../tasks/README.md);
+these releases do not change the finite milestone completion counted below.
+
+Earlier recheck: published 1.11.0 at protected main
 `e00539eca682b60e5761702d1851472bb6401b12` (2026-09-24, America/Chicago).
 Release, npm, Homebrew PR #73 and installed acceptance are complete; the live service
 was preserved on 1.10.0. Extraction budgets (#281), guarded publication (#282–284),
@@ -48,11 +58,11 @@ remaining gates take precedence. T9 recurs and is excluded from the finite count
 | T2 shared execution/verification | Complete, released | 100% | Production evidence belongs to T4; restart durability to T5 |
 | T3 QA regression | Complete, released | 100% | Broader provisioning and demand-backed report adapters are follow-ups |
 | T4 application operations/parity | Active | ~40% | Production UI/API oracle and evidence; U0/U1 operator UX merged; synthetic parity qualified; callback repair merged #236 |
-| T5 durable recovery | Active publication/journal foundation | ~10% | HTTP/replay publication merged; B1/B2 contract merged; runtime journal/recovery and process-loss qualification remain; no durable guarantee yet |
+| T5 durable recovery | Active publication/journal foundation | ~10% | Journal settlement/authority/terminal, control views and the SQLite owner/anchor merged through #303; raw adapter, bounded child manager and process-loss qualification remain; no durable guarantee yet |
 | T6 forms/operations | Active | ~40% | Production sources, candidate/job eligibility and live qualification; C3c public synthetic workflow merged #257 |
 | T7 audit/security/bounty | Design/gated | 0% | Audit adapter; additional scope and parity gates for security modes |
 | T8 installed harnesses | Active source repair; installed acceptance unqualified | 0% installed qualification | Actual installed Victor/Codex/Claude acceptance; registration is insufficient |
-| T9 release hardening | Recurring | 100% of 1.11.0 checkpoint | Repeat per later release |
+| T9 release hardening | Recurring | 100% of 1.13.0 checkpoint | Repeat per later release |
 
 Exact milestone count: **3 of 9 finite tasks complete (33%)**. Counting all original
 ten rows gives 30%, including recurring T9. No defensible effort-weighted overall
