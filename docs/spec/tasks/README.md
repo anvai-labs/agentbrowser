@@ -47,11 +47,15 @@ recovery gated.
 
 Next dependency-ready slices by task:
 
-- T5 — J2b.3: the process-loss matrix at crash barriers, then the adversarial and
-  bounded-resource matrix, over the landed manager/child/adapter stack (J2b.2 steps
-  1–2: frozen record schema, unchanged conformance over real SQLite, one-child
-  manager with second-handle refusal, SIGKILL reacquisition with stale-fence
-  clearing — see the [owner/anchor primitive](../evidence/t5-journal-sqlite-owner.md)).
+- T5 — J2b.3 PARTIAL: after_anchor and caller-timeout process-loss rows qualified
+  over the landed manager/child/adapter stack; OPEN BLOCKER: the before_commit/
+  after_commit barrier rows hang on a pre-ready hot -journal reopen window after a
+  mid-mutate SIGKILL (skipped with reason in
+  `scripts/journal-sqlite-adapter-qualification.mjs`) — root-cause that, then the
+  adversarial/bounded-resource and packaging matrices (J2b.2 steps 1–2: frozen
+  record schema, unchanged conformance over real SQLite, one-child manager with
+  second-handle refusal, SIGKILL reacquisition with stale-fence clearing — see the
+  [owner/anchor primitive](../evidence/t5-journal-sqlite-owner.md)).
 - T4 — production-evidence gates: trusted native-read composition, receipts and
   parity against production surfaces; synthetic parity and public consent are
   already qualified.

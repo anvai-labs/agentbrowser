@@ -18,6 +18,13 @@ import type { RawJournalNamespace, RawOperationJournalAdapter } from './journal-
 export interface JournalSqliteAdapterOptions extends JournalSqliteStoreOptions {
   /** Compiled child entry; defaults to the sibling of this compiled module. */
   childModulePath?: string;
+  /**
+   * Extra argv appended verbatim to the child spawn. Operational escape hatch
+   * (operator diagnostics) and qualification seam (the crash-barrier gates arm
+   * their instrumented child through it); the production child ignores argv
+   * beyond its own options.
+   */
+  childArgv?: string[];
 }
 
 interface ChildReply {
@@ -34,7 +41,13 @@ const READY_TIMEOUT_MS = 30_000;
 
 export async function openJournalSqliteOperationJournalAdapter(
   options: JournalSqliteAdapterOptions
-): Promise<RawOperationJournalAdapter & { dispose(): Promise<void> }> {
+): Promise<
+  RawOperationJournalAdapter & {
+    dispose(): Promise<void>;
+    /** OS pid of the storage child, for operator diagnostics and forced teardown. */
+    readonly childPid: number | undefined;
+  }
+> {
   const childPath =
     options.childModulePath ?? fileURLToPath(new URL('./journal-sqlite-child.js', import.meta.url));
   const child: ChildProcess = fork(
@@ -46,6 +59,7 @@ export async function openJournalSqliteOperationJournalAdapter(
         restoreGeneration: options.restoreGeneration,
         initialize: options.initialize === true,
       }),
+      ...(options.childArgv ?? []),
     ],
     { stdio: ['ignore', 'ignore', 'pipe', 'ipc'], execArgv: [] }
   );
@@ -229,6 +243,8 @@ export async function openJournalSqliteOperationJournalAdapter(
     async open(request: RawJournalNamespace, signal: AbortSignal) {
       return openRaw(request, signal);
     },
+    /** OS pid of the storage child, for operator diagnostics and forced teardown. */
+    childPid: child.pid,
     async dispose() {
       // Explicit teardown for a manager with no in-flight work: graceful shutdown
       // is the child's own last-handle-close exit; this reclaims a straggler.
