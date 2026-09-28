@@ -22,6 +22,12 @@ import { openJournalSqliteOperationJournalAdapter } from '../packages/control/di
 
 const controlRoot = fileURLToPath(new URL('../packages/control/', import.meta.url));
 const CHILD_MODULE = join(controlRoot, 'dist', 'journal-sqlite-child.js');
+const CRASH_CHILD_MODULE = join(
+  controlRoot,
+  'src',
+  'journal-sqlite-adapter-crash-child.test-support.mjs'
+);
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 if (!existsSync(CHILD_MODULE)) {
   const { execFileSync } = await import('node:child_process');
@@ -198,6 +204,125 @@ test('reacquires a SIGKILLed manager generation, clearing the dead owner fence',
   assert.equal(lookup.record.revision, 1);
   await reacquired.journal.close();
   await second.dispose();
+});
+
+// ---------------------------------------------------------------------------
+// J2b.3 process-loss matrix: SIGKILL the storage child while a reserveIntent is
+// unresolved at deterministic commit barriers (the instrumented crash child blocks
+// forever at the armed point; the kill is the continuation). Reopen outcomes per
+// the design's matrix row: before COMMIT nothing persists and the store reopens
+// cleanly; after COMMIT but before the anchor rename the DB/anchor mismatch
+// REFUSES reopen (no auto-repair, no advancing the anchor); after the anchor
+// rename but before the reply the acknowledged-ready intent is historical fact on
+// reopen. Caller timeout alone (never_settles) must not kill the child.
+// The instrumented crash child scopes its barrier arm to the faulted method's own
+// dispatch (an unscoped COMMIT patch fires on the child's own bootstrap commits and
+// hangs generation 1 pre-ready — a test-support bug the adversarial review caught,
+// not a product state). All three rows run un-skipped.
+for (const [point, expect] of [
+  ['before_commit', 'absent'],
+  ['after_commit', 'mismatch'],
+  ['after_anchor', 'ready'],
+]) {
+  test(`process loss: SIGKILL at ${point} during reserveIntent`, async () => {
+    const paths = freshPaths(`journal-crash-${point}-`);
+    const first = await openJournalSqliteOperationJournalAdapter({
+      ...paths,
+      restoreGeneration: 'generation-1',
+      initialize: true,
+      childModulePath: CRASH_CHILD_MODULE,
+      childArgv: [JSON.stringify({ method: 'reserveIntent', point })],
+    });
+    try {
+      const opened = await openOperationJournal(
+        first,
+        namespaceConfiguration('crash-a'),
+        Buffer.alloc(32, 7)
+      );
+      assertOpened(opened);
+      const key = intentKey('op-crash');
+      const pending = opened.journal.reserveIntent({
+        key,
+        actor: 'operator-a',
+        liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-crash' },
+      });
+      await sleep(1_000); // the child crosses the barrier and blocks forever there
+      process.kill(first.childPid, 'SIGKILL');
+      const settled = await pending;
+      assert.deepEqual(settled, { kind: 'uncertain', reason: 'io' });
+
+      if (expect === 'mismatch') {
+        // DB/anchor mismatch refuses reopen — no auto-repair, no anchor advance.
+        await assert.rejects(
+          openJournalSqliteOperationJournalAdapter({
+            ...paths,
+            restoreGeneration: 'generation-1',
+            childModulePath: CHILD_MODULE,
+          })
+        );
+        return;
+      }
+      const second = await openJournalSqliteOperationJournalAdapter({
+        ...paths,
+        restoreGeneration: 'generation-1',
+        childModulePath: CHILD_MODULE,
+      });
+      const reopened = await openOperationJournal(
+        second,
+        namespaceConfiguration('crash-a'),
+        Buffer.alloc(32, 7)
+      );
+      assertOpened(reopened);
+      const lookup = await reopened.journal.lookup(key);
+      if (expect === 'absent') assert.equal(lookup.kind, 'scoped_absent');
+      else {
+        assert.equal(lookup.kind, 'found');
+        if (lookup.kind !== 'found') throw new Error();
+        assert.equal(lookup.record.revision, 1);
+        assert.equal(lookup.record.dispatched, false);
+      }
+      await reopened.journal.close();
+      await second.dispose();
+    } finally {
+      await first.dispose().catch(() => {});
+    }
+  });
+}
+
+test('caller timeout alone neither kills the child nor grants new ownership', async () => {
+  const paths = freshPaths('journal-crash-timeout-');
+  const first = await openJournalSqliteOperationJournalAdapter({
+    ...paths,
+    restoreGeneration: 'generation-1',
+    initialize: true,
+    childModulePath: CRASH_CHILD_MODULE,
+    childArgv: [JSON.stringify({ method: 'reserveIntent', point: 'never_settles' })],
+  });
+  try {
+    const opened = await openOperationJournal(
+      first,
+      { ...namespaceConfiguration('timeout-a'), bounds: { ...namespaceConfiguration('timeout-a').bounds, timeoutMs: 1_000 } },
+      Buffer.alloc(32, 7)
+    );
+    assertOpened(opened);
+    const timedOut = await opened.journal.reserveIntent({
+      key: intentKey('op-timeout'),
+      actor: 'operator-a',
+      liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-timeout' },
+    });
+    assert.deepEqual(timedOut, { kind: 'uncertain', reason: 'wait_expired' });
+    // The child survived the caller timeout and still serves other namespaces.
+    assert.doesNotThrow(() => process.kill(first.childPid, 0));
+    const other = await openOperationJournal(
+      first,
+      namespaceConfiguration('timeout-b'),
+      Buffer.alloc(32, 7)
+    );
+    assertOpened(other);
+    await other.journal.close();
+  } finally {
+    await first.dispose().catch(() => {});
+  }
 });
 
 test('child exits after the last handle closes; a dead adapter reports uncertain', async () => {
