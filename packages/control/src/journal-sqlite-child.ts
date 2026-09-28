@@ -11,7 +11,10 @@
  * for a live namespace inside one child is refused by the ownership fence.
  */
 import { DatabaseSync } from 'node:sqlite';
-import type { JournalChildRequest } from './journal-sqlite-child-protocol.js';
+import {
+  type JournalChildRequest,
+  isJournalChildRequest,
+} from './journal-sqlite-child-protocol.js';
 import {
   closeJournalSqliteNamespace,
   commitJournalSqliteTerminal,
@@ -73,11 +76,17 @@ try {
     readonly ownerFence: string;
   }
   const liveByNamespace = new Map<string, LiveHandle>();
-  let openSequence = 0;
+  const openSequence = 0;
   let inFlight = 0;
 
   const maybeShutdown = () => {
     if (inFlight > 0 || liveByNamespace.size > 0) return;
+    try {
+      reader?.close();
+      reader = undefined;
+    } catch {
+      // A dead reader does not block the checkpoint-less close of a sealed store.
+    }
     store.close();
     disconnect();
   };
@@ -139,9 +148,20 @@ try {
     return outcome;
   };
 
-  process.on('message', (message: JournalChildRequest) => {
+  process.on('message', (raw: unknown) => {
+    // Structural guard before any field access: a malformed manager message is
+    // refused as an uncorrelated fault, never a child crash.
+    if (!isJournalChildRequest(raw)) {
+      send({ kind: 'faulted', correlationId: -1 });
+      return;
+    }
+    const message: JournalChildRequest = raw;
     if (message.kind === 'open') {
-      if (openSequence >= MAX_HANDLES || liveByNamespace.has(message.descriptor.namespaceId)) {
+      // Bounded CONCURRENT handles; the correlation id counts opens, not liveness.
+      if (
+        liveByNamespace.size >= MAX_HANDLES ||
+        liveByNamespace.has(message.descriptor.namespaceId)
+      ) {
         send({
           kind: 'definitely_not_opened',
           openId: message.openId,
@@ -165,7 +185,6 @@ try {
         return;
       }
       if (openOutcome.kind === 'opened') {
-        openSequence += 1;
         const handle: LiveHandle = {
           namespaceId: message.descriptor.namespaceId,
           ownerFence: openOutcome.ownerFence,

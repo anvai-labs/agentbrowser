@@ -49,13 +49,6 @@ export async function openJournalSqliteOperationJournalAdapter(
     ],
     { stdio: ['ignore', 'ignore', 'pipe', 'ipc'], execArgv: [] }
   );
-  const exited = once(child, 'exit');
-  void exited.catch(() => {});
-  let dead = false;
-  const exit = exited.then(() => {
-    dead = true;
-  });
-
   const pendingOpen = new Map<number, (reply: ChildReply) => void>();
   const pendingCorrelation = new Map<number, (reply: ChildReply) => void>();
   let openSequence = 0;
@@ -63,18 +56,36 @@ export async function openJournalSqliteOperationJournalAdapter(
   /** namespaceId → live ownerFence; the manager-level second-handle refusal. */
   const liveNamespaces = new Map<string, string>();
 
+  // Death (exit or channel error) makes the whole manager uncertain: pending calls
+  // settle as faulted, and the namespace map clears — a dead manager cannot know
+  // ownership (its fences are stale; a fresh generation acquires immediately).
+  let dead = false;
   const settleAll = () => {
-    for (const [openId, resolve] of pendingOpen) {
-      resolve({ kind: 'uncertain', openId, reason: 'io' });
+    for (const resolve of pendingOpen.values()) {
+      resolve({ kind: 'uncertain', reason: 'io' });
     }
     pendingOpen.clear();
-    for (const [correlationId, resolve] of pendingCorrelation) {
-      resolve({ kind: 'faulted', correlationId });
+    for (const resolve of pendingCorrelation.values()) {
+      resolve({ kind: 'faulted', correlationId: 0 });
     }
     pendingCorrelation.clear();
+    liveNamespaces.clear();
   };
+  const failDead = () => {
+    if (dead) return;
+    dead = true;
+    settleAll();
+  };
+  const exited = once(child, 'exit');
+  void exited.catch(() => {});
+  void exited.then(failDead);
+  // The callback form of send already swallows async delivery errors; this listener
+  // is the belt to those braces — without it a channel error crashes the host.
+  child.on('error', () => failDead());
+
   child.on('message', (message: ChildReply) => {
     if (message.kind === 'ready') return; // handshake consumed separately
+    if (dead) return;
     if (message.openId !== undefined) {
       pendingOpen.get(message.openId as number)?.(message);
       return;
@@ -83,11 +94,15 @@ export async function openJournalSqliteOperationJournalAdapter(
       pendingCorrelation.get(message.correlationId as number)?.(message);
     }
   });
-  void exited.then(settleAll);
 
   const sendRequest = (message: object): void => {
     if (dead) throw new Error('journal storage child has exited');
-    child.send(message);
+    // Callback form: async channel-close errors settle here, never as an
+    // uncaught 'error' event that would crash the host process. The callback
+    // delivers null on success — only a real error marks the manager dead.
+    child.send(message, (error) => {
+      if (error !== null && error !== undefined) failDead();
+    });
   };
   const callOpen = (descriptor: RawJournalNamespace, openId: number): Promise<ChildReply> =>
     new Promise((resolve, reject) => {
@@ -115,28 +130,42 @@ export async function openJournalSqliteOperationJournalAdapter(
   // Readiness handshake: the child broadcasts once the store is acquired and its
   // message loop is live. A bootstrap failure exits nonzero and rejects here.
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
+    // A timed-out or errored child keeps the store's exclusive locks: every
+    // rejection path must kill it or the directory is wedged for all future
+    // managers.
+    const abandon = (message: string) => {
       cleanup();
-      reject(new Error('journal storage child never became ready'));
-    }, READY_TIMEOUT_MS);
+      child.kill('SIGKILL');
+      reject(new Error(message));
+    };
+    const timer = setTimeout(
+      () => abandon('journal storage child never became ready'),
+      READY_TIMEOUT_MS
+    );
     const cleanup = () => clearTimeout(timer);
     const onMessage = (message: ChildReply) => {
       if (message.kind === 'ready') {
         child.off('message', onMessage);
+        child.off('error', onError);
         cleanup();
         resolve();
       }
     };
+    const onError = () => abandon('journal storage child channel error before ready');
     child.on('message', onMessage);
+    child.on('error', onError);
     void exited.then(() => {
       child.off('message', onMessage);
+      child.off('error', onError);
       cleanup();
       reject(new Error('journal storage child exited before ready'));
     });
   });
 
   const openRaw = async (request: RawJournalNamespace, signal: AbortSignal): Promise<unknown> => {
-    if (signal.aborted) return { kind: 'definitely_not_opened', reason: 'expired' };
+    // Death precedes every definite answer: a dead manager cannot claim ownership
+    // or capacity — its fences are stale the moment the child exited.
+    if (dead || signal.aborted) return { kind: 'uncertain', reason: 'io' };
     if (liveNamespaces.has(request.namespaceId))
       return { kind: 'definitely_not_opened', reason: 'ownership' };
     let reply: ChildReply;
@@ -204,7 +233,7 @@ export async function openJournalSqliteOperationJournalAdapter(
       // Explicit teardown for a manager with no in-flight work: graceful shutdown
       // is the child's own last-handle-close exit; this reclaims a straggler.
       if (!dead && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
-      await exit;
+      await exited;
     },
   };
 }
