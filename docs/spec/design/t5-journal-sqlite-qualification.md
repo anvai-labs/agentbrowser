@@ -1,7 +1,13 @@
 # T5 J2b: concrete store implementation and qualification packet
 
-Status: J2b.1 ownership/anchor primitive implemented; full raw adapter qualification
-remains blocked on the acceptance below, with no public capability enabled. Read [J2a architecture](t5-journal-sqlite-audit.md) and existing
+Status: J2b.1 ownership/anchor primitive implemented; J2b.2 step 1 complete — the
+frozen v1 record schema and the record/CAS/namespace state machine
+(`packages/control/src/journal-sqlite-records.ts`) pass the unchanged
+storage-neutral conformance over real SQLite storage, with child-hosted restart
+durability, storage-sentinel and schema-freeze gates. Still open before any public
+capability: the owner-child IPC manager and raw adapter factory (J2b.2 step 2) and
+the process-loss, adversarial and packaging matrix below. No public capability is
+enabled and nothing is exported from the control barrel. Read [J2a architecture](t5-journal-sqlite-audit.md) and existing
 [journal port](t5-journal-contract.md). Reuse their owners; do not invent a durable executor.
 
 ## Current bounded implementation
