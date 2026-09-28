@@ -12,6 +12,11 @@ export type JournalChildMutationKind =
   | 'commitTerminal'
   | 'lookup';
 
+/** Child-to-parent broadcast sent once the store is acquired and the loop is live. */
+export interface JournalChildReady {
+  readonly kind: 'ready';
+}
+
 export type JournalChildRequest =
   | { readonly kind: 'open'; readonly openId: number; readonly descriptor: RawJournalNamespace }
   | {
