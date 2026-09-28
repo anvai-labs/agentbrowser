@@ -2,10 +2,13 @@
 // Speaks exactly the frozen production protocol; the ONLY difference from the
 // production child is that a reserveIntent COMMIT and the post-mutate ACK can block
 // forever at an armed barrier, so the qualification can SIGKILL the child while a
-// call is unresolved at a deterministic point. Arming arrives at spawn through
-// argv[3] (a fault spec), never through the frozen protocol; this file is excluded
-// from the build and spawned only by the qualification script through the factory's
-// childModulePath/childArgv seams.
+// call is unresolved at a deterministic point. The arm is SCOPED to the faulted
+// method's own dispatch (set when that message arrives, cleared when it settles) —
+// an unscoped COMMIT patch fires on this child's own bootstrap commits and hangs
+// generation 1 pre-ready, which is a test-support bug, not a product state. Arming
+// arrives at spawn through argv[3], never through the frozen protocol; this file is
+// excluded from the build and spawned only by the qualification script through the
+// factory's childModulePath/childArgv seams.
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -30,12 +33,12 @@ const {
 } = await import('../dist/journal-sqlite-records.js');
 const { isJournalChildRequest } = await import('../dist/journal-sqlite-child-protocol.js');
 
-// Spawn-time arming: the fault spec arrives in argv, before any traffic.
-const armed = fault.method !== undefined && fault.point !== 'never_settles';
-const dropsReplies = fault.method !== undefined && fault.point === 'never_settles';
+// Scoped arm: true only while the faulted method's own dispatch is inside the
+// owner mutate. The patch must never fire on this child's bootstrap commits.
+let dispatchArmed = false;
 const exec = DatabaseSync.prototype.exec;
 DatabaseSync.prototype.exec = function (sql) {
-  if (armed && fault.method === 'reserveIntent' && sql === 'COMMIT') {
+  if (dispatchArmed && sql === 'COMMIT') {
     if (fault.point === 'before_commit') barrier(fault.point);
     const result = exec.call(this, sql);
     if (fault.point === 'after_commit') barrier(fault.point);
@@ -124,41 +127,92 @@ process.on('message', (raw) => {
     });
     return;
   }
+  const dropsReplies = fault.point === 'never_settles';
+  if (dropsReplies) {
+    // The mutation still executes (storage state after the kill is the point);
+    // only the reply is withheld so the caller times out.
+    store.mutate((tx) => {
+      const now = Date.now();
+      if (message.kind === 'reserveIntent')
+        return reserveJournalSqliteIntent(
+          tx,
+          message.namespaceId,
+          message.ownerFence,
+          message.value,
+          now
+        );
+      if (message.kind === 'markDispatch')
+        return markJournalSqliteDispatch(
+          tx,
+          message.namespaceId,
+          message.ownerFence,
+          message.value,
+          now
+        );
+      if (message.kind === 'commitTerminal')
+        return commitJournalSqliteTerminal(
+          tx,
+          message.namespaceId,
+          message.ownerFence,
+          message.value,
+          now
+        );
+      throw new Error('unreachable mutation kind');
+    });
+    return;
+  }
+  const isFaultedDispatch = message.kind === fault.method;
+  if (isFaultedDispatch && fault.point === 'after_anchor') {
+    // Anchor fully replaced; block before the reply so the caller is unresolved.
+    const outcome = store.mutate((tx) => dispatchFaulted(tx, message));
+    barrier(fault.point);
+    send({
+      kind: 'outcome',
+      correlationId: message.correlationId,
+      outcome: envelope(message.namespaceId, message.ownerFence, outcome),
+    });
+    return;
+  }
   const outcome = store.mutate((tx) => {
-    const now = Date.now();
-    if (message.kind === 'reserveIntent')
-      return reserveJournalSqliteIntent(
-        tx,
-        message.namespaceId,
-        message.ownerFence,
-        message.value,
-        now
-      );
-    if (message.kind === 'markDispatch')
-      return markJournalSqliteDispatch(
-        tx,
-        message.namespaceId,
-        message.ownerFence,
-        message.value,
-        now
-      );
-    if (message.kind === 'commitTerminal')
-      return commitJournalSqliteTerminal(
-        tx,
-        message.namespaceId,
-        message.ownerFence,
-        message.value,
-        now
-      );
-    throw new Error('unreachable mutation kind');
+    // Armed stays true through the owner's COMMIT — the barrier must fire on the
+    // commit itself; this child is single-shot (the gate SIGKILLs it).
+    if (isFaultedDispatch) dispatchArmed = true;
+    return dispatchFaulted(tx, message);
   });
-  if (dropsReplies) return; // the call stays unresolved; storage committed-or-not is the point
-  if (fault.method === message.kind && fault.point === 'after_anchor') barrier(fault.point);
   send({
     kind: 'outcome',
     correlationId: message.correlationId,
     outcome: envelope(message.namespaceId, message.ownerFence, outcome),
   });
+
+  function dispatchFaulted(tx, request) {
+    const now = Date.now();
+    if (request.kind === 'reserveIntent')
+      return reserveJournalSqliteIntent(
+        tx,
+        request.namespaceId,
+        request.ownerFence,
+        request.value,
+        now
+      );
+    if (request.kind === 'markDispatch')
+      return markJournalSqliteDispatch(
+        tx,
+        request.namespaceId,
+        request.ownerFence,
+        request.value,
+        now
+      );
+    if (request.kind === 'commitTerminal')
+      return commitJournalSqliteTerminal(
+        tx,
+        request.namespaceId,
+        request.ownerFence,
+        request.value,
+        now
+      );
+    throw new Error('unreachable faulted dispatch kind');
+  }
 });
 
 send({ kind: 'ready' });

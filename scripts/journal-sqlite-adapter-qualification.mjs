@@ -215,24 +215,16 @@ test('reacquires a SIGKILLed manager generation, clearing the dead owner fence',
 // REFUSES reopen (no auto-repair, no advancing the anchor); after the anchor
 // rename but before the reply the acknowledged-ready intent is historical fact on
 // reopen. Caller timeout alone (never_settles) must not kill the child.
-// J2b.3 OPEN BLOCKER (tracked in the qualification doc): for before_commit and
-// after_commit, the REOPEN manager's child intermittently hangs before its ready
-// broadcast after a mid-mutate SIGKILL (hot -journal + exclusive-lock window);
-// the handshake then SIGKILLs it at the 30 s timeout and the gate fails with
-// 'journal storage child never became ready'. The after_anchor generation (kill
-// AFTER the full commit unit) reacquires deterministically, which isolates the
-// hang to the hot-journal recovery window. Root-cause before qualifying these
-// two rows; skipping keeps the lane green without claiming them.
+// The instrumented crash child scopes its barrier arm to the faulted method's own
+// dispatch (an unscoped COMMIT patch fires on the child's own bootstrap commits and
+// hangs generation 1 pre-ready — a test-support bug the adversarial review caught,
+// not a product state). All three rows run un-skipped.
 for (const [point, expect] of [
   ['before_commit', 'absent'],
   ['after_commit', 'mismatch'],
   ['after_anchor', 'ready'],
 ]) {
-  const skipReason =
-    point === 'after_anchor'
-      ? false
-      : 'J2b.3 open blocker: reopen child intermittently hangs pre-ready after a mid-mutate SIGKILL (hot -journal window); needs root cause';
-  test(`process loss: SIGKILL at ${point} during reserveIntent`, { skip: skipReason }, async () => {
+  test(`process loss: SIGKILL at ${point} during reserveIntent`, async () => {
     const paths = freshPaths(`journal-crash-${point}-`);
     const first = await openJournalSqliteOperationJournalAdapter({
       ...paths,

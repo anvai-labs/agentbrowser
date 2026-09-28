@@ -9,17 +9,19 @@ production storage child (`journal-sqlite-child.ts`) and raw adapter factory
 (`journal-sqlite-adapter.ts`) run the full lifecycle over real IPC — one child for
 all handles, manager-level second-handle refusal, child self-exit after the last
 handle closes, and SIGKILL reacquisition with dead-predecessor fences cleared inside
-the acquisition transaction. J2b.3 process-loss matrix PARTIAL (gates in
-`scripts/journal-sqlite-adapter-qualification.mjs`, node --test lane): the
-after_anchor barrier (kill after the full commit unit, call unresolved) and the
-caller-timeout rule (timeout neither kills the child nor grants ownership) are
-qualified; the before_commit/after_commit barrier rows are SKIPPED on an open
-blocker — after a mid-mutate SIGKILL the reopen child intermittently hangs before
-its ready broadcast (hot -journal + exclusive-lock window; handshake SIGKILLs it at
-30 s), which is precisely the mismatch/hot-journal classification territory those
-rows exist to qualify. Still open before any public capability: that root cause,
-the adversarial/bounded-resource matrix, and the packaging gates below. No public
-capability is enabled and nothing is exported from the control barrel. Read [J2a architecture](t5-journal-sqlite-audit.md) and existing
+the acquisition transaction. J2b.3 process-loss matrix rows QUALIFIED (gates in
+`scripts/journal-sqlite-adapter-qualification.mjs`, node --test/type-check lane):
+before_commit (kill before COMMIT — nothing persists, clean reopen),
+after_commit (kill between DB COMMIT and anchor rename — the DB/anchor mismatch
+REFUSES reopen, no auto-repair), after_anchor (kill after the full commit unit
+with the caller unresolved — the acknowledged-ready intent reopens as historical
+fact), and the caller-timeout rule (timeout neither kills the child nor grants
+new ownership). The instrumented crash child scopes its barrier arm to the
+faulted method's own dispatch — the adversarial review caught an unscoped arm
+hanging generation 1 pre-ready, a test-support bug since fixed. Still open before
+any public capability: the adversarial/bounded-resource matrix and the packaging
+gates below. No public capability is enabled and nothing is exported from the
+control barrel. Read [J2a architecture](t5-journal-sqlite-audit.md) and existing
 [journal port](t5-journal-contract.md). Reuse their owners; do not invent a durable executor.
 
 ## Current bounded implementation
