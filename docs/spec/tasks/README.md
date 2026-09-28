@@ -47,8 +47,10 @@ recovery gated.
 
 Next dependency-ready slices by task:
 
-- T5 — J2b: the raw SQLite journal adapter, the bounded child manager and the
-  remaining process-loss qualification on top of the merged
+- T5 — J2b.2 step 2: the bounded child/IPC manager and raw adapter factory over the
+  frozen record schema (step 1 landed: state machine, unchanged conformance over real
+  SQLite, child-hosted restart/sentinel/schema gates); then the process-loss and
+  adversarial matrix on top of the merged
   [owner/anchor primitive](../evidence/t5-journal-sqlite-owner.md).
 - T4 — production-evidence gates: trusted native-read composition, receipts and
   parity against production surfaces; synthetic parity and public consent are
