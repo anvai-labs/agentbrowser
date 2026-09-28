@@ -12,7 +12,17 @@
 // (requires packages/control/dist — the script builds it if missing, like CI's
 // clean-checkout order).
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -38,6 +48,25 @@ if (!existsSync(CHILD_MODULE)) {
 }
 
 const directories = [];
+
+/** Open one namespace through the port and return the live journal. */
+async function openManagerNamespace(adapter, namespaceId) {
+  const opened = await openOperationJournal(
+    adapter,
+    namespaceConfiguration(namespaceId),
+    Buffer.alloc(32, 7)
+  );
+  assertOpened(opened);
+  return opened.journal;
+}
+
+/** Close a namespace opened through openManagerNamespace. */
+async function closeManagerNamespace(adapter, namespaceId) {
+  // The port memoizes journals per adapter generation; reopening the namespace
+  // would refuse at the manager, so this helper is only used before dispose.
+  void adapter;
+  void namespaceId;
+}
 
 function freshPaths(prefix) {
   const base = mkdtempSync(join(realpathSync(tmpdir()), prefix));
@@ -322,6 +351,228 @@ test('caller timeout alone neither kills the child nor grants new ownership', as
     await other.journal.close();
   } finally {
     await first.dispose().catch(() => {});
+  }
+});
+
+// ---------------------------------------------------------------------------
+// J2b.3 adversarial / bounded-resource matrix (manager/child stack level; the
+// state-machine level is conformance-covered, the storage-owner level is covered
+// by the owner's own real-child suite).
+
+test('a second manager process on the same store loses the acquisition race', async () => {
+  const paths = freshPaths('journal-atv-double-');
+  const winner = await openJournalSqliteOperationJournalAdapter({
+    ...paths,
+    restoreGeneration: 'generation-1',
+    initialize: true,
+    childModulePath: CHILD_MODULE,
+  });
+  assertOpened(await openManagerGeneration(winner, 'double-a'));
+  // A competing manager on the same directory: its child exits(1) on the owner
+  // lock, and the factory rejects the handshake instead of hanging.
+  await assert.rejects(
+    openJournalSqliteOperationJournalAdapter({
+      ...paths,
+      restoreGeneration: 'generation-1',
+      childModulePath: CHILD_MODULE,
+    })
+  );
+  // The winner is unaffected by the contender's failed spawn.
+  await closeManagerNamespace(winner, 'double-a');
+  await winner.dispose();
+});
+
+test('concurrent first initialization resolves exactly one winner', async () => {
+  const paths = freshPaths('journal-atv-race-');
+  const [winner, loser] = await Promise.allSettled([
+    openJournalSqliteOperationJournalAdapter({
+      ...paths,
+      restoreGeneration: 'generation-1',
+      initialize: true,
+      childModulePath: CHILD_MODULE,
+    }),
+    openJournalSqliteOperationJournalAdapter({
+      ...paths,
+      restoreGeneration: 'generation-1',
+      initialize: true,
+      childModulePath: CHILD_MODULE,
+    }),
+  ]);
+  assert.equal(winner.status, 'fulfilled');
+  assert.equal(loser.status, 'rejected');
+  const adapter = winner.value;
+  assertOpened(await openManagerNamespace(adapter, 'race-a'));
+  await adapter.dispose();
+});
+
+test('a different fingerprint key refuses the namespace as configuration', async () => {
+  const paths = freshPaths('journal-atv-key-');
+  const adapter = await startAdapter({ ...paths }, true);
+  const opened = await openOperationJournal(
+    adapter,
+    namespaceConfiguration('key-a'),
+    Buffer.alloc(32, 7)
+  );
+  assertOpened(opened);
+  await opened.journal.close();
+  // A different key produces a different fingerprintKeyCheck: the stored
+  // descriptor no longer matches, and the refusal is configuration, not io.
+  const other = await openOperationJournal(
+    adapter,
+    namespaceConfiguration('key-a'),
+    Buffer.alloc(32, 9)
+  );
+  assert.deepEqual(other, { kind: 'definitely_not_opened', reason: 'configuration' });
+  await adapter.dispose();
+});
+
+test('a corrupted durable database refuses reopen without auto-repair', async () => {
+  const paths = freshPaths('journal-atv-corrupt-');
+  const first = await openJournalSqliteOperationJournalAdapter({
+    ...paths,
+    restoreGeneration: 'generation-1',
+    initialize: true,
+    childModulePath: CHILD_MODULE,
+  });
+  const opened = await openOperationJournal(
+    first,
+    namespaceConfiguration('corrupt-a'),
+    Buffer.alloc(32, 7)
+  );
+  assertOpened(opened);
+  const reserved = await opened.journal.reserveIntent({
+    key: intentKey('op-corrupt'),
+    actor: 'operator-a',
+    liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-corrupt' },
+  });
+  assertAcknowledged(reserved);
+  await opened.journal.close();
+  await first.dispose();
+
+  // Corrupt the durable store in place (operator-investigation scenario): the
+  // reopen refuses and nothing repairs or deletes the evidence.
+  const database = join(paths.directory, 'journal.sqlite');
+  const bytes = readFileSync(database);
+  bytes.write('CORRUPTED', 100, 'utf8');
+  writeFileSync(database, bytes);
+
+  await assert.rejects(
+    openJournalSqliteOperationJournalAdapter({
+      ...paths,
+      restoreGeneration: 'generation-1',
+      childModulePath: CHILD_MODULE,
+    })
+  );
+  // The evidence is preserved for investigation: the corrupted bytes remain.
+  assert.ok(readFileSync(database).includes('CORRUPTED'));
+});
+
+test('a truncated durable database refuses reopen without auto-repair', async () => {
+  const paths = freshPaths('journal-atv-trunc-');
+  const first = await openJournalSqliteOperationJournalAdapter({
+    ...paths,
+    restoreGeneration: 'generation-1',
+    initialize: true,
+    childModulePath: CHILD_MODULE,
+  });
+  const opened = await openOperationJournal(
+    first,
+    namespaceConfiguration('trunc-a'),
+    Buffer.alloc(32, 7)
+  );
+  assertOpened(opened);
+  await opened.journal.close();
+  await first.dispose();
+
+  writeFileSync(join(paths.directory, 'journal.sqlite'), Buffer.alloc(64));
+  await assert.rejects(
+    openJournalSqliteOperationJournalAdapter({
+      ...paths,
+      restoreGeneration: 'generation-1',
+      childModulePath: CHILD_MODULE,
+    })
+  );
+  // No auto-repair: the truncated file is left for operator investigation.
+  assert.equal(statSync(join(paths.directory, 'journal.sqlite')).size, 64);
+});
+
+test('dispose with outstanding I/O drains the call as uncertain', async () => {
+  const paths = freshPaths('journal-atv-io-');
+  const crashFault = JSON.stringify({ method: 'reserveIntent', point: 'never_settles' });
+  const first = await openJournalSqliteOperationJournalAdapter({
+    ...paths,
+    restoreGeneration: 'generation-1',
+    initialize: true,
+    childModulePath: CRASH_CHILD_MODULE,
+    childArgv: [crashFault],
+  });
+  const opened = await openOperationJournal(
+    first,
+    { ...namespaceConfiguration('io-a'), bounds: { ...namespaceConfiguration('io-a').bounds, timeoutMs: 60_000 } },
+    Buffer.alloc(32, 7)
+  );
+  assertOpened(opened);
+  const pending = opened.journal.reserveIntent({
+    key: intentKey('op-io').key,
+    actor: 'operator-a',
+    liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-io' },
+  });
+  await sleep(300); // the child withheld the reply; the call is outstanding
+  await first.dispose(); // SIGKILLs the child with the call outstanding
+  const drained = await pending;
+  assert.deepEqual(drained, { kind: 'uncertain', reason: 'io' });
+});
+
+test('sustained writes stay within bounded file sizes; the anchor never grows', async () => {
+  const paths = freshPaths('journal-atv-bounds-');
+  const adapter = await startAdapter({ ...paths }, true);
+  const opened = await openOperationJournal(
+    adapter,
+    { ...namespaceConfiguration('bounds-a'), bounds: { ...namespaceConfiguration('bounds-a').bounds, maxRecords: 64 } },
+    Buffer.alloc(32, 7)
+  );
+  assertOpened(opened);
+  for (let index = 0; index < 64; index += 1) {
+    const reserved = await opened.journal.reserveIntent({
+      key: intentKey(`op-bounds-${index}`),
+      actor: 'operator-a',
+      liveFingerprint: { algorithm: 'rest-json-v1', digest: `private-bounds-${index}` },
+    });
+    assertAcknowledged(reserved);
+  }
+  const anchorSize = statSync(join(paths.anchorDirectory, 'commit.json')).size;
+  assert.ok(anchorSize <= 1024, `anchor grew to ${anchorSize}`);
+  const databaseSize = statSync(join(paths.directory, 'journal.sqlite')).size;
+  assert.ok(databaseSize > 0 && databaseSize < 5 * 1024 * 1024, `database size ${databaseSize}`);
+  await opened.journal.close();
+  await adapter.dispose();
+  // Bounded growth is the gate; an empty -wal is NOT asserted because dispose
+  // tears the child down without the graceful close's TRUNCATE checkpoint, and
+  // the next open replays whatever the WAL holds.
+  const wal = join(paths.directory, 'journal.sqlite-wal');
+  assert.ok(!existsSync(wal) || statSync(wal).size < 1024 * 1024, 'WAL grew unbounded');
+});
+
+test('CLI and MCP source trees carry no journal storage code', async () => {
+  // The design invariant: CLI/MCP Bun builds must remain free of journal storage
+  // code and dependencies. Static source scan; the dependency graph is checked
+  // in CI (package.json diffs).
+  const repoRoot = fileURLToPath(new URL('../', import.meta.url));
+  for (const surface of ['packages/cli/src', 'packages/mcp-server/src']) {
+    const scan = (directory) => {
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const child = join(directory, entry.name);
+        if (entry.isDirectory()) scan(child);
+        else if (entry.name.endsWith('.ts') || entry.name.endsWith('.mjs')) {
+          const source = readFileSync(child, 'utf8');
+          assert.ok(
+            !source.includes('journal-sqlite'),
+            `${child} references journal storage code`
+          );
+        }
+      }
+    };
+    scan(join(repoRoot, surface));
   }
 });
 
