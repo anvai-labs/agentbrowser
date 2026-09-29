@@ -55,8 +55,10 @@ Next dependency-ready slices by task:
   stack, arbitrated by the now-blocking CI journal-gates job — see the
   [owner/anchor primitive](../evidence/t5-journal-sqlite-owner.md)); remaining:
   the packaging gates (extracted-package child resolution) and the deeper
-  adversarial rows (alias/read-only paths, disk-full and BUSY/IO faults, clock
-  movement, sentinel scan).
+  adversarial rows — including, at minimum, alias/read-only paths, stale
+  DB-only/anchor-only copies, malformed/missing and partially replaced
+  anchors, disk-full and BUSY/IO faults, exhausted-resource bounds,
+  malformed/duplicate IPC replies, clock movement and the sentinel scan.
 - T4 — production-evidence gates: trusted native-read composition, receipts and
   parity against production surfaces; synthetic parity and public consent are
   already qualified.
