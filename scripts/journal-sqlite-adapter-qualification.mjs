@@ -367,7 +367,7 @@ test('a second manager process on the same store loses the acquisition race', as
     initialize: true,
     childModulePath: CHILD_MODULE,
   });
-  assertOpened(await openManagerGeneration(winner, 'double-a'));
+  await openManagerNamespace(winner, 'double-a');
   // A competing manager on the same directory: its child exits(1) on the owner
   // lock, and the factory rejects the handshake instead of hanging.
   await assert.rejects(
@@ -384,7 +384,7 @@ test('a second manager process on the same store loses the acquisition race', as
 
 test('concurrent first initialization resolves exactly one winner', async () => {
   const paths = freshPaths('journal-atv-race-');
-  const [winner, loser] = await Promise.allSettled([
+  const results = await Promise.allSettled([
     openJournalSqliteOperationJournalAdapter({
       ...paths,
       restoreGeneration: 'generation-1',
@@ -398,9 +398,12 @@ test('concurrent first initialization resolves exactly one winner', async () => 
       childModulePath: CHILD_MODULE,
     }),
   ]);
-  assert.equal(winner.status, 'fulfilled');
-  assert.equal(loser.status, 'rejected');
-  const adapter = winner.value;
+  // Exactly one winner regardless of which fork wins the O_EXCL race.
+  const fulfilled = results.filter((r) => r.status === 'fulfilled');
+  const rejected = results.filter((r) => r.status === 'rejected');
+  assert.equal(fulfilled.length, 1);
+  assert.equal(rejected.length, 1);
+  const adapter = fulfilled[0].value;
   assertOpened(await openManagerNamespace(adapter, 'race-a'));
   await adapter.dispose();
 });
@@ -414,15 +417,18 @@ test('a different fingerprint key refuses the namespace as configuration', async
     Buffer.alloc(32, 7)
   );
   assertOpened(opened);
-  await opened.journal.close();
   // A different key produces a different fingerprintKeyCheck: the stored
   // descriptor no longer matches, and the refusal is configuration, not io.
+  // Attempted while the child is still live (key-a stays open), because the
+  // child self-exits after the last handle closes and a dead manager could
+  // only answer uncertain:io.
   const other = await openOperationJournal(
     adapter,
     namespaceConfiguration('key-a'),
     Buffer.alloc(32, 9)
   );
   assert.deepEqual(other, { kind: 'definitely_not_opened', reason: 'configuration' });
+  await opened.journal.close();
   await adapter.dispose();
 });
 
@@ -513,7 +519,7 @@ test('dispose with outstanding I/O drains the call as uncertain', async () => {
   );
   assertOpened(opened);
   const pending = opened.journal.reserveIntent({
-    key: intentKey('op-io').key,
+    key: intentKey('op-io'),
     actor: 'operator-a',
     liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-io' },
   });
