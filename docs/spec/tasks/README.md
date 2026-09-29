@@ -48,13 +48,17 @@ recovery gated.
 Next dependency-ready slices by task:
 
 - T5 — J2b.3 process-loss rows QUALIFIED (before_commit / after_commit /
-  after_anchor barriers + caller-timeout rule, over the landed manager/child/
-  adapter stack — see the
+  after_anchor barriers + caller-timeout rule) and the adversarial/bounded
+  matrix QUALIFIED (acquisition races, wrong-fingerprint-key, corrupt/
+  truncated database reopen refusal, dispose under outstanding I/O, bounded
+  DB/WAL/anchor sizes, child self-exit) over the landed manager/child/adapter
+  stack, arbitrated by the now-blocking CI journal-gates job — see the
   [owner/anchor primitive](../evidence/t5-journal-sqlite-owner.md)); remaining:
-  the adversarial/bounded-resource matrix and the packaging gates (J2b.2 steps
-  1–2: frozen record schema, unchanged conformance over real SQLite, one-child
-  manager with second-handle refusal, SIGKILL reacquisition with stale-fence
-  clearing).
+  the packaging gates (extracted-package child resolution) and the deeper
+  adversarial rows — including, at minimum, alias/read-only paths, stale
+  DB-only/anchor-only copies, malformed/missing and partially replaced
+  anchors, disk-full and BUSY/IO faults, exhausted-resource bounds,
+  malformed/duplicate IPC replies, clock movement and the sentinel scan.
 - T4 — production-evidence gates: trusted native-read composition, receipts and
   parity against production surfaces; synthetic parity and public consent are
   already qualified.

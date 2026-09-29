@@ -29,10 +29,14 @@ leaks the storage child's open IPC handle and wedges the runner to the job
 timeout — that leak-on-failure was the original canary hang. The gates await
 the factory's exposed child-exit promise after graceful close, because the
 close reply precedes the child's own TRUNCATE checkpoint and racing it
-SIGKILLs the shutdown mid-checkpoint on slower runners. Arbitration for these
-gates is the CI Linux canary. Still open before any public capability: the
-remaining adversarial rows (alias/read-only paths, disk-full and BUSY/IO
-faults, clock movement, sentinel scan) and the packaging gates below. No public
+SIGKILLs the shutdown mid-checkpoint on slower runners. The CI Linux
+journal-gates job arbitrated the matrix (16/16 gates, two consecutive green
+runs) and is now a blocking CI job. Still open before any public capability:
+the remaining adversarial rows — including, at minimum, alias/read-only
+paths, stale DB-only/anchor-only copies, malformed/missing and partially
+replaced anchors, disk-full and BUSY/IO faults, exhausted-resource bounds,
+malformed/duplicate IPC replies, clock movement and the sentinel scan — and
+the packaging gates below. No public
 capability is enabled and nothing is exported from the
 control barrel. Read [J2a architecture](t5-journal-sqlite-audit.md) and existing
 [journal port](t5-journal-contract.md). Reuse their owners; do not invent a durable executor.
