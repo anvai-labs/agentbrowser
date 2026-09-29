@@ -48,6 +48,8 @@ export async function openJournalSqliteOperationJournalAdapter(
     dispose(): Promise<void>;
     /** OS pid of the storage child, for operator diagnostics and forced teardown. */
     readonly childPid: number | undefined;
+    /** Resolves once the storage child is gone (exit or spawn failure). */
+    readonly exited: Promise<void>;
   }
 > {
   const childPath =
@@ -92,8 +94,13 @@ export async function openJournalSqliteOperationJournalAdapter(
     dead = true;
     settleAll();
   };
-  const exited = once(child, 'exit');
-  void exited.catch(() => {});
+  // Resolves when the child is gone — 'exit', or 'error' for a child that never
+  // spawned. Never rejects, so awaiters (the dispose drain, and graceful-shutdown
+  // qualification that must not race the shutdown checkpoint) await it freely.
+  const exited = once(child, 'exit').then(
+    () => undefined,
+    () => undefined
+  );
   void exited.then(failDead);
   // The callback form of send already swallows async delivery errors; this listener
   // is the belt to those braces — without it a channel error crashes the host.
@@ -250,10 +257,12 @@ export async function openJournalSqliteOperationJournalAdapter(
     async dispose() {
       // Explicit teardown for a manager with no in-flight work: graceful shutdown
       // is the child's own last-handle-close exit; this reclaims a straggler.
-      // Bounded: a child that failed to spawn never emits 'exit', so awaiting
-      // `exited` unconditionally would hang the caller forever.
+      // Bounded: a child wedged between limbo states may emit neither 'exit' nor
+      // 'error', so awaiting `exited` unconditionally would hang the caller.
       if (!dead && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
       await Promise.race([exited, sleep(DISPOSE_DRAIN_MS)]);
     },
+    /** Resolves once the storage child is gone (exit or spawn failure). */
+    exited,
   };
 }

@@ -91,6 +91,21 @@ async function startAdapter(paths, initialize) {
   return adapter;
 }
 
+/** Await the child's own shutdown after a graceful namespace close. The child
+ * checkpoints (wal TRUNCATE) and exits only AFTER the close reply is sent, so
+ * proceeding straight to dispose() races the SIGKILL against the shutdown — on
+ * a loaded runner the WAL survives uncheckpointed and later gates read state
+ * that a completed shutdown would have folded into the main database.
+ */
+async function awaitChildSelfExit(adapter) {
+  await Promise.race([
+    adapter.exited,
+    sleep(5_000).then(() => {
+      throw new Error('storage child never self-exited after graceful close');
+    }),
+  ]);
+}
+
 test.afterEach(async () => {
   for (const directory of directories.splice(0))
     rmSync(directory, { recursive: true, force: true });
@@ -148,7 +163,7 @@ test('full operation lifecycle through one child, durable across manager generat
   });
   assert.equal(committed.kind, 'acknowledged');
   assert.equal(committed.record.revision, 3);
-  await opened.journal.close();
+  assert.deepEqual(await opened.journal.close(), { kind: 'closed' });
   await first.dispose();
 
   const second = await startAdapter({ ...paths }, false);
@@ -162,7 +177,7 @@ test('full operation lifecycle through one child, durable across manager generat
   assert.equal(lookup.kind, 'found');
   if (lookup.kind !== 'found') throw new Error('record did not persist');
   assert.equal(lookup.record.revision, 3);
-  await reopened.journal.close();
+  assert.deepEqual(await reopened.journal.close(), { kind: 'closed' });
   await second.dispose();
 });
 
@@ -187,8 +202,8 @@ test('refuses a second handle for a live namespace at the manager', async () => 
     Buffer.alloc(32, 7)
   );
   assertOpened(other);
-  await first.journal.close();
-  await other.journal.close();
+  assert.deepEqual(await first.journal.close(), { kind: 'closed' });
+  assert.deepEqual(await other.journal.close(), { kind: 'closed' });
   await adapter.dispose();
 });
 
@@ -231,7 +246,7 @@ test('reacquires a SIGKILLed manager generation, clearing the dead owner fence',
   assert.equal(lookup.kind, 'found');
   if (lookup.kind !== 'found') throw new Error('record did not persist');
   assert.equal(lookup.record.revision, 1);
-  await reacquired.journal.close();
+  assert.deepEqual(await reacquired.journal.close(), { kind: 'closed' });
   await second.dispose();
 });
 
@@ -310,7 +325,7 @@ for (const [point, expect] of [
         assert.equal(lookup.record.revision, 1);
         assert.equal(lookup.record.dispatched, false);
       }
-      await reopened.journal.close();
+      assert.deepEqual(await reopened.journal.close(), { kind: 'closed' });
       await second.dispose();
     } finally {
       await first.dispose().catch(() => {});
@@ -348,7 +363,7 @@ test('caller timeout alone neither kills the child nor grants new ownership', as
       Buffer.alloc(32, 7)
     );
     assertOpened(other);
-    await other.journal.close();
+    assert.deepEqual(await other.journal.close(), { kind: 'closed' });
   } finally {
     await first.dispose().catch(() => {});
   }
@@ -367,7 +382,7 @@ test('a second manager process on the same store loses the acquisition race', as
     initialize: true,
     childModulePath: CHILD_MODULE,
   });
-  assertOpened(await openManagerGeneration(winner, 'double-a'));
+  await openManagerNamespace(winner, 'double-a');
   // A competing manager on the same directory: its child exits(1) on the owner
   // lock, and the factory rejects the handshake instead of hanging.
   await assert.rejects(
@@ -384,7 +399,7 @@ test('a second manager process on the same store loses the acquisition race', as
 
 test('concurrent first initialization resolves exactly one winner', async () => {
   const paths = freshPaths('journal-atv-race-');
-  const [winner, loser] = await Promise.allSettled([
+  const results = await Promise.allSettled([
     openJournalSqliteOperationJournalAdapter({
       ...paths,
       restoreGeneration: 'generation-1',
@@ -398,10 +413,13 @@ test('concurrent first initialization resolves exactly one winner', async () => 
       childModulePath: CHILD_MODULE,
     }),
   ]);
-  assert.equal(winner.status, 'fulfilled');
-  assert.equal(loser.status, 'rejected');
-  const adapter = winner.value;
-  assertOpened(await openManagerNamespace(adapter, 'race-a'));
+  // Exactly one winner regardless of which fork wins the O_EXCL race.
+  const fulfilled = results.filter((r) => r.status === 'fulfilled');
+  const rejected = results.filter((r) => r.status === 'rejected');
+  assert.equal(fulfilled.length, 1);
+  assert.equal(rejected.length, 1);
+  const adapter = fulfilled[0].value;
+  await openManagerNamespace(adapter, 'race-a');
   await adapter.dispose();
 });
 
@@ -414,7 +432,18 @@ test('a different fingerprint key refuses the namespace as configuration', async
     Buffer.alloc(32, 7)
   );
   assertOpened(opened);
-  await opened.journal.close();
+  // A second live handle keeps the child alive after key-a closes: without it
+  // the child self-exits and a dead manager could only answer uncertain:io
+  // (the Linux failure), and with key-a still held the manager's own
+  // second-handle refusal would answer ownership before the child ever sees
+  // the descriptor.
+  const keeper = await openOperationJournal(
+    adapter,
+    namespaceConfiguration('key-b'),
+    Buffer.alloc(32, 7)
+  );
+  assertOpened(keeper);
+  assert.deepEqual(await opened.journal.close(), { kind: 'closed' });
   // A different key produces a different fingerprintKeyCheck: the stored
   // descriptor no longer matches, and the refusal is configuration, not io.
   const other = await openOperationJournal(
@@ -423,6 +452,8 @@ test('a different fingerprint key refuses the namespace as configuration', async
     Buffer.alloc(32, 9)
   );
   assert.deepEqual(other, { kind: 'definitely_not_opened', reason: 'configuration' });
+  assert.deepEqual(await keeper.journal.close(), { kind: 'closed' });
+  await awaitChildSelfExit(adapter);
   await adapter.dispose();
 });
 
@@ -446,7 +477,8 @@ test('a corrupted durable database refuses reopen without auto-repair', async ()
     liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-corrupt' },
   });
   assertAcknowledged(reserved);
-  await opened.journal.close();
+  assert.deepEqual(await opened.journal.close(), { kind: 'closed' });
+  await awaitChildSelfExit(first);
   await first.dispose();
 
   // Corrupt the durable store in place (operator-investigation scenario): the
@@ -481,7 +513,8 @@ test('a truncated durable database refuses reopen without auto-repair', async ()
     Buffer.alloc(32, 7)
   );
   assertOpened(opened);
-  await opened.journal.close();
+  assert.deepEqual(await opened.journal.close(), { kind: 'closed' });
+  await awaitChildSelfExit(first);
   await first.dispose();
 
   writeFileSync(join(paths.directory, 'journal.sqlite'), Buffer.alloc(64));
@@ -513,7 +546,7 @@ test('dispose with outstanding I/O drains the call as uncertain', async () => {
   );
   assertOpened(opened);
   const pending = opened.journal.reserveIntent({
-    key: intentKey('op-io').key,
+    key: intentKey('op-io'),
     actor: 'operator-a',
     liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-io' },
   });
@@ -544,13 +577,13 @@ test('sustained writes stay within bounded file sizes; the anchor never grows', 
   assert.ok(anchorSize <= 1024, `anchor grew to ${anchorSize}`);
   const databaseSize = statSync(join(paths.directory, 'journal.sqlite')).size;
   assert.ok(databaseSize > 0 && databaseSize < 5 * 1024 * 1024, `database size ${databaseSize}`);
-  await opened.journal.close();
+  assert.deepEqual(await opened.journal.close(), { kind: 'closed' });
+  await awaitChildSelfExit(adapter);
   await adapter.dispose();
-  // Bounded growth is the gate; an empty -wal is NOT asserted because dispose
-  // tears the child down without the graceful close's TRUNCATE checkpoint, and
-  // the next open replays whatever the WAL holds.
+  // A completed shutdown folds the WAL into the main database (TRUNCATE
+  // checkpoint on the child's own close), so the sidecar must be gone or empty.
   const wal = join(paths.directory, 'journal.sqlite-wal');
-  assert.ok(!existsSync(wal) || statSync(wal).size < 1024 * 1024, 'WAL grew unbounded');
+  assert.ok(!existsSync(wal) || statSync(wal).size === 0, 'WAL survived graceful close');
 });
 
 test('CLI and MCP source trees carry no journal storage code', async () => {
@@ -585,7 +618,7 @@ test('child exits after the last handle closes; a dead adapter reports uncertain
     Buffer.alloc(32, 7)
   );
   assertOpened(opened);
-  await opened.journal.close();
+  assert.deepEqual(await opened.journal.close(), { kind: 'closed' });
   await adapter.dispose();
   const after = await openOperationJournal(
     adapter,
@@ -603,3 +636,4 @@ function assertAcknowledged(outcome) {
   assert.equal(outcome.kind, 'acknowledged');
   if (outcome.kind !== 'acknowledged') throw new Error('mutation was not acknowledged');
 }
+// canary probe: exercises the journal gates job on CI for hang diagnosis

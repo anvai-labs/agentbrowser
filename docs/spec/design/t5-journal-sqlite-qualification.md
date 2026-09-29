@@ -10,7 +10,8 @@ production storage child (`journal-sqlite-child.ts`) and raw adapter factory
 all handles, manager-level second-handle refusal, child self-exit after the last
 handle closes, and SIGKILL reacquisition with dead-predecessor fences cleared inside
 the acquisition transaction. J2b.3 process-loss matrix rows QUALIFIED (gates in
-`scripts/journal-sqlite-adapter-qualification.mjs`, node --test/type-check lane):
+`scripts/journal-sqlite-adapter-qualification.mjs`, the dedicated journal-gates
+CI canary job):
 before_commit (kill before COMMIT — nothing persists, clean reopen),
 after_commit (kill between DB COMMIT and anchor rename — the DB/anchor mismatch
 REFUSES reopen, no auto-repair), after_anchor (kill after the full commit unit
@@ -18,9 +19,21 @@ with the caller unresolved — the acknowledged-ready intent reopens as historic
 fact), and the caller-timeout rule (timeout neither kills the child nor grants
 new ownership). The instrumented crash child scopes its barrier arm to the
 faulted method's own dispatch — the adversarial review caught an unscoped arm
-hanging generation 1 pre-ready, a test-support bug since fixed. Still open before
-any public capability: the adversarial/bounded-resource matrix and the packaging
-gates below. No public capability is enabled and nothing is exported from the
+hanging generation 1 pre-ready, a test-support bug since fixed. The adversarial
+and bounded gates added alongside (second manager acquisition race, concurrent
+first initialization, wrong-fingerprint-key refusal, corrupt/truncated database
+reopen refusal, dispose under outstanding I/O, bounded DB/WAL/anchor sizes,
+child self-exit with a dead adapter reporting uncertain) run in the same
+node --test lane under `--test-force-exit`: a failed gate that skips dispose
+leaks the storage child's open IPC handle and wedges the runner to the job
+timeout — that leak-on-failure was the original canary hang. The gates await
+the factory's exposed child-exit promise after graceful close, because the
+close reply precedes the child's own TRUNCATE checkpoint and racing it
+SIGKILLs the shutdown mid-checkpoint on slower runners. Arbitration for these
+gates is the CI Linux canary. Still open before any public capability: the
+remaining adversarial rows (alias/read-only paths, disk-full and BUSY/IO
+faults, clock movement, sentinel scan) and the packaging gates below. No public
+capability is enabled and nothing is exported from the
 control barrel. Read [J2a architecture](t5-journal-sqlite-audit.md) and existing
 [journal port](t5-journal-contract.md). Reuse their owners; do not invent a durable executor.
 
