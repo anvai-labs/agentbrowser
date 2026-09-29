@@ -76,9 +76,11 @@ jobs:
       - name: Build workspace dependencies
         run: pnpm -r build
       - name: Journal SQLite manager/child qualification gates
-        # TAP reporter: streams each gate result and failure detail inline, so a
-        # cancelled/hung run still leaves the diagnostic evidence in the log.
-        run: node --test --test-reporter=tap scripts/journal-sqlite-adapter-qualification.mjs
+        # TAP reporter streams each gate result inline; --test-force-exit bounds
+        # the runner when a FAILED gate skips its dispose (a leaked storage child
+        # holds the fork's IPC handle open and would otherwise wedge the job to
+        # its timeout — the original canary hang).
+        run: node --test --test-reporter=tap --test-force-exit scripts/journal-sqlite-adapter-qualification.mjs
 
   lint:
     name: Lint

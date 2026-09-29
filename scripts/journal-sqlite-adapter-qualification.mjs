@@ -91,6 +91,21 @@ async function startAdapter(paths, initialize) {
   return adapter;
 }
 
+/** Await the child's own shutdown after a graceful namespace close. The child
+ * checkpoints (wal TRUNCATE) and exits only AFTER the close reply is sent, so
+ * proceeding straight to dispose() races the SIGKILL against the shutdown — on
+ * a loaded runner the WAL survives uncheckpointed and later gates read state
+ * that a completed shutdown would have folded into the main database.
+ */
+async function awaitChildSelfExit(adapter) {
+  await Promise.race([
+    adapter.exited,
+    sleep(5_000).then(() => {
+      throw new Error('storage child never self-exited after graceful close');
+    }),
+  ]);
+}
+
 test.afterEach(async () => {
   for (const directory of directories.splice(0))
     rmSync(directory, { recursive: true, force: true });
@@ -404,7 +419,7 @@ test('concurrent first initialization resolves exactly one winner', async () => 
   assert.equal(fulfilled.length, 1);
   assert.equal(rejected.length, 1);
   const adapter = fulfilled[0].value;
-  assertOpened(await openManagerNamespace(adapter, 'race-a'));
+  await openManagerNamespace(adapter, 'race-a');
   await adapter.dispose();
 });
 
@@ -417,18 +432,28 @@ test('a different fingerprint key refuses the namespace as configuration', async
     Buffer.alloc(32, 7)
   );
   assertOpened(opened);
+  // A second live handle keeps the child alive after key-a closes: without it
+  // the child self-exits and a dead manager could only answer uncertain:io
+  // (the Linux failure), and with key-a still held the manager's own
+  // second-handle refusal would answer ownership before the child ever sees
+  // the descriptor.
+  const keeper = await openOperationJournal(
+    adapter,
+    namespaceConfiguration('key-b'),
+    Buffer.alloc(32, 7)
+  );
+  assertOpened(keeper);
+  await opened.journal.close();
   // A different key produces a different fingerprintKeyCheck: the stored
   // descriptor no longer matches, and the refusal is configuration, not io.
-  // Attempted while the child is still live (key-a stays open), because the
-  // child self-exits after the last handle closes and a dead manager could
-  // only answer uncertain:io.
   const other = await openOperationJournal(
     adapter,
     namespaceConfiguration('key-a'),
     Buffer.alloc(32, 9)
   );
   assert.deepEqual(other, { kind: 'definitely_not_opened', reason: 'configuration' });
-  await opened.journal.close();
+  await keeper.journal.close();
+  await awaitChildSelfExit(adapter);
   await adapter.dispose();
 });
 
@@ -453,6 +478,7 @@ test('a corrupted durable database refuses reopen without auto-repair', async ()
   });
   assertAcknowledged(reserved);
   await opened.journal.close();
+  await awaitChildSelfExit(first);
   await first.dispose();
 
   // Corrupt the durable store in place (operator-investigation scenario): the
@@ -488,6 +514,7 @@ test('a truncated durable database refuses reopen without auto-repair', async ()
   );
   assertOpened(opened);
   await opened.journal.close();
+  await awaitChildSelfExit(first);
   await first.dispose();
 
   writeFileSync(join(paths.directory, 'journal.sqlite'), Buffer.alloc(64));
@@ -551,12 +578,12 @@ test('sustained writes stay within bounded file sizes; the anchor never grows', 
   const databaseSize = statSync(join(paths.directory, 'journal.sqlite')).size;
   assert.ok(databaseSize > 0 && databaseSize < 5 * 1024 * 1024, `database size ${databaseSize}`);
   await opened.journal.close();
+  await awaitChildSelfExit(adapter);
   await adapter.dispose();
-  // Bounded growth is the gate; an empty -wal is NOT asserted because dispose
-  // tears the child down without the graceful close's TRUNCATE checkpoint, and
-  // the next open replays whatever the WAL holds.
+  // A completed shutdown folds the WAL into the main database (TRUNCATE
+  // checkpoint on the child's own close), so the sidecar must be gone or empty.
   const wal = join(paths.directory, 'journal.sqlite-wal');
-  assert.ok(!existsSync(wal) || statSync(wal).size < 1024 * 1024, 'WAL grew unbounded');
+  assert.ok(!existsSync(wal) || statSync(wal).size === 0, 'WAL survived graceful close');
 });
 
 test('CLI and MCP source trees carry no journal storage code', async () => {
