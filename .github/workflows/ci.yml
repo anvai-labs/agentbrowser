@@ -54,9 +54,10 @@ jobs:
   journal-gates:
     # T5 J2b.2/J2b.3 gates over the concrete journal manager/child/adapter stack
     # (real forked child, durable commits), on the built dist this job owns.
-    # NON-BLOCKING CANARY: the gates hang intermittently on CI runners (open
-    # J2b.3 blocker — see the qualification doc); they must not wedge Type
-    # Check while that is open. Promote to blocking when the hang is fixed.
+    # NON-BLOCKING CANARY: the original hang (a failed gate skipping dispose
+    # leaks the storage child's IPC handle and wedges node --test) is
+    # root-caused and bounded by --test-force-exit; the job stays non-blocking
+    # until consecutive green Linux canary runs qualify promotion to blocking.
     name: Journal SQLite gates (canary)
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10

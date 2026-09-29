@@ -10,7 +10,8 @@ production storage child (`journal-sqlite-child.ts`) and raw adapter factory
 all handles, manager-level second-handle refusal, child self-exit after the last
 handle closes, and SIGKILL reacquisition with dead-predecessor fences cleared inside
 the acquisition transaction. J2b.3 process-loss matrix rows QUALIFIED (gates in
-`scripts/journal-sqlite-adapter-qualification.mjs`, node --test/type-check lane):
+`scripts/journal-sqlite-adapter-qualification.mjs`, the dedicated journal-gates
+CI canary job):
 before_commit (kill before COMMIT — nothing persists, clean reopen),
 after_commit (kill between DB COMMIT and anchor rename — the DB/anchor mismatch
 REFUSES reopen, no auto-repair), after_anchor (kill after the full commit unit
