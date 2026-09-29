@@ -603,5 +603,4 @@ function assertAcknowledged(outcome) {
   assert.equal(outcome.kind, 'acknowledged');
   if (outcome.kind !== 'acknowledged') throw new Error('mutation was not acknowledged');
 }
-
-<!-- canary probe: exercises the journal gates job on CI for hang diagnosis -->
+// canary probe: exercises the journal gates job on CI for hang diagnosis
