@@ -73,3 +73,10 @@ Next qualify a released installed harness and the provider's actual tool-call
 path, then the remaining correlation/reconnect/cancellation and footprint gates.
 Retain explicit limits until those named acceptance runs exist; no whole-milestone
 completion or release is implied by this source repair.
+
+The first installed-harness machine record is
+[installed-harness availability](../evidence/t8-installed-harness-availability.md):
+CLI-path schema/report/operation/cursor flows qualified on 1.13.0; Codex listing
+fidelity qualified; the Victor live loop is blocked by two recorded
+infrastructure facts (formula catalog/binding skew - repaired locally - and the
+self-signed Sandhi gateway with no TLS trust override in the transport).
