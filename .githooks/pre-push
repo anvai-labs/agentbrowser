@@ -4,6 +4,20 @@
 
 set -euo pipefail
 
+# A pure ref-deletion push changes no content: the gates below would re-run
+# the full suite to validate nothing. Skip only when every pushed ref is a
+# deletion; any real ref update runs the full gates.
+deletion_only=true
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ "$local_sha" != "0000000000000000000000000000000000000000" ]; then
+    deletion_only=false
+  fi
+done
+if $deletion_only; then
+  echo "Deletion-only push: skipping content gates."
+  exit 0
+fi
+
 echo "🚀 Running AgentBrowser pre-push checks..."
 
 # Colors for output

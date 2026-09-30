@@ -53,13 +53,15 @@ Next dependency-ready slices by task:
   truncated database reopen refusal, dispose under outstanding I/O, bounded
   DB/WAL/anchor sizes, child self-exit) over the landed manager/child/adapter
   stack, arbitrated by the now-blocking CI journal-gates job, with the
-  packaging gate (extracted-package child resolution, packaged per PR) in the
+  packaging gate (extracted-package child resolution, packaged per PR) and
+  the deeper adversarial rows (stale DB/anchor copies, malformed/missing/
+  partial anchors, hardlink/symlink/permission aliases, external-writer BUSY
+  seal, admission ceilings, oversize refusal, key-material sentinel) in the
   same job — see the
   [owner/anchor primitive](../evidence/t5-journal-sqlite-owner.md)); remaining:
-  the deeper adversarial rows — including, at minimum, alias/read-only paths,
-  stale DB-only/anchor-only copies, malformed/missing and partially replaced
-  anchors, disk-full and BUSY/IO faults, exhausted-resource bounds,
-  malformed/duplicate IPC replies, clock movement and the sentinel scan.
+  release-time read-only-filesystem and disk-full lanes, clock-movement rows
+  in the fake-timer record conformance, and a protocol-fault child variant
+  for the malformed/duplicate/late IPC reply rows.
 - T4 — production-evidence gates: trusted native-read composition, receipts and
   parity against production surfaces; synthetic parity and public consent are
   already qualified.
