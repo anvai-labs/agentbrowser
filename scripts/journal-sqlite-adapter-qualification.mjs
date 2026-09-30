@@ -376,6 +376,138 @@ test('caller timeout alone neither kills the child nor grants new ownership', as
   }
 });
 
+test('a late reply settles from the bounded map and the mutation is historical fact', async () => {
+  const paths = freshPaths('journal-crash-late-');
+  const first = await openJournalSqliteOperationJournalAdapter({
+    ...paths,
+    restoreGeneration: 'generation-1',
+    initialize: true,
+    childModulePath: CRASH_CHILD_MODULE,
+    childArgv: [
+      JSON.stringify({ method: 'reserveIntent', point: 'late_reply', delayMs: 2_500 }),
+    ],
+  });
+  try {
+    const opened = await openOperationJournal(
+      first,
+      { ...namespaceConfiguration('late-a'), bounds: { ...namespaceConfiguration('late-a').bounds, timeoutMs: 1_000 } },
+      Buffer.alloc(32, 7)
+    );
+    assertOpened(opened);
+    const key = intentKey('op-late');
+    const timedOut = await opened.journal.reserveIntent({
+      key,
+      actor: 'operator-a',
+      liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-late' },
+    });
+    assert.deepEqual(timedOut, { kind: 'uncertain', reason: 'wait_expired' });
+    // The reply lands after the caller gave up; the manager settles it from
+    // its bounded correlation map and stays healthy.
+    await sleep(3_000);
+    // The late-settled mutation was durable all along: historical fact only.
+    const lookup = await opened.journal.lookup(key);
+    assert.equal(lookup.kind, 'found');
+    if (lookup.kind !== 'found') throw new Error('late mutation did not persist');
+    assert.equal(lookup.record.revision, 1);
+    assert.doesNotThrow(() => process.kill(first.childPid, 0));
+    // Health probe through a method the fault does not arm: open and close.
+    const other = await openOperationJournal(
+      first,
+      namespaceConfiguration('late-b'),
+      Buffer.alloc(32, 7)
+    );
+    assertOpened(other);
+    assert.deepEqual(await other.journal.close(), { kind: 'closed' });
+    assert.deepEqual(await opened.journal.close(), { kind: 'closed' });
+  } finally {
+    await first.dispose().catch(() => {});
+  }
+});
+
+test('a duplicate reply settles once and the manager keeps serving', async () => {
+  const paths = freshPaths('journal-crash-duplicate-');
+  const first = await openJournalSqliteOperationJournalAdapter({
+    ...paths,
+    restoreGeneration: 'generation-1',
+    initialize: true,
+    childModulePath: CRASH_CHILD_MODULE,
+    childArgv: [JSON.stringify({ method: 'reserveIntent', point: 'duplicate_reply' })],
+  });
+  try {
+    const opened = await openOperationJournal(
+      first,
+      namespaceConfiguration('duplicate-a'),
+      Buffer.alloc(32, 7)
+    );
+    assertOpened(opened);
+    const key = intentKey('op-duplicate');
+    const reserved = await opened.journal.reserveIntent({
+      key,
+      actor: 'operator-a',
+      liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-duplicate' },
+    });
+    assertAcknowledged(reserved);
+    // The duplicate frame must not corrupt the settled state.
+    const lookup = await opened.journal.lookup(key);
+    assert.equal(lookup.kind, 'found');
+    assert.doesNotThrow(() => process.kill(first.childPid, 0));
+    const other = await openOperationJournal(
+      first,
+      namespaceConfiguration('duplicate-b'),
+      Buffer.alloc(32, 7)
+    );
+    assertOpened(other);
+    assert.deepEqual(await other.journal.close(), { kind: 'closed' });
+    assert.deepEqual(await opened.journal.close(), { kind: 'closed' });
+  } finally {
+    await first.dispose().catch(() => {});
+  }
+});
+
+test('malformed frames never crash the host; an untrustable reply seals the journal', async () => {
+  const paths = freshPaths('journal-crash-malformed-');
+  const first = await openJournalSqliteOperationJournalAdapter({
+    ...paths,
+    restoreGeneration: 'generation-1',
+    initialize: true,
+    childModulePath: CRASH_CHILD_MODULE,
+    childArgv: [JSON.stringify({ method: 'reserveIntent', point: 'malformed_frames' })],
+  });
+  try {
+    const opened = await openOperationJournal(
+      first,
+      namespaceConfiguration('malformed-a'),
+      Buffer.alloc(32, 7)
+    );
+    assertOpened(opened);
+    // The injected frames include one carrying the live correlation id with
+    // no outcome payload: that frame cannot be silently dropped (it answers
+    // the waiter), so the port must classify it defensively as uncertain —
+    // never crash, never acknowledge without evidence.
+    const reserved = await opened.journal.reserveIntent({
+      key: intentKey('op-malformed'),
+      actor: 'operator-a',
+      liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-malformed' },
+    });
+    assert.deepEqual(reserved, { kind: 'uncertain', reason: 'invalid_response' });
+    // Once a reply is untrustable the port seals this journal (the design's
+    // once-uncertain rule): later reads refuse rather than guess.
+    const sealed = await opened.journal.lookup(intentKey('op-malformed'));
+    assert.equal(sealed.kind, 'definitely_not_read');
+    assert.doesNotThrow(() => process.kill(first.childPid, 0));
+    // The MANAGER is unaffected: a fresh port serves a new namespace fine.
+    const other = await openOperationJournal(
+      first,
+      namespaceConfiguration('malformed-b'),
+      Buffer.alloc(32, 7)
+    );
+    assertOpened(other);
+    assert.deepEqual(await other.journal.close(), { kind: 'closed' });
+  } finally {
+    await first.dispose().catch(() => {});
+  }
+});
+
 // ---------------------------------------------------------------------------
 // J2b.3 adversarial / bounded-resource matrix (manager/child stack level; the
 // state-machine level is conformance-covered, the storage-owner level is covered
