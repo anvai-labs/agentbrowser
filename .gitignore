@@ -52,3 +52,7 @@ Cargo.lock
 # Bun compile cache
 *.bun-build
 .cache/obscura/
+
+# Internal agent workspace (never commit, never publish)
+.victor/
+__pycache__/

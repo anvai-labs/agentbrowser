@@ -1,0 +1,72 @@
+name: Deploy Documentation
+
+# Publishes the mkdocs site (anvai-labs.github.io/agentbrowser) from main.
+# PRs touching docs build the site as a preview gate (strict mode: warnings
+# fail) without publishing. Path-filtered so prose edits elsewhere stay free.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - 'mkdocs-requirements.txt'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - 'mkdocs-requirements.txt'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # git-revision-date-localized needs history for page timestamps.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pinned docs toolchain
+        run: pip install -r mkdocs-requirements.txt
+
+      - name: Build the site (strict — warnings fail)
+        run: mkdocs build --strict
+
+      - name: Validate every relative link in the source tree
+        run: node scripts/check-doc-links.mjs .
+
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
+        with:
+          path: site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    needs: [build]
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
