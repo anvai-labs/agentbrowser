@@ -105,7 +105,11 @@ export function openJournalSqliteRecords(
   const state = row(transaction, descriptor.namespaceId);
   if (state) {
     if (!same(state.descriptor, descriptor)) return { kind: 'refused', reason: 'configuration' };
-    if (now > state.descriptor.retainUntil) return { kind: 'refused', reason: 'expired' };
+    // Rollback detection: a wall clock below the persisted high-water
+    // contradicts stored state and refuses as configuration.
+    if (now < state.clockHighWater) return { kind: 'refused', reason: 'configuration' };
+    if (Math.max(now, state.clockHighWater) > state.descriptor.retainUntil)
+      return { kind: 'refused', reason: 'expired' };
     if (state.activeFence !== undefined) return { kind: 'refused', reason: 'ownership' };
     const fence = `sqlite-fence-${state.fenceSerial + 1}`;
     transaction.run(
@@ -149,7 +153,7 @@ function fenceRefusal(
 ): 'fenced' | 'expired' | undefined {
   const state = row(reader, namespaceId);
   if (!state || state.activeFence !== ownerFence) return 'fenced';
-  if (now > state.descriptor.retainUntil) return 'expired';
+  if (Math.max(now, state.clockHighWater) > state.descriptor.retainUntil) return 'expired';
   return undefined;
 }
 
@@ -215,6 +219,13 @@ export function reserveJournalSqliteIntent(
   if (current) {
     if (current.identity !== canonicalJson(transition.identity))
       return { kind: 'conflict', reason: 'identity' };
+    // An acknowledged resume commits, so it advances the high-water exactly
+    // like a fresh admission (memory-oracle parity).
+    transaction.run(
+      'UPDATE journal_namespace SET clock_high_water = ? WHERE namespace_id = ?',
+      Math.max(now, ready.state.clockHighWater),
+      namespaceId
+    );
     return {
       kind: 'acknowledged',
       disposition: 'existing',
@@ -222,7 +233,7 @@ export function reserveJournalSqliteIntent(
     };
   }
   if (transition.expectedRevision !== 0) return { kind: 'conflict', reason: 'revision' };
-  if (now > ready.state.descriptor.acceptUntil)
+  if (Math.max(now, ready.state.clockHighWater) > ready.state.descriptor.acceptUntil)
     return { kind: 'definitely_not_written', reason: 'admission_expired' };
   const count = transaction.get(
     'SELECT count(*) AS count FROM journal_record WHERE namespace_id = ?',

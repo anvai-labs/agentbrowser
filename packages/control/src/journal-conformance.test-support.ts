@@ -24,6 +24,8 @@ interface StoredNamespace {
   activeFence: string | undefined;
   nextFence: number;
   reservedBytes: number;
+  /** Persisted clock high-water; updated by opens and acknowledged mutations. */
+  highWater?: number;
 }
 
 export interface ObservedMemoryNamespace {
@@ -38,6 +40,8 @@ export interface JournalConformanceFixture {
   readonly fingerprintKey: Uint8Array;
   now(): number;
   advance(milliseconds: number): void;
+  /** Time travel without a storage operation; may move the clock backward. */
+  setClock(milliseconds: number): void;
   observe(namespaceId: string): ObservedMemoryNamespace | undefined;
   releaseOwnership(namespaceId: string): void;
   failNext(method: RawMethod, point: FailurePoint): void;
@@ -61,6 +65,7 @@ export function createMemoryJournalFixture(startTime = 1_000): JournalConformanc
   let clock = startTime;
   let storeMaxNamespaces: number | undefined;
   const namespaces = new Map<string, StoredNamespace>();
+  const highWaterOf = (state: StoredNamespace): number => state.highWater ?? 0;
   const failures = new Map<RawMethod, FailurePoint[]>();
 
   const takeFailure = (method: RawMethod): FailurePoint | undefined =>
@@ -81,9 +86,13 @@ export function createMemoryJournalFixture(startTime = 1_000): JournalConformanc
       if (state) {
         if (!same(state.descriptor, request))
           return { kind: 'definitely_not_opened', reason: 'configuration' };
-        if (clock > state.descriptor.retainUntil)
+        const effective = Math.max(clock, highWaterOf(state));
+        if (effective > state.descriptor.retainUntil)
           return { kind: 'definitely_not_opened', reason: 'expired' };
+        if (clock < highWaterOf(state))
+          return { kind: 'definitely_not_opened', reason: 'configuration' };
         if (state.activeFence) return { kind: 'definitely_not_opened', reason: 'ownership' };
+        state.highWater = effective;
       } else {
         if (clock > request.acceptUntil || clock > request.retainUntil)
           return { kind: 'definitely_not_opened', reason: 'expired' };
@@ -102,6 +111,7 @@ export function createMemoryJournalFixture(startTime = 1_000): JournalConformanc
           activeFence: undefined,
           nextFence: 1,
           reservedBytes: 0,
+          highWater: clock,
         };
         namespaces.set(request.namespaceId, state);
       }
@@ -117,11 +127,19 @@ export function createMemoryJournalFixture(startTime = 1_000): JournalConformanc
           state.activeFence !== ownerFence
         )
           return 'fenced' as const;
-        if (clock > state.descriptor.retainUntil) return 'expired' as const;
+        if (Math.max(clock, highWaterOf(state)) > state.descriptor.retainUntil)
+          return 'expired' as const;
         return undefined;
       };
-      const mutationEnvelope = <T>(value: T) =>
-        stamped(state.descriptor.namespaceId, ownerFence, value);
+      const mutationEnvelope = <T>(value: T) => {
+        const envelope = stamped(state.descriptor.namespaceId, ownerFence, value);
+        // Only acknowledged mutations commit, so only they advance the
+        // persisted clock high-water.
+        if ((envelope.value as { kind?: string }).kind === 'acknowledged') {
+          state.highWater = Math.max(clock, highWaterOf(state));
+        }
+        return envelope;
+      };
       const handle: RawOperationJournalHandle = {
         reserveIntent(requestStamp) {
           return run('reserveIntent', () => {
@@ -142,7 +160,7 @@ export function createMemoryJournalFixture(startTime = 1_000): JournalConformanc
             }
             if (transition.expectedRevision !== 0)
               return mutationEnvelope({ kind: 'conflict', reason: 'revision' });
-            if (clock > state.descriptor.acceptUntil)
+            if (Math.max(clock, highWaterOf(state)) > state.descriptor.acceptUntil)
               return mutationEnvelope({
                 kind: 'definitely_not_written',
                 reason: 'admission_expired',
@@ -303,6 +321,9 @@ export function createMemoryJournalFixture(startTime = 1_000): JournalConformanc
       queue.push(point);
       failures.set(method, queue);
     },
+    setClock(milliseconds) {
+      clock = milliseconds;
+    },
   };
 }
 
@@ -399,6 +420,45 @@ export function operationJournalAdapterConformance(
   factory: () => JournalConformanceFixture = createMemoryJournalFixture
 ): void {
   afterEach(() => vi.useRealTimers());
+
+  // Clock movement semantics: the persisted high-water makes horizons
+  // monotonic across wall-clock rollback, and a reopen below the high-water
+  // refuses as configuration (the environment contradicts stored state).
+  describe('clock movement semantics', () => {
+    it('a backward wall clock does not re-open admission past acceptUntil', async () => {
+      const fixture = factory();
+      const journal = await open(fixture, namespace({ acceptUntil: 2_000 }));
+      void journal;
+      // Reopen at 4000: the open itself persists high-water 4000 (> acceptUntil).
+      fixture.advance(3_000);
+      fixture.releaseOwnership('deployment-a');
+      const reopened = await open(fixture, namespace({ acceptUntil: 2_000 }));
+      // Roll the wall clock backward below the persisted high-water: the
+      // effective time stays at the high-water, so admission stays shut.
+      fixture.setClock(1_500);
+      expect(await reopened.reserveIntent(intent('op-rolled-back'))).toEqual({
+        kind: 'definitely_not_written',
+        reason: 'admission_expired',
+      });
+    });
+
+    it('a reopen wall clock below the persisted high-water refuses as configuration', async () => {
+      const fixture = factory();
+      const journal = await open(fixture);
+      fixture.advance(500);
+      // The acknowledged mutation persists high-water 1500.
+      const reserved = await journal.reserveIntent(intent());
+      expect(reserved).toMatchObject({ kind: 'acknowledged' });
+      fixture.releaseOwnership('deployment-a');
+      fixture.setClock(1_200);
+      const reopened = await openOperationJournal(
+        fixture.adapter,
+        namespace(),
+        fixture.fingerprintKey
+      );
+      expect(reopened).toEqual({ kind: 'definitely_not_opened', reason: 'configuration' });
+    });
+  });
 
   describe('operation journal raw adapter conformance', () => {
     it('reserves once, returns the current record for an exact identity, and conflicts on identity reuse', async () => {
