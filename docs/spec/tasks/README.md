@@ -58,10 +58,11 @@ Next dependency-ready slices by task:
   partial anchors, hardlink/symlink/permission aliases, external-writer BUSY
   seal, admission ceilings, oversize refusal, key-material sentinel) in the
   same job — see the
-  [owner/anchor primitive](../evidence/t5-journal-sqlite-owner.md)); remaining:
-  release-time read-only-filesystem and disk-full lanes, clock-movement rows
-  in the fake-timer record conformance, and a protocol-fault child variant
-  for the malformed/duplicate/late IPC reply rows.
+  [owner/anchor primitive](../evidence/t5-journal-sqlite-owner.md)); the
+  protocol-fault rows (late/duplicate/malformed replies, with the manager's
+  host-crash frame guard) are qualified too. Every row testable in CI is
+  gated; remaining: release-time read-only-filesystem and disk-full lanes
+  and clock-movement rows in the fake-timer record conformance.
 - T4 — production-evidence gates: trusted native-read composition, receipts and
   parity against production surfaces; synthetic parity and public consent are
   already qualified.

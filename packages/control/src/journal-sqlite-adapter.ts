@@ -107,6 +107,11 @@ export async function openJournalSqliteOperationJournalAdapter(
   child.on('error', () => failDead());
 
   child.on('message', (message: ChildReply) => {
+    // A buggy or hostile frame must never crash the host: structural guard
+    // before any field access (mirrors the child's own
+    // isJournalChildRequest discipline on the reverse path). Null and
+    // non-object frames are dropped silently.
+    if (message === null || typeof message !== 'object') return;
     if (message.kind === 'ready') return; // handshake consumed separately
     if (dead) return;
     if (message.openId !== undefined) {
@@ -167,6 +172,7 @@ export async function openJournalSqliteOperationJournalAdapter(
     );
     const cleanup = () => clearTimeout(timer);
     const onMessage = (message: ChildReply) => {
+      if (message === null || typeof message !== 'object') return;
       if (message.kind === 'ready') {
         child.off('message', onMessage);
         child.off('error', onError);
