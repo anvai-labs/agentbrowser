@@ -10,8 +10,9 @@ proves the control works. Residual risks are named, not hidden.
    keys identify tenants when configured (no-keys = trusted single-tenant
    local mode, loudly warned).
 2. **Service -> engine**: in-process, trusted.
-3. **Engine -> network**: intended egress boundary; current browser routing
-   does not cover later redirect hops or provide OS-enforced containment.
+3. **Engine -> network**: intended egress boundary; HTTP redirect hops are
+   covered by walking chains in the routing choke point (all-hop
+   enforcement, 2026-09-30). OS-enforced containment is not provided.
 4. **Page content -> agent**: everything the browser returns (text,
    names, values, titles) is hostile-injected data.
 
@@ -21,8 +22,8 @@ proves the control works. Residual risks are named, not hidden.
 | --- | --- | --- |
 | SSRF to loopback / private ranges / cloud metadata via navigation | Service fast-fail + host/resolved-address checks on routed requests; no browser connection pinning | `network-policy.test.ts` loopback/private/metadata suites; initial-hop engine tests |
 | Equivalent IP spellings / malformed resolver answers (R14) | Native IP identity classification under configured flags; strict resolved-literal syntax; direct downloads validate every address/family pair before selecting a connection | `address-policy.test.ts`; real `download-transport.test.ts` zero-TCP/HTTP denials plus permitted-local positive controls; not full browser containment |
-| Redirect-based policy bypass (public URL -> 302 -> blocked host) | First redirect target checked; later hops bypass routing: **open gap** | Independent real Chromium multi-hop probe falsifies complete coverage |
-| Subresource / XHR / fetch bypass | Routed requests checked; later redirect hops remain a gap; service workers blocked | `engine-playwright` "block in-page fetches" does not prove all-hop enforcement |
+| Redirect-based policy bypass (public URL -> 302 -> blocked host) | All-hop enforcement: chains walked in the choke point, fresh verdict + hop cap + loop detection per hop; a denied terminal is never fetched (body-bearing POST/PUT/PATCH still pass natively) | Real-Chromium chain test `redirect-gap-real-chromium.test.ts` (checked list includes the denied hop, zero hits); route-handler units `egress-boundaries.test.ts` |
+| Subresource / XHR / fetch bypass | Routed requests checked including redirect chains (body-less); service workers blocked; body-bearing requests keep the native passthrough residual | `egress-boundaries.test.ts` chain-walk units; real-Chromium chain test |
 | Session policy weakening by tenant | `SessionHostPolicy` is restrict-only: the SSRF base always runs after session allow/blocked lists | `network-policy.test.ts` "still enforce the base SSRF policy" |
 | Cross-tenant session/artifact access | Bearer-key tenancy: keys held hashed, sessions stamped with tenantId, every /v1 session-scoped route (incl. WS, 4403) verifies ownership | `server.test.ts` authentication and tenancy suite |
 | Unauthorized use | 401 without/with-unknown key when AGENTBROWSER_API_KEYS configured; loud warning when unauthenticated | same suite |
@@ -36,22 +37,31 @@ proves the control works. Residual risks are named, not hidden.
 
 ## Open gaps and residual risks
 
-- **Later-hop redirects (OPEN, not accepted debt)**: Chromium routing is not
-  invoked for every redirect hop. Host, redirect-count, response and byte gates
-  can be skipped. Direct-download fixes do not close this browser gap (R4).
-- **DNS rebinding (PARTIAL)**: routed requests recheck all resolved addresses,
-  without hostname-verdict caching, and session policies delegate those checks.
-  Browser connections are not pinned to those addresses, and later hops can
-  escape checks. Direct downloads separately validate and pin each connection.
+- **Later-hop redirects (RESOLVED 2026-09-30 for body-less routed chains,
+  was R4, not accepted debt)**: the routing choke point now walks redirect
+  chains itself — fresh host/address verdict, a ten-hop cap, and loop
+  detection per hop — and allowed chains complete in two phases: the
+  verified terminal URL is handed back to the browser as a redirect, so
+  the document lands at the right address and no unchecked hop is ever
+  followed. Residuals: the browser's native fetch of the verified terminal
+  is not re-capped (content TOCTOU, same residual class as the next item);
+  body-bearing `POST`/`PUT/PATCH` requests still pass through natively
+  (the 2026-09-12 fidelity exception), so their redirects remain
+  unchecked; OS-enforced containment remains a separate layer.
+- **DNS rebinding (PARTIAL)**: routed requests recheck all resolved addresses
+  per hop, without hostname-verdict caching, and session policies delegate
+  those checks. Browser connections are not pinned to those addresses.
+  Direct downloads separately validate and pin each connection.
 - **WebSocket upgrades (PARTIAL)**: root and session-only policies now install
   the same default page WebSocket deny handler. The real Chromium page fixture
   has zero server connections; this does not establish worker coverage or a
   network-wide boundary. Selective forwarding remains unsupported under the
   fetch/fulfill combination; explicit `off` and no-policy modes are unguarded.
 - **Response-size caps (PARTIAL)**: browser declared-length and actual-byte
-  checks apply only to routed responses; actual bytes are checked after buffering,
-  not as a peak-memory bound. Later redirect responses can bypass them. Direct
-  downloads separately enforce streaming decoded-byte limits.
+  checks apply to the terminal response of walked chains; actual bytes are
+  checked after buffering, not as a peak-memory bound; body-bearing
+  passthrough responses are uncapped. Direct downloads separately enforce
+  streaming decoded-byte limits.
 - **Body-bearing request fidelity (RESOLVED 2026-09-12)**: the fetch/fulfill
   choke point's response-inspection benefit came at the cost of request-body
   fidelity for `POST`/`PUT`/`PATCH` — Playwright's `route.fetch()` re-issue does

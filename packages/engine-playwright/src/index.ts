@@ -1348,16 +1348,18 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
   }
 
   /**
-   * Partial browser egress gate. For each routed request, fetch without
-   * following redirects, check the response and first Location target,
-   * then fulfill. Playwright does not route later hops in that chain;
-   * this path does not enforce all-hop host, redirect-count or byte limits.
-   * Denied routed requests receive a synthetic 403 marked with
-   * x-agentbrowser-blocked, which navigate() maps to `blocked`.
+   * Browser egress gate. For each routed request, fetch without following
+   * redirects, then walk any redirect chain Node-side: every hop gets a
+   * fresh policy verdict, a hop cap, and loop detection, and only the
+   * terminal response is fulfilled — the browser never follows an
+   * unchecked hop. Denied routed requests receive a synthetic 403 marked
+   * with x-agentbrowser-blocked, which navigate() maps to `blocked`.
    *
-   * Verdicts and addresses are rechecked per routed request, but the
-   * browser connection is not DNS-pinned. Body checks occur after buffering.
-   * Routing disables Chromium's HTTP cache and adds an in-process hop.
+   * Verdicts and addresses are rechecked per hop, but the browser
+   * connection is not DNS-pinned, body-bearing requests (POST/PUT/PATCH)
+   * bypass response inspection natively, and body checks occur after
+   * buffering. Routing disables Chromium's HTTP cache and adds an
+   * in-process hop.
    */
   private async installEgress(
     context: BrowserContext,
@@ -1470,6 +1472,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       }
     }
 
+    // Redirect chains are walked Node-side (all-hop enforcement); Chromium's
+    // own limit is ~20. Ten keeps hostile chains bounded without breaking
+    // ordinary login/logo chains.
+    const MAX_REDIRECT_HOPS = 10;
     await context.route('**', async (route) => {
       const request = route.request();
       const url = request.url();
@@ -1520,11 +1526,47 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         }
 
         const response = await route.fetch({ maxRedirects: 0 });
+        // All-hop enforcement: the browser never sees an UNCHECKED hop.
+        // The chain is walked Node-side — fresh verdict, hop cap, and loop
+        // detection per hop. Allowed chains complete in two phases: the
+        // verified terminal URL is handed back as a redirect so the
+        // document lands at the right address, and the browser's native
+        // fetch of that already-checked URL is not re-capped (content
+        // TOCTOU, same residual class as the body-bearing passthrough).
+        // This retires the R4 redirect gap: fulfilling the first 302 let
+        // the browser follow every later hop unchecked.
+        const seen = new Set([url]);
+        let current = response;
+        let currentUrl = url;
+        let hops = 0;
         try {
-          const headers = await response.headers();
-          const location = headers.location;
-          if (response.status() >= 300 && response.status() < 400 && location !== undefined) {
-            const absolute = new URL(location, url);
+          while (true) {
+            const hopHeaders = await current.headers();
+            const location = hopHeaders.location;
+            if (!(current.status() >= 300 && current.status() < 400 && location !== undefined)) {
+              break;
+            }
+            hops += 1;
+            if (hops > MAX_REDIRECT_HOPS) {
+              emitRequest('request.failed', request, {
+                blocked: true,
+                reason: `MAX_REDIRECTS (${hops - 1} hops)`,
+              });
+              await deny('egress_policy');
+              return;
+            }
+            const absolute = new URL(location, currentUrl);
+            const hopKey = absolute.origin + absolute.pathname + absolute.search;
+            if (seen.has(hopKey)) {
+              emitRequest('request.failed', request, {
+                blocked: true,
+                reason: 'REDIRECT_LOOP',
+                redirect: hopKey,
+              });
+              await deny('egress_policy');
+              return;
+            }
+            seen.add(hopKey);
             const hop = await verdictOf(absolute.hostname, absolute.toString());
             if (hop.verdict === 'deny') {
               emitRequest('request.failed', request, {
@@ -1535,7 +1577,22 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
               await deny(hop.reason ?? 'engine_error');
               return;
             }
+            // This walker only handles body-less requests (the body-bearing
+            // passthrough above): 303 always re-issues GET, 307/308 keep the
+            // original method.
+            const followMethod =
+              current.status() === 307 || current.status() === 308 ? method : 'GET';
+            const next = await route.fetch({
+              url: absolute.toString(),
+              method: followMethod,
+              maxRedirects: 0,
+            });
+            currentUrl = absolute.toString();
+            const previous = current;
+            current = next;
+            await previous.dispose().catch(() => {});
           }
+          const headers = await current.headers();
 
           // Response-cap enforcement (spec 17): oversized responses are
           // blocked at the choke point, not merely observed.
@@ -1555,7 +1612,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
           // Playwright buffers route.fetch before this gate; this limits what
           // reaches the page, NOT peak transport memory (ADR-008 residual).
           if (egress.checkBodySize !== undefined) {
-            const body = await response.body();
+            const body = await current.body();
             try {
               await egress.checkBodySize(body.byteLength);
             } catch {
@@ -1566,22 +1623,42 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
               await deny('egress_policy');
               return;
             }
+            if (hops > 0) {
+              emitRequest('request.finished', request, { status: 302, redirect: currentUrl });
+              await fulfill({
+                status: 302,
+                headers: { location: currentUrl },
+                contentType: 'text/plain',
+                body: '',
+              });
+              return;
+            }
             emitRequest('request.finished', request, {
-              status: response.status(),
+              status: current.status(),
               bytes: body.byteLength,
             });
-            await fulfill({ response, body });
+            await fulfill({ response: current, body });
             return;
           }
 
           const declaredLength = headers['content-length'];
+          if (hops > 0) {
+            emitRequest('request.finished', request, { status: 302, redirect: currentUrl });
+            await fulfill({
+              status: 302,
+              headers: { location: currentUrl },
+              contentType: 'text/plain',
+              body: '',
+            });
+            return;
+          }
           emitRequest('request.finished', request, {
-            status: response.status(),
+            status: current.status(),
             ...(declaredLength !== undefined ? { bytes: Number.parseInt(declaredLength, 10) } : {}),
           });
-          await fulfill({ response });
+          await fulfill({ response: current });
         } finally {
-          await response.dispose();
+          await current.dispose();
         }
       } catch (error) {
         emitRequest('request.failed', request, {
