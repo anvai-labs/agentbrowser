@@ -80,6 +80,29 @@ No persistent config change was made.
   CA for a Sandhi gateway, or installing the homelab CA into the trust store
   the client uses — an operator trust decision.
 
+## Footprint (T8 footprint gate, measured 2026-09-29)
+
+Install sizes (`du -sh`, brew Cellar trees) and peak RSS (`/usr/bin/time -l`
+max-resident, and `ps rss` for the idle MCP bridge), on the same machine as
+every other record in this file. Prompt bytes are a T1 measurement
+(`spec-context.mjs` serialized bytes) and are deliberately not mixed in here.
+
+| Measurement | Value |
+| --- | --- |
+| agentbrowser install (Cellar 1.13.0: CLI + server + MCP) | 337 MB |
+| Victor install (Cellar 0.10.0) | 208 MB |
+| Application-only control package (src / dist) | 824 KB / 660 KB |
+| agentbrowser CLI one-shot (`health`) peak RSS | 47 MB |
+| agentbrowser-mcp idle RSS after handshake (16 tools) | 44 MB |
+| agentbrowser-server live baseline RSS (Chromium libs loaded, no session) | 415 MB |
+| Victor import + sandhi transport peak RSS | 144 MB |
+| Victor `--version` peak RSS | 139 MB |
+
+The application-only boundary is visible in the sizes themselves: the
+control package that T8's application-only execution requires is under a
+megabyte and imports no browser or model SDK, while the browser-carrying
+install is three orders of magnitude larger.
+
 ## Consequences for the T8 gates
 
 - Slice 2 (schema/result fidelity): **qualified through the installed CLI
