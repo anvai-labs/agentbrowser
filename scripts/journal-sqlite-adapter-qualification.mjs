@@ -13,18 +13,25 @@
 // clean-checkout order).
 import assert from 'node:assert/strict';
 import {
+  chmodSync,
+  copyFileSync,
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
+  symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { openOperationJournal } from '../packages/control/dist/operation-journal.js';
@@ -584,6 +591,302 @@ test('sustained writes stay within bounded file sizes; the anchor never grows', 
   // checkpoint on the child's own close), so the sidecar must be gone or empty.
   const wal = join(paths.directory, 'journal.sqlite-wal');
   assert.ok(!existsSync(wal) || statSync(wal).size === 0, 'WAL survived graceful close');
+});
+
+test('a stale DB-only copy refuses reopen against the current anchor', async () => {
+  const paths = freshPaths('journal-atv-stale-db-');
+  const first = await startAdapter({ ...paths }, true);
+  const journal = await openManagerNamespace(first, 'stale-db-a');
+  assertAcknowledged(
+    await journal.reserveIntent({
+      key: intentKey('op-stale-db-1'),
+      actor: 'operator-a',
+      liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-stale-db' },
+    })
+  );
+  assert.deepEqual(await journal.close(), { kind: 'closed' });
+  await awaitChildSelfExit(first);
+  // Graceful close checkpointed everything into the DB: snapshot the stale pair.
+  const dataPath = join(paths.directory, 'journal.sqlite');
+  const anchorPath = join(paths.anchorDirectory, 'commit.json');
+  const staleDb = join(dirname(paths.directory), 'stale-db.sqlite');
+  copyFileSync(dataPath, staleDb);
+
+  // Advance durable state past the snapshot.
+  const second = await startAdapter({ ...paths }, false);
+  const advanced = await openManagerNamespace(second, 'stale-db-a');
+  assertAcknowledged(
+    await advanced.reserveIntent({
+      key: intentKey('op-stale-db-2'),
+      actor: 'operator-a',
+      liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-stale-db-2' },
+    })
+  );
+  assert.deepEqual(await advanced.close(), { kind: 'closed' });
+  await awaitChildSelfExit(second);
+
+  // Restore ONLY the stale DB: the current anchor witness no longer matches.
+  copyFileSync(staleDb, dataPath);
+  await assert.rejects(startAdapter({ ...paths }, false));
+  // Evidence preserved: no auto-repair rewrote the stale copy.
+  assert.deepEqual(readFileSync(dataPath), readFileSync(staleDb));
+});
+
+test('a stale anchor-only copy refuses reopen against the current database', async () => {
+  const paths = freshPaths('journal-atv-stale-anchor-');
+  const first = await startAdapter({ ...paths }, true);
+  const journal = await openManagerNamespace(first, 'stale-anchor-a');
+  assertAcknowledged(
+    await journal.reserveIntent({
+      key: intentKey('op-stale-anchor-1'),
+      actor: 'operator-a',
+      liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-stale-anchor' },
+    })
+  );
+  assert.deepEqual(await journal.close(), { kind: 'closed' });
+  await awaitChildSelfExit(first);
+  const anchorPath = join(paths.anchorDirectory, 'commit.json');
+  const staleAnchor = join(dirname(paths.directory), 'stale-anchor.json');
+  copyFileSync(anchorPath, staleAnchor);
+
+  const second = await startAdapter({ ...paths }, false);
+  const advanced = await openManagerNamespace(second, 'stale-anchor-a');
+  assertAcknowledged(
+    await advanced.reserveIntent({
+      key: intentKey('op-stale-anchor-2'),
+      actor: 'operator-a',
+      liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-stale-anchor-2' },
+    })
+  );
+  assert.deepEqual(await advanced.close(), { kind: 'closed' });
+  await awaitChildSelfExit(second);
+
+  // Restore ONLY the stale anchor: the current DB witness no longer matches.
+  copyFileSync(staleAnchor, anchorPath);
+  await assert.rejects(startAdapter({ ...paths }, false));
+  assert.deepEqual(readFileSync(anchorPath), readFileSync(staleAnchor));
+});
+
+test('a malformed anchor refuses reopen and is preserved for investigation', async () => {
+  const paths = freshPaths('journal-atv-bad-anchor-');
+  const first = await startAdapter({ ...paths }, true);
+  const journal = await openManagerNamespace(first, 'bad-anchor-a');
+  assert.deepEqual(await journal.close(), { kind: 'closed' });
+  await awaitChildSelfExit(first);
+  const anchorPath = join(paths.anchorDirectory, 'commit.json');
+  writeFileSync(anchorPath, 'this is not anchor json');
+  await assert.rejects(startAdapter({ ...paths }, false));
+  assert.equal(readFileSync(anchorPath, 'utf8'), 'this is not anchor json');
+});
+
+test('a missing anchor refuses reopen without auto-recreation', async () => {
+  const paths = freshPaths('journal-atv-no-anchor-');
+  const first = await startAdapter({ ...paths }, true);
+  const journal = await openManagerNamespace(first, 'no-anchor-a');
+  assert.deepEqual(await journal.close(), { kind: 'closed' });
+  await awaitChildSelfExit(first);
+  const anchorPath = join(paths.anchorDirectory, 'commit.json');
+  const dataPath = join(paths.directory, 'journal.sqlite');
+  rmSync(anchorPath);
+  await assert.rejects(startAdapter({ ...paths }, false));
+  assert.ok(!existsSync(anchorPath), 'reopen recreated the missing anchor');
+  assert.ok(existsSync(dataPath), 'reopen deleted the durable database');
+});
+
+test('a partially replaced anchor (leftover commit.pending) refuses reopen', async () => {
+  const paths = freshPaths('journal-atv-partial-anchor-');
+  const first = await startAdapter({ ...paths }, true);
+  const journal = await openManagerNamespace(first, 'partial-anchor-a');
+  assert.deepEqual(await journal.close(), { kind: 'closed' });
+  await awaitChildSelfExit(first);
+  const pendingPath = join(paths.anchorDirectory, 'commit.pending');
+  writeFileSync(pendingPath, '{"partial":true');
+  await assert.rejects(startAdapter({ ...paths }, false));
+  assert.equal(readFileSync(pendingPath, 'utf8'), '{"partial":true');
+});
+
+test('hardlinked or symlinked durable data refuses reopen', async () => {
+  const paths = freshPaths('journal-atv-alias-');
+  const first = await startAdapter({ ...paths }, true);
+  const journal = await openManagerNamespace(first, 'alias-a');
+  assert.deepEqual(await journal.close(), { kind: 'closed' });
+  await awaitChildSelfExit(first);
+  const dataPath = join(paths.directory, 'journal.sqlite');
+
+  // A hardlink doubles the link count the owner checks on every open.
+  const aliasPath = join(paths.directory, 'journal.sqlite.alias');
+  linkSync(dataPath, aliasPath);
+  try {
+    await assert.rejects(startAdapter({ ...paths }, false));
+  } finally {
+    unlinkSync(aliasPath);
+  }
+
+  // A symlink in the durable name itself is not a regular single-link file.
+  renameSync(dataPath, `${dataPath}.real`);
+  symlinkSync(`${dataPath}.real`, dataPath);
+  try {
+    await assert.rejects(startAdapter({ ...paths }, false));
+  } finally {
+    unlinkSync(dataPath);
+    renameSync(`${dataPath}.real`, dataPath);
+  }
+});
+
+test('store directory permission drift refuses reopen', async () => {
+  const paths = freshPaths('journal-atv-perm-');
+  const first = await startAdapter({ ...paths }, true);
+  const journal = await openManagerNamespace(first, 'perm-a');
+  assert.deepEqual(await journal.close(), { kind: 'closed' });
+  await awaitChildSelfExit(first);
+
+  for (const mode of [0o750, 0o500]) {
+    chmodSync(paths.directory, mode);
+    try {
+      await assert.rejects(startAdapter({ ...paths }, false), undefined, `mode ${mode.toString(8)} accepted`);
+    } finally {
+      chmodSync(paths.directory, 0o700);
+    }
+  }
+});
+
+test('an external writer lock BUSYs one mutation, seals the owner, and reopens clean', async () => {
+  const paths = freshPaths('journal-atv-busy-');
+  const adapter = await startAdapter({ ...paths }, true);
+  const journal = await openManagerNamespace(adapter, 'busy-a');
+  const external = new DatabaseSync(join(paths.directory, 'journal.sqlite'));
+  external.exec('BEGIN EXCLUSIVE');
+  // busy_timeout is zero inside the child: the write lock is BUSY immediately,
+  // the mutation cannot be classified, and the owner seals.
+  const outcome = await journal.reserveIntent({
+    key: intentKey('op-busy'),
+    actor: 'operator-a',
+    liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-busy' },
+  });
+  assert.notEqual(outcome.kind, 'acknowledged');
+  external.exec('ROLLBACK');
+  external.close();
+  // The sealed owner can neither confirm the namespace close nor accept work.
+  const closed = await journal.close();
+  assert.notEqual(closed.kind, 'closed');
+  await adapter.dispose();
+
+  // BUSY alone leaves a consistent pair: a fresh generation acquires cleanly
+  // and the unclassified intent is not silently present.
+  const second = await startAdapter({ ...paths }, false);
+  const reopened = await openOperationJournal(
+    second,
+    namespaceConfiguration('busy-a'),
+    Buffer.alloc(32, 7)
+  );
+  assertOpened(reopened);
+  const retry = await reopened.journal.reserveIntent({
+    key: intentKey('op-busy'),
+    actor: 'operator-a',
+    liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-busy' },
+  });
+  assertAcknowledged(retry);
+  // 'applied', not 'existing': the BUSYed mutation wrote nothing.
+  assert.equal(retry.disposition, 'applied');
+  assert.deepEqual(await reopened.journal.close(), { kind: 'closed' });
+  await second.dispose();
+});
+
+test('admission ceilings refuse capacity without evicting accepted identities', async () => {
+  const paths = freshPaths('journal-atv-exhaust-');
+  const adapter = await startAdapter({ ...paths }, true);
+  const base = namespaceConfiguration('exhaust-a');
+  const opened = await openOperationJournal(
+    adapter,
+    {
+      ...base,
+      bounds: { ...base.bounds, maxNamespaces: 1, maxRecords: 2, maxRecordBytes: 8192 },
+    },
+    Buffer.alloc(32, 7)
+  );
+  assertOpened(opened);
+  const secondNamespace = await openOperationJournal(
+    adapter,
+    {
+      ...namespaceConfiguration('exhaust-b'),
+      bounds: { ...namespaceConfiguration('exhaust-b').bounds, maxNamespaces: 1 },
+    },
+    Buffer.alloc(32, 7)
+  );
+  // Later namespaces must repeat the first namespace's maxNamespaces (a
+  // mismatch is configuration); with the bound repeated, the count refuses.
+  assert.deepEqual(secondNamespace, { kind: 'definitely_not_opened', reason: 'capacity' });
+
+  const key1 = intentKey('op-exhaust-1');
+  const key2 = intentKey('op-exhaust-2');
+  assertAcknowledged(await opened.journal.reserveIntent({ key: key1, actor: 'operator-a', liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-exhaust-1' } }));
+  assertAcknowledged(await opened.journal.reserveIntent({ key: key2, actor: 'operator-a', liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-exhaust-2' } }));
+  const third = await opened.journal.reserveIntent({
+    key: intentKey('op-exhaust-3'),
+    actor: 'operator-a',
+    liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-exhaust-3' },
+  });
+  assert.deepEqual(third, { kind: 'definitely_not_written', reason: 'capacity' });
+  // The record ceiling bounds transitions at the port: the oversize input is
+  // refused before any write (the port's parse bound; the count ceilings above
+  // carry the capacity reason). Nothing persists either way.
+  const oversize = await opened.journal.reserveIntent({
+    key: intentKey('op-exhaust-big'),
+    actor: 'operator-a',
+    liveFingerprint: { algorithm: 'rest-json-v1', digest: 'x'.repeat(16384) },
+  });
+  assert.equal(oversize.kind, 'definitely_not_written');
+  assert.equal(
+    (await opened.journal.lookup(intentKey('op-exhaust-big'))).kind,
+    'scoped_absent'
+  );
+
+  // Accepted identities survive the refusals: no eviction to admit newcomers.
+  assert.equal((await opened.journal.lookup(key1)).kind, 'found');
+  assert.equal((await opened.journal.lookup(key2)).kind, 'found');
+  assert.deepEqual(await opened.journal.close(), { kind: 'closed' });
+  await adapter.dispose();
+});
+
+test('raw fingerprint key material never persists in storage or anchor', async () => {
+  const paths = freshPaths('journal-atv-sentinel-');
+  const adapter = await startAdapter({ ...paths }, true);
+  const rawKey = Buffer.alloc(32, 0xab);
+  const opened = await openOperationJournal(
+    adapter,
+    namespaceConfiguration('sentinel-a'),
+    rawKey
+  );
+  assertOpened(opened);
+  assertAcknowledged(
+    await opened.journal.reserveIntent({
+      key: intentKey('op-sentinel'),
+      actor: 'operator-a',
+      liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-sentinel' },
+    })
+  );
+  assert.deepEqual(await opened.journal.close(), { kind: 'closed' });
+  await awaitChildSelfExit(adapter);
+  await adapter.dispose();
+
+  // Positive control: the namespace really is durable on disk.
+  assert.ok(
+    readFileSync(join(paths.directory, 'journal.sqlite')).includes(Buffer.from('sentinel-a')),
+    'positive control failed: namespace id absent from storage'
+  );
+  const scan = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const child = join(dir, entry.name);
+      if (entry.isDirectory()) scan(child);
+      else
+        assert.ok(
+          !readFileSync(child).includes(rawKey),
+          `${child} contains raw fingerprint key material`
+        );
+    }
+  };
+  scan(paths.directory);
+  scan(paths.anchorDirectory);
 });
 
 test('CLI and MCP source trees carry no journal storage code', async () => {
