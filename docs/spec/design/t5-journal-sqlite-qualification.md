@@ -46,11 +46,18 @@ write-stripped) refuse reopen, an external writer lock BUSYs one mutation,
 seals the owner, and reopens clean with the unclassified intent absent,
 namespace/record ceilings refuse `capacity` without evicting accepted
 identities, oversize transitions are refused before any write, and the raw
-fingerprint key material appears in no storage or anchor file. Still open
+fingerprint key material appears in no storage or anchor file. The
+protocol-fault rows are qualified with an instrumented child as well: a
+late reply settles from the manager's bounded correlation map with the
+mutation durable as historical fact, a duplicate reply settles exactly
+once, and malformed frames — including a well-correlated reply with no
+payload — never crash the host: the manager drops unanswerable frames, the
+port classifies the untrustable reply as uncertain and seals that journal
+(the once-uncertain rule), and the manager keeps serving fresh ports.
+Still open
 before any public capability: true read-only-filesystem and disk-full lanes
-(release-time qualification on constrained mounts), clock-movement rows
-(fake-timer record conformance), and malformed/duplicate/late IPC reply
-rows (a protocol-fault child variant, next). No public
+(release-time qualification on constrained mounts) and clock-movement rows
+(fake-timer record conformance). No public
 capability is enabled and nothing is exported from the
 control barrel. Read [J2a architecture](t5-journal-sqlite-audit.md) and existing
 [journal port](t5-journal-contract.md). Reuse their owners; do not invent a durable executor.

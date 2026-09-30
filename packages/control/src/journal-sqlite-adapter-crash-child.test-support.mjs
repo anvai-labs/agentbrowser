@@ -179,11 +179,41 @@ process.on('message', (raw) => {
     if (isFaultedDispatch) dispatchArmed = true;
     return dispatchFaulted(tx, message);
   });
-  send({
-    kind: 'outcome',
-    correlationId: message.correlationId,
-    outcome: envelope(message.namespaceId, message.ownerFence, outcome),
-  });
+  const reply = () =>
+    send({
+      kind: 'outcome',
+      correlationId: message.correlationId,
+      outcome: envelope(message.namespaceId, message.ownerFence, outcome),
+    });
+  if (isFaultedDispatch && fault.point === 'late_reply') {
+    // The mutation is already durable; the reply arrives after the caller's
+    // own timeout, so the manager must settle it from its bounded map and
+    // stay healthy for later callers.
+    setTimeout(reply, fault.delayMs ?? 2_500);
+    return;
+  }
+  if (isFaultedDispatch && fault.point === 'duplicate_reply') {
+    // The same correlation frame delivered twice: the manager settles once
+    // and must ignore the second without dropping later work.
+    reply();
+    reply();
+    return;
+  }
+  if (isFaultedDispatch && fault.point === 'malformed_frames') {
+    // Frames a buggy or hostile peer could produce — including a null frame,
+    // which crashes an unguarded host listener — ahead of the real reply.
+    try {
+      send(null);
+    } catch {
+      // A serialization refusal to deliver null is itself acceptable.
+    }
+    send('garbage');
+    send({ kind: 'outcome' });
+    send({ kind: 'outcome', correlationId: message.correlationId });
+    reply();
+    return;
+  }
+  reply();
 
   function dispatchFaulted(tx, request) {
     const now = Date.now();
