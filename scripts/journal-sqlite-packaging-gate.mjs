@@ -6,15 +6,24 @@
 // real manager/child lifecycle through the deployed control package, asserting
 // the forked child's command line stays inside the extraction root.
 //
-// Run: node --test --test-force-exit scripts/journal-sqlite-packaging-gate.mjs \
-//        <path to agentbrowser-server-<target>.tar.gz>
+// Run: JOURNAL_PACKAGE_TARBALL=<server-candidate.tar.gz> \
+//        node --test --test-force-exit scripts/journal-sqlite-packaging-gate.mjs
+// (the node --test runner treats positional arguments as test-file paths, so
+// the candidate path must arrive through the environment)
 // (design doc: "Verify the storage child is included and resolves paths after
 // extraction without the source checkout.")
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readlinkSync,
+  realpathSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { test } from 'node:test';
 
 // The candidate path arrives via JOURNAL_PACKAGE_TARBALL under the node --test
@@ -55,6 +64,20 @@ test('the packaged candidate carries the storage child and resolves it after ext
 
   mkdirSync(extracted, { recursive: true });
   execFileSync('tar', ['-xzf', tarball, '-C', extracted], { stdio: 'pipe' });
+  // The candidate is self-contained: every deployed symlink target stays
+  // inside the extraction (links are relative today; this makes the invariant
+  // explicit). One hop is resolved here — a chained escape still fails loudly
+  // at module resolution or the ps containment assert below.
+  const links = execFileSync('find', [extracted, '-type', 'l'], { encoding: 'utf8' })
+    .split('\n')
+    .filter(Boolean);
+  for (const link of links) {
+    const target = resolve(dirname(link), readlinkSync(link));
+    assert.ok(
+      target === extracted || target.startsWith(extracted + sep),
+      `deployed symlink escapes the extraction: ${link} -> ${target}`
+    );
+  }
   for (const module of JOURNAL_MODULES) {
     assert.ok(
       existsSync(join(extracted, 'server', CONTROL_DIST, module)),
