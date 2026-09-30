@@ -5,6 +5,7 @@
  * Following TDD principles, tests are written before implementation.
  */
 
+import http from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PlaywrightChromiumEngine, extraChromiumArgs, resolveContextViewport } from './index';
 
@@ -446,18 +447,37 @@ describe('PlaywrightChromiumEngine', () => {
     });
 
     it('should execute click action', async () => {
-      const session = await engine.createSession();
-      const page = await session.newPage();
+      // Hermetic local page: example.com restructured its live page (2026-09) and
+      // now asks not to be relied on for testing — the click target is a local
+      // counter button whose DOM effect proves the synthetic click dispatched.
+      const server = http.createServer((request, response) => {
+        response.writeHead(200, { 'content-type': 'text/html' });
+        response.end(
+          '<button id="counter" onclick="this.textContent=String(Number(this.textContent||0)+1)">0</button>'
+        );
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const baseUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}/`;
+      try {
+        const session = await engine.createSession();
+        const page = await session.newPage();
 
-      await page.navigate({ url: 'https://example.com' });
-      const observation = await page.observe({ mode: 'interactive' });
+        await page.navigate({ url: baseUrl });
+        const observation = await page.observe({ mode: 'interactive' });
 
-      if (observation.elements.length > 0) {
-        const target = { ref: observation.elements[0].ref };
-        const result = await page.act({ type: 'click', target });
+        const button = observation.elements.find((element) => element.role === 'button');
+        expect(button).toBeDefined();
+        const result = await page.act({ type: 'click', target: { ref: button!.ref } });
 
         expect(result).toBeDefined();
         expect(result.actionId).toBeDefined();
+        // The synthetic click actually reached the page: the counter advanced.
+        const after = await page.observe({ mode: 'interactive' });
+        const afterButton = after.elements.find((element) => element.role === 'button');
+        // The button's accessible name IS its text content: '0' before, '1' after.
+        expect(afterButton?.name).toBe('1');
+      } finally {
+        server.close();
       }
     });
 

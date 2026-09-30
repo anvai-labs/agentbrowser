@@ -51,6 +51,51 @@ jobs:
       - name: Verify built product versions
         run: pnpm release:artifacts
 
+  journal-gates:
+    # T5 J2b.2/J2b.3 gates over the concrete journal manager/child/adapter stack
+    # (real forked child, durable commits), on the built dist this job owns.
+    # Blocking since the promotion PR: the original hang (a failed gate
+    # skipping dispose leaks the storage child's IPC handle and wedges
+    # node --test) is root-caused and bounded by --test-force-exit, and two
+    # consecutive green Linux canary runs qualified the gates.
+    name: Journal SQLite gates
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    needs: [type-check]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.tool-versions'
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build workspace dependencies
+        run: pnpm -r build
+      - name: Journal SQLite manager/child qualification gates
+        # TAP reporter streams each gate result inline; --test-force-exit bounds
+        # the runner when a FAILED gate skips its dispose (a leaked storage child
+        # holds the fork's IPC handle open and would otherwise wedge the job to
+        # its timeout — the original canary hang); --test-timeout gives every
+        # test an individual ceiling so a future unbounded await fails its own
+        # test instead of consuming the whole job budget.
+        run: node --test --test-reporter=tap --test-force-exit --test-timeout=60000 scripts/journal-sqlite-adapter-qualification.mjs
+
+      - name: Package the untagged server candidate
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          TARGET="$(node -p "process.platform + '-' + process.arch")"
+          node scripts/package-server.mjs --output-dir out-journal-package --target "$TARGET" --expected-version "$VERSION"
+
+      - name: Qualify the extracted candidate resolves the storage child
+        run: |
+          TARGET="$(node -p "process.platform + '-' + process.arch")"
+          JOURNAL_PACKAGE_TARBALL="out-journal-package/agentbrowser-server-$TARGET.tar.gz" \
+            node --test --test-reporter=tap --test-force-exit --test-timeout=120000 scripts/journal-sqlite-packaging-gate.mjs
+
   lint:
     name: Lint
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}

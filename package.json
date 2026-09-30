@@ -1,6 +1,6 @@
 {
   "name": "agentbrowser-monorepo",
-  "version": "1.13.0",
+  "version": "1.14.0",
   "private": true,
   "description": "AgentBrowser: Agent-First Headless Browser",
   "scripts": {
@@ -33,7 +33,13 @@
     "test:application-independence": "node scripts/check-application-independence.mjs",
     "test:job-eligibility": "tsc --noEmit --allowJs --checkJs --module NodeNext --target ES2022 --skipLibCheck examples/job-application/eligibility.mjs && tsc --noEmit --allowJs --module NodeNext --target ES2022 --skipLibCheck examples/job-application/listing-review.mjs && node --test scripts/job-eligibility.test.mjs scripts/job-listing-review.test.mjs"
   },
-  "keywords": ["browser", "automation", "agent", "headless", "playwright"],
+  "keywords": [
+    "browser",
+    "automation",
+    "agent",
+    "headless",
+    "playwright"
+  ],
   "author": "AgentBrowser Team",
   "license": "Apache-2.0",
   "engines": {

@@ -1,7 +1,58 @@
 # T5 J2b: concrete store implementation and qualification packet
 
-Status: J2b.1 ownership/anchor primitive implemented; full raw adapter qualification
-remains blocked on the acceptance below, with no public capability enabled. Read [J2a architecture](t5-journal-sqlite-audit.md) and existing
+Status: J2b.1 ownership/anchor primitive implemented; J2b.2 steps 1 and 2 complete —
+step 1: the frozen v1 record schema and the record/CAS/namespace state machine
+(`packages/control/src/journal-sqlite-records.ts`) pass the unchanged
+storage-neutral conformance over real SQLite storage, with child-hosted restart
+durability, storage-sentinel and schema-freeze gates; step 2: the bounded manager,
+production storage child (`journal-sqlite-child.ts`) and raw adapter factory
+(`journal-sqlite-adapter.ts`) run the full lifecycle over real IPC — one child for
+all handles, manager-level second-handle refusal, child self-exit after the last
+handle closes, and SIGKILL reacquisition with dead-predecessor fences cleared inside
+the acquisition transaction. J2b.3 process-loss matrix rows QUALIFIED (gates in
+`scripts/journal-sqlite-adapter-qualification.mjs`, the dedicated journal-gates
+CI canary job):
+before_commit (kill before COMMIT — nothing persists, clean reopen),
+after_commit (kill between DB COMMIT and anchor rename — the DB/anchor mismatch
+REFUSES reopen, no auto-repair), after_anchor (kill after the full commit unit
+with the caller unresolved — the acknowledged-ready intent reopens as historical
+fact), and the caller-timeout rule (timeout neither kills the child nor grants
+new ownership). The instrumented crash child scopes its barrier arm to the
+faulted method's own dispatch — the adversarial review caught an unscoped arm
+hanging generation 1 pre-ready, a test-support bug since fixed. The adversarial
+and bounded gates added alongside (second manager acquisition race, concurrent
+first initialization, wrong-fingerprint-key refusal, corrupt/truncated database
+reopen refusal, dispose under outstanding I/O, bounded DB/WAL/anchor sizes,
+child self-exit with a dead adapter reporting uncertain) run in the same
+node --test lane under `--test-force-exit`: a failed gate that skips dispose
+leaks the storage child's open IPC handle and wedges the runner to the job
+timeout — that leak-on-failure was the original canary hang. The gates await
+the factory's exposed child-exit promise after graceful close, because the
+close reply precedes the child's own TRUNCATE checkpoint and racing it
+SIGKILLs the shutdown mid-checkpoint on slower runners. The CI Linux
+journal-gates job arbitrated the matrix (16/16 gates, two consecutive green
+runs) and is now a blocking CI job. The extracted-package child-resolution
+gate (`scripts/journal-sqlite-packaging-gate.mjs`) runs in the same job on
+every PR: it packages the untagged server candidate for the runner's target,
+extracts it, and runs a real manager/child lifecycle from an unrelated
+directory with no `childModulePath` override, asserting the forked child
+stays inside the extraction and dies with dispose; release-time per-target
+qualification stays with the release gate. The deeper adversarial rows are
+qualified in the same blocking lane: stale DB-only and anchor-only copies
+refuse reopen with evidence preserved, malformed and missing anchors and
+leftover `commit.pending` refuse without auto-repair, hardlinked/symlinked
+durable data and directory permission drift (group-readable,
+write-stripped) refuse reopen, an external writer lock BUSYs one mutation,
+seals the owner, and reopens clean with the unclassified intent absent,
+namespace/record ceilings refuse `capacity` without evicting accepted
+identities, oversize transitions are refused before any write, and the raw
+fingerprint key material appears in no storage or anchor file. Still open
+before any public capability: true read-only-filesystem and disk-full lanes
+(release-time qualification on constrained mounts), clock-movement rows
+(fake-timer record conformance), and malformed/duplicate/late IPC reply
+rows (a protocol-fault child variant, next). No public
+capability is enabled and nothing is exported from the
+control barrel. Read [J2a architecture](t5-journal-sqlite-audit.md) and existing
 [journal port](t5-journal-contract.md). Reuse their owners; do not invent a durable executor.
 
 ## Current bounded implementation
