@@ -1,0 +1,6 @@
+# Pinned docs toolchain — mirrors the CI docs workflow; bump both together.
+mkdocs==1.6.1
+mkdocs-material==9.7.7
+mkdocs-git-revision-date-localized-plugin==1.6.0
+pymdown-extensions==12.0.1
+Pygments==2.21.0

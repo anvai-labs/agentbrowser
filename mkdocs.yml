@@ -1,0 +1,298 @@
+site_name: AgentBrowser
+site_description: Agent-native browser service for AI agents - semantic observations, stable refs, egress policy, approval gates.
+site_url: https://anvai-labs.github.io/agentbrowser/
+repo_url: https://github.com/anvai-labs/agentbrowser
+edit_uri: edit/develop/docs/
+copyright: Copyright &copy; 2026 Anvai Labs
+
+# The repo README stays a repo index; docs/index.md is the published home.
+exclude_docs: |
+  # Leading slash anchors each pattern to docs/ top level; unanchored
+  # gitignore-style patterns match at any depth and would silently drop
+  # spec/evidence/, spec/tasks/README.md and spec/design/consumer-*.
+  /README.md
+  /agent-handoffs/
+  /research/
+  /evidence/
+  /consumer-*.md
+  /coexistence-*.md
+  /HANDOFF-*.md
+  /phase0-summary.md
+  /phase1-progress.md
+  /hygiene-audit.md
+
+theme:
+  name: material
+  features:
+    - content.tabs.link
+    - navigation.indexes
+    - navigation.sections
+    - navigation.tabs
+    - navigation.top
+    - search.highlight
+    - search.suggest
+  palette:
+    - media: '(prefers-color-scheme: light)'
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: '(prefers-color-scheme: dark)'
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+hooks:
+  - docs_hooks/rewrite_source_links.py
+
+plugins:
+  - search
+  - git-revision-date-localized:
+      fallback_to_build_date: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Roadmap:
+    - Roadmap overview (T0-T9): spec/tasks/README.md
+    - 'T0 - Contract catalog': spec/tasks/t0-contract-catalog.md
+    - 'T1 - Context profiles': spec/tasks/t1-context-profiles.md
+    - 'T2 - Shared execution': spec/tasks/t2-shared-execution.md
+    - 'T3 - QA regressions': spec/tasks/t3-qa-regressions.md
+    - 'T4 - Application parity': spec/tasks/t4-application-parity.md
+    - 'T5 - Durable recovery': spec/tasks/t5-durable-recovery.md
+    - 'T6 - Widget strategies': spec/tasks/t6-widget-strategies.md
+    - 'T7 - Audit & security': spec/tasks/t7-audit-security.md
+    - 'T8 - Harness qualification': spec/tasks/t8-harness-qualification.md
+    - 'T9 - Release hardening': spec/tasks/t9-release-hardening.md
+  - Truth & comparisons:
+    - 'AgentBrowser vs Chrome debug & Claude integrations': comparison.md
+  - Guides:
+    - 'Operations': operations.md
+    - 'CLI for agents': cli-agent-usage.md
+    - 'MCP tool catalog': mcp-tool-catalog.md
+    - 'Delegated (headed) sessions': delegated-sessions.md
+    - 'Human handoff': human-handoff.md
+    - 'Bulk autofill': bulk-autofill.md
+    - 'Recipe: interactive forms': recipes/interactive-forms.md
+    - 'Recipe: EDGAR filings': recipes/edgar-filings.md
+    - 'Browser engines': engines.md
+    - 'Benchmarks': benchmarks.md
+    - 'Synthetic input limitations': synthetic-input-limitations.md
+    - 'Firefox egress gate': firefox-egress-gate.md
+  - Security & trust:
+    - 'Threat model': threat-model.md
+    - 'Egress transport design': egress-transport-design.md
+    - 'Egress transport feasibility': egress-transport-feasibility.md
+    - 'Egress transport reassessment': egress-transport-reassessment.md
+    - 'Connection authority design': connection-authority-design.md
+    - 'Snapshot release review': snapshot-release-review.md
+    - 'Engineering review remediation': engineering-review-remediation.md
+  - Architecture decisions:
+    - '001 Typescript Playwright Mvp': adr/001-typescript-playwright-mvp.md
+    - '002 Engine Neutral Protocol': adr/002-engine-neutral-protocol.md
+    - '003 Headless First Semantic Observations': adr/003-headless-first-semantic-observations.md
+    - '004 Stable Element Refs Revision Checking': adr/004-stable-element-refs-revision-checking.md
+    - '005 Ephemeral Sessions Explicit Persistence': adr/005-ephemeral-sessions-explicit-persistence.md
+    - '006 Network Egress Policy Ssrf': adr/006-network-egress-policy-ssrf.md
+    - '007 Approval Tokens Side Effects': adr/007-approval-tokens-side-effects.md
+    - '008 Process Container Isolation': adr/008-process-container-isolation.md
+    - '009 Mcp High Level Tools': adr/009-mcp-high-level-tools.md
+    - '010 Rust Engine Gated By Benchmarks': adr/010-rust-engine-gated-by-benchmarks.md
+    - '011 Safari Via Safaridriver Webdriver': adr/011-safari-via-safaridriver-webdriver.md
+    - '012 Snapshot Plan Interaction Model': adr/012-snapshot-plan-interaction-model.md
+    - '013 Headed Sessions And Walled Logins': adr/013-headed-sessions-and-walled-logins.md
+    - '014 Npm Distribution': adr/014-npm-distribution.md
+    - '015 Cross Package Contract Single Source Of Truth': adr/015-cross-package-contract-single-source-of-truth.md
+    - '016 Branded Chrome First Headed Launches': adr/016-branded-chrome-first-headed-launches.md
+    - '017 Default Port 5709': adr/017-default-port-5709.md
+    - '018 Upload Action': adr/018-upload-action.md
+    - '019 Explicit Service Worker Opt In': adr/019-explicit-service-worker-opt-in.md
+    - '020 Inline Html Verification': adr/020-inline-html-verification.md
+    - '021 Form Controls Enrichment': adr/021-form-controls-enrichment.md
+  - Technical designs:
+    - 'Td Browser 10 Session Extension Loading': td/TD-BROWSER-10-session-extension-loading.md
+    - 'Td Browser 11 Session Initial Page Race': td/TD-BROWSER-11-session-initial-page-race.md
+    - 'Td Browser 12 Structured Extraction Gaps': td/TD-BROWSER-12-structured-extraction-gaps.md
+    - 'Td Browser 5 Single Binary Mcp Distribution': td/TD-BROWSER-5-single-binary-mcp-distribution.md
+    - 'Td Browser 6 Headed Sessions And Credential Handoff': td/TD-BROWSER-6-headed-sessions-and-credential-handoff.md
+    - 'Td Browser 7 Safari Webdriver Engine': td/TD-BROWSER-7-safari-webdriver-engine.md
+    - 'Td Browser 8 Batched Snapshots And Action Plans': td/TD-BROWSER-8-batched-snapshots-and-action-plans.md
+    - 'Td Browser 9 Bounded In Memory Collections': td/TD-BROWSER-9-bounded-in-memory-collections.md
+  - Specification:
+    - Overview: spec/README.md
+    - 'Architecture': spec/architecture.md
+    - 'Contracts': spec/contracts.md
+    - 'Core': spec/core.md
+    - 'Delivery': spec/delivery.md
+    - 'Execution': spec/execution.md
+    - 'Grounding': spec/grounding.md
+    - 'Interfaces': spec/interfaces.md
+    - 'Quality Ci': spec/quality-ci.md
+    - 'Review': spec/review.md
+    - 'Security': spec/security.md
+    - 'State Memory': spec/state-memory.md
+    - 'Vision': spec/vision.md
+    - Modes:
+      - 'Application': spec/modes/application.md
+      - 'Appsec': spec/modes/appsec.md
+      - 'Audit': spec/modes/audit.md
+      - 'Bounty': spec/modes/bounty.md
+      - 'Forms': spec/modes/forms.md
+      - 'Operations': spec/modes/operations.md
+      - 'Qa': spec/modes/qa.md
+  - Design briefs:
+    - 'Cli Cookie File Handoff': spec/design/cli-cookie-file-handoff.md
+    - 'Consumer Research Intake': spec/design/consumer-research-intake.md
+    - 'Extraction Output Budget': spec/design/extraction-output-budget.md
+    - 'Navigation Failure Reasons': spec/design/navigation-failure-reasons.md
+    - 'Operator Cdp Attach': spec/design/operator-cdp-attach.md
+    - 'Research Browser Ownership': spec/design/research-browser-ownership.md
+    - 'Session Close Causes': spec/design/session-close-causes.md
+    - 'Session Disconnect': spec/design/session-disconnect.md
+    - 'Session Launch Diagnostics': spec/design/session-launch-diagnostics.md
+    - 'Session Lease Visibility': spec/design/session-lease-visibility.md
+    - 'T3 Application Recipe': spec/design/t3-application-recipe.md
+    - 'T3 Cli Evaluation': spec/design/t3-cli-evaluation.md
+    - 'T3 Live Junit': spec/design/t3-live-junit.md
+    - 'T3 Node Test Qualification': spec/design/t3-node-test-qualification.md
+    - 'T3 Regression Report': spec/design/t3-regression-report.md
+    - 'T3 Report Artifacts': spec/design/t3-report-artifacts.md
+    - 'T4 Application Callback Contracts': spec/design/t4-application-callback-contracts.md
+    - 'T4 Operator Application Binding': spec/design/t4-operator-application-binding.md
+    - 'T4 Operator Reconciliation': spec/design/t4-operator-reconciliation.md
+    - 'T4 Production Evidence Composition': spec/design/t4-production-evidence-composition.md
+    - 'T5 Browser Review Publication': spec/design/t5-browser-review-publication.md
+    - 'T5 Finalization Publication': spec/design/t5-finalization-publication.md
+    - 'T5 Http Publication': spec/design/t5-http-publication.md
+    - 'T5 Journal Application Terminal': spec/design/t5-journal-application-terminal.md
+    - 'T5 Journal Authority': spec/design/t5-journal-authority.md
+    - 'T5 Journal Contract': spec/design/t5-journal-contract.md
+    - 'T5 Journal Control Views': spec/design/t5-journal-control-views.md
+    - 'T5 Journal Sqlite Audit': spec/design/t5-journal-sqlite-audit.md
+    - 'T5 Journal Sqlite Qualification': spec/design/t5-journal-sqlite-qualification.md
+    - 'T5 Operation Journal': spec/design/t5-operation-journal.md
+    - 'T5 Review Publication': spec/design/t5-review-publication.md
+    - 'T5 Status Publication': spec/design/t5-status-publication.md
+    - 'T6 Application Read Evidence': spec/design/t6-application-read-evidence.md
+    - 'T6 Atomic Submission': spec/design/t6-atomic-submission.md
+    - 'T6 Document Read': spec/design/t6-document-read.md
+    - 'T6 Draft Oracle': spec/design/t6-draft-oracle.md
+    - 'T6 Evidence Review Binding': spec/design/t6-evidence-review-binding.md
+    - 'T6 Form Mapping': spec/design/t6-form-mapping.md
+    - 'T6 Job Application Checkpoint': spec/design/t6-job-application-checkpoint.md
+    - 'T6 Job Eligibility': spec/design/t6-job-eligibility.md
+    - 'T6 Listing Review': spec/design/t6-listing-review.md
+    - 'T6 Mandatory Application Consent': spec/design/t6-mandatory-application-consent.md
+    - 'T6 Native Form Witness': spec/design/t6-native-form-witness.md
+    - 'T6 Operator Approval': spec/design/t6-operator-approval.md
+    - 'T6 Owned Popup Readiness': spec/design/t6-owned-popup-readiness.md
+    - 'T6 Public Application Review': spec/design/t6-public-application-review.md
+    - 'T6 Public Evidence Review': spec/design/t6-public-evidence-review.md
+    - 'T6 Review Authority Binding': spec/design/t6-review-authority-binding.md
+    - 'T6 Reviewed Payload Consent': spec/design/t6-reviewed-payload-consent.md
+    - 'T6 Scoped Application Read': spec/design/t6-scoped-application-read.md
+    - 'T6 Verified Upload Draft': spec/design/t6-verified-upload-draft.md
+  - Evidence & delivery:
+    - 'Consumer Research Smoke': spec/evidence/consumer-research-smoke.md
+    - 'Foundation Coverage Findings': spec/evidence/foundation-coverage-findings.md
+    - 'Foundation Handback Recheck': spec/evidence/foundation-handback-recheck.md
+    - 'Foundation Progress 2026 09 20': spec/evidence/foundation-progress-2026-09-20.md
+    - 'Navigation Failure Reasons': spec/evidence/navigation-failure-reasons.md
+    - 'Node24 Baseline': spec/evidence/node24-baseline.md
+    - 'Operator Cdp Attach': spec/evidence/operator-cdp-attach.md
+    - 'Release 1.10.0': spec/evidence/release-1.10.0.md
+    - 'Release 1.11.0': spec/evidence/release-1.11.0.md
+    - 'Release 1.12.0': spec/evidence/release-1.12.0.md
+    - 'Release 1.13.0': spec/evidence/release-1.13.0.md
+    - 'Release 1.9.1': spec/evidence/release-1.9.1.md
+    - 'Session Close Causes': spec/evidence/session-close-causes.md
+    - 'Session Disconnect': spec/evidence/session-disconnect.md
+    - 'Session Lease Visibility': spec/evidence/session-lease-visibility.md
+    - 'T0 Contract Audit': spec/evidence/t0-contract-audit.md
+    - 'T0 Foundation': spec/evidence/t0-foundation.md
+    - 'T1 Context Profiles': spec/evidence/t1-context-profiles.md
+    - 'T2 Application Evidence Permission': spec/evidence/t2-application-evidence-permission.md
+    - 'T2 Application Identity': spec/evidence/t2-application-identity.md
+    - 'T2 Cli Application Outcome': spec/evidence/t2-cli-application-outcome.md
+    - 'T2 Dispatch Boundary': spec/evidence/t2-dispatch-boundary.md
+    - 'T2 Evidence Permission': spec/evidence/t2-evidence-permission.md
+    - 'T2 Foundation Qualification': spec/evidence/t2-foundation-qualification.md
+    - 'T2 Http Result Classification': spec/evidence/t2-http-result-classification.md
+    - 'T2 Outcome Run Vertical': spec/evidence/t2-outcome-run-vertical.md
+    - 'T2 Outcome Verifier Foundation': spec/evidence/t2-outcome-verifier-foundation.md
+    - 'T2 Plan Verification Evidence': spec/evidence/t2-plan-verification-evidence.md
+    - 'T2 Semantic Result Validation': spec/evidence/t2-semantic-result-validation.md
+    - 'T3 Application Recipe': spec/evidence/t3-application-recipe.md
+    - 'T3 Bound Regression Report': spec/evidence/t3-bound-regression-report.md
+    - 'T3 Cli Evaluation': spec/evidence/t3-cli-evaluation.md
+    - 'T3 Live Junit': spec/evidence/t3-live-junit.md
+    - 'T3 Navigation Reset': spec/evidence/t3-navigation-reset.md
+    - 'T3 Node Test Qualification': spec/evidence/t3-node-test-qualification.md
+    - 'T3 Report Artifacts': spec/evidence/t3-report-artifacts.md
+    - 'T3 Standalone Qualification': spec/evidence/t3-standalone-qualification.md
+    - 'T4 Application Callback Contracts': spec/evidence/t4-application-callback-contracts.md
+    - 'T4 Operator Application Binding': spec/evidence/t4-operator-application-binding.md
+    - 'T4 Operator Reconciliation': spec/evidence/t4-operator-reconciliation.md
+    - 'T4 Production Evidence Composition': spec/evidence/t4-production-evidence-composition.md
+    - 'T5 Application Publication': spec/evidence/t5-application-publication.md
+    - 'T5 Browser Review Publication': spec/evidence/t5-browser-review-publication.md
+    - 'T5 Finalization': spec/evidence/t5-finalization.md
+    - 'T5 Http Publication': spec/evidence/t5-http-publication.md
+    - 'T5 Journal Application Terminal': spec/evidence/t5-journal-application-terminal.md
+    - 'T5 Journal Authority': spec/evidence/t5-journal-authority.md
+    - 'T5 Journal Contract': spec/evidence/t5-journal-contract.md
+    - 'T5 Journal Control Views': spec/evidence/t5-journal-control-views.md
+    - 'T5 Journal Settlement': spec/evidence/t5-journal-settlement.md
+    - 'T5 Journal Sqlite Audit': spec/evidence/t5-journal-sqlite-audit.md
+    - 'T5 Journal Sqlite Owner': spec/evidence/t5-journal-sqlite-owner.md
+    - 'T5 Operation Status Publication': spec/evidence/t5-operation-status-publication.md
+    - 'T5 Replay Publication': spec/evidence/t5-replay-publication.md
+    - 'T5 Review Publication': spec/evidence/t5-review-publication.md
+    - 'T5 Session Publication': spec/evidence/t5-session-publication.md
+    - 'T6 Application Read Evidence': spec/evidence/t6-application-read-evidence.md
+    - 'T6 Approval Consumption': spec/evidence/t6-approval-consumption.md
+    - 'T6 Atomic Submission': spec/evidence/t6-atomic-submission.md
+    - 'T6 Document Read': spec/evidence/t6-document-read.md
+    - 'T6 Draft Oracle': spec/evidence/t6-draft-oracle.md
+    - 'T6 Evidence Review Binding': spec/evidence/t6-evidence-review-binding.md
+    - 'T6 Form Mapping': spec/evidence/t6-form-mapping.md
+    - 'T6 Job Eligibility': spec/evidence/t6-job-eligibility.md
+    - 'T6 Listing Review': spec/evidence/t6-listing-review.md
+    - 'T6 Mandatory Application Consent': spec/evidence/t6-mandatory-application-consent.md
+    - 'T6 Native Form Witness': spec/evidence/t6-native-form-witness.md
+    - 'T6 Operator Approval': spec/evidence/t6-operator-approval.md
+    - 'T6 Owned Popup Readiness': spec/evidence/t6-owned-popup-readiness.md
+    - 'T6 Public Application Review': spec/evidence/t6-public-application-review.md
+    - 'T6 Public Evidence Review': spec/evidence/t6-public-evidence-review.md
+    - 'T6 Review Authority Binding': spec/evidence/t6-review-authority-binding.md
+    - 'T6 Scoped Application Read': spec/evidence/t6-scoped-application-read.md
+    - 'T6 Verified Upload Draft': spec/evidence/t6-verified-upload-draft.md
+    - 'T6 Widget Commitment': spec/evidence/t6-widget-commitment.md
+    - 'T8 Installed Harness Availability': spec/evidence/t8-installed-harness-availability.md
+  - History:
+    - 'MVP implementation plan (technical design)': technical-design.md
+    - 'Implementation roadmap': implementation-roadmap.md
+    - 'Release milestones': release-milestones.md
+
+strict: true
+use_directory_urls: true

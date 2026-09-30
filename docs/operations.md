@@ -5,7 +5,7 @@ configuration, health and metrics, day-to-day operation, and
 troubleshooting. For what AgentBrowser is and how to drive it as a
 client, start with the [README](../README.md); for the security model,
 see the [threat model](threat-model.md) and the
-[safety ADRs](README.md#core-architecture-adrs).
+[safety ADRs](https://github.com/anvai-labs/agentbrowser#core-architecture-adrs).
 
 ## Operator approval policy
 
