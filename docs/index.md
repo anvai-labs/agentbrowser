@@ -39,8 +39,8 @@ brew services start anvai-labs/tap/agentbrowser
 # Configure tenant keys (env contract of the service)
 AGENTBROWSER_API_KEYS=key:tenant
 
-# Drive it from an MCP client
-brew install caveats   # prints the AGENTBROWSER_BASE_URL / API_KEY wiring
+# Drive it from an MCP client (the formula's caveats print the wiring)
+brew info anvai-labs/tap/agentbrowser
 ```
 
 Full operator guide: [Operations](operations.md). Tool-by-tool surface:

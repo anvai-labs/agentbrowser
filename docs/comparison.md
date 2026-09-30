@@ -86,9 +86,9 @@ per-action approval, site-level "Always allow" permissions, and prohibited
 action classes (purchases, account creation, card data, deletions,
 following instructions from web content)
 ([permissions guide](https://support.claude.com/en/articles/12902446-claude-in-chrome-permissions-guide)).
-Anthropic publishes measured prompt-injection results: 23.6% → 11.2%
-attack success at launch, 1% with Opus 4.5 — which they still call
-"meaningful risk"
+Anthropic publishes measured prompt-injection results: a 1% attack
+success rate with Opus 4.5 — which they still call "meaningful risk" —
+with their chart attributing 23.6% → 11.2% across earlier launch stages
 ([injection defenses](https://www.anthropic.com/research/prompt-injection-defenses)).
 GA to paid plans with a Claude Code integration (`--chrome`) in December
 2025; the extension is Chrome-only

@@ -7,16 +7,19 @@ copyright: Copyright &copy; 2026 Anvai Labs
 
 # The repo README stays a repo index; docs/index.md is the published home.
 exclude_docs: |
-  README.md
-  agent-handoffs/
-  research/
-  evidence/
-  consumer-*.md
-  coexistence-*.md
-  HANDOFF-*.md
-  phase0-summary.md
-  phase1-progress.md
-  hygiene-audit.md
+  # Leading slash anchors each pattern to docs/ top level; unanchored
+  # gitignore-style patterns match at any depth and would silently drop
+  # spec/evidence/, spec/tasks/README.md and spec/design/consumer-*.
+  /README.md
+  /agent-handoffs/
+  /research/
+  /evidence/
+  /consumer-*.md
+  /coexistence-*.md
+  /HANDOFF-*.md
+  /phase0-summary.md
+  /phase1-progress.md
+  /hygiene-audit.md
 
 theme:
   name: material

@@ -36,6 +36,10 @@ jobs:
           # git-revision-date-localized needs history for page timestamps.
           fetch-depth: 0
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.tool-versions'
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
