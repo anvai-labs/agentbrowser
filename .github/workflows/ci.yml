@@ -79,8 +79,22 @@ jobs:
         # TAP reporter streams each gate result inline; --test-force-exit bounds
         # the runner when a FAILED gate skips its dispose (a leaked storage child
         # holds the fork's IPC handle open and would otherwise wedge the job to
-        # its timeout — the original canary hang).
-        run: node --test --test-reporter=tap --test-force-exit scripts/journal-sqlite-adapter-qualification.mjs
+        # its timeout — the original canary hang); --test-timeout gives every
+        # test an individual ceiling so a future unbounded await fails its own
+        # test instead of consuming the whole job budget.
+        run: node --test --test-reporter=tap --test-force-exit --test-timeout=60000 scripts/journal-sqlite-adapter-qualification.mjs
+
+      - name: Package the untagged server candidate
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          TARGET="$(node -p "process.platform + '-' + process.arch")"
+          node scripts/package-server.mjs --output-dir out-journal-package --target "$TARGET" --expected-version "$VERSION"
+
+      - name: Qualify the extracted candidate resolves the storage child
+        run: |
+          TARGET="$(node -p "process.platform + '-' + process.arch")"
+          JOURNAL_PACKAGE_TARBALL="out-journal-package/agentbrowser-server-$TARGET.tar.gz" \
+            node --test --test-reporter=tap --test-force-exit --test-timeout=120000 scripts/journal-sqlite-packaging-gate.mjs
 
   lint:
     name: Lint

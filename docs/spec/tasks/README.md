@@ -52,11 +52,12 @@ Next dependency-ready slices by task:
   matrix QUALIFIED (acquisition races, wrong-fingerprint-key, corrupt/
   truncated database reopen refusal, dispose under outstanding I/O, bounded
   DB/WAL/anchor sizes, child self-exit) over the landed manager/child/adapter
-  stack, arbitrated by the now-blocking CI journal-gates job — see the
+  stack, arbitrated by the now-blocking CI journal-gates job, with the
+  packaging gate (extracted-package child resolution, packaged per PR) in the
+  same job — see the
   [owner/anchor primitive](../evidence/t5-journal-sqlite-owner.md)); remaining:
-  the packaging gates (extracted-package child resolution) and the deeper
-  adversarial rows — including, at minimum, alias/read-only paths, stale
-  DB-only/anchor-only copies, malformed/missing and partially replaced
+  the deeper adversarial rows — including, at minimum, alias/read-only paths,
+  stale DB-only/anchor-only copies, malformed/missing and partially replaced
   anchors, disk-full and BUSY/IO faults, exhausted-resource bounds,
   malformed/duplicate IPC replies, clock movement and the sentinel scan.
 - T4 — production-evidence gates: trusted native-read composition, receipts and

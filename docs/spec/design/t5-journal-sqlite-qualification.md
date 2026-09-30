@@ -31,12 +31,18 @@ the factory's exposed child-exit promise after graceful close, because the
 close reply precedes the child's own TRUNCATE checkpoint and racing it
 SIGKILLs the shutdown mid-checkpoint on slower runners. The CI Linux
 journal-gates job arbitrated the matrix (16/16 gates, two consecutive green
-runs) and is now a blocking CI job. Still open before any public capability:
+runs) and is now a blocking CI job. The extracted-package child-resolution
+gate (`scripts/journal-sqlite-packaging-gate.mjs`) runs in the same job on
+every PR: it packages the untagged server candidate for the runner's target,
+extracts it, and runs a real manager/child lifecycle from an unrelated
+directory with no `childModulePath` override, asserting the forked child
+stays inside the extraction and dies with dispose; release-time per-target
+qualification stays with the release gate. Still open before any public
+capability:
 the remaining adversarial rows — including, at minimum, alias/read-only
 paths, stale DB-only/anchor-only copies, malformed/missing and partially
 replaced anchors, disk-full and BUSY/IO faults, exhausted-resource bounds,
-malformed/duplicate IPC replies, clock movement and the sentinel scan — and
-the packaging gates below. No public
+malformed/duplicate IPC replies, clock movement and the sentinel scan. No public
 capability is enabled and nothing is exported from the
 control barrel. Read [J2a architecture](t5-journal-sqlite-audit.md) and existing
 [journal port](t5-journal-contract.md). Reuse their owners; do not invent a durable executor.
