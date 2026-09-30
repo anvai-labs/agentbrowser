@@ -41,7 +41,7 @@ qualification stays with the release gate. The deeper adversarial rows are
 qualified in the same blocking lane: stale DB-only and anchor-only copies
 refuse reopen with evidence preserved, malformed and missing anchors and
 leftover `commit.pending` refuse without auto-repair, hardlinked/symlinked
-durable data and directory permission drift (group/world-readable,
+durable data and directory permission drift (group-readable,
 write-stripped) refuse reopen, an external writer lock BUSYs one mutation,
 seals the owner, and reopens clean with the unclassified intent absent,
 namespace/record ceilings refuse `capacity` without evicting accepted

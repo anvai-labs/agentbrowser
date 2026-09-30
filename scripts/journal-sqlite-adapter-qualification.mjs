@@ -786,6 +786,8 @@ test('an external writer lock BUSYs one mutation, seals the owner, and reopens c
     liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-busy' },
   });
   assertAcknowledged(retry);
+  // 'applied', not 'existing': the BUSYed mutation wrote nothing.
+  assert.equal(retry.disposition, 'applied');
   assert.deepEqual(await reopened.journal.close(), { kind: 'closed' });
   await second.dispose();
 });
