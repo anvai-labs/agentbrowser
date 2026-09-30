@@ -5,8 +5,32 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
-## [Unreleased]
+## [1.14.0] - 2026-09-30
 
+### Added
+
+- T5 journal foundation, storage-neutral and internal (no public durability
+  yet): a bounded journal manager with a dedicated storage child process and
+  an adapter factory over the SQLite owner/anchor primitive; runtime
+  selection, concrete store enablement and recovery remain gated behind the
+  remaining resource and packaging acceptances.
+- J2b.3 qualification gates: the full process-loss matrix (before-intent,
+  after-commit, after-anchor barriers and the caller-timeout rule), the
+  adversarial and bounded-resource matrix, and a packaging gate proving the
+  extracted candidate resolves the storage child in a clean install. The
+  journal gates run as a blocking CI job (promoted from a canary after the
+  wedge root-cause and gate repairs).
+- The journal manager's dispose drain is bounded (#319): shutdown can no
+  longer wait indefinitely on a wedged storage child.
+
+### Docs
+
+- T8 installed-harness records: named-version availability (CLI-path
+  delegated flows, Codex listing fidelity, two Victor infrastructure
+  blockers with unblock paths) and footprint measurements for the installed
+  harnesses.
+
+## [1.13.0] - 2026-09-27
 ## [1.13.0] - 2026-09-27
 
 ### Added
