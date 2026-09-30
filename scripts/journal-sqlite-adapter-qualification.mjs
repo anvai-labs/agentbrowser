@@ -384,7 +384,7 @@ test('a late reply settles from the bounded map and the mutation is historical f
     initialize: true,
     childModulePath: CRASH_CHILD_MODULE,
     childArgv: [
-      JSON.stringify({ method: 'reserveIntent', point: 'late_reply', delayMs: 2_500 }),
+      JSON.stringify({ method: 'reserveIntent', point: 'late_reply', delayMs: 4_000 }),
     ],
   });
   try {
@@ -402,8 +402,10 @@ test('a late reply settles from the bounded map and the mutation is historical f
     });
     assert.deepEqual(timedOut, { kind: 'uncertain', reason: 'wait_expired' });
     // The reply lands after the caller gave up; the manager settles it from
-    // its bounded correlation map and stays healthy.
-    await sleep(3_000);
+    // its bounded correlation map and stays healthy. The 3s margin between
+    // the port's 1s ceiling and the child's 4s delay survives parent-side
+    // event-loop starvation; a breach fails loud, never false-green.
+    await sleep(4_500);
     // The late-settled mutation was durable all along: historical fact only.
     const lookup = await opened.journal.lookup(key);
     assert.equal(lookup.kind, 'found');
