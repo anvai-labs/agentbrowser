@@ -62,7 +62,7 @@ Next dependency-ready slices by task:
   protocol-fault rows (late/duplicate/malformed replies, with the manager's
   host-crash frame guard) are qualified too. Every row testable in CI is
   gated; remaining: release-time read-only-filesystem and disk-full lanes
-  and clock-movement rows in the fake-timer record conformance.
+  only.
 - T4 — production-evidence gates: trusted native-read composition, receipts and
   parity against production surfaces; synthetic parity and public consent are
   already qualified.
@@ -84,9 +84,8 @@ authorization.
 ## Foundation-first refinements (2026-09-30)
 
 The tooling comparison (docs/comparison.md) produced a foundation-first
-ordering that gates the task list: F1 all-hop egress enforcement
-(DELIVERED 2026-09-30 — the R4 redirect gap is closed), F2 clock-movement
-conformance rows, F3 durable-journal runtime enablement (requires explicit
-authorization), N1 bounded network-error observation, and N2 OS-enforced
-egress pairing. Rationale, residuals, and sequencing:
+ordering that gates the task list: F1 all-hop egress enforcement and F2
+clock-movement conformance rows (both DELIVERED 2026-09-30), F3
+durable-journal runtime enablement (requires explicit authorization), N1
+bounded network-error observation, and N2 OS-enforced egress pairing. Rationale, residuals, and sequencing:
 [foundation-refinements.md](foundation-refinements.md).

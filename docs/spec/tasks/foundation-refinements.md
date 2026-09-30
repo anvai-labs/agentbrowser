@@ -17,10 +17,14 @@ foundation-first order is therefore:
   residuals named (body-bearing POST/PUT/PATCH passthrough, DNS pinning,
   OS containment).
 - **F2 — clock-movement conformance rows (finishes T5's CI-testable
-  surface).** Backward/forward clock movement, rollback detection and
-  wall-clock-below-persisted-high-water refusals in the fake-timer record
-  conformance, completing the journal's gate surface before any C4b
-  runtime-enablement decision.
+  surface). DELIVERED 2026-09-30.** The shared record conformance pins
+  clock-movement semantics for both fixtures: admission horizons stay
+  monotonic across wall-clock rollback (effective time is
+  max(now, high-water)), and a reopen whose wall clock is below the
+  persisted high-water refuses as configuration. Implemented in the SQLite
+  record layer and the memory oracle alike. Named remainder of the
+  design's max-rule: the in-handle monotonic-elapsed term lives in the
+  storage child and is part of the C4b enablement slice.
 - **F3 — C4b durable-journal runtime enablement.** The first public
   durable-journal capability (delegated-session receipts stop being
   ephemeral). Requires explicit user authorization to enable; not
@@ -36,7 +40,7 @@ foundation-first order is therefore:
   prerequisite with the pairing documented, per the egress-transport
   reassessment's "not a substitute" boundaries.
 
-Sequence: F1, F2 (independent, small) -> F3 decision point (user
+Sequence: F1, F2 delivered -> F3 decision point (user
 authorization) -> T4 production evidence -> T6 normalization/live gates ->
 T8 installed qualification -> T1 consumption -> T7, with N1/N2 slotted by
 design readiness.
