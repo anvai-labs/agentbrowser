@@ -12,14 +12,22 @@ const mainPage = `
 <iframe src="/frame-b" name="frame-b" title="Frame B"></iframe>
 <iframe srcdoc="<button>Srcdoc Action</button>" title="Srcdoc"></iframe>
 <iframe src="/nested" name="nested" title="Nested"></iframe>
+<iframe src="/deep1" name="deep1" title="Deep1"></iframe>
 <main><button>Main Action</button></main>`;
+const frameADiv = `<div onclick="this.textContent='DIV-DONE'" style="width:80px;height:30px">Div Action</div>`;
 
 const frameA = `<button onclick="this.textContent='DONE-A'">Frame A Action</button>
-<button onclick="this.textContent='DONE-SUB-A'">Submit</button>`;
+<button onclick="this.textContent='DONE-SUB-A'">Submit</button>
+${frameADiv}`;
 const frameB = `<button onclick="this.textContent='DONE-B'">Frame B Action</button>
 <button onclick="this.textContent='DONE-SUB-B'">Submit</button>`;
 const nestedOuter = `<iframe src="/nested-inner" name="inner" title="Inner"></iframe>`;
 const nestedInner = `<button onclick="this.textContent='DONE-NESTED'">Nested Action</button>`;
+const deep1 = `<iframe src="/deep2" name="d2" title="D2"></iframe>`;
+const deep2 = `<iframe src="/deep3" name="d3" title="D3"></iframe>`;
+const deep3 = `<button onclick="this.textContent='DONE-D3'">Deep 3 Action</button>
+<iframe src="/deep4" name="d4" title="D4"></iframe>`;
+const deep4 = '<button>Deep 4 Action</button>';
 
 function startServers(): Promise<{
   main: string;
@@ -37,7 +45,17 @@ function startServers(): Promise<{
             ? nestedOuter
             : path === '/nested-inner'
               ? nestedInner
-              : mainPage;
+              : path === '/deep1'
+                ? deep1
+                : path === '/deep2'
+                  ? deep2
+                  : path === '/deep3'
+                    ? deep3
+                    : path === '/deep4'
+                      ? deep4
+                      : path === '/frame-a-div'
+                        ? frameADiv
+                        : mainPage;
     response.writeHead(200, { 'content-type': 'text/html' });
     response.end(body);
   });
@@ -180,6 +198,64 @@ describe('child-frame observation and ref binding (T6)', () => {
       after = await page.observe({ mode: 'interactive' });
       expect(after.elements.find((element) => element.name === 'DONE-SUB-B')).toBeDefined();
       expect(after.elements.find((element) => element.name === 'DONE-SUB-A')).toBeDefined();
+    } finally {
+      await engine.close();
+      await servers.close();
+    }
+  }, 60_000);
+
+  it('reports depth-exceeded frames in coverage without faking completeness', async () => {
+    const servers = await startServers();
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({ url: servers.main });
+      await waitForElement(page, 'Deep 3 Action');
+
+      const observation = await page.observe({ mode: 'interactive' });
+      // Depth-3 content is merged; the depth-4 frame is covered, not silent.
+      expect(
+        observation.elements.find((element) => element.name === 'Deep 3 Action')
+      ).toBeDefined();
+      expect(
+        observation.elements.find((element) => element.name === 'Deep 4 Action')
+      ).toBeUndefined();
+      const coverage = (observation as { frameCoverage?: Array<{ frame: string; status: string }> })
+        .frameCoverage;
+      expect(coverage).toBeDefined();
+      expect(coverage?.some((entry) => entry.status === 'depth_exceeded')).toBe(true);
+      // Frame nodes themselves are never bindable refs.
+      expect(observation.elements.find((element) => element.role === 'iframe')).toBeUndefined();
+    } finally {
+      await engine.close();
+      await servers.close();
+    }
+  }, 60_000);
+
+  it('binds role-less in-frame controls through the formControls scan', async () => {
+    const servers = await startServers();
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({ url: servers.main });
+      await waitForElement(page, 'Frame A Action');
+
+      const observation = await page.observe({
+        mode: 'interactive',
+        include: ['formControls'],
+      });
+      const control = observation.elements.find(
+        (element) => element.role === 'control' && element.name === 'Div Action'
+      );
+      expect(control?.ref).toBeDefined();
+      await page.act({ type: 'click', target: { ref: control?.ref } });
+      const after = await page.observe({
+        mode: 'interactive',
+        include: ['formControls'],
+      });
+      expect(after.elements.find((element) => element.name === 'DIV-DONE')).toBeDefined();
     } finally {
       await engine.close();
       await servers.close();

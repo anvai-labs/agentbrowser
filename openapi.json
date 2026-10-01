@@ -7144,6 +7144,46 @@
               }
             }
           },
+          "frameCoverage": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "frame",
+                "status"
+              ],
+              "properties": {
+                "frame": {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "timeout",
+                      "type": "string"
+                    },
+                    {
+                      "const": "unavailable",
+                      "type": "string"
+                    },
+                    {
+                      "const": "depth_exceeded",
+                      "type": "string"
+                    },
+                    {
+                      "const": "budget_exceeded",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "reason": {
+                  "maxLength": 256,
+                  "type": "string"
+                }
+              }
+            }
+          },
           "degraded": {
             "type": "boolean"
           },
@@ -9539,6 +9579,46 @@
                   "remaining": {
                     "minimum": 0,
                     "type": "integer"
+                  }
+                }
+              },
+              "frameCoverage": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "frame",
+                    "status"
+                  ],
+                  "properties": {
+                    "frame": {
+                      "maxLength": 512,
+                      "type": "string"
+                    },
+                    "status": {
+                      "anyOf": [
+                        {
+                          "const": "timeout",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unavailable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "depth_exceeded",
+                          "type": "string"
+                        },
+                        {
+                          "const": "budget_exceeded",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "reason": {
+                      "maxLength": 256,
+                      "type": "string"
+                    }
                   }
                 }
               },

@@ -213,6 +213,13 @@ export type ActionType =
 /**
  * Page state response
  */
+/** One child frame the observation could not fully inspect (T6). */
+export interface FrameCoverage {
+  frame: string;
+  status: 'timeout' | 'unavailable' | 'depth_exceeded' | 'budget_exceeded';
+  reason?: string;
+}
+
 export interface PageState {
   sessionId: string;
   pageId: string;
@@ -229,6 +236,8 @@ export interface PageState {
   overlays?: OverlayBlocker[];
   truncated: boolean;
   untrustedContent: boolean;
+  /** Child frames not fully inspected, present only when some are missing. */
+  frameCoverage?: FrameCoverage[];
   /**
    * Cursor for fetching the rest of a truncated observation, in stable
    * document order. Present only when truncated.
