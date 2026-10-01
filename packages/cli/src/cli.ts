@@ -699,16 +699,45 @@ export function buildCli(deps: CliDependencies): Cli {
         .description('replay retained session events (console + request ledgers)')
         .argument('<sessionId>')
         .option('--type <type>', 'filter by event type, e.g. request.finished or console.log')
+        .option('--since <n>', 'paging cursor: entries with a ledger sequence above this')
+        .option('--limit <n>', 'paging cap (default 200, max 1000)')
         .action(
-          action(async (ctx, sessionId: string, options: { type?: string }) => {
-            const events = await ctx.client.sessions.events(sessionId, options.type);
-            ctx.emit(events, () =>
-              events.map(
-                (event) =>
-                  `${String(event.timestamp ?? '')} ${String(event.type ?? '?')} ${JSON.stringify(event.data ?? {})}`
-              )
-            );
-          })
+          action(
+            async (
+              ctx,
+              sessionId: string,
+              options: { type?: string; since?: string; limit?: string }
+            ) => {
+              const describe = (event: Record<string, unknown>) =>
+                `${String(event.timestamp ?? '')} ${String(event.seq ?? '')} ${String(
+                  event.type ?? '?'
+                )} ${JSON.stringify(event.data ?? {})}`;
+              if (options.since !== undefined || options.limit !== undefined) {
+                if (options.type === undefined)
+                  throw new UsageError('--since/--limit require --type (cursors are per-ledger)');
+                const since =
+                  options.since !== undefined
+                    ? captureInteger(options.since, '--since')
+                    : undefined;
+                const limit =
+                  options.limit !== undefined
+                    ? captureInteger(options.limit, '--limit')
+                    : undefined;
+                const envelope = await ctx.client.sessions.events(sessionId, {
+                  type: options.type,
+                  ...(since !== undefined ? { since } : {}),
+                  ...(limit !== undefined ? { limit } : {}),
+                });
+                ctx.emit(envelope, () => [
+                  `nextCursor: ${envelope.nextCursor}`,
+                  ...envelope.events.map(describe),
+                ]);
+                return;
+              }
+              const events = await ctx.client.sessions.events(sessionId, options.type);
+              ctx.emit(events, () => events.map(describe));
+            }
+          )
         );
 
       // ---- application -------------------------------------------------------

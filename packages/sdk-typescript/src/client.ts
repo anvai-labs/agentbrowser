@@ -593,11 +593,39 @@ export class SessionsClient {
   }
 
   /** A3/network summary: replay retained session events, oldest first per ledger. */
-  async events(sessionId: string, type?: string): Promise<Array<Record<string, unknown>>> {
-    const query = type !== undefined ? `?type=${encodeURIComponent(type)}` : '';
-    const body = await this.http.requestJson<{ events: Array<Record<string, unknown>> }>(
-      `/v1/sessions/${sessionId}/events/replay${query}`
-    );
+  async events(sessionId: string, type?: string): Promise<Array<Record<string, unknown>>>;
+  /** Paged replay: cursors are per-ledger entry sequences (paging requires a type filter). */
+  async events(
+    sessionId: string,
+    options:
+      | { type?: string; since: number; limit?: number }
+      | { type: string; since?: number; limit?: number }
+  ): Promise<{ events: Array<Record<string, unknown>>; nextCursor: number }>;
+  async events(
+    sessionId: string,
+    selector: string | { type?: string; since?: number; limit?: number } = {}
+  ): Promise<
+    Array<Record<string, unknown>> | { events: Array<Record<string, unknown>>; nextCursor: number }
+  > {
+    let query = '';
+    let paged = false;
+    if (typeof selector === 'string') {
+      query = selector !== '' ? `?type=${encodeURIComponent(selector)}` : '';
+    } else {
+      const params = new URLSearchParams();
+      if (selector.type !== undefined) params.set('type', selector.type);
+      if (selector.since !== undefined) {
+        params.set('since', String(selector.since));
+        paged = true;
+      }
+      if (selector.limit !== undefined) params.set('limit', String(selector.limit));
+      query = params.size > 0 ? `?${params.toString()}` : '';
+    }
+    const body = await this.http.requestJson<{
+      events: Array<Record<string, unknown>>;
+      nextCursor?: number;
+    }>(`/v1/sessions/${sessionId}/events/replay${query}`);
+    if (paged) return { events: body.events, nextCursor: body.nextCursor ?? -1 };
     return body.events;
   }
 
