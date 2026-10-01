@@ -584,3 +584,25 @@ describe('ObservationNormalizer', () => {
     });
   });
 });
+
+describe('frame coverage passthrough (T6)', () => {
+  it('carries frameCoverage from the raw state into the normalized observation', () => {
+    const normalizer = new ObservationNormalizer();
+    const raw = {
+      revision: 7,
+      url: 'https://example.test/',
+      title: 't',
+      status: 'interactive' as const,
+      content: '<main></main>',
+      elements: [],
+      frameCoverage: [{ frame: 'https://example.test/inner', status: 'depth_exceeded' as const }],
+    };
+    const normalized = normalizer.normalize(raw as unknown as RawPageState, {
+      mode: 'interactive',
+      revision: 1,
+    });
+    expect(normalized.frameCoverage).toEqual([
+      { frame: 'https://example.test/inner', status: 'depth_exceeded' },
+    ]);
+  });
+});

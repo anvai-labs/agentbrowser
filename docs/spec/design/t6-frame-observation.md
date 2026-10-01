@@ -156,8 +156,22 @@ slices land per T9 evidence discipline.
   with per-frame (role, name) ordinals — duplicate labels across frames
   bind and act independently. Pinned on real Chromium: same-origin,
   cross-origin, srcdoc, and nested (depth 2) frames observe and act.
-  Not yet in this slice, queued next: the coverage block and its
-  protocol/normalizer touchpoints, the iframe-marker `frame_content`
-  diagnostic, fileInputs/formControls frame-extended scans, the egress
-  gate for frame navigation, per-frame snapshot-slice reservation, and
-  the budget/latency measurement.
+- **Slice 1b DELIVERED 2026-09-30** (coverage + frame-extended scans):
+  uninspectable frames now surface a bounded `frameCoverage` block
+  (`timeout` / `unavailable` / `depth_exceeded` / `budget_exceeded`)
+  through all four touchpoints (engine RawPageState, protocol schema —
+  optional field, no version bump — core normalizer, API projection);
+  iframe/frame nodes are no longer bindable refs at all (the design's
+  typed marker refusal became the cleaner no-marker + coverage-entry
+  shape: there is no iframe ref to act on, and the coverage block names
+  what was not inspected); fileInputs/formControls scans are
+  frame-extended with frame-scoped binding. Deliberate degradation:
+  form-identity evidence (the identity-map handle lives in the main
+  frame's context) is main-frame only until per-frame identity state
+  lands in the next slice.
+- **Still queued**: frame-navigation egress gate, per-frame
+  snapshot-slice reservation, budget/latency measurement, per-frame
+  form-identity state. Named residual: a frame observed during its
+  loading window (ariaSnapshot succeeds but is empty) is
+  indistinguishable from a legitimately empty frame — a candidate
+  `empty`/`loading` coverage status for a later slice.
