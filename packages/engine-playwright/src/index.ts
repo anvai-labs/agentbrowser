@@ -28,6 +28,7 @@ import type {
   ObservationRequest,
   OverlayBlocker,
   PdfRequest,
+  RawFrameCoverage,
   RawPageState,
   ResolvedTarget,
   ScreenshotRequest,
@@ -539,6 +540,9 @@ function captureFormEvidence(
  * snapshot can miss because they carry no role attribute. Role-attributed
  * elements are excluded here - they are presumed covered by the snapshot.
  */
+/** Bounded child-frame traversal depth for observation (T6). */
+const MAX_FRAME_DEPTH = 3;
+
 const FORM_CONTROL_SELECTOR = [
   '[aria-haspopup]:not([role])',
   '[data-automation-id]:not(button):not(a):not(input):not(select):not(textarea):not([role])',
@@ -1550,7 +1554,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             if (hops > MAX_REDIRECT_HOPS) {
               emitRequest('request.failed', request, {
                 blocked: true,
-                reason: `MAX_REDIRECTS (${hops - 1} hops)`,
+                reason: 'egress_policy',
+                detail: `MAX_REDIRECTS (${hops - 1} hops)`,
               });
               await deny('egress_policy');
               return;
@@ -1560,8 +1565,9 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             if (seen.has(hopKey)) {
               emitRequest('request.failed', request, {
                 blocked: true,
-                reason: 'REDIRECT_LOOP',
-                redirect: hopKey,
+                reason: 'egress_policy',
+                detail: 'REDIRECT_LOOP',
+                redirect: absolute.origin + absolute.pathname,
               });
               await deny('egress_policy');
               return;
@@ -1602,7 +1608,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             } catch {
               emitRequest('request.failed', request, {
                 blocked: true,
-                reason: 'RESPONSE_TOO_LARGE (response-size cap)',
+                reason: 'egress_policy',
+                detail: 'RESPONSE_TOO_LARGE (response-size cap)',
               });
               await deny('egress_policy');
               return;
@@ -1618,13 +1625,17 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             } catch {
               emitRequest('request.failed', request, {
                 blocked: true,
-                reason: 'RESPONSE_TOO_LARGE (actual-byte cap)',
+                reason: 'egress_policy',
+                detail: 'RESPONSE_TOO_LARGE (actual-byte cap)',
               });
               await deny('egress_policy');
               return;
             }
             if (hops > 0) {
-              emitRequest('request.finished', request, { status: 302, redirect: currentUrl });
+              emitRequest('request.finished', request, {
+                status: 302,
+                redirect: new URL(currentUrl).origin + new URL(currentUrl).pathname,
+              });
               await fulfill({
                 status: 302,
                 headers: { location: currentUrl },
@@ -1643,7 +1654,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
 
           const declaredLength = headers['content-length'];
           if (hops > 0) {
-            emitRequest('request.finished', request, { status: 302, redirect: currentUrl });
+            emitRequest('request.finished', request, {
+              status: 302,
+              redirect: new URL(currentUrl).origin + new URL(currentUrl).pathname,
+            });
             await fulfill({
               status: 302,
               headers: { location: currentUrl },
@@ -2073,6 +2087,11 @@ class PlaywrightPage implements EnginePage {
   /** Include tokens the most recent observe ran with (tryRemap re-observes with them). */
   private lastObservationInclude: ObservationRequest['include'] = undefined;
   private refStore = new Map<string, StoredElement>();
+  /** Owning page/frame for elements merged from frame traversal (T6). */
+  private frameOfElement = new WeakMap<
+    StoredElement,
+    import('playwright').Page | import('playwright').Frame
+  >();
   private readonly fallbackNodes = new WeakMap<
     StoredElement,
     { handle: ElementHandle; locator: Locator }
@@ -2094,6 +2113,7 @@ class PlaywrightPage implements EnginePage {
   private onPageDialog: (dialog: import('playwright').Dialog) => void = () => {};
   private onPageLoad: () => void = () => {};
   private onPageConsole: (msg: import('playwright').ConsoleMessage) => void = () => {};
+  private onPageError: (error: unknown) => void = () => {};
   private onPageCrashed: () => void = () => {};
 
   /** Registered by the owning session so close() removes it from the map. */
@@ -2211,6 +2231,20 @@ class PlaywrightPage implements EnginePage {
       });
     };
     this.page.on('console', this.onPageConsole);
+    // Uncaught page exceptions are failure facts agents cannot see any other
+    // way. Page-derived text: marked untrusted, redacted at the service
+    // boundary before storage (N1 G1/G3).
+    this.onPageError = (error) => {
+      this.enqueueEvent({
+        type: 'page.error',
+        timestamp: new Date().toISOString(),
+        sessionId: 'unknown',
+        pageId: this.id,
+        untrustedContent: true,
+        data: { text: error instanceof Error ? error.message : String(error) },
+      });
+    };
+    this.page.on('pageerror', this.onPageError);
   }
 
   /** Enqueue an event and wake any iterator waiting for one. */
@@ -2416,6 +2450,23 @@ class PlaywrightPage implements EnginePage {
     // from a timed-out one (aria-snapshot-timeout, handled via getContentElements).
     let ariaSnapshotSucceeded = false;
 
+    const mainFrame = this.page.mainFrame();
+    const frameCoverage: RawFrameCoverage[] = [];
+    // Bounded frame identity: URL origin+path when meaningful, else the
+    // frame's name, else its traversal ordinal.
+    const frameIdentity = (frame: import('playwright').Frame, ordinal: number): string => {
+      const url = frame.url();
+      if (url && url !== 'about:blank') {
+        try {
+          const parsed = new URL(url);
+          return parsed.origin + parsed.pathname;
+        } catch {
+          // Malformed URL — fall through to the name/ordinal identity.
+        }
+      }
+      return frame.name() || `frame-${ordinal}`;
+    };
+
     if (mode === 'interactive' || mode === 'accessibility' || mode === 'content') {
       // Only timeouts can recover. Transport/context errors are not evidence.
       const yaml = await snapshotBudget.capture(this.page.locator('body'));
@@ -2423,6 +2474,53 @@ class PlaywrightPage implements EnginePage {
       if (yaml !== undefined) {
         ariaSnapshotSucceeded = true;
         elements = this.parseAriaSnapshot(yaml, this.revision);
+        // Bounded child-frame traversal (T6): the main-frame snapshot renders
+        // child frames as bare [iframe] nodes without descending. Each child
+        // frame's own snapshot is merged so embedded-application content is
+        // observed and bindable; depth is capped and capture shares the
+        // snapshot time envelope (main frame first).
+        const depthOf = (frame: import('playwright').Frame): number => {
+          let depth = 0;
+          let cursor = frame.parentFrame();
+          while (cursor !== null && depth <= MAX_FRAME_DEPTH) {
+            depth += 1;
+            cursor = cursor.parentFrame();
+          }
+          return depth;
+        };
+        let refOffset = elements.length;
+        let frameOrdinal = 0;
+        for (const frame of this.page.frames()) {
+          if (frame === mainFrame) continue;
+          frameOrdinal += 1;
+          const identity = frameIdentity(frame, frameOrdinal);
+          const depth = depthOf(frame);
+          if (depth > MAX_FRAME_DEPTH) {
+            frameCoverage.push({ frame: identity, status: 'depth_exceeded' });
+            continue;
+          }
+          if (snapshotBudget.exhausted) {
+            frameCoverage.push({ frame: identity, status: 'budget_exceeded' });
+            continue;
+          }
+          let frameYaml: string | undefined;
+          try {
+            frameYaml = await snapshotBudget.capture(frame.locator('body'));
+          } catch {
+            // A frame detaching mid-traversal must not reject the whole
+            // observation; it reads as an uninspectable frame.
+            frameCoverage.push({ frame: identity, status: 'unavailable', reason: 'detached' });
+            continue;
+          }
+          if (frameYaml === undefined) {
+            frameCoverage.push({ frame: identity, status: 'timeout' });
+            continue;
+          }
+          const parsed = this.parseAriaSnapshot(frameYaml, this.revision, refOffset);
+          for (const element of parsed) this.frameOfElement.set(element, frame);
+          refOffset += parsed.length;
+          elements.push(...parsed);
+        }
       } else {
         ariaSnapshotDegraded = true;
         elements = await this.getContentElements();
@@ -2435,21 +2533,29 @@ class PlaywrightPage implements EnginePage {
     // bindable elements after the accessibility-derived set.
     try {
       this.lastObservationInclude = request.include;
+      const scanRoots: Array<import('playwright').Page | import('playwright').Frame> = [
+        this.page,
+        ...this.page.frames().filter((frame) => frame !== mainFrame),
+      ];
       if (request.include?.includes('fileInputs') === true) {
-        for (const info of await this.describeFileInputs()) {
-          elements.push({
-            ref: `e${this.revision}_${elements.length}`,
-            role: 'fileinput',
-            ...(info.name !== undefined ? { name: info.name } : {}),
-            visible: info.visible,
-            enabled: true,
-            fileInputIndex: info.index,
-            attributes: {
-              ...(info.id !== undefined ? { id: info.id } : {}),
-              ...(info.accept !== undefined ? { accept: info.accept } : {}),
-              ...(info.multiple ? { multiple: 'true' } : {}),
-            },
-          });
+        for (const root of scanRoots) {
+          for (const info of await this.describeFileInputs(root)) {
+            elements.push({
+              ref: `e${this.revision}_${elements.length}`,
+              role: 'fileinput',
+              ...(info.name !== undefined ? { name: info.name } : {}),
+              visible: info.visible,
+              enabled: true,
+              fileInputIndex: info.index,
+              attributes: {
+                ...(info.id !== undefined ? { id: info.id } : {}),
+                ...(info.accept !== undefined ? { accept: info.accept } : {}),
+                ...(info.multiple ? { multiple: 'true' } : {}),
+              },
+            });
+            const merged = elements.at(-1);
+            if (merged !== undefined && root !== this.page) this.frameOfElement.set(merged, root);
+          }
         }
       }
 
@@ -2460,22 +2566,26 @@ class PlaywrightPage implements EnginePage {
       // refs; the :not([role]) candidate filter keeps elements the snapshot
       // covered from being minted twice.
       if (request.include?.includes('formControls') === true) {
-        for (const info of await this.describeFormControls()) {
-          elements.push({
-            ref: `e${this.revision}_${elements.length}`,
-            role: 'control',
-            ...(info.name !== undefined ? { name: info.name } : {}),
-            visible: info.visible,
-            enabled: true,
-            formControlIndex: info.index,
-            attributes: {
-              tag: info.tag,
-              ...(info.id !== undefined ? { id: info.id } : {}),
-              ...(info.automationId !== undefined
-                ? { 'data-automation-id': info.automationId }
-                : {}),
-            },
-          });
+        for (const root of scanRoots) {
+          for (const info of await this.describeFormControls(root)) {
+            elements.push({
+              ref: `e${this.revision}_${elements.length}`,
+              role: 'control',
+              ...(info.name !== undefined ? { name: info.name } : {}),
+              visible: info.visible,
+              enabled: true,
+              formControlIndex: info.index,
+              attributes: {
+                tag: info.tag,
+                ...(info.id !== undefined ? { id: info.id } : {}),
+                ...(info.automationId !== undefined
+                  ? { 'data-automation-id': info.automationId }
+                  : {}),
+              },
+            });
+            const merged = elements.at(-1);
+            if (merged !== undefined && root !== this.page) this.frameOfElement.set(merged, root);
+          }
         }
       }
     } catch (error) {
@@ -2499,7 +2609,19 @@ class PlaywrightPage implements EnginePage {
     this.bindings = new Map();
     this.refStore.clear();
     let changed = previousCount > 0 && previousCount !== elements.length;
-    const ordinals = new Map<string, number>();
+    // (role, name) ordinals are PER FRAME: the same label in two frames is
+    // two distinct bindable elements, each resolving inside its own frame.
+    const ordinals = new Map<object, Map<string, number>>();
+    const ordinalFor = (frameKey: object, key: string): number => {
+      let per = ordinals.get(frameKey);
+      if (per === undefined) {
+        per = new Map();
+        ordinals.set(frameKey, per);
+      }
+      const ordinal = per.get(key) ?? 0;
+      per.set(key, ordinal + 1);
+      return ordinal;
+    };
     // Elements bound to a real node this pass, deferred here instead of
     // enriched inline: isVisible()/isEnabled() are independent per-element
     // reads (each was previously one sequential await), and on a
@@ -2516,19 +2638,23 @@ class PlaywrightPage implements EnginePage {
       for (const [index, element] of elements.entries()) {
         const ref = element.ref ?? `e${this.revision}_${index}`;
         const key = JSON.stringify([element.role, element.name ?? '']);
-        const ordinal = ordinals.get(key) ?? 0;
-        ordinals.set(key, ordinal + 1);
+        const ownerFrame = this.frameOfElement.get(element);
+        const frameKey = ownerFrame ?? mainFrame;
+        const locatorRoot = ownerFrame ?? this.page;
+        const ordinal = ordinalFor(frameKey, key);
         // Role resolution excludes hidden nodes and role-less widgets, so
         // file inputs and form controls bind by ordinal over their candidate
-        // selectors instead of via getByRole.
+        // selectors instead of via getByRole. Those scans are main-frame;
+        // frame-scoped elements bind through their owning frame's locator.
         const fallback = this.fallbackNodes.get(element);
+        const scanRoot = ownerFrame ?? this.page;
         const locator =
           fallback?.locator ??
           (element.fileInputIndex !== undefined
-            ? this.page.locator('input[type=file]').nth(element.fileInputIndex)
+            ? scanRoot.locator('input[type=file]').nth(element.fileInputIndex)
             : element.formControlIndex !== undefined
-              ? this.page.locator(FORM_CONTROL_SELECTOR).nth(element.formControlIndex)
-              : this.page
+              ? scanRoot.locator(FORM_CONTROL_SELECTOR).nth(element.formControlIndex)
+              : locatorRoot
                   .getByRole(element.role as never, { name: element.name ?? '', exact: true })
                   .nth(ordinal));
         // Bind once to an actual node. An ordinal is never resolved anew at act time.
@@ -2581,7 +2707,13 @@ class PlaywrightPage implements EnginePage {
         boundElements.map(async ({ element, handle, locator }) => {
           element.visible = await handle.isVisible();
           element.enabled = await handle.isEnabled();
-          if (request.include?.includes('formControls') && formState) {
+          // Form-identity evidence requires the identity-map handle, which
+          // lives in the MAIN frame's context: passing it into a child
+          // frame's evaluate is a cross-context error. Frame-owned controls
+          // keep their scan attributes; per-frame identity state is the
+          // next slice's work.
+          const ownerFrame = this.frameOfElement.get(element);
+          if (request.include?.includes('formControls') && formState && ownerFrame === undefined) {
             const evidence = await handle.evaluate(captureFormEvidence, formState);
             element.attributes = { ...element.attributes, ...evidence.attributes };
             if (evidence.value !== undefined) element.value = evidence.value;
@@ -2701,6 +2833,7 @@ class PlaywrightPage implements EnginePage {
       content: await this.page.content(),
       elements: elements,
       ...(overlays !== undefined ? { overlays } : {}),
+      ...(frameCoverage.length > 0 ? { frameCoverage } : {}),
       ...(ariaSnapshotDegraded
         ? { degraded: true, degradedReason: 'aria-snapshot-timeout' as const }
         : emptyOverNonEmptyDom
@@ -2737,7 +2870,7 @@ class PlaywrightPage implements EnginePage {
    *     - /value: "typed text"
    * Attribute lines (`/attr: value`) annotate the preceding element.
    */
-  private parseAriaSnapshot(yaml: string, revision: number): StoredElement[] {
+  private parseAriaSnapshot(yaml: string, revision: number, refOffset = 0): StoredElement[] {
     const elements: StoredElement[] = [];
     const lines = yaml.split('\n');
 
@@ -2778,9 +2911,16 @@ class PlaywrightPage implements EnginePage {
       if (role === 'text' || role === 'StaticText') {
         continue; // static text is not an interactive element
       }
+      if (role === 'iframe' || role === 'frame') {
+        // Frame nodes are never bindable refs (T6): their content is merged
+        // by the frame traversal, and uninspectable frames are reported in
+        // the observation's frameCoverage block — never as a ref that would
+        // fail binding with the ambiguous no-binding STALE_TARGET.
+        continue;
+      }
 
       const element: StoredElement = {
-        ref: `e${revision}_${elements.length}`,
+        ref: `e${revision}_${refOffset + elements.length}`,
         role,
         visible: true,
         enabled: true,
@@ -2921,8 +3061,10 @@ class PlaywrightPage implements EnginePage {
    * `visible` here is a layout-box heuristic; observe overwrites it with the
    * authoritative Playwright isVisible for bound elements.
    */
-  private async describeFileInputs(): Promise<FileInputInfo[]> {
-    return this.page.locator('input[type=file]').evaluateAll((nodes) =>
+  private async describeFileInputs(
+    root: import('playwright').Page | import('playwright').Frame = this.page
+  ): Promise<FileInputInfo[]> {
+    return root.locator('input[type=file]').evaluateAll((nodes) =>
       nodes.map((node, index) => {
         const input = node as {
           id: string;
@@ -2963,8 +3105,10 @@ class PlaywrightPage implements EnginePage {
    * `visible` here is a layout-box heuristic; observe overwrites it with the
    * authoritative Playwright isVisible for bound elements.
    */
-  private async describeFormControls(): Promise<FormControlInfo[]> {
-    const described = await this.page.locator(FORM_CONTROL_SELECTOR).evaluateAll(
+  private async describeFormControls(
+    root: import('playwright').Page | import('playwright').Frame = this.page
+  ): Promise<FormControlInfo[]> {
+    const described = await root.locator(FORM_CONTROL_SELECTOR).evaluateAll(
       (
         nodes: Array<{
           tagName: string;
@@ -3885,6 +4029,7 @@ class PlaywrightPage implements EnginePage {
     this.page.off('dialog', this.onPageDialog);
     this.page.off('load', this.onPageLoad);
     this.page.off('console', this.onPageConsole);
+    this.page.off('pageerror', this.onPageError);
     this.page.off('crash', this.onPageCrashed);
     this.page.off('framenavigated', this.onFrameNavigated);
     await this.formIdentityState?.dispose().catch(() => {});

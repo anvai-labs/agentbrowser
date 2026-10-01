@@ -279,6 +279,17 @@ export const ContinuationCursorSchema = Type.Object({
   remaining: Type.Integer({ minimum: 0 }),
 });
 
+export const FrameCoverageSchema = Type.Object({
+  frame: Type.String({ maxLength: 512 }),
+  status: Type.Union([
+    Type.Literal('timeout'),
+    Type.Literal('unavailable'),
+    Type.Literal('depth_exceeded'),
+    Type.Literal('budget_exceeded'),
+  ]),
+  reason: Type.Optional(Type.String({ maxLength: 256 })),
+});
+
 export const PageStateSchema = Type.Object({
   sessionId: Type.String(),
   pageId: Type.String(),
@@ -295,6 +306,7 @@ export const PageStateSchema = Type.Object({
   truncated: Type.Boolean(),
   untrustedContent: Type.Boolean(),
   continuation: Type.Optional(ContinuationCursorSchema),
+  frameCoverage: Type.Optional(Type.Array(FrameCoverageSchema)),
   degraded: Type.Optional(Type.Boolean()),
   degradedReason: Type.Optional(
     Type.Union([

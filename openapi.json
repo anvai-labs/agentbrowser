@@ -1743,7 +1743,7 @@
       "get": {
         "operationId": "getSessionEvents",
         "summary": "Replay the session event ledger",
-        "description": "A3 evidence: the session's recent engine events (bounded rings, oldest first per ledger) - console lines and lifecycle events for late subscribers. Network summary (spec 5.1): request lifecycle events (request.started/finished/failed, URLs query-string-redacted, denials carrying the policy code/rule) live in their own bounded ledger - filter with ?type=request.finished etc. Unfiltered returns both ledgers (console first; cross-ledger ordering not preserved).",
+        "description": "A3 evidence: the session's recent engine events (bounded rings, oldest first per ledger) - console lines and lifecycle events for late subscribers. Network summary (spec 5.1): request lifecycle events (request.started/finished/failed, URLs query-string-redacted, denials carrying the policy code/rule) live in their own bounded ledger - filter with ?type=request.finished etc. Unfiltered returns both ledgers (console first; cross-ledger ordering not preserved). Paging: since/limit require a type filter (cursors are per-ledger entry sequences; the cursor is returned as nextCursor). A cursor older than the retained window re-reads from the oldest kept entry - entries evicted before it are silently skipped. limit defaults to 200 and is capped at 1000.",
         "tags": [
           "sessions"
         ],
@@ -1764,17 +1764,37 @@
               "type": "string"
             },
             "description": "Filter by event type, e.g. console.log."
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Paging cursor: return ledger entries with a sequence above this."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "description": "Paging cap (default 200, max 1000)."
           }
         ],
         "responses": {
           "200": {
-            "description": "The retained events.",
+            "description": "The retained events. Paged responses carry per-entry sequence numbers and nextCursor (the cursor for the next page).",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "required": [
-                    "events"
+                    "events",
+                    "nextCursor"
                   ],
                   "properties": {
                     "events": {
@@ -1782,8 +1802,21 @@
                       "items": {
                         "type": "object"
                       }
+                    },
+                    "nextCursor": {
+                      "type": "integer"
                     }
                   }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was malformed or failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -7111,6 +7144,46 @@
               }
             }
           },
+          "frameCoverage": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "frame",
+                "status"
+              ],
+              "properties": {
+                "frame": {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "timeout",
+                      "type": "string"
+                    },
+                    {
+                      "const": "unavailable",
+                      "type": "string"
+                    },
+                    {
+                      "const": "depth_exceeded",
+                      "type": "string"
+                    },
+                    {
+                      "const": "budget_exceeded",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "reason": {
+                  "maxLength": 256,
+                  "type": "string"
+                }
+              }
+            }
+          },
           "degraded": {
             "type": "boolean"
           },
@@ -9506,6 +9579,46 @@
                   "remaining": {
                     "minimum": 0,
                     "type": "integer"
+                  }
+                }
+              },
+              "frameCoverage": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "frame",
+                    "status"
+                  ],
+                  "properties": {
+                    "frame": {
+                      "maxLength": 512,
+                      "type": "string"
+                    },
+                    "status": {
+                      "anyOf": [
+                        {
+                          "const": "timeout",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unavailable",
+                          "type": "string"
+                        },
+                        {
+                          "const": "depth_exceeded",
+                          "type": "string"
+                        },
+                        {
+                          "const": "budget_exceeded",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "reason": {
+                      "maxLength": 256,
+                      "type": "string"
+                    }
                   }
                 }
               },
