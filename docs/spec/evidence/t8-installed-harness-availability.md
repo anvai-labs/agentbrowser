@@ -114,3 +114,17 @@ install is three orders of magnitude larger.
 - Footprint gates (install sizes, RSS): not started.
 - T1 cursor: delivery qualified through the installed CLI (step 7);
   consumption/retirement semantics remain with the harness sessions.
+
+## 2026-10-01 update (1.14.0 installed): MCP tool-call path qualified
+
+The installed `agentbrowser-mcp` 1.14.0 binary was driven end-to-end against
+the installed :5709 service (no-keys local mode), eight checks all pass:
+initialize (server reports 1.14.0), tools/list (16 tools — the released set;
+`browser_events_replay` is correctly absent, it ships post-1.14.0), then the
+full tool-call flow — browser_create → browser_page_create →
+browser_navigate (example.com) → browser_observe (elements returned) →
+browser_close. This qualifies the MCP-path tool-call fidelity gate for the
+installed 1.14.0 harness; the `browser_events_replay` surface qualifies with
+the next release. Re-runnable driver: scripted JSON-RPC over stdio against
+`/opt/homebrew/bin/agentbrowser-mcp` (driver script is ephemeral at
+/tmp/t8-mcp-qualification.mjs; the eight checks above are the record).
