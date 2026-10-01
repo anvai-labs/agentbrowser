@@ -169,9 +169,16 @@ slices land per T9 evidence discipline.
   form-identity evidence (the identity-map handle lives in the main
   frame's context) is main-frame only until per-frame identity state
   lands in the next slice.
-- **Still queued**: frame-navigation egress gate, per-frame
-  snapshot-slice reservation, budget/latency measurement, per-frame
-  form-identity state. Named residual: a frame observed during its
-  loading window (ariaSnapshot succeeds but is empty) is
-  indistinguishable from a legitimately empty frame — a candidate
-  `empty`/`loading` coverage status for a later slice.
+- **Slice 2 DELIVERED 2026-10-01** (frame-scoped form identity + the
+  egress pin): form-identity evidence for frame-owned controls evaluates
+  against a lazily minted per-frame identity state (stable tokens across
+  observations, act-time re-verification through the owning frame's own
+  state handle — the cross-context evaluate limitation is lifted), and
+  the frame-navigation egress gate is pinned on real Chromium: a child
+  frame's denied navigation is checked and blocked exactly like
+  top-level (context-scoped routing covers frames).
+- **Still queued**: per-frame snapshot-slice reservation,
+  budget/latency measurement (T9 evidence). Named residual: a frame
+  observed during its loading window (ariaSnapshot succeeds but is
+  empty) is indistinguishable from a legitimately empty frame — a
+  candidate `empty`/`loading` coverage status for a later slice.

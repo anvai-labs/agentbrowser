@@ -250,6 +250,20 @@ describe('child-frame observation and ref binding (T6)', () => {
         (element) => element.role === 'control' && element.name === 'Div Action'
       );
       expect(control?.ref).toBeDefined();
+      // Form-identity evidence is frame-scoped: the token is present and
+      // stable across observations (slice 2 lifted the main-frame-only
+      // degradation).
+      const token = control?.attributes?.['autofill-node'];
+      expect(token).toBeDefined();
+      const reobserved = await page.observe({
+        mode: 'interactive',
+        include: ['formControls'],
+      });
+      const stable = reobserved.elements.find(
+        (element) => element.role === 'control' && element.name === 'Div Action'
+      );
+      expect(stable?.attributes?.['autofill-node']).toBe(token);
+
       await page.act({ type: 'click', target: { ref: control?.ref } });
       const after = await page.observe({
         mode: 'interactive',
@@ -259,6 +273,52 @@ describe('child-frame observation and ref binding (T6)', () => {
     } finally {
       await engine.close();
       await servers.close();
+    }
+  }, 60_000);
+
+  it('applies egress policy to child-frame navigation exactly like top-level', async () => {
+    const checked: string[] = [];
+    const forbiddenHits: string[] = [];
+    const deniedServer = createServer((request, response) => {
+      const path = request.url ?? '/';
+      if (path === '/forbidden') {
+        forbiddenHits.push(path);
+        response.writeHead(200, { 'content-type': 'text/html' });
+        response.end('<title>forbidden content</title>');
+        return;
+      }
+      const port = (deniedServer.address() as { port: number }).port;
+      const frameHtml = `<iframe src="http://127.0.0.1:${port}/forbidden" name="deny" title="Deny"></iframe>`;
+      response.writeHead(200, { 'content-type': 'text/html' });
+      response.end(frameHtml);
+    });
+    await new Promise<void>((resolve) => deniedServer.listen(0, '127.0.0.1', resolve));
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const address = deniedServer.address();
+      if (address === null || typeof address === 'string') throw new Error('no address');
+      const session = await engine.createSession({
+        headless: true,
+        requestPolicy: {
+          async checkRequest({ url }) {
+            const path = new URL(url).pathname;
+            checked.push(path);
+            if (path === '/forbidden') throw new Error('POLICY_DENIED: forbidden fixture');
+          },
+        },
+      });
+      const page = await session.newPage();
+      await page.navigate({ url: `http://127.0.0.1:${address.port}/` });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      // The child frame's denied navigation was checked AND blocked: the
+      // policy saw the frame hop, and the forbidden destination records
+      // zero server hits (context-scoped routing covers frames).
+      expect(checked).toContain('/forbidden');
+      expect(forbiddenHits).toEqual([]);
+    } finally {
+      await engine.close();
+      deniedServer.closeAllConnections();
+      await new Promise<void>((done) => deniedServer.close(() => done()));
     }
   }, 60_000);
 
