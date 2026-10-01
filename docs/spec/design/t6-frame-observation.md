@@ -177,8 +177,17 @@ slices land per T9 evidence discipline.
   the frame-navigation egress gate is pinned on real Chromium: a child
   frame's denied navigation is checked and blocked exactly like
   top-level (context-scoped routing covers frames).
-- **Still queued**: per-frame snapshot-slice reservation,
-  budget/latency measurement (T9 evidence). Named residual: a frame
-  observed during its loading window (ariaSnapshot succeeds but is
-  empty) is indistinguishable from a legitimately empty frame — a
-  candidate `empty`/`loading` coverage status for a later slice.
+- **Slice 3 DELIVERED 2026-10-01** (per-frame snapshot-slice
+  reservation + budget/latency measurement): frame captures draw from
+  `frameSliceMs` — an even split of the remaining envelope across the
+  frames still to capture, floored at zero — so one slow frame cannot
+  consume the whole budget; a spent envelope reads as `budget_exceeded`
+  coverage per frame instead of a stall. Measured against a frameless
+  baseline over the same fixture: ~31 ms median merged observation vs
+  ~8.5 ms top-level (~23 ms absolute overhead for 4 child frames),
+  far inside the 5 s default envelope — evidence in
+  [t6-frame-budgets](../evidence/t6-frame-budgets.md).
+- **Still queued**: the loading-window residual (a frame observed during
+  its loading window is indistinguishable from a legitimately empty
+  frame — candidate `empty`/`loading` coverage status) and per-frame
+  form-identity state refresh timing refinement.
