@@ -126,6 +126,8 @@ interface NodeBinding extends SnapshotEvidence {
   handle: ElementHandle;
   locator: Locator;
   formEvidence?: Record<string, string>;
+  /** Owning child frame for frame-scoped form-identity evidence (T6). */
+  frame?: import('playwright').Frame;
 }
 
 /** Read-only DOM evidence. WeakMap identities survive reordering, never replacement/navigation. */
@@ -542,6 +544,29 @@ function captureFormEvidence(
  */
 /** Bounded child-frame traversal depth for observation (T6). */
 const MAX_FRAME_DEPTH = 3;
+
+/**
+ * Evaluated in ANY frame context to mint that context's form-identity
+ * state: stable per-node tokens scoped to the frame's current document.
+ */
+function formIdentityStateInit(id: string): FormIdentityState {
+  const doc = (globalThis as unknown as { document: NativeCaptureDocument }).document;
+  return {
+    nodes: new WeakMap(),
+    next: 0,
+    document: id,
+    root: doc.documentElement,
+    ownerDocument: doc,
+    token(node: object) {
+      let value = this.nodes.get(node);
+      if (!value) {
+        value = `${this.document}:${++this.next}`;
+        this.nodes.set(node, value);
+      }
+      return value;
+    },
+  };
+}
 
 const FORM_CONTROL_SELECTOR = [
   '[aria-haspopup]:not([role])',
@@ -2059,6 +2084,15 @@ class PlaywrightSession implements EngineSession {
  */
 class PlaywrightPage implements EnginePage {
   private formIdentityState: JSHandle<FormIdentityState> | undefined;
+  /** Per-frame form-identity states for frame-owned controls (T6 slice 2). */
+  private readonly frameIdentityStates = new Map<
+    import('playwright').Frame,
+    JSHandle<FormIdentityState>
+  >();
+  private readonly frameIdentityInitializations = new Map<
+    import('playwright').Frame,
+    Promise<JSHandle<FormIdentityState>>
+  >();
   private formIdentityInitialization: Promise<JSHandle<FormIdentityState>> | undefined;
   private formIdentityGeneration = 0;
   private readonly onFrameNavigated = (frame: import('playwright').Frame) => {
@@ -2066,7 +2100,25 @@ class PlaywrightPage implements EnginePage {
       this.formIdentityGeneration++;
       void this.formIdentityState?.dispose().catch(() => {});
       this.formIdentityState = undefined;
+      for (const frameState of this.frameIdentityStates.values()) {
+        void frameState.dispose().catch(() => {});
+      }
+      this.frameIdentityStates.clear();
+      this.frameIdentityInitializations.clear();
     }
+    // A frame navigation destroys that frame's execution context: its
+    // form-identity state (and every descendant's) is dead and must be
+    // dropped, or the stale handle would be returned forever and silently
+    // strip form evidence from the frame's controls.
+    const dropFrameIdentityState = (dropped: import('playwright').Frame): void => {
+      const state = this.frameIdentityStates.get(dropped);
+      if (state !== undefined) {
+        this.frameIdentityStates.delete(dropped);
+        void state.dispose().catch(() => {});
+      }
+      for (const child of dropped.childFrames()) dropFrameIdentityState(child);
+    };
+    dropFrameIdentityState(frame);
   };
   readonly id: string;
   private page: Page;
@@ -2258,6 +2310,54 @@ class PlaywrightPage implements EnginePage {
   }
 
   /** One browser-owned identity map shared by observation and native capture. */
+  /** Lazily mint (or reuse) the form-identity state for a child frame.
+   * A dead context (frame navigated/detached) is dropped so the next call
+   * re-mints; callers degrade to scan-only attributes on failure.
+   */
+  /** Root-accepting wrapper: the main page uses the shared main state;
+   * child frames get their own lazily minted state.
+   */
+  private async ensureFormIdentityStateFor(
+    root: import('playwright').Page | import('playwright').Frame
+  ): Promise<JSHandle<FormIdentityState>> {
+    if (root === this.page) return this.ensureFormIdentityState();
+    return this.ensureFrameIdentityState(root as import('playwright').Frame);
+  }
+
+  private async ensureFrameIdentityState(
+    frame: import('playwright').Frame
+  ): Promise<JSHandle<FormIdentityState>> {
+    const existing = this.frameIdentityStates.get(frame);
+    if (existing !== undefined && !frame.isDetached()) return existing;
+    // The minting PROMISE is cached (mirroring formIdentityInitialization):
+    // a concurrent act/observe pair shares one mint instead of dueling
+    // states whose divergent tokens would surface as spurious
+    // STALE_TARGET.
+    const pending = this.frameIdentityInitializations.get(frame);
+    if (pending !== undefined) return pending;
+    const stale = this.frameIdentityStates.get(frame);
+    if (stale !== undefined) {
+      await stale.dispose().catch(() => {});
+      this.frameIdentityStates.delete(frame);
+    }
+    const generation = this.formIdentityGeneration;
+    const mint = frame
+      .evaluateHandle(formIdentityStateInit, randomUUID())
+      .then(async (state) => {
+        if (generation !== this.formIdentityGeneration || frame.isDetached()) {
+          await state.dispose().catch(() => {});
+          throw new Error('Frame context changed');
+        }
+        this.frameIdentityStates.set(frame, state);
+        return state;
+      })
+      .finally(() => {
+        this.frameIdentityInitializations.delete(frame);
+      });
+    this.frameIdentityInitializations.set(frame, mint);
+    return mint;
+  }
+
   private async ensureFormIdentityState(): Promise<JSHandle<FormIdentityState>> {
     if (!this.formIdentityState) {
       if (!this.formIdentityInitialization) {
@@ -2680,6 +2780,11 @@ class PlaywrightPage implements EnginePage {
               locator,
               snapshot: undefined,
               documentSnapshot,
+              // frameOfElement tags only non-page scan roots, so the cast is
+              // sound; exactOptionalPropertyTypes demands the conditional.
+              ...(ownerFrame !== undefined
+                ? { frame: ownerFrame as import('playwright').Frame }
+                : {}),
             };
             this.bindings.set(ref, binding);
             // A display:none input has no stable aria snapshot and may make
@@ -2720,18 +2825,33 @@ class PlaywrightPage implements EnginePage {
         boundElements.map(async ({ element, handle, locator }) => {
           element.visible = await handle.isVisible();
           element.enabled = await handle.isEnabled();
-          // Form-identity evidence requires the identity-map handle, which
-          // lives in the MAIN frame's context: passing it into a child
-          // frame's evaluate is a cross-context error. Frame-owned controls
-          // keep their scan attributes; per-frame identity state is the
-          // next slice's work.
-          const ownerFrame = this.frameOfElement.get(element);
-          if (request.include?.includes('formControls') && formState && ownerFrame === undefined) {
-            const evidence = await handle.evaluate(captureFormEvidence, formState);
-            element.attributes = { ...element.attributes, ...evidence.attributes };
-            if (evidence.value !== undefined) element.value = evidence.value;
-            const binding = this.bindings.get(element.ref ?? '');
-            if (binding) binding.formEvidence = evidence.attributes;
+          // Form-identity evidence is frame-scoped (slice 2): each context
+          // evaluates against its own identity-map handle — the main state
+          // for main-frame controls, a lazily minted per-frame state for
+          // frame-owned controls. A dead frame context degrades to
+          // scan-only attributes.
+          const ownerRoot = this.frameOfElement.get(element);
+          const ownerFrame =
+            ownerRoot === undefined || ownerRoot === this.page ? undefined : ownerRoot;
+          let stateHandle: JSHandle<FormIdentityState> | undefined =
+            ownerFrame === undefined ? formState : undefined;
+          if (ownerFrame !== undefined) {
+            try {
+              stateHandle = await this.ensureFormIdentityStateFor(ownerFrame);
+            } catch {
+              stateHandle = undefined;
+            }
+          }
+          if (request.include?.includes('formControls') && stateHandle !== undefined) {
+            try {
+              const evidence = await handle.evaluate(captureFormEvidence, stateHandle);
+              element.attributes = { ...element.attributes, ...evidence.attributes };
+              if (evidence.value !== undefined) element.value = evidence.value;
+              const binding = this.bindings.get(element.ref ?? '');
+              if (binding) binding.formEvidence = evidence.attributes;
+            } catch {
+              // The frame context died mid-capture: degrade gracefully.
+            }
           }
           // Checked roles: the snapshot marker settles true and records mixed
           // as present-but-undefined; elements the marker left unset get one
@@ -3502,11 +3622,31 @@ class PlaywrightPage implements EnginePage {
     if (action.target !== undefined) {
       const binding = this.bindings.get(action.target.ref);
       if (binding?.formEvidence) {
-        if (!this.formIdentityState)
+        // Frame-owned bindings re-verify against their own frame's identity
+        // state; the main state handle lives in the main context and cannot
+        // cross into a child frame's evaluate.
+        const frameState =
+          binding.frame !== undefined && !binding.frame.isDetached()
+            ? await this.ensureFrameIdentityState(binding.frame).catch(() => undefined)
+            : undefined;
+        const stateHandle =
+          binding.frame !== undefined ? frameState : (this.formIdentityState ?? undefined);
+        if (stateHandle === undefined)
           throw new EngineError('STALE_TARGET', 'Form document changed', false);
         if ('autofill-popup-state' in binding.formEvidence)
-          await this.page.evaluate(refreshFormPopupEvidence, this.formIdentityState);
-        const live = await binding.handle.evaluate(captureFormEvidence, this.formIdentityState);
+          await (binding.frame ?? this.page).evaluate(refreshFormPopupEvidence, stateHandle);
+        let live: { attributes: Record<string, string>; value?: string };
+        try {
+          live = await binding.handle.evaluate(captureFormEvidence, stateHandle);
+        } catch (error) {
+          throw new EngineError(
+            'INTERNAL',
+            `form evidence re-verification failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            false
+          );
+        }
         if (JSON.stringify(live.attributes) !== JSON.stringify(binding.formEvidence))
           throw new EngineError(
             'STALE_TARGET',
