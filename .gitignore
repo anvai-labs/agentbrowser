@@ -56,3 +56,4 @@ Cargo.lock
 # Internal agent workspace (never commit, never publish)
 .victor/
 __pycache__/
+site/

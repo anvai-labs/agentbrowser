@@ -145,7 +145,17 @@ export interface NavigationResult {
 /**
  * Raw page state from engine (before normalization)
  */
+/** One child frame the observation could not fully inspect (T6). */
+export interface RawFrameCoverage {
+  /** Bounded frame identity: URL origin+path, else the frame's name/ordinal. */
+  frame: string;
+  status: 'timeout' | 'unavailable' | 'depth_exceeded' | 'budget_exceeded';
+  reason?: string;
+}
+
 export interface RawPageState {
+  /** Child frames not fully inspected, present only when some are missing. */
+  frameCoverage?: RawFrameCoverage[];
   /** Optional monotonic engine observation generation, including out-of-band DOM changes. */
   revision?: number;
   url: string;
@@ -297,6 +307,7 @@ export type EngineEventType =
   | 'console.log'
   | 'console.error'
   | 'console.warning'
+  | 'page.error'
   | 'request.started'
   | 'request.finished'
   | 'request.failed'
@@ -317,6 +328,8 @@ export interface EngineEvent {
   sessionId: string;
   pageId?: string;
   data?: Record<string, unknown>;
+  /** Set on events carrying page-derived text (hostile until redacted). */
+  untrustedContent?: boolean;
 }
 
 // ============================================================================

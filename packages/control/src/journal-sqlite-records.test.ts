@@ -394,6 +394,10 @@ function createDirectSqliteJournalFixture(startTime = 1_000): JournalConformance
         throw new Error('invalid clock advance');
       clock += milliseconds;
     },
+    setClock(milliseconds: number) {
+      if (!Number.isSafeInteger(milliseconds)) throw new Error('invalid clock set');
+      clock = milliseconds;
+    },
     adapter: {
       async open(request: RawJournalNamespace, signal: AbortSignal) {
         if (signal.aborted) return { kind: 'definitely_not_opened', reason: 'expired' };

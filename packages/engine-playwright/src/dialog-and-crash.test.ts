@@ -196,10 +196,10 @@ describe('held dialogs, crashes, and observation details (real Chromium)', () =>
       const hidden = state.elements.find((el) => el.role === 'fileinput');
       if (!hidden) throw new Error('missing observed fileinput');
       expect(hidden.visible).toBe(false);
-      // The iframe is in the snapshot but its role cannot bind to a locator.
-      const frame = state.elements.find((el) => el.role === 'iframe');
-      if (!frame) throw new Error('missing observed iframe');
-      expect(frame.visible).toBe(true);
+      // The iframe node itself is never a bindable ref (T6): its content is
+      // merged by frame traversal, and static-only srcdoc content yields no
+      // interactive elements.
+      expect(state.elements.find((el) => el.role === 'iframe')).toBeUndefined();
 
       // Neither crashed the census, and nothing occludes the plain button.
       expect(state.overlays).toEqual([]);

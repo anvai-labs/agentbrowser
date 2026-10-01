@@ -663,7 +663,12 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
             '(request.started/finished/failed, URLs query-string-redacted, denials ' +
             'carrying the policy code/rule) live in their own bounded ledger - ' +
             'filter with ?type=request.finished etc. Unfiltered returns both ' +
-            'ledgers (console first; cross-ledger ordering not preserved).',
+            'ledgers (console first; cross-ledger ordering not preserved). ' +
+            'Paging: since/limit require a type filter (cursors are per-ledger ' +
+            'entry sequences; the cursor is returned as nextCursor). A cursor ' +
+            'older than the retained window re-reads from the oldest kept ' +
+            'entry - entries evicted before it are silently skipped. limit ' +
+            'defaults to 200 and is capped at 1000.',
           tags: ['sessions'],
           parameters: [
             sessionIdParam,
@@ -673,16 +678,34 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               schema: { type: 'string' },
               description: 'Filter by event type, e.g. console.log.',
             },
+            {
+              name: 'since',
+              in: 'query',
+              schema: { type: 'integer', minimum: 0 },
+              description: 'Paging cursor: return ledger entries with a sequence above this.',
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              schema: { type: 'integer', minimum: 1, maximum: 1000 },
+              description: 'Paging cap (default 200, max 1000).',
+            },
           ],
           responses: {
             '200': {
-              description: 'The retained events.',
+              description:
+                'The retained events. Paged responses carry per-entry sequence ' +
+                'numbers and nextCursor (the cursor for the next page).',
               content: json({
                 type: 'object',
-                required: ['events'],
-                properties: { events: { type: 'array', items: { type: 'object' } } },
+                required: ['events', 'nextCursor'],
+                properties: {
+                  events: { type: 'array', items: { type: 'object' } },
+                  nextCursor: { type: 'integer' },
+                },
               }),
             },
+            '400': INVALID_REQUEST,
             '404': NOT_FOUND,
           },
         },

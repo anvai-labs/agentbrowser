@@ -32,6 +32,11 @@ export class SnapshotBudget {
     this.deadline = performance.now() + timeoutMs;
   }
 
+  /** True once the envelope is spent: further captures return immediately. */
+  get exhausted(): boolean {
+    return this.deadline - performance.now() <= 0;
+  }
+
   async capture(locator: Locator): Promise<string | undefined> {
     const remaining = this.deadline - performance.now();
     // Playwright interprets zero as unlimited, not expired.

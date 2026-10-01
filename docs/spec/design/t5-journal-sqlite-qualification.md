@@ -54,10 +54,13 @@ once, and malformed frames — including a well-correlated reply with no
 payload — never crash the host: the manager drops unanswerable frames, the
 port classifies the untrustable reply as uncertain and seals that journal
 (the once-uncertain rule), and the manager keeps serving fresh ports.
-Still open
+Clock-movement rows joined the shared record conformance (2026-09-30):
+admission horizons are monotonic across wall-clock rollback via the
+persisted high-water, and a reopen below the persisted high-water refuses
+as configuration; the in-handle monotonic-elapsed term of the design's
+max-rule remains for the C4b slice. Still open
 before any public capability: true read-only-filesystem and disk-full lanes
-(release-time qualification on constrained mounts) and clock-movement rows
-(fake-timer record conformance). No public
+(release-time qualification on constrained mounts). No public
 capability is enabled and nothing is exported from the
 control barrel. Read [J2a architecture](t5-journal-sqlite-audit.md) and existing
 [journal port](t5-journal-contract.md). Reuse their owners; do not invent a durable executor.

@@ -109,6 +109,9 @@ export class ObservationNormalizer {
     if (rawState.degradedReason !== undefined) {
       observation.degradedReason = rawState.degradedReason;
     }
+    if (rawState.frameCoverage !== undefined) {
+      observation.frameCoverage = rawState.frameCoverage;
+    }
 
     // Add focusedRef only if there is a focused element
     const focusedRef = this.getFocusedRef(prioritizedElements);

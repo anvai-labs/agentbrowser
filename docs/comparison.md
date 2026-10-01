@@ -102,7 +102,7 @@ user permission in a consumer profile.
 | --- | --- | --- | --- | --- |
 | Semantic element refs | Yes — protocol-level, opaque ([ADR-004](adr/004-stable-element-refs-revision-checking.md)) | No — raw node handles | Yes — `uid` per snapshot | Internal; user sees actions, not refs |
 | Staleness protection | Revision + fingerprint check, typed `STALE_TARGET`, never auto-retried ([ADR-004](adr/004-stable-element-refs-revision-checking.md)) | None | Typed stale-uid errors; no revision counter | UNVERIFIED internals |
-| Egress + SSRF policy | Default-on deny lists — **partial enforcement, see ugly** ([ADR-006](adr/006-network-egress-policy-ssrf.md), [threat model](threat-model.md)) | None | Explicitly "not a sandbox" (their SECURITY.md) | None documented |
+| Egress + SSRF policy | Default-on deny lists; redirect chains checked hop by hop — still partial (DNS pinning, body-bearing passthrough) ([ADR-006](adr/006-network-egress-policy-ssrf.md), [threat model](threat-model.md)) | None | Explicitly "not a sandbox" (their SECURITY.md) | None documented |
 | Approval gates | Single-use tokens bound to session/rev/fingerprint; "records caller confirmation; does not independently authenticate a human" | None | None — "the AI agent or client validates input" (their SECURITY.md) | Yes — human-visible per-action approval, site permissions, prohibited classes |
 | Isolation + multi-tenancy | Ephemeral isolated contexts, hashed tenant keys, per-route ownership; OS isolation not shipped ([threat model](threat-model.md)) | None | Single user, one Chrome | Consumer profile, no tenancy |
 | Visual + performance debugging | None — no JS eval, console, network inspection, or traces (deliberate: [ADR-009](adr/009-mcp-high-level-tools.md)) | Full (Tracing, Performance, Console, Network) | First-class (traces, insights, Lighthouse, screencast) | Console/DOM via `--chrome` |
@@ -117,10 +117,12 @@ user permission in a consumer profile.
   advisory.** Staleness rejection, approval-token consumption, and tenancy
   ownership each have dedicated suites the threat model names
   ([threat model](threat-model.md)).
-- **The security posture is falsifiable by design.** A real-Chromium test
-  asserts the R4 redirect bypass *exists* instead of hiding it
-  (`redirect-gap-real-chromium.test.ts`); the experimental Obscura engine's
-  tests assert its own non-enforcement as a truth guard
+- **The security posture is falsifiable by design.** The R4 redirect gap
+  shipped with a real-Chromium test asserting it *existed* rather than
+  hiding it; when all-hop enforcement landed (2026-09-30) the same test
+  was flipped to pin the fix, leaving the guard-to-fix trail in git
+  history (`redirect-gap-real-chromium.test.ts`); the experimental
+  Obscura engine's tests assert its own non-enforcement as a truth guard
   ([engines](engines.md)).
 - **Secret redaction** across observations, logs, and errors
   ([threat model](threat-model.md)).
@@ -135,9 +137,11 @@ user permission in a consumer profile.
   inspection, no performance traces — deliberate
   ([ADR-009](adr/009-mcp-high-level-tools.md)), so any perf/console/debug
   work belongs in chrome-devtools-mcp or raw CDP, not here.
-- **Egress enforcement is partial**, so the headline safety layer cannot
-  promise containment on its own — the threat model says do not rely on
-  it alone ([threat model](threat-model.md)).
+- **Egress enforcement is partial**: redirect chains are now walked and
+  checked hop by hop (2026-09-30), but DNS-pinned connections,
+  body-bearing request passthrough, and OS-level containment remain open —
+  the threat model says do not rely on the layer alone
+  ([threat model](threat-model.md)).
 - **Heavier setup** than `npx` one-liners
   ([operations](operations.md)).
 - **Chromium-first.** Safari refuses all policy-bearing sessions, so the
@@ -156,12 +160,9 @@ user permission in a consumer profile.
 
 ### Ugly (documented footguns, each admitted by the repo)
 
-- **R4 later-hop redirect bypass**: a public URL that 302s to a blocked
-  host *reaches it*; the policy callback never sees the denied hop — open,
-  explicitly "not accepted debt"
-  ([threat model](threat-model.md); the test asserts it).
 - **DNS rebinding** is only partially covered: browser connections are not
-  pinned to validated addresses ([threat model](threat-model.md)).
+  pinned to validated addresses ([threat model](threat-model.md)). Redirect
+  hops themselves are now all checked (2026-09-30).
 - **Response-size caps check after buffering**, and only on routed
   responses ([threat model](threat-model.md)).
 - **POST/PUT/PATCH bypass response inspection** via `route.continue()` —

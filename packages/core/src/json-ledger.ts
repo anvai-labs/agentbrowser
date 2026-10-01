@@ -44,6 +44,23 @@ export class JsonLedger<T> {
     return [...this.entries.values()].map(({ json }) => JSON.parse(json) as T);
   }
 
+  /** Entries with sequence > since, oldest first, capped at limit. Cursors
+   * are the entry sequence numbers; eviction simply removes low sequences,
+   * so a cursor below the retained window re-reads from the oldest kept
+   * entry rather than failing.
+   */
+  entriesAfter(since: number, limit: number): { seq: number; value: T }[] {
+    if (!Number.isSafeInteger(since) || !Number.isSafeInteger(limit) || limit < 1)
+      throw new Error('Invalid ledger paging arguments');
+    const out: { seq: number; value: T }[] = [];
+    for (const [seq, entry] of this.entries) {
+      if (seq <= since) continue;
+      out.push({ seq, value: JSON.parse(entry.json) as T });
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
   get stats() {
     return {
       entries: this.entries.size,
