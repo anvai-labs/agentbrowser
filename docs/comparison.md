@@ -34,7 +34,7 @@ auto-retried ([ADR-004](adr/004-stable-element-refs-revision-checking.md));
 a network egress layer with SSRF defaults ([ADR-006](adr/006-network-egress-policy-ssrf.md));
 single-use approval tokens bound to session/revision/fingerprint;
 delegated human-in-the-loop sessions ([delegated sessions](delegated-sessions.md));
-four surfaces (REST/OpenAPI, TS SDK, CLI, MCP stdio with 16 tools) with
+four surfaces (REST/OpenAPI, TS SDK, CLI, MCP stdio with 17 tools) with
 `evaluate()` and raw network tools **deliberately excluded**
 ([ADR-009](adr/009-mcp-high-level-tools.md), [catalog](mcp-tool-catalog.md));
 an engine-neutral contract with a loud engine matrix

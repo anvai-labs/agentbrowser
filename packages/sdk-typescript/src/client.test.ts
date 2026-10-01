@@ -1446,5 +1446,32 @@ describe('SessionsClient.extract schema passthrough', () => {
         'http://localhost:5709/v1/sessions/ses_1/events/replay?type=request.finished'
       );
     });
+
+    it('pages the replay ledger by cursor when the options form is used', async () => {
+      const fetchMock = global.fetch as unknown as {
+        mock: { calls: unknown[][] };
+        mockResolvedValueOnce(value: unknown): unknown;
+      };
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          events: [{ type: 'console.error', seq: 4 }],
+          nextCursor: 5,
+        }),
+      });
+      const localClient = new AgentBrowserClient({ baseUrl: 'http://localhost:5709' });
+      const envelope = await localClient.sessions.events('ses_1', {
+        type: 'console.error',
+        since: 3,
+        limit: 2,
+      });
+      expect(envelope.events).toHaveLength(1);
+      expect(envelope.nextCursor).toBe(5);
+      const calls = fetchMock.mock.calls;
+      const eventsCall = calls[calls.length - 1] as unknown[];
+      expect(eventsCall[0]).toBe(
+        'http://localhost:5709/v1/sessions/ses_1/events/replay?type=console.error&since=3&limit=2'
+      );
+    });
   });
 });
