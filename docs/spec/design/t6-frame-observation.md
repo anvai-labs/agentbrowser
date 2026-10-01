@@ -26,12 +26,24 @@ complete" (T4 parity, T6 live gates, T7 evidence) inherits the hole.
   likewise main-frame.
 - Refs bind to exact DOM nodes (`binding.handle` ElementHandle +
   `isSameNode` identity re-check in `resolve()`). ElementHandles are
-  frame-owned: `handle.evaluate` runs in the owning frame's context, so the
-  binding layer is frame-capable once observation mints frame content refs.
+  frame-owned: `handle.evaluate` runs in the owning frame's context.
+- **The main implementation item**: the binding-construction loop builds
+  every stored locator via `this.page.getByRole(...)`/`this.page.locator(...)`
+  — main-frame only. A frame-content element merged into the observed list
+  would mint a handle but `locator.count()` to 0 on the stored locator and
+  reproduce the exact no-binding STALE_TARGET. Frame-scoping must extend
+  to the stored locator (frame-owned locator construction), not just the
+  minted handle.
 - The consumer's exact error — `STALE_TARGET: Observed target could not be
   bound safely; observe again.` — is the no-binding branch of `resolve()`.
   The `[iframe]` node was observed but is not bindable, and nothing
   distinguishes that from genuine staleness.
+- Frame-navigation invalidation is LAZY: `onFrameNavigated` disposes only
+  main-frame form-identity state and the revision counter is not tied to
+  frame navigation. Stale child-frame refs die at `resolve()` time
+  (detached handles, zero-count locators) — functionally satisfying the
+  no-retargeting criterion, but implementers must not assume the revision
+  machinery fires on frame navigation.
 
 ## Design
 
@@ -45,9 +57,15 @@ in document order:
   deterministic per revision.
 - Bounds: traversal depth ≤ 3 (nested iframes), total merged elements
   respect the caller's `maxElements` budget (frames compete for the same
-  budget, main frame first), per-frame capture shares the existing
-  `SnapshotBudget` time envelope. An unbounded per-frame budget is
-  explicitly rejected.
+  budget, main frame first), and frame capture draws from the remaining
+  `SnapshotBudget` envelope with a reserved per-frame minimum slice so one
+  slow main frame cannot starve frame capture entirely (starvation of
+  frames is the accepted alternative on envelope exhaustion; the coverage
+  block says which frames were truncated). An unbounded per-frame budget
+  is explicitly rejected.
+- Frame identity for the coverage block: URL origin + frame name where
+  meaningful; srcdoc/about:blank frames fall back to name-then-ordinal
+  identity.
 - Each minted ref records its owning frame in the binding. `resolve()`
   needs no structural change — handle evaluation already runs in the
   owning context — but bindings now carry frame identity for diagnostics.
@@ -60,11 +78,15 @@ in document order:
 
 Any frame that cannot be inspected — snapshot timeout, detached mid-flight,
 depth or budget truncation — produces a bounded `coverage` block on the
-observation: frame URL origin + name, status (`timeout` | `unavailable` |
-`depth_exceeded` | `budget_exceeded`), and a reason from the existing
-bounded vocabulary. A stable shell with uninspectable frames must not look
-like complete task coverage. This is the handoff's "surface explicit
-incomplete coverage and a bounded reason".
+observation: frame URL origin + name (name/ordinal fallback for
+srcdoc/about:blank), status (`timeout` | `unavailable` | `depth_exceeded` |
+`budget_exceeded`), and a reason from the existing bounded vocabulary. A
+stable shell with uninspectable frames must not look like complete task
+coverage. This is the handoff's "surface explicit incomplete coverage and a
+bounded reason". Touchpoints for the additive field: the engine's
+`RawPageState`, the protocol's observation schema (optional-field precedent
+— `degradedReason` — no version bump), the core observation normalizer
+(which copies named fields explicitly), and the API projection.
 
 ### 3. Iframe nodes stop masquerading as actuable refs
 
