@@ -539,6 +539,9 @@ function captureFormEvidence(
  * snapshot can miss because they carry no role attribute. Role-attributed
  * elements are excluded here - they are presumed covered by the snapshot.
  */
+/** Bounded child-frame traversal depth for observation (T6). */
+const MAX_FRAME_DEPTH = 3;
+
 const FORM_CONTROL_SELECTOR = [
   '[aria-haspopup]:not([role])',
   '[data-automation-id]:not(button):not(a):not(input):not(select):not(textarea):not([role])',
@@ -2083,6 +2086,8 @@ class PlaywrightPage implements EnginePage {
   /** Include tokens the most recent observe ran with (tryRemap re-observes with them). */
   private lastObservationInclude: ObservationRequest['include'] = undefined;
   private refStore = new Map<string, StoredElement>();
+  /** Owning child frame for elements merged from frame traversal (T6). */
+  private frameOfElement = new WeakMap<StoredElement, import('playwright').Frame>();
   private readonly fallbackNodes = new WeakMap<
     StoredElement,
     { handle: ElementHandle; locator: Locator }
@@ -2448,6 +2453,39 @@ class PlaywrightPage implements EnginePage {
       if (yaml !== undefined) {
         ariaSnapshotSucceeded = true;
         elements = this.parseAriaSnapshot(yaml, this.revision);
+        // Bounded child-frame traversal (T6): the main-frame snapshot renders
+        // child frames as bare [iframe] nodes without descending. Each child
+        // frame's own snapshot is merged so embedded-application content is
+        // observed and bindable; depth is capped and capture shares the
+        // snapshot time envelope (main frame first).
+        const mainFrame = this.page.mainFrame();
+        const depthOf = (frame: import('playwright').Frame): number => {
+          let depth = 0;
+          let cursor = frame.parentFrame();
+          while (cursor !== null && depth <= MAX_FRAME_DEPTH) {
+            depth += 1;
+            cursor = cursor.parentFrame();
+          }
+          return depth;
+        };
+        let refOffset = elements.length;
+        for (const frame of this.page.frames()) {
+          if (frame === mainFrame) continue;
+          if (depthOf(frame) > MAX_FRAME_DEPTH) continue;
+          let frameYaml: string | undefined;
+          try {
+            frameYaml = await snapshotBudget.capture(frame.locator('body'));
+          } catch {
+            // A frame detaching mid-traversal must not reject the whole
+            // observation; it reads as an uninspectable frame.
+            frameYaml = undefined;
+          }
+          if (frameYaml === undefined) continue;
+          const parsed = this.parseAriaSnapshot(frameYaml, this.revision, refOffset);
+          for (const element of parsed) this.frameOfElement.set(element, frame);
+          refOffset += parsed.length;
+          elements.push(...parsed);
+        }
       } else {
         ariaSnapshotDegraded = true;
         elements = await this.getContentElements();
@@ -2524,7 +2562,20 @@ class PlaywrightPage implements EnginePage {
     this.bindings = new Map();
     this.refStore.clear();
     let changed = previousCount > 0 && previousCount !== elements.length;
-    const ordinals = new Map<string, number>();
+    // (role, name) ordinals are PER FRAME: the same label in two frames is
+    // two distinct bindable elements, each resolving inside its own frame.
+    const mainFrame = this.page.mainFrame();
+    const ordinals = new Map<object, Map<string, number>>();
+    const ordinalFor = (frameKey: object, key: string): number => {
+      let per = ordinals.get(frameKey);
+      if (per === undefined) {
+        per = new Map();
+        ordinals.set(frameKey, per);
+      }
+      const ordinal = per.get(key) ?? 0;
+      per.set(key, ordinal + 1);
+      return ordinal;
+    };
     // Elements bound to a real node this pass, deferred here instead of
     // enriched inline: isVisible()/isEnabled() are independent per-element
     // reads (each was previously one sequential await), and on a
@@ -2541,11 +2592,14 @@ class PlaywrightPage implements EnginePage {
       for (const [index, element] of elements.entries()) {
         const ref = element.ref ?? `e${this.revision}_${index}`;
         const key = JSON.stringify([element.role, element.name ?? '']);
-        const ordinal = ordinals.get(key) ?? 0;
-        ordinals.set(key, ordinal + 1);
+        const ownerFrame = this.frameOfElement.get(element);
+        const frameKey = ownerFrame ?? mainFrame;
+        const locatorRoot = ownerFrame ?? this.page;
+        const ordinal = ordinalFor(frameKey, key);
         // Role resolution excludes hidden nodes and role-less widgets, so
         // file inputs and form controls bind by ordinal over their candidate
-        // selectors instead of via getByRole.
+        // selectors instead of via getByRole. Those scans are main-frame;
+        // frame-scoped elements bind through their owning frame's locator.
         const fallback = this.fallbackNodes.get(element);
         const locator =
           fallback?.locator ??
@@ -2553,7 +2607,7 @@ class PlaywrightPage implements EnginePage {
             ? this.page.locator('input[type=file]').nth(element.fileInputIndex)
             : element.formControlIndex !== undefined
               ? this.page.locator(FORM_CONTROL_SELECTOR).nth(element.formControlIndex)
-              : this.page
+              : locatorRoot
                   .getByRole(element.role as never, { name: element.name ?? '', exact: true })
                   .nth(ordinal));
         // Bind once to an actual node. An ordinal is never resolved anew at act time.
@@ -2762,7 +2816,7 @@ class PlaywrightPage implements EnginePage {
    *     - /value: "typed text"
    * Attribute lines (`/attr: value`) annotate the preceding element.
    */
-  private parseAriaSnapshot(yaml: string, revision: number): StoredElement[] {
+  private parseAriaSnapshot(yaml: string, revision: number, refOffset = 0): StoredElement[] {
     const elements: StoredElement[] = [];
     const lines = yaml.split('\n');
 
@@ -2805,7 +2859,7 @@ class PlaywrightPage implements EnginePage {
       }
 
       const element: StoredElement = {
-        ref: `e${revision}_${elements.length}`,
+        ref: `e${revision}_${refOffset + elements.length}`,
         role,
         visible: true,
         enabled: true,
