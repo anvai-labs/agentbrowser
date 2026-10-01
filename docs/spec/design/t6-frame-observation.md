@@ -143,6 +143,21 @@ coverage block; no automatic retry of frame capture.
 ## Sequencing
 
 Design review (this packet), then three slices: (1) traversal + merge +
-binding with gates 1-2; (3) frame-identity/egress/verification gates;
+binding with gates 1-2; (2) frame-identity/egress/verification gates;
 (3) budgets + evidence. Slice 1 unblocks the consumer workaround gap;
 slices land per T9 evidence discipline.
+
+## Delivery status
+
+- **Slice 1 DELIVERED 2026-09-30** (traversal + merge + frame-scoped
+  binding): observe() walks child frames (depth ≤ 3, shared snapshot
+  envelope, main frame first), merges their elements into one
+  deterministic ref list, and binds through the owning frame's locator
+  with per-frame (role, name) ordinals — duplicate labels across frames
+  bind and act independently. Pinned on real Chromium: same-origin,
+  cross-origin, srcdoc, and nested (depth 2) frames observe and act.
+  Not yet in this slice, queued next: the coverage block and its
+  protocol/normalizer touchpoints, the iframe-marker `frame_content`
+  diagnostic, fileInputs/formControls frame-extended scans, the egress
+  gate for frame navigation, per-frame snapshot-slice reservation, and
+  the budget/latency measurement.
