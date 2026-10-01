@@ -67,6 +67,7 @@ import {
   SnapshotBudget,
   type SnapshotEvidence,
   classifyEmptyObservation,
+  frameSliceMs,
   sameSnapshotEvidence,
   snapshotDigest,
   snapshotTimeout,
@@ -2592,8 +2593,9 @@ class PlaywrightPage implements EnginePage {
         };
         let refOffset = elements.length;
         let frameOrdinal = 0;
-        for (const frame of this.page.frames()) {
-          if (frame === mainFrame) continue;
+        const childFrames = this.page.frames().filter((frame) => frame !== mainFrame);
+        const framesLeft = childFrames.length;
+        for (const [frameIndex, frame] of childFrames.entries()) {
           frameOrdinal += 1;
           const identity = frameIdentity(frame, frameOrdinal);
           const depth = depthOf(frame);
@@ -2601,13 +2603,20 @@ class PlaywrightPage implements EnginePage {
             frameCoverage.push({ frame: identity, status: 'depth_exceeded' });
             continue;
           }
-          if (snapshotBudget.exhausted) {
+          // Per-frame slice: the remaining envelope re-split evenly across
+          // the frames still to capture — an even split recomputed per turn,
+          // which back-loads later document-order frames (they receive
+          // whatever the earlier ones left). Total time stays bounded by
+          // the envelope; a slice too small to produce a snapshot reads as
+          // budget_exceeded — the coverage block names the frame either way.
+          const slice = frameSliceMs(snapshotBudget.remaining(), framesLeft - frameIndex);
+          if (snapshotBudget.exhausted || slice <= 0) {
             frameCoverage.push({ frame: identity, status: 'budget_exceeded' });
             continue;
           }
           let frameYaml: string | undefined;
           try {
-            frameYaml = await snapshotBudget.capture(frame.locator('body'));
+            frameYaml = await snapshotBudget.capture(frame.locator('body'), slice);
           } catch {
             // A frame detaching mid-traversal must not reject the whole
             // observation; it reads as an uninspectable frame.
