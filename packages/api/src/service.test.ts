@@ -2656,3 +2656,77 @@ describe('session page visibility (TD-BROWSER-11)', () => {
     await expect(service.listPages(session.sessionId)).resolves.toEqual([]);
   });
 });
+
+describe('session event ledger paging and redaction (N1)', () => {
+  const until = async (condition: () => boolean): Promise<void> => {
+    for (let spins = 0; spins < 100; spins += 1) {
+      if (condition()) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  };
+
+  it('pages a typed stream by per-stream ledger cursor', async () => {
+    const engine = new FakeEngine();
+    const paged = new AgentBrowserService({ engine });
+    const session = await paged.createSession({ tenantId: 't1' });
+    const pageId = (await paged.createPage(session.sessionId)).pageId;
+    const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
+    const fakePage = engine.getFakePage(engineSessionId as string, pageId);
+    for (let index = 0; index < 5; index += 1) {
+      fakePage?.emitEvent('console.log', { text: `line-${index}` });
+    }
+    await until(() => {
+      const page1 = paged.getSessionEvents(session.sessionId, {
+        type: 'console.log',
+        since: -1,
+        limit: 2,
+      });
+      return page1.events.length === 2;
+    });
+    const page1 = paged.getSessionEvents(session.sessionId, {
+      type: 'console.log',
+      since: -1,
+      limit: 2,
+    });
+    expect(page1.events.map((event) => (event.data as { text: string }).text)).toEqual([
+      'line-0',
+      'line-1',
+    ]);
+    expect(page1.events.every((event) => 'seq' in event)).toBe(true);
+    expect(page1.nextCursor).toBeGreaterThan(0);
+    const page2 = paged.getSessionEvents(session.sessionId, {
+      type: 'console.log',
+      since: page1.nextCursor,
+      limit: 2,
+    });
+    expect(page2.events.map((event) => (event.data as { text: string }).text)).toEqual([
+      'line-2',
+      'line-3',
+    ]);
+    // The merged no-filter view keeps its legacy array shape.
+    const merged = paged.getSessionEvents(session.sessionId);
+    expect(Array.isArray(merged)).toBe(true);
+    expect((merged as { type: string }[]).some((event) => event.type === 'console.log')).toBe(true);
+  });
+
+  it('stores page-derived text redacted (pump-level redaction pin)', async () => {
+    const engine = new FakeEngine();
+    const secreted = new AgentBrowserService({
+      engine,
+      secretManager: new SecretManager({ 'vault://p': 'hunter2' }),
+    });
+    const session = await secreted.createSession({ tenantId: 't1' });
+    const pageId = (await secreted.createPage(session.sessionId)).pageId;
+    const engineSessionId = engine.getSessionIds()[engine.getSessionIds().length - 1];
+    const fakePage = engine.getFakePage(engineSessionId as string, pageId);
+    fakePage?.emitEvent('page.error', { text: 'token hunter2 escaped' });
+    await until(() => {
+      const { events } = secreted.getSessionEvents(session.sessionId, { type: 'page.error' });
+      return events.length > 0;
+    });
+    const { events } = secreted.getSessionEvents(session.sessionId, { type: 'page.error' });
+    expect(events).toHaveLength(1);
+    const text = (events[0].data as { text: string }).text;
+    expect(text).not.toContain('hunter2');
+  });
+});

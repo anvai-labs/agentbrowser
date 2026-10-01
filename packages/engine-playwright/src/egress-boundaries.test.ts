@@ -188,7 +188,12 @@ describe('egress all-hop redirect enforcement', () => {
     const fetched: string[] = [];
     const fulfill = vi.fn(async () => {});
     const route = {
-      request: () => ({ url: () => urls[0], method: () => 'GET' }),
+      request: () => ({
+        url: () => urls[0],
+        method: () => 'GET',
+        resourceType: () => 'document',
+        frame: () => ({ page: () => undefined }),
+      }),
       fetch: vi.fn(async (options?: { url?: string }) => {
         const target = options?.url ?? urls[0];
         fetched.push(target);
@@ -275,6 +280,48 @@ describe('egress all-hop redirect enforcement', () => {
     await routeHandler(route);
     expect(fetched).toEqual(['https://example.test/loop']);
     expect(fulfill.mock.calls[0]?.[0]).toMatchObject({ status: 403 });
+  });
+
+  it('emits bounded vocabulary reasons and query-free redirect locations', async () => {
+    const emitted: Array<Record<string, unknown>> = [];
+    let routeHandler: ((route: unknown) => Promise<void>) | undefined;
+    const engine = new PlaywrightChromiumEngine();
+    await (
+      engine as unknown as {
+        installEgress(context: unknown, policy: unknown, sink: unknown): Promise<void>;
+      }
+    ).installEgress(
+      {
+        route: async (_pattern: string, handler: typeof routeHandler) => {
+          routeHandler = handler;
+        },
+      },
+      { checkRequest: async () => {}, checkBodySize: async () => {} },
+      {
+        emit: (event: { data: Record<string, unknown> }) => {
+          emitted.push(event.data);
+        },
+        navigationFailures: new WeakMap(),
+      }
+    );
+    if (!routeHandler) throw new Error('Missing route handler');
+    const terminal = makeResponse(200, undefined, '<p>end</p>');
+    const byUrl = new Map<string, ReturnType<typeof makeResponse>>([
+      ['https://example.test/h0?entry=1', makeResponse(302, '/h1?token=secret-query')],
+      ['https://example.test/h1?token=secret-query', makeResponse(302, '/h2')],
+      // h2 sends the chain back to the already-visited h1: the loop fires.
+      ['https://example.test/h2', makeResponse(302, '/h1?token=secret-query')],
+    ]);
+    const { route } = chainRoute(['https://example.test/h0?entry=1'], byUrl);
+    await routeHandler(route);
+    const failed = emitted.filter((entry) => entry.blocked === true);
+    // Every denial carries the bounded vocabulary reason, never free-form codes.
+    for (const entry of failed) expect(entry.reason).toBe('egress_policy');
+    // The loop-detection location is query-stripped even though the hop URL
+    // carried a query string.
+    const looped = emitted.find((entry) => entry.detail === 'REDIRECT_LOOP');
+    expect(looped).toBeDefined();
+    expect(String(looped?.redirect)).not.toContain('?');
   });
 
   it('caps redirect chain length', async () => {

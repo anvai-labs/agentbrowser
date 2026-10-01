@@ -832,17 +832,51 @@ export class AgentBrowserService {
    * (console/other first, then requests - cross-ledger interleaving order
    * is not preserved, documented at the route).
    */
-  getSessionEvents(sessionId: string, typeFilter?: string): EngineEvent[] {
+  getSessionEvents(sessionId: string, typeFilter?: string): EngineEvent[];
+  getSessionEvents(
+    sessionId: string,
+    options: { type?: string; since?: number; limit?: number }
+  ): { events: EngineEvent[]; nextCursor: number };
+  getSessionEvents(
+    sessionId: string,
+    selector?: string | { type?: string; since?: number; limit?: number }
+  ): EngineEvent[] | { events: EngineEvent[]; nextCursor: number } {
     this.requireSession(sessionId);
     const others = this.eventHistory.get(sessionId)?.toArray() ?? [];
     const requests = this.requestHistory.get(sessionId)?.toArray() ?? [];
+    // Legacy positional form: an array, exactly as callers have always seen.
+    // No selector at all is the merged view.
+    if (selector === undefined) {
+      return [...others, ...requests];
+    }
+    if (typeof selector === 'string') {
+      if (selector.startsWith('request.')) {
+        return requests.filter((event) => event.type === selector);
+      }
+      return others.filter((event) => event.type === selector);
+    }
+    // Paging (N1 G2) applies to one stream at a time — the cursors are
+    // per-stream ledger sequences. The filtered-no-paging form returns an
+    // envelope with a sentinel cursor for existing shape-agnostic callers.
+    const typeFilter = selector.type;
+    if (selector.since !== undefined || selector.limit !== undefined) {
+      if (typeFilter === undefined) throw new Error('since/limit require a type filter');
+      const limit = selector.limit ?? 200;
+      const since = selector.since ?? -1;
+      const ledger = typeFilter.startsWith('request.')
+        ? this.requestHistory.get(sessionId)
+        : this.eventHistory.get(sessionId);
+      const rows = (ledger?.entriesAfter(since, limit) ?? []).map(({ seq, value }) => ({
+        ...value,
+        seq,
+      }));
+      const last = rows.at(-1)?.seq ?? since;
+      return { events: rows, nextCursor: last };
+    }
     if (typeFilter?.startsWith('request.')) {
-      return requests.filter((event) => event.type === typeFilter);
+      return { events: requests.filter((event) => event.type === typeFilter), nextCursor: -1 };
     }
-    if (typeFilter !== undefined) {
-      return others.filter((event) => event.type === typeFilter);
-    }
-    return [...others, ...requests];
+    return { events: others.filter((event) => event.type === typeFilter), nextCursor: -1 };
   }
 
   private canPublishEvents(sessionId: string, owner: SessionContext): boolean {
