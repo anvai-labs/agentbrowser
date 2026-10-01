@@ -297,6 +297,7 @@ export type EngineEventType =
   | 'console.log'
   | 'console.error'
   | 'console.warning'
+  | 'page.error'
   | 'request.started'
   | 'request.finished'
   | 'request.failed'
@@ -317,6 +318,8 @@ export interface EngineEvent {
   sessionId: string;
   pageId?: string;
   data?: Record<string, unknown>;
+  /** Set on events carrying page-derived text (hostile until redacted). */
+  untrustedContent?: boolean;
 }
 
 // ============================================================================

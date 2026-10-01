@@ -97,3 +97,17 @@ JS eval; capture before session start; pushing facts into per-call results
 This design review first. Then two PRs: (1) engine + service gap-fill
 (G1, G2, G3, G5, G6) with the unit gates; (2) surface exposure (G4) with
 catalog/CLI/schema sync. Each carries its own evidence record per T9.
+
+## Delivery status
+
+- **Slice 1 DELIVERED 2026-09-30**: G1 pageerror capture (untrusted, real
+  Chromium-pinned); G2 cursor paging on replay (`since`/`limit` require a
+  type filter — cursors are per-stream ledger sequences; the legacy
+  positional/array form is preserved for every existing caller); G3
+  verified as already-shipped (the event pump redacts through the
+  SecretManager before storage — pinned by a canary test rather than
+  rebuilt); G5 walker denials mapped to the bounded `egress_policy`
+  reason with bounded `detail`, and redirect location fields stripped of
+  query strings; G6 pageId confirmed present on rows.
+- **Slice 2 (G4 — MCP/CLI surface exposure)** remains.
+

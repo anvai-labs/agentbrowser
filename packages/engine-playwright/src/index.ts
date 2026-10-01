@@ -1550,7 +1550,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             if (hops > MAX_REDIRECT_HOPS) {
               emitRequest('request.failed', request, {
                 blocked: true,
-                reason: `MAX_REDIRECTS (${hops - 1} hops)`,
+                reason: 'egress_policy',
+                detail: `MAX_REDIRECTS (${hops - 1} hops)`,
               });
               await deny('egress_policy');
               return;
@@ -1560,8 +1561,9 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             if (seen.has(hopKey)) {
               emitRequest('request.failed', request, {
                 blocked: true,
-                reason: 'REDIRECT_LOOP',
-                redirect: hopKey,
+                reason: 'egress_policy',
+                detail: 'REDIRECT_LOOP',
+                redirect: absolute.origin + absolute.pathname,
               });
               await deny('egress_policy');
               return;
@@ -1602,7 +1604,8 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             } catch {
               emitRequest('request.failed', request, {
                 blocked: true,
-                reason: 'RESPONSE_TOO_LARGE (response-size cap)',
+                reason: 'egress_policy',
+                detail: 'RESPONSE_TOO_LARGE (response-size cap)',
               });
               await deny('egress_policy');
               return;
@@ -1618,13 +1621,17 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
             } catch {
               emitRequest('request.failed', request, {
                 blocked: true,
-                reason: 'RESPONSE_TOO_LARGE (actual-byte cap)',
+                reason: 'egress_policy',
+                detail: 'RESPONSE_TOO_LARGE (actual-byte cap)',
               });
               await deny('egress_policy');
               return;
             }
             if (hops > 0) {
-              emitRequest('request.finished', request, { status: 302, redirect: currentUrl });
+              emitRequest('request.finished', request, {
+                status: 302,
+                redirect: new URL(currentUrl).origin + new URL(currentUrl).pathname,
+              });
               await fulfill({
                 status: 302,
                 headers: { location: currentUrl },
@@ -1643,7 +1650,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
 
           const declaredLength = headers['content-length'];
           if (hops > 0) {
-            emitRequest('request.finished', request, { status: 302, redirect: currentUrl });
+            emitRequest('request.finished', request, {
+              status: 302,
+              redirect: new URL(currentUrl).origin + new URL(currentUrl).pathname,
+            });
             await fulfill({
               status: 302,
               headers: { location: currentUrl },
@@ -2094,6 +2104,7 @@ class PlaywrightPage implements EnginePage {
   private onPageDialog: (dialog: import('playwright').Dialog) => void = () => {};
   private onPageLoad: () => void = () => {};
   private onPageConsole: (msg: import('playwright').ConsoleMessage) => void = () => {};
+  private onPageError: (error: unknown) => void = () => {};
   private onPageCrashed: () => void = () => {};
 
   /** Registered by the owning session so close() removes it from the map. */
@@ -2211,6 +2222,20 @@ class PlaywrightPage implements EnginePage {
       });
     };
     this.page.on('console', this.onPageConsole);
+    // Uncaught page exceptions are failure facts agents cannot see any other
+    // way. Page-derived text: marked untrusted, redacted at the service
+    // boundary before storage (N1 G1/G3).
+    this.onPageError = (error) => {
+      this.enqueueEvent({
+        type: 'page.error',
+        timestamp: new Date().toISOString(),
+        sessionId: 'unknown',
+        pageId: this.id,
+        untrustedContent: true,
+        data: { text: error instanceof Error ? error.message : String(error) },
+      });
+    };
+    this.page.on('pageerror', this.onPageError);
   }
 
   /** Enqueue an event and wake any iterator waiting for one. */
@@ -3885,6 +3910,7 @@ class PlaywrightPage implements EnginePage {
     this.page.off('dialog', this.onPageDialog);
     this.page.off('load', this.onPageLoad);
     this.page.off('console', this.onPageConsole);
+    this.page.off('pageerror', this.onPageError);
     this.page.off('crash', this.onPageCrashed);
     this.page.off('framenavigated', this.onFrameNavigated);
     await this.formIdentityState?.dispose().catch(() => {});
