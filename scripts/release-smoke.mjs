@@ -9,6 +9,7 @@ export const EXPECTED_TOOLS = Object.freeze([
   'browser_create', 'browser_page_create', 'browser_pages', 'browser_close', 'browser_cookies', 'browser_snapshot',
   'browser_plan', 'browser_autofill', 'browser_navigate', 'browser_observe', 'browser_act',
   'browser_extract', 'browser_html', 'browser_pdf', 'browser_screenshot', 'browser_session',
+  'browser_events_replay',
 ]);
 
 export const EXPECTED_DELEGATED_TOOLS = Object.freeze([

@@ -69,6 +69,7 @@ export interface McpClient {
     | 'pdf'
     | 'html'
     | 'artifact'
+    | 'events'
   > &
     Partial<
       Pick<
@@ -764,6 +765,53 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
           ...(boundSessionId !== undefined ? { control } : {}),
           pages,
         };
+      },
+    },
+    {
+      name: 'browser_events_replay',
+      requiredCapabilities: ['session.control', 'page.observe'],
+      description:
+        "Replay the session's bounded event ledgers oldest-first: console lines and lifecycle events, plus the network summary (request started/finished/failed with policy-denial facts; URLs are query-string-redacted; entries are redacted and page-derived text is untrusted). Cursor paging via since/limit requires a type filter — cursors are per-ledger entry sequences, and a cursor older than the retained window re-reads from the oldest kept entry.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string', minLength: 1 },
+          type: {
+            type: 'string',
+            description: 'Filter by event type, e.g. console.log or request.failed.',
+          },
+          since: {
+            type: 'integer',
+            minimum: 0,
+            description: 'Paging cursor: return entries with a sequence above this.',
+          },
+          limit: {
+            type: 'integer',
+            minimum: 1,
+            maximum: 1000,
+            description: 'Paging cap (default 200, max 1000).',
+          },
+        },
+        required: ['sessionId'],
+      },
+      handler: async (args) => {
+        const sessionId = requireSessionId(args);
+        if (typeof client.sessions.events !== 'function')
+          throw new UsageError('Client does not support event replay');
+        const type = typeof args.type === 'string' ? args.type : undefined;
+        const since = typeof args.since === 'number' ? args.since : undefined;
+        const limit = typeof args.limit === 'number' ? args.limit : undefined;
+        if ((since !== undefined || limit !== undefined) && type === undefined)
+          throw new UsageError('since/limit require a type filter (cursors are per-ledger)');
+        if (since !== undefined || limit !== undefined) {
+          return client.sessions.events(sessionId, {
+            type: type as string,
+            ...(since !== undefined ? { since } : {}),
+            ...(limit !== undefined ? { limit } : {}),
+          });
+        }
+        const events = await client.sessions.events(sessionId, type);
+        return { events, nextCursor: -1 };
       },
     },
   ];

@@ -5,6 +5,64 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [1.15.0] - 2026-10-01
+
+### Added
+
+- Child-frame observation and ref binding (T6): `observe` walks child
+  frames (depth-capped, per-frame snapshot slices) and merges their
+  content into one deterministic ref list; bindings are frame-scoped
+  with per-frame ordinals, so embedded-application content is visible
+  and actionable — duplicate labels across frames bind independently.
+- Frame coverage surfacing: uninspectable frames (`timeout`,
+  `unavailable`, `depth_exceeded`, `budget_exceeded`) surface a bounded
+  `frameCoverage` block through the observation schema instead of
+  silently partial content; iframe nodes are no longer bindable refs.
+- Frame-scoped form identity: form-identity evidence for frame-owned
+  controls evaluates against a per-frame identity state (the main-frame
+  limitation is lifted); act-time re-verification routes through the
+  owning frame.
+- Per-frame snapshot slices: frame captures draw an even split of the
+  remaining snapshot envelope, so one slow frame cannot starve the rest;
+  a spent envelope reads as `budget_exceeded` coverage per frame.
+- Session event replay outside REST (N1): `browser_events_replay` MCP
+  tool, `session events --since/--limit` CLI paging, and the SDK paged
+  overload over the bounded event ledgers; uncaught page exceptions are
+  captured as redacted `page.error` events.
+- Operator loopback opt-in (`AGENTBROWSER_ALLOW_LOOPBACK`): disables the
+  loopback egress block for all sessions on the server (local-machine
+  testing against 127.0.0.1 dev servers). Startup-only; metadata
+  blocking and session host restrictions still apply; visited pages can
+  reach loopback services including the server's own API — see the
+  operations table and threat model.
+
+### Changed
+
+- All-hop egress enforcement: redirect chains are walked in the routing
+  choke point with per-hop policy checks, a redirect cap, and loop
+  detection — the later-redirect policy bypass (R4) is closed; a denied
+  terminal is never fetched.
+- Journal horizons are monotonic across wall-clock rollback: admission
+  and retention use max(now, persisted high-water); a reopen below the
+  persisted high-water refuses as configuration.
+- T8: the installed 1.14.0 MCP tool-call path and cursor
+  consumption/retirement lifecycle are qualified on the record machine;
+  explicit footprint gates (peak RSS on the shipped binaries) run in CI.
+
+### Fixed
+
+- The storage manager's dispose drain is bounded; a navigated child
+  frame can no longer leave form evidence dead; journal manager
+  hostile-frame and late/duplicate-reply hardening; footprint and
+  per-frame snapshot-slice gates enforce the recorded budgets.
+
+### Docs
+
+- The tooling comparison (AgentBrowser vs Chrome debug mode,
+  chrome-devtools-mcp, assistant-vendor browser integrations), the
+  frame-observation and N1 designs, the installed-harness
+  qualification records, and the foundation-first plan refinements.
+
 ## [1.14.0] - 2026-09-30
 
 ### Added

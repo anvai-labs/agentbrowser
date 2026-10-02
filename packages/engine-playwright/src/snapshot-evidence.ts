@@ -34,20 +34,39 @@ export class SnapshotBudget {
 
   /** True once the envelope is spent: further captures return immediately. */
   get exhausted(): boolean {
-    return this.deadline - performance.now() <= 0;
+    return this.remaining() <= 0;
   }
 
-  async capture(locator: Locator): Promise<string | undefined> {
-    const remaining = this.deadline - performance.now();
-    // Playwright interprets zero as unlimited, not expired.
-    if (remaining <= 0) return undefined;
+  /** Milliseconds left in the envelope (zero once spent). */
+  remaining(): number {
+    return Math.max(0, this.deadline - performance.now());
+  }
+
+  /** Capture with the full remaining envelope, or bound it to `timeoutMs`
+   * (a per-frame slice can never exceed what the envelope has left).
+   * Playwright interprets zero as unlimited, not expired — zero means spent.
+   */
+  async capture(locator: Locator, timeoutMs?: number): Promise<string | undefined> {
+    const slice =
+      timeoutMs === undefined ? this.remaining() : Math.min(timeoutMs, this.remaining());
+    if (slice <= 0) return undefined;
     try {
-      return await locator.ariaSnapshot({ timeout: Math.ceil(remaining) });
+      return await locator.ariaSnapshot({ timeout: Math.ceil(slice) });
     } catch (error) {
       if (error instanceof errors.TimeoutError) return undefined;
       throw error;
     }
   }
+}
+
+/** Per-frame slice of the remaining envelope: an even split across the
+ * frames still to capture, floored at zero. Later frames see whatever the
+ * earlier ones left; the coverage block names any frame whose slice was
+ * too small to produce a snapshot.
+ */
+export function frameSliceMs(remainingMs: number, framesLeft: number): number {
+  if (remainingMs <= 0 || framesLeft < 1) return 0;
+  return Math.floor(remainingMs / framesLeft);
 }
 
 export function snapshotDigest(value: string | undefined): string | undefined {

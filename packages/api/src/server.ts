@@ -430,7 +430,15 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     ...(options.evidenceReviewProvider !== undefined
       ? { evidenceReviewProvider: options.evidenceReviewProvider }
       : {}),
-    ...(options.networkPolicy ? { networkPolicy: options.networkPolicy } : {}),
+    ...(options.networkPolicy
+      ? { networkPolicy: options.networkPolicy }
+      : process.env.AGENTBROWSER_ALLOW_LOOPBACK !== undefined ||
+          process.env.AGENTBROWSER_ALLOWED_CIDRS !== undefined
+        ? {
+            allowLoopback: process.env.AGENTBROWSER_ALLOW_LOOPBACK,
+            allowedPrivateCIDRs: process.env.AGENTBROWSER_ALLOWED_CIDRS,
+          }
+        : {}),
     ...((options.approvalPolicy ?? process.env.AGENTBROWSER_APPROVAL_POLICY) !== undefined
       ? {
           approvalPolicy:
