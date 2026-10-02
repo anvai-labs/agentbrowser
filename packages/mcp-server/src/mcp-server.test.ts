@@ -342,6 +342,8 @@ describe('AgentBrowser MCP server', () => {
       expect(descriptions.get('browser_plan')).toContain('application commit');
       expect(descriptions.get('browser_act')).toContain('reconcile');
       expect(descriptions.get('browser_act')).not.toContain('one retry after observing');
+      expect(descriptions.get('browser_create')).toContain('blocked by egress policy');
+      expect(descriptions.get('browser_navigate')).toContain('reloading');
     });
 
     it('advertises the ten-minute idle default without imposing a client-side default', async () => {

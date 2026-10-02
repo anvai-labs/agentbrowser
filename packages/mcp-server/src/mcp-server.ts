@@ -159,7 +159,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
     {
       name: 'browser_create',
       requiredCapabilities: ['session.manage'],
-      description: `Create an ephemeral browser session (isolated by default). The opt-in cdpAttach lane shares a dedicated operator profile and checks only initial explicit navigation URLs; it requires local startup configuration. Element refs are scoped to a single session and page. Returns both sessionId and an initial pageId. ${INTERACTION_GUIDANCE.headedSession}`,
+      description: `Create an ephemeral browser session (isolated by default). The opt-in cdpAttach lane shares a dedicated operator profile and checks only initial explicit navigation URLs; it requires local startup configuration. Element refs are scoped to a single session and page. Returns both sessionId and an initial pageId. ${INTERACTION_GUIDANCE.headedSession} ${INTERACTION_GUIDANCE.livePush}`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -428,7 +428,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
     {
       name: 'browser_navigate',
       requiredCapabilities: ['page.navigate'],
-      description: `Navigate a page to an http(s) URL and wait for it to load. Failures set isError and carry a bounded reason; transport errors do not prove a bot wall. ${INTERACTION_GUIDANCE.networkPolicy}`,
+      description: `Navigate a page to an http(s) URL and wait for it to load. Failures set isError and carry a bounded reason; transport errors do not prove a bot wall. ${INTERACTION_GUIDANCE.networkPolicy} ${INTERACTION_GUIDANCE.livePush}`,
       inputSchema: {
         type: 'object',
         properties: {

@@ -60,7 +60,9 @@ proves the control works. Residual risks are named, not hidden.
   those checks. Browser connections are not pinned to those addresses.
   Direct downloads separately validate and pin each connection.
 - **WebSocket upgrades (PARTIAL)**: root and session-only policies now install
-  the same default page WebSocket deny handler. The real Chromium page fixture
+  the same default page WebSocket deny handler — upgrades close with code
+  `1014` / `blocked by egress policy` (the operator-facing diagnostic). The
+  real Chromium page fixture
   has zero server connections; this does not establish worker coverage or a
   network-wide boundary. Selective forwarding remains unsupported under the
   fetch/fulfill combination; explicit `off` and no-policy modes are unguarded.

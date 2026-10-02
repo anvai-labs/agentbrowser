@@ -36,4 +36,12 @@ export const INTERACTION_GUIDANCE = Object.freeze({
     'A timed-out or disconnected write may have executed. Do not blindly retry: reconcile ' +
     'the recorded operation under current authorization before any further write. ' +
     'If no operation record is available, preserve uncertainty and inspect independent outcome evidence.',
+  livePush:
+    'Live-push transports are closed under any active egress policy (the default SSRF policy ' +
+    'included): page WebSockets close with code 1014 "blocked by egress policy" — an engine ' +
+    'diagnostic, not a site or bot wall. Read final state by reloading the page or polling a REST ' +
+    'endpoint instead of waiting for push; streamed HTTP (SSE) is buffered by the same choke point. ' +
+    'allowServiceWorkers restores service-worker transport only, never WebSockets. There is no ' +
+    'supported procedure to enable page WebSockets under a policy; the transport-level replacement ' +
+    'is tracked separately.',
 });
