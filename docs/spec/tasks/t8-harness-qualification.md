@@ -72,9 +72,15 @@ an explicit installed-harness acceptance gate.
 The released installed harness (1.14.0) MCP tool-call path is now qualified
 (2026-10-01, see the availability record's update), including cursor
 consumption/retirement semantics through the bound harness (takeover
-revocation, epoch advance, fresh-grant recovery, old-epoch refusal);
-still open: the provider's actual tool-call path, then the remaining
-correlation/reconnect/cancellation and footprint gates.
+revocation, epoch advance, fresh-grant recovery, old-epoch refusal).
+Footprint gates are explicit and CI-enforced
+(scripts/footprint-gates.test.mjs: shipped CLI one-shot and idle MCP
+bridge peak RSS within 120 MB, polled on the compiled dist-bin
+artifacts); measured 2026-09-30: 26.8 / 44.5 MB. Still open: the
+provider's actual tool-call path, the remaining
+correlation/reconnect/cancellation gates, and the install-size gate for
+the packaged candidate (RSS half delivered; Linux CI numbers will inform
+tightening the 120 MB limits).
 Retain explicit limits until those named acceptance runs exist; no whole-milestone
 completion or release is implied by this source repair.
 
