@@ -2635,15 +2635,19 @@ class PlaywrightPage implements EnginePage {
           for (const element of parsed) this.frameOfElement.set(element, frame);
           refOffset += parsed.length;
           elements.push(...parsed);
-          // A frame still on its initial about:blank document (navigation
-          // not yet committed) yields an empty snapshot that is NOT a
-          // legitimately empty frame — name it so an agent retries rather
-          // than reading the shell as complete coverage of a mounting
-          // application.
-          // A frame with an empty URL (or still on about:blank) and no
-          // merged content is mid-navigation, not legitimately empty.
+          // A frame with no committed document (empty/about:blank URL) and
+          // no merged content is mid-navigation — name it so an agent
+          // retries rather than reading the shell as complete coverage of
+          // a mounting application. URL alone cannot distinguish a held
+          // navigation from a src-less/srcdoc frame (both report
+          // about:blank forever): the reason says so instead of overclaiming.
           if (parsed.length === 0 && (frame.url() === '' || frame.url() === 'about:blank')) {
-            frameCoverage.push({ frame: identity, status: 'loading' as const });
+            frameCoverage.push({
+              frame: identity,
+              status: 'loading' as const,
+              reason:
+                'no committed document — navigation in flight, or a static src-less/srcdoc frame',
+            });
           }
         }
       } else {
