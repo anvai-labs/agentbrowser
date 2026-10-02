@@ -149,10 +149,18 @@ the real choke point.
   base) with EngagementScopePolicy as the outermost layer; the download
   transport inherits the same wrapped policy.
 - Preflight: the service navigates through a non-spending preflight
-  (`preflightCheck`) — full denial checks, budget-exhaustion included,
-  without consuming budget, so a navigation is charged once at the wire
-  and denials surface as typed `POLICY_DENIED` ServiceErrors carrying
-  the `SCOPE_*` sub-code before the request reaches the engine.
+  (`preflightCheck`, carrying the document GET method) — full denial
+  checks, budget-exhaustion included, without consuming budget, so a
+  navigation is charged once at the wire and its denials surface as
+  typed `POLICY_DENIED` ServiceErrors carrying the `SCOPE_*` sub-code
+  before the request reaches the engine. Act-driven navigations
+  (plan navigate steps, goBack/goForward/reload) bypass the preflight
+  and enforce at the wire with the generic `egress_policy` reason —
+  enforcement is identical, reason granularity is not.
+- Download lane: the download transport re-validates the accumulated
+  chain per redirect; the wrapper charges each hop URL once (spend
+  idempotency), and downloads spend the engagement budget like any
+  other traffic.
 
 ## Deliberately out of scope (later slices)
 

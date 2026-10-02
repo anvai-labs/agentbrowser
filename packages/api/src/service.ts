@@ -2626,10 +2626,17 @@ export class AgentBrowserService {
         // choke point is the only spender (a navigation is not charged
         // twice). Other policies preflight through checkRequest as before.
         const scoped = policy as unknown as {
-          preflightCheck?: (r: { hostname: string; url: string }) => Promise<void>;
+          preflightCheck?: (r: {
+            hostname: string;
+            url: string;
+            method?: string;
+          }) => Promise<void>;
         };
         if (typeof scoped.preflightCheck === 'function') {
-          await scoped.preflightCheck({ hostname, url });
+          // Document navigations are GETs; the preflight must say so or a
+          // method-scoped engagement would false-deny every navigation
+          // (the wire check carries the real method and allows it).
+          await scoped.preflightCheck({ hostname, url, method: 'GET' });
         } else {
           await policy.checkRequest({ hostname, url });
         }

@@ -93,6 +93,30 @@ it('scope: budget exhaustion prevents further traffic through the service surfac
   }
 }, 30_000);
 
+it('scope: method-scoped engagements allow document navigations (GET preflight)', async () => {
+  const { server, port } = await startFixture();
+  const service = new AgentBrowserService({
+    engine: new PlaywrightChromiumEngine(),
+    networkPolicy: new NetworkPolicy(),
+  });
+  try {
+    const { sessionId } = await service.createSession({
+      tenantId: 'local',
+      scope: { allowedHosts: ['127.0.0.1'], allowedMethods: ['GET'] },
+    });
+    const { pageId } = await service.createPage(sessionId);
+    // The preflight carries the document method: a GET-only engagement
+    // must not false-deny GET navigations at the surface.
+    const allowed = await service.navigate(sessionId, pageId, {
+      url: `http://127.0.0.1:${port}/get`,
+    });
+    expect(allowed.status).toBe('success');
+  } finally {
+    await service.shutdown().catch(() => {});
+    await closeFixture(server);
+  }
+}, 30_000);
+
 it('scope: an expired engagement scope denies the first navigation', async () => {
   const { server, port } = await startFixture();
   const service = new AgentBrowserService({

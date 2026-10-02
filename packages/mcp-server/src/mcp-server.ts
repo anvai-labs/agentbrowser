@@ -250,7 +250,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
                 items: {
                   type: 'object',
                   properties: {
-                    hostSuffix: { type: 'string' },
+                    hostSuffix: { type: 'string', minLength: 2 },
                     prefix: { type: 'string', minLength: 1 },
                   },
                   required: ['prefix'],
@@ -304,6 +304,9 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
             ...(request.policy ?? {}),
             allowServiceWorkers: args.allowServiceWorkers,
           };
+        }
+        if (args.scope !== undefined && (Array.isArray(args.scope) || args.scope === null)) {
+          throw new UsageError('scope must be an engagement-scope object.');
         }
         if (args.scope !== undefined && typeof args.scope === 'object') {
           request.policy = {

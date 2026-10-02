@@ -277,6 +277,56 @@ describe('EngagementScopePolicy (T7 slice 2)', () => {
     });
   });
 
+  it('preflightCheck runs every denial without spending the budget', async () => {
+    const scope = new EngagementScopePolicy(permissiveBase(), {
+      allowedHosts: ['a.testhost.example'],
+      requestBudget: 1,
+    });
+    // The preflight is non-spending: the wire check is the only spender.
+    await scope.preflightCheck({
+      hostname: 'a.testhost.example',
+      url: 'https://a.testhost.example/x',
+      method: 'GET',
+    });
+    await scope.checkRequest({
+      hostname: 'a.testhost.example',
+      url: 'https://a.testhost.example/x',
+      method: 'GET',
+    });
+    // The preflight still denies on a spent budget (fail-fast at the
+    // surface) and on out-of-scope hosts.
+    await expect(
+      scope.preflightCheck({
+        hostname: 'a.testhost.example',
+        url: 'https://a.testhost.example/y',
+        method: 'GET',
+      })
+    ).rejects.toMatchObject({ code: 'POLICY_DENIED' });
+    await expect(
+      scope.preflightCheck({ hostname: 'offscope.example', url: 'https://offscope.example/' })
+    ).rejects.toMatchObject({ code: 'POLICY_DENIED' });
+  });
+
+  it('charges a redirect hop once no matter how often the chain is re-validated', async () => {
+    const scope = new EngagementScopePolicy(permissiveBase(), {
+      allowedHosts: ['a.testhost.example', 'b.testhost.example'],
+      requestBudget: 2,
+    });
+    const chain = [
+      { url: 'https://a.testhost.example/start' },
+      { url: 'https://b.testhost.example/hop' },
+    ];
+    // The download transport re-submits the ACCUMULATED chain per
+    // redirect: the second call re-validates both hops but may only
+    // spend the NEW one.
+    await scope.checkRedirectChain([chain[0] as { url: string }]);
+    await scope.checkRedirectChain(chain as Array<{ url: string }>);
+    // Two distinct hops spent, not three (1 + 2).
+    await expect(
+      scope.checkRequest({ hostname: 'a.testhost.example', url: 'https://a.testhost.example/x' })
+    ).rejects.toMatchObject({ code: 'POLICY_DENIED' });
+  });
+
   it('constructs with an empty allowlist only as an explicit deny-all', async () => {
     const scope = new EngagementScopePolicy(permissiveBase(), { allowedHosts: [] });
     await expect(

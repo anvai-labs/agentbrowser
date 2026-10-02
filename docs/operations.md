@@ -421,11 +421,19 @@ method allowlist, identity bindings (a marked request is denied on any
 host not bound to that identity), an expiry instant, and a total
 request budget including redirect hops. The scope is the outermost
 restrict-only layer of the session's policy chain: every request and
-every redirect hop is checked, denials surface as `POLICY_DENIED`
-errors carrying `SCOPE_*` reasons (`SCOPE_HOST_DENIED`,
-`SCOPE_PATH_DENIED`, `SCOPE_METHOD_DENIED`, `SCOPE_IDENTITY_DENIED`,
-`SCOPE_EXPIRED`, `SCOPE_BUDGET_EXHAUSTED`), and a spent budget stops
-all further traffic. CLI: `session create --scope-file scope.json`
+every redirect hop is checked, and a spent budget stops all further
+traffic (downloads included — each hop of a redirecting download is
+charged once). Surfacing: service `navigate` preflights the scope, so
+its denials are typed `POLICY_DENIED` errors carrying `SCOPE_*`
+reasons (`SCOPE_HOST_DENIED`, `SCOPE_PATH_DENIED`, `SCOPE_METHOD_DENIED`,
+`SCOPE_IDENTITY_DENIED`, `SCOPE_EXPIRED`, `SCOPE_BUDGET_EXHAUSTED`);
+traffic denied at the wire from other lanes (act-driven navigations,
+non-navigation subresources) surfaces the generic `egress_policy`
+reason — enforcement is identical, only the reason granularity
+differs. Identity
+bindings on well-known headers (`host`, `content-length`, ...) are an
+operator footgun — bind application identity headers only. CLI:
+`session create --scope-file scope.json`
 (1 MiB bound, no symlink follow). See
 [the design record](spec/design/t7-scope-enforcement.md) for the model
 and its stated residuals.
