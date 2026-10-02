@@ -41,7 +41,11 @@ describe('egress revalidation', () => {
     const fetch = vi.fn(async () => response);
     const fulfill = vi.fn(async () => {});
     const route = {
-      request: () => ({ url: () => 'https://example.test/', method: () => 'GET' }),
+      request: () => ({
+        url: () => 'https://example.test/',
+        method: () => 'GET',
+        headers: () => ({}),
+      }),
       fetch,
       fulfill,
       abort: vi.fn(),
@@ -95,7 +99,11 @@ describe('egress body-bearing request passthrough', () => {
       const fulfill = vi.fn();
       const continueFn = vi.fn(async () => {});
       const route = {
-        request: () => ({ url: () => 'https://s3.example.test/bucket', method: () => method }),
+        request: () => ({
+          url: () => 'https://s3.example.test/bucket',
+          method: () => method,
+          headers: () => ({}),
+        }),
         fetch,
         fulfill,
         continue: continueFn,
@@ -118,7 +126,11 @@ describe('egress body-bearing request passthrough', () => {
     const fulfill = vi.fn(async () => {});
     const continueFn = vi.fn();
     const route = {
-      request: () => ({ url: () => 'https://internal.example.test/', method: () => 'POST' }),
+      request: () => ({
+        url: () => 'https://internal.example.test/',
+        method: () => 'POST',
+        headers: () => ({}),
+      }),
       fetch,
       fulfill,
       continue: continueFn,
@@ -142,7 +154,11 @@ describe('egress body-bearing request passthrough', () => {
     const fulfill = vi.fn(async () => {});
     const continueFn = vi.fn();
     const route = {
-      request: () => ({ url: () => 'https://example.test/', method: () => 'GET' }),
+      request: () => ({
+        url: () => 'https://example.test/',
+        method: () => 'GET',
+        headers: () => ({}),
+      }),
       fetch,
       fulfill,
       continue: continueFn,
@@ -191,6 +207,7 @@ describe('egress all-hop redirect enforcement', () => {
       request: () => ({
         url: () => urls[0],
         method: () => 'GET',
+        headers: () => ({}),
         resourceType: () => 'document',
         frame: () => ({ page: () => undefined }),
       }),
