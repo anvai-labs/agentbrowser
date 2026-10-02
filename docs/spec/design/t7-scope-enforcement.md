@@ -1,6 +1,7 @@
 # T7 slice 2: engagement scope enforcement
 
-Status: in progress (slice 2a — synthetic gates). Task packet:
+Status: slice 2a DELIVERED 2026-10-02 (primitive + service surface +
+synthetic/real-Chromium gates). Task packet:
 [t7-audit-security](../tasks/t7-audit-security.md). The bounty use case
 (vision priority 5) is blocked on this slice ("it blocks dependent active
 testing if incomplete"); T4's remaining production gates need live-target
@@ -131,8 +132,9 @@ the real choke point.
 - **N2 prerequisite (OS-enforced egress pairing)**: hostile multi-tenancy
   requires the OS-level layer per the threat model; this slice is
   application-layer enforcement for authorized single-operator use and
-  explicitly not a substitute — the pairing requirement stays recorded
-  as the T7 prerequisite.
+  explicitly not a substitute — the pairing is now a documented
+  prerequisite record:
+  [t7-os-egress-pairing](t7-os-egress-pairing.md).
 - **Methods on the passthrough lane**: method denial for POST/PUT/PATCH
   happens at the initial verdict (before passthrough), so a disallowed
   method never reaches the wire; response-side method semantics are out
