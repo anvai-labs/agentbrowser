@@ -111,7 +111,9 @@ install is three orders of magnitude larger.
 - Slice 1 (correlation/cancellation/retirement): qualified at the
   CLI/service level (steps 5–6 above); installed-Victor-level correlation
   remains gated on F1/F2.
-- Footprint gates (install sizes, RSS): not started.
+- Footprint gates (install sizes, RSS): shipped and CI-enforced (peak-RSS
+  gates on the compiled binaries; install-size gates on the packaged
+  server candidate).
 - T1 cursor: delivery qualified through the installed CLI (step 7);
   consumption/retirement semantics remain with the harness sessions.
 
@@ -128,3 +130,20 @@ installed 1.14.0 harness; the `browser_events_replay` surface qualifies with
 the next release. Re-runnable driver: scripted JSON-RPC over stdio against
 `/opt/homebrew/bin/agentbrowser-mcp` (driver script is ephemeral at
 /tmp/t8-mcp-qualification.mjs; the eight checks above are the record).
+
+## 2026-10-02 update: gate tightening on Linux numbers
+
+The first footprint-limit tightening pass, made once public-runner Linux
+numbers existed (ubuntu-latest CI, develop @ the #349 merge):
+
+| Metric | darwin-arm64 | linux-x64 | Gate |
+| --- | --- | --- | --- |
+| CLI one-shot peak RSS | 26.8 MB | 42.3 MB | 75 MB (was 120) |
+| MCP bridge idle peak RSS | 44.5 MB | 49.6 MB | 75 MB (was 120) |
+| Packaged candidate compressed | 9.2 MB | 7.7 MB | 12 MB (held) |
+| Extracted server tree | 55.7 MB | 37.5 MB | 80 MB (held) |
+
+75 MB is 1.5x the worst observed RSS (linux bridge 49.6 MB): a +50%
+regression trips while platform/toolchain noise does not. The install-size
+gates already sat at 1.30x/1.44x worst-observed, so they held and the RSS
+gates tightened instead. Rationale recorded in both gate scripts' headers.

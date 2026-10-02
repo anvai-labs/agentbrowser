@@ -6,10 +6,13 @@
  *
  *   node --test scripts/install-size-gates.test.mjs --out-dir out-packages
  *
- * Limits carry headroom over the 2026-10-01 darwin-arm64 baseline
- * (9.2 MB compressed, 55.7 MB extracted); tighten with a recorded reason,
- * loosen only with a measured regression named in the commit. Linux CI
- * numbers should inform the first tightening pass.
+ * Limits carry headroom over the worst observed across platforms
+ * (darwin-arm64 2026-10-01: 9.2 MB compressed, 55.7 MB extracted;
+ * linux-x64 2026-10-02 CI: 7.7 MB compressed, 37.5 MB extracted) —
+ * 1.30x / 1.44x worst, so the first tightening pass (2026-10-02, once
+ * Linux numbers existed) held these at 12/80 MB and tightened the RSS
+ * gates instead. Tighten with a recorded reason, loosen only with a
+ * measured regression named in the commit.
  */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';

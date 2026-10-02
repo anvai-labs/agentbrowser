@@ -8,8 +8,12 @@
  *
  * Peak RSS is polled via `ps -o rss=` (KB, both macOS and Linux) at a 10 ms
  * interval while the process runs; polling can miss sub-10ms spikes, so the
- * limits carry headroom over the 2026-09-29 baselines (CLI one-shot 47 MB,
- * MCP bridge idle 44 MB). Limits are named here and in the T8 packet.
+ * limits carry headroom. First tightening pass 2026-10-02, once Linux CI
+ * numbers existed (120 -> 75 MB): worst observed across platforms is
+ * linux-x64 (CLI one-shot 42.3 MB, MCP bridge idle 49.6 MB; darwin-arm64
+ * 26.8 / 44.5 MB), so 75 MB = 1.5x worst — a +50% regression trips while
+ * toolchain/platform noise does not. Limits are named here and in the T8
+ * packet.
  */
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
@@ -24,7 +28,7 @@ const MCP_BIN = `${root}packages/mcp-server/dist-bin/agentbrowser-mcp`;
 /** Explicit named limits (MB). Tighten only with a recorded reason; loosen
  * only with a measured regression named in the commit.
  */
-const LIMITS = { cliOneShot: 120, mcpBridgeIdle: 120 };
+const LIMITS = { cliOneShot: 75, mcpBridgeIdle: 75 };
 
 const rssKb = (pid) => {
   try {
