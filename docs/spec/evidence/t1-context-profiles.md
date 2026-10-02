@@ -79,3 +79,20 @@ consume the fixed catalog and preserve the complete cursor as a scope key. A pro
 change requires a fresh connection. Hiding a tool cannot erase data already loaded in
 an existing model transcript, and the cursor does not make ephemeral operation records
 durable across service restart.
+
+## 2026-10-01 update: installed-MCP-harness cursor consumption/retirement qualified
+
+The T8 boundary ("installed Codex/Claude/Victor cursor consumption") was
+exercised through the installed `agentbrowser-mcp` 1.14.0 binary acting as
+the bound harness, against a keyed scratch server on :5810 (operator side
+via the installed CLI). Lifecycle, all pass: delegate → all seven cursor
+fields delivered; bound harness observes control state AGENT_ACTIVE;
+operator takeover revokes the grant (harness call refused); prepare-resume
+under human authority advances the control epoch; re-delegate with the
+fresh epoch issues a new grant; the harness reconnects with the fresh
+grant and reports AGENT_ACTIVE; an old-epoch re-delegate is refused.
+Driver: scripted JSON-RPC over stdio (ephemeral /tmp/t1-cursor-
+consumption.mjs; the checks above are the record). Remaining T8 work:
+the same consumption/retirement semantics through the providers' own
+tool-call paths (Victor live loop still gated on F1/F2; Codex gated on
+approval policy).

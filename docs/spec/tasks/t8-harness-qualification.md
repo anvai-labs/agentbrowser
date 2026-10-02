@@ -70,9 +70,11 @@ validation modes. Provider/ToolPipeline transformations before the executor rema
 an explicit installed-harness acceptance gate.
 
 The released installed harness (1.14.0) MCP tool-call path is now qualified
-(2026-10-01, see the availability record's update); still open: the provider's
-actual tool-call path, then the remaining correlation/reconnect/cancellation
-and footprint gates.
+(2026-10-01, see the availability record's update), including cursor
+consumption/retirement semantics through the bound harness (takeover
+revocation, epoch advance, fresh-grant recovery, old-epoch refusal);
+still open: the provider's actual tool-call path, then the remaining
+correlation/reconnect/cancellation and footprint gates.
 Retain explicit limits until those named acceptance runs exist; no whole-milestone
 completion or release is implied by this source repair.
 
