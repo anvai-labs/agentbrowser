@@ -75,8 +75,10 @@ consumption/retirement semantics through the bound harness (takeover
 revocation, epoch advance, fresh-grant recovery, old-epoch refusal).
 Footprint gates are explicit and CI-enforced
 (scripts/footprint-gates.test.mjs: shipped CLI one-shot and idle MCP
-bridge peak RSS within 120 MB, polled on the compiled dist-bin
-artifacts; measured 2026-09-30: 26.8 / 44.5 MB). The install-size gate
+bridge peak RSS within 75 MB, polled on the compiled dist-bin
+artifacts; tightened 2026-10-02 from 120 MB once Linux CI numbers
+existed — worst observed 51.9 / 52.0 MB, see the availability record's
+2026-10-02 update). The install-size gate
 for the packaged candidate is also CI-enforced
 (scripts/install-size-gates.test.mjs: compressed <= 12 MB, extracted
 server tree <= 80 MB, contents verified). Still open: the provider's
