@@ -32,12 +32,16 @@ every redirect hop — the F1 all-hop walker calls `checkRequest` per hop,
 so each hop is a first-class scope check, never a free ride):
 
 - **Hosts** (`allowedHosts`): exact or `.suffix` entries, same semantics
-  as `SessionHostRules`. Exhaustive when set: everything else is denied
-  (`SCOPE_HOST_DENIED`).
+  as `SessionHostRules` — a `.suffix` entry matches SUBDOMAINS ONLY (the
+  apex is not covered; list both `example.com` and `.example.com` when
+  the apex is in scope, exactly as with session host rules). Exhaustive
+  when set: everything else is denied (`SCOPE_HOST_DENIED`).
 - **Paths** (`pathRules`): `{hostSuffix?, prefix}` entries; a request's
-  pathname must match some rule bound to its host (`SCOPE_PATH_DENIED`).
-  A host with no binding rule is fully in scope for paths; absent rules
-  mean all paths on allowed hosts are in scope.
+  pathname must match some rule bound to its host on PATH-SEGMENT
+  boundaries — prefix `/api` admits `/api` and `/api/users` but never
+  `/apix` (`SCOPE_PATH_DENIED`). A host with no binding rule is fully in
+  scope for paths; absent rules mean all paths on allowed hosts are in
+  scope.
 - **Methods** (`allowedMethods`): uppercase-compared allow-list
   (`SCOPE_METHOD_DENIED`); absent means all methods.
 - **Identities** (`identityBindings`): `{header, value, allowedHosts}` —
@@ -45,8 +49,14 @@ so each hop is a first-class scope check, never a free ride):
   binding's hosts, else the identity would leak to an unbound host
   (`SCOPE_IDENTITY_DENIED`). This is the enforceable form of "identities
   do not leak" at the transport layer: the credential-marking request is
-  denied before the browser sends it.
-- **Time** (`expiresAt`, injected `now`): an expired scope denies every
+  denied before the browser sends it. Scope of the guarantee: it holds
+  on every walker-checked lane (initial requests and redirect hops);
+  the body-bearing redirect residual below is the recorded exception —
+  an allowed identity-marked POST whose redirect target is unbound is
+  followed natively without a hop check, so identity binding is only as
+  strong as that residual allows.
+- **Time** (`expiresAt`, injected `now`): a scope is expired AT OR AFTER
+  the boundary; an expired scope denies every
   check with `SCOPE_EXPIRED`. The clock is injected (default `Date.now`)
   so movement is testable (the F2 lesson: no hidden wall-clock reads in
   gate paths); verdicts are never cached, so expiry takes effect on the
@@ -66,6 +76,11 @@ so each hop is a first-class scope check, never a free ride):
   Existing policies ignore the new fields.
 - No other engine change: frames inherit context-scoped routing, so
   child-frame requests are scope-checked exactly like top-level.
+- `checkRedirectChain` on the wrapper re-derives per-hop `checkRequest`
+  (scope + base verdict per hop) and deliberately does NOT double-invoke
+  a base `checkRedirectChain`: the engine's walker calls `checkRequest`
+  per hop, and the download lane walks chains with its own cap and loop
+  detection without routing through this wrapper.
 
 ## Acceptance gates (real Chromium, local fixtures only)
 

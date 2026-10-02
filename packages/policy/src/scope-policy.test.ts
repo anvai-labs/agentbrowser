@@ -223,7 +223,58 @@ describe('EngagementScopePolicy (T7 slice 2)', () => {
       expect(error?.code).toBe('POLICY_DENIED');
       expect(String(error?.message)).toContain(expected);
       expect(error?.details?.reason).toBe('egress_policy');
+      expect(error?.details?.scope).toBe(expected);
     }
+  });
+
+  it('matches path prefixes on segment boundaries so a bare prefix cannot expand scope', async () => {
+    const scope = new EngagementScopePolicy(permissiveBase(), {
+      allowedHosts: ['app.testhost.example'],
+      pathRules: [{ prefix: '/api' }],
+    });
+    await scope.checkRequest({
+      hostname: 'app.testhost.example',
+      url: 'https://app.testhost.example/api',
+    });
+    await scope.checkRequest({
+      hostname: 'app.testhost.example',
+      url: 'https://app.testhost.example/api/users',
+    });
+    // Sibling spellings that share the string prefix are OUT of scope.
+    await expect(
+      scope.checkRequest({
+        hostname: 'app.testhost.example',
+        url: 'https://app.testhost.example/apix',
+      })
+    ).rejects.toMatchObject({ code: 'POLICY_DENIED' });
+    await expect(
+      scope.checkRequest({
+        hostname: 'app.testhost.example',
+        url: 'https://app.testhost.example/apiary',
+      })
+    ).rejects.toMatchObject({ code: 'POLICY_DENIED' });
+  });
+
+  it('matches ".suffix" host entries on subdomains only, like SessionHostPolicy', async () => {
+    const scope = new EngagementScopePolicy(permissiveBase(), {
+      allowedHosts: ['.testhost.example'],
+    });
+    await scope.checkRequest({
+      hostname: 'app.testhost.example',
+      url: 'https://app.testhost.example/',
+    });
+    // The apex is NOT covered by the suffix entry — aligning with
+    // SessionHostPolicy so the two host policies authorize identically.
+    await expect(
+      scope.checkRequest({ hostname: 'testhost.example', url: 'https://testhost.example/' })
+    ).rejects.toMatchObject({ code: 'POLICY_DENIED' });
+    const withApex = new EngagementScopePolicy(permissiveBase(), {
+      allowedHosts: ['testhost.example', '.testhost.example'],
+    });
+    await withApex.checkRequest({
+      hostname: 'testhost.example',
+      url: 'https://testhost.example/',
+    });
   });
 
   it('constructs with an empty allowlist only as an explicit deny-all', async () => {

@@ -189,8 +189,9 @@ describe('engagement scope enforcement (T7 slice 2, real Chromium)', () => {
       await withSession(scope, async (page) => {
         // The /api/probe document is in scope; its script's probes are
         // not: /admin leaves the path scope, DELETE leaves the method
-        // scope — and because the denial happens at the initial verdict,
-        // the passthrough lane never carries the DELETE either.
+        // scope. Both are denied at the initial verdict — before any
+        // fetch — so neither reaches the wire (the method check runs
+        // ahead of both the inspection and passthrough lanes).
         await page.navigate({ url: fixture.url('/api/probe') });
         await new Promise((resolve) => setTimeout(resolve, 400));
         const paths = fixture.hits.map((hit) => hit.path);
@@ -251,7 +252,7 @@ describe('engagement scope enforcement (T7 slice 2, real Chromium)', () => {
     }
   }, 60_000);
 
-  it('gate 8: identity-marked traffic never reaches an unbound host', async () => {
+  it('gate 8: identity-marked traffic never reaches an unbound host, and the hop denial is a scope denial', async () => {
     const fixture = await startFixture();
     try {
       const scope = new EngagementScopePolicy(new NetworkPolicy({ blockLoopback: false }), {
@@ -265,6 +266,23 @@ describe('engagement scope enforcement (T7 slice 2, real Chromium)', () => {
         ],
       });
       await withSession(scope, async (page) => {
+        // Collect failed-request events: the identity-hop must fail with
+        // reason egress_policy (the scope saw the forwarded headers and
+        // denied), NOT a transport failure — a transport failure would
+        // mean the hop headers never reached the policy and the denial
+        // was accidental.
+        const failures: Array<{ url?: unknown; reason?: unknown }> = [];
+        const collector = (async () => {
+          for await (const event of page.events()) {
+            if (event.type === 'request.failed') {
+              failures.push({
+                url: (event.data as { url?: string } | undefined)?.url,
+                reason: (event.data as { reason?: string } | undefined)?.reason,
+              });
+            }
+          }
+        })();
+        collector.catch(() => {});
         await page.navigate({ url: fixture.url('/identity-driver') });
         await new Promise((resolve) => setTimeout(resolve, 500));
         // The bound host received the identity...
@@ -278,6 +296,14 @@ describe('engagement scope enforcement (T7 slice 2, real Chromium)', () => {
         // before the wire (the unrouted out host records nothing, and
         // no /identity-leak path exists on the in-fixture either).
         expect(fixture.hits.some((hit) => hit.path === '/identity-leak')).toBe(false);
+        // The denial's SOURCE is pinned: the /identity-hop request failed
+        // as an egress-policy denial — the hop-header forwarding this PR
+        // adds is load-bearing for exactly this verdict.
+        const identityHopFailure = failures.find((failure) =>
+          String(failure.url).endsWith('/identity-hop')
+        );
+        expect(identityHopFailure).toBeDefined();
+        expect(identityHopFailure?.reason).toBe('egress_policy');
       });
     } finally {
       await closeFixture(fixture);

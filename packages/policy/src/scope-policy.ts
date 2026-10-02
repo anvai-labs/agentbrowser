@@ -54,7 +54,10 @@ const DENIED = 'POLICY_DENIED' as const;
 const hostMatches = (hostname: string, pattern: string): boolean => {
   const host = hostname.toLowerCase();
   if (pattern.startsWith('.')) {
-    return host.endsWith(pattern) || host === pattern.slice(1);
+    // Aligned with SessionHostPolicy's suffix semantics: ".example.com"
+    // matches SUBDOMAINS ONLY — list the apex explicitly alongside it
+    // when both are in scope.
+    return host.endsWith(pattern);
   }
   return host === pattern;
 };
@@ -130,13 +133,20 @@ export class EngagementScopePolicy {
     if (this.paths.length > 0) {
       const pathname = request.url !== undefined ? new URL(request.url).pathname : '/';
       // Rules bind their own hosts: a host with no binding rule is fully
-      // in scope for paths.
+      // in scope for paths. Prefixes match on path-SEGMENT boundaries —
+      // prefix "/api" admits "/api" and "/api/users" but never "/apix" —
+      // so a bare prefix cannot silently expand the engagement scope.
       const boundRules = this.paths.filter(
         (rule) => rule.hostSuffix === undefined || hostMatches(hostname, rule.hostSuffix)
       );
       const inPath =
         boundRules.length === 0 ||
-        boundRules.some((rule) => pathname === rule.prefix || pathname.startsWith(rule.prefix));
+        boundRules.some(
+          (rule) =>
+            pathname === rule.prefix ||
+            (pathname.startsWith(rule.prefix) &&
+              (rule.prefix.endsWith('/') || pathname.charAt(rule.prefix.length) === '/'))
+        );
       if (!inPath) {
         throw scopeDenial('SCOPE_PATH_DENIED', `path ${pathname} is outside the engagement scope`);
       }
@@ -172,6 +182,11 @@ export class EngagementScopePolicy {
   async checkRedirectChain(
     requests: Array<{ url: string; hostname?: string; method?: string }>
   ): Promise<void> {
+    // Per-hop checkRequest deliberately SUBSUMES base chain-level logic
+    // (each hop gets the full scope + base request verdict); a base
+    // checkRedirectChain is not double-invoked. The engine's walker
+    // calls checkRequest per hop; the download lane has its own chain
+    // walk and does not route through this wrapper.
     for (const hop of requests) {
       const hostname = hop.hostname ?? new URL(hop.url).hostname;
       await this.checkRequest({
