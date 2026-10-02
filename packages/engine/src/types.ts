@@ -93,9 +93,22 @@ export interface EngineSessionOptions {
  * throwing means ALLOW.
  */
 export interface RequestPolicy {
-  checkRequest(request: { hostname: string; url: string }): Promise<void>;
+  /**
+   * `method` and `headers` are additive, optional context the Playwright
+   * engine passes at the choke point (initial request and per redirect
+   * hop) so engagement-scope rules (T7 slice 2) can enforce methods and
+   * identity bindings. Existing policies ignore them.
+   */
+  checkRequest(request: {
+    hostname: string;
+    url: string;
+    method?: string;
+    headers?: Record<string, string>;
+  }): Promise<void>;
   /** Redirect targets, excluding the initial request; throw before following. */
-  checkRedirectChain?(requests: Array<{ url: string; hostname?: string }>): Promise<void>;
+  checkRedirectChain?(
+    requests: Array<{ url: string; hostname?: string; method?: string }>
+  ): Promise<void>;
   /**
    * Optional response-size gate enforced at the choke point (bytes).
    * Implementations throw to block an oversized response.

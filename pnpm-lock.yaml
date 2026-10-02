@@ -248,6 +248,9 @@ importers:
         specifier: ^1.62.1
         version: 1.62.1
     devDependencies:
+      '@agentbrowser/policy':
+        specifier: workspace:*
+        version: link:../policy
       '@agentbrowser/testkit':
         specifier: workspace:^
         version: link:../testkit
