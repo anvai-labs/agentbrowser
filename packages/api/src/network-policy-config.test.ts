@@ -45,3 +45,36 @@ describe('operator network policy configuration', () => {
     }
   );
 });
+
+describe('operator loopback opt-in (local-machine sessions)', () => {
+  it('an explicit opt-in builds a policy whose loopback check allows 127.0.0.1', async () => {
+    const { networkPolicyFromEnvironment } = await import('./network-policy-config.js');
+    const policy = networkPolicyFromEnvironment({
+      AGENTBROWSER_ALLOWED_CIDRS: '',
+      AGENTBROWSER_ALLOW_LOOPBACK: '1',
+    });
+    // The base no longer denies the loopback host outright.
+    await expect(
+      policy.checkRequest({ hostname: '127.0.0.1', url: 'http://127.0.0.1:3000/x' })
+    ).resolves.toBeUndefined();
+  });
+
+  it('the default (no opt-in) still blocks loopback', async () => {
+    const { networkPolicyFromEnvironment } = await import('./network-policy-config.js');
+    const policy = networkPolicyFromEnvironment({ AGENTBROWSER_ALLOWED_CIDRS: '' });
+    await expect(
+      policy.checkRequest({ hostname: '127.0.0.1', url: 'http://127.0.0.1:3000/x' })
+    ).rejects.toThrow(/loopback/i);
+  });
+
+  it('metadata stays blocked even with the loopback opt-in', async () => {
+    const { networkPolicyFromEnvironment } = await import('./network-policy-config.js');
+    const policy = networkPolicyFromEnvironment({
+      AGENTBROWSER_ALLOWED_CIDRS: '',
+      AGENTBROWSER_ALLOW_LOOPBACK: '1',
+    });
+    await expect(
+      policy.checkRequest({ hostname: '169.254.169.254', url: 'http://169.254.169.254/latest' })
+    ).rejects.toThrow();
+  });
+});

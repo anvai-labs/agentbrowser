@@ -12,7 +12,14 @@ proves the control works. Residual risks are named, not hidden.
 2. **Service -> engine**: in-process, trusted.
 3. **Engine -> network**: intended egress boundary; HTTP redirect hops are
    covered by walking chains in the routing choke point (all-hop
-   enforcement, 2026-09-30). OS-enforced containment is not provided.
+   enforcement, 2026-09-30). OS-enforced containment is not provided. The
+   loopback block is operator-opt-out at server startup
+   (AGENTBROWSER_ALLOW_LOOPBACK) for local-machine testing; it is never
+   settable from session or request input. The opt-in lets visited pages
+   reach every loopback service including this server's own API — in
+   no-keys local mode that is full unauthenticated control of all
+   sessions; keyed mode auth-gates the service but other loopback
+   services remain exposed.
 4. **Page content -> agent**: everything the browser returns (text,
    names, values, titles) is hostile-injected data.
 
