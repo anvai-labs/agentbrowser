@@ -82,14 +82,14 @@ existed — worst observed 51.9 / 52.0 MB, see the availability record's
 for the packaged candidate is also CI-enforced
 (scripts/install-size-gates.test.mjs: compressed <= 12 MB, extracted
 server tree <= 80 MB, contents verified). The provider's actual
-tool-call path is qualified for the exercised subset (2026-10-02:
-codex-cli 0.157.1 drove the installed 1.15.0 binary through
-create/navigate/observe/close with ground-truth-matching results —
-flat inputs, array-of-object results; the acceptance's unions/enums
-remain source-level only; approval policy resolved via
-`--approve-for-me` auto review — see the
-availability record). Still open: the remaining
-correlation/reconnect/cancellation gates.
+tool-call path is qualified on the Codex path (2026-10-02: codex-cli
+0.157.1 drove the installed 1.15.0 binary — every slice-2 acceptance
+dimension has an installed-provider run: flat, union (the flattened
+act envelope and true anyOf strategy/verify inputs), enum,
+nested-object, nested-array inputs, typed evidence; autofill
+fail-fast and verified receipts included; approval policy resolved via
+`--approve-for-me` auto review — see the availability record). Still
+open: the remaining correlation/reconnect/cancellation gates.
 Retain explicit limits until those named acceptance runs exist; no whole-milestone
 completion or release is implied by this source repair.
 
