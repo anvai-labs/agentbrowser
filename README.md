@@ -156,6 +156,12 @@ collapses that to two calls ([TD-BROWSER-8](docs/td/TD-BROWSER-8-batched-snapsho
 
 ### Shell and CLI agents
 
+Use `agentbrowser --help` for server/client environment settings and a LAN setup
+example. Command help and offline `describe` share usage notes and examples:
+`agentbrowser session create --help`, `agentbrowser session cookies --help`, and
+`agentbrowser describe navigate`. See the [CLI quick reference](docs/cli-agent-usage.md#find-the-answer-in-cli-help-first)
+before inspecting source. Help describes the installed client, not the live server.
+
 Use `agentbrowser describe` to discover immediate commands as JSON without a running
 service, then `agentbrowser describe act press` to load only one command's details.
 Execution uses the existing SDK/service: pass `--json`, quote shell arguments and

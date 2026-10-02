@@ -11,6 +11,155 @@ The CLI is a thin SDK client to the shared AgentBrowser service. It owns no brow
 session state or alternate executor. Use ordinary Bash/shell tools to inspect JSON;
 MCP is an alternative adapter to the same execution and authority boundaries.
 
+## Find the answer in CLI help first
+
+`agentbrowser --help` gives the service/client configuration split and a narrow LAN
+startup example. `agentbrowser session create --help` covers headed sessions and
+page creation; `agentbrowser session cookies --help` documents file formats and
+private credential handoff; `agentbrowser navigate --help` explains policy refusals.
+These notes and examples are also available as `command.notes` and
+`command.examples` in offline `describe` output. They are static guidance, never a
+dump of the current environment, and are not proof of a running server's settings.
+
+```sh
+agentbrowser describe session create | jq '.command | {usage, notes, examples}'
+agentbrowser describe session cookies
+agentbrowser describe plan --schema
+```
+
+For an authorized headed workflow, reuse an existing session where possible:
+
+```sh
+agentbrowser --json health
+agentbrowser --json session list
+agentbrowser session create --tenant TENANT --no-headless --viewport 1440x1000 \
+  --ttl 14400000 --idle-timeout 3600000
+# Replace SESSION with the returned ID; CLI creation does not create a page.
+agentbrowser page create SESSION --url https://example.com
+# Replace PAGE with the returned ID; snapshot supplies current element refs.
+agentbrowser snapshot SESSION PAGE --max-elements 40
+```
+
+The visible window belongs to the **server host**. A fresh isolated session does not
+inherit a daily Chrome profile. MCP `browser_create` differs from CLI creation: it
+also provisions an initial page and returns both IDs. Cookie seeding is only an
+attempt to reuse authentication; verify the expected signed-in UI afterward.
+
+### Which process must receive an environment variable?
+
+| Setting | Reader | Effect |
+| --- | --- | --- |
+| `--base-url` | CLI | Selects the REST service. |
+| `AGENTBROWSER_BASE_URL` | MCP adapter | Selects the REST service; the CLI does not use this variable. |
+| `AGENTBROWSER_API_KEY` | CLI and MCP adapter | Sends an existing bearer credential. |
+| `AGENTBROWSER_API_KEYS` | Server at startup | Configures `key:tenant` credentials; unset means an unauthenticated local service. |
+| `HOST`, `PORT` | Server at startup | Selects the listener; keep local instances on loopback. |
+| `AGENTBROWSER_ALLOWED_CIDRS` | Server at startup | Operator-authorized private-IP exceptions, never a loopback or metadata bypass. |
+
+An existing Homebrew service keeps its startup environment. Exporting a variable in
+a new CLI/MCP process does not reconfigure that service. Preserve active sessions
+before an authorized restart, or start a separate local service on an unused port:
+
+```sh
+# Operator-authorized example: one lab host, not the entire LAN.
+AGENTBROWSER_ALLOWED_CIDRS=192.168.1.89/32 HOST=127.0.0.1 PORT=5719 agentbrowser-server
+# In another shell, connect explicitly to that service.
+agentbrowser --base-url http://127.0.0.1:5719 --json health
+agentbrowser --base-url http://127.0.0.1:5719 session create --tenant TENANT --no-headless
+```
+
+The allowlist is comma-separated CIDRs and must be configured by the operator.
+It permits the named private addresses through the base policy; it does not restrict
+ports. `--allow-hosts` only narrows a session's permissions. Loopback and cloud
+metadata remain denied even with a broad CIDR. A `POLICY_DENIED` result can reflect
+other rules; inspect its bounded reason and operator configuration before acting.
+Do not invent an allow-loopback flag or use CDP attachment as a policy workaround.
+For exact enforcement semantics, see [LAN policy](HANDOFF-LAN-CIDR-ALLOWLIST.md).
+
+### Explicitly authorized loopback testing
+
+The stock server intentionally blocks loopback. Adding `127.0.0.1/32` to
+`AGENTBROWSER_ALLOWED_CIDRS` does **not** override it; neither does `--allow-hosts`.
+Do not retry these settings as a workaround for a refusal. Stop and obtain an
+explicit operator exception if a local synthetic test requires loopback.
+
+After that authorization, the existing trusted embedding API supports a separate
+test service. This is operator deployment code, not a session/MCP parameter or a
+new environment flag. In a workspace with these packages built and resolvable:
+
+```ts
+import { startServer } from '@agentbrowser/api';
+import { NetworkPolicy } from '@agentbrowser/policy';
+import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
+
+const server = await startServer({
+  host: '127.0.0.1',
+  port: 5727, // First verify this port is unused.
+  engine: new PlaywrightChromiumEngine(),
+  networkPolicy: new NetworkPolicy({
+    blockLoopback: false,
+    blockPrivateIPs: true,
+    blockMetadata: true,
+    allowedPrivateCIDRs: ['127.0.0.1/32', '::1/128'],
+  }),
+});
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, async () => { await server.close(); process.exit(0); });
+}
+```
+
+Keep it loopback-bound, use synthetic data and configure authentication when
+credentials or other local users are in scope. Connect a **new** isolated session
+with `--base-url http://127.0.0.1:5727 session create --tenant local-test
+--no-headless --allow-hosts localhost,127.0.0.1`. The session allowlist restricts
+hosts, not ports. This is not permission to browse unrelated local services.
+Existing sessions stay owned by their original service and authority; restarting
+the main service or guessing its session IDs is unnecessary.
+
+`localhost` often resolves to **both** IPv4 `127.0.0.1` and IPv6 `::1`. The router
+checks every resolved address: permitting only IPv4 can let a literal IPv4 URL
+work while `localhost` fails. Inspect the intended listener/address family and
+permit both loopback CIDRs only within the approved exception. Keep cloud metadata
+and other private ranges denied. A policy pass does not prove TCP reachability;
+check the tunnel and application response separately. Stop the test service and
+tunnel when finished; do not change the shared server's default policy.
+
+Code references: `packages/api/src/network-policy-config.ts`, trusted
+`ServerOptions.networkPolicy` in `server.ts`, and `checkResolvedAddresses` in
+`packages/policy/src/network-policy.ts`. The Sandesha headed synthetic smoke on
+2026-10-01 reproduced stock loopback refusal, IPv4-only/dual-stack disagreement,
+and successful localhost navigation after explicit owner approval.
+
+### Cookie handoff without exposing credentials
+
+```sh
+agentbrowser session cookies SESSION --output /private/path/cookies.json
+agentbrowser session create --tenant TENANT --no-headless \
+  --cookies-file /private/path/cookies.json --cookies-format json
+```
+
+Export refuses existing files and creates mode `0600`; omitting `--output` prints
+credential values. Prefer canonical JSON exports. Formats are explicit, independent
+of filename: Netscape has seven tab-separated columns; DevTools TSV has exactly
+twelve in the order shown by `session cookies --help`. Extra trailing columns or
+headers are refused. Current source accepts UTC ISO DevTools expiry as well as Unix
+seconds and `Session`; older installed builds may differ. Expired entries are
+rejected, and `--cookies-skip-unsupported` only omits entire partitioned records.
+Keep domain, path, Secure, HttpOnly and SameSite intact. A parser error is not a
+reason to strip scope attributes or expose cookies in logs.
+
+### When a command fails
+
+| Symptom | Next check |
+| --- | --- |
+| LAN `POLICY_DENIED` | `navigate --help`; verify the **server's** authorized CIDR setting and session host rules. |
+| No visible local window | `session get SESSION`; inspect launch diagnostics and which host runs the server. |
+| Missing page ID after CLI create | `page create SESSION`; MCP creation already returns an initial page. |
+| Cookie row/expiry refusal | `session cookies --help`; export a supported fresh format without discarding security attributes. |
+| Invalid plan JSON | `describe plan --schema`; steps use `action` and `target: {ref}`, not CLI positional arguments or CSS selectors. |
+| Stale refs | Take a fresh snapshot on the same session/page; inspect before acting. |
+| Timed-out mutation | Reconcile its operation ID; do not blindly repeat the write. |
+
 ## Background service and harness setup
 
 The Homebrew formula installs the service and compiled CLI/MCP binaries together.

@@ -159,15 +159,16 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
     {
       name: 'browser_create',
       requiredCapabilities: ['session.manage'],
-      description:
-        'Create an ephemeral browser session (isolated by default). The opt-in cdpAttach lane shares a dedicated operator profile and checks only initial explicit navigation URLs; it requires local startup configuration. Element refs are ' +
-        'scoped to a single session and page. Returns the sessionId.',
+      description: `Create an ephemeral browser session (isolated by default). The opt-in cdpAttach lane shares a dedicated operator profile and checks only initial explicit navigation URLs; it requires local startup configuration. Element refs are scoped to a single session and page. Returns both sessionId and an initial pageId. ${INTERACTION_GUIDANCE.headedSession}`,
       inputSchema: {
         type: 'object',
         properties: {
           tenantId: { type: 'string', description: 'Tenant that owns the session.' },
           engine: { type: 'string', description: 'Engine to use, e.g. playwright-chromium.' },
-          headless: { type: 'boolean' },
+          headless: {
+            type: 'boolean',
+            description: 'Set false for a visible window on the server host; defaults to headless.',
+          },
           cdpAttach: {
             type: 'boolean',
             description:
@@ -311,9 +312,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
     {
       name: 'browser_cookies',
       requiredCapabilities: ['session.manage'],
-      description:
-        'Export the session context cookies (TD-BROWSER-6). Persist them and pass them back ' +
-        'via browser_create `cookies` to re-enter an authenticated session without re-login.',
+      description: `Export the session context cookies (TD-BROWSER-6). Persist them and pass them back via browser_create \`cookies\` to attempt authenticated reuse. The result contains credentials. ${INTERACTION_GUIDANCE.cookieHandoff}`,
       inputSchema: {
         type: 'object',
         properties: { sessionId: { type: 'string' } },
@@ -429,8 +428,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
     {
       name: 'browser_navigate',
       requiredCapabilities: ['page.navigate'],
-      description:
-        'Navigate a page to an http(s) URL and wait for it to load. Failures set isError and carry a bounded reason; transport errors do not prove a bot wall.',
+      description: `Navigate a page to an http(s) URL and wait for it to load. Failures set isError and carry a bounded reason; transport errors do not prove a bot wall. ${INTERACTION_GUIDANCE.networkPolicy}`,
       inputSchema: {
         type: 'object',
         properties: {

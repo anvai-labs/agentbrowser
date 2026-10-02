@@ -73,6 +73,14 @@ import { Command, type Option } from 'commander';
 import { assertCookieRequestSize, readCookieFile, writeCookieFile } from './cookie-file.js';
 import { type JsonInputStream, createJsonArgumentReader } from './json-input.js';
 import { PRODUCT_VERSION } from './product-version.js';
+import {
+  COOKIE_USAGE,
+  NAVIGATION_USAGE,
+  PLAN_USAGE,
+  ROOT_USAGE,
+  SESSION_CREATE_USAGE,
+  type UsageGuidance,
+} from './usage-guidance.js';
 
 /** Shared --wait-* flags for observe/screenshot readiness (SPA hydration). */
 interface WaitFlagOptions {
@@ -266,12 +274,33 @@ export function buildCli(deps: CliDependencies): Cli {
         requireWireContract(command, wireContracts, wireContractExemptions, label);
         return readJsonArgument(raw, label);
       };
-      const program = new Command();
+      const usageGuidance = new Map<Command, UsageGuidance>();
+      // One registration feeds both human help and machine-readable discovery.
+      const withUsage = (command: Command, guidance: UsageGuidance): Command => {
+        usageGuidance.set(command, guidance);
+        command.addHelpText(
+          'after',
+          [
+            '',
+            'Usage notes:',
+            ...guidance.notes.map((note) => `  ${note}`),
+            '',
+            'Examples (replace uppercase IDs and private paths):',
+            ...guidance.examples.map((example) => `  ${example}`),
+          ].join('\n')
+        );
+        return command;
+      };
+      const program = withUsage(new Command(), ROOT_USAGE);
       program
         .name('agentbrowser')
         .version(PRODUCT_VERSION)
         .description('Agent-native browser service CLI')
-        .option('--base-url <url>', 'AgentBrowser server base URL', DEFAULT_BASE_URL)
+        .option(
+          '--base-url <url>',
+          'REST server URL; AGENTBROWSER_BASE_URL is for MCP, not this CLI',
+          DEFAULT_BASE_URL
+        )
         .option('--timeout <ms>', 'request timeout in milliseconds', '30000')
         .option('--json', 'emit raw JSON instead of formatted output', false)
         .option('--operation-id <id>', 'reconciliation ID for a controlled mutation')
@@ -432,9 +461,10 @@ export function buildCli(deps: CliDependencies): Cli {
         output: OperatorApprovalViewSchema,
       });
 
-      const sessionCreate = session
-        .command('create')
-        .description('create a new session')
+      const sessionCreate = withUsage(session.command('create'), SESSION_CREATE_USAGE)
+        .description(
+          'create an isolated session; --tenant is required; use --no-headless for a visible browser on the server host'
+        )
         .requiredOption('--tenant <id>', 'tenant identifier')
         .option('--delegated', 'require explicit human review and revocable agent authority')
         .option(
@@ -461,7 +491,7 @@ export function buildCli(deps: CliDependencies): Cli {
         .option('--timezone-id <tz>', 'IANA timezone, e.g. America/New_York')
         .option(
           '--cookies <json>',
-          'seed cookies as inline JSON (the credential-handoff loop: pair with `session cookies` to export first)'
+          'seed an inline JSON cookie array; prefer --cookies-file to keep credentials out of process arguments'
         )
         .option(
           '--cookies-file <path>',
@@ -480,7 +510,10 @@ export function buildCli(deps: CliDependencies): Cli {
           'allow downloads for this session (denied by default server-side)'
         )
         .option('--max-download-bytes <n>', 'per-download byte cap when downloads are allowed')
-        .option('--allow-hosts <a,b>', 'restrict egress to these hosts (comma-separated)')
+        .option(
+          '--allow-hosts <a,b>',
+          'restrict egress to these hosts; cannot override server private-IP, loopback or metadata blocks'
+        )
         .option(
           '--blocked-hosts <a,b>',
           'block these hosts on top of the SSRF base (comma-separated)'
@@ -649,9 +682,10 @@ export function buildCli(deps: CliDependencies): Cli {
       // The export half of the credential-handoff loop (TD-BROWSER-6):
       // export cookies, later re-seed a new session via
       // `session create --cookies "$(…)"`.
-      session
-        .command('cookies')
-        .description("export a session's cookies (re-seed future sessions via create --cookies)")
+      withUsage(session.command('cookies'), COOKIE_USAGE)
+        .description(
+          'export cookies; use --output for a private file and re-seed with session create --cookies-file'
+        )
         .argument('<sessionId>')
         .option(
           '--output <path>',
@@ -898,7 +932,9 @@ export function buildCli(deps: CliDependencies): Cli {
 
       page
         .command('create')
-        .description('create a page in a session (optionally navigate it on creation)')
+        .description(
+          'create a page and return its pageId; required after CLI session create; optional --url navigates immediately'
+        )
         .argument('<sessionId>')
         .option('--url <url>', 'navigate the new page to this URL')
         .action(
@@ -1032,8 +1068,7 @@ export function buildCli(deps: CliDependencies): Cli {
         );
 
       // ---- navigate --------------------------------------------------------
-      program
-        .command('navigate')
+      withUsage(program.command('navigate'), NAVIGATION_USAGE)
         .description(
           'navigate a page to a URL; failed navigation exits 1 with a bounded reason (--json preserves structured details)'
         )
@@ -1194,8 +1229,7 @@ export function buildCli(deps: CliDependencies): Cli {
         );
 
       // ---- plan (TD-BROWSER-8) ------------------------------------------------
-      const plan = program
-        .command('plan')
+      const plan = withUsage(program.command('plan'), PLAN_USAGE)
         .description(
           `${INTERACTION_GUIDANCE.plan} Supply JSON steps inline, via @file or stdin (-); at most 1 MiB, stdin EOF within 30 seconds (act arguments, optionally waitForLabel + waitMs).`
         )
@@ -2086,7 +2120,9 @@ export function buildCli(deps: CliDependencies): Cli {
       // This handler deliberately avoids the service-client action wrapper.
       program
         .command('describe [path...]')
-        .description('describe one command or group as JSON, offline (e.g. describe act press)')
+        .description(
+          'discover command syntax, usage notes and examples as JSON, offline; add --schema for canonical JSON inputs/outputs'
+        )
         .option('--schema', 'include canonical bulk input/output schemas; null if unavailable')
         .action((path: string[], options: { schema?: boolean }) => {
           let selected = program;
@@ -2126,6 +2162,7 @@ export function buildCli(deps: CliDependencies): Cli {
                     : {}),
                   usage: selected.createHelp().commandUsage(selected),
                   description: selected.description(),
+                  ...(usageGuidance.get(selected) ?? {}),
                   arguments: selected.registeredArguments.map((argument) => ({
                     name: argument.name(),
                     description: argument.description,
