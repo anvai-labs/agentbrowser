@@ -107,8 +107,9 @@ install is three orders of magnitude larger.
 
 - Slice 2 (schema/result fidelity): **qualified through the installed CLI
   path, Codex listing path, and (2026-10-02) the Codex tool-call path on
-  1.15.0 — for the exercised subset (flat inputs, array-of-object
-  results); the acceptance's unions/enums remain source-level only.**
+  1.15.0 — every acceptance dimension now has an installed-provider run
+  (flat, union, enum, nested-object, nested-array inputs; typed
+  evidence), see the later 2026-10-02 section.**
   Victor live-loop fidelity remains blocked by the two infrastructure
   facts recorded earlier in this file: the formula catalog/binding skew
   (repaired locally on this machine; the durable fix is upstream) and
@@ -214,3 +215,35 @@ of the sandbox. The Claude provider path remains additional
 (unrequired) coverage; Victor's live loop remains blocked on the two
 facts named above (locally-repaired formula skew; the Sandhi TLS trust
 decision, which is an operator call).
+
+## 2026-10-02 update (later): slice-2 dimensions exercised through Codex
+
+The first codex run used flat inputs only. Three further runs the same
+day exercise every slice-2 acceptance dimension through the same
+installed path (codex-cli 0.157.1 → `agentbrowser-mcp` 1.15.0), all on
+public pages, nothing submitted, no files written:
+
+- **Discriminated-union input** — `browser_act` with the `click`
+  variant on example.com: executed, revision advanced, post-click URL
+  `https://www.iana.org/help/example-domains` reported by the model
+  from its own follow-up observation.
+- **Enum + nested-object input** — `browser_extract` with
+  `format: "schema"` and a three-property schema object: the call
+  executed and the field-specific "optional field not found" warnings
+  prove each property name survived the provider round trip; the
+  extractor returned empty `data` with an evidence hash rather than
+  fabricating fields.
+- **Nested array-of-objects input** — `browser_autofill` on the public
+  httpbin test form. First attempt with hardcoded labels failed typed:
+  per-field receipts came back (`failed` / `not_attempted` /
+  `not_attempted`, `TARGET_NOT_FOUND` on field 0) and the batch
+  aborted fail-fast — the failure semantics survive the provider too.
+  Second attempt let the model derive labels from its own
+  `formControls` observation: three fields, all `verified: true` with
+  values read back from the page.
+
+With these, slice 2's acceptance sentence — nested arrays, unions,
+enums, typed evidence — has an installed-provider run for every
+dimension (through the Codex path; the CLI path already covered the
+flat surface). The remaining slice-2 residue is installed-Victor
+specific: its live loop stays blocked on the two facts above.
