@@ -16,7 +16,7 @@ at the application boundary:
 
 | Layer | Enforces | Failure mode it closes |
 | --- | --- | --- |
-| Application (SHIPPED) | SSRF base policy, session host rules, engagement scope (T7 slice 2a), redirect all-hop walk, response caps, WebSocket deny, download pinning | honest mistakes, malicious page content, scope drift |
+| Application (SHIPPED, with the threat model's PARTIAL qualifiers) | SSRF base policy, session host rules, engagement scope (T7 slice 2a), redirect all-hop walk, response caps (body-bearing passthrough responses uncapped), WebSocket deny (page-routed traffic; workers uncovered, explicit off/no-policy unguarded), download pinning | honest mistakes, page-routed malicious content, scope drift |
 | OS / process boundary (NOT SHIPPED) | the browser process (or its network service) may only connect through the session's authorized gateway; startup REFUSES to run when the enforcement is absent | a compromised or misrouted renderer bypassing the application filter entirely |
 
 The two layers are a pairing, not alternatives: the application layer
@@ -52,7 +52,7 @@ the requirement without restarting that project implicitly.
    contained row) — no silent native fallback.
 3. No unauthenticated control plane on the enforcement path (the
    loopback opt-out's page→service escalation is the cautionary record;
-   see the threat model's boundary table).
+   see the threat model's Trust boundaries list).
 4. Independent verification: real network-bypass tests by an adversarial
    reviewer, not the application suite's own green checks.
 

@@ -1,6 +1,7 @@
 # T7 slice 2: engagement scope enforcement
 
-Status: in progress (slice 2a — synthetic gates). Task packet:
+Status: slice 2a DELIVERED 2026-10-02 (primitive + service surface +
+synthetic/real-Chromium gates). Task packet:
 [t7-audit-security](../tasks/t7-audit-security.md). The bounty use case
 (vision priority 5) is blocked on this slice ("it blocks dependent active
 testing if incomplete"); T4's remaining production gates need live-target
