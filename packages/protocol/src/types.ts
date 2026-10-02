@@ -216,7 +216,7 @@ export type ActionType =
 /** One child frame the observation could not fully inspect (T6). */
 export interface FrameCoverage {
   frame: string;
-  status: 'timeout' | 'unavailable' | 'depth_exceeded' | 'budget_exceeded';
+  status: 'timeout' | 'unavailable' | 'depth_exceeded' | 'budget_exceeded' | 'loading';
   reason?: string;
 }
 

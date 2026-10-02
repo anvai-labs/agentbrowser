@@ -286,6 +286,7 @@ export const FrameCoverageSchema = Type.Object({
     Type.Literal('unavailable'),
     Type.Literal('depth_exceeded'),
     Type.Literal('budget_exceeded'),
+    Type.Literal('loading'),
   ]),
   reason: Type.Optional(Type.String({ maxLength: 256 })),
 });
