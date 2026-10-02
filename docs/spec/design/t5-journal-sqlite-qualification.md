@@ -58,9 +58,12 @@ Clock-movement rows joined the shared record conformance (2026-09-30):
 admission horizons are monotonic across wall-clock rollback via the
 persisted high-water, and a reopen below the persisted high-water refuses
 as configuration; the in-handle monotonic-elapsed term of the design's
-max-rule remains for the C4b slice. Still open
-before any public capability: true read-only-filesystem and disk-full lanes
-(release-time qualification on constrained mounts). No public
+max-rule remains for the C4b slice. The read-only-filesystem and disk-full lanes DELIVERED 2026-10-02 as
+CI-gated qualification rows (the spec's sanctioned deterministic
+max-page mechanism for SQLITE_FULL; directory permissions for
+read-only): see the owner evidence record's 2026-10-02 section.
+Constrained-mount release-time runs remain optional depth on top of
+the gated contracts. No public
 capability is enabled and nothing is exported from the
 control barrel. Read [J2a architecture](t5-journal-sqlite-audit.md) and existing
 [journal port](t5-journal-contract.md). Reuse their owners; do not invent a durable executor.
