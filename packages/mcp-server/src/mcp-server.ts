@@ -229,6 +229,61 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
               'response marks this with degraded: true when it happens. Raise this for a ' +
               'session known to navigate large/complex forms (many fields, custom comboboxes).',
           },
+          scope: {
+            type: 'object',
+            description:
+              'T7 engagement scope for authorized security testing: the outermost restrict-only ' +
+              'layer of the session policy chain, enforced per request and per redirect hop. ' +
+              'Fields: allowedHosts (required, exhaustive exact/".suffix" entries — suffix ' +
+              'covers subdomains only, list the apex separately), pathRules ' +
+              '[{hostSuffix?, prefix}] (segment-boundary prefixes), allowedMethods, expiresAt ' +
+              '(epoch ms), requestBudget (choke-point requests, hops included), identityBindings ' +
+              '[{header, value, allowedHosts}] (the marker is denied on unbound hosts).',
+            properties: {
+              allowedHosts: {
+                type: 'array',
+                items: { type: 'string', minLength: 1 },
+                minItems: 1,
+              },
+              pathRules: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    hostSuffix: { type: 'string' },
+                    prefix: { type: 'string', minLength: 1 },
+                  },
+                  required: ['prefix'],
+                },
+                minItems: 1,
+              },
+              allowedMethods: {
+                type: 'array',
+                items: { type: 'string', minLength: 1 },
+                minItems: 1,
+              },
+              expiresAt: { type: 'number', minimum: 0 },
+              requestBudget: { type: 'number', minimum: 1 },
+              identityBindings: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    header: { type: 'string', minLength: 1 },
+                    value: { type: 'string', minLength: 1 },
+                    allowedHosts: {
+                      type: 'array',
+                      items: { type: 'string', minLength: 1 },
+                      minItems: 1,
+                    },
+                  },
+                  required: ['header', 'value', 'allowedHosts'],
+                },
+                minItems: 1,
+              },
+            },
+            required: ['allowedHosts'],
+          },
         },
         required: ['tenantId'],
       },
@@ -248,6 +303,12 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
           request.policy = {
             ...(request.policy ?? {}),
             allowServiceWorkers: args.allowServiceWorkers,
+          };
+        }
+        if (args.scope !== undefined && typeof args.scope === 'object') {
+          request.policy = {
+            ...(request.policy ?? {}),
+            scope: args.scope as NonNullable<SessionRequest['policy']>['scope'] & object,
           };
         }
         if (typeof args.snapshotTimeoutMs === 'number') {

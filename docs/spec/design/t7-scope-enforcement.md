@@ -138,12 +138,24 @@ the real choke point.
   method never reaches the wire; response-side method semantics are out
   of scope.
 
+## Service surface (delivered with the primitive)
+
+- Wire shape: `policy.scope` on session create (REST/SDK), the
+  `scope` object on MCP `browser_create`, and `--scope-file PATH` on
+  the CLI (bounded 1 MiB reader, no symlink follow — identity-binding
+  markers stay out of process arguments). Additive optional schema
+  fields; no protocol version bump.
+- Composition: the service wraps the session's host policy (or the SSRF
+  base) with EngagementScopePolicy as the outermost layer; the download
+  transport inherits the same wrapped policy.
+- Preflight: the service navigates through a non-spending preflight
+  (`preflightCheck`) — full denial checks, budget-exhaustion included,
+  without consuming budget, so a navigation is charged once at the wire
+  and denials surface as typed `POLICY_DENIED` ServiceErrors carrying
+  the `SCOPE_*` sub-code before the request reaches the engine.
+
 ## Deliberately out of scope (later slices)
 
 - Slice 1 (audit adapters with baseline/versioned measurements), slice 3
   (scanner regression adapters + role/business-logic fixtures), slice 4
   (SARIF/report templates) — on demand, per the packet.
-- Service-surface wiring (session-create scope fields, CLI/MCP flags):
-  the primitive and its gates land first so the model stabilizes before
-  it is published; the surface is the next slice and changes nothing
-  here.

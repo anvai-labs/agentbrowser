@@ -4,9 +4,10 @@ Status: slice 2a (engagement scope enforcement) DELIVERED 2026-10-02 —
 the `EngagementScopePolicy` primitive (hosts/paths/methods/identities/
 time/budgets, enforced per request and per redirect hop through the F1
 all-hop walker) with real-Chromium gates and nine acceptance rows in
-[the design record](../design/t7-scope-enforcement.md); audit adapters
-(slice 1), scanner regression (slice 3), reports (slice 4) and the
-service-surface wiring of scope options remain. Repository: agentbrowser.
+[the design record](../design/t7-scope-enforcement.md); the service
+surface for scope (policy.scope / MCP scope / CLI --scope-file) is
+delivered with it; audit adapters (slice 1), scanner regression
+(slice 3) and reports (slice 4) remain. Repository: agentbrowser.
 Depends on: T3; security parity also T4.
 Inputs: core, selected audit/appsec/bounty mode, security, contracts, quality-ci.
 

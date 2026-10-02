@@ -10,9 +10,9 @@ structured output contracts. An absent annotation is not a promise of read-only 
 Descriptions and annotations are hints, never authorization. Catalog presence does
 not prove a live backend, engine capability or current session grant.
 
-Catalog SHA-256 (complete descriptions and schemas): `966bae79a76b3169307f55065542384e3bd4f7a2fd17df8824118c2e5f4765e9`
+Catalog SHA-256 (complete descriptions and schemas): `3c449d32690cdfa8974956f7d29dd5c0d0456dade6fe1e5005110e0aa18416af`
 
-## unbound/qa (17 tools; 44973 result bytes)
+## unbound/qa (17 tools; 46330 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -54,7 +54,7 @@ Catalog SHA-256 (complete descriptions and schemas): `966bae79a76b3169307f550655
 | `browser_session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## unbound/operations (17 tools; 44973 result bytes)
+## unbound/operations (17 tools; 46330 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -96,7 +96,7 @@ Catalog SHA-256 (complete descriptions and schemas): `966bae79a76b3169307f550655
 | `browser_session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## unbound/audit (16 tools; 40122 result bytes)
+## unbound/audit (16 tools; 41479 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -136,7 +136,7 @@ Catalog SHA-256 (complete descriptions and schemas): `966bae79a76b3169307f550655
 | `browser_session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## unbound/appsec (17 tools; 44973 result bytes)
+## unbound/appsec (17 tools; 46330 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -178,7 +178,7 @@ Catalog SHA-256 (complete descriptions and schemas): `966bae79a76b3169307f550655
 | `browser_session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## unbound/bounty (17 tools; 44973 result bytes)
+## unbound/bounty (17 tools; 46330 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |
@@ -220,7 +220,7 @@ Catalog SHA-256 (complete descriptions and schemas): `966bae79a76b3169307f550655
 | `browser_session` | none | text JSON | Inspect one session's metadata, sampled service-lease deadlines and available pages without refreshing idle lifetime. |
 | `browser_snapshot` | pageId | text JSON | Read a self-contained page snapshot with current refs. |
 
-## unbound/forms (17 tools; 44973 result bytes)
+## unbound/forms (17 tools; 46330 result bytes)
 
 | Tool | Required arguments | Output contract | Purpose |
 | --- | --- | --- | --- |

@@ -179,6 +179,21 @@ export class EngagementScopePolicy {
     await this.base.checkRequest(request);
   }
 
+  /**
+   * Service-side preflight: the full denial checks (a spent budget
+   * included) WITHOUT consuming budget — the choke point spends when the
+   * request actually flows, so a navigation is not double-charged by the
+   * service preflight plus the wire-level check.
+   */
+  async preflightCheck(request: {
+    hostname: string;
+    url?: string;
+    method?: string;
+    headers?: Record<string, string>;
+  }): Promise<void> {
+    this.denyIf(request);
+  }
+
   async checkRedirectChain(
     requests: Array<{ url: string; hostname?: string; method?: string }>
   ): Promise<void> {

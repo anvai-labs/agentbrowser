@@ -413,6 +413,23 @@ the [threat model](threat-model.md) carries the enforcement-boundary
 caveats (page-routing coverage only, no worker guarantee, explicit
 `off`/no-policy modes unguarded).
 
+**Engagement scope for authorized testing (`policy.scope` /
+`--scope-file`).** Sessions can pin an engagement — exhaustive
+`allowedHosts` (`.suffix` covers subdomains only; list the apex
+explicitly), per-host path prefixes (segment-boundary matched), a
+method allowlist, identity bindings (a marked request is denied on any
+host not bound to that identity), an expiry instant, and a total
+request budget including redirect hops. The scope is the outermost
+restrict-only layer of the session's policy chain: every request and
+every redirect hop is checked, denials surface as `POLICY_DENIED`
+errors carrying `SCOPE_*` reasons (`SCOPE_HOST_DENIED`,
+`SCOPE_PATH_DENIED`, `SCOPE_METHOD_DENIED`, `SCOPE_IDENTITY_DENIED`,
+`SCOPE_EXPIRED`, `SCOPE_BUDGET_EXHAUSTED`), and a spent budget stops
+all further traffic. CLI: `session create --scope-file scope.json`
+(1 MiB bound, no symlink follow). See
+[the design record](spec/design/t7-scope-enforcement.md) for the model
+and its stated residuals.
+
 **There is no supported procedure to enable page WebSockets under a
 policy.** The engine's `webSocketPolicy: 'off'` opt-out is an
 engine-construction option with no REST/MCP/env surface, and selecting

@@ -39,6 +39,10 @@ export const SESSION_CREATE_USAGE: UsageGuidance = {
       'Use describe session cookies for format details and private export.',
     INTERACTION_GUIDANCE.networkPolicy,
     INTERACTION_GUIDANCE.livePush,
+    'Authorized security testing: --scope-file pins the engagement (hosts, paths, methods, ' +
+      'identity bindings, expiry, request budget) as the outermost restrict-only layer; denials ' +
+      'carry SCOPE_* reasons and a spent budget stops all traffic. The .suffix host form covers ' +
+      'subdomains only — list the apex explicitly.',
     'CDP attachment is a separate operator-configured lane, not a workaround for denied egress. ' +
       'Use a dedicated profile; --cdp-attach cannot be combined with launch or cookie settings.',
   ],

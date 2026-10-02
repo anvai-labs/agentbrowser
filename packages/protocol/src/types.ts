@@ -99,6 +99,43 @@ export type EngineSelection = EngineType | (string & {});
 /**
  * Session policy configuration
  */
+/**
+ * T7 slice 2a: one path rule of an engagement scope. A host with no
+ * binding rule is fully in scope for paths; prefixes match on
+ * path-segment boundaries (prefix "/api" admits "/api" and "/api/users",
+ * never "/apix").
+ */
+export interface ScopePathRule {
+  /** Exact host or ".suffix" (subdomains only). Absent = every allowed host. */
+  hostSuffix?: string;
+  prefix: string;
+}
+
+/** One identity binding: the marker must not leave its bound hosts. */
+export interface ScopeIdentityBinding {
+  header: string;
+  value: string;
+  allowedHosts: string[];
+}
+
+/**
+ * T7 slice 2a: engagement scope for authorized security testing
+ * (hosts/paths/methods/identities/time/budget), enforced per request and
+ * per redirect hop by EngagementScopePolicy as the outermost
+ * restrict-only layer of the session's policy chain.
+ */
+export interface EngagementScope {
+  /** Exhaustive when set: exact hosts and ".suffix" entries in scope. */
+  allowedHosts: string[];
+  pathRules?: ScopePathRule[];
+  allowedMethods?: string[];
+  /** Epoch ms; the scope is expired at or after this instant. */
+  expiresAt?: number;
+  /** Total choke-point requests in scope, redirect hops included. */
+  requestBudget?: number;
+  identityBindings?: ScopeIdentityBinding[];
+}
+
 export interface SessionPolicy {
   /** Optional since Phase 3: blockedHosts-only / downloads-only policies are legitimate (restrict-only). */
   allowedHosts?: string[];
@@ -115,6 +152,8 @@ export interface SessionPolicy {
    * service-worker presence and rejects sessions that block it.
    */
   allowServiceWorkers?: boolean;
+  /** T7 slice 2a: engagement scope enforced on top of the whole chain. */
+  scope?: EngagementScope;
 }
 
 /**
