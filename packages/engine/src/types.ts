@@ -149,7 +149,7 @@ export interface NavigationResult {
 export interface RawFrameCoverage {
   /** Bounded frame identity: URL origin+path, else the frame's name/ordinal. */
   frame: string;
-  status: 'timeout' | 'unavailable' | 'depth_exceeded' | 'budget_exceeded';
+  status: 'timeout' | 'unavailable' | 'depth_exceeded' | 'budget_exceeded' | 'loading';
   reason?: string;
 }
 

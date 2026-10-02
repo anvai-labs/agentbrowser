@@ -80,7 +80,8 @@ Any frame that cannot be inspected — snapshot timeout, detached mid-flight,
 depth or budget truncation — produces a bounded `coverage` block on the
 observation: frame URL origin + name (name/ordinal fallback for
 srcdoc/about:blank), status (`timeout` | `unavailable` | `depth_exceeded` |
-`budget_exceeded`), and a reason from the existing bounded vocabulary. A
+`budget_exceeded` | `loading`), and a reason from the existing bounded
+vocabulary. A
 stable shell with uninspectable frames must not look like complete task
 coverage. This is the handoff's "surface explicit incomplete coverage and a
 bounded reason". Touchpoints for the additive field: the engine's
@@ -187,7 +188,18 @@ slices land per T9 evidence discipline.
   ~8.5 ms top-level (~23 ms absolute overhead for 4 child frames),
   far inside the 5 s default envelope — evidence in
   [t6-frame-budgets](../evidence/t6-frame-budgets.md).
-- **Still queued**: the loading-window residual (a frame observed during
-  its loading window is indistinguishable from a legitimately empty
-  frame — candidate `empty`/`loading` coverage status) and per-frame
-  form-identity state refresh timing refinement.
+- **Loading-window coverage DELIVERED 2026-10-02** (`loading` status): a
+  child frame observed with no committed document (empty/about:blank URL)
+  and an empty snapshot is named `loading` in the coverage block instead
+  of reading as complete coverage of a mounting application. Honest
+  limitation, stated in the entry's `reason`: URL alone cannot distinguish
+  a held navigation from a src-less or content-free srcdoc frame (both
+  report about:blank permanently), so legitimately empty frames of that
+  shape are also named `loading` — informational only (no ref, action, or
+  staleness effect); an agent retrying is merely wasteful, never wrong.
+- **Still queued**: per-frame form-identity state refresh timing
+  refinement. Known residual, out of scope by design: a frame whose
+  navigation HAS committed (real URL) but whose SPA has not yet mounted
+  also yields an empty snapshot with no coverage entry — the pre-commit
+  window is covered; the post-commit-unmounted window is not.
+

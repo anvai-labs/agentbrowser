@@ -2624,13 +2624,31 @@ class PlaywrightPage implements EnginePage {
             continue;
           }
           if (frameYaml === undefined) {
-            frameCoverage.push({ frame: identity, status: 'timeout' });
+            // An empty frame URL means the navigation never committed: the
+            // frame is still LOADING, not timed out — an agent should retry
+            // rather than read the shell as complete coverage.
+            const status = frame.url() === '' ? 'loading' : 'timeout';
+            frameCoverage.push({ frame: identity, status });
             continue;
           }
           const parsed = this.parseAriaSnapshot(frameYaml, this.revision, refOffset);
           for (const element of parsed) this.frameOfElement.set(element, frame);
           refOffset += parsed.length;
           elements.push(...parsed);
+          // A frame with no committed document (empty/about:blank URL) and
+          // no merged content is mid-navigation — name it so an agent
+          // retries rather than reading the shell as complete coverage of
+          // a mounting application. URL alone cannot distinguish a held
+          // navigation from a src-less/srcdoc frame (both report
+          // about:blank forever): the reason says so instead of overclaiming.
+          if (parsed.length === 0 && (frame.url() === '' || frame.url() === 'about:blank')) {
+            frameCoverage.push({
+              frame: identity,
+              status: 'loading' as const,
+              reason:
+                'no committed document — navigation in flight, or a static src-less/srcdoc frame',
+            });
+          }
         }
       } else {
         ariaSnapshotDegraded = true;
