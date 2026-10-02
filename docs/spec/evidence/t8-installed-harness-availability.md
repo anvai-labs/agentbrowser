@@ -107,13 +107,21 @@ install is three orders of magnitude larger.
 
 - Slice 2 (schema/result fidelity): **qualified through the installed CLI
   path, Codex listing path, and (2026-10-02) the Codex tool-call path on
-  1.15.0.** Victor live-loop fidelity no longer waits on F1/F2 (both
-  delivered 2026-09-30); its remaining blocker is the recorded Sandhi
-  TLS trust decision — an operator call (the source-level fidelity
-  repair in Victor #1168 is unaffected).
+  1.15.0 — for the exercised subset (flat inputs, array-of-object
+  results); the acceptance's unions/enums remain source-level only.**
+  Victor live-loop fidelity remains blocked by the two infrastructure
+  facts recorded earlier in this file: the formula catalog/binding skew
+  (repaired locally on this machine; the durable fix is upstream) and
+  the self-signed Sandhi gateway with no TLS trust override — an
+  operator call (the source-level fidelity repair in Victor #1168 is
+  unaffected). Note: the "F1/F2" labels used in older entries of this
+  file denote THOSE Victor blockers — a namespace collision with the
+  delivered foundation refinements that also call themselves F1/F2 in
+  [foundation-refinements](../tasks/foundation-refinements.md); blockers
+  are named, not labeled, from here on.
 - Slice 1 (correlation/cancellation/retirement): qualified at the
   CLI/service level (steps 5–6 above); installed-Victor-level correlation
-  remains gated on F1/F2.
+  remains gated on the same two Victor-loop blockers above.
 - Footprint gates (install sizes, RSS): shipped and CI-enforced (peak-RSS
   gates on the compiled binaries; install-size gates on the packaged
   server candidate).
@@ -123,7 +131,7 @@ install is three orders of magnitude larger.
 ## 2026-10-01 update (1.14.0 installed): MCP tool-call path qualified
 
 The installed `agentbrowser-mcp` 1.14.0 binary was driven end-to-end against
-the installed :5709 service (no-keys local mode), eight checks all pass:
+the installed :5709 service (no-keys local mode); the checks below all pass:
 initialize (server reports 1.14.0), tools/list (16 tools — the released set;
 `browser_events_replay` is correctly absent, it ships post-1.14.0), then the
 full tool-call flow — browser_create → browser_page_create →
@@ -132,7 +140,7 @@ browser_close. This qualifies the MCP-path tool-call fidelity gate for the
 installed 1.14.0 harness; the `browser_events_replay` surface qualifies with
 the next release. Re-runnable driver: scripted JSON-RPC over stdio against
 `/opt/homebrew/bin/agentbrowser-mcp` (driver script is ephemeral at
-/tmp/t8-mcp-qualification.mjs; the eight checks above are the record).
+/tmp/t8-mcp-qualification.mjs; the checks above are the record).
 
 ## 2026-10-02 update: gate tightening on Linux numbers
 
@@ -172,10 +180,15 @@ on :5709 restarted, `/health` reports 1.15.0) through a real model loop:
 `browser_create` → `browser_navigate` (https://example.com) →
 `browser_observe` → `browser_close` — all four MCP calls completed, and
 the model's ground-truth report matches the page: title "Example
-Domain", 1 interactive element (the page's single link). This proves
-provider-final schema conversion on the tool-call direction: tool input
-schemas reach the model, typed results return intact, and nested
-element arrays survive the provider round trip.
+Domain", 1 interactive element (the page's single link). This qualifies
+provider-final schema conversion for the exercised subset: flat tool
+inputs and an array-of-object observe result round-trip intact through
+the model. The slice-2 acceptance's unions/enums and the nested-autofill
+input schema remain exercised only at source level (Victor #1168); no
+installed provider path has run them yet. A direct tools/list against
+the same installed binary (scripted JSON-RPC over stdio) returns 17
+tools including `browser_events_replay` — closing the 2026-10-01
+section's commitment for exactly this release.
 
 The approval-policy gate recorded against this path is resolved, with
 the resolution itself part of the record: codex `exec` defaults to
@@ -193,8 +206,11 @@ codex exec --ephemeral --ignore-user-config --approve-for-me \
   '<task prompt>'
 ```
 
-Ephemeral home + ignored user config: the run registers only the
-agentbrowser server and touches neither the user's codex config nor any
-repo file. The Claude provider path remains additional (unrequired)
-coverage; Victor's live loop remains gated on the Sandhi TLS trust
-decision, which is an operator call.
+`--ephemeral` persists no session files to disk (auth still reads
+`CODEX_HOME`) and `--ignore-user-config` skips the user's
+`config.toml`, so the run registers only the agentbrowser server; that
+it wrote no repo files is an observation about this run, not a property
+of the sandbox. The Claude provider path remains additional
+(unrequired) coverage; Victor's live loop remains blocked on the two
+facts named above (locally-repaired formula skew; the Sandhi TLS trust
+decision, which is an operator call).
