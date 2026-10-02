@@ -134,16 +134,27 @@ the next release. Re-runnable driver: scripted JSON-RPC over stdio against
 ## 2026-10-02 update: gate tightening on Linux numbers
 
 The first footprint-limit tightening pass, made once public-runner Linux
-numbers existed (ubuntu-latest CI, develop @ the #349 merge):
+numbers existed (ubuntu-latest CI, 2026-10-02). CI samples vary run to
+run, so the record is the observed spread over all 7 linux-x64 runs that
+day (bun 1.4.0 pinned), not a point estimate:
 
-| Metric | darwin-arm64 | linux-x64 | Gate |
+| Metric (gate measurement) | darwin-arm64 | linux-x64 observed | Gate |
 | --- | --- | --- | --- |
-| CLI one-shot peak RSS | 26.8 MB | 42.3 MB | 75 MB (was 120) |
-| MCP bridge idle peak RSS | 44.5 MB | 49.6 MB | 75 MB (was 120) |
+| CLI one-shot peak RSS (`--version`, ps-poll) | 43.5 MB | 37.4–51.9 MB (7 runs) | 75 MB (was 120) |
+| MCP bridge idle peak RSS (post-handshake, ps-poll) | 37.7–44.5 MB | 47.4–52.0 MB (7 runs) | 75 MB (was 120) |
 | Packaged candidate compressed | 9.2 MB | 7.7 MB | 12 MB (held) |
 | Extracted server tree | 55.7 MB | 37.5 MB | 80 MB (held) |
 
-75 MB is 1.5x the worst observed RSS (linux bridge 49.6 MB): a +50%
-regression trips while platform/toolchain noise does not. The install-size
-gates already sat at 1.30x/1.44x worst-observed, so they held and the RSS
-gates tightened instead. Rationale recorded in both gate scripts' headers.
+75 MB is 1.44x the worst observed RSS (bridge 52.0 MB, CLI 51.9 MB).
+The CLI's ~39% run-to-run spread makes the gate a tripwire for gross
+regressions (tens of MB), not a precision instrument; the 10 ms ps-poll
+also undersamples true peaks (disclosed in the gate script), so real
+headroom is below 1.44x. The install-size gates already sat at
+1.30x/1.44x worst-observed, so they held and the RSS gates tightened
+instead. Rationale recorded in both gate scripts' headers.
+
+Reconciliation with the 2026-09-29 table above: its 47 MB CLI figure is
+a different measurement — the brew-installed 1.13.0 binary running the
+`health` one-shot under `/usr/bin/time -l` max-resident — while the gate
+polls `--version` on the freshly compiled binary via `ps -o rss=`. Both
+are honest; they are not the same number and are not interchangeable.

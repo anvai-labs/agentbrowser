@@ -8,12 +8,15 @@
  *
  * Peak RSS is polled via `ps -o rss=` (KB, both macOS and Linux) at a 10 ms
  * interval while the process runs; polling can miss sub-10ms spikes, so the
- * limits carry headroom. First tightening pass 2026-10-02, once Linux CI
- * numbers existed (120 -> 75 MB): worst observed across platforms is
- * linux-x64 (CLI one-shot 42.3 MB, MCP bridge idle 49.6 MB; darwin-arm64
- * 26.8 / 44.5 MB), so 75 MB = 1.5x worst — a +50% regression trips while
- * toolchain/platform noise does not. Limits are named here and in the T8
- * packet.
+ * limits carry headroom. First tightening pass 2026-10-02 (120 -> 75 MB),
+ * once Linux CI numbers existed: across 7 linux-x64 CI samples that day
+ * (bun 1.4.0 pinned) the CLI one-shot (`--version`) spanned 37.4-51.9 MB
+ * and the idle bridge 47.4-52.0 MB — worst observed 51.9/52.0, so 75 MB
+ * is a 1.44x gate. The CLI's ~39% run-to-run spread means the gate is a
+ * tripwire for gross regressions (tens of MB), not a precision
+ * instrument; darwin-arm64 reads lower (recent samples: CLI one-shot
+ * 26.8-43.5 MB, idle bridge 37.7-44.5 MB). Limits are named
+ * here and in the T8 packet.
  */
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
