@@ -69,8 +69,10 @@ silently stripping it. Regression coverage includes direct dispatch and all exec
 validation modes. Provider/ToolPipeline transformations before the executor remain
 an explicit installed-harness acceptance gate.
 
-Next qualify a released installed harness and the provider's actual tool-call
-path, then the remaining correlation/reconnect/cancellation and footprint gates.
+The released installed harness (1.14.0) MCP tool-call path is now qualified
+(2026-10-01, see the availability record's update); still open: the provider's
+actual tool-call path, then the remaining correlation/reconnect/cancellation
+and footprint gates.
 Retain explicit limits until those named acceptance runs exist; no whole-milestone
 completion or release is implied by this source repair.
 
