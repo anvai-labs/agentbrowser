@@ -129,7 +129,10 @@ import {
   DownloadTransport,
   type DownloadTransportOptions,
 } from './download-transport.js';
-import { createDefaultNetworkPolicy } from './network-policy-config.js';
+import {
+  createDefaultNetworkPolicy,
+  networkPolicyFromEnvironment,
+} from './network-policy-config.js';
 import type { SessionPrincipal } from './session-authority.js';
 
 /** Typed failure carrying a protocol error code. */
@@ -331,6 +334,13 @@ export interface ServiceDependencies {
   approvalGate?: ApprovalGate;
   /** Secret registry; values are redacted from every service output. */
   secretManager?: SecretManager;
+  /** Operator startup opt-in: disable the loopback block for local-machine
+   * sessions (AGENTBROWSER_ALLOW_LOOPBACK). Present only when the operator
+   * set the flag; session/request input can never reach it.
+   */
+  allowLoopback?: string | undefined;
+  /** Operator private-IP CIDR exceptions (AGENTBROWSER_ALLOWED_CIDRS). */
+  allowedPrivateCIDRs?: string | undefined;
   /** Artifact retention store; defaults to a bounded in-memory store. */
   artifactStore?: ArtifactStore;
   /** Payload fetcher for downloads; injectable for tests. */
@@ -582,7 +592,14 @@ export class AgentBrowserService {
     this.executor = deps.executor ?? new ActionExecutor(this.normalizer);
     // SSRF defenses are on by default (ADR-006): loopback, private ranges and
     // cloud metadata endpoints are blocked unless a policy is injected.
-    this.networkPolicy = deps.networkPolicy ?? createDefaultNetworkPolicy();
+    this.networkPolicy =
+      deps.networkPolicy ??
+      (deps.allowLoopback !== undefined || deps.allowedPrivateCIDRs !== undefined
+        ? networkPolicyFromEnvironment({
+            AGENTBROWSER_ALLOWED_CIDRS: deps.allowedPrivateCIDRs,
+            AGENTBROWSER_ALLOW_LOOPBACK: deps.allowLoopback,
+          })
+        : createDefaultNetworkPolicy());
     this.approvalGate =
       deps.approvalGate ??
       new ApprovalGate({

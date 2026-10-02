@@ -35,6 +35,33 @@ it('allows trusted embedded policy injection while session host rules can only r
   }
 });
 
+it('the operator loopback opt-in (env) allows loopback without injecting a policy', async () => {
+  process.env.AGENTBROWSER_ALLOW_LOOPBACK = '1';
+  try {
+    const server = await buildServer({ engine: new FakeEngine() });
+    try {
+      const create = await server.inject({
+        method: 'POST',
+        url: '/v1/sessions',
+        payload: { tenantId: 'test', policy: { allowedHosts: ['127.0.0.1'] } },
+      });
+      const { sessionId } = create.json();
+      const page = await server.inject({ method: 'POST', url: `/v1/sessions/${sessionId}/pages` });
+      const allowed = await server.inject({
+        method: 'POST',
+        url: `/v1/sessions/${sessionId}/pages/${page.json().pageId}/navigate`,
+        payload: { url: 'http://127.0.0.1/' },
+      });
+      expect(allowed.statusCode).toBe(200);
+    } finally {
+      await server.close();
+    }
+  } finally {
+    // biome-ignore lint/performance/noDelete: env restore requires the delete.
+    delete process.env.AGENTBROWSER_ALLOW_LOOPBACK;
+  }
+});
+
 it('keeps private-address denial when no trusted policy is injected', async () => {
   const server = await buildServer({ engine: new FakeEngine() });
   try {
