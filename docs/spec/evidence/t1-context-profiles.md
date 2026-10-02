@@ -94,5 +94,8 @@ grant and reports AGENT_ACTIVE; an old-epoch re-delegate is refused.
 Driver: scripted JSON-RPC over stdio (ephemeral /tmp/t1-cursor-
 consumption.mjs; the checks above are the record). Remaining T8 work:
 the same consumption/retirement semantics through the providers' own
-tool-call paths (Victor live loop still gated on F1/F2; Codex gated on
-approval policy).
+tool-call paths (the Codex path now executes tool calls — the approval
+gate was resolved 2026-10-02, see the T8 availability record — but
+cursor semantics are not yet exercised through it; the Victor live loop
+remains blocked on the Sandhi TLS trust decision, with the formula skew
+repaired locally).
