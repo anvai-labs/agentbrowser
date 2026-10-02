@@ -81,8 +81,12 @@ existed — worst observed 51.9 / 52.0 MB, see the availability record's
 2026-10-02 update). The install-size gate
 for the packaged candidate is also CI-enforced
 (scripts/install-size-gates.test.mjs: compressed <= 12 MB, extracted
-server tree <= 80 MB, contents verified). Still open: the provider's
-actual tool-call path and the remaining
+server tree <= 80 MB, contents verified). The provider's actual
+tool-call path is qualified (2026-10-02: codex-cli 0.157.1 drove the
+installed 1.15.0 binary through
+create/navigate/observe/close with ground-truth-matching results;
+approval policy resolved via `--approve-for-me` auto review — see the
+availability record). Still open: the remaining
 correlation/reconnect/cancellation gates.
 Retain explicit limits until those named acceptance runs exist; no whole-milestone
 completion or release is implied by this source repair.

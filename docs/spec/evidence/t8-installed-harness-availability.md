@@ -106,8 +106,11 @@ install is three orders of magnitude larger.
 ## Consequences for the T8 gates
 
 - Slice 2 (schema/result fidelity): **qualified through the installed CLI
-  path and Codex listing path.** Victor live-loop fidelity remains gated on
-  F1/F2 (the source-level fidelity repair in Victor #1168 is unaffected).
+  path, Codex listing path, and (2026-10-02) the Codex tool-call path on
+  1.15.0.** Victor live-loop fidelity no longer waits on F1/F2 (both
+  delivered 2026-09-30); its remaining blocker is the recorded Sandhi
+  TLS trust decision — an operator call (the source-level fidelity
+  repair in Victor #1168 is unaffected).
 - Slice 1 (correlation/cancellation/retirement): qualified at the
   CLI/service level (steps 5–6 above); installed-Victor-level correlation
   remains gated on F1/F2.
@@ -158,3 +161,40 @@ a different measurement — the brew-installed 1.13.0 binary running the
 `health` one-shot under `/usr/bin/time -l` max-resident — while the gate
 polls `--version` on the freshly compiled binary via `ps -o rss=`. Both
 are honest; they are not the same number and are not interchangeable.
+
+## 2026-10-02 update (1.15.0 installed): Codex tool-call path qualified
+
+The provider's actual tool-call execution path — the remaining slice-2
+gate — is qualified: codex-cli 0.157.1 drove the installed
+`agentbrowser-mcp` 1.15.0 binary (brew keg upgraded from 1.14.0; service
+on :5709 restarted, `/health` reports 1.15.0) through a real model loop:
+
+`browser_create` → `browser_navigate` (https://example.com) →
+`browser_observe` → `browser_close` — all four MCP calls completed, and
+the model's ground-truth report matches the page: title "Example
+Domain", 1 interactive element (the page's single link). This proves
+provider-final schema conversion on the tool-call direction: tool input
+schemas reach the model, typed results return intact, and nested
+element arrays survive the provider round trip.
+
+The approval-policy gate recorded against this path is resolved, with
+the resolution itself part of the record: codex `exec` defaults to
+`approval_policy = never`, which REFUSES every MCP call ("MCP tool call
+requires approval, but approval policy is never" — reproduced once,
+then resolved). The scoped fix is `--approve-for-me` (codex's automatic
+approval review; implies the workspace-write sandbox and is mutually
+exclusive with an explicit `--sandbox` flag) — not
+`--dangerously-bypass-approvals-and-sandbox`. Exact invocation:
+
+```
+codex exec --ephemeral --ignore-user-config --approve-for-me \
+  --skip-git-repo-check \
+  -c 'mcp_servers.agentbrowser.command="/opt/homebrew/bin/agentbrowser-mcp"' \
+  '<task prompt>'
+```
+
+Ephemeral home + ignored user config: the run registers only the
+agentbrowser server and touches neither the user's codex config nor any
+repo file. The Claude provider path remains additional (unrequired)
+coverage; Victor's live loop remains gated on the Sandhi TLS trust
+decision, which is an operator call.
