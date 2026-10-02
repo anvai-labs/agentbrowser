@@ -390,6 +390,32 @@ silently runs on a different engine than requested. The full matrix,
 including per-engine egress guarantees, is in the
 [engine matrix](engines.md). Notes for operators:
 
+**Live-push transports are closed under any active policy.** Every
+policy-bearing session — the default SSRF policy included — also closes
+page WebSocket upgrades cleanly (close code `1014`, reason
+`blocked by egress policy`): Playwright's fetch/fulfill proxy breaks
+allowed-WebSocket forwarding (verified upstream limitation, Playwright
+1.62.1), so the engine denies upgrades instead of letting them fail
+opaquely. This is a deliberate containment decision, not a defect. When
+driving live-updating SPAs, expect WebSocket-pushed state to never
+arrive: treat a long-running server-side action as fire-and-reload
+(navigate/reload, then observe the final state), or poll a REST
+endpoint. The diagnostic that distinguishes this from a site or bot
+wall: a page WebSocket closing with `1014` / `blocked by egress policy`
+is this engine behavior. `allowServiceWorkers: true` restores
+service-worker transport only — it does not restore WebSocket
+transport. Mechanism note (inferred from the choke point, not
+separately reproduced): the same fetch/fulfill interception buffers
+responses to completion, so incremental push over streamed HTTP (SSE)
+cannot stream through it either. A transport-level fix requires an
+interception layer that can forward WebSockets (OS/CDP-level proxy),
+which the `context.route` fetch/fulfill design cannot provide — the
+candidate mechanisms are gated as failed in
+[egress-transport feasibility](egress-transport-feasibility.md), and
+the [threat model](threat-model.md) carries the enforcement-boundary
+caveats (page-routing coverage only, no worker guarantee, explicit
+`off`/no-policy modes unguarded).
+
 - **Chromium (Playwright)** is the production default; the egress policy
   checks routed requests, first redirect targets and resolved IPs. Later hops
   and connection pinning remain open; see the deployment limitations below.
@@ -575,6 +601,7 @@ authority model and the acceptance fixture
 | Observation shows a combobox as selected but you cannot tell what, or a checkbox state you cannot see | Custom-widget selections live in the DOM, not the accessibility output: read `browser_html` (inline, maxBytes-bounded, not secret-redacted). Checkbox/radio elements carry `checked` on observations; React-controlled widgets can still hide state in the DOM attribute, so trust the observation field over the raw HTML attribute. |
 | Browser download slow/failing | First service start bootstraps Chromium; on Homebrew installs it lands in `$(brew --prefix)/var/agentbrowser/browsers`. |
 | Engine crash loops | Check `sessions_crashed_total` and the JSON error log for the crash reason; the session is terminated cleanly — retry with a new session, and file an issue with the log line if it reproduces. |
+| A live-updating SPA never updates (a server-side action completes but the UI stays stale; reloading the page shows the final result) | With any active egress policy — the default SSRF policy included — page WebSocket upgrades are closed outright (close code `1014`, reason `blocked by egress policy`): a Playwright limitation makes allowed-WebSocket forwarding impossible under the fetch/fulfill choke point, so upgrades are denied cleanly instead of failing opaquely. Treat long-running actions as fire-and-reload (or poll a REST endpoint) rather than waiting for push; a page WebSocket closing with `1014` is this behavior, not a site or bot wall. `allowServiceWorkers` restores service-worker transport only, never WebSockets. See the [egress notes](threat-model.md) and [egress-transport feasibility](egress-transport-feasibility.md). |
 
 
 ## Attach to a dedicated operator Chrome profile
