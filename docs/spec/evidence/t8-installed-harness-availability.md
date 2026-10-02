@@ -184,9 +184,12 @@ the model's ground-truth report matches the page: title "Example
 Domain", 1 interactive element (the page's single link). This qualifies
 provider-final schema conversion for the exercised subset: flat tool
 inputs and an array-of-object observe result round-trip intact through
-the model. The slice-2 acceptance's unions/enums and the nested-autofill
-input schema remain exercised only at source level (Victor #1168); no
-installed provider path has run them yet. A direct tools/list against
+the model. [Erratum, same day: the unions/enums/nested-autofill
+limitation stated in the next sentence was superseded a few hours
+later — see the "slice-2 dimensions" section below.] At the time of
+this run, the slice-2 acceptance's unions/enums and the nested-autofill
+input schema had been exercised only at source level (Victor #1168). A
+direct tools/list against
 the same installed binary (scripted JSON-RPC over stdio) returns 17
 tools including `browser_events_replay` — closing the 2026-10-01
 section's commitment for exactly this release.
@@ -218,15 +221,22 @@ decision, which is an operator call).
 
 ## 2026-10-02 update (later): slice-2 dimensions exercised through Codex
 
-The first codex run used flat inputs only. Three further runs the same
+The first codex run used flat inputs only. Four further runs the same
 day exercise every slice-2 acceptance dimension through the same
 installed path (codex-cli 0.157.1 → `agentbrowser-mcp` 1.15.0), all on
 public pages, nothing submitted, no files written:
 
-- **Discriminated-union input** — `browser_act` with the `click`
-  variant on example.com: executed, revision advanced, post-click URL
+- **Union-typed inputs** — two shapes, stated precisely: the
+  model-facing `browser_act` schema is a flattened envelope (an
+  `action` string literal plus a nested `target` object, branch
+  validation server-side), and the `click` run round-tripped exactly
+  that — executed, revision advanced, post-click URL
   `https://www.iana.org/help/example-domains` reported by the model
-  from its own follow-up observation.
+  from its own follow-up observation. The surface's true `anyOf`
+  inputs were carried explicitly in a fourth run: `browser_autofill`
+  with `strategy: "native-input"` and `verify: "exact"` — both
+  accepted, and the `verify` choice drove the read-back verification
+  (receipt `verified: true`, actual value matched).
 - **Enum + nested-object input** — `browser_extract` with
   `format: "schema"` and a three-property schema object: the call
   executed and the field-specific "optional field not found" warnings

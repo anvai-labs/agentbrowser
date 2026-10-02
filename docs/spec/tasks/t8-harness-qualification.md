@@ -84,7 +84,8 @@ for the packaged candidate is also CI-enforced
 server tree <= 80 MB, contents verified). The provider's actual
 tool-call path is qualified on the Codex path (2026-10-02: codex-cli
 0.157.1 drove the installed 1.15.0 binary — every slice-2 acceptance
-dimension has an installed-provider run: flat, union, enum,
+dimension has an installed-provider run: flat, union (the flattened
+act envelope and true anyOf strategy/verify inputs), enum,
 nested-object, nested-array inputs, typed evidence; autofill
 fail-fast and verified receipts included; approval policy resolved via
 `--approve-for-me` auto review — see the availability record). Still
