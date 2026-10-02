@@ -96,6 +96,9 @@ proves the control works. Residual risks are named, not hidden.
   requires an external gateway and OS-enforced gateway-only egress. Native local
   operation remains available without that guarantee. Full ADR-008 multi-tenant
   isolation remains deferred; an ordinary Docker bridge is not forced egress.
+  The pairing requirement (application layer + OS layer, neither a
+  substitute for the other) is documented as the T7 prerequisite in
+  [t7-os-egress-pairing](spec/design/t7-os-egress-pairing.md).
 - **Unauthenticated infra planes (HARDENED)**: `/metrics` requires
   bearer auth when keys are configured; `/health/ready` answers
   unauthenticated probes with a minimal `{status}` (no engine/version

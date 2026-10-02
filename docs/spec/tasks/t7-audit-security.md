@@ -1,6 +1,9 @@
 # T7: optional audit and security adapters
 
-Status: slice 2a (engagement scope enforcement) DELIVERED 2026-10-02 —
+Status: slice 2a (engagement scope enforcement) DELIVERED 2026-10-02; the
+N2 prerequisite (OS-enforced egress pairing) is documented
+([t7-os-egress-pairing](../design/t7-os-egress-pairing.md), enforcement
+NOT SHIPPED, gated behind the deferred gateway program) —
 the `EngagementScopePolicy` primitive (hosts/paths/methods/identities/
 time/budgets, enforced per request and per redirect hop through the F1
 all-hop walker) with real-Chromium gates and nine acceptance rows in
