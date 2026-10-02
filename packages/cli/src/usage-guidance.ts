@@ -38,6 +38,7 @@ export const SESSION_CREATE_USAGE: UsageGuidance = {
     'Cookie JSON must be an array, not an export wrapper. File formats are explicit; extensions do not select them. ' +
       'Use describe session cookies for format details and private export.',
     INTERACTION_GUIDANCE.networkPolicy,
+    INTERACTION_GUIDANCE.livePush,
     'CDP attachment is a separate operator-configured lane, not a workaround for denied egress. ' +
       'Use a dedicated profile; --cdp-attach cannot be combined with launch or cookie settings.',
   ],
@@ -75,6 +76,7 @@ export const COOKIE_USAGE: UsageGuidance = {
 export const NAVIGATION_USAGE: UsageGuidance = {
   notes: [
     INTERACTION_GUIDANCE.networkPolicy,
+    INTERACTION_GUIDANCE.livePush,
     'Use --json and inspect stderr as well as the exit status for bounded failure details. ' +
       'Transport errors and timeouts do not establish a bot challenge or successful navigation.',
     'After navigation, take a new snapshot for current refs. Do not reuse refs from another page or revision.',

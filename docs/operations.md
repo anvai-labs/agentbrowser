@@ -416,6 +416,21 @@ the [threat model](threat-model.md) carries the enforcement-boundary
 caveats (page-routing coverage only, no worker guarantee, explicit
 `off`/no-policy modes unguarded).
 
+**There is no supported procedure to enable page WebSockets under a
+policy.** The engine's `webSocketPolicy: 'off'` opt-out is an
+engine-construction option with no REST/MCP/env surface, and selecting
+it would not make WebSockets *work* under a policy anyway: allowed-WS
+forwarding is broken by the same choke point, so `'off'` leaves
+upgrades to connect natively and **bypass the egress policy entirely**
+— an unguarded hole, which is why clean denial is the default. The only
+lanes where page WebSockets operate today are sessions with no egress
+policy at all (embedder-built engines; the packaged server always
+attaches the SSRF default by design). If live streaming is a hard
+requirement, track the transport-level replacement in
+[egress-transport feasibility](egress-transport-feasibility.md) — until
+that lands, reload-to-read-final-state or REST polling is the supported
+pattern.
+
 - **Chromium (Playwright)** is the production default; the egress policy
   checks routed requests, first redirect targets and resolved IPs. Later hops
   and connection pinning remain open; see the deployment limitations below.
