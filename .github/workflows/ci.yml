@@ -374,6 +374,9 @@ jobs:
       - name: Compile the CLI for packaged workflow acceptance
         run: node packages/cli/scripts/compile.mjs
 
+      - name: T8 footprint gates (peak RSS)
+        run: node --test scripts/footprint-gates.test.mjs
+
       - name: Install Chromium system dependencies on Linux
         if: runner.os == 'Linux'
         run: pnpm --filter @agentbrowser/engine-playwright exec playwright install-deps chromium
