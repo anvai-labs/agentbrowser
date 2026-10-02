@@ -383,20 +383,17 @@ multi-tenant deployments need network-enforced egress and memory/disk quotas at
 the process/container boundary described by ADR-008; trusted local deployments
 retain that explicit deferral.
 
-Sessions name their engine (`engine` field on create / MCP
-`browser_create`). The registry resolves the primary engine by default
-and fails loudly (`ENGINE_NOT_FOUND`) on unknown names — a session never
-silently runs on a different engine than requested. The full matrix,
-including per-engine egress guarantees, is in the
-[engine matrix](engines.md). Notes for operators:
-
 **Live-push transports are closed under any active policy.** Every
-policy-bearing session — the default SSRF policy included — also closes
-page WebSocket upgrades cleanly (close code `1014`, reason
+policy-bearing session on the launched-engine lanes — the default SSRF
+policy included — also closes page WebSocket upgrades cleanly (close code `1014`, reason
 `blocked by egress policy`): Playwright's fetch/fulfill proxy breaks
 allowed-WebSocket forwarding (verified upstream limitation, Playwright
 1.62.1), so the engine denies upgrades instead of letting them fail
-opaquely. This is a deliberate containment decision, not a defect. When
+opaquely. This is a deliberate containment decision, not a defect. (The operator
+`cdp-attach` lane is the recorded exception: a session policy is still
+attached to it, but the lane runs navigation-preflight-only and installs
+neither the choke point nor the WS deny handler — its unenforced-egress
+terms are admission-gated and loudly warned.) When
 driving live-updating SPAs, expect WebSocket-pushed state to never
 arrive: treat a long-running server-side action as fire-and-reload
 (navigate/reload, then observe the final state), or poll a REST
@@ -425,11 +422,20 @@ upgrades to connect natively and **bypass the egress policy entirely**
 — an unguarded hole, which is why clean denial is the default. The only
 lanes where page WebSockets operate today are sessions with no egress
 policy at all (embedder-built engines; the packaged server always
-attaches the SSRF default by design). If live streaming is a hard
+attaches the SSRF default by design), plus the operator `cdp-attach`
+lane, which never installs the WS deny handler and is likewise
+unguarded for WS. If live streaming is a hard
 requirement, track the transport-level replacement in
 [egress-transport feasibility](egress-transport-feasibility.md) — until
 that lands, reload-to-read-final-state or REST polling is the supported
 pattern.
+
+Sessions name their engine (`engine` field on create / MCP
+`browser_create`). The registry resolves the primary engine by default
+and fails loudly (`ENGINE_NOT_FOUND`) on unknown names — a session never
+silently runs on a different engine than requested. The full matrix,
+including per-engine egress guarantees, is in the
+[engine matrix](engines.md). Notes for operators:
 
 - **Chromium (Playwright)** is the production default; the egress policy
   checks routed requests, first redirect targets and resolved IPs. Later hops
