@@ -754,6 +754,30 @@ describe('AgentBrowser MCP server', () => {
       expect(createArgs.policy).toBeUndefined();
     });
 
+    it('forwards the engagement scope as a nested policy field (T7 slice 2a)', async () => {
+      const scope = {
+        allowedHosts: ['app.testhost.example'],
+        requestBudget: 50,
+        identityBindings: [
+          {
+            header: 'x-test-identity',
+            value: 'admin-session',
+            allowedHosts: ['app.testhost.example'],
+          },
+        ],
+      };
+      const response = JSON.parse(
+        await call('6e', 'browser_create', { tenantId: 'tenant_1', scope })
+      );
+      expect(response.result.isError).toBeFalsy();
+      expect(sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'tenant_1',
+          policy: expect.objectContaining({ scope }),
+        })
+      );
+    });
+
     it('should navigate', async () => {
       const response = JSON.parse(
         await call('7', 'browser_navigate', {

@@ -74,6 +74,10 @@ export class EngagementScopePolicy {
   private readonly now: () => number;
   private readonly budget: number | undefined;
   private spent = 0;
+  /** Hops already spent by checkRedirectChain — callers may re-submit the
+   * accumulated chain per redirect (the download transport does), and the
+   * budget must charge a hop once, not once per resubmission. */
+  private readonly chainSpent = new Set<string>();
 
   constructor(
     private readonly base: {
@@ -179,16 +183,49 @@ export class EngagementScopePolicy {
     await this.base.checkRequest(request);
   }
 
+  /**
+   * Service-side preflight: the full denial checks (a spent budget
+   * included) WITHOUT consuming budget — the choke point spends when the
+   * request actually flows, so a navigation is not double-charged by the
+   * service preflight plus the wire-level check.
+   */
+  async preflightCheck(request: {
+    hostname: string;
+    url?: string;
+    method?: string;
+    headers?: Record<string, string>;
+  }): Promise<void> {
+    this.denyIf(request);
+  }
+
   async checkRedirectChain(
     requests: Array<{ url: string; hostname?: string; method?: string }>
   ): Promise<void> {
     // Per-hop checkRequest deliberately SUBSUMES base chain-level logic
     // (each hop gets the full scope + base request verdict); a base
     // checkRedirectChain is not double-invoked. The engine's walker
-    // calls checkRequest per hop; the download lane has its own chain
-    // walk and does not route through this wrapper.
+    // calls checkRequest per hop; the download lane re-submits the
+    // accumulated chain per redirect, so budget spend is idempotent per
+    // hop URL — a hop is charged once no matter how often its chain is
+    // re-validated. Denial checks still run on every call.
     for (const hop of requests) {
       const hostname = hop.hostname ?? new URL(hop.url).hostname;
+      const firstSpend = !this.chainSpent.has(hop.url);
+      this.chainSpent.add(hop.url);
+      if (this.budget !== undefined && !firstSpend) {
+        // Full denial checks, no second spend for this hop.
+        this.denyIf({
+          hostname,
+          url: hop.url,
+          ...(hop.method !== undefined ? { method: hop.method } : {}),
+        });
+        await this.base.checkRequest({
+          hostname,
+          url: hop.url,
+          ...(hop.method !== undefined ? { method: hop.method } : {}),
+        });
+        continue;
+      }
       await this.checkRequest({
         hostname,
         url: hop.url,

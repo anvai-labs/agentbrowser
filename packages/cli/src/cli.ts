@@ -71,7 +71,11 @@ import {
 } from '@agentbrowser/sdk-typescript';
 import { Command, type Option } from 'commander';
 import { assertCookieRequestSize, readCookieFile, writeCookieFile } from './cookie-file.js';
-import { type JsonInputStream, createJsonArgumentReader } from './json-input.js';
+import {
+  type JsonInputStream,
+  createJsonArgumentReader,
+  createTextArgumentReader,
+} from './json-input.js';
 import { PRODUCT_VERSION } from './product-version.js';
 import {
   COOKIE_USAGE,
@@ -519,6 +523,12 @@ export function buildCli(deps: CliDependencies): Cli {
           'block these hosts on top of the SSRF base (comma-separated)'
         )
         .option(
+          '--scope-file <path>',
+          'engagement scope JSON (T7): {allowedHosts, pathRules?, allowedMethods?, ' +
+            'expiresAt?, requestBudget?, identityBindings?} — enforced per request and per ' +
+            'redirect hop on top of every other policy layer (1 MiB bound, no symlink follow)'
+        )
+        .option(
           '--allow-service-workers',
           'ADR-019: allow service workers for this session (off by default whenever egress ' +
             'policy applies; they bypass the choke point - opt in only for a trusted destination)'
@@ -620,6 +630,19 @@ export function buildCli(deps: CliDependencies): Cli {
             }
             if (options.allowServiceWorkers !== undefined) {
               policy.allowServiceWorkers = Boolean(options.allowServiceWorkers);
+            }
+            if (options.scopeFile !== undefined) {
+              const text = await createTextArgumentReader({ noFollow: true })(
+                `@${String(options.scopeFile)}`,
+                'scope input'
+              );
+              try {
+                policy.scope = JSON.parse(text) as NonNullable<
+                  NonNullable<SessionRequest['policy']>['scope']
+                >;
+              } catch {
+                throw new UsageError('--scope-file must contain valid engagement-scope JSON.');
+              }
             }
             if (Object.keys(policy).length > 0) {
               request.policy = policy as unknown as NonNullable<SessionRequest['policy']>;

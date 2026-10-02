@@ -89,7 +89,7 @@ import {
   extractTables,
   extractVisibleText,
 } from '@agentbrowser/extraction';
-import { type NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
+import { EngagementScopePolicy, type NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
 import type {
   ArtifactRef,
   ObservationRequest,
@@ -177,6 +177,11 @@ export interface ServiceSessionRequest {
    * tooling keys off service-worker presence.
    */
   allowServiceWorkers?: boolean;
+  /**
+   * T7 slice 2a: engagement scope, enforced by EngagementScopePolicy as
+   * the outermost restrict-only layer of the session's policy chain.
+   */
+  scope?: import('@agentbrowser/protocol').EngagementScope;
   /**
    * Per-session override (1-30000ms, default 5000) for the whole-page
    * ariaSnapshot budget observe() uses before degrading to a DOM-tag-only
@@ -1238,13 +1243,20 @@ export class AgentBrowserService {
         engineRequest.snapshotTimeoutMs = request.snapshotTimeoutMs;
 
       // Per-session chain: session rules restrict; the SSRF base always runs.
-      const sessionPolicy =
+      const hostPolicy =
         request.allowedHosts !== undefined || request.blockedHosts !== undefined
           ? new SessionHostPolicy(basePolicy, {
               ...(request.allowedHosts !== undefined ? { allowedHosts: request.allowedHosts } : {}),
               ...(request.blockedHosts !== undefined ? { blockedHosts: request.blockedHosts } : {}),
             })
           : basePolicy;
+      // T7 slice 2a: the engagement scope is the outermost restrict-only
+      // layer — hosts/paths/methods/identities/time/budget over the whole
+      // chain, per request and per redirect hop.
+      const sessionPolicy: SessionHostPolicy | NetworkPolicy | EngagementScopePolicy =
+        request.scope !== undefined
+          ? new EngagementScopePolicy(hostPolicy, request.scope)
+          : hostPolicy;
 
       let allocation: Awaited<ReturnType<SessionCoordinator['createOwned']>>;
       try {
@@ -2609,7 +2621,25 @@ export class AgentBrowserService {
       try {
         const policy = this.sessionPolicies.get(sessionId);
         if (!policy) throw new ServiceError('SESSION_NOT_FOUND', 'Session policy is unavailable');
-        await policy.checkRequest({ hostname, url });
+        // An engagement-scope policy offers a non-spending preflight: the
+        // full denial checks without consuming budget, so the wire-level
+        // choke point is the only spender (a navigation is not charged
+        // twice). Other policies preflight through checkRequest as before.
+        const scoped = policy as unknown as {
+          preflightCheck?: (r: {
+            hostname: string;
+            url: string;
+            method?: string;
+          }) => Promise<void>;
+        };
+        if (typeof scoped.preflightCheck === 'function') {
+          // Document navigations are GETs; the preflight must say so or a
+          // method-scoped engagement would false-deny every navigation
+          // (the wire check carries the real method and allows it).
+          await scoped.preflightCheck({ hostname, url, method: 'GET' });
+        } else {
+          await policy.checkRequest({ hostname, url });
+        }
         if (policySpan) {
           this.tracer?.endSpan(policySpan, { allowed: true });
         }

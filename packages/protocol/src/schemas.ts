@@ -97,6 +97,35 @@ export const ApprovalPolicySchema = Type.Object({
   ),
 });
 
+export const ScopePathRuleSchema = Type.Object({
+  // Exact host or ".suffix" (subdomains only — the apex needs its own
+  // exact entry, matching SessionHostRules semantics). Absent = the rule
+  // binds every allowed host.
+  hostSuffix: Type.Optional(Type.String({ minLength: 2 })),
+  prefix: Type.String({ minLength: 1 }),
+});
+
+export const ScopeIdentityBindingSchema = Type.Object({
+  header: Type.String({ minLength: 1 }),
+  value: Type.String({ minLength: 1 }),
+  allowedHosts: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+});
+
+// T7 slice 2: engagement scope (authorized security testing). Enforced
+// per request and per redirect hop by EngagementScopePolicy over the
+// session's base policy; restrict-only — the base always runs.
+export const EngagementScopeSchema = Type.Object({
+  // Exhaustive when set: exact hosts and ".suffix" entries in scope.
+  allowedHosts: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+  pathRules: Type.Optional(Type.Array(ScopePathRuleSchema, { minItems: 1 })),
+  allowedMethods: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
+  // Epoch ms; the scope is expired at or after this instant.
+  expiresAt: Type.Optional(Type.Number({ minimum: 0 })),
+  // Total choke-point requests in scope, redirect hops included.
+  requestBudget: Type.Optional(Type.Number({ minimum: 1 })),
+  identityBindings: Type.Optional(Type.Array(ScopeIdentityBindingSchema, { minItems: 1 })),
+});
+
 export const SessionPolicySchema = Type.Object({
   // Optional since Phase 3: requiring allowedHosts meant a policy object
   // carrying ONLY blockedHosts (or only download rules) could not be
@@ -111,6 +140,10 @@ export const SessionPolicySchema = Type.Object({
   // route service-worker-originated requests), needed by destinations whose
   // anti-fraud tooling keys off service-worker presence.
   allowServiceWorkers: Type.Optional(Type.Boolean()),
+  // T7 slice 2a: engagement scope (hosts/paths/methods/identities/time/
+  // budget) enforced on top of every other layer of the session's policy
+  // chain.
+  scope: Type.Optional(EngagementScopeSchema),
 });
 
 export const SessionCookieSchema = Type.Object({
