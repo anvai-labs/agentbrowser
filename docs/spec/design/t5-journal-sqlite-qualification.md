@@ -218,7 +218,7 @@ Stop public enablement if any crash classification, ownership fence, anchor/fsyn
 retention, runtime or package gate is unproven. Passing synthetic probes or memory tests
 is insufficient. Never promise exactly-once external effects or power-loss guarantees.
 
-## 2026-10-03: C4b precondition audit — all five gates pass
+## 2026-10-03: C4b precondition audit — the five delivery gates pass; one standing item remains open
 
 The delivery sequence's precondition audit for the C4b slice (its item 6:
 "only after these gates and adversarial review may C4b implement its one
@@ -231,9 +231,12 @@ evidence on 2026-10-03:
    boundary is pinned by the qualification's protocol-fault rows
    (late/duplicate/malformed replies, host-crash frame guard).
 2. **No eager export, service setting, or added dependency**: the suite's
-   own row proves the CLI and MCP source trees carry no journal storage
-   code, nothing is exported from the control barrel, and the control
-   package's storage uses only node built-ins.
+   row scans the CLI and MCP source trees for journal-storage code (the
+   dependency-graph side is checked in CI via package.json diffs); the
+   control barrel exports no journal-storage symbol (verified against
+   packages/control/src/index.ts — the journal PORT is exported, the
+   concrete storage is not), and the storage sources import only node
+   builtins plus the workspace canonicalJson helper.
 3. **Unchanged conformance over real SQLite with the memory oracle
    retained**: `operationJournalAdapterConformance` runs over the direct
    SQLite fixture (journal-sqlite-records.test.ts) AND the memory
@@ -241,20 +244,26 @@ evidence on 2026-10-03:
 4. **Process-loss, anchor, quota, privacy qualification with explicit
    barriers**: the SIGKILL matrix, anchor/stale-copy/admission rows,
    sentinel/privacy row, and the 2026-10-02 read-only/disk-full lanes —
-   all CI-gated (31 rows before this slice's additions; 33 after).
-5. **Packaging/extract from an unrelated directory per claimed
-   runtime/OS**: the CI packaging gate resolves the child from the
-   extracted tree alone (journal-sqlite-packaging-gate.mjs), and the
-   suite runs on darwin locally and linux in CI; the ephemeral memory
-   acceptance is retained (item 3's memory-oracle row).
+   29 distinct rows before the lanes slice, +4 added, one iterative
+   duplicate removed → 32 distinct rows, all green under the CI flags
+   (also re-run on the darwin-arm64 development host, 2026-10-03).
+5. **Packaging/extract from an unrelated directory**: the CI packaging
+   gate resolves the child from the extracted tree alone
+   (journal-sqlite-packaging-gate.mjs) on linux (the journal-gates
+   job); the darwin leg of item 5's "each claimed runtime/OS" is run on
+   the development host but is NOT yet recorded as a durable evidence
+   row — recorded here as the audit's own open depth item.
 
-**Verdict**: the qualification preconditions for C4b are satisfied.
-C4b itself — runtime/transport selection, service configuration,
-historical recovery and public durability — remains CLOSED behind the
-F3 authorization gate (the packet: "C4b runtime/transport selection
-stays gated"; foundation-first refinements: durable-journal runtime
-enablement "requires explicit authorization"). The F3 decision point is
-therefore now purely an authorization decision: every technical
-precondition it waits on has passed its gates and adversarial review.
-J3 historical authorization and J4 recovery remain separate, and
-process restart never grants business replay or revives sessions.
+**Verdict (scoped to the five delivery gates)**: satisfied.
+
+**One standing item this audit does NOT close**: the doc's own
+requirement at [DB-ahead refusal](#) — "document an operator
+quarantine/reconciliation procedure before C4b" (and the owner
+evidence's "Not yet qualified" list still requires it verbatim). No
+such procedure document exists yet. C4b's implementation therefore
+waits on TWO items: this operator procedure, and the F3 authorization
+(the packet line "C4b runtime/transport selection stays gated" is
+t5-durable-recovery.md's, and C4b's scope is the runtime/transport
+selection and service configuration contract — historical recovery
+(J3) and public durability (J4) are separate slices). Process restart
+never grants business replay or revives sessions.
