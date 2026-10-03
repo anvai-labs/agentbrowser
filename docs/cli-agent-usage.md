@@ -11,6 +11,30 @@ The CLI is a thin SDK client to the shared AgentBrowser service. It owns no brow
 session state or alternate executor. Use ordinary Bash/shell tools to inspect JSON;
 MCP is an alternative adapter to the same execution and authority boundaries.
 
+## Operator response-size configuration
+
+`AGENTBROWSER_MAX_RESPONSE_BYTES` is read by the server at startup, never by
+CLI/MCP session requests. Unset/blank retains the 10 MiB default. Set a strict
+decimal integer from 1 through 67108864 bytes (64 MiB); malformed, zero, negative,
+fractional, nonfinite or larger values abort startup.
+
+For `request.failed` with `RESPONSE_TOO_LARGE (actual-byte cap)`, a large site
+JavaScript bundle may have been blocked. The page may then remain on its loading
+screen or report a secondary JavaScript error. This is not evidence of an expired
+login or a site bot wall. An operator can start a separate bounded service:
+
+```sh
+AGENTBROWSER_MAX_RESPONSE_BYTES=33554432 HOST=127.0.0.1 PORT=5719 agentbrowser-server
+agentbrowser --base-url http://127.0.0.1:5719 --json health
+```
+
+An existing Homebrew service keeps its startup environment; exporting a variable
+in a CLI shell does not reconfigure it. Use an unused port and do not restart
+another operator's active service. The cap applies to all sessions on that server;
+a session cannot raise it. Host and SSRF restrictions remain intact. This setting
+does not change extraction-output or download authorization/budgets. Playwright
+buffers before checking actual body size, so this is not a peak-memory guarantee.
+
 ## Background service and harness setup
 
 The Homebrew formula installs the service and compiled CLI/MCP binaries together.

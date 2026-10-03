@@ -1,5 +1,23 @@
 import { NetworkPolicy } from '@agentbrowser/policy';
 
+const MAX_OPERATOR_RESPONSE_BYTES = 64 * 1024 * 1024;
+
+/** Startup-only, finite byte budget; malformed configuration must not disable the gate. */
+function responseBytesFromEnvironment(raw: string | undefined): number | undefined {
+  const value = raw?.trim();
+  if (!value) return undefined;
+  const bytes = Number(value);
+  if (
+    !/^\d+$/.test(value) ||
+    !Number.isSafeInteger(bytes) ||
+    bytes < 1 ||
+    bytes > MAX_OPERATOR_RESPONSE_BYTES
+  ) {
+    throw new Error('AGENTBROWSER_MAX_RESPONSE_BYTES must be an integer from 1 to 67108864 bytes');
+  }
+  return bytes;
+}
+
 /** One default SSRF policy for embedded services and the server entrypoint. */
 export function createDefaultNetworkPolicy(allowedPrivateCIDRs: string[] = []): NetworkPolicy {
   return new NetworkPolicy({
@@ -15,6 +33,7 @@ export function networkPolicyFromEnvironment(
   env: {
     AGENTBROWSER_ALLOWED_CIDRS?: string | undefined;
     AGENTBROWSER_ALLOW_LOOPBACK?: string | undefined;
+    AGENTBROWSER_MAX_RESPONSE_BYTES?: string | undefined;
   },
   warn: (message: string) => void = console.warn
 ): NetworkPolicy {
@@ -27,11 +46,13 @@ export function networkPolicyFromEnvironment(
   // server. Startup-only configuration; session/request input can never set
   // it. Metadata blocking is unaffected.
   const allowLoopback = /^(1|true|yes)$/i.test(env.AGENTBROWSER_ALLOW_LOOPBACK?.trim() ?? '');
+  const maxResponseSize = responseBytesFromEnvironment(env.AGENTBROWSER_MAX_RESPONSE_BYTES);
   const policy = new NetworkPolicy({
     blockLoopback: !allowLoopback,
     blockPrivateIPs: true,
     blockMetadata: true,
     allowedPrivateCIDRs: cidrs,
+    ...(maxResponseSize !== undefined ? { maxResponseSize } : {}),
   });
   if (allowLoopback) {
     warn(
