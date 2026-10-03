@@ -341,6 +341,8 @@ export interface ServiceDependencies {
   allowLoopback?: string | undefined;
   /** Operator private-IP CIDR exceptions (AGENTBROWSER_ALLOWED_CIDRS). */
   allowedPrivateCIDRs?: string | undefined;
+  /** Operator startup response cap; never read from session/request input. */
+  maxResponseBytes?: string | undefined;
   /** Artifact retention store; defaults to a bounded in-memory store. */
   artifactStore?: ArtifactStore;
   /** Payload fetcher for downloads; injectable for tests. */
@@ -594,10 +596,13 @@ export class AgentBrowserService {
     // cloud metadata endpoints are blocked unless a policy is injected.
     this.networkPolicy =
       deps.networkPolicy ??
-      (deps.allowLoopback !== undefined || deps.allowedPrivateCIDRs !== undefined
+      (deps.allowLoopback !== undefined ||
+      deps.allowedPrivateCIDRs !== undefined ||
+      deps.maxResponseBytes !== undefined
         ? networkPolicyFromEnvironment({
             AGENTBROWSER_ALLOWED_CIDRS: deps.allowedPrivateCIDRs,
             AGENTBROWSER_ALLOW_LOOPBACK: deps.allowLoopback,
+            AGENTBROWSER_MAX_RESPONSE_BYTES: deps.maxResponseBytes,
           })
         : createDefaultNetworkPolicy());
     this.approvalGate =
