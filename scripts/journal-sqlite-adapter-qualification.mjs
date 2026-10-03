@@ -1160,7 +1160,7 @@ test('a capped database fails writes typed, serves reads, and reopens clean', as
   // submitted in a bounded loop (the journal stores fingerprint REFERENCES,
   // not raw bytes, so page growth comes from row count) and at least one
   // must be denied; every denial is asserted non-acknowledging.
-  const anchorPath = join(paths.anchorDirectory, readdirSync(paths.anchorDirectory)[0]);
+  const anchorPath = join(paths.anchorDirectory, 'commit.json');
   let deniedAt = -1;
   for (let attempt = 0; attempt < 60; attempt += 1) {
     // The port RESOLVES failures as outcome kinds (the BUSY row's idiom):
@@ -1197,7 +1197,155 @@ test('a capped database fails writes typed, serves reads, and reopens clean', as
     wideConfiguration,
     Buffer.alloc(32, 7)
   );
-  console.error('RECOVERY-DEBUG', JSON.stringify(recoveryOpen).slice(0, 160));
+  assertOpened(recoveryOpen);
+  const survived = await recoveryOpen.journal.lookup(seeded.key);
+  assert.equal(survived.kind, 'found');
+  const deniedKey = intentKey(`op-full-fault-${deniedAt}`);
+  const retry = await recoveryOpen.journal.reserveIntent({
+    key: deniedKey,
+    actor: 'operator-a',
+    liveFingerprint: { algorithm: 'rest-json-v1', digest: `private-full-${deniedAt}` },
+  });
+  assertAcknowledged(retry);
+  assert.equal(retry.disposition, 'applied');
+  assert.deepEqual(await recoveryOpen.journal.close(), { kind: 'closed' });
+  await third.dispose();
+});
+
+test('a read-only durable directory fails mid-session writes typed and refuses fresh reopen', async () => {
+  if (isRoot) {
+    test.skip('directory permissions do not deny root', { skip: true }, () => {});
+    return;
+  }
+  const paths = freshPaths('journal-atv-ro-');
+
+  // Mid-session lane FIRST: a refused child's partial open leaves the
+  // directory state altered for later generations, so the live-generation
+  // lane runs before any refusal. Mechanism (recorded from the store's
+  // actual behavior): the owner's per-mutate path check demands the durable
+  // directory mode be exactly 0o700 — chmod-tampering away from that mode
+  // trips the check and SEALS the owner, so the next write fails typed.
+  const first = await startAdapter({ ...paths }, true);
+  const seeded = await seedOneLifecycle(first, 'ro-a');
+  chmodSync(paths.directory, 0o555);
+  const outcome = await seeded.opened.journal.reserveIntent({
+    key: intentKey('op-ro-0'),
+    actor: 'operator-a',
+    liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-ro-0' },
+  });
+  assert.notEqual(outcome.kind, 'acknowledged', 'the tampered-directory write must fail typed');
+  chmodSync(paths.directory, 0o700);
+  // The pre-fault record survives the seal.
+  const still = await seeded.opened.journal.lookup(seeded.key);
+  assert.equal(still.kind, 'found');
+  await seeded.opened.journal.close().catch(() => {});
+  await first.dispose();
+  await awaitChildSelfExit(first);
+
+  // Closed-owner reopen against a tampered durable directory refuses — the
+  // refusal is hard (the child's bootstrap cannot acquire the store and
+  // exits nonzero), surfacing today as the adapter's generic startup-death
+  // message rather than a typed configuration error: a surfacing gap,
+  // recorded, not hidden. The tamper leaves no quarantine: with the mode
+  // restored, the same directory reopens and serves (verified here — the
+  // recovery generation runs against the ORIGINAL directory).
+  chmodSync(paths.directory, 0o555);
+  await assert.rejects(startAdapter({ ...paths }, false), /storage child exited before ready/);
+  chmodSync(paths.directory, 0o700);
+  const third = await startAdapter({ ...paths }, false);
+  const recovered = await openOperationJournal(
+    third,
+    namespaceConfiguration('ro-a'),
+    Buffer.alloc(32, 7)
+  );
+  assertOpened(recovered);
+  const check = await recovered.journal.lookup(seeded.key);
+  assert.equal(check.kind, 'found');
+  // The tampered attempt wrote nothing durable ('applied', not 'existing').
+  const retry = await recovered.journal.reserveIntent({
+    key: intentKey('op-ro-0'),
+    actor: 'operator-a',
+    liveFingerprint: { algorithm: 'rest-json-v1', digest: 'private-ro-0' },
+  });
+  assertAcknowledged(retry);
+  assert.equal(retry.disposition, 'applied');
+  assert.deepEqual(await recovered.journal.close(), { kind: 'closed' });
+  await third.dispose();
+});
+
+test('a capped database fails writes typed, serves reads, and reopens clean', async () => {
+  const paths = freshPaths('journal-atv-full-');
+  // The row's namespace is created with wide bounds up front (configuration
+  // is frozen at creation): enough record capacity for intents to cross the
+  // capped page boundary.
+  const wideConfiguration = {
+    ...namespaceConfiguration('full-a'),
+    bounds: {
+      ...namespaceConfiguration('full-a').bounds,
+      maxRecords: 256,
+      maxInFlight: 256,
+    },
+  };
+  // Generation 1 (production child): seed one committed record so the fault
+  // generation has durable state to protect.
+  const first = await startAdapter({ ...paths }, true);
+  const seeded = await seedOneLifecycle(first, 'full-a', wideConfiguration);
+  assert.deepEqual(await seeded.opened.journal.close(), { kind: 'closed' });
+  await first.dispose();
+  await awaitChildSelfExit(first);
+
+  // Generation 2 (disk-full child): capped at its bootstrap size, so the next
+  // grow-needing write fails with a real SQLITE_FULL.
+  const faulty = await startAdapterWithChild({ ...paths }, false, DISKFULL_CHILD_MODULE);
+  const reopened = await openOperationJournal(faulty, wideConfiguration, Buffer.alloc(32, 7));
+  assertOpened(reopened);
+
+  // The pre-fault record is still served through the read lane.
+  const before = await reopened.journal.lookup(seeded.key);
+  assert.equal(before.kind, 'found');
+
+  // The mutation fails typed (child STORAGE failure surfaced by the manager)
+  // once an insert genuinely needs a fresh page beyond the cap: intents are
+  // submitted in a bounded loop (the journal stores fingerprint REFERENCES,
+  // not raw bytes, so page growth comes from row count) and at least one
+  // must be denied; every denial is asserted non-acknowledging.
+  const anchorPath = join(paths.anchorDirectory, 'commit.json');
+  let deniedAt = -1;
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    // The port RESOLVES failures as outcome kinds (the BUSY row's idiom):
+    // acknowledged means written; anything else on this capped connection is
+    // the disk-full denial. The anchor snapshot is per-attempt: acknowledged
+    // intents legitimately advance the witness, and the DENIED attempt must
+    // leave it byte-identical (no commit without its anchor).
+    const anchorBefore = readFileSync(anchorPath);
+    const outcome = await reopened.journal.reserveIntent({
+      key: intentKey(`op-full-fault-${attempt}`),
+      actor: 'operator-a',
+      liveFingerprint: { algorithm: 'rest-json-v1', digest: `private-full-${attempt}` },
+    });
+    if (outcome.kind !== 'acknowledged') {
+      deniedAt = attempt;
+      assert.deepEqual(readFileSync(anchorPath), anchorBefore);
+      break;
+    }
+  }
+  assert.notEqual(deniedAt, -1, 'the capped database must deny at least one write');
+  // The pre-fault record is STILL served after the fault.
+  const during = await reopened.journal.lookup(seeded.key);
+  assert.equal(during.kind, 'found');
+  await reopened.journal.close().catch(() => {});
+  await faulty.dispose();
+  await awaitChildSelfExit(faulty);
+
+  // Generation 3 (production child, uncapped connection): clean recovery —
+  // the denied attempt wrote nothing ('applied', not 'existing'), the
+  // pre-fault record and the pre-cap acknowledgements survived.
+  const third = await startAdapter({ ...paths }, false);
+  const recoveryOpen = await openOperationJournal(
+    third,
+    wideConfiguration,
+    Buffer.alloc(32, 7)
+  );
   assertOpened(recoveryOpen);
   const survived = await recoveryOpen.journal.lookup(seeded.key);
   assert.equal(survived.kind, 'found');
@@ -1271,7 +1419,7 @@ test('a read-only durable directory fails mid-session writes typed and refuses f
   // The quarantine persists: a second attempt on the interrupted directory
   // refuses exactly the same way.
   await assert.rejects(startAdapter({ ...paths }, false), /storage child exited before ready/);
-  chmodSync(paths.directory, 0o755);
+  chmodSync(paths.directory, 0o700);
 
   // Operator restore: the last good pair reopens clean in a fresh
   // directory, the seeded record survives, and the read-only-faulted

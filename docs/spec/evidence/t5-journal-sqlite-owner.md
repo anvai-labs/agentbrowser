@@ -101,138 +101,37 @@ review of `4601a71835e3ae34e095a5c34f6224a19694f0ca`, normal hooks and all eight
 The merge tree matches reviewed tree `96b07c110035e7c1bc5864dc8f4ea5b63671e2b1`;
 all eight [post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/36210212870)
 passed, including the 43 storage cases in the Linux Test job. Publication is separate;
-these results do not close the remaining raw-adapter, manager or recovery gates.# T5 J2b.1: SQLite owner and anchored transaction foundation
-
-Base: develop `83b747b` (PR #301). Status: merged to develop in PR #303
-at `7ccddb21a627c9019f58c99fa11848456b98492c`.
-Scope: internal storage primitive, not a raw journal adapter or public durability.
-Design and remaining gates: [J2b qualification](../design/t5-journal-sqlite-qualification.md).
-
-## Reuse and boundary
-
-`packages/control/src/journal-sqlite-store.ts` owns only the local database lifetime
-and commit witness. It is absent from `control/src/index.ts` and has no service setting,
-transport field, runtime dependency or business executor. It requires an IPC child;
-the next packet supplies the bounded store manager/raw adapter. Production code must
-never call it in the API process. The ordinary control entry point imports without SQLite.
-
-The synchronous `mutate` callback is trusted storage implementation code, not a plugin
-or user callback. It receives a frozen, revocable exec/run/get facade with no raw DB or
-statement handles. SQLite authorization denies transaction-control, PRAGMA, attach/detach
-and witness-table access. The facade expires before commit; retained/microtask calls
-refuse. Results reuse the existing bounded journalData snapshot helper. This primitive
-owns the transaction; the future adapter reuses journal parsers/CAS/identity rules.
-It does not implement another authority, operation registry or timeout owner.
-
-The operator provisions two disjoint canonical private directories. `initialize: true`
-is explicit first creation only; it cannot recreate an interrupted store. Exclusive
-creation reserves both the owner file and final anchor name. The empty reserved anchor
-is an intentionally invalid partial pair until initialization completes; this prevents
-concurrent distinct stores from overwriting a shared anchor. No file is auto-deleted on
-failure. Separate directory placement does not prove separate backup scope.
-
-The child holds `BEGIN EXCLUSIVE` in two derived rollback databases (store/owner.sqlite,
-then anchor/owner.sqlite; busy timeout zero) before opening data. The second lock prevents
-cloned stores with different data paths from concurrently sharing a live anchor.
-The WAL/FULL data transaction writes a strict singleton witness. Initialization uses
-sequence zero; each mutation increments once and replaces the random nonce. The store
-syncs the data directory after each commit, including initialization and writes the external anchor by private
-exclusive temp creation, file fsync, atomic rename and directory fsync before returning.
-Reopen requires the exact version/UUID/generation/sequence/nonce pair and no leftover temp.
-Mutation-stage failure seals further writes and emits a static error without SQL/path text.
-Close requires a successful TRUNCATE checkpoint, closes data, then releases the store
-lock and finally the anchor lock. A busy/failed checkpoint retains both locks. IPC loss exits the child;
-caller timeout/drain behavior belongs to the later manager and existing journal facade.
-
-## Failing-first and local observations
-
-Pinned Node 24.21.0, Darwin arm64. Before implementation, the real child suite had
-11 failed positive/crash tests; the five layout refusals also refused a missing module
-and are not claimed as independent negative-control evidence. The implemented suite
-currently passes 43 tests, including:
-
-- Exclusive competing-process, cloned-store/shared-anchor and same-child ownership; clean close and SIGKILL release.
-- Concurrent first initialization against a shared anchor and private file modes.
-- SIGKILL before DB commit, after DB commit before anchor, and after full anchor completion
-  before the fixture's IPC ACK. Only the middle state refuses as mismatched.
-- Interrupted initialization, stale DB/anchor restores, each witness mismatch dimension,
-  missing/malformed/oversized anchor and abandoned anchor temp refusal.
-- Symlink/hardlink aliases, directory permissions and overlapping-directory refusal.
-- Revoked retained/async callbacks, detached results, forbidden SQL, callback rollback
-  and sealed admission after failures; anchor rename and directory fsync
-  faults cannot emit ACK or allow another mutation. Errors omit the private sentinel.
-- Busy checkpoint with a real reader retains both lifetime locks; store-directory sync
-  failure withholds acknowledgment after WAL recreation.
-- Compiled module loading from an unrelated cwd and exact committed fact observation
-  through a separate SQLite connection while the owner remains live.
-
-Run after building workspace dependencies:
-
-```sh
-pnpm --filter @agentbrowser/control exec vitest run src/journal-sqlite-store.test.ts --maxWorkers=1 --minWorkers=1
-node --no-experimental-sqlite packages/control/scripts/accept-deployment.mjs "$PWD/packages/control/dist/index.js"
-```
-
-The existing application acceptance exits zero with SQLite disabled. Review regression
-tests initially reproduced five failures in callback retention, cloned-store/shared-anchor
-ownership and noncanonical JSON; fixes pass the expanded suite.
-The [pinned SQLite API](https://raw.githubusercontent.com/nodejs/node/v24.21.0/doc/api/sqlite.md)
-specifies setAuthorizer; this internal lane checks its presence before opening files.
-The local build has no StatementSync.close method; DatabaseSync.close finalizes statements
-according to [Node source](https://raw.githubusercontent.com/nodejs/node/v24.21.0/src/node_sqlite.cc).
-No statement handles escape the SQL helper; full physical/cache bounds remain unqualified. The test fixture
-alone instruments the real SQLite COMMIT and filesystem methods to establish explicit
-IPC barriers/faults; production storage has no phase hooks or test flags. Kill tests wait
-for actual child exit before reopening. Existing workspace tests run this suite in the
-existing CI Test job; no additional job or runtime/browser matrix is introduced.
-
-## Not yet qualified
-
-This is not the 17-case raw adapter conformance suite. Namespace descriptors/fences,
-record/CAS/retention/HMAC enforcement, clock high-water, bounded IPC manager, physical
-DB/WAL ceilings, hostile/corrupt schema coverage, disk-full behavior, packaged server
-extraction and other target filesystems remain J2b gates. No source/public runtime selector
-or recovery is enabled. Process loss is not power-loss qualification, and restoring both
-DB and anchor together is undetectable. The operator quarantine/reconciliation procedure
-remains required before C4b. T5 stays approximately 10%; finite completion stays 3/9.
-
-## Delivery
-
-[PR #303](https://github.com/anvai-labs/agentbrowser/pull/303) merged after independent
-review of `4601a71835e3ae34e095a5c34f6224a19694f0ca`, normal hooks and all eight
-[PR checks](https://github.com/anvai-labs/agentbrowser/actions/runs/36209836864).
-The merge tree matches reviewed tree `96b07c110035e7c1bc5864dc8f4ea5b63671e2b1`;
-all eight [post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/36210212870)
-passed, including the 43 storage cases in the Linux Test job. Publication is separate;
 these results do not close the remaining raw-adapter, manager or recovery gates.
 
 ## 2026-10-02: read-only-filesystem and disk-full lanes qualified
 
 The last two CI-testable adversarial lanes landed in the adapter
-qualification suite (both arbitrated by the CI journal-gates job):
+qualification suite (both arbitrated by the CI journal-gates job,
+which invokes it with a 60-second per-test timeout):
 
-- **Deterministic disk-full** (the spec's max-page mechanism): a
-test-support child caps the data connection at its bootstrap page
-count plus one headroom page. Writes that need fresh pages then fail
-with a real SQLITE_FULL; the qualification asserts typed faulted
-replies (never silent acknowledgements), a byte-identical anchor
-across each denied attempt (no commit without its witness), reads
-still serving pre-fault records, bounded DB/WAL/anchor sizes, and a
-clean recovery generation — the faulted key re-applies ('applied',
-not 'existing').
-- **Read-only durable directory**: mid-session, writes under a
-read-only store directory fail typed while the pre-fault record
-survives; a fresh reopen against a read-only directory refuses hard.
-Two honest discoveries recorded: (1) the refusal surfaces today as
-the adapter's generic startup-death message rather than a typed
-configuration error (a surfacing gap, not a containment gap); (2) a
-refused child's partial open leaves the layout interrupted for that
-directory — the designed quarantine persists, and recovery is the
-operator path: restoring the COMPLETE durable file set (data DB,
-ownership DBs, anchor witness — a partial pair is its own
-interrupted layout) into a fresh directory reopens clean, with the
-faulted attempts proven to have written nothing ('applied').
+- **Deterministic disk-full** (the spec's sanctioned max-page
+  mechanism): a test-support child caps the data connection at its
+  bootstrap page count plus one headroom page, so a write that needs a
+  fresh page fails with a real storage failure under the cap. The
+  qualification asserts typed faulted replies (never silent
+  acknowledgements), a byte-identical commit.json anchor across each
+  denied attempt (no commit without its witness), reads still serving
+  pre-fault records, and a recovery generation — the production child,
+  uncapped — re-applying the denied key ('applied', not 'existing').
+- **Read-only durable directory**: mid-session, writes under a store
+  directory whose permissions were tampered away from the required
+  0o700 fail typed — the store's own per-mutate path check detects the
+  mode change and seals, a chmod-tamper tripwire rather than a
+  filesystem EACCES — while the pre-fault record survives, and a fresh
+  reopen against the tampered directory refuses hard. That refusal
+  surfaces today as the adapter's generic startup-death message rather
+  than a typed configuration error: a surfacing gap, recorded, not
+  hidden. A refusal leaves no quarantine — a third open after the
+  mode is restored succeeds (verified) — and recovery for a genuinely
+  wedged directory remains the operator path of restoring the complete
+  durable file set into a fresh directory.
 
-With these, every adversarial row the qualification spec names is
-ci-gated. Remaining: optional constrained-mount release-time runs on
-top of the gated contracts.
+The read-only lane skips on root runners (directory permissions do
+not deny root). With these rows, every adversarial row the
+qualification spec names is CI-gated; optional constrained-mount
+release-time runs remain depth on top of the gated contracts.

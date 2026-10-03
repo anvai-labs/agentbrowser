@@ -60,9 +60,11 @@ Next dependency-ready slices by task:
   same job — see the
   [owner/anchor primitive](../evidence/t5-journal-sqlite-owner.md)); the
   protocol-fault rows (late/duplicate/malformed replies, with the manager's
-  host-crash frame guard) are qualified too. Every row testable in CI is
-  gated; remaining: release-time read-only-filesystem and disk-full lanes
-  only.
+  host-crash frame guard) are qualified too — as are the
+  read-only-filesystem and disk-full lanes (DELIVERED 2026-10-02,
+  deterministic max-page + directory-permission mechanisms). Every row
+  testable in CI is gated; remaining: optional constrained-mount
+  release-time runs only.
 - T4 — production-evidence gates: trusted native-read composition, receipts and
   parity against production surfaces; synthetic parity and public consent are
   already qualified.
