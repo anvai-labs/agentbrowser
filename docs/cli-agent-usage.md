@@ -55,6 +55,7 @@ attempt to reuse authentication; verify the expected signed-in UI afterward.
 | `AGENTBROWSER_API_KEYS` | Server at startup | Configures `key:tenant` credentials; unset means an unauthenticated local service. |
 | `HOST`, `PORT` | Server at startup | Selects the listener; keep local instances on loopback. |
 | `AGENTBROWSER_ALLOWED_CIDRS` | Server at startup | Operator-authorized private-IP exceptions, never a loopback or metadata bypass. |
+| `AGENTBROWSER_MAX_RESPONSE_BYTES` | Server at startup | Per-response network byte cap: defaults to 10 MiB; operator override from 1 through 67108864 bytes (64 MiB). Session/CLI requests cannot raise it. |
 
 An existing Homebrew service keeps its startup environment. Exporting a variable in
 a new CLI/MCP process does not reconfigure that service. Preserve active sessions
@@ -67,6 +68,23 @@ AGENTBROWSER_ALLOWED_CIDRS=192.168.1.89/32 HOST=127.0.0.1 PORT=5719 agentbrowser
 agentbrowser --base-url http://127.0.0.1:5719 --json health
 agentbrowser --base-url http://127.0.0.1:5719 session create --tenant TENANT --no-headless
 ```
+
+For `request.failed` with `RESPONSE_TOO_LARGE (actual-byte cap)`, a large site
+JavaScript bundle may have been blocked. A page may then show only a loading screen
+or a secondary JavaScript error. This is not evidence of an expired login or a site
+bot wall. An operator can start a separate server with a bounded larger budget:
+
+```sh
+AGENTBROWSER_MAX_RESPONSE_BYTES=33554432 HOST=127.0.0.1 PORT=5719 agentbrowser-server
+```
+
+Use an unused port; do not restart another operator's active service. This setting
+applies to all sessions on that server, so prefer an isolated server for an exception.
+Unset/blank preserves the 10 MiB default. Non-decimal, zero, negative, fractional,
+or over-64-MiB values abort startup. It does not change extraction-output budgets or
+download authorization/budgets. Existing SSRF and host restrictions still apply.
+The Playwright adapter checks the actual body after buffering; this is a limit on
+bytes delivered to the page, not a peak-memory guarantee.
 
 The allowlist is comma-separated CIDRs and must be configured by the operator.
 It permits the named private addresses through the base policy; it does not restrict

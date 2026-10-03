@@ -5,6 +5,46 @@ import {
 } from './network-policy-config.js';
 
 describe('operator network policy configuration', () => {
+  it.each([undefined, '', '   '])('keeps the 10 MiB response default for %j', async (raw) => {
+    const policy = networkPolicyFromEnvironment({ AGENTBROWSER_MAX_RESPONSE_BYTES: raw });
+    await expect(policy.checkBodySize(10 * 1024 * 1024)).resolves.toBeUndefined();
+    await expect(policy.checkBodySize(10 * 1024 * 1024 + 1)).rejects.toThrow();
+  });
+
+  it.each([1, 32 * 1024 * 1024, 64 * 1024 * 1024])(
+    'enforces the configured %i byte boundary and preserves SSRF controls',
+    async (bytes) => {
+      const policy = networkPolicyFromEnvironment({
+        AGENTBROWSER_MAX_RESPONSE_BYTES: ` ${bytes} `,
+      });
+      await expect(policy.checkBodySize(bytes)).resolves.toBeUndefined();
+      await expect(policy.checkBodySize(bytes + 1)).rejects.toThrow();
+      await expect(
+        policy.checkResponse({ headers: { 'content-length': String(bytes + 1) } })
+      ).rejects.toThrow();
+      for (const hostname of ['127.0.0.1', '192.168.1.89', '169.254.169.254']) {
+        await expect(policy.checkRequest({ hostname })).rejects.toThrow();
+      }
+    }
+  );
+
+  it.each([
+    '0',
+    '-1',
+    '1.5',
+    '1e7',
+    'Infinity',
+    'NaN',
+    '32MiB',
+    '33554432oops',
+    '67108865',
+    '9007199254740992',
+  ])('rejects invalid response cap %j', (raw) => {
+    expect(() => networkPolicyFromEnvironment({ AGENTBROWSER_MAX_RESPONSE_BYTES: raw })).toThrow(
+      /AGENTBROWSER_MAX_RESPONSE_BYTES/
+    );
+  });
+
   it.each([undefined, '', '   '])('defaults to private-network denial for %j', async (raw) => {
     const warn = vi.fn();
     const policy = networkPolicyFromEnvironment({ AGENTBROWSER_ALLOWED_CIDRS: raw }, warn);

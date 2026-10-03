@@ -433,10 +433,12 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     ...(options.networkPolicy
       ? { networkPolicy: options.networkPolicy }
       : process.env.AGENTBROWSER_ALLOW_LOOPBACK !== undefined ||
-          process.env.AGENTBROWSER_ALLOWED_CIDRS !== undefined
+          process.env.AGENTBROWSER_ALLOWED_CIDRS !== undefined ||
+          process.env.AGENTBROWSER_MAX_RESPONSE_BYTES !== undefined
         ? {
             allowLoopback: process.env.AGENTBROWSER_ALLOW_LOOPBACK,
             allowedPrivateCIDRs: process.env.AGENTBROWSER_ALLOWED_CIDRS,
+            maxResponseBytes: process.env.AGENTBROWSER_MAX_RESPONSE_BYTES,
           }
         : {}),
     ...((options.approvalPolicy ?? process.env.AGENTBROWSER_APPROVAL_POLICY) !== undefined

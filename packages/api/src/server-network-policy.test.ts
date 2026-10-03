@@ -3,6 +3,40 @@ import { FakeEngine } from '@agentbrowser/testkit';
 import { expect, it, vi } from 'vitest';
 import { buildServer } from './server';
 
+it('captures the operator response cap at startup and enforces it through session host policy', async () => {
+  const previous = process.env.AGENTBROWSER_MAX_RESPONSE_BYTES;
+  process.env.AGENTBROWSER_MAX_RESPONSE_BYTES = '33554432';
+  const engine = new FakeEngine();
+  const createSession = vi.spyOn(engine, 'createSession');
+  try {
+    const server = await buildServer({ engine });
+    try {
+      // Later environment edits must not silently mutate a running service's policy.
+      process.env.AGENTBROWSER_MAX_RESPONSE_BYTES = '67108864';
+      const response = await server.inject({
+        method: 'POST',
+        url: '/v1/sessions',
+        payload: { tenantId: 'test', policy: { allowedHosts: ['www.linkedin.com'] } },
+      });
+      expect(response.statusCode).toBe(201);
+      const policy = createSession.mock.calls.at(-1)?.[0].requestPolicy;
+      expect(policy?.checkBodySize).toBeTypeOf('function');
+      await expect(policy?.checkBodySize?.(33554432)).resolves.toBeUndefined();
+      await expect(policy?.checkBodySize?.(33554433)).rejects.toThrow();
+      await expect(
+        policy?.checkRequest({ hostname: 'example.com', url: 'https://example.com/' })
+      ).rejects.toThrow();
+    } finally {
+      await server.close();
+    }
+  } finally {
+    if (previous === undefined) {
+      // biome-ignore lint/performance/noDelete: restore an absent environment setting.
+      delete process.env.AGENTBROWSER_MAX_RESPONSE_BYTES;
+    } else process.env.AGENTBROWSER_MAX_RESPONSE_BYTES = previous;
+  }
+});
+
 it('allows trusted embedded policy injection while session host rules can only restrict it', async () => {
   const server = await buildServer({
     engine: new FakeEngine(),
