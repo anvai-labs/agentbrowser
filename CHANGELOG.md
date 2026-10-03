@@ -5,6 +5,22 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [1.15.1] - 2026-10-03
+
+### Fixed
+
+- Large site JavaScript responses can now be admitted using the operator-owned
+  `AGENTBROWSER_MAX_RESPONSE_BYTES` startup setting. The default remains 10 MiB;
+  a validated override accepts 1 byte through 64 MiB (for example, 33554432 for
+  32 MiB). Session requests cannot raise the cap. Malformed settings fail startup,
+  and SSRF and host restrictions remain intact. This does not change download or
+  extraction budgets and is not a peak-memory guarantee for buffered adapters.
+- Server and CLI usage documentation explains response-size policy failures and
+  configuring a separate service without disrupting active browser sessions.
+
+This maintenance release backports only the response-cap fix from develop onto
+v1.15.0; unreleased engagement-scope and other develop features are not included.
+
 ## [1.15.0] - 2026-10-01
 
 ### Added

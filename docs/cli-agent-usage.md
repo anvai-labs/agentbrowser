@@ -80,6 +80,10 @@ AGENTBROWSER_MAX_RESPONSE_BYTES=33554432 HOST=127.0.0.1 PORT=5719 agentbrowser-s
 
 Use an unused port; do not restart another operator's active service. This setting
 applies to all sessions on that server, so prefer an isolated server for an exception.
+With Homebrew Services, persist the override in
+`~/.homebrew/services/agentbrowser.env` (one `KEY=value` per line), then restart
+the service only after its active sessions have finished. Setting the variable in
+the CLI's shell does not change an already-running server.
 Unset/blank preserves the 10 MiB default. Non-decimal, zero, negative, fractional,
 or over-64-MiB values abort startup. It does not change extraction-output budgets or
 download authorization/budgets. Existing SSRF and host restrictions still apply.
