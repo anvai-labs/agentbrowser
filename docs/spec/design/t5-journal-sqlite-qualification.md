@@ -219,7 +219,7 @@ Stop public enablement if any crash classification, ownership fence, anchor/fsyn
 retention, runtime or package gate is unproven. Passing synthetic probes or memory tests
 is insufficient. Never promise exactly-once external effects or power-loss guarantees.
 
-## 2026-10-03: C4b precondition audit — the five delivery gates pass; one standing item remains open
+## 2026-10-03: C4b precondition audit — five delivery gates pass; the flagged procedure item delivered same day
 
 The delivery sequence's precondition audit for the C4b slice (its item 6:
 "only after these gates and adversarial review may C4b implement its one

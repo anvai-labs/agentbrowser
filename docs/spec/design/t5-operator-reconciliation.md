@@ -55,7 +55,10 @@ divide into two families:
 ENTIRE anchor directory to a quarantine location (both are small:
 bounded DB/WAL plus one ≤1024-byte anchor). Record the original paths,
 modes, and file lists first (`ls -la`, `stat`). Touch nothing in the
-originals.
+originals. The ENTIRE directory means it: omitting the `-wal`/`-shm`
+sidecars silently misclassifies a DB-ahead scene as "identical" —
+a recent commit can live only in the WAL, and reading the main
+database without it reports the older sequence number.
 
 **Step 2 — Classify on the copies.** Read both witnesses read-only:
 
@@ -73,8 +76,11 @@ console.log("db:     ", JSON.stringify(stored));
 
 Classify by comparing the two objects:
 
-- **Identical** → the pair is consistent; the refusal was an
-  environment/layout cause (Step 3a).
+- **Identical** (same commitSeq AND commitNonce) → the pair is
+  consistent; the refusal was an environment/layout cause (Step 3a).
+- **Same commitSeq but a different commitNonce** (same storeUUID and
+  restoreGeneration) → the files were not written together even though
+  neither is ahead — treat as a mismatched pair (Step 3c).
 - **DB ahead** (`db.commitSeq > anchor.commitSeq`, same `storeUUID` and
   `restoreGeneration`) → unacknowledged mutations may exist (Step 3b).
   A leftover `commit.pending` in the anchor directory is corroborating
