@@ -17,7 +17,7 @@ declared files and budgets without contacting a service.
 | Task | Current state | Delivered or next gate | Hard task dependencies |
 | --- | --- | --- | --- |
 | [T0](t0-contract-catalog.md) | Complete | Released discovery/catalog foundation | None |
-| [T1](t1-context-profiles.md) | Active | Local loader, fixed profiles and run cursor delivered; installed-harness consumption remains | T0 |
+| [T1](t1-context-profiles.md) | Active | Local loader, fixed profiles and run cursor delivered; Codex-path cursor consumption qualified (2026-10-03); Victor live loop gated on the TLS trust decision | T0 |
 | [T2](t2-shared-execution.md) | Complete | Shared execution/evidence shipped; 1.10.0 includes #257 synthetic G6 acceptance, with production evidence and durability still gated | T0 |
 | [T3](t3-qa-regressions.md) | Complete | First application-owned CLI regression workflow, private JUnit evidence, standalone-copy and measured-cost qualification delivered through #231 and released in 1.9.1 | T2 |
 | [T4](t4-application-parity.md) | Active | REST/SDK/CLI shipped; synthetic UI/API parity and C3c public consent qualified; P0 trusted native-read composition merged #259; U0 binding UI merged #261; U1 receipt UX merged #262; production gates remain | T2 |
@@ -72,7 +72,9 @@ Next dependency-ready slices by task:
   document-read and listing-capture slices.
 - T8 — installed Victor/Codex/Claude qualification; the source-level schema
   repair is merged.
-- T1 — installed-harness consumption of profiles and the run cursor.
+- T1 — installed-harness consumption of profiles and the run cursor;
+  the Codex-path cursor choreography is qualified (2026-10-03), leaving
+  Victor (TLS trust operator call) and Claude (additional coverage).
 - T7 — slice 2a scope enforcement DELIVERED (2026-10-02): hosts/paths/
   methods/identities/time/budgets enforced per request and per redirect
   hop over any base policy, real-Chromium gates per the design record;
