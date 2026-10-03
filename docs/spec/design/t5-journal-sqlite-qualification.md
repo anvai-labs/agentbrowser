@@ -257,7 +257,7 @@ evidence on 2026-10-03:
 **Verdict (scoped to the five delivery gates)**: satisfied.
 
 **One standing item this audit does NOT close**: the doc's own
-requirement at [DB-ahead refusal](#) — "document an operator
+DB-ahead-refusal requirement — "document an operator
 quarantine/reconciliation procedure before C4b" (and the owner
 evidence's "Not yet qualified" list still requires it verbatim). No
 such procedure document exists yet. C4b's implementation therefore
