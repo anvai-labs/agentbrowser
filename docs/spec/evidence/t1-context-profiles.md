@@ -95,9 +95,10 @@ Driver: scripted JSON-RPC over stdio (ephemeral /tmp/t1-cursor-
 consumption.mjs; the checks above are the record). Remaining T8 work:
 the same consumption/retirement semantics through the providers' own
 tool-call paths (the Codex path now executes tool calls — the approval
-gate was resolved 2026-10-02, see the T8 availability record — but
-cursor semantics are not yet exercised through it; the Victor live loop
-remains blocked on the Sandhi TLS trust decision, with the formula skew
+gate was resolved 2026-10-02, see the T8 availability record — and
+[Erratum 2026-10-03: cursor semantics ARE now exercised through it —
+see the 2026-10-03 section below]; the Victor live loop remains
+blocked on the Sandhi TLS trust decision, with the formula skew
 repaired locally).
 
 ## 2026-10-03 update: cursor consumption/retirement through the Codex provider path
