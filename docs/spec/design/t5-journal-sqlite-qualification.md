@@ -217,3 +217,44 @@ one PR cycle. A docs-only status update is folded into the next substantive chec
 Stop public enablement if any crash classification, ownership fence, anchor/fsync,
 retention, runtime or package gate is unproven. Passing synthetic probes or memory tests
 is insufficient. Never promise exactly-once external effects or power-loss guarantees.
+
+## 2026-10-03: C4b precondition audit — all five gates pass
+
+The delivery sequence's precondition audit for the C4b slice (its item 6:
+"only after these gates and adversarial review may C4b implement its one
+shared execution-requirement/discovery contract"), verified against
+evidence on 2026-10-03:
+
+1. **Schema/IPC/witness freeze + boundary tests**: the owner-child IPC
+   message shapes are frozen by header declaration
+   (journal-sqlite-child-protocol.ts, "J2b.2 step 1"), and the IPC
+   boundary is pinned by the qualification's protocol-fault rows
+   (late/duplicate/malformed replies, host-crash frame guard).
+2. **No eager export, service setting, or added dependency**: the suite's
+   own row proves the CLI and MCP source trees carry no journal storage
+   code, nothing is exported from the control barrel, and the control
+   package's storage uses only node built-ins.
+3. **Unchanged conformance over real SQLite with the memory oracle
+   retained**: `operationJournalAdapterConformance` runs over the direct
+   SQLite fixture (journal-sqlite-records.test.ts) AND the memory
+   fixture (operation-journal-adapter.test.ts).
+4. **Process-loss, anchor, quota, privacy qualification with explicit
+   barriers**: the SIGKILL matrix, anchor/stale-copy/admission rows,
+   sentinel/privacy row, and the 2026-10-02 read-only/disk-full lanes —
+   all CI-gated (31 rows before this slice's additions; 33 after).
+5. **Packaging/extract from an unrelated directory per claimed
+   runtime/OS**: the CI packaging gate resolves the child from the
+   extracted tree alone (journal-sqlite-packaging-gate.mjs), and the
+   suite runs on darwin locally and linux in CI; the ephemeral memory
+   acceptance is retained (item 3's memory-oracle row).
+
+**Verdict**: the qualification preconditions for C4b are satisfied.
+C4b itself — runtime/transport selection, service configuration,
+historical recovery and public durability — remains CLOSED behind the
+F3 authorization gate (the packet: "C4b runtime/transport selection
+stays gated"; foundation-first refinements: durable-journal runtime
+enablement "requires explicit authorization"). The F3 decision point is
+therefore now purely an authorization decision: every technical
+precondition it waits on has passed its gates and adversarial review.
+J3 historical authorization and J4 recovery remain separate, and
+process restart never grants business replay or revives sessions.

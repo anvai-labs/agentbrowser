@@ -47,4 +47,8 @@ foundation-first order is therefore:
 Sequence: F1, F2 delivered -> F3 decision point (user
 authorization) -> T4 production evidence -> T6 normalization/live gates ->
 T8 installed qualification -> T1 consumption -> T7, with N1/N2 slotted by
-design readiness.
+design readiness. 2026-10-03: the C4b precondition audit passed all five
+gates ([J2b qualification](../design/t5-journal-sqlite-qualification.md)'s
+dated section) — the F3 authorization is now the ONLY remaining gate for
+durable-journal runtime selection; every technical precondition has
+passed.
