@@ -90,7 +90,9 @@ record/CAS/retention/HMAC enforcement, clock high-water, bounded IPC manager, ph
 DB/WAL ceilings, hostile/corrupt schema coverage, disk-full behavior, packaged server
 extraction and other target filesystems remain J2b gates. No source/public runtime selector
 or recovery is enabled. Process loss is not power-loss qualification, and restoring both
-DB and anchor together is undetectable. The operator quarantine/reconciliation procedure
+DB and anchor together is undetectable. The operator quarantine/reconciliation procedure — required before C4b — was DELIVERED 2026-10-03:
+[t5-operator-reconciliation](../design/t5-operator-reconciliation.md). The list below records
+what was still outstanding when this section was written:
 remains required before C4b. T5 stays approximately 10%; finite completion stays 3/9.
 
 ## Delivery
