@@ -50,8 +50,9 @@ T8 installed qualification -> T1 consumption -> T7, with N1/N2 slotted by
 design readiness. 2026-10-03: the C4b precondition audit passed the five
 delivery-sequence gates ([J2b
 qualification](../design/t5-journal-sqlite-qualification.md)'s dated
-section) — but the audit also surfaced one standing technical item the
-gates do not cover: the doc-mandated operator
-quarantine/reconciliation procedure for DB-ahead refusals is still
-undocumented. F3 authorization and that procedure are the two
-remaining items ahead of C4b implementation.
+section); the audit's one flagged item — the doc-mandated operator
+quarantine/reconciliation procedure for DB-ahead refusals — was
+delivered the same day
+([t5-operator-reconciliation](../design/t5-operator-reconciliation.md)).
+The single remaining item ahead of C4b implementation is the F3
+authorization.

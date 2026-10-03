@@ -189,7 +189,8 @@ child exit. Caller timeout alone must not trigger process death or new ownership
   tokens, credentials and result bodies never persist. Keys stay outside IPC/journal rows.
 
 For a DB-ahead refusal, document an operator quarantine/reconciliation procedure before
-C4b. Do not suggest silently using a new operation ID or namespace to bypass uncertainty.
+C4b — DELIVERED 2026-10-03:
+[t5-operator-reconciliation](t5-operator-reconciliation.md). Do not suggest silently using a new operation ID or namespace to bypass uncertainty.
 Any retirement must preserve old identity/evidence/key horizons; the absence of a public
 repair tool is a real operational gate, not evidence of recovery completeness.
 
@@ -256,14 +257,15 @@ evidence on 2026-10-03:
 
 **Verdict (scoped to the five delivery gates)**: satisfied.
 
-**One standing item this audit does NOT close**: the doc's own
-DB-ahead-refusal requirement — "document an operator
-quarantine/reconciliation procedure before C4b" (and the owner
-evidence's "Not yet qualified" list still requires it verbatim). No
-such procedure document exists yet. C4b's implementation therefore
-waits on TWO items: this operator procedure, and the F3 authorization
-(the packet line "C4b runtime/transport selection stays gated" is
-t5-durable-recovery.md's, and C4b's scope is the runtime/transport
-selection and service configuration contract — historical recovery
-(J3) and public durability (J4) are separate slices). Process restart
-never grants business replay or revives sessions.
+**One standing item this audit flagged — now CLOSED (2026-10-03)**: the
+doc's own DB-ahead-refusal requirement — "document an operator
+quarantine/reconciliation procedure before C4b" — is delivered as
+[t5-operator-reconciliation](t5-operator-reconciliation.md) (quarantine
+on copies, witness-pair classification, conservative DB-ahead
+reconciliation, and the never-do invariants). With this, C4b's
+implementation waits on the F3 authorization alone (the "runtime/
+transport selection stays gated" line is t5-durable-recovery.md's, and
+C4b's scope is the runtime/transport selection and service
+configuration contract — historical recovery (J3) and public durability
+(J4) are separate slices). Process restart never grants business replay
+or revives sessions.
