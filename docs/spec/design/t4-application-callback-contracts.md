@@ -1,6 +1,6 @@
 # T4 Q0a: trusted application callback contracts
 
-Status: implementation in progress from develop `e69317a`, after released 1.9.1.
+Status: DELIVERED (merged #236) from develop `e69317a`, after released 1.9.1.
 This bounded repair precedes new mappings, production parity and security adapters.
 It hardens trusted deployment configuration; it is not evidence of a stock remote
 exploit or completion of T4.

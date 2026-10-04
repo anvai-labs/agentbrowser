@@ -1,7 +1,7 @@
 # T6: reviewed payload consent, from shared owners to qualified submission
 
 Status: C0 merged #240; C1 review-binding foundation merged #241. C1a operator
-action approval merged #242; C2–C3 remain incomplete. The [C2a draft oracle](t6-draft-oracle.md)
+action approval merged #242; C2–C3 DELIVERED (C2d #248, C3b #251, C3c synthetic submission shipped in 1.10.0). The [C2a draft oracle](t6-draft-oracle.md)
 merged #243 as test-only qualification, before service-collected witness binding.
 The [C2b read foundation](t6-scoped-application-read.md) supplies scoped authorized data;
 the [read-source composition](t6-application-read-evidence.md) adds required source

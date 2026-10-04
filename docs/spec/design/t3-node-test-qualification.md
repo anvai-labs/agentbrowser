@@ -2,7 +2,7 @@
 
 Status: merged by PR #226 at develop `0762554`.
 See [local qualification](../evidence/t3-node-test-qualification.md).
-Load only for this report slice; [T3](../tasks/t3-qa-regressions.md) remains active.
+Load only for this report slice; [T3](../tasks/t3-qa-regressions.md) is COMPLETE.
 
 ## Decision and scope
 

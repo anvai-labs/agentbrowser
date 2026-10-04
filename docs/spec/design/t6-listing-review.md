@@ -1,6 +1,6 @@
 # T6 E0c: private listing capture for review
 
-Status: implemented candidate, based on develop `4bcc47b` (#263). See
+Status: DELIVERED (merged #264), based on develop `4bcc47b` (#263). See
 [qualification evidence](../evidence/t6-listing-review.md).
 This is the first read-only E0c integration step, not completion of E0c/E1.
 

@@ -1,7 +1,7 @@
 # C3c: public application review and accepted-receipt qualification
 
-Base: develop `74bda24` after C3b (#254) and error handling (#253). Align the
-implementation with independently reviewed #255 before delivery. Load forms/T6 and
+Base: develop `74bda24` after C3b (#254) and error handling (#253). The implementation was aligned with independently reviewed #255
+(merged; adversarial containment fixes landed as #256). Load forms/T6 and
 application/T4 context only. Published 1.9.1 and installed sessions are unchanged.
 
 Implementation alignment: #255 was merged by the parallel session; subsequent
