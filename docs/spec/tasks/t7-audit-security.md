@@ -12,7 +12,8 @@ surface for scope (policy.scope / MCP scope / CLI --scope-file) is
 delivered with it; slice 3 (the OWASP ZAP client adapter) DELIVERED 2026-10-03 with the
 real-ZAP recorded run EXECUTED (ZAP 2.17.0, six normalized findings
 including the seeded reflected-XSS confirmed high — see the evidence
-record); reports (slice 4) remain. Repository: agentbrowser.
+record); slice 4 (SARIF 2.1.0 report adapter) DELIVERED 2026-10-03; the
+packet's delivery scope is now COMPLETE. Repository: agentbrowser.
 Depends on: T3; security parity also T4.
 Inputs: core, selected audit/appsec/bounty mode, security, contracts, quality-ci.
 
