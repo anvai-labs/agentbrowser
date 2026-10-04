@@ -25,6 +25,11 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   against ZAP 2.17.0 (seeded reflected-XSS confirmed high). Design:
   `docs/spec/design/t7-scanner-regression.md`; evidence:
   `docs/spec/evidence/t7-scanner-regression.md`.
+- **Shared finding-baseline store** (`FindingBaselineStore`): the
+  versioned persistence half for the finding adapters — explicit
+  versioned saves (never overwrite; temp+rename manifest), latest-on-
+  load, retained history, strict filename-component labels, typed
+  errors for corrupt/unsupported manifests.
 
 ### Added — records and procedures
 
