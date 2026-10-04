@@ -71,9 +71,9 @@ as an inline native select and capability summary with normal keyboard controls.
 The manual [qualification record](../evidence/t1-context-profiles.md) separates exact
 catalog bytes, exact cl100k/o200k token counts and fresh-process cold/warm RSS medians.
 The common MCP import dominates RSS, so no general memory-saving claim is made. No
-dependency was added. Installed Codex cursor consumption is qualified
+dependency was added. Installed Codex AND Claude cursor consumption are qualified
 (2026-10-03: the full delegate/takeover/resume/re-delegate choreography
-through the Codex tool-call path — see the T1 evidence record's dated
-section); Claude remains additional coverage and Victor's live loop
-stays blocked on the Sandhi TLS trust decision. The loader, cursor and
+through both provider tool-call paths — see the T1 evidence record's
+dated sections); Victor's live loop stays blocked on the Sandhi TLS
+trust decision. The loader, cursor and
 catalog projection do not confer permissions.

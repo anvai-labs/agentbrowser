@@ -128,3 +128,29 @@ the harness credential, against a keyed scratch :5812 service):
 Remaining T1 residue narrows to: the same choreography on the Victor
 live loop (blocked on the Sandhi TLS trust decision, an operator call)
 and the Claude provider path (additional, unrequired coverage).
+
+## 2026-10-04 update: cursor consumption/retirement through the Claude provider path
+
+The same choreography ran through Claude Code's tool-call path
+(claude-code 2.1.285 driving the installed `agentbrowser-mcp` 1.15.1
+binary via `--mcp-config`, bound via AGENTBROWSER_SESSION_ID and
+authenticated with the delegated bearer as the harness credential, on
+a keyed scratch :5812 service):
+
+1. **Delegate** (epoch 2): the bound harness read AGENT_ACTIVE with
+   ALL SEVEN cursor fields delivered intact.
+2. **Takeover** (epoch 3): the harness's next call with the REVOKED
+   bearer was refused — `UNAUTHORIZED: A valid bearer credential is
+   required`.
+3. **Resume + re-delegate** (epoch 4 → 5): a fresh bearer and a NEW
+   bindingGeneration; the harness read AGENT_ACTIVE with the fresh
+   cursor at epoch 5.
+4. **Old-epoch refusal**: a stale-epoch re-delegate was refused
+   `CONTROL_REVOKED: A current human review is required`, and the
+   active grant was unharmed.
+
+With both the Codex and Claude provider paths qualified, the
+installed-harness cursor consumption/retirement coverage is complete
+for every available provider. The only remaining residue is Victor's
+live loop (blocked on the Sandhi TLS trust decision, an operator
+call).
