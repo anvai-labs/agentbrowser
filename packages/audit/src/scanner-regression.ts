@@ -110,9 +110,13 @@ export class ZapClient {
     });
     const response = await this.fetchImpl(`${this.baseUrl}${viewOrAction}?${query.toString()}`);
     if (!response.ok) {
+      // ZAP reports scanner-side causes in the body (url_not_found, scoped
+      // access, add-on state) — carry a bounded excerpt so operators see the
+      // scanner's cause, not just an HTTP number.
+      const body = (await response.text()).slice(0, 200);
       throw new VisualAuditError(
         'SCANNER_UNAVAILABLE',
-        `ZAP ${viewOrAction} returned HTTP ${response.status}`
+        `ZAP ${viewOrAction} returned HTTP ${response.status}: ${body}`
       );
     }
     return (await response.json()) as T;
