@@ -11,8 +11,8 @@ adapter builds on the existing screenshot-artifact capability.
 ## Choice and reuse
 
 A **visual adapter** wrapping `pixelmatch` (the specialist pixel
-comparison library, 21 KB, zero dependencies) and `pngjs` (PNG codec,
-zero dependencies). The packet's prohibitions are honored literally:
+comparison library, whose one dependency is pngjs) and `pngjs` (the PNG
+codec, zero dependencies). The packet's prohibitions are honored literally:
 no image-comparison library is BUILT — the specialist library is
 wrapped; no scanner, rule engine, or bounty executor is added. The
 adapter is engine-agnostic: it receives PNG buffers; capturing them is
@@ -30,20 +30,27 @@ gates, and its storage format.
 ## Semantics
 
 - `compareVisual(currentPng, baseline, options?)` is PURE: decode both
-  PNGs, run pixelmatch at the baseline's threshold (override allowed),
-  and return a verdict: `match` (zero changed pixels),
-  `within-threshold` (changed-pixel ratio within the threshold),
-  `regression` (beyond it), or `dimension-change` (explicit re-baseline
-  required — a result with guidance, not a crash). A diff PNG artifact
-  is returned for the report adapter.
-- Non-PNG input is a typed error, not a crash.
+  PNGs, run pixelmatch at the baseline's color threshold (override
+  allowed), and return a verdict: `match` (zero changed pixels),
+  `within-threshold` (changed-pixel ratio within the baseline's
+  change-ratio limit), `regression` (beyond it), or `dimension-change`
+  (explicit re-baseline required — a result with guidance, not a
+  crash). A diff PNG artifact is returned for the report adapter. The
+  two knobs are deliberately SEPARATE numbers — loosening the per-pixel
+  color tolerance (absorbing antialiasing) must not silently permit a
+  larger fraction of the page to change.
+- Non-PNG input is a typed error (`VisualAuditError`, coded), as are
+  invalid thresholds, path-traversing labels, viewport/PNG-dimension
+  mismatches, and unsupported manifest versions.
 - **Baseline changes are explicit**: `BaselineStore.save` appends a new
   version to a manifest (identity, threshold, capturedAt, image) and
   never overwrites; `compareVisual` never writes. Loading a label
   returns the LATEST version; the manifest retains history.
-- Identity (label + viewport) is recorded so a baseline from a
-  different viewport cannot be silently compared; comparing against a
-  dimension-mismatched baseline yields `dimension-change`.
+- Identity (label + viewport) is recorded AND enforced: `save`
+  validates the claimed viewport against the actual PNG dimensions, and
+  comparing against a dimension-mismatched baseline yields
+  `dimension-change`. Labels are strict filename components (no path
+  traversal).
 
 ## Acceptance gates (synthetic, deterministic)
 

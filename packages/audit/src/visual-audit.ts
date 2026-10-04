@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import pixelmatch from 'pixelmatch';
 import { PNG } from 'pngjs';
@@ -10,6 +10,16 @@ import { PNG } from 'pngjs';
  * closures (cli/mcp-server/api do not depend on it); consumption arrives
  * with the audit mode/profile selection slice. */
 
+export class VisualAuditError extends Error {
+  constructor(
+    public code: string,
+    message: string
+  ) {
+    super(message);
+    this.name = 'VisualAuditError';
+  }
+}
+
 export interface VisualIdentity {
   label: string;
   viewport: { width: number; height: number };
@@ -19,8 +29,10 @@ export interface VisualIdentity {
 export interface VisualBaseline {
   formatVersion: 1;
   identity: VisualIdentity;
-  /** pixelmatch color-distance threshold, 0..1. */
-  threshold: number;
+  /** pixelmatch per-pixel color-distance tolerance, 0..1. */
+  colorThreshold: number;
+  /** Changed-pixel ratio budget for `within-threshold`, 0..1. */
+  changeRatioLimit: number;
   imageBase64: string;
 }
 
@@ -30,7 +42,8 @@ export interface VisualDiffResult {
   verdict: VisualVerdict;
   changedPixels: number;
   totalPixels: number;
-  /** changedPixels / totalPixels. */
+  /** changedPixels / totalPixels, rounded to 6 dp — the verdict derives
+   * from this SAME rounded value so reports can re-derive it. */
   ratio: number;
   /** Base64 PNG highlighting changed pixels; empty for dimension-change. */
   diffPngBase64: string;
@@ -39,10 +52,34 @@ export interface VisualDiffResult {
 }
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 function assertPng(png: Buffer): void {
   if (png.length < 8 || !png.subarray(0, 8).equals(PNG_SIGNATURE)) {
-    throw new Error('INVALID_PNG: visual audit input must be a PNG buffer');
+    throw new VisualAuditError('INVALID_PNG', 'visual audit input must be a PNG buffer');
+  }
+}
+
+function assertLabel(label: string): void {
+  if (!LABEL_PATTERN.test(label)) {
+    throw new VisualAuditError(
+      'INVALID_LABEL',
+      `label must match ${LABEL_PATTERN.source} (no path separators): ${JSON.stringify(label)}`
+    );
+  }
+}
+
+function assertThresholds(colorThreshold: number, changeRatioLimit: number): void {
+  for (const [name, value] of [
+    ['colorThreshold', colorThreshold],
+    ['changeRatioLimit', changeRatioLimit],
+  ] as const) {
+    if (!Number.isFinite(value) || value < 0 || value > 1) {
+      throw new VisualAuditError(
+        'INVALID_THRESHOLD',
+        `${name} must be a finite number in [0, 1]; got ${value}`
+      );
+    }
   }
 }
 
@@ -55,8 +92,10 @@ function decode(png: Buffer): PNG {
 export function compareVisual(
   currentPng: Buffer,
   baseline: VisualBaseline,
-  options?: { threshold?: number }
+  options?: { colorThreshold?: number }
 ): VisualDiffResult {
+  const colorThreshold = options?.colorThreshold ?? baseline.colorThreshold;
+  assertThresholds(colorThreshold, baseline.changeRatioLimit);
   const current = decode(currentPng);
   const stored = decode(Buffer.from(baseline.imageBase64, 'base64'));
   if (current.width !== stored.width || current.height !== stored.height) {
@@ -69,7 +108,6 @@ export function compareVisual(
       rebaselineRequired: true,
     };
   }
-  const threshold = options?.threshold ?? baseline.threshold;
   const diff = new PNG({ width: current.width, height: current.height });
   const changedPixels = pixelmatch(
     new Uint8Array(current.data),
@@ -77,17 +115,23 @@ export function compareVisual(
     new Uint8Array(diff.data),
     current.width,
     current.height,
-    { threshold }
+    { threshold: colorThreshold }
   );
   const totalPixels = current.width * current.height;
-  const ratio = totalPixels === 0 ? 0 : changedPixels / totalPixels;
+  // The verdict derives from the SAME rounded value the result carries, so
+  // a report re-deriving the verdict from the fields agrees at the boundary.
+  const ratio = Math.round((changedPixels / totalPixels) * 1e6) / 1e6;
   const verdict: VisualVerdict =
-    changedPixels === 0 ? 'match' : ratio <= threshold ? 'within-threshold' : 'regression';
+    changedPixels === 0
+      ? 'match'
+      : ratio <= baseline.changeRatioLimit
+        ? 'within-threshold'
+        : 'regression';
   return {
     verdict,
     changedPixels,
     totalPixels,
-    ratio: Math.round(ratio * 1e6) / 1e6,
+    ratio,
     diffPngBase64: PNG.sync.write(diff).toString('base64'),
   };
 }
@@ -99,14 +143,15 @@ interface StoreManifest {
     {
       latest: VisualBaseline;
       version: number;
-      versions: Array<{ version: number; capturedAt: string; threshold: number }>;
+      versions: Array<{ version: number; capturedAt: string; colorThreshold: number }>;
     }
   >;
 }
 
 /** File-backed baseline store: one manifest (baselines.json) plus versioned
- * PNG files per label. Saves APPEND a version and never overwrite; the
- * comparator never touches the directory. */
+ * PNG files per label. Saves APPEND a version and never overwrite (the
+ * manifest itself is written via temp+rename); the comparator never touches
+ * the directory. Single-process by contract — cross-process saves race. */
 export class BaselineStore {
   private readonly directory: string;
   private readonly manifestPath: string;
@@ -120,33 +165,55 @@ export class BaselineStore {
     if (!existsSync(this.manifestPath)) {
       return { formatVersion: 1, baselines: {} };
     }
-    return JSON.parse(readFileSync(this.manifestPath, 'utf8')) as StoreManifest;
+    const manifest = JSON.parse(readFileSync(this.manifestPath, 'utf8')) as StoreManifest;
+    if (manifest.formatVersion !== 1) {
+      throw new VisualAuditError(
+        'UNSUPPORTED_MANIFEST',
+        `baseline manifest formatVersion ${manifest.formatVersion} is not supported`
+      );
+    }
+    return manifest;
   }
 
   private writeManifest(manifest: StoreManifest): void {
     mkdirSync(this.directory, { recursive: true });
-    writeFileSync(this.manifestPath, JSON.stringify(manifest, null, 2));
+    const temp = `${this.manifestPath}.pending`;
+    writeFileSync(temp, JSON.stringify(manifest, null, 2));
+    renameSync(temp, this.manifestPath);
   }
 
   /** Latest baseline for the label, or undefined. */
   load(label: string): VisualBaseline | undefined {
+    assertLabel(label);
     return this.readManifest().baselines[label]?.latest;
   }
 
   /** Retained version history for the label (explicit baseline changes). */
-  versions(label: string): Array<{ version: number; capturedAt: string; threshold: number }> {
+  versions(label: string): Array<{ version: number; capturedAt: string; colorThreshold: number }> {
+    assertLabel(label);
     return this.readManifest().baselines[label]?.versions ?? [];
   }
 
   /** Append a new version for the label. Explicit by contract: this is the
-   * ONLY way a baseline changes. Returns the stored baseline. */
+   * ONLY way a baseline changes. The claimed viewport must match the actual
+   * PNG dimensions; the label is a strict filename component. Returns the
+   * stored baseline. */
   save(input: {
     label: string;
     viewport: { width: number; height: number };
-    threshold: number;
+    colorThreshold: number;
+    changeRatioLimit: number;
     png: Buffer;
   }): VisualBaseline {
-    const decoded = PNG.sync.read(input.png);
+    assertLabel(input.label);
+    assertThresholds(input.colorThreshold, input.changeRatioLimit);
+    const decoded = decode(input.png);
+    if (decoded.width !== input.viewport.width || decoded.height !== input.viewport.height) {
+      throw new VisualAuditError(
+        'VIEWPORT_MISMATCH',
+        `claimed viewport ${input.viewport.width}x${input.viewport.height} does not match the PNG's ${decoded.width}x${decoded.height}`
+      );
+    }
     const manifest = this.readManifest();
     const entry = manifest.baselines[input.label] ?? {
       latest: undefined as unknown as VisualBaseline,
@@ -163,7 +230,8 @@ export class BaselineStore {
         viewport: { ...input.viewport },
         capturedAt: new Date().toISOString(),
       },
-      threshold: input.threshold,
+      colorThreshold: input.colorThreshold,
+      changeRatioLimit: input.changeRatioLimit,
       imageBase64: input.png.toString('base64'),
     };
     entry.latest = baseline;
@@ -171,7 +239,7 @@ export class BaselineStore {
     entry.versions.push({
       version,
       capturedAt: baseline.identity.capturedAt,
-      threshold: input.threshold,
+      colorThreshold: input.colorThreshold,
     });
     manifest.baselines[input.label] = entry;
     this.writeManifest(manifest);
