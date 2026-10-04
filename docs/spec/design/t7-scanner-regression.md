@@ -1,8 +1,9 @@
 # T7 slice 3: scanner-regression adapter (OWASP ZAP) with role/business-logic fixtures
 
-Status: slice 3 DELIVERED 2026-10-03 (the ZAP-API client adapter and
-its fixture gates; the real-ZAP recorded run is availability-gated —
-no ZAP on the development host, docker present for a future run). Task packet:
+Status: slice 3 DELIVERED 2026-10-03 (the ZAP-API client adapter, its
+fixture gates, AND the real-ZAP recorded run — executed against OWASP
+ZAP 2.17.0 via the official container; see
+[evidence](../evidence/t7-scanner-regression.md)). Task packet:
 [t7-audit-security](../tasks/t7-audit-security.md) ("Security
 regression: external ZAP/Burp adapter plus a role/business-logic
 fixture"). Dependencies: T3 (complete); the T7 slice-2a scope policy
@@ -55,11 +56,10 @@ the adapter speaks ZAP's REST API over `fetch`).
   scanner version.
 - **Installed-scanner honesty**: `version()` is recorded in every
   result (`scannerVersion`), satisfying "installed scanner version and
-  capability scope are recorded". There is no availability-gated
-  real-ZAP test in the suite: the Status line records the real-ZAP run
-  as skipped on the development host (no ZAP installed; docker present
-  for a future recorded run) — the CI-gated fixture rows carry the
-  adapter's logic meanwhile.
+  capability scope are recorded". The real-ZAP recorded run has since
+  EXECUTED against ZAP 2.17.0 (the official container) — see the
+  evidence record; the CI-gated fixture rows carry the adapter's logic
+  for every run without a scanner.
 
 ## Honest boundary (the packet's egress rule)
 
@@ -91,7 +91,7 @@ uses (version, scan start/status, alerts):
    `newSession()` (the gate invokes and counts it).
 6. Closure: still no new runtime dependencies (fetch only).
 
-## Real-ZAP recorded run (availability-gated)
+## Real-ZAP recorded run (executed 2026-10-03)
 
 When a ZAP is launchable on the host (local install or the official
 container image), a recorded run drives the REAL scanner over the same
