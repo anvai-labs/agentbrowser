@@ -1,6 +1,6 @@
 # T6 continuation: child-frame observation and ref binding
 
-Status: design candidate, not implemented. Addresses the OVH Manager embedded
+Status: DELIVERED (slices 1, 1b, 2, 3 and loading-window coverage; shipped in 1.15.0). Addresses the OVH Manager embedded
 form handoff (docs/consumer-ovh-iframe-observation-2026-09-30.md): the
 snapshot of a real embedded-application page exposed only the navigation shell
 and an unnamed `[iframe]`; the primary content, form controls, and modal were

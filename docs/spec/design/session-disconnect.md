@@ -1,6 +1,6 @@
 # Typed engine-session disconnect evidence
 
-Status: implementation candidate, R5b2. Extends the existing session lifetime owner
+Status: shipped in 1.12.0. Extends the existing session lifetime owner
 and bounded close-cause projection; it does not add recovery or a second registry.
 
 ## Observed fact and shared port

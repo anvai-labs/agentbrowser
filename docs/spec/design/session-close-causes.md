@@ -1,6 +1,6 @@
 # R5b1: bounded session close causes
 
-Status: implemented source candidate, unreleased. Based on R5a plus navigation
+Status: shipped in 1.12.0. Based on R5a plus navigation
 classification at `e8d50a5`. Load only for R5 lifecycle work from
 [research intake](consumer-research-intake.md).
 

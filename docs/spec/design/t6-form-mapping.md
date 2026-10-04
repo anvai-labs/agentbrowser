@@ -1,6 +1,6 @@
 # T6: bounded form mapping and private-value preparation
 
-Status: implementation slice after owned-popup/readiness #237. One exact URL and
+Status: DELIVERED (merged #238). One exact URL and
 one fully present form stage; not arbitrary ATS support or application submission.
 
 ## Owners and contract

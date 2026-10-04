@@ -1,6 +1,6 @@
 # Operator Chrome attachment
 
-Status: implementation candidate; Brief 3 / consumer F2.2. This is an explicit local
+Status: shipped in 1.12.0; Brief 3 / consumer F2.2. This is an explicit local
 operator exception to [ADR-006](../../adr/006-network-egress-policy-ssrf.md), bounded by
 [ADR-008](../../adr/008-process-container-isolation.md). It does not replace the isolated
 session default or the existing remote-CDP browser-pool adapter.

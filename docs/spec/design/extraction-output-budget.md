@@ -1,7 +1,7 @@
 # Extraction response budgets
 
 Status: merged in PR #281; shipped in the [1.11.0 checkpoint](../evidence/release-1.11.0.md).
-The existing live service remains on 1.10.0 until a deliberate restart checkpoint.
+The live service baseline is 1.15.1.
 Base: develop `124afc3`, including SPA-capture contract alignment (#279–#280).
 Scope: shared extraction service plus CLI/SDK/REST and optional MCP adapters.
 

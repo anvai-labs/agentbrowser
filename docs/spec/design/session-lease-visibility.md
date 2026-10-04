@@ -1,6 +1,6 @@
 # R5a: active-session lease visibility
 
-Status: implemented source slice, unreleased. Based on develop `72d1a6e` after
+Status: shipped in 1.12.0. Based on develop `72d1a6e` after
 1.11.0. Load only for R5 lifecycle work from [research intake](consumer-research-intake.md).
 
 ## Boundary and owners

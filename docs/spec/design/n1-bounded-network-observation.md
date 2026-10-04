@@ -1,8 +1,9 @@
 # N1: bounded network and console error observation — gap-fill design
 
-Status: design candidate, revised after adversarial review of the first draft.
-Not implemented. Design-first per the foundation-first refinements
-(docs/spec/tasks/foundation-refinements.md); no code ships in this packet.
+Status: slice 1 DELIVERED 2026-09-30; G4 (events replay) DELIVERED in 1.15.0.
+Design-first per the foundation-first refinements
+(docs/spec/tasks/foundation-refinements.md); the implementation is
+recorded in this packet's delivery-status section below.
 
 ## Ground truth first: most of this layer already ships
 
