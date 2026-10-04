@@ -92,8 +92,19 @@ violation set: new violations are regressions, disappeared
 acknowledged ones are reported resolved, and an acknowledged-only set
 is `within-baseline`.
 
+## The shared finding-baseline store (added with slice 1b)
+
+`FindingBaselineStore` — the versioned persistence half for BOTH
+finding adapters (accessibility and scanner): saves append versions
+(never overwrite; manifest via temp+rename), the comparators never
+write, loading returns the latest, history is retained per label, and
+labels are strict filename components. Typed errors for corrupt or
+unsupported manifests. The visual adapter keeps its own
+`BaselineStore` (PNG artifacts alongside the manifest); the finding
+store holds JSON documents only.
+
 ## Deliberately out of scope
 
-- Scanner-regression adapters (slice 3), SARIF/report templates
-  (slice 4), CLI/MCP wiring, and any live-page capture orchestration
-  (callers capture; the adapter measures).
+- Scanner-regression adapters (slice 3 — delivered separately),
+  SARIF/report templates (slice 4), CLI/MCP wiring, and any live-page
+  capture orchestration (callers capture; the adapter measures).
