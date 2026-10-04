@@ -9,7 +9,10 @@ time/budgets, enforced per request and per redirect hop through the F1
 all-hop walker) with real-Chromium gates and nine acceptance rows in
 [the design record](../design/t7-scope-enforcement.md); the service
 surface for scope (policy.scope / MCP scope / CLI --scope-file) is
-delivered with it; scanner regression (slice 3) and reports (slice 4) remain. Repository: agentbrowser.
+delivered with it; slice 3 (the OWASP ZAP client adapter with scope enforcement,
+acknowledged-baseline comparison, and fixture gates over a fixture ZAP
+API — the real-ZAP recorded run is availability-gated) DELIVERED
+2026-10-03; reports (slice 4) remain. Repository: agentbrowser.
 Depends on: T3; security parity also T4.
 Inputs: core, selected audit/appsec/bounty mode, security, contracts, quality-ci.
 
