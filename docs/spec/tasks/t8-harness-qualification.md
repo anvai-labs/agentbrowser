@@ -89,12 +89,14 @@ act envelope and true anyOf strategy/verify inputs), enum,
 nested-object, nested-array inputs, typed evidence; autofill
 fail-fast and verified receipts included; approval policy resolved via
 `--approve-for-me` auto review — see the availability record).
-Timeout/reconnect/honest-failure behavior is qualified through the
-Codex path (2026-10-03, including the blackhole uncertainty case — see
-the availability record); MCP client-internal reply correlation is
-provider-client semantics qualified at the manager/bridge level. Still
-open: the same treatment on Victor (TLS trust operator call) and
-Claude (additional coverage).
+Create-call-level timeout/reconnect/honest-failure behavior is
+qualified through the Codex path (2026-10-03, including the blackhole
+uncertainty case — see the availability record); cancellation was
+qualified at the CLI/service level (slice 1) and has no provider-path
+run; MCP client-internal reply correlation is provider-client
+semantics qualified at the manager/bridge level. Still open: the same
+treatment on Victor (TLS trust operator call) and Claude (additional
+coverage).
 Retain explicit limits until those named acceptance runs exist; no whole-milestone
 completion or release is implied by this source repair.
 
