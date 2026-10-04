@@ -257,3 +257,30 @@ enums, typed evidence — has an installed-provider run for every
 dimension (through the Codex path; the CLI path already covered the
 flat surface). The remaining slice-2 residue is installed-Victor
 specific: its live loop stays blocked on the two facts above.
+
+## 2026-10-03 update (later): provider-path resilience qualified
+
+Timeout, reconnection and honest-failure behavior through the same
+Codex provider path (installed `agentbrowser-mcp` 1.15.1 — the keg
+upgraded; keyed scratch :5812 service), three scenarios:
+
+- **Service down**: the call failed honestly — `ConnectionRefused`,
+  exact transport message reported, no fabricated session, no blind
+  retry.
+- **Service restored**: the next provider run created the session
+  normally (recovery is ordinary). One visible wrinkle recorded: the
+  auto-approval review refused a tenant-less `browser_create` on the
+  keyed service — the tenant must be explicit — which is the
+  tenant-scoping working as designed, surfaced at the provider layer.
+- **Blackhole endpoint** (accepts connections, never responds): the
+  call surfaced `TIMEOUT: Request timeout; outcome may be unknown`,
+  and the provider reported the session creation as UNCONFIRMED — the
+  uncertainty discipline (a timed-out write may have executed) intact
+  through the provider round trip.
+
+Scope note: MCP client-internal reply correlation (out-of-order and
+duplicate replies) is the provider's own client semantics and is
+qualified at the manager/bridge level (the journal and service-side
+gates), not through a third-party client; this record qualifies what
+is observable through the provider: honest failure, recovery, and
+timeout-uncertainty surfacing.
