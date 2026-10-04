@@ -79,7 +79,9 @@ Next dependency-ready slices by task:
   methods/identities/time/budgets enforced per request and per redirect
   hop over any base policy, real-Chromium gates per the design record;
   the dependent active-testing blocker this slice named is lifted at the
-  primitive level. Remaining: audit adapters, scanner regression, report slices.
+  primitive level. Remaining: reports (slice 4, on demand), the
+  availability-gated real-ZAP depth run, and slice 1b's accessibility
+  variant is delivered — see the T7 row.
 
 Use-case gates: the automated-testing use case (vision priority 1) needs T4
 production evidence, T6 live gates and T8 installed qualification. The bounty
