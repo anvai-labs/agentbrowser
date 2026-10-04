@@ -40,12 +40,15 @@ branches and use the reviewed final commit identity for each merge.
 
 ## Current release checkpoint
 
-The current published and installed baseline is 1.11.0 from protected main
-`e00539e`. The [delivery record](../evidence/release-1.11.0.md) records the twelve green
-release jobs, investigated Rosetta timeout retry, fourteen verified downloads, npm
-integrity, Homebrew PR #73 and eleven installed acceptance groups. The existing
-service remains on 1.10.0 until a deliberate session checkpoint. The older records
-below are historical. All eight strict main checks and immutable release assets
+The published and installed baseline is 1.15.1 (the 1.15.1 maintenance
+release shipped 2026-10-03; the delivery records
+[release-1.11.0](../evidence/release-1.11.0.md) and later per-release
+records remain historical references). Develop carries substantial
+unreleased work since 1.15.0 — the T7 scope-enforcement and audit-adapter
+stack, the completed T5 qualification matrix and reconciliation procedure,
+the T1/T8 provider qualifications, and the N2 prerequisite record (see the
+CHANGELOG's Unreleased section) — all pending the next deliberate
+promotion and release checkpoint. All eight strict main checks and immutable release assets
 remain required. Label acceptance phases and measure their timing before changing
 budgets. No durable recovery, installed external-harness qualification or production
 use-case completion is implied.
@@ -92,8 +95,9 @@ Q0a custom-adapter callback hardening, popup ownership/readiness, production ver
 configuration, durable recovery and installed third-party harness qualification remain
 deferred. Do not represent these as completed or supported by cookie import.
 
-The published and locally installed baseline is **1.9.1**. Existing running services
-were preserved rather than restarted during qualification. Every later candidate still
+At the time of this section the published and locally installed baseline was
+**1.9.1** (historical — the current baseline is stated in the checkpoint above).
+Existing running services were preserved rather than restarted during qualification. Every later candidate still
 requires its own design gates, review, exact-head/post-merge CI, protected-main promotion,
 artifact verification and tap delivery.
 
