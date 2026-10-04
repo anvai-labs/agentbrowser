@@ -1,0 +1,26 @@
+{
+  "name": "@agentbrowser/audit",
+  "version": "1.15.1",
+  "description": "T7 slice 1: visual audit adapter with baseline/versioned measurements (wraps pixelmatch; absent from default dependency closures)",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "test": "vitest run",
+    "lint": "biome check src/",
+    "format": "biome format --write src/",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "pixelmatch": "^7.2.0",
+    "pngjs": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/pngjs": "^6.0.5",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.9"
+  }
+}
