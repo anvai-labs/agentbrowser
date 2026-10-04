@@ -1,12 +1,10 @@
-# T7 slice 1: visual audit adapter with baseline/versioned measurements
+# T7 slice 1: audit adapters (visual + accessibility) with baseline/versioned measurements
 
-Status: in progress (slice 1a — the visual measurement adapter). Task
-packet: [t7-audit-scope](../tasks/t7-audit-security.md) ("one
-accessibility or visual adapter with baseline/versioned measurements").
-Dependencies: T3 (complete). The accessibility (axe) alternative is
-slice 1b and is deliberately deferred: it needs a page-context
-injection surface the engine does not expose yet, while the visual
-adapter builds on the existing screenshot-artifact capability.
+Status: slices 1a (visual measurement) and 1b (accessibility) both
+DELIVERED 2026-10-03. Task packet:
+[t7-audit-scope](../tasks/t7-audit-security.md) ("one accessibility or
+visual adapter with baseline/versioned measurements"). Dependencies: T3
+(complete).
 
 ## Choice and reuse
 
@@ -69,9 +67,33 @@ gates, and its storage format.
 7. Closure: the default surfaces (cli, mcp-server, api) do not depend
    on the audit package.
 
+## Slice 1b: the accessibility adapter (delivered 2026-10-03)
+
+`runAccessibilityAudit(html, options?)` runs axe-core in a Node DOM
+(jsdom, `runScripts: 'outside-only'`) over the captured-HTML lane —
+the ADR-009 posture is preserved because NO page-context injection is
+added to the engine and PAGE SCRIPTS ARE NEVER EXECUTED (only the
+bundled axe source is evaluated in the window; a gate pins this
+through public output — an inline payload that would remove the
+audited image leaves the image-alt finding intact). Selector targets
+are page-derived data: length-capped and documented hostile. `help`
+text is axe-authored. jsdom's own outside-only guarantee underwrites
+the inertness; the gate observes it. The lane has NO internal timeout
+or input-size cap — callers bound captured-HTML size and wrap the
+call (the visual lane inherits the engine's timeouts; this lane does
+not).
+
+Honest lane boundary: rules requiring real layout (color-contrast and
+friends) cannot run against a Node DOM — they surface as axe's
+`incomplete`, never as passing. Rule tags scope runs for deterministic
+CI (wcag2a finds both seeded defects while excluding best-practice
+rules). `compareAccessibility` diffs a result against an acknowledged
+violation set: new violations are regressions, disappeared
+acknowledged ones are reported resolved, and an acknowledged-only set
+is `within-baseline`.
+
 ## Deliberately out of scope
 
-- Accessibility (axe) injection (slice 1b — needs the injection
-  decision), scanner-regression adapters (slice 3), SARIF/report
-  templates (slice 4), CLI/MCP wiring, and any live-page capture
-  orchestration (callers capture; the adapter measures).
+- Scanner-regression adapters (slice 3), SARIF/report templates
+  (slice 4), CLI/MCP wiring, and any live-page capture orchestration
+  (callers capture; the adapter measures).
