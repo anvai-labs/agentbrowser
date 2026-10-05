@@ -103,8 +103,21 @@ unsupported manifests. The visual adapter keeps its own
 `BaselineStore` (PNG artifacts alongside the manifest); the finding
 store holds JSON documents only.
 
+## Slice 4: SARIF report adapter (delivered 2026-10-03)
+
+`buildSarifReport(inputs?)` normalizes findings from the audit adapters
+into SARIF 2.1.0 (the standard interchange for security and quality
+findings). Accepts any subset of `{accessibility?, scanner?}` results;
+absent adapters produce empty runs. Impact-to-level and risk-to-level
+mappings are explicit (`critical/high → error`, `moderate/medium →
+warning`, `minor/low/informational → note`). Scanner rules deduplicate
+by pluginId. `partialFingerprints` are deterministic for scanner
+findings (pluginId::url::parameter) so downstream tools can correlate.
+Visual-regression verdicts are excluded (not security findings — they
+belong to the visual adapter's own baseline workflow). The report is
+pure JSON (valid `JSON.stringify` output, no side effects).
+
 ## Deliberately out of scope
 
-- Scanner-regression adapters (slice 3 — delivered separately),
-  SARIF/report templates (slice 4), CLI/MCP wiring, and any live-page
-  capture orchestration (callers capture; the adapter measures).
+- CLI/MCP wiring, and any live-page capture orchestration
+  (callers capture; the adapter measures).
