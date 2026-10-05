@@ -75,12 +75,28 @@ consumption/retirement semantics through the bound harness (takeover
 revocation, epoch advance, fresh-grant recovery, old-epoch refusal).
 Footprint gates are explicit and CI-enforced
 (scripts/footprint-gates.test.mjs: shipped CLI one-shot and idle MCP
-bridge peak RSS within 120 MB, polled on the compiled dist-bin
-artifacts); measured 2026-09-30: 26.8 / 44.5 MB. Still open: the
-provider's actual tool-call path, the remaining
-correlation/reconnect/cancellation gates, and the install-size gate for
-the packaged candidate (RSS half delivered; Linux CI numbers will inform
-tightening the 120 MB limits).
+bridge peak RSS within 75 MB, polled on the compiled dist-bin
+artifacts; tightened 2026-10-02 from 120 MB once Linux CI numbers
+existed — worst observed 51.9 / 52.0 MB, see the availability record's
+2026-10-02 update). The install-size gate
+for the packaged candidate is also CI-enforced
+(scripts/install-size-gates.test.mjs: compressed <= 12 MB, extracted
+server tree <= 80 MB, contents verified). The provider's actual
+tool-call path is qualified on the Codex path (2026-10-02: codex-cli
+0.157.1 drove the installed 1.15.0 binary — every slice-2 acceptance
+dimension has an installed-provider run: flat, union (the flattened
+act envelope and true anyOf strategy/verify inputs), enum,
+nested-object, nested-array inputs, typed evidence; autofill
+fail-fast and verified receipts included; approval policy resolved via
+`--approve-for-me` auto review — see the availability record).
+Create-call-level timeout/reconnect/honest-failure behavior is
+qualified through the Codex path (2026-10-03, including the blackhole
+uncertainty case — see the availability record); cancellation was
+qualified at the CLI/service level (slice 1) and has no provider-path
+run; MCP client-internal reply correlation is provider-client
+semantics qualified at the manager/bridge level. Still open: the same
+treatment on Victor (TLS trust operator call) and Claude (additional
+coverage).
 Retain explicit limits until those named acceptance runs exist; no whole-milestone
 completion or release is implied by this source repair.
 

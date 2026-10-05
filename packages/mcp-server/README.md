@@ -9,6 +9,26 @@ npm i -g @anvailabs/agentbrowser-mcp   # Node >= 18
 
 The package is **only the MCP stdio adapter** — it proxies to an AgentBrowser service. Point it at one with `AGENTBROWSER_BASE_URL` (default `http://localhost:5709`).
 
+## Discover usage before inspecting source
+
+`tools/list` includes headed-session, cookie-handoff and LAN policy guidance on the
+relevant tools. `browser_create` returns both a `sessionId` and an initial `pageId`;
+set `headless: false` for a visible window on the **server** host. CLI `session create`
+only returns a session, so shell clients must also call `page create`.
+
+When shell access is available, use `agentbrowser --help` and offline
+`agentbrowser describe session create` / `describe navigate` / `describe plan --schema`
+for examples and exact CLI syntax. `AGENTBROWSER_BASE_URL` configures this adapter;
+the CLI uses `--base-url`. Neither reconfigures the running REST server.
+An operator may set `AGENTBROWSER_ALLOWED_CIDRS` on **agentbrowser-server at startup**
+for specific authorized LAN hosts. This never relaxes loopback/metadata blocks or
+overrides session host restrictions. There is no per-tool policy-widening argument.
+
+Cookie tool results contain credentials. Prefer the CLI's private-file export/import
+when appropriate, and verify the expected authenticated UI after seeding. See the
+[quick reference](../../docs/cli-agent-usage.md#find-the-answer-in-cli-help-first).
+
+
 Exposes AgentBrowser as a small set of high-level, safe, composable MCP tools
 (ADR-009). Raw engine operations — evaluate, routing, selectors, low-level
 input — are deliberately not exposed.

@@ -50,4 +50,4 @@ Test optional-port fallback, implemented-port failure with no fallback, crash ma
 redaction, and controlled permission/revocation. Reuse existing test engine fixtures
 and authority owners. Re-drive the public headed read using CLI and record actual
 results privately; synthetic local tests remain CI evidence. No applicant data in
-committed tests/docs. E0c integration remains open until its own source gates pass.
+committed tests/docs. E0c integration gates remain owned-workflow (the first E0c slice merged #264).

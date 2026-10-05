@@ -1,6 +1,6 @@
 # R3 continuation: navigation failure reasons
 
-Status: implemented candidate, unreleased; based on develop after PR #292.
+Status: shipped in 1.12.0; based on develop after PR #292.
 Scope: Brief 1 / F7 remainder in the September 25 consumer handoff. Load this
 packet for navigation failure work; it does not add a browser lane or retry engine.
 

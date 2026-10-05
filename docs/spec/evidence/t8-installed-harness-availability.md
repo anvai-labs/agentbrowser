@@ -106,19 +106,33 @@ install is three orders of magnitude larger.
 ## Consequences for the T8 gates
 
 - Slice 2 (schema/result fidelity): **qualified through the installed CLI
-  path and Codex listing path.** Victor live-loop fidelity remains gated on
-  F1/F2 (the source-level fidelity repair in Victor #1168 is unaffected).
+  path, Codex listing path, and (2026-10-02) the Codex tool-call path on
+  1.15.0 — every acceptance dimension now has an installed-provider run
+  (flat, union, enum, nested-object, nested-array inputs; typed
+  evidence), see the later 2026-10-02 section.**
+  Victor live-loop fidelity remains blocked by the two infrastructure
+  facts recorded earlier in this file: the formula catalog/binding skew
+  (repaired locally on this machine; the durable fix is upstream) and
+  the self-signed Sandhi gateway with no TLS trust override — an
+  operator call (the source-level fidelity repair in Victor #1168 is
+  unaffected). Note: the "F1/F2" labels used in older entries of this
+  file denote THOSE Victor blockers — a namespace collision with the
+  delivered foundation refinements that also call themselves F1/F2 in
+  [foundation-refinements](../tasks/foundation-refinements.md); blockers
+  are named, not labeled, from here on.
 - Slice 1 (correlation/cancellation/retirement): qualified at the
   CLI/service level (steps 5–6 above); installed-Victor-level correlation
-  remains gated on F1/F2.
-- Footprint gates (install sizes, RSS): not started.
+  remains gated on the same two Victor-loop blockers above.
+- Footprint gates (install sizes, RSS): shipped and CI-enforced (peak-RSS
+  gates on the compiled binaries; install-size gates on the packaged
+  server candidate).
 - T1 cursor: delivery qualified through the installed CLI (step 7);
   consumption/retirement semantics remain with the harness sessions.
 
 ## 2026-10-01 update (1.14.0 installed): MCP tool-call path qualified
 
 The installed `agentbrowser-mcp` 1.14.0 binary was driven end-to-end against
-the installed :5709 service (no-keys local mode), eight checks all pass:
+the installed :5709 service (no-keys local mode); the checks below all pass:
 initialize (server reports 1.14.0), tools/list (16 tools — the released set;
 `browser_events_replay` is correctly absent, it ships post-1.14.0), then the
 full tool-call flow — browser_create → browser_page_create →
@@ -127,4 +141,146 @@ browser_close. This qualifies the MCP-path tool-call fidelity gate for the
 installed 1.14.0 harness; the `browser_events_replay` surface qualifies with
 the next release. Re-runnable driver: scripted JSON-RPC over stdio against
 `/opt/homebrew/bin/agentbrowser-mcp` (driver script is ephemeral at
-/tmp/t8-mcp-qualification.mjs; the eight checks above are the record).
+/tmp/t8-mcp-qualification.mjs; the checks above are the record).
+
+## 2026-10-02 update: gate tightening on Linux numbers
+
+The first footprint-limit tightening pass, made once public-runner Linux
+numbers existed (ubuntu-latest CI, 2026-10-02). CI samples vary run to
+run, so the record is the observed spread over all 7 linux-x64 runs that
+day (bun 1.4.0 pinned), not a point estimate:
+
+| Metric (gate measurement) | darwin-arm64 | linux-x64 observed | Gate |
+| --- | --- | --- | --- |
+| CLI one-shot peak RSS (`--version`, ps-poll) | 43.5 MB | 37.4–51.9 MB (7 runs) | 75 MB (was 120) |
+| MCP bridge idle peak RSS (post-handshake, ps-poll) | 37.7–44.5 MB | 47.4–52.0 MB (7 runs) | 75 MB (was 120) |
+| Packaged candidate compressed | 9.2 MB | 7.7 MB | 12 MB (held) |
+| Extracted server tree | 55.7 MB | 37.5 MB | 80 MB (held) |
+
+75 MB is 1.44x the worst observed RSS (bridge 52.0 MB, CLI 51.9 MB).
+The CLI's ~39% run-to-run spread makes the gate a tripwire for gross
+regressions (tens of MB), not a precision instrument; the 10 ms ps-poll
+also undersamples true peaks (disclosed in the gate script), so real
+headroom is below 1.44x. The install-size gates already sat at
+1.30x/1.44x worst-observed, so they held and the RSS gates tightened
+instead. Rationale recorded in both gate scripts' headers.
+
+Reconciliation with the 2026-09-29 table above: its 47 MB CLI figure is
+a different measurement — the brew-installed 1.13.0 binary running the
+`health` one-shot under `/usr/bin/time -l` max-resident — while the gate
+polls `--version` on the freshly compiled binary via `ps -o rss=`. Both
+are honest; they are not the same number and are not interchangeable.
+
+## 2026-10-02 update (1.15.0 installed): Codex tool-call path qualified
+
+The provider's actual tool-call execution path — the remaining slice-2
+gate — is qualified: codex-cli 0.157.1 drove the installed
+`agentbrowser-mcp` 1.15.0 binary (brew keg upgraded from 1.14.0; service
+on :5709 restarted, `/health` reports 1.15.0) through a real model loop:
+
+`browser_create` → `browser_navigate` (https://example.com) →
+`browser_observe` → `browser_close` — all four MCP calls completed, and
+the model's ground-truth report matches the page: title "Example
+Domain", 1 interactive element (the page's single link). This qualifies
+provider-final schema conversion for the exercised subset: flat tool
+inputs and an array-of-object observe result round-trip intact through
+the model. [Erratum, same day: the unions/enums/nested-autofill
+limitation stated in the next sentence was superseded a few hours
+later — see the "slice-2 dimensions" section below.] At the time of
+this run, the slice-2 acceptance's unions/enums and the nested-autofill
+input schema had been exercised only at source level (Victor #1168). A
+direct tools/list against
+the same installed binary (scripted JSON-RPC over stdio) returns 17
+tools including `browser_events_replay` — closing the 2026-10-01
+section's commitment for exactly this release.
+
+The approval-policy gate recorded against this path is resolved, with
+the resolution itself part of the record: codex `exec` defaults to
+`approval_policy = never`, which REFUSES every MCP call ("MCP tool call
+requires approval, but approval policy is never" — reproduced once,
+then resolved). The scoped fix is `--approve-for-me` (codex's automatic
+approval review; implies the workspace-write sandbox and is mutually
+exclusive with an explicit `--sandbox` flag) — not
+`--dangerously-bypass-approvals-and-sandbox`. Exact invocation:
+
+```
+codex exec --ephemeral --ignore-user-config --approve-for-me \
+  --skip-git-repo-check \
+  -c 'mcp_servers.agentbrowser.command="/opt/homebrew/bin/agentbrowser-mcp"' \
+  '<task prompt>'
+```
+
+`--ephemeral` persists no session files to disk (auth still reads
+`CODEX_HOME`) and `--ignore-user-config` skips the user's
+`config.toml`, so the run registers only the agentbrowser server; that
+it wrote no repo files is an observation about this run, not a property
+of the sandbox. The Claude provider path remains additional
+(unrequired) coverage; Victor's live loop remains blocked on the two
+facts named above (locally-repaired formula skew; the Sandhi TLS trust
+decision, which is an operator call).
+
+## 2026-10-02 update (later): slice-2 dimensions exercised through Codex
+
+The first codex run used flat inputs only. Four further runs the same
+day exercise every slice-2 acceptance dimension through the same
+installed path (codex-cli 0.157.1 → `agentbrowser-mcp` 1.15.0), all on
+public pages, nothing submitted, no files written:
+
+- **Union-typed inputs** — two shapes, stated precisely: the
+  model-facing `browser_act` schema is a flattened envelope (an
+  `action` string literal plus a nested `target` object, branch
+  validation server-side), and the `click` run round-tripped exactly
+  that — executed, revision advanced, post-click URL
+  `https://www.iana.org/help/example-domains` reported by the model
+  from its own follow-up observation. The surface's true `anyOf`
+  inputs were carried explicitly in a fourth run: `browser_autofill`
+  with `strategy: "native-input"` and `verify: "exact"` — both
+  accepted, and the `verify` choice drove the read-back verification
+  (receipt `verified: true`, actual value matched).
+- **Enum + nested-object input** — `browser_extract` with
+  `format: "schema"` and a three-property schema object: the call
+  executed and the field-specific "optional field not found" warnings
+  prove each property name survived the provider round trip; the
+  extractor returned empty `data` with an evidence hash rather than
+  fabricating fields.
+- **Nested array-of-objects input** — `browser_autofill` on the public
+  httpbin test form. First attempt with hardcoded labels failed typed:
+  per-field receipts came back (`failed` / `not_attempted` /
+  `not_attempted`, `TARGET_NOT_FOUND` on field 0) and the batch
+  aborted fail-fast — the failure semantics survive the provider too.
+  Second attempt let the model derive labels from its own
+  `formControls` observation: three fields, all `verified: true` with
+  values read back from the page.
+
+With these, slice 2's acceptance sentence — nested arrays, unions,
+enums, typed evidence — has an installed-provider run for every
+dimension (through the Codex path; the CLI path already covered the
+flat surface). The remaining slice-2 residue is installed-Victor
+specific: its live loop stays blocked on the two facts above.
+
+## 2026-10-03 update (later): provider-path resilience qualified
+
+Timeout, reconnection and honest-failure behavior through the same
+Codex provider path (installed `agentbrowser-mcp` 1.15.1 — the keg
+upgraded; keyed scratch :5812 service), three scenarios:
+
+- **Service down**: the call failed honestly — `ConnectionRefused`,
+  exact transport message reported, no fabricated session, no blind
+  retry.
+- **Service restored**: the next provider run created the session
+  normally (recovery is ordinary). One visible wrinkle recorded: the
+  auto-approval review refused a tenant-less `browser_create` on the
+  keyed service — the tenant must be explicit — which is the
+  tenant-scoping working as designed, surfaced at the provider layer.
+- **Blackhole endpoint** (accepts connections, never responds): the
+  call surfaced `TIMEOUT: Request timeout; outcome may be unknown`,
+  and the provider reported the session creation as UNCONFIRMED — the
+  uncertainty discipline (a timed-out write may have executed) intact
+  through the provider round trip.
+
+Scope note: MCP client-internal reply correlation (out-of-order and
+duplicate replies) is the provider's own client semantics and is
+qualified at the manager/bridge level (the journal and service-side
+gates), not through a third-party client; this record qualifies what
+is observable through the provider: honest failure, recovery, and
+timeout-uncertainty surfacing.

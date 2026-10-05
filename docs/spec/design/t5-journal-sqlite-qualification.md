@@ -58,9 +58,12 @@ Clock-movement rows joined the shared record conformance (2026-09-30):
 admission horizons are monotonic across wall-clock rollback via the
 persisted high-water, and a reopen below the persisted high-water refuses
 as configuration; the in-handle monotonic-elapsed term of the design's
-max-rule remains for the C4b slice. Still open
-before any public capability: true read-only-filesystem and disk-full lanes
-(release-time qualification on constrained mounts). No public
+max-rule remains for the C4b slice. The read-only-filesystem and disk-full lanes DELIVERED 2026-10-02 as
+CI-gated qualification rows (the spec's sanctioned deterministic
+max-page mechanism for SQLITE_FULL; directory permissions for
+read-only): see the owner evidence record's 2026-10-02 section.
+Constrained-mount release-time runs remain optional depth on top of
+the gated contracts. No public
 capability is enabled and nothing is exported from the
 control barrel. Read [J2a architecture](t5-journal-sqlite-audit.md) and existing
 [journal port](t5-journal-contract.md). Reuse their owners; do not invent a durable executor.
@@ -186,7 +189,8 @@ child exit. Caller timeout alone must not trigger process death or new ownership
   tokens, credentials and result bodies never persist. Keys stay outside IPC/journal rows.
 
 For a DB-ahead refusal, document an operator quarantine/reconciliation procedure before
-C4b. Do not suggest silently using a new operation ID or namespace to bypass uncertainty.
+C4b — DELIVERED 2026-10-03:
+[t5-operator-reconciliation](t5-operator-reconciliation.md). Do not suggest silently using a new operation ID or namespace to bypass uncertainty.
 Any retirement must preserve old identity/evidence/key horizons; the absence of a public
 repair tool is a real operational gate, not evidence of recovery completeness.
 
@@ -214,3 +218,54 @@ one PR cycle. A docs-only status update is folded into the next substantive chec
 Stop public enablement if any crash classification, ownership fence, anchor/fsync,
 retention, runtime or package gate is unproven. Passing synthetic probes or memory tests
 is insufficient. Never promise exactly-once external effects or power-loss guarantees.
+
+## 2026-10-03: C4b precondition audit — five delivery gates pass; the flagged procedure item delivered same day
+
+The delivery sequence's precondition audit for the C4b slice (its item 6:
+"only after these gates and adversarial review may C4b implement its one
+shared execution-requirement/discovery contract"), verified against
+evidence on 2026-10-03:
+
+1. **Schema/IPC/witness freeze + boundary tests**: the owner-child IPC
+   message shapes are frozen by header declaration
+   (journal-sqlite-child-protocol.ts, "J2b.2 step 1"), and the IPC
+   boundary is pinned by the qualification's protocol-fault rows
+   (late/duplicate/malformed replies, host-crash frame guard).
+2. **No eager export, service setting, or added dependency**: the suite's
+   row scans the CLI and MCP source trees for journal-storage code (the
+   dependency-graph side is checked in CI via package.json diffs); the
+   control barrel exports no journal-storage symbol (verified against
+   packages/control/src/index.ts — the journal PORT is exported, the
+   concrete storage is not), and the storage sources import only node
+   builtins plus the workspace canonicalJson helper.
+3. **Unchanged conformance over real SQLite with the memory oracle
+   retained**: `operationJournalAdapterConformance` runs over the direct
+   SQLite fixture (journal-sqlite-records.test.ts) AND the memory
+   fixture (operation-journal-adapter.test.ts).
+4. **Process-loss, anchor, quota, privacy qualification with explicit
+   barriers**: the SIGKILL matrix, anchor/stale-copy/admission rows,
+   sentinel/privacy row, and the 2026-10-02 read-only/disk-full lanes —
+   29 distinct rows before the lanes slice, +4 added, one iterative
+   duplicate removed → 32 distinct rows, all green under the CI flags
+   (also re-run on the darwin-arm64 development host, 2026-10-03).
+5. **Packaging/extract from an unrelated directory**: the CI packaging
+   gate resolves the child from the extracted tree alone
+   (journal-sqlite-packaging-gate.mjs) on linux (the journal-gates
+   job); the darwin leg of item 5's "each claimed runtime/OS" is run on
+   the development host but is NOT yet recorded as a durable evidence
+   row — recorded here as the audit's own open depth item.
+
+**Verdict (scoped to the five delivery gates)**: satisfied.
+
+**One standing item this audit flagged — now CLOSED (2026-10-03)**: the
+doc's own DB-ahead-refusal requirement — "document an operator
+quarantine/reconciliation procedure before C4b" — is delivered as
+[t5-operator-reconciliation](t5-operator-reconciliation.md) (quarantine
+on copies, witness-pair classification, conservative DB-ahead
+reconciliation, and the never-do invariants). With this, C4b's
+implementation waits on the F3 authorization alone (the "runtime/
+transport selection stays gated" line is t5-durable-recovery.md's, and
+C4b's scope is the runtime/transport selection and service
+configuration contract — historical recovery (J3) and public durability
+(J4) are separate slices). Process restart never grants business replay
+or revives sessions.

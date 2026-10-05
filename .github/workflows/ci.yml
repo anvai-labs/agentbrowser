@@ -401,6 +401,11 @@ jobs:
           TARGET="$(node -p "process.platform + '-' + process.arch")"
           node scripts/package-server.mjs --output-dir out-packages --target "$TARGET" --expected-version "$VERSION"
 
+      - name: T8 install-size gates (packaged candidate)
+        run: |
+          TARGET="$(node -p "process.platform + '-' + process.arch")"
+          PACKAGE_OUT_DIR=out-packages PACKAGE_TARGET="$TARGET" node --test scripts/install-size-gates.test.mjs
+
       - name: Accept the extracted candidate with real Chromium and client binaries
         env:
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/candidate-browsers

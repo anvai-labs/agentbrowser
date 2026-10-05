@@ -5,6 +5,52 @@ All notable changes to **AgentBrowser** are documented here. The format is based
 built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub Releases;
 `@anvailabs/agentbrowser-mcp` on npm from 1.7.0 — [ADR-014](docs/adr/014-npm-distribution.md)).
 
+## [Unreleased]
+
+### Added — task T7 (audit/security), slices 2a/1/3
+
+- **Engagement scope enforcement** (`policy.scope` on session create; MCP `browser_create`
+  `scope`; CLI `session create --scope-file`): hosts/paths/methods/identity-bindings/
+  expiry/request-budget enforced per request and per redirect hop by `EngagementScopePolicy`
+  as the outermost restrict-only layer of the session's policy chain
+  (`SCOPE_*` typed denials). Design: `docs/spec/design/t7-scope-enforcement.md`.
+- **Audit adapters** (`@agentbrowser/audit`, outside the default dependency closures):
+  visual (pixelmatch-wrapped, versioned baselines with explicit saves) and
+  accessibility (axe-core in a Node DOM over captured HTML — page scripts never
+  executed; layout-dependent rules recorded as incomplete, never passing). Design:
+  `docs/spec/design/t7-audit-adapter.md`.
+- **Scanner-regression adapter**: bounded OWASP ZAP API client with scope
+  enforcement, poll budget, and acknowledged-baseline comparison over
+  `(pluginId, url, parameter)` signatures; the real-ZAP recorded run executed
+  against ZAP 2.17.0 (seeded reflected-XSS confirmed high). Design:
+  `docs/spec/design/t7-scanner-regression.md`; evidence:
+  `docs/spec/evidence/t7-scanner-regression.md`.
+- **Shared finding-baseline store** (`FindingBaselineStore`): the
+  versioned persistence half for the finding adapters — explicit
+  versioned saves (never overwrite; temp+rename manifest), latest-on-
+  load, retained history, strict filename-component labels, typed
+  errors for corrupt/unsupported manifests.
+
+### Added — records and procedures
+
+- N2: the OS-enforced egress pairing documented as the T7 prerequisite
+  (`docs/spec/design/t7-os-egress-pairing.md`; enforcement NOT SHIPPED).
+- T5: the operator quarantine/reconciliation procedure for journal stores
+  (`docs/spec/design/t5-operator-reconciliation.md`); the read-only-filesystem
+  and disk-full qualification lanes (deterministic max-page mechanism);
+  the C4b precondition audit (all five delivery gates pass; the F3
+  authorization is the remaining gate).
+
+### Qualified — installed harness
+
+- T1: cursor consumption/retirement choreography through the Codex provider
+  path (all seven cursor fields delivered; takeover revocation, fresh-grant
+  recovery, old-epoch refusal).
+- T8: provider-path resilience (service down / restored / blackhole timeout —
+  uncertainty discipline surfaced honestly); slice-2 acceptance dimensions
+  (union, enum, nested-object/array inputs, typed evidence) and the full
+  cursor choreography through the same path.
+
 ## [1.15.1] - 2026-10-03
 
 ### Fixed
@@ -104,7 +150,6 @@ v1.15.0; unreleased engagement-scope and other develop features are not included
   blockers with unblock paths) and footprint measurements for the installed
   harnesses.
 
-## [1.13.0] - 2026-09-27
 ## [1.13.0] - 2026-09-27
 
 ### Added

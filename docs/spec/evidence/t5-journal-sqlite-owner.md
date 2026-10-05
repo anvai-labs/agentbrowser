@@ -90,7 +90,9 @@ record/CAS/retention/HMAC enforcement, clock high-water, bounded IPC manager, ph
 DB/WAL ceilings, hostile/corrupt schema coverage, disk-full behavior, packaged server
 extraction and other target filesystems remain J2b gates. No source/public runtime selector
 or recovery is enabled. Process loss is not power-loss qualification, and restoring both
-DB and anchor together is undetectable. The operator quarantine/reconciliation procedure
+DB and anchor together is undetectable. The operator quarantine/reconciliation procedure — required before C4b — was DELIVERED 2026-10-03:
+[t5-operator-reconciliation](../design/t5-operator-reconciliation.md). The list below records
+what was still outstanding when this section was written:
 remains required before C4b. T5 stays approximately 10%; finite completion stays 3/9.
 
 ## Delivery
@@ -102,3 +104,36 @@ The merge tree matches reviewed tree `96b07c110035e7c1bc5864dc8f4ea5b63671e2b1`;
 all eight [post-merge checks](https://github.com/anvai-labs/agentbrowser/actions/runs/36210212870)
 passed, including the 43 storage cases in the Linux Test job. Publication is separate;
 these results do not close the remaining raw-adapter, manager or recovery gates.
+
+## 2026-10-02: read-only-filesystem and disk-full lanes qualified
+
+The last two CI-testable adversarial lanes landed in the adapter
+qualification suite (both arbitrated by the CI journal-gates job,
+which invokes it with a 60-second per-test timeout):
+
+- **Deterministic disk-full** (the spec's sanctioned max-page
+  mechanism): a test-support child caps the data connection at its
+  bootstrap page count plus one headroom page, so a write that needs a
+  fresh page fails with a real storage failure under the cap. The
+  qualification asserts typed faulted replies (never silent
+  acknowledgements), a byte-identical commit.json anchor across each
+  denied attempt (no commit without its witness), reads still serving
+  pre-fault records, and a recovery generation — the production child,
+  uncapped — re-applying the denied key ('applied', not 'existing').
+- **Read-only durable directory**: mid-session, writes under a store
+  directory whose permissions were tampered away from the required
+  0o700 fail typed — the store's own per-mutate path check detects the
+  mode change and seals, a chmod-tamper tripwire rather than a
+  filesystem EACCES — while the pre-fault record survives, and a fresh
+  reopen against the tampered directory refuses hard. That refusal
+  surfaces today as the adapter's generic startup-death message rather
+  than a typed configuration error: a surfacing gap, recorded, not
+  hidden. A refusal leaves no quarantine — a third open after the
+  mode is restored succeeds (verified) — and recovery for a genuinely
+  wedged directory remains the operator path of restoring the complete
+  durable file set into a fresh directory.
+
+The read-only lane skips on root runners (directory permissions do
+not deny root). With these rows, every adversarial row the
+qualification spec names is CI-gated; optional constrained-mount
+release-time runs remain depth on top of the gated contracts.

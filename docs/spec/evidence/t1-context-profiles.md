@@ -94,5 +94,63 @@ grant and reports AGENT_ACTIVE; an old-epoch re-delegate is refused.
 Driver: scripted JSON-RPC over stdio (ephemeral /tmp/t1-cursor-
 consumption.mjs; the checks above are the record). Remaining T8 work:
 the same consumption/retirement semantics through the providers' own
-tool-call paths (Victor live loop still gated on F1/F2; Codex gated on
-approval policy).
+tool-call paths (the Codex path now executes tool calls — the approval
+gate was resolved 2026-10-02, see the T8 availability record — and
+[Erratum 2026-10-03: cursor semantics ARE now exercised through it —
+see the 2026-10-03 section below]; the Victor live loop remains
+blocked on the Sandhi TLS trust decision, with the formula skew
+repaired locally).
+
+## 2026-10-03 update: cursor consumption/retirement through the Codex provider path
+
+The remaining T1 work item above is now qualified on its provider half:
+the full delegate → takeover → resume → re-delegate choreography ran
+through the Codex provider's own tool-call path (codex-cli 0.157.1
+driving the installed `agentbrowser-mcp` 1.15.0 binary, bound via
+AGENTBROWSER_SESSION_ID and authenticated with the delegated bearer as
+the harness credential, against a keyed scratch :5812 service):
+
+1. **Delegate**: the operator reviewed and delegated (epoch 2); the
+   bound harness read AGENT_ACTIVE with ALL SEVEN cursor fields
+   (version, serviceGeneration, bindingGeneration, sessionId,
+   controlEpoch, mode, profileRevision) delivered intact through the
+   provider round trip.
+2. **Takeover**: the operator took over (epoch 3, HUMAN_ACTIVE); the
+   harness's next call with the REVOKED bearer was refused —
+   `UNAUTHORIZED: A valid bearer credential is required`.
+3. **Resume + re-delegate**: prepare-resume (epoch 4) then re-delegate
+   issued a fresh bearer and a NEW bindingGeneration; the harness read
+   AGENT_ACTIVE with the fresh cursor (controlEpoch 5).
+4. **Old-epoch refusal**: a stale-epoch re-delegate (epoch 4 against a
+   current epoch of 5) was refused `CONTROL_REVOKED: A current human
+   review is required`, and the active grant was unharmed.
+
+Remaining T1 residue narrows to: the same choreography on the Victor
+live loop (blocked on the Sandhi TLS trust decision, an operator call)
+and the Claude provider path (additional, unrequired coverage).
+
+## 2026-10-04 update: cursor consumption/retirement through the Claude provider path
+
+The same choreography ran through Claude Code's tool-call path
+(claude-code 2.1.285 driving the installed `agentbrowser-mcp` 1.15.1
+binary via `--mcp-config`, bound via AGENTBROWSER_SESSION_ID and
+authenticated with the delegated bearer as the harness credential, on
+a keyed scratch :5812 service):
+
+1. **Delegate** (epoch 2): the bound harness read AGENT_ACTIVE with
+   ALL SEVEN cursor fields delivered intact.
+2. **Takeover** (epoch 3): the harness's next call with the REVOKED
+   bearer was refused — `UNAUTHORIZED: A valid bearer credential is
+   required`.
+3. **Resume + re-delegate** (epoch 4 → 5): a fresh bearer and a NEW
+   bindingGeneration; the harness read AGENT_ACTIVE with the fresh
+   cursor at epoch 5.
+4. **Old-epoch refusal**: a stale-epoch re-delegate was refused
+   `CONTROL_REVOKED: A current human review is required`, and the
+   active grant was unharmed.
+
+With both the Codex and Claude provider paths qualified, the
+installed-harness cursor consumption/retirement coverage is complete
+for every available provider. The only remaining residue is Victor's
+live loop (blocked on the Sandhi TLS trust decision, an operator
+call).

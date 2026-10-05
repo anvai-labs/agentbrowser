@@ -5,3 +5,4 @@
  */
 
 export * from './network-policy.js';
+export * from './scope-policy.js';

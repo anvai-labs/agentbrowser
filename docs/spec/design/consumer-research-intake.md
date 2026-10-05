@@ -9,10 +9,10 @@ merged in PR #287 (`1a1afc7`), with pre/post-merge CI green.
  [1.11.0 checkpoint](../evidence/release-1.11.0.md). R5a
  [active lease visibility](session-lease-visibility.md) merged in PR #292 (`b80211d`),
  and R3 [navigation reasons](navigation-failure-reasons.md) merged in PR #293
- (`26a863d`); both are unreleased. R5b1 [bounded close causes](session-close-causes.md)
+ (`26a863d`); both shipped in 1.12.0. R5b1 [bounded close causes](session-close-causes.md)
  and the [R7 EDGAR recipe](../../recipes/edgar-filings.md) are delivered through PR #295.
  R6 [operator CDP attachment](operator-cdp-attach.md)
- merged in PR #294 (`752da5e`) and is unreleased.
+ merged in PR #294 (`752da5e`) and shipped in 1.12.0.
  R5b2 [typed disconnect evidence](session-disconnect.md) is an unreleased source candidate
  with a qualified headed process-loss smoke across REST, SDK, CLI and MCP.
 Source: [consumer field report, 2026-09-24](../../consumer-field-handoff-2026-09-24.md).

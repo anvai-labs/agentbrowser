@@ -6314,6 +6314,88 @@
               },
               "allowServiceWorkers": {
                 "type": "boolean"
+              },
+              "scope": {
+                "type": "object",
+                "required": [
+                  "allowedHosts"
+                ],
+                "properties": {
+                  "allowedHosts": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "pathRules": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "prefix"
+                      ],
+                      "properties": {
+                        "hostSuffix": {
+                          "minLength": 2,
+                          "type": "string"
+                        },
+                        "prefix": {
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "allowedMethods": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "expiresAt": {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "requestBudget": {
+                    "minimum": 1,
+                    "type": "number"
+                  },
+                  "identityBindings": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "header",
+                        "value",
+                        "allowedHosts"
+                      ],
+                      "properties": {
+                        "header": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "value": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "allowedHosts": {
+                          "minItems": 1,
+                          "type": "array",
+                          "items": {
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
               }
             }
           },
@@ -7173,6 +7255,10 @@
                     },
                     {
                       "const": "budget_exceeded",
+                      "type": "string"
+                    },
+                    {
+                      "const": "loading",
                       "type": "string"
                     }
                   ]
@@ -9611,6 +9697,10 @@
                         },
                         {
                           "const": "budget_exceeded",
+                          "type": "string"
+                        },
+                        {
+                          "const": "loading",
                           "type": "string"
                         }
                       ]

@@ -285,6 +285,6 @@ event/cursor qualification remain separate. No concrete store, public durability
 C1b connects the facade to internal SessionAuthority admission/dispatch. C2/C3 extend
 trusted application composition and acknowledged publication; service configuration and
 transports remain disconnected. C4a bounds all control views by the same ACK facts.
-C4b, J2 runtime/storage qualification and J3/J4 recovery gates remain closed. See the
+C4b runtime selection and J3/J4 recovery gates remain closed; J2b runtime/storage qualification is COMPLETE. See the
 [C2/C3 packet](t5-journal-application-terminal.md) and
 [C4 continuation](t5-journal-control-views.md).

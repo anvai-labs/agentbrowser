@@ -1,7 +1,7 @@
 # T5 A3a: review publication ownership
 
 Status: A3a1 session/application owner pins and A3a2 page/evidence composition
-implemented and locally qualified; A3 HTTP adoption remains gated.
+implemented and locally qualified; A3 HTTP publication DELIVERED (merged #283, shipped in 1.11.0).
 A3a1 base: develop `8752c6b` (A4a2, PR #273). A3a2 base: `e123a4d` (#281).
 Parent: [finalization/publication](t5-finalization-publication.md).
 Load explicitly for review disclosure; unrelated modes need no additional context.

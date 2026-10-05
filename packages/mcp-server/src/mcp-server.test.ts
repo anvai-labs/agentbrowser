@@ -342,6 +342,8 @@ describe('AgentBrowser MCP server', () => {
       expect(descriptions.get('browser_plan')).toContain('application commit');
       expect(descriptions.get('browser_act')).toContain('reconcile');
       expect(descriptions.get('browser_act')).not.toContain('one retry after observing');
+      expect(descriptions.get('browser_create')).toContain('blocked by egress policy');
+      expect(descriptions.get('browser_navigate')).toContain('reloading');
     });
 
     it('advertises the ten-minute idle default without imposing a client-side default', async () => {
@@ -750,6 +752,30 @@ describe('AgentBrowser MCP server', () => {
       expect(response.result.isError).toBeFalsy();
       const createArgs = sessions.create.mock.calls.at(-1)?.[0];
       expect(createArgs.policy).toBeUndefined();
+    });
+
+    it('forwards the engagement scope as a nested policy field (T7 slice 2a)', async () => {
+      const scope = {
+        allowedHosts: ['app.testhost.example'],
+        requestBudget: 50,
+        identityBindings: [
+          {
+            header: 'x-test-identity',
+            value: 'admin-session',
+            allowedHosts: ['app.testhost.example'],
+          },
+        ],
+      };
+      const response = JSON.parse(
+        await call('6e', 'browser_create', { tenantId: 'tenant_1', scope })
+      );
+      expect(response.result.isError).toBeFalsy();
+      expect(sessions.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'tenant_1',
+          policy: expect.objectContaining({ scope }),
+        })
+      );
     });
 
     it('should navigate', async () => {

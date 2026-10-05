@@ -1,6 +1,6 @@
 # T5 A4a: authorized status publication before HTTP adoption
 
-Status: A4a1/A4a2 internal primitives implemented; A3/A4b proposed.
+Status: A4a1/A4a2 internal primitives implemented; A3/A4b DELIVERED (merged #283/#284, shipped in 1.11.0).
 Base: develop `61ad5c1` (A4a1, PR #272).
 Parent: [finalization/publication](t5-finalization-publication.md).
 Load this module explicitly for status publication; unrelated modes do not need it.

@@ -1,6 +1,20 @@
 # T7: optional audit and security adapters
 
-Status: not started. Repository: agentbrowser. Depends on: T3; security parity also T4.
+Status: slice 2a (engagement scope enforcement) DELIVERED 2026-10-02; the
+N2 prerequisite (OS-enforced egress pairing) is documented
+([t7-os-egress-pairing](../design/t7-os-egress-pairing.md), enforcement
+NOT SHIPPED, gated behind the deferred gateway program) —
+the `EngagementScopePolicy` primitive (hosts/paths/methods/identities/
+time/budgets, enforced per request and per redirect hop through the F1
+all-hop walker) with real-Chromium gates and nine acceptance rows in
+[the design record](../design/t7-scope-enforcement.md); the service
+surface for scope (policy.scope / MCP scope / CLI --scope-file) is
+delivered with it; slice 3 (the OWASP ZAP client adapter) DELIVERED 2026-10-03 with the
+real-ZAP recorded run EXECUTED (ZAP 2.17.0, six normalized findings
+including the seeded reflected-XSS confirmed high — see the evidence
+record); slice 4 (SARIF 2.1.0 report adapter) DELIVERED 2026-10-03; the
+packet's delivery scope is now COMPLETE. Repository: agentbrowser.
+Depends on: T3; security parity also T4.
 Inputs: core, selected audit/appsec/bounty mode, security, contracts, quality-ci.
 
 ## Reuse and scope

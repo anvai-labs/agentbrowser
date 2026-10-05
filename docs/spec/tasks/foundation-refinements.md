@@ -35,12 +35,24 @@ foundation-first order is therefore:
   policy-filtered network/console *error facts* as evidence (not JS eval,
   not bodies, not traces). Design against the ADR-009 boundary before any
   implementation; a generic URL blocklist is not that evidence.
-- **N2 — OS-enforced egress pairing.** The threat model already says
-  hostile multi-tenancy needs an OS-level layer; make that an explicit T7
-  prerequisite with the pairing documented, per the egress-transport
-  reassessment's "not a substitute" boundaries.
+- **N2 — OS-enforced egress pairing. DELIVERED as documentation
+  2026-10-02.** The threat model already says hostile multi-tenancy
+  needs an OS-level layer; that requirement is now an explicit T7
+  prerequisite with the pairing documented
+  ([t7-os-egress-pairing](../design/t7-os-egress-pairing.md)), per the
+  egress-transport reassessment's "not a substitute" boundaries. The
+  enforcement itself remains NOT SHIPPED and gated behind the deferred
+  gateway program.
 
 Sequence: F1, F2 delivered -> F3 decision point (user
 authorization) -> T4 production evidence -> T6 normalization/live gates ->
 T8 installed qualification -> T1 consumption -> T7, with N1/N2 slotted by
-design readiness.
+design readiness. 2026-10-03: the C4b precondition audit passed the five
+delivery-sequence gates ([J2b
+qualification](../design/t5-journal-sqlite-qualification.md)'s dated
+section); the audit's one flagged item — the doc-mandated operator
+quarantine/reconciliation procedure for DB-ahead refusals — was
+delivered the same day
+([t5-operator-reconciliation](../design/t5-operator-reconciliation.md)).
+The single remaining item ahead of C4b implementation is the F3
+authorization.

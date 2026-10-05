@@ -1,6 +1,6 @@
 # T3 next slice: offline CLI evaluation and conventional test integration
 
-Status: implemented in the develop candidate; not published in 1.9.0. Design baseline:
+Status: DELIVERED (merged #225, shipped in 1.9.1). Design baseline:
 `4601e77`, with the 13-case foundation delivered by #212/#214.
 Load this file only for this T3 slice. T3 remains active; its completion gates do not change.
 

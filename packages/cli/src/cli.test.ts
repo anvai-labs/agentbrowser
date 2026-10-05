@@ -36,6 +36,38 @@ describe('AgentBrowser CLI', () => {
   });
 
   describe('offline command discovery', () => {
+    it('shares operating examples between help and discovery without reading live credentials', async () => {
+      const secret = 'synthetic-startup-setting-must-not-be-disclosed';
+      vi.stubEnv('AGENTBROWSER_ALLOWED_CIDRS', secret);
+      vi.stubEnv('AGENTBROWSER_API_KEY', secret);
+      try {
+        for (const path of [
+          [],
+          ['session', 'create'],
+          ['session', 'cookies'],
+          ['navigate'],
+          ['plan'],
+        ]) {
+          out = [];
+          expect(await run('describe', ...path)).toBe(0);
+          const metadata = lastJson().command;
+          expect(metadata.notes.length).toBeGreaterThan(0);
+          expect(metadata.examples.length).toBeGreaterThan(0);
+          expect(out.join('\n')).not.toContain(secret);
+          out = [];
+          expect(await run(...path, '--help')).toBe(0);
+          const help = out.join('\n');
+          for (const text of [...metadata.notes, ...metadata.examples])
+            expect(help).toContain(text);
+          expect(help).not.toContain(secret);
+        }
+        expect(deps.createClient).not.toHaveBeenCalled();
+        expect(err).toEqual([]);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
     it('lists only the immediate command surface without contacting a service', async () => {
       expect(await run('describe')).toBe(0);
       const catalog = lastJson();

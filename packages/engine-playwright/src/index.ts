@@ -1417,12 +1417,18 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
 
     const verdictOf = async (
       hostname: string,
-      url: string
+      url: string,
+      context?: { method?: string; headers?: Record<string, string> }
     ): Promise<{ verdict: 'allow' | 'deny'; reason?: NavigationFailureReason }> => {
       let verdict: 'allow' | 'deny';
       let reason: NavigationFailureReason | undefined;
       try {
-        await egress.checkRequest({ hostname, url });
+        await egress.checkRequest({
+          hostname,
+          url,
+          ...(context?.method !== undefined ? { method: context.method } : {}),
+          ...(context?.headers !== undefined ? { headers: context.headers } : {}),
+        });
         if (egress.checkResolvedAddresses !== undefined) {
           const addresses = await resolveOf(hostname);
           if (addresses.length > 0) {
@@ -1532,7 +1538,11 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       };
 
       try {
-        const initial = await verdictOf(hostname, url);
+        // Method and headers ride along so engagement-scope rules can
+        // enforce methods and identity bindings; redirect hops reuse the
+        // original request's headers (a redirect re-issues them).
+        const requestHeaders = request.headers();
+        const initial = await verdictOf(hostname, url, { method, headers: requestHeaders });
         if (initial.verdict === 'deny') {
           emitRequest('request.failed', request, { blocked: true, reason: initial.reason });
           await deny(initial.reason ?? 'engine_error');
@@ -1599,7 +1609,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
               return;
             }
             seen.add(hopKey);
-            const hop = await verdictOf(absolute.hostname, absolute.toString());
+            const hop = await verdictOf(absolute.hostname, absolute.toString(), {
+              method: current.status() === 307 || current.status() === 308 ? method : 'GET',
+              headers: requestHeaders,
+            });
             if (hop.verdict === 'deny') {
               emitRequest('request.failed', request, {
                 blocked: true,
@@ -2624,13 +2637,31 @@ class PlaywrightPage implements EnginePage {
             continue;
           }
           if (frameYaml === undefined) {
-            frameCoverage.push({ frame: identity, status: 'timeout' });
+            // An empty frame URL means the navigation never committed: the
+            // frame is still LOADING, not timed out — an agent should retry
+            // rather than read the shell as complete coverage.
+            const status = frame.url() === '' ? 'loading' : 'timeout';
+            frameCoverage.push({ frame: identity, status });
             continue;
           }
           const parsed = this.parseAriaSnapshot(frameYaml, this.revision, refOffset);
           for (const element of parsed) this.frameOfElement.set(element, frame);
           refOffset += parsed.length;
           elements.push(...parsed);
+          // A frame with no committed document (empty/about:blank URL) and
+          // no merged content is mid-navigation — name it so an agent
+          // retries rather than reading the shell as complete coverage of
+          // a mounting application. URL alone cannot distinguish a held
+          // navigation from a src-less/srcdoc frame (both report
+          // about:blank forever): the reason says so instead of overclaiming.
+          if (parsed.length === 0 && (frame.url() === '' || frame.url() === 'about:blank')) {
+            frameCoverage.push({
+              frame: identity,
+              status: 'loading' as const,
+              reason:
+                'no committed document — navigation in flight, or a static src-less/srcdoc frame',
+            });
+          }
         }
       } else {
         ariaSnapshotDegraded = true;

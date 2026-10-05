@@ -36,6 +36,21 @@ function startServers(): Promise<{
 }> {
   const main = createServer((request, response) => {
     const path = request.url ?? '/';
+    // /held-open never responds and /held-loader embeds it: the fixture
+    // frame stays in the loading state for the whole observation (the
+    // loading-window coverage gate).
+    if (path === '/held-open') return;
+    if (path === '/held-loader') {
+      // The held frame is attached after this page's load event, so the
+      // loader itself completes while the embedded frame stays loading.
+      response.writeHead(200, { 'content-type': 'text/html' });
+      response.end(
+        '<button>Held Loader Action</button><script>window.addEventListener("load", () => {' +
+          'const held = document.createElement("iframe"); held.src = "/held-open";' +
+          'document.body.appendChild(held); });</script>'
+      );
+      return;
+    }
     const body =
       path === '/frame-a'
         ? frameA
@@ -53,9 +68,7 @@ function startServers(): Promise<{
                     ? deep3
                     : path === '/deep4'
                       ? deep4
-                      : path === '/frame-a-div'
-                        ? frameADiv
-                        : mainPage;
+                      : mainPage;
     response.writeHead(200, { 'content-type': 'text/html' });
     response.end(body);
   });
@@ -319,6 +332,36 @@ describe('child-frame observation and ref binding (T6)', () => {
       await engine.close();
       deniedServer.closeAllConnections();
       await new Promise<void>((done) => deniedServer.close(() => done()));
+    }
+  }, 60_000);
+
+  it('names frames still loading in the coverage block (held-open response)', async () => {
+    const servers = await startServers();
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const session = await engine.createSession({ headless: true });
+      const page = await session.newPage();
+      await page.navigate({ url: `${servers.main.replace(/\/$/, '')}/held-loader` });
+      await waitForElement(page, 'Held Loader Action');
+
+      // The /held-open response never arrives: the frame's document stays
+      // in the loading state for the whole observation.
+      const observation = await page.observe({ mode: 'interactive' });
+      const coverage = (
+        observation as {
+          frameCoverage?: Array<{ frame: string; status: string }>;
+        }
+      ).frameCoverage;
+      expect(coverage).toBeDefined();
+      const loading = coverage?.find((entry) => entry.status === 'loading');
+      expect(loading).toBeDefined();
+      // The healthy sibling still merges; a held frame is named, not silent.
+      expect(
+        observation.elements.find((element) => element.name === 'Held Loader Action')
+      ).toBeDefined();
+    } finally {
+      await engine.close();
+      await servers.close();
     }
   }, 60_000);
 

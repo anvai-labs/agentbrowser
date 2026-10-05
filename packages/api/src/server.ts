@@ -974,6 +974,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         if (policy?.allowServiceWorkers !== undefined) {
           createRequest.allowServiceWorkers = policy.allowServiceWorkers;
         }
+        if (policy?.scope !== undefined) {
+          createRequest.scope = policy.scope;
+        }
         const session = await service.createSession(createRequest as never);
         return reply.status(201).send(session);
       });
