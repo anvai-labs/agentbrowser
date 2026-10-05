@@ -82,7 +82,7 @@ test('G2: .cmd shim launches via cmd.exe /c (WSL/npm-parent pattern)', { skip: !
   const target = join(dir, 'target.js');
   // What the target script proves: env + argv propagation through the two
   // exec layers (cmd.exe -> node), and that the shim resolves %~dp0 paths.
-  writeFileSync(target, `console.log(JSON.stringify({argv: process.argv.slice(1), marker: process.env.AB_GOTCHA}))\n`);
+  writeFileSync(target, `console.log(JSON.stringify({argv: process.argv.slice(2), marker: process.env.AB_GOTCHA}))\n`);
   // Shape mirrors npm's generated shims (npm.cmd): %~dp0-relative node call.
   const shim = join(dir, 'agentbrowser-fake.cmd');
   writeFileSync(shim, `@ECHO off\r\n"${NODE.replace(/"/g, '')}" "%~dp0target.js" %*\r\n`);
