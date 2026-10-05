@@ -110,24 +110,27 @@ test('G3: cwd with spaces does not break spawn', { skip: !IS_WIN && 'windows-onl
   rmSync(spaced, { recursive: true, force: true });
 });
 
-test('G4: UNC working directory tolerated', { skip: (!IS_WIN && 'windows-only') }, async () => {
+test('G4: UNC working directory tolerated', { skip: !IS_WIN && 'windows-only' }, async (t) => {
   // Admin shares are the only easily-provisioned UNC path on a runner.
-  // If this box has no \\localhost\c$ (non-admin), skip rather than fail:
-  // the gotcha is documented behavior (cmd.exe warns + falls back), and the
-  // server must not crash when handed such a cwd by an interop parent.
+  // Without \\localhost\c$ (non-admin box) there is nothing honest to
+  // assert: skip via the test context so the run reports a real skip,
+  // not a silent pass. The gotcha under test: an interop parent hands
+  // the server a UNC cwd and the server must still answer initialize.
   const UNC_TMP = String.raw`\\localhost\c$\Windows\Temp`;
-  const probe = spawnSync('cmd.exe', ['/c', 'if exist "\\\\.\\pipe\\' + '" echo ok'], { encoding: 'utf8' });
-  if (probe.error || !existsSync('//localhost/c$/Windows/Temp')) {
-    return; // t.skip semantics inside async node:test body: returning skips nothing;
-            // use console note instead of failing.
+  if (!existsSync('//localhost/c$/Windows/Temp')) {
+    t.skip('no \\\\localhost\\c$ admin share available to stage a UNC cwd');
+    return;
   }
   const msg = await mcpHandshake([MCP_BIN], { cwd: UNC_TMP });
   assert.ok(msg.result?.serverInfo, 'server must answer initialize under a UNC cwd');
 });
 
-test('G5: PowerShell relay (interop drive pattern)', { skip: !IS_WIN && 'windows-only' }, () => {
+test('G5: PowerShell relay (interop drive pattern)', { skip: !IS_WIN && 'windows-only' }, (t) => {
   const ps = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  if (!existsSync(ps)) return; // not fatal on stripped images
+  if (!existsSync(ps)) {
+    t.skip('powershell.exe not present (stripped image)');
+    return;
+  }
   const r = spawnSync(ps, ['-NoProfile', '-Command',
     `& '${NODE.replace(/'/g, "''")}' -e "console.log('ps-relay-ok')"`],
     { encoding: 'utf8', timeout: 25000 });
