@@ -323,6 +323,12 @@ export interface ServiceEvidenceReviewContext {
 export interface ServiceDependencies {
   /** Trusted startup capability. Absent means disabled. */
   cdpAttachAdmission?: CdpAttachAdmission;
+  /**
+   * C4b: whether a qualified durable journal store is deployed. Defaults
+   * to false (ephemeral-only). Trusted deployment configuration — never
+   * settable from session or request input.
+   */
+  durableJournalAvailable?: boolean;
   /** Operator-owned maximum complete extraction response bytes. */
   extractMaxBytes?: number;
   approvalPolicy?: ActionRiskPolicyOptions;
@@ -506,6 +512,7 @@ export class AgentBrowserService {
     | TrustedEvidenceSourceRegistry<ServiceOutcomeEvidenceContext>
     | undefined;
   private readonly evidenceReviewProvider: ServiceDependencies['evidenceReviewProvider'];
+  private readonly durableJournalAvailable: boolean;
   /** Per-session download policy, captured at creation (denying by default). */
   private readonly sessionDownloadPolicy = new Map<
     string,
@@ -538,6 +545,7 @@ export class AgentBrowserService {
     if (evidenceReviewProvider !== undefined && typeof evidenceReviewProvider !== 'function')
       throw new Error('Invalid evidence review provider');
     this.evidenceReviewProvider = evidenceReviewProvider;
+    this.durableJournalAvailable = deps.durableJournalAvailable ?? false;
     if (evidenceSourceRegistry !== undefined && evidenceSourceRegistryProvider !== undefined)
       throw new Error('Evidence source registry and provider are mutually exclusive');
     this.applicationAuthority = new ApplicationAuthority(
@@ -2197,7 +2205,22 @@ export class AgentBrowserService {
     principal: SessionPrincipal,
     publication?: Parameters<ApplicationAuthority['discover']>[2]
   ): Promise<Awaited<ReturnType<ApplicationAuthority['discover']>>> {
-    return this.applicationAuthority.discover(sessionId, principal, publication);
+    const discovery = (await this.applicationAuthority.discover(
+      sessionId,
+      principal,
+      publication
+    )) as Record<string, unknown>;
+    // C4b: surface the execution-requirement capability so callers can
+    // discover what the runtime supports before dispatching.
+    return {
+      ...discovery,
+      writeExecution: {
+        defaultRequirement: 'ephemeral',
+        supportedRequirements: this.durableJournalAvailable
+          ? ['ephemeral', 'durable']
+          : ['ephemeral'],
+      },
+    } as unknown as Awaited<ReturnType<ApplicationAuthority['discover']>>;
   }
 
   /** Allocate one pending review; no execution identity is reserved or dispatched. */
@@ -2291,6 +2314,19 @@ export class AgentBrowserService {
         `Invalid application execute request: ${validated.issues
           .map((issue) => `${issue.path || '(root)'}: ${issue.message}`)
           .join('; ')}`
+      );
+    }
+    // C4b: normalize the execution requirement (missing → ephemeral) and
+    // refuse 'durable' when the runtime has no qualified durable journal
+    // store. The refusal is typed and must not reserve an identity or
+    // consume approval.
+    const executionRequirement = (validated.value as { executionRequirement?: string })
+      .executionRequirement;
+    if (executionRequirement === 'durable' && !this.durableJournalAvailable) {
+      throw new ServiceError(
+        'CONTROL_REQUIRED',
+        'durable execution requires a qualified durable journal store; this runtime supports ephemeral only',
+        false
       );
     }
     return this.applicationAuthority.execute(

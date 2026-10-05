@@ -5610,6 +5610,18 @@
             "minLength": 1,
             "maxLength": 128,
             "type": "string"
+          },
+          "executionRequirement": {
+            "anyOf": [
+              {
+                "const": "ephemeral",
+                "type": "string"
+              },
+              {
+                "const": "durable",
+                "type": "string"
+              }
+            ]
           }
         }
       },

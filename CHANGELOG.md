@@ -31,6 +31,17 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   load, retained history, strict filename-component labels, typed
   errors for corrupt/unsupported manifests.
 
+### Added — C4b execution requirement
+
+- **`executionRequirement: 'ephemeral' | 'durable'`** optional field on
+  application execute (C4b: missing normalizes to `ephemeral`; `durable`
+  requires a qualified durable journal store and refuses typed when the
+  runtime cannot satisfy it — the refusal does not reserve an identity
+  or consume approval). Discovery surfaces `writeExecution` with the
+  supported requirements. Trusted deployment configuration
+  (`durableJournalAvailable`) — never settable from session or request
+  input. Design: `docs/spec/design/t5-journal-control-views.md` (C4b).
+
 ### Added — records and procedures
 
 - N2: the OS-enforced egress pairing documented as the T7 prerequisite

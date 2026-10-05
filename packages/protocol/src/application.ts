@@ -47,6 +47,11 @@ export const ApplicationDiscoverySchema = Type.Object(
   strict
 );
 
+export const ExecutionRequirementSchema = Type.Union([
+  Type.Literal('ephemeral'),
+  Type.Literal('durable'),
+]);
+
 export const ApplicationExecuteRequestSchema = Type.Object(
   {
     operation: ID_SCHEMA,
@@ -54,6 +59,10 @@ export const ApplicationExecuteRequestSchema = Type.Object(
     operationId: Type.Optional(ID_SCHEMA),
     expectedVersion: Type.Optional(Type.Integer({ minimum: 0 })),
     approvalToken: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    // C4b: missing normalizes to 'ephemeral' at the application control
+    // boundary; 'durable' requires a qualified durable journal store and
+    // refuses typed when the runtime cannot satisfy it.
+    executionRequirement: Type.Optional(ExecutionRequirementSchema),
   },
   strict
 );

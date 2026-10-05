@@ -45,7 +45,7 @@ terminal ACK, timeout/lost ACK, actual ticket drain, copied snapshots and epheme
 behavior. Reuse the shared controllable journal fixture and independent stored-state
 observations. No browser, service or persistent store is needed for this invariant.
 
-## C4b design: shared execution requirement (not implemented)
+## C4b design: shared execution requirement (IMPLEMENTED 2026-10-04)
 
 After J2 qualifies the concrete store/runtime, use one optional protocol field:
 `executionRequirement: 'ephemeral' | 'durable'`. Missing normalizes to `ephemeral` once
