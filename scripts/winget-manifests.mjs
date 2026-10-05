@@ -53,8 +53,10 @@ const mcpName = 'agentbrowser-mcp-windows-x64.exe';
 const cliName = 'agentbrowser-cli-windows-x64.exe';
 const mcpFile = arg('mcp-file');
 const cliFile = arg('cli-file');
+const serverFile = arg('server-file');
 let mcpSha = arg('mcp-sha256');
 let cliSha = arg('cli-sha256');
+let serverSha = arg('server-sha256');
 
 if (!version) { console.error('--version is required'); exit(1); }
 if (!mcpSha) {
@@ -65,13 +67,18 @@ if (!cliSha) {
   if (!cliFile) { console.error('need --cli-file or --cli-sha256'); exit(1); }
   cliSha = sha256(cliFile);
 }
-for (const [label, h] of [['mcp', mcpSha], ['cli', cliSha]]) {
+// Optional: the REST server exe is a third portable command. Emit its
+// installer entry only when the caller provides it (backwards compatible).
+if (!serverSha && serverFile) serverSha = sha256(serverFile);
+for (const [label, h] of [['mcp', mcpSha], ['cli', cliSha], ...(serverSha ? [['server', serverSha]] : [])]) {
   if (!/^[0-9A-Fa-f]{64}$/.test(h)) { console.error(`${label} sha256 malformed: ${h}`); exit(1); }
 }
 
 mkdirSync(outDir, { recursive: true });
 const mcpUrl = `${base}/v${version.replace(/^v/, '')}/${mcpName}`;
 const cliUrl = `${base}/v${version.replace(/^v/, '')}/${cliName}`;
+const serverName = 'agentbrowser-server-windows-x64.exe';
+const serverUrl = serverSha ? `${base}/v${version.replace(/^v/, '')}/${serverName}` : null;
 
 const yamls = {
   'AnvaiLabs.AgentBrowser.yaml':
@@ -98,7 +105,12 @@ Installers:
   InstallerUrl: ${cliUrl}
   InstallerSha256: ${cliSha}
   PortableCommandAlias: agentbrowser-cli
-ManifestType: installer
+${serverSha ? `- Architecture: x64
+  InstallerType: portable
+  InstallerUrl: ${serverUrl}
+  InstallerSha256: ${serverSha}
+  PortableCommandAlias: agentbrowser-server
+` : ''}ManifestType: installer
 ManifestVersion: ${MANIFEST_VERSION}
 `,
   'AnvaiLabs.AgentBrowser.locale.en-US.yaml':

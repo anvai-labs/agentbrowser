@@ -63,6 +63,11 @@ jobs:
             os: windows-latest
             artifact: agentbrowser-mcp-windows-x64.exe
             cli_artifact: agentbrowser-cli-windows-x64.exe
+            # Windows-only: the REST server exe closes the gap the tar.gz
+            # server-packages channel cannot reach (that deploy layout ships
+            # darwin/linux with node_modules + acceptance tooling; Windows
+            # gets the single-binary exe via winget + release download).
+            server_artifact: agentbrowser-server-windows-x64.exe
             smoke: true
     steps:
       - uses: actions/checkout@v4
@@ -122,6 +127,29 @@ jobs:
         with:
           name: ${{ matrix.cli_artifact }}
           path: packages/cli/dist-bin/${{ matrix.cli_artifact }}
+          if-no-files-found: error
+
+      # Server exe rides only the windows matrix entry (server_artifact is
+      # unset on the other targets): same bun --compile pipeline, and the
+      # smoke boots the exe on an ephemeral port and requires GET /health to
+      # answer healthy — that is the gate which catches runtime-only breaks
+      # bundling cannot see, most importantly node:sqlite (control/journal
+      # layer) under bun's runtime. Validated end-to-end on 2026-10-04
+      # (darwin host compile+boot; the windows runner smoke re-proves it
+      # per release).
+      - name: Compile the server binary
+        if: ${{ matrix.server_artifact }}
+        run: node packages/api/scripts/compile.mjs --target=${{ matrix.target }} --outfile=packages/api/dist-bin/${{ matrix.server_artifact }}
+
+      - name: Server smoke (boot + GET /health)
+        if: ${{ matrix.server_artifact }}
+        run: node packages/api/scripts/smoke.mjs packages/api/dist-bin/${{ matrix.server_artifact }}
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ matrix.server_artifact }}
+        with:
+          name: ${{ matrix.server_artifact }}
+          path: packages/api/dist-bin/${{ matrix.server_artifact }}
           if-no-files-found: error
 
   server-packages:
@@ -442,7 +470,8 @@ jobs:
           mkdir -p winget-assets && cd winget-assets
           gh release download "$TAG" --repo "${{ github.repository }}" \
             --pattern 'agentbrowser-mcp-windows-x64.exe' \
-            --pattern 'agentbrowser-cli-windows-x64.exe'
+            --pattern 'agentbrowser-cli-windows-x64.exe' \
+            --pattern 'agentbrowser-server-windows-x64.exe'
 
       - name: Generate winget manifests
         run: |
@@ -450,6 +479,7 @@ jobs:
             --version "${GITHUB_REF_NAME#v}" \
             --mcp-file winget-assets/agentbrowser-mcp-windows-x64.exe \
             --cli-file winget-assets/agentbrowser-cli-windows-x64.exe \
+            --server-file winget-assets/agentbrowser-server-windows-x64.exe \
             --out winget
 
       - uses: actions/upload-artifact@v4
