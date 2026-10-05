@@ -87,9 +87,13 @@ test('G2: .cmd shim launches via cmd.exe /c (WSL/npm-parent pattern)', { skip: !
   const shim = join(dir, 'agentbrowser-fake.cmd');
   writeFileSync(shim, `@ECHO off\r\n"${NODE.replace(/"/g, '')}" "%~dp0target.js" %*\r\n`);
   try {
-    const r = spawnSync('cmd.exe', ['/c', `"${shim}" arg-one`], {
+    // /s: strip only the outermost quote pair — cmd.exe's /c parsing is
+    // quote-ambiguous without it. windowsVerbatimArguments stops Node from
+    // double-escaping the quotes we need cmd.exe to see.
+    const r = spawnSync('cmd.exe', ['/d', '/s', '/c', `"${shim}" arg-one`], {
       encoding: 'utf8', timeout: 20000,
       env: { ...process.env, AB_GOTCHA: 'via-cmd' },
+      windowsVerbatimArguments: true,
     });
     assert.equal(r.status, 0, `shim exit=${r.status} stderr=${r.stderr}`);
     const payload = JSON.parse(r.stdout.trim().split(/\r?\n/).find((l) => l.startsWith('{')));
