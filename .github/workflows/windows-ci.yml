@@ -1,0 +1,91 @@
+name: Windows CI
+
+# TD-BROWSER Windows gate. The Linux suites in ci.yml cover the product;
+# this workflow owns the win32-specific failure classes that Linux CI
+# cannot see, observed in production bring-ups (WSL interop on aiserver1,
+# GitHub windows runners):
+#
+#   W1  Core MCP stdio spawn + handshake on win32.
+#   W2  .cmd shim relaying — npm shims must be launched via cmd.exe /c;
+#       a bash/WSL parent execing the shim directly parses batch as shell.
+#   W3  Paths with spaces ("C:\Program Files\..." class).
+#   W4  UNC working directories (\\wsl.localhost\... parents).
+#   W5  PowerShell interop relay (powershell.exe -Command -> node).
+#   W6  Engine browser discovery (system Chrome or PLAYWRIGHT_BROWSERS_PATH).
+#
+# Plus the standard build sanity on the windows toolchain (pnpm workspace
+# builds, dist version verification) — the release matrix already compiles
+# windows exes; this keeps the pre-release path honest between tags.
+#
+# Runner override: set repo variable CI_WINDOWS_RUNNER (e.g. a self-hosted
+# box like aiserver1) to move this job off hosted runners.
+
+on:
+  workflow_dispatch:
+  push:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '**/LICENSE'
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows gotchas + build
+    runs-on: ${{ vars.CI_WINDOWS_RUNNER || 'windows-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.tool-versions'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Workspace packages resolve each other through dist/, which does not
+      # exist on a clean checkout. Build first, in topological order.
+      - name: Build workspace dependencies
+        run: pnpm -r build
+
+      # W6 prefers system Chrome on end-user machines; hosted runners do not
+      # ship it, so provision Playwright's Chromium the same way the release
+      # smoke job does and pin the browsers path for engine discovery.
+      - name: Provision Chromium (runner fallback browser)
+        shell: pwsh
+        run: |
+          $env:PLAYWRIGHT_BROWSERS_PATH = "$env:RUNNER_TEMP\win-ci-browsers"
+          pnpm --filter @agentbrowser/engine-playwright exec playwright install chromium
+          "PLAYWRIGHT_BROWSERS_PATH=$env:PLAYWRIGHT_BROWSERS_PATH" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Verify built product versions
+        run: pnpm release:artifacts
+
+      - name: Windows gotcha gates (W1-W6)
+        run: node --test scripts/windows-gotchas.test.mjs
+
+      # Real end-to-end on win32: MCP server spawns a headless session and
+      # answers a browser observation through the full stack. This is the
+      # test that would have caught the UNC/.cmd class of failures before
+      # they reached WSL users.
+      - name: MCP end-to-end (headless session roundtrip)
+        shell: pwsh
+        run: |
+          $env:AGENTBROWSER_TEST_HEADLESS = "1"
+          node --test scripts/windows-mcp-e2e.test.mjs
+        continue-on-error: true # TODO(TD-BROWSER): promote to blocking after
+        # two consecutive green windows runs, same policy as journal-gates.

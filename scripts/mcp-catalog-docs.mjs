@@ -72,7 +72,11 @@ export async function collectCatalogs() {
 export async function checkCatalogDocument({ write = false, file = destination } = {}) {
   const expected = renderCatalog(await collectCatalogs());
   if (write) await writeFile(file, expected);
-  else if (await readFile(file, 'utf8') !== expected)
+  // Normalize CRLF before comparing: git checkout on Windows (autocrlf=true,
+  // GitHub runner default) converts the checked-in LF to CRLF while
+  // renderCatalog emits LF — the byte-for-byte comparison would fail on
+  // line endings alone, not on catalog drift.
+  else if ((await readFile(file, 'utf8')).replaceAll('\r\n', '\n') !== expected)
     throw new Error('MCP catalog documentation is stale. Build, then run node scripts/mcp-catalog-docs.mjs --write');
 }
 

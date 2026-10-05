@@ -63,6 +63,11 @@ jobs:
             os: windows-latest
             artifact: agentbrowser-mcp-windows-x64.exe
             cli_artifact: agentbrowser-cli-windows-x64.exe
+            # Windows-only: the REST server exe closes the gap the tar.gz
+            # server-packages channel cannot reach (that deploy layout ships
+            # darwin/linux with node_modules + acceptance tooling; Windows
+            # gets the single-binary exe via winget + release download).
+            server_artifact: agentbrowser-server-windows-x64.exe
             smoke: true
     steps:
       - uses: actions/checkout@v4
@@ -122,6 +127,29 @@ jobs:
         with:
           name: ${{ matrix.cli_artifact }}
           path: packages/cli/dist-bin/${{ matrix.cli_artifact }}
+          if-no-files-found: error
+
+      # Server exe rides only the windows matrix entry (server_artifact is
+      # unset on the other targets): same bun --compile pipeline, and the
+      # smoke boots the exe on an ephemeral port and requires GET /health to
+      # answer healthy — that is the gate which catches runtime-only breaks
+      # bundling cannot see, most importantly node:sqlite (control/journal
+      # layer) under bun's runtime. Validated end-to-end on 2026-10-04
+      # (darwin host compile+boot; the windows runner smoke re-proves it
+      # per release).
+      - name: Compile the server binary
+        if: ${{ matrix.server_artifact }}
+        run: node packages/api/scripts/compile.mjs --target=${{ matrix.target }} --outfile=packages/api/dist-bin/${{ matrix.server_artifact }}
+
+      - name: Server smoke (boot + GET /health)
+        if: ${{ matrix.server_artifact }}
+        run: node packages/api/scripts/smoke.mjs packages/api/dist-bin/${{ matrix.server_artifact }}
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ matrix.server_artifact }}
+        with:
+          name: ${{ matrix.server_artifact }}
+          path: packages/api/dist-bin/${{ matrix.server_artifact }}
           if-no-files-found: error
 
   server-packages:
@@ -414,3 +442,75 @@ jobs:
           gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 || \
             gh release create "$TAG" --repo "$REPO" --title "$TAG" --notes-file notes.md
           gh release upload "$TAG" --repo "$REPO" release-assets/*
+
+  winget:
+    name: Winget manifests (combined MCP + CLI)
+    # Generates winget-pkgs manifests for the windows portable exes and,
+    # when WINGET_FORK_TOKEN is configured, opens the submission PR to
+    # microsoft/winget-pkgs so any Windows user can:
+    #   winget install AnvaiLabs.AgentBrowser
+    # (installs BOTH agentbrowser-mcp and agentbrowser-cli commands).
+    # Manifests always upload as a workflow artifact for manual submission.
+    # InstallerUrl must point at the PUBLIC release repo (anvai-labs), never
+    # the private anvaiops remote — winget validates public reachability.
+    runs-on: ubuntu-latest
+    needs: [release]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.tool-versions'
+
+      - name: Download windows release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          mkdir -p winget-assets && cd winget-assets
+          gh release download "$TAG" --repo "${{ github.repository }}" \
+            --pattern 'agentbrowser-mcp-windows-x64.exe' \
+            --pattern 'agentbrowser-cli-windows-x64.exe' \
+            --pattern 'agentbrowser-server-windows-x64.exe'
+
+      - name: Generate winget manifests
+        run: |
+          node scripts/winget-manifests.mjs \
+            --version "${GITHUB_REF_NAME#v}" \
+            --mcp-file winget-assets/agentbrowser-mcp-windows-x64.exe \
+            --cli-file winget-assets/agentbrowser-cli-windows-x64.exe \
+            --server-file winget-assets/agentbrowser-server-windows-x64.exe \
+            --out winget
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: winget-manifests
+          path: winget/
+
+      - name: Submit PR to microsoft/winget-pkgs
+        env:
+          WINGET_FORK_TOKEN: ${{ secrets.WINGET_FORK_TOKEN }}
+        run: |
+          if [ -z "$WINGET_FORK_TOKEN" ]; then
+            echo "::notice::WINGET_FORK_TOKEN not set — manifests uploaded as artifact; submit manually from manifests/a/AnvaiLabs/AgentBrowser/${GITHUB_REF_NAME#v}/"
+            exit 0
+          fi
+          set -euo pipefail
+          VER="${GITHUB_REF_NAME#v}"
+          BRANCH="ab-agentbrowser-${VER}"
+          export GH_TOKEN="$WINGET_FORK_TOKEN"
+          # Fork (idempotent) + branch off microsoft/winget-pkgs master.
+          gh repo fork microsoft/winget-pkgs --clone=false >/dev/null 2>&1 || true
+          sleep 5
+          rm -rf wpk && git clone -q --depth 1 https://x-access-token:"$WINGET_FORK_TOKEN"@github.com/${GITHUB_ACTOR}/winget-pkgs.git wpk
+          cd wpk
+          git checkout -q -b "$BRANCH"
+          DEST="manifests/a/AnvaiLabs/AgentBrowser/${VER}"
+          mkdir -p "$DEST" && cp ../winget/*.yaml "$DEST/"
+          git add "$DEST"
+          git -c user.name="agentbrowser-release-bot" -c user.email="noreply@anvai-labs" \
+            commit -qm "Add AnvaiLabs.AgentBrowser ${VER}"
+          git push -q origin "$BRANCH"
+          gh pr create --repo microsoft/winget-pkgs --head "$BRANCH" \
+            --title "Add AnvaiLabs.AgentBrowser ${VER}" \
+            --body "Automated submission from anvai-labs/agentbrowser release ${GITHUB_REF_NAME}. Portable installers (agentbrowser-mcp, agentbrowser-cli). SHA256 verified by CI."

@@ -136,6 +136,13 @@ export interface EngagementScope {
   identityBindings?: ScopeIdentityBinding[];
 }
 
+/**
+ * C4b: the execution requirement for application writes. Missing
+ * normalizes to 'ephemeral'; 'durable' requires a qualified durable
+ * journal store and refuses typed when the runtime cannot satisfy it.
+ */
+export type ExecutionRequirement = 'ephemeral' | 'durable';
+
 export interface SessionPolicy {
   /** Optional since Phase 3: blockedHosts-only / downloads-only policies are legitimate (restrict-only). */
   allowedHosts?: string[];

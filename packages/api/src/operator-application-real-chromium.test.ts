@@ -84,8 +84,11 @@ async function openPanel() {
     await connect();
     const { sessionId } = await owner.sessions.create({ controlMode: 'delegated' });
     await attach(sessionId);
-    await vi.waitFor(async () =>
-      expect(await ui.locator('#status').textContent()).toContain('HUMAN_ACTIVE')
+    await vi.waitFor(
+      async () => expect(await ui.locator('#status').textContent()).toContain('HUMAN_ACTIVE'),
+      // Real-Chromium waits use the 6s budget the file's other gates use:
+      // under pre-commit's cross-package parallel load the 1s default starves.
+      { timeout: 6000 }
     );
     const bind = async (id = adapter.id, resource = 'panel') => {
       await ui.getByLabel('Application adapter ID', { exact: true }).fill(id);
@@ -127,7 +130,11 @@ async function openPanel() {
   }
 }
 async function idle(ui: Page) {
-  await vi.waitFor(async () => expect(await ui.locator('#attach').isDisabled()).toBe(false));
+  await vi.waitFor(
+    async () => expect(await ui.locator('#attach').isDisabled()).toBe(false),
+    // 6s budget — see the #status wait above; the 1s default flakes under load.
+    { timeout: 6000 }
+  );
 }
 // Delay one actual response, not an invented authority result. Other requests pass.
 async function delayResponse(ui: Page, pattern: string, method = 'GET', deny = false) {
@@ -173,8 +180,11 @@ async function delayResponse(ui: Page, pattern: string, method = 'GET', deny = f
 it('binds, discovers review requirements and requires fresh review after binding changes in the operator panel', async () => {
   await withPanel(async (f) => {
     const { ui } = f;
-    await vi.waitFor(async () =>
-      expect(await ui.locator('#application').textContent()).toContain('No application bound')
+    await vi.waitFor(
+      async () =>
+        expect(await ui.locator('#application').textContent()).toContain('No application bound'),
+      // 6s budget — see the #status wait above; the 1s default flakes under load.
+      { timeout: 6000 }
     );
     await f.bind();
     await idle(ui);
@@ -252,8 +262,11 @@ it('discards delayed discovery after attaching another session', async () => {
     await f.attach(other.sessionId);
     await idle(f.ui);
     await delayed.release();
-    await vi.waitFor(async () =>
-      expect(await f.ui.locator('#application').textContent()).toContain('No application bound')
+    await vi.waitFor(
+      async () =>
+        expect(await f.ui.locator('#application').textContent()).toContain('No application bound'),
+      // 6s budget — see the #status wait above; the 1s default flakes under load.
+      { timeout: 6000 }
     );
     expect(await f.ui.locator('#application').textContent()).not.toContain(f.adapter.id);
   });
