@@ -516,6 +516,13 @@ seed future headless sessions with them — [TD-BROWSER-6](td/TD-BROWSER-6-heade
 
 ### Executable release checks
 
+The extracted-package acceptance gates the darwin release channel; its
+cli-outcome settlement is budgeted at 150s (case matrix ~60s plus
+application-recipe ~28s measured on macOS runners, which sat within ~2s of
+the previous 90s default). A timeout there with every functional phase
+passing means runner variance, not a product failure — rerun the job before
+investigating.
+
 The release pipeline compiles the Windows server exe with `bun build
 --compile`; playwright-core's lazily-required transports (`chromium-bidi`,
 `electron` — undeclared dependencies pnpm never links) are externalized in
