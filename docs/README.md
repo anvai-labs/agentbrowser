@@ -162,6 +162,15 @@ complete and remains in [technical-design.md](technical-design.md).
   indexed hot-path lookups). **Accepted, implemented** (all 8 sites; metrics
   quantiles read a bounded recent-sample window, `_count`/`_sum` stay all-time).
   Addresses `hygiene-audit.md` Theme A.
+- [TD-BROWSER-13](td/TD-BROWSER-13-observation-secret-redaction.md) -
+  Observation secret redaction: one trusted sensitivity boundary at the
+  DOM-binding point withholds password/credential values from observations,
+  the ref store, fingerprints and native form evidence; honest boundaries for
+  what value redaction cannot cover. **Implemented** (1.15.2; incident
+  records: the
+  [password observation handoff](AGENTBROWSER_PASSWORD_OBSERVATION_HANDOFF_2026-10-06.md)
+  and the
+  [WebAuthn TLS investigation](AGENTBROWSER_WEBAUTHN_TLS_INVESTIGATION_2026-10-06.md)).
 
 ## Audits
 
