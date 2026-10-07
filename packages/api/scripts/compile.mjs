@@ -41,6 +41,19 @@ if (spaceForm && passthrough[outfileIndex + 1]) {
 const args = [
   'build',
   '--compile',
+  // playwright-core lazily requires chromium-bidi (its BiDi transport) and
+  // electron (launching an Electron app) but declares neither as a
+  // dependency, so pnpm never links them beside it. Node never executes
+  // those requires on the CDP path this server uses; Bun's compile-time
+  // bundler, however, resolves every require statically and hard-fails on
+  // Windows (observed on the first v1.15.2 tag run; darwin resolves the
+  // bare specifier through the pnpm store, which is why host validation
+  // missed it). Externalizing keeps the requires lazy — never taken —
+  // instead of unresolvable at build time.
+  '--external',
+  'chromium-bidi',
+  '--external',
+  'electron',
   'src/bin.ts',
   ...(outfileIndex >= 0
     ? passthrough

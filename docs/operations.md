@@ -516,6 +516,15 @@ seed future headless sessions with them — [TD-BROWSER-6](td/TD-BROWSER-6-heade
 
 ### Executable release checks
 
+The release pipeline compiles the Windows server exe with `bun build
+--compile`; playwright-core's lazily-required transports (`chromium-bidi`,
+`electron` — undeclared dependencies pnpm never links) are externalized in
+`packages/api/scripts/compile.mjs` because Windows' static resolution fails
+on them. If that job fails again with `Could not resolve`, check whether a
+playwright bump added another undeclared lazy require to `coreBundle.js`
+(`grep -o 'require("...' node_modules/.pnpm/playwright-core*/.../coreBundle.js`)
+and externalize it the same way.
+
 From a source checkout, test downloaded or installed executables against an
 explicit expected release version, independently of the checkout's version:
 
