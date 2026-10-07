@@ -376,7 +376,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
       expectedValues.push(value);
     }
   }
-  for (const [index, field] of (preflightFailed ? [] : request.fields).entries()) {
+  fieldLoop: for (const [index, field] of (preflightFailed ? [] : request.fields).entries()) {
     const receipt = receipts[index] as AutofillReceipt;
     const execution: { state: 'not_started' | 'dispatched' | 'completed' } = {
       state: 'not_started',
@@ -510,10 +510,11 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
           // Sensitive control: the observed value is withheld by policy, so
           // value verification is impossible. The write itself completed;
           // report withheld, never as a mismatch (a false "failed" would
-          // invite a retry that double-writes a credential).
+          // invite a retry that double-writes a credential) — and keep
+          // filling the remaining fields, like verify:'none'.
           receipt.status = 'unverified';
           receipt.verificationWithheld = true;
-          break;
+          continue fieldLoop;
         }
         display(receipt, same.value);
         if (strategy.isCommitted(same, expected)) {

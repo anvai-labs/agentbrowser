@@ -16,6 +16,7 @@ const loginPage = `<!DOCTYPE html><html><body><form id="f">
 <label>Pass <input type="password" id="pw" autocomplete="current-password"></label>
 <label>NewPass <input type="text" id="newpw" autocomplete="new-password"></label>
 <label>Code <input type="text" id="otp" autocomplete="one-time-code" inputmode="numeric"></label>
+<label>Cvc <input type="text" id="cvc" autocomplete="cc-csc" inputmode="numeric"></label>
 <label>Plain <input type="text" id="plain"></label>
 <label>Notes <textarea id="notes"></textarea></label>
 <button type="button" id="toggle" onclick="const p=document.getElementById('tpw');p.type=p.type==='password'?'text':'password'">Toggle</button>
@@ -132,13 +133,14 @@ it('withholds password values under include:["formControls"]', async () => {
   });
 });
 
-it('classifies autocomplete current/new-password and one-time-code fields as sensitive', async () => {
+it('classifies credential autocomplete fields (password, OTP, payment) as sensitive', async () => {
   await withLoginPage(async (page) => {
     await fillFresh(page, 'NewPass', CANARY);
     await fillFresh(page, 'Code', CANARY);
+    await fillFresh(page, 'Cvc', CANARY);
     const second = await page.observe({});
     assertNoCanary(second);
-    for (const name of ['NewPass', 'Code']) {
+    for (const name of ['NewPass', 'Code', 'Cvc']) {
       const element = second.elements.find((candidate) => candidate.name === name);
       expect(element?.value).toBeUndefined();
       expect(element?.valueRedacted).toBe(true);
@@ -148,6 +150,44 @@ it('classifies autocomplete current/new-password and one-time-code fields as sen
       true
     );
   });
+});
+
+it('keeps explicitly marked hidden inputs redacted in native form evidence', async () => {
+  const engine = new PlaywrightChromiumEngine();
+  try {
+    const page = await (await engine.createSession({ headless: true })).newPage();
+    await page.navigate({
+      url: 'data:text/html,<form action="." method="get"><input id="token" type="hidden" value="page-generated"><input id="marked" type="hidden"></form>',
+    });
+    const native = page.backingPage();
+    // A hidden input cannot be observed or filled through refs; the mark path
+    // is the attempted sensitive fill (the probe marks before the fill runs).
+    // Mark it directly through the installed page policy to pin the
+    // boundary: explicit marks override the hidden-token exception.
+    await native.evaluate(() => {
+      const marked = document.getElementById('marked');
+      const policy = (
+        globalThis as {
+          __agentbrowserSensitivePolicy?: { mark(node: HTMLElement, explicit: boolean): boolean };
+        }
+      ).__agentbrowserSensitivePolicy;
+      if (!policy || !marked) throw new Error('policy or node missing');
+      policy.mark(marked, true);
+      (marked as HTMLInputElement).value = 'SYNTH-HIDDEN-CANARY-9b1';
+    });
+    const evidence = await page.captureNativeForm();
+    const control = evidence?.controls.find((entry) => entry.id === 'marked');
+    expect(control?.valueRedacted).toBe(true);
+    expect(control?.value).toBe('');
+    expect(JSON.stringify(evidence)).not.toContain('SYNTH-HIDDEN-CANARY-9b1');
+    // An unmarked hidden control keeps its page-generated token (witness
+    // tamper evidence) — the documented exception.
+    const unmarked = evidence?.controls.find((entry) => entry.id === 'token');
+    expect(unmarked?.valueRedacted).toBe(false);
+    expect(unmarked?.value).toBe('page-generated');
+  } finally {
+    await engine.close();
+  }
 });
 
 it('honors explicit sensitive fills and survives show-password toggles', async () => {

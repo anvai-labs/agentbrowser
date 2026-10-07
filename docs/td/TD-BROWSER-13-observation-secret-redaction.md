@@ -47,9 +47,9 @@ values as **untrusted**:
 3. **Classification** (in the element's own frame context, so frame-hosted controls classify
    against their own document):
    - native `input[type=password]` / `input[type=hidden]` — always sensitive;
-   - `autocomplete` tokens `current-password`, `new-password`, `one-time-code` —
-     policy-sensitive (labels can never establish safety; these tokens are explicit
-     credential semantics);
+   - `autocomplete` tokens `current-password`, `new-password`, `one-time-code`, `cc-number`,
+     `cc-csc`, `cc-exp` — policy-sensitive (labels can never establish safety; these tokens
+     are explicit credential semantics, passwords/OTP and payment card data alike);
    - a node **marked** by an explicit sensitive fill (`action.sensitive`) or by any fill/type
      into a policy-sensitive input — the mark is a page-context `WeakSet` keyed by node
      identity, so it survives show-password type toggles and ref revisions, and dies with
@@ -71,8 +71,9 @@ on them; the positive-control tests pin this.
 `captureFormEvidence` (observations) excludes hidden inputs, as before. Native form evidence
 (used by the application-witness tamper comparison) **keeps hidden values** with
 `valueRedacted: false`: its hidden-drift check needs those page-generated tokens, and hidden
-inputs are not a user-typeable channel, so credentials do not flow through them by fill. This
-is the one deliberate divergence between the two surfaces.
+inputs are not a user-typeable channel, so credentials do not flow through them by fill. The
+exception never overrides an explicit sensitive-fill mark — a marked node stays redacted
+whatever its type. This is the one deliberate divergence between the two surfaces.
 
 ## Honest boundaries — what this does NOT protect
 

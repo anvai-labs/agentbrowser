@@ -383,6 +383,13 @@ describe('server edge branches', () => {
       expect(replay.statusCode).toBe(200);
       expect(Array.isArray(replay.json().events)).toBe(true);
 
+      // Paging caps are per-ledger: since/limit without a type filter is a
+      // client mistake and must answer 400, not surface as a 500 from the
+      // service's plain Error.
+      const limitOnly = await inject('GET', `/v1/sessions/${sessionId}/events/replay?limit=50`);
+      expect(limitOnly.statusCode).toBe(400);
+      expect(limitOnly.json().error).toContain('type filter');
+
       const snapshot = await inject('GET', `/v1/sessions/${sessionId}/pages/${pageId}/snapshot`);
       expect(snapshot.statusCode).toBe(200);
       expect(snapshot.json()).toMatchObject({ url: 'https://example.com/' });

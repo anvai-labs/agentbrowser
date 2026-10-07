@@ -211,9 +211,10 @@ export interface RawElement {
   name?: string;
   value?: string;
   /**
-   * True when this element is classified sensitive (password/hidden input,
-   * credential autocomplete semantics, or an explicit sensitive fill) and its
-   * value is withheld from observations, caches and fingerprints.
+   * True when this element's value, if any, is withheld: classified sensitive
+   * (password/hidden input, credential autocomplete semantics, or an explicit
+   * sensitive fill), or its type could not be established at the DOM-binding
+   * boundary and the value failed closed.
    */
   valueRedacted?: boolean;
   required?: boolean;

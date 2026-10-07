@@ -290,18 +290,18 @@ async function captureNativeFormEvidence({
       // the application-witness tamper comparison, whose hidden-drift check
       // needs those page-generated tokens; hidden inputs are not a user-
       // typeable channel, so credentials do not flow through them by fill.
-      // Password inputs, credential-autocomplete fields, and explicitly
-      // marked nodes never carry their value into evidence. Prefer the
-      // installed context policy so sensitive-fill marks apply; a missing
-      // policy falls back to the type/autocomplete check, never to disclosure.
+      // That exception never overrides an explicit sensitive-fill mark: a
+      // marked node stays redacted whatever its type. A missing policy falls
+      // back to the type/autocomplete check, never to disclosure.
       const policy = (globalThis as SensitiveInputPolicyGlobals).__agentbrowserSensitivePolicy;
       const credentialSensitive = policy
         ? policy.classify(control)
         : type === 'password' ||
-          /(^|\s)(current-password|new-password|one-time-code)(\s|$)/.test(
+          /(^|\s)(current-password|new-password|one-time-code|cc-number|cc-csc|cc-exp)(\s|$)/.test(
             (control.getAttribute('autocomplete') ?? '').toLowerCase()
           );
-      const sensitive = credentialSensitive && type !== 'hidden';
+      const sensitive =
+        (credentialSensitive && type !== 'hidden') || (policy?.marked(control) ?? false);
       const item: NativeFormControlEvidence = {
         nodeId: state.token(control),
         blockId: block ? state.token(block) : null,
@@ -646,6 +646,8 @@ interface SensitivityNode {
 interface SensitiveInputPolicy {
   classify(node: SensitivityNode): boolean;
   mark(node: SensitivityNode, explicit: boolean): boolean;
+  /** True only for nodes carrying an explicit sensitive-fill mark. */
+  marked(node: SensitivityNode): boolean;
 }
 
 type SensitiveInputPolicyGlobals = { __agentbrowserSensitivePolicy?: SensitiveInputPolicy };
@@ -656,13 +658,13 @@ type SensitiveInputPolicyGlobals = { __agentbrowserSensitivePolicy?: SensitiveIn
  * Playwright serializes the function source into the page, so it may reference
  * only its own scope and globalThis — never module bindings.
  *
- * Policy: a native password or hidden input is always sensitive; autocomplete
- * current-password/new-password/one-time-code are policy-sensitive (labels
- * alone can never establish safety, but those autocomplete tokens are explicit
- * credential semantics); a node marked by an explicit sensitive fill stays
- * sensitive for the node lifetime — show-password toggles change the input
- * type, never the classification, and the WeakSet identity dies with the node,
- * which is exactly the element lifetime the guarantee covers.
+ * Policy: a native password or hidden input is always sensitive; credential
+ * autocomplete tokens (password, one-time-code, payment card) are
+ * policy-sensitive (labels alone can never establish safety, but those tokens
+ * are explicit credential semantics); a node marked by an explicit sensitive
+ * fill stays sensitive for the node lifetime — show-password toggles change
+ * the input type, never the classification, and the WeakSet identity dies
+ * with the node, which is exactly the element lifetime the guarantee covers.
  */
 function sensitivityPolicyInit(): void {
   const globals = globalThis as SensitiveInputPolicyGlobals & {
@@ -681,10 +683,13 @@ function sensitivityPolicyInit(): void {
       if (type === 'password' || type === 'hidden') return true;
     }
     const autocomplete = (node.getAttribute('autocomplete') ?? '').toLowerCase();
-    return /(^|\s)(current-password|new-password|one-time-code)(\s|$)/.test(autocomplete);
+    return /(^|\s)(current-password|new-password|one-time-code|cc-number|cc-csc|cc-exp)(\s|$)/.test(
+      autocomplete
+    );
   };
   globals.__agentbrowserSensitivePolicy = {
     classify: (node) => marks().has(node) || policySensitive(node),
+    marked: (node) => marks().has(node),
     mark: (node, explicit) => {
       const sensitive = explicit || marks().has(node) || policySensitive(node);
       if (sensitive) marks().add(node);

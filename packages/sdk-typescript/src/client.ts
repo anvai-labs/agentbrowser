@@ -592,21 +592,21 @@ export class SessionsClient {
     };
   }
 
-  /** A3/network summary: replay retained session events, oldest first per ledger. */
+  /**
+   * A3/network summary: replay retained session events, oldest first per
+   * ledger. The undefined/string form is the legacy array-returning shape.
+   */
   async events(sessionId: string, type?: string): Promise<Array<Record<string, unknown>>>;
-  /** Paged replay: cursors are per-ledger entry sequences (paging requires a type filter). */
   /**
    * Replay retained session events. Object selectors always resolve to the
    * paging envelope `{events, nextCursor}` — the route answers with that
    * shape for type-only and limit-only queries too, and a bare array here
-   * made limit-only callers crash on `envelope.events.map`. The string
-   * selector is the legacy form and keeps returning a plain array.
+   * made limit-only callers crash on `envelope.events.map`.
    */
   async events(
     sessionId: string,
     options: { type?: string; since?: number; limit?: number }
   ): Promise<{ events: Array<Record<string, unknown>>; nextCursor: number }>;
-  async events(sessionId: string, selector: string): Promise<Array<Record<string, unknown>>>;
   async events(
     sessionId: string,
     selector: string | { type?: string; since?: number; limit?: number } = {}
@@ -627,7 +627,9 @@ export class SessionsClient {
       events: Array<Record<string, unknown>>;
       nextCursor?: number;
     }>(`/v1/sessions/${sessionId}/events/replay${query}`);
-    if (typeof selector === 'string') return body.events;
+    // The undefined/string selector keeps its legacy array shape (an
+    // explicitly-undefined argument must not silently become the envelope).
+    if (selector === undefined || typeof selector === 'string') return body.events;
     return { events: body.events, nextCursor: body.nextCursor ?? -1 };
   }
 

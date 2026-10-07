@@ -278,10 +278,12 @@ export const PageElementSchema = Type.Object({
   name: Type.Optional(Type.String()),
   value: Type.Optional(Type.String()),
   /**
-   * True when the element is classified sensitive (password/hidden input,
-   * credential autocomplete semantics, or an explicit sensitive fill): values
-   * are withheld from observations, caches and fingerprints. Absent value +
-   * valueRedacted:true means "withheld", not "empty".
+   * True when this element's value, if any, is withheld: the element is
+   * classified sensitive (password/hidden input, credential autocomplete
+   * semantics, or an explicit sensitive fill), or its type could not be
+   * established at the DOM-binding boundary (unbound element, dead frame
+   * context) and the value failed closed. Absent value + valueRedacted:true
+   * means "withheld", not "empty".
    */
   valueRedacted: Type.Optional(Type.Boolean()),
   required: Type.Optional(Type.Boolean()),

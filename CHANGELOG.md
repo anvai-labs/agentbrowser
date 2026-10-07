@@ -13,11 +13,11 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   carries password inputs as plaintext `textbox` values; a trusted sensitivity boundary at
   the DOM-binding point now withholds them from observations, the ref store, semantic
   fingerprints, diff caches and every downstream envelope. Policy: native password/hidden
-  inputs, `autocomplete` `current-password`/`new-password`/`one-time-code`, and explicit
-  `sensitive` fills (the classification persists for the element's lifetime across
-  show-password toggles and revisions). Elements whose type cannot be established fail
-  closed — values are dropped, never carried as fallback. Ordinary form values are
-  preserved for bulk-autofill verification.
+  inputs, `autocomplete` `current-password`/`new-password`/`one-time-code`/`cc-number`/
+  `cc-csc`/`cc-exp`, and explicit `sensitive` fills (the classification persists for the
+  element's lifetime across show-password toggles and revisions). Elements whose type
+  cannot be established fail closed — values are dropped, never carried as fallback.
+  Ordinary form values are preserved for bulk-autofill verification.
 - New `PageElement.valueRedacted` (and `NativeFormControlEvidence.valueRedacted`) marks
   withheld values: absent `value` + `valueRedacted:true` means "withheld", not "empty".
   Native form evidence keeps hidden-input values (documented exception: the application
