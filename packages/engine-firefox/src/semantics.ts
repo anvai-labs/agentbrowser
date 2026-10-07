@@ -55,12 +55,25 @@ export function describeElement(element: Element): {
   )
     .trim()
     .replace(/\s+/g, ' ');
+  // Same sensitivity policy as the Playwright engine (TD-BROWSER-13): a
+  // marked node (explicit sensitive fill), a password/hidden input, or a
+  // credential-autocomplete field never publishes its value; valueRedacted
+  // marks the withholding. Type and autocomplete gate without any registry;
+  // the marks WeakSet only carries explicit sensitive-fill history.
+  const sensitiveMarks = (globalThis as { __agentbrowserSensitiveInputs?: WeakSet<object> })
+    .__agentbrowserSensitiveInputs;
+  const credentialAutocomplete =
+    /(^|\s)(current-password|new-password|one-time-code|cc-number|cc-csc|cc-exp)(\s|$)/.test(
+      (element.getAttribute('autocomplete') ?? '').toLowerCase()
+    );
+  const sensitiveInputType = input.type === 'password' || input.type === 'hidden';
+  const sensitive =
+    sensitiveMarks?.has(element) === true || sensitiveInputType || credentialAutocomplete;
   const description: Omit<RawElement, 'ref'> = {
     role,
     name: name.slice(0, 500),
-    ...('value' in element && input.type !== 'password'
-      ? { value: String(input.value).slice(0, 2000) }
-      : {}),
+    ...('value' in element && !sensitive ? { value: String(input.value).slice(0, 2000) } : {}),
+    ...(sensitive ? { valueRedacted: true } : {}),
     ...(['checkbox', 'radio'].includes(role) ? { checked: input.checked } : {}),
     ...(tag === 'a'
       ? {

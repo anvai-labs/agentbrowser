@@ -454,7 +454,9 @@ describe('AgentBrowser CLI', () => {
       expect(sessions.html).toHaveBeenCalledWith('ses_1', 'pg_1');
 
       await run('session', 'events', 'ses_1', '--type', 'request.finished');
-      expect(sessions.events).toHaveBeenCalledWith('ses_1', 'request.finished');
+      // One envelope call shape for every flag combination (the legacy string
+      // selector returned a bare array; limit-only queries crashed on it).
+      expect(sessions.events).toHaveBeenCalledWith('ses_1', { type: 'request.finished' });
     });
 
     it('prints HTML inline by default and pulls stored bytes when not inlined', async () => {

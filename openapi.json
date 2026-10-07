@@ -2370,6 +2370,9 @@
                           "verified": {
                             "type": "boolean"
                           },
+                          "verificationWithheld": {
+                            "type": "boolean"
+                          },
                           "actual": {
                             "maxLength": 512,
                             "type": "string"
@@ -5610,6 +5613,18 @@
             "minLength": 1,
             "maxLength": 128,
             "type": "string"
+          },
+          "executionRequirement": {
+            "anyOf": [
+              {
+                "const": "ephemeral",
+                "type": "string"
+              },
+              {
+                "const": "durable",
+                "type": "string"
+              }
+            ]
           }
         }
       },
@@ -7064,6 +7079,9 @@
                 "value": {
                   "type": "string"
                 },
+                "valueRedacted": {
+                  "type": "boolean"
+                },
                 "required": {
                   "type": "boolean"
                 },
@@ -7312,6 +7330,9 @@
           },
           "value": {
             "type": "string"
+          },
+          "valueRedacted": {
+            "type": "boolean"
           },
           "required": {
             "type": "boolean"
@@ -9505,6 +9526,9 @@
                     },
                     "value": {
                       "type": "string"
+                    },
+                    "valueRedacted": {
+                      "type": "boolean"
                     },
                     "required": {
                       "type": "boolean"

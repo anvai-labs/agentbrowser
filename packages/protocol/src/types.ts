@@ -136,6 +136,13 @@ export interface EngagementScope {
   identityBindings?: ScopeIdentityBinding[];
 }
 
+/**
+ * C4b: the execution requirement for application writes. Missing
+ * normalizes to 'ephemeral'; 'durable' requires a qualified durable
+ * journal store and refuses typed when the runtime cannot satisfy it.
+ */
+export type ExecutionRequirement = 'ephemeral' | 'durable';
+
 export interface SessionPolicy {
   /** Optional since Phase 3: blockedHosts-only / downloads-only policies are legitimate (restrict-only). */
   allowedHosts?: string[];
@@ -323,6 +330,14 @@ export interface PageElement {
   role: string;
   name?: string;
   value?: string;
+  /**
+   * True when this element's value, if any, is withheld: classified sensitive
+   * (password/hidden input, credential autocomplete semantics, or an explicit
+   * sensitive fill), or its type could not be established at the DOM-binding
+   * boundary and the value failed closed. Absent value + valueRedacted:true
+   * means "withheld", not "empty".
+   */
+  valueRedacted?: boolean;
   required?: boolean;
   visible: boolean;
   enabled: boolean;

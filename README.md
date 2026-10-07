@@ -125,13 +125,17 @@ packages/
 └── benchmarks/         # Performance benchmarks
 ```
 
-The unbound MCP catalog exposes thirteen tools: `browser_create`, `browser_navigate`,
-`browser_observe`, `browser_act`, `browser_extract`, `browser_html`,
-`browser_screenshot`, `browser_pdf`, `browser_cookies`, `browser_close`, and the
-batched tools `browser_snapshot`, `browser_plan`, and `browser_autofill`.
-Delegated mode exposes twelve: it replaces create/close/cookies with
-`browser_session` and `browser_operation`. No raw selectors, no evaluate - element
-refs come from observations and die with their revision (ADR-009).
+The unbound MCP catalog exposes seventeen tools: `browser_create`,
+`browser_page_create`, `browser_pages`, `browser_navigate`, `browser_observe`,
+`browser_act`, `browser_extract`, `browser_html`, `browser_screenshot`,
+`browser_pdf`, `browser_cookies`, `browser_close`, `browser_events_replay`,
+`browser_session`, and the batched tools `browser_snapshot`, `browser_plan`,
+and `browser_autofill`. Delegated mode exposes fifteen: it drops
+create/close/cookies and adds `browser_session` and `browser_operation`. No raw
+selectors, no evaluate - element refs come from observations and die with their
+revision (ADR-009). Observed values are redacted at the engine's sensitivity
+boundary (TD-BROWSER-13): password and credential fields report
+`valueRedacted: true` instead of a value.
 
 ### The fast path for forms: snapshot then plan
 
@@ -167,8 +171,9 @@ service, then `agentbrowser describe act press` to load only one command's detai
 Execution uses the existing SDK/service: pass `--json`, quote shell arguments and
 inspect outcomes rather than relying on exit code alone. See the
 [CLI agent guide](docs/cli-agent-usage.md) for Bash/jq examples and reconciliation.
-The develop candidate adds offline `test evaluate` for caller-observed case reports;
-it reuses the bound test contract and needs no service or MCP connection.
+Offline `test evaluate` (shipped in 1.10.1) produces caller-observed case
+reports; it reuses the bound test contract and needs no service or MCP
+connection.
 
 ## Development
 
@@ -202,8 +207,8 @@ surface; the rest depends on who you are.
 **Understanding the design**
 
 - [Docs index](docs/README.md) - the full map: ADRs (the "why"), threat model, audits
-- [Architecture decisions](docs/README.md#architecture-decision-records-adrs) - ADR-001…015
-- [Technical designs](docs/td/) - TD-BROWSER-5…9 feature records
+- [Architecture decisions](docs/README.md#architecture-decision-records-adrs) - ADR-001…021
+- [Technical designs](docs/td/) - TD-BROWSER-5…13 feature records
 - [Threat model](docs/threat-model.md) - the security posture and its named limits
 - [Human handoff](docs/human-handoff.md) - working a session with a person in the loop: approval gates, headed credential entry, re-observe discipline
 - [Delegated sessions](docs/delegated-sessions.md) - human takeover, revocable agent credentials, and regression checks

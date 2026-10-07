@@ -1287,6 +1287,8 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           options.since = since;
         }
         if (query.limit !== undefined) {
+          if (options.type === undefined)
+            return responseDraft({ error: 'limit requires a type filter' }, 400);
           const limit = Number(query.limit);
           if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000)
             return responseDraft({ error: 'limit must be an integer in [1, 1000]' }, 400);

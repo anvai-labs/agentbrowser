@@ -96,7 +96,9 @@ validators and wire-action translation. No parallel JSON canonicalizer in MCP, Q
 or a durable store. Specify canonicalization version and bind fingerprints to the
 operation schema and scoped binding. For retained fingerprints of low-entropy secret
 values, use a keyed digest with a documented key lifetime; an unkeyed hash alone is
-not secret protection. This is a proposed durable-store refinement, not current behavior.
+not secret protection. Approval-gate action fingerprints already follow this rule
+(per-instance keyed HMAC since 1.15.2, key lifetime = process); durable-store
+retention remains proposed.
 
 Validate at public trust boundaries and before external dispatch. Internal typed
 calls should not repeatedly serialize the same validated value. Cache compiled

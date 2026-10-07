@@ -45,6 +45,57 @@ function fixture(initial: PageElement[]) {
 }
 
 describe('bulk autofill closed loop', () => {
+  it('withheld verification on a sensitive control keeps filling the remaining fields', async () => {
+    const otp: PageElement = { ...field('otp', 'one'), name: 'Code' };
+    const device: PageElement = { ...field('dev', 'two'), name: 'Device name' };
+    const redact = (element: PageElement): PageElement => {
+      const { value: _withheld, ...rest } = element;
+      return { ...rest, valueRedacted: true };
+    };
+    let filledOtp = false;
+    let filledDevice = '';
+    const f = fixture([otp, device]);
+    f.act.mockImplementation(
+      async (request: { target?: { ref?: string }; value?: string }, onDispatch: () => void) => {
+        onDispatch();
+        f.dispatch();
+        if (request.target?.ref === 'otp') {
+          filledOtp = true;
+          // Post-fill observation of a policy-sensitive control: value
+          // withheld by the engine's redaction boundary.
+          f.replace([redact(otp), device]);
+        } else {
+          filledDevice = String(request.value ?? '');
+          f.replace([redact(otp), { ...device, value: filledDevice }]);
+        }
+      }
+    );
+    const report = await runAutofill(
+      {
+        fields: [
+          { match: { label: 'Code' }, value: '123456' },
+          { match: { label: 'Device name' }, value: 'YubiKey 5C' },
+        ],
+        policy: { settleMs: 0 },
+      },
+      f
+    );
+    expect(filledOtp).toBe(true);
+    expect(filledDevice).toBe('YubiKey 5C');
+    expect(f.act).toHaveBeenCalledTimes(2);
+    // A withheld receipt never aborts the loop, never reports a mismatch, and
+    // never leaks the value — retrying a "failed" report would double-write
+    // the credential.
+    expect(report.receipts[0]).toMatchObject({
+      status: 'unverified',
+      verified: false,
+      verificationWithheld: true,
+    });
+    expect(report.receipts[0]?.actual).toBeUndefined();
+    expect(report.receipts[1]).toMatchObject({ status: 'verified', verified: true });
+    expect(report.ok).toBe(true);
+  });
+
   it('fills identical labels within stable blocks despite document reorder', async () => {
     const f = fixture([field('a', 'old'), field('b', 'current')]);
     f.act.mockImplementationOnce(async (_request, onDispatch) => {

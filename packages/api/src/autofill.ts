@@ -376,7 +376,7 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
       expectedValues.push(value);
     }
   }
-  for (const [index, field] of (preflightFailed ? [] : request.fields).entries()) {
+  fieldLoop: for (const [index, field] of (preflightFailed ? [] : request.fields).entries()) {
     const receipt = receipts[index] as AutofillReceipt;
     const execution: { state: 'not_started' | 'dispatched' | 'completed' } = {
       state: 'not_started',
@@ -506,6 +506,16 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
         // Verify the originally written node and selector, never a matching replacement.
         if (resolve(fresh, field.match, blocks).attributes?.['autofill-node'] !== identity)
           throw new AutofillFailure('STALE_TARGET', 'Field identity changed after dispatch');
+        if (same.valueRedacted === true) {
+          // Sensitive control: the observed value is withheld by policy, so
+          // value verification is impossible. The write itself completed;
+          // report withheld, never as a mismatch (a false "failed" would
+          // invite a retry that double-writes a credential) — and keep
+          // filling the remaining fields, like verify:'none'.
+          receipt.status = 'unverified';
+          receipt.verificationWithheld = true;
+          continue fieldLoop;
+        }
         display(receipt, same.value);
         if (strategy.isCommitted(same, expected)) {
           receipt.verified = true;
@@ -563,12 +573,24 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
           display(receipt, same.value);
           const strategy = selectedStrategies.get(receipt.field);
           if (!strategy?.isCommitted(same, expectedValues[receipt.field] as string)) {
-            receipt.verified = false;
-            receipt.status = 'failed';
-            receipt.error = {
-              code: 'VALUE_MISMATCH',
-              message: 'A later field changed this value before final verification',
-            };
+            // The per-field loop's withheld rule applies here too: a control
+            // newly classified sensitive has its value withheld by policy, and
+            // downgrading a verified receipt to a mismatch would invite a
+            // retry that double-writes a credential.
+            if (same.valueRedacted === true) {
+              receipt.verified = false;
+              receipt.status = 'unverified';
+              receipt.verificationWithheld = true;
+              Reflect.deleteProperty(receipt, 'actual');
+              Reflect.deleteProperty(receipt, 'actualTruncated');
+            } else {
+              receipt.verified = false;
+              receipt.status = 'failed';
+              receipt.error = {
+                code: 'VALUE_MISMATCH',
+                message: 'A later field changed this value before final verification',
+              };
+            }
           }
         } catch {
           receipt.verified = false;

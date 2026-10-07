@@ -548,6 +548,28 @@ A revoked delegated token and another tenant receive no terminal facts. Engine o
 window intent is not inferred from error text. See the
 [R5b1 design](spec/design/session-close-causes.md).
 
+### Replay session event ledgers
+
+`agentbrowser session events SESSION_ID` replays the retained console + request
+ledgers oldest-first. Every flag combination prints the same paging envelope —
+`nextCursor:` followed by one line per event — and `--json` returns
+`{events, nextCursor}` (since 1.15.2 the object-selector SDK form resolves to
+that envelope for type-only and limit-only queries too; only the legacy
+string/undefined selector returns a bare array).
+
+```bash
+agentbrowser session events ses_x --type console.log --limit 50   # newest 50 console lines
+agentbrowser session events ses_x --type request.failed           # network failures
+agentbrowser session events ses_x --type console.log --since 412  # continue past a cursor
+agentbrowser session events ses_x                                  # merged ledger view
+```
+
+`--since`/`--limit` require `--type`: cursors are per-ledger entry sequences, so
+paging crosses one stream at a time. Ledger content is page-derived and untrusted;
+console lines can contain anything the page logged, so never paste raw ledgers
+into instructions. Do not dump raw ledgers to hunt for credentials — if a
+credential may have been exposed, follow the incident process instead.
+
 ### Navigation failure diagnostics
 
 `agentbrowser navigate SESSION PAGE URL --json` preserves successful result JSON.
