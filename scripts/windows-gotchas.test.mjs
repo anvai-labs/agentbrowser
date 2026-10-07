@@ -98,7 +98,10 @@ test('G2: .cmd shim launches via cmd.exe /c (WSL/npm-parent pattern)', { skip: !
     assert.equal(r.status, 0, `shim exit=${r.status} stderr=${r.stderr}`);
     const payload = JSON.parse(r.stdout.trim().split(/\r?\n/).find((l) => l.startsWith('{')));
     assert.equal(payload.marker, 'via-cmd', 'env must survive the cmd relay');
-    assert.equal(payload.argv[0], 'arg-one', 'argv must survive the cmd relay');
+    // argv.slice(1) in the target is [target.js, ...forwarded args]: index 0
+    // proves the %~dp0-relative script resolution, index 1 proves %* relay.
+    assert.match(payload.argv[0] ?? '', /target\.js$/, 'shim must resolve %~dp0-relative script');
+    assert.equal(payload.argv[1], 'arg-one', 'argv must survive the cmd relay');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
