@@ -37,6 +37,29 @@ describe('evidence boundaries', () => {
       await service.shutdown();
     }
   });
+  it('returns the merged ledger view for an unfiltered object selector', async () => {
+    // Regression: `{}` (the HTTP form of "no filter") used to filter events
+    // by an undefined type and always returned an empty envelope.
+    const engine = new FakeEngine();
+    const service = new AgentBrowserService({ engine });
+    try {
+      const { sessionId } = await service.createSession({ tenantId: 'local' });
+      const { pageId } = await service.createPage(sessionId);
+      await service.navigate(sessionId, pageId, { url: 'https://example.test/' });
+      const engineId = engine.getSessionIds()[0];
+      const page = engineId ? engine.getFakePage(engineId, pageId) : undefined;
+      if (!page) throw new Error('Missing fake page');
+      page.emitEvent('console', { text: 'hello' });
+      await expect
+        .poll(() => service.getSessionEvents(sessionId, {}).events.length)
+        .toBeGreaterThan(0);
+      const merged = service.getSessionEvents(sessionId, {});
+      expect(merged.events.some((event) => event.type === 'console')).toBe(true);
+      expect(merged.nextCursor).toBe(-1);
+    } finally {
+      await service.shutdown();
+    }
+  });
   it('retains owner checks through session expiry and expires artifacts independently', async () => {
     const clock = vi.spyOn(Date, 'now');
     const start = clock.getMockImplementation()?.() ?? Date.now();

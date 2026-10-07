@@ -147,6 +147,10 @@ export class ObservationNormalizer {
         element.value = rawEl.value;
       }
 
+      if (rawEl.valueRedacted !== undefined) {
+        element.valueRedacted = rawEl.valueRedacted;
+      }
+
       if (rawEl.required !== undefined) {
         element.required = rawEl.required;
       }

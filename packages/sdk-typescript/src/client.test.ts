@@ -1473,5 +1473,59 @@ describe('SessionsClient.extract schema passthrough', () => {
         'http://localhost:5709/v1/sessions/ses_1/events/replay?type=console.error&since=3&limit=2'
       );
     });
+
+    it('returns the paging envelope for limit-only queries, not a bare array', async () => {
+      // Regression: `--limit` without `--since` used to return the inner
+      // array, crashing formatted callers on `envelope.events.map`.
+      const fetchMock = global.fetch as unknown as {
+        mock: { calls: unknown[][] };
+        mockResolvedValueOnce(value: unknown): unknown;
+      };
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          events: [{ type: 'console.log', seq: 1 }],
+          nextCursor: 1,
+        }),
+      });
+      const localClient = new AgentBrowserClient({ baseUrl: 'http://localhost:5709' });
+      const envelope = await localClient.sessions.events('ses_1', {
+        type: 'console.log',
+        limit: 50,
+      });
+      expect(Array.isArray(envelope)).toBe(false);
+      expect(envelope.events).toHaveLength(1);
+      expect(envelope.nextCursor).toBe(1);
+      const calls = fetchMock.mock.calls;
+      const eventsCall = calls[calls.length - 1] as unknown[];
+      expect(eventsCall[0]).toBe(
+        'http://localhost:5709/v1/sessions/ses_1/events/replay?type=console.log&limit=50'
+      );
+    });
+
+    it('returns the merged paging envelope when no filter is given', async () => {
+      const fetchMock = global.fetch as unknown as {
+        mock: { calls: unknown[][] };
+        mockResolvedValueOnce(value: unknown): unknown;
+      };
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          events: [
+            { type: 'console.log', seq: 1 },
+            { type: 'request.finished', seq: 2 },
+          ],
+          nextCursor: -1,
+        }),
+      });
+      const localClient = new AgentBrowserClient({ baseUrl: 'http://localhost:5709' });
+      const envelope = await localClient.sessions.events('ses_1', {});
+      expect(Array.isArray(envelope)).toBe(false);
+      expect(envelope.events).toHaveLength(2);
+      expect(envelope.nextCursor).toBe(-1);
+      const calls = fetchMock.mock.calls;
+      const eventsCall = calls[calls.length - 1] as unknown[];
+      expect(eventsCall[0]).toBe('http://localhost:5709/v1/sessions/ses_1/events/replay');
+    });
   });
 });

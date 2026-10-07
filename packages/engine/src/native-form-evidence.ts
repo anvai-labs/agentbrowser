@@ -110,6 +110,7 @@ export function parseNativeFormEvidence(input: unknown): NativeFormEvidence {
         'tag',
         'type',
         'value',
+        'valueRedacted',
         'disabled',
         'required',
         'visible',
@@ -130,6 +131,10 @@ export function parseNativeFormEvidence(input: unknown): NativeFormEvidence {
       }
       string(control.name, limits.identifier);
       string(control.value, limits.value);
+      boolean(control.valueRedacted);
+      // A withheld value must actually be empty: redaction and a residual
+      // value can never coexist.
+      if (control.valueRedacted && control.value !== '') throw new Error();
       boolean(control.disabled);
       boolean(control.required);
       boolean(control.visible);

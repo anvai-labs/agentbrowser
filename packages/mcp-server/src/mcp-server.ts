@@ -865,15 +865,13 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         const limit = typeof args.limit === 'number' ? args.limit : undefined;
         if ((since !== undefined || limit !== undefined) && type === undefined)
           throw new UsageError('since/limit require a type filter (cursors are per-ledger)');
-        if (since !== undefined || limit !== undefined) {
-          return client.sessions.events(sessionId, {
-            type: type as string,
-            ...(since !== undefined ? { since } : {}),
-            ...(limit !== undefined ? { limit } : {}),
-          });
-        }
-        const events = await client.sessions.events(sessionId, type);
-        return { events, nextCursor: -1 };
+        // Object selectors resolve to the paging envelope for every flag
+        // combination; the tool's result shape is stable across calls.
+        return client.sessions.events(sessionId, {
+          ...(type !== undefined ? { type } : {}),
+          ...(since !== undefined ? { since } : {}),
+          ...(limit !== undefined ? { limit } : {}),
+        });
       },
     },
   ];

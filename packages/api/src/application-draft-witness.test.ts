@@ -30,6 +30,7 @@ function fixture() {
     tag: 'input' as const,
     type,
     value,
+    valueRedacted: false,
     disabled: false,
     required: false,
     visible: type !== 'hidden',

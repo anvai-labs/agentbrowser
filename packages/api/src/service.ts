@@ -908,7 +908,13 @@ export class AgentBrowserService {
       const last = rows.at(-1)?.seq ?? since;
       return { events: rows, nextCursor: last };
     }
-    if (typeFilter?.startsWith('request.')) {
+    if (typeFilter === undefined) {
+      // Over HTTP the route always builds an object selector, so `{}` is the
+      // "no selector" merged view — not a filter for events with an undefined
+      // type (which matches nothing).
+      return { events: [...others, ...requests], nextCursor: -1 };
+    }
+    if (typeFilter.startsWith('request.')) {
       return { events: requests.filter((event) => event.type === typeFilter), nextCursor: -1 };
     }
     return { events: others.filter((event) => event.type === typeFilter), nextCursor: -1 };

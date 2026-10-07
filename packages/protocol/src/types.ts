@@ -330,6 +330,14 @@ export interface PageElement {
   role: string;
   name?: string;
   value?: string;
+  /**
+   * True when this element's value, if any, is withheld: classified sensitive
+   * (password/hidden input, credential autocomplete semantics, or an explicit
+   * sensitive fill), or its type could not be established at the DOM-binding
+   * boundary and the value failed closed. Absent value + valueRedacted:true
+   * means "withheld", not "empty".
+   */
+  valueRedacted?: boolean;
   required?: boolean;
   visible: boolean;
   enabled: boolean;

@@ -48,11 +48,14 @@ describe('browser_events_replay', () => {
     expect(tool?.inputSchema.required).toEqual(['sessionId']);
   });
 
-  it('passes a type filter through and returns the ledger array unpaged', async () => {
+  it('passes a type filter through and returns the paging envelope unpaged', async () => {
     const f = fixture();
-    f.events.mockResolvedValue([{ type: 'console.error', data: { text: 'boom' } }]);
+    f.events.mockResolvedValue({
+      events: [{ type: 'console.error', data: { text: 'boom' } }],
+      nextCursor: -1,
+    });
     const result = await f.call({ sessionId: 'ses_1', type: 'console.error' });
-    expect(f.events).toHaveBeenCalledWith('ses_1', 'console.error');
+    expect(f.events).toHaveBeenCalledWith('ses_1', { type: 'console.error' });
     expect(result).toMatchObject({ events: [{ type: 'console.error' }], nextCursor: -1 });
   });
 

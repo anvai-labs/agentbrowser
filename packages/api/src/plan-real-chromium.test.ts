@@ -80,9 +80,15 @@ describe('waitForLabel against real Chromium (pressure matrix row 2)', () => {
 
       const after = (await service.observe(session.sessionId, page.pageId, {
         mode: 'interactive',
-      })) as unknown as { elements: Array<{ name?: string; value?: string }> };
+      })) as unknown as {
+        elements: Array<{ name?: string; value?: string; valueRedacted?: boolean }>;
+      };
       const password = after.elements.find((e) => e.name === 'Password');
-      expect(password?.value).toBe('hunter2');
+      // The fill verified (result above); the observed value stays withheld —
+      // password values never re-enter observations after the fill.
+      expect(password?.value).toBeUndefined();
+      expect(password?.valueRedacted).toBe(true);
+      expect(JSON.stringify(after)).not.toContain('hunter2');
     } finally {
       await service.shutdown();
     }
