@@ -96,6 +96,13 @@ export const AutofillReceiptSchema = Type.Object(
       )
     ),
     verified: Type.Boolean(),
+    /**
+     * True when the control is classified sensitive (password/credential
+     * semantics) and its observed value is withheld by policy: the write
+     * completed, but value verification is impossible by design. Distinct
+     * from a mismatch — never reported as failed.
+     */
+    verificationWithheld: Type.Optional(Type.Boolean()),
     actual: Type.Optional(Type.String({ maxLength: 512 })),
     actualTruncated: Type.Optional(Type.Boolean()),
     error: Type.Optional(Type.Object({ code: Type.String(), message: Type.String() }, strict)),

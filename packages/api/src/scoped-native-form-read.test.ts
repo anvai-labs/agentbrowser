@@ -25,6 +25,7 @@ const evidence = (): NativeFormEvidence => ({
       tag: 'input',
       type: 'text',
       value: 'Synthetic Person',
+      valueRedacted: false,
       disabled: false,
       required: true,
       visible: true,

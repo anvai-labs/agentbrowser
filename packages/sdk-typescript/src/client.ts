@@ -595,12 +595,18 @@ export class SessionsClient {
   /** A3/network summary: replay retained session events, oldest first per ledger. */
   async events(sessionId: string, type?: string): Promise<Array<Record<string, unknown>>>;
   /** Paged replay: cursors are per-ledger entry sequences (paging requires a type filter). */
+  /**
+   * Replay retained session events. Object selectors always resolve to the
+   * paging envelope `{events, nextCursor}` — the route answers with that
+   * shape for type-only and limit-only queries too, and a bare array here
+   * made limit-only callers crash on `envelope.events.map`. The string
+   * selector is the legacy form and keeps returning a plain array.
+   */
   async events(
     sessionId: string,
-    options:
-      | { type?: string; since: number; limit?: number }
-      | { type: string; since?: number; limit?: number }
+    options: { type?: string; since?: number; limit?: number }
   ): Promise<{ events: Array<Record<string, unknown>>; nextCursor: number }>;
+  async events(sessionId: string, selector: string): Promise<Array<Record<string, unknown>>>;
   async events(
     sessionId: string,
     selector: string | { type?: string; since?: number; limit?: number } = {}
@@ -608,16 +614,12 @@ export class SessionsClient {
     Array<Record<string, unknown>> | { events: Array<Record<string, unknown>>; nextCursor: number }
   > {
     let query = '';
-    let paged = false;
     if (typeof selector === 'string') {
       query = selector !== '' ? `?type=${encodeURIComponent(selector)}` : '';
     } else {
       const params = new URLSearchParams();
       if (selector.type !== undefined) params.set('type', selector.type);
-      if (selector.since !== undefined) {
-        params.set('since', String(selector.since));
-        paged = true;
-      }
+      if (selector.since !== undefined) params.set('since', String(selector.since));
       if (selector.limit !== undefined) params.set('limit', String(selector.limit));
       query = params.size > 0 ? `?${params.toString()}` : '';
     }
@@ -625,8 +627,8 @@ export class SessionsClient {
       events: Array<Record<string, unknown>>;
       nextCursor?: number;
     }>(`/v1/sessions/${sessionId}/events/replay${query}`);
-    if (paged) return { events: body.events, nextCursor: body.nextCursor ?? -1 };
-    return body.events;
+    if (typeof selector === 'string') return body.events;
+    return { events: body.events, nextCursor: body.nextCursor ?? -1 };
   }
 
   /** Structured native form filling; choose an operation ID before dispatch. */

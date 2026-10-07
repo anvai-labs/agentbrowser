@@ -772,27 +772,24 @@ export function buildCli(deps: CliDependencies): Cli {
               if (options.since !== undefined || options.limit !== undefined) {
                 if (options.type === undefined)
                   throw new UsageError('--since/--limit require --type (cursors are per-ledger)');
-                const since =
-                  options.since !== undefined
-                    ? captureInteger(options.since, '--since')
-                    : undefined;
-                const limit =
-                  options.limit !== undefined
-                    ? captureInteger(options.limit, '--limit')
-                    : undefined;
-                const envelope = await ctx.client.sessions.events(sessionId, {
-                  type: options.type,
-                  ...(since !== undefined ? { since } : {}),
-                  ...(limit !== undefined ? { limit } : {}),
-                });
-                ctx.emit(envelope, () => [
-                  `nextCursor: ${envelope.nextCursor}`,
-                  ...envelope.events.map(describe),
-                ]);
-                return;
               }
-              const events = await ctx.client.sessions.events(sessionId, options.type);
-              ctx.emit(events, () => events.map(describe));
+              const since =
+                options.since !== undefined ? captureInteger(options.since, '--since') : undefined;
+              const limit =
+                options.limit !== undefined ? captureInteger(options.limit, '--limit') : undefined;
+              // One call shape for every flag combination: the object selector
+              // always resolves to the paging envelope. (The legacy string
+              // selector returned a bare array whose `.events` access crashed
+              // the formatted path for limit-only queries.)
+              const envelope = await ctx.client.sessions.events(sessionId, {
+                ...(options.type !== undefined ? { type: options.type } : {}),
+                ...(since !== undefined ? { since } : {}),
+                ...(limit !== undefined ? { limit } : {}),
+              });
+              ctx.emit(envelope, () => [
+                `nextCursor: ${envelope.nextCursor}`,
+                ...envelope.events.map(describe),
+              ]);
             }
           )
         );

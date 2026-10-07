@@ -2370,6 +2370,9 @@
                           "verified": {
                             "type": "boolean"
                           },
+                          "verificationWithheld": {
+                            "type": "boolean"
+                          },
                           "actual": {
                             "maxLength": 512,
                             "type": "string"
@@ -7076,6 +7079,9 @@
                 "value": {
                   "type": "string"
                 },
+                "valueRedacted": {
+                  "type": "boolean"
+                },
                 "required": {
                   "type": "boolean"
                 },
@@ -7324,6 +7330,9 @@
           },
           "value": {
             "type": "string"
+          },
+          "valueRedacted": {
+            "type": "boolean"
           },
           "required": {
             "type": "boolean"
@@ -9517,6 +9526,9 @@
                     },
                     "value": {
                       "type": "string"
+                    },
+                    "valueRedacted": {
+                      "type": "boolean"
                     },
                     "required": {
                       "type": "boolean"

@@ -7,6 +7,33 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Security — TD-BROWSER-13: observation secret redaction (release blocker)
+
+- **Password values no longer leak through observations.** Playwright's aria snapshot
+  carries password inputs as plaintext `textbox` values; a trusted sensitivity boundary at
+  the DOM-binding point now withholds them from observations, the ref store, semantic
+  fingerprints, diff caches and every downstream envelope. Policy: native password/hidden
+  inputs, `autocomplete` `current-password`/`new-password`/`one-time-code`, and explicit
+  `sensitive` fills (the classification persists for the element's lifetime across
+  show-password toggles and revisions). Elements whose type cannot be established fail
+  closed — values are dropped, never carried as fallback. Ordinary form values are
+  preserved for bulk-autofill verification.
+- New `PageElement.valueRedacted` (and `NativeFormControlEvidence.valueRedacted`) marks
+  withheld values: absent `value` + `valueRedacted:true` means "withheld", not "empty".
+  Native form evidence keeps hidden-input values (documented exception: the application
+  witness's hidden-drift tamper check needs page-generated tokens; hidden inputs are not a
+  user-typeable channel).
+- Autofill receipts for sensitive controls report `unverified` + `verificationWithheld`
+  instead of a false value mismatch.
+- Approval-gate action fingerprints use a per-instance keyed HMAC (they cover full action
+  JSON including fill values; unkeyed digests of low-entropy secrets were brute-forceable).
+- **CLI/SDK/API fix**: `sessions.events` object selectors always resolve to the
+  `{events, nextCursor}` envelope — `--limit` without `--since` used to return a bare array
+  and crash the CLI's formatted output (`envelope.events.map`); an unfiltered selector now
+  returns the merged console+request ledger instead of an always-empty envelope.
+  Design + honest boundaries (screenshots, raw HTML, page-side exfiltration):
+  `docs/td/TD-BROWSER-13-observation-secret-redaction.md`.
+
 ### Added — task T7 (audit/security), slices 2a/1/3
 
 - **Engagement scope enforcement** (`policy.scope` on session create; MCP `browser_create`

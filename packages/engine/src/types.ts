@@ -210,6 +210,12 @@ export interface RawElement {
   role: string;
   name?: string;
   value?: string;
+  /**
+   * True when this element is classified sensitive (password/hidden input,
+   * credential autocomplete semantics, or an explicit sensitive fill) and its
+   * value is withheld from observations, caches and fingerprints.
+   */
+  valueRedacted?: boolean;
   required?: boolean;
   visible: boolean;
   enabled: boolean;
@@ -456,6 +462,14 @@ export interface NativeFormControlEvidence {
   tag: 'input' | 'textarea' | 'select' | 'button';
   type: string;
   value: string;
+  /**
+   * True when the control is classified credential-sensitive (password input,
+   * credential autocomplete semantics, or an explicit sensitive-fill mark)
+   * and `value` was withheld at capture. Hidden inputs are the documented
+   * exception: their page-generated tokens stay for the witness tamper
+   * comparison. Always present; parser validation requires the exact key set.
+   */
+  valueRedacted: boolean;
   disabled: boolean;
   required: boolean;
   visible: boolean;

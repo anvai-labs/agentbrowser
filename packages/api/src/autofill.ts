@@ -506,6 +506,15 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
         // Verify the originally written node and selector, never a matching replacement.
         if (resolve(fresh, field.match, blocks).attributes?.['autofill-node'] !== identity)
           throw new AutofillFailure('STALE_TARGET', 'Field identity changed after dispatch');
+        if (same.valueRedacted === true) {
+          // Sensitive control: the observed value is withheld by policy, so
+          // value verification is impossible. The write itself completed;
+          // report withheld, never as a mismatch (a false "failed" would
+          // invite a retry that double-writes a credential).
+          receipt.status = 'unverified';
+          receipt.verificationWithheld = true;
+          break;
+        }
         display(receipt, same.value);
         if (strategy.isCommitted(same, expected)) {
           receipt.verified = true;

@@ -61,6 +61,7 @@ function context() {
     }),
     cookies: vi.fn().mockResolvedValue([]),
     addCookies: vi.fn().mockResolvedValue(undefined),
+    addInitScript: vi.fn().mockResolvedValue(undefined),
     pages: vi.fn(() => pages),
   };
 }

@@ -704,6 +704,7 @@ function captureForm() {
         tag: 'input' as const,
         type: 'text',
         value: 'Synthetic Person',
+        valueRedacted: false,
         disabled: false,
         required: true,
         visible: true,

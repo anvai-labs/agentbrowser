@@ -5,7 +5,7 @@
  * automatic expiration, validation, and usage tracking.
  */
 
-import { createHash, randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import type { OperatorApprovalView } from '@agentbrowser/protocol';
 import { canonicalJson } from './canonical-json.js';
 import type { StructuredLogger } from './logger.js';
@@ -96,6 +96,14 @@ export class ApprovalGate {
    * could reintroduce drift, hence the dedicated consistency test.
    */
   private readonly sessionIndex: Map<string, Set<string>> = new Map();
+  /**
+   * Per-instance key for action fingerprints. The fingerprint covers the full
+   * action JSON — including fill values — and is echoed in operator-review
+   * views; an unkeyed digest of a low-entropy secret would be brute-forceable
+   * offline, so bind it to a key that never leaves this process. Tokens are
+   * in-memory and short-lived: issuance and validation always share the key.
+   */
+  private readonly fingerprintKey = randomBytes(32);
   private cleanupTimer?: NodeJS.Timeout;
   private closed = false;
 
@@ -480,7 +488,7 @@ export class ApprovalGate {
         throw new Error('Invalid binding');
       return {
         sessionId: detached.sessionId,
-        actionFingerprint: `${detached.action.type}:${createHash('sha256').update(canonicalJson(detached.action)).digest('hex')}`,
+        actionFingerprint: `${detached.action.type}:${createHmac('sha256', this.fingerprintKey).update(canonicalJson(detached.action)).digest('hex')}`,
       };
     } catch {
       throw new ApprovalError(

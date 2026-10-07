@@ -21,6 +21,7 @@ function evidence() {
         tag: 'input',
         type: 'text',
         value: 'Private Name',
+        valueRedacted: false,
         disabled: false,
         required: true,
         visible: true,

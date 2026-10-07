@@ -40,6 +40,7 @@ function context() {
     newPage: vi.fn(),
     close: vi.fn().mockResolvedValue(undefined),
     cookies: vi.fn().mockResolvedValue([]),
+    addInitScript: vi.fn().mockResolvedValue(undefined),
     browser: vi.fn(),
     emitClose() {
       listeners.get('close')?.(undefined as never);

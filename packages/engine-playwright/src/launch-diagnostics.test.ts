@@ -167,7 +167,9 @@ describe('bounded launch diagnostics', () => {
     expect(mocks.access).not.toHaveBeenCalled();
     expect(mocks.launch).not.toHaveBeenCalled();
     expect(mocks.connectOverCDP).toHaveBeenCalledTimes(1);
-    expect(ctx.addInitScript).toHaveBeenCalledTimes(1);
+    // Two context scripts: the unconditional sensitivity-classification policy
+    // plus the headed locale/webdriver overrides.
+    expect(ctx.addInitScript).toHaveBeenCalledTimes(2);
     expect(session.diagnostics).toEqual({
       attachment: 'remote_cdp',
       browserFamily: 'chromium',

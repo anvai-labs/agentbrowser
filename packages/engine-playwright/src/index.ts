@@ -82,6 +82,14 @@ interface StoredElement {
   role: string;
   name?: string;
   value?: string;
+  /**
+   * Value parsed from the ARIA snapshot before the DOM-binding boundary has
+   * classified sensitivity. Untrusted by construction: promoted to `value`
+   * only after the bound node is proven non-sensitive, and never serialized.
+   */
+  untrustedValue?: string;
+  /** True when this element is classified sensitive and its values withheld. */
+  valueRedacted?: boolean;
   visible: boolean;
   enabled: boolean;
   href?: string;
@@ -277,6 +285,23 @@ async function captureNativeFormEvidence({
       const block = control.closest('fieldset');
       const rect = control.getBoundingClientRect();
       const visibility = doc.defaultView?.getComputedStyle(control).visibility;
+      // Same sensitivity policy as observed values, with one documented
+      // exception: hidden inputs keep their value here. This inventory feeds
+      // the application-witness tamper comparison, whose hidden-drift check
+      // needs those page-generated tokens; hidden inputs are not a user-
+      // typeable channel, so credentials do not flow through them by fill.
+      // Password inputs, credential-autocomplete fields, and explicitly
+      // marked nodes never carry their value into evidence. Prefer the
+      // installed context policy so sensitive-fill marks apply; a missing
+      // policy falls back to the type/autocomplete check, never to disclosure.
+      const policy = (globalThis as SensitiveInputPolicyGlobals).__agentbrowserSensitivePolicy;
+      const credentialSensitive = policy
+        ? policy.classify(control)
+        : type === 'password' ||
+          /(^|\s)(current-password|new-password|one-time-code)(\s|$)/.test(
+            (control.getAttribute('autocomplete') ?? '').toLowerCase()
+          );
+      const sensitive = credentialSensitive && type !== 'hidden';
       const item: NativeFormControlEvidence = {
         nodeId: state.token(control),
         blockId: block ? state.token(block) : null,
@@ -284,7 +309,8 @@ async function captureNativeFormEvidence({
         name: bounded(control.name),
         tag,
         type,
-        value: bounded(control.value, limits.value),
+        value: sensitive ? '' : bounded(control.value, limits.value),
+        valueRedacted: sensitive,
         disabled: control.matches(':disabled'),
         required: Boolean(control.required),
         visible:
@@ -578,6 +604,23 @@ const FORM_CONTROL_SELECTOR = [
 
 /** Boundlessness guard: at most this many controls are minted per observation. */
 const MAX_FORM_CONTROLS = 200;
+
+/**
+ * Roles whose elements can carry an observed value. Only these (and any
+ * element the ARIA snapshot gave a value) pay the sensitivity probe; other
+ * roles can hold nothing to withhold.
+ */
+const VALUE_BEARING_ROLES = new Set([
+  'textbox',
+  'passwordbox',
+  'searchbox',
+  'spinbutton',
+  'combobox',
+  'slider',
+  'option',
+  'treeitem',
+  'control',
+]);
 // Late async normalization (masking, formatting) can race the post-fill readback;
 // a mismatching value is re-read once after this much settle time.
 const FILL_VERIFY_SETTLE_MS = 250;
@@ -588,6 +631,93 @@ function unquote(value: string): string {
   const match = /^"((?:[^"\\]|\\.)*)"$/.exec(trimmed);
   return match?.[1] !== undefined ? match[1] : trimmed;
 }
+
+/**
+ * Structural DOM surface the sensitivity policy reads. Evaluated in the
+ * element's own frame context (handle.evaluate), so frame-hosted controls
+ * classify against their own document.
+ */
+interface SensitivityNode {
+  tagName: string;
+  getAttribute(name: string): string | null;
+}
+
+/** In-page sensitivity policy installed per context by addInitScript. */
+interface SensitiveInputPolicy {
+  classify(node: SensitivityNode): boolean;
+  mark(node: SensitivityNode, explicit: boolean): boolean;
+}
+
+type SensitiveInputPolicyGlobals = { __agentbrowserSensitivePolicy?: SensitiveInputPolicy };
+
+/**
+ * The sensitivity policy body, installed once per browser context so every
+ * frame document carries it (addInitScript runs in each). Self-contained:
+ * Playwright serializes the function source into the page, so it may reference
+ * only its own scope and globalThis — never module bindings.
+ *
+ * Policy: a native password or hidden input is always sensitive; autocomplete
+ * current-password/new-password/one-time-code are policy-sensitive (labels
+ * alone can never establish safety, but those autocomplete tokens are explicit
+ * credential semantics); a node marked by an explicit sensitive fill stays
+ * sensitive for the node lifetime — show-password toggles change the input
+ * type, never the classification, and the WeakSet identity dies with the node,
+ * which is exactly the element lifetime the guarantee covers.
+ */
+function sensitivityPolicyInit(): void {
+  const globals = globalThis as SensitiveInputPolicyGlobals & {
+    __agentbrowserSensitiveInputs?: WeakSet<object>;
+  };
+  const marks = (): WeakSet<object> => {
+    const existing = globals.__agentbrowserSensitiveInputs;
+    if (existing !== undefined) return existing;
+    const created = new WeakSet<object>();
+    globals.__agentbrowserSensitiveInputs = created;
+    return created;
+  };
+  const policySensitive = (node: SensitivityNode): boolean => {
+    if (node.tagName === 'INPUT') {
+      const type = (node.getAttribute('type') ?? 'text').trim().toLowerCase();
+      if (type === 'password' || type === 'hidden') return true;
+    }
+    const autocomplete = (node.getAttribute('autocomplete') ?? '').toLowerCase();
+    return /(^|\s)(current-password|new-password|one-time-code)(\s|$)/.test(autocomplete);
+  };
+  globals.__agentbrowserSensitivePolicy = {
+    classify: (node) => marks().has(node) || policySensitive(node),
+    mark: (node, explicit) => {
+      const sensitive = explicit || marks().has(node) || policySensitive(node);
+      if (sensitive) marks().add(node);
+      return sensitive;
+    },
+  };
+}
+
+/**
+ * Self-contained observe probe. A missing policy (a document that predates the
+ * install, e.g. a CDP-adopted operator context) is an unknowable input type:
+ * fail closed — withhold the value rather than expose it unvalidated.
+ */
+const classifySensitiveInput = (node: SensitivityNode): boolean => {
+  const policy = (globalThis as SensitiveInputPolicyGlobals).__agentbrowserSensitivePolicy;
+  return policy !== undefined ? policy.classify(node) : true;
+};
+
+/**
+ * Self-contained fill probe: fillability for verification plus the effective
+ * sensitivity (marking the node when explicit or policy-sensitive). A missing
+ * policy fails closed.
+ */
+const sensitiveFillProbe = (
+  element: SensitivityNode,
+  explicit: boolean
+): { fillable: boolean; sensitive: boolean } => {
+  const policy = (globalThis as SensitiveInputPolicyGlobals).__agentbrowserSensitivePolicy;
+  return {
+    fillable: ['INPUT', 'TEXTAREA'].includes(element.tagName),
+    sensitive: policy === undefined ? true : policy.mark(element, explicit),
+  };
+};
 
 /** Bound a diagnostic promise; Playwright evaluate has no timeout of its own. */
 async function withDeadline<T>(promise: Promise<T>, deadlineMs: number): Promise<T> {
@@ -1038,6 +1168,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       disconnectObserver = new SessionDisconnectObserver(browser, context);
       assertSessionConnected(disconnectObserver);
       this.requireOpen();
+      // Sensitivity classification policy for every document in this context
+      // (all frames, all navigations). Installed unconditionally, headed or
+      // headless: observed-value redaction must not depend on session flavor.
+      await context.addInitScript(sensitivityPolicyInit);
       let initScript: SessionDiagnostics['context']['initScript'] = 'not_registered';
       if (options.headless === false) {
         // Keep the headed overrides aligned with the context locale. Playwright
@@ -1194,6 +1328,10 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       }
       disconnectObserver = new SessionDisconnectObserver(browser, context);
       assertSessionConnected(disconnectObserver);
+      // Sensitivity policy on the adopted operator context: best-effort for
+      // future navigations. Documents that predate the attach carry no policy,
+      // so classification there fails closed (values withheld, not exposed).
+      await context.addInitScript(sensitivityPolicyInit).catch(() => {});
       const version = browserVersion(browser);
       const diagnostics = captureSessionDiagnostics({
         attachment: 'cdp_attach',
@@ -2865,6 +3003,24 @@ class PlaywrightPage implements EnginePage {
         boundElements.map(async ({ element, handle, locator }) => {
           element.visible = await handle.isVisible();
           element.enabled = await handle.isEnabled();
+          // Trusted sensitivity boundary. ARIA-snapshot values ride as
+          // untrusted until here, where the bound DOM node's own type and
+          // autocomplete semantics (plus any explicit sensitive-fill mark)
+          // decide disclosure. The probe runs in the element's frame context;
+          // a dead context is an unknowable type, so it fails CLOSED — the
+          // value is withheld and flagged rather than exposed unvalidated.
+          // Only value-bearing roles pay the probe: links and buttons never
+          // carry values, and skipping them keeps ordinary pages fast.
+          let sensitive: boolean | undefined;
+          if (element.untrustedValue !== undefined || VALUE_BEARING_ROLES.has(element.role)) {
+            sensitive = await handle.evaluate(classifySensitiveInput).catch(() => true as const);
+            if (sensitive) {
+              element.valueRedacted = true;
+            } else if (element.untrustedValue !== undefined) {
+              element.value = element.untrustedValue;
+            }
+          }
+          Reflect.deleteProperty(element, 'untrustedValue');
           // Form-identity evidence is frame-scoped (slice 2): each context
           // evaluates against its own identity-map handle — the main state
           // for main-frame controls, a lazily minted per-frame state for
@@ -2886,7 +3042,21 @@ class PlaywrightPage implements EnginePage {
             try {
               const evidence = await handle.evaluate(captureFormEvidence, stateHandle);
               element.attributes = { ...element.attributes, ...evidence.attributes };
-              if (evidence.value !== undefined) element.value = evidence.value;
+              if (evidence.value !== undefined) {
+                // captureFormEvidence excludes native password/hidden inputs,
+                // but an autocomplete-classified or explicitly-marked field
+                // can still surface a value here: classify before publishing.
+                if (sensitive === undefined) {
+                  sensitive = await handle
+                    .evaluate(classifySensitiveInput)
+                    .catch(() => true as const);
+                }
+                if (sensitive) {
+                  element.valueRedacted = true;
+                } else {
+                  element.value = evidence.value;
+                }
+              }
               const binding = this.bindings.get(element.ref ?? '');
               if (binding) binding.formEvidence = evidence.attributes;
             } catch {
@@ -2938,6 +3108,14 @@ class PlaywrightPage implements EnginePage {
 
       for (const [index, element] of elements.entries()) {
         const ref = element.ref ?? `e${this.revision}_${index}`;
+        // Unbound elements never had their type established: an unvalidated
+        // ARIA value is dropped, not carried as fallback evidence. The
+        // redaction flag marks the gap so callers read "withheld", not
+        // "empty".
+        if (element.untrustedValue !== undefined) {
+          Reflect.deleteProperty(element, 'untrustedValue');
+          element.valueRedacted = true;
+        }
         this.refStore.set(ref, {
           role: element.role,
           ...(element.name !== undefined ? { name: element.name } : {}),
@@ -3066,7 +3244,10 @@ class PlaywrightPage implements EnginePage {
       if (attrMatch?.[1] && attrMatch[2] !== undefined) {
         const last = elements[elements.length - 1];
         if (last && attrMatch[1] === 'value') {
-          last.value = unquote(attrMatch[2]);
+          // ARIA snapshot values ride as untrusted until the DOM-binding
+          // boundary classifies the node: the snapshot cannot know an input's
+          // type, and password inputs snapshot as plaintext `textbox` values.
+          last.untrustedValue = unquote(attrMatch[2]);
         }
         continue;
       }
@@ -3107,7 +3288,9 @@ class PlaywrightPage implements EnginePage {
       }
       const inlineValue = elementMatch[4]?.trim();
       if (inlineValue) {
-        element.value = unquote(inlineValue);
+        // Same trust rule as the /value: annotation above: promotion to the
+        // published `value` happens only after sensitivity classification.
+        element.untrustedValue = unquote(inlineValue);
       }
       if (
         role === 'checkbox' ||
@@ -3751,32 +3934,29 @@ class PlaywrightPage implements EnginePage {
       case 'fill': {
         const locator = this.locatorFor((action.target as EngineTarget).ref);
         const expected = action.expectValue;
-        let passwordInput = false;
-        if (expected !== undefined) {
-          if (typeof expected !== 'string')
-            throw new EngineError('INVALID_REQUEST', 'expectValue must be a string');
-          const probe = await locator.evaluate((element) => ({
-            fillable: ['INPUT', 'TEXTAREA'].includes(element.tagName),
-            password:
-              element.tagName === 'INPUT' &&
-              (element.getAttribute('type') ?? '').trim().toLowerCase() === 'password',
-          }));
-          if (!probe.fillable)
-            throw new EngineError(
-              'ENGINE_UNSUPPORTED',
-              'Fill verification requires a native input or textarea'
-            );
-          // Password inputs keep their value out of mismatch details even
-          // without the sensitive flag: a site-side normalization of a
-          // literal credential must not surface in error payloads.
-          passwordInput = probe.password;
-        }
+        if (expected !== undefined && typeof expected !== 'string')
+          throw new EngineError('INVALID_REQUEST', 'expectValue must be a string');
+        // One probe serves three duties: fillability for verification, the
+        // sensitivity classification for mismatch redaction, and the
+        // node-lifetime mark that keeps a classified field's values withheld
+        // across show-password toggles and later observations.
+        const probe = await locator.evaluate(sensitiveFillProbe, action.sensitive === true);
+        if (expected !== undefined && !probe.fillable)
+          throw new EngineError(
+            'ENGINE_UNSUPPORTED',
+            'Fill verification requires a native input or textarea'
+          );
+        // Sensitive fills (explicit flag, password inputs, autocomplete
+        // credential semantics) keep their value out of mismatch details even
+        // without the sensitive flag: a site-side normalization of a literal
+        // credential must not surface in error payloads.
+        const sensitiveInput = probe.sensitive;
         await locator.fill(String(action.value ?? ''));
         // A field's input handler may have committed an effect even if it reverted
         // the value. Never replay the write to manufacture success. The first read
         // can also race a late async normalization (masking, formatting), so a
         // mismatch gets one settle + re-read before failing. Value-bearing details
-        // are withheld for sensitive fills and password inputs.
+        // are withheld for sensitive fills and classified inputs.
         let actual: string | undefined;
         try {
           if (expected !== undefined) {
@@ -3790,7 +3970,7 @@ class PlaywrightPage implements EnginePage {
                 'VALUE_MISMATCH',
                 'Field value differs after filling. Inspect current state before another write.',
                 false,
-                action.sensitive === true || passwordInput
+                sensitiveInput
                   ? { ref: (action.target as EngineTarget).ref, reads: 2 }
                   : {
                       ref: (action.target as EngineTarget).ref,
@@ -4004,6 +4184,10 @@ class PlaywrightPage implements EnginePage {
           // focus + keyboard.type is the same event stream Playwright's
           // pressSequentially produces (per-char keydown/textInput/keyup).
           if (locator) {
+            // Typed secrets get the same node-lifetime classification as
+            // filled ones: a password typed into a password input stays
+            // sensitive when the page later toggles the field to text.
+            await locator.evaluate(sensitiveFillProbe, false).catch(() => {});
             await locator.focus();
           }
           await this.page.keyboard.type(text, { delay });
