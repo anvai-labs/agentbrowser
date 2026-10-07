@@ -152,6 +152,37 @@ it('classifies credential autocomplete fields (password, OTP, payment) as sensit
   });
 });
 
+it('withholds committed-selection evidence for classified-sensitive widgets', async () => {
+  const engine = new PlaywrightChromiumEngine();
+  try {
+    const page = await (await engine.createSession({ headless: true })).newPage();
+    // React-Select-style markup: the committed selection lives outside the
+    // input, as container text. For a classified-sensitive control that text
+    // is the secret — it must not ride along as autofill-committed evidence.
+    await page.navigate({
+      url: 'data:text/html,<div class="select__value-container"><span class="select__single-value">SYNTH-COMMITTED-77</span><label>Card <input type="text" id="card" autocomplete="cc-csc"></label></div>',
+    });
+    const observed = await page.observe({ include: ['formControls'] });
+    const card = observed.elements.find((element) => element.name === 'Card');
+    expect(card).toBeDefined();
+    expect(card?.valueRedacted).toBe(true);
+    expect(card?.value).toBeUndefined();
+    expect(card?.attributes?.['autofill-committed']).toBeUndefined();
+    expect(card?.attributes?.['autofill-committed-members']).toBeUndefined();
+    // An ordinary widget keeps its committed evidence — that is the
+    // bulk-fill verification contract.
+    await page.navigate({
+      url: 'data:text/html,<div class="select__value-container"><span class="select__single-value">Remote</span><label>Office <input type="text" id="office"></label></div>',
+    });
+    const second = await page.observe({ include: ['formControls'] });
+    const office = second.elements.find((element) => element.name === 'Office');
+    expect(office?.attributes?.['autofill-committed']).toBe('Remote');
+    expect(office?.valueRedacted).not.toBe(true);
+  } finally {
+    await engine.close();
+  }
+});
+
 it('keeps explicitly marked hidden inputs redacted in native form evidence', async () => {
   const engine = new PlaywrightChromiumEngine();
   try {

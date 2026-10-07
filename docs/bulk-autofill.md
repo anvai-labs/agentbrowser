@@ -20,7 +20,14 @@ For delegated sessions, supply `X-AgentBrowser-Operation-Id` (MCP `operationId`)
 
 The CLI drives the same contract: `agentbrowser autofill <sessionId> <pageId> '@payload.json' [--policy '<json>']` prints the per-field receipts (values and redacted excerpts omitted; `--json` includes them).
 
-Each receipt has `field` (zero-based payload index), `match`, `resolvedRef` when resolved, `blockIdentity` when captured, `status`, and `verified`. `actionId` is optional in the schema and is not currently populated by the bulk orchestrator; do not rely on it for per-field reconciliation. `actual` is a redacted native-value excerpt of at most 512 characters, with `actualTruncated`. Native verification compares the full private value; custom strategies compare committed selection evidence. A successfully selected custom control can have an empty search input and therefore an empty `actual`. Statuses are `verified`, `unverified` (explicit `verify: "none"`), `failed`, `uncertain`, `skipped`, and `not_attempted`. HTTP 200 means a report is available: callers must inspect `ok` and each receipt. A partial controlled batch is recorded conservatively as failed or outcome-unknown, never wholly completed.
+Each receipt has `field` (zero-based payload index), `match`, `resolvedRef` when resolved, `blockIdentity` when captured, `status`, and `verified`. `actionId` is optional in the schema and is not currently populated by the bulk orchestrator; do not rely on it for per-field reconciliation. `actual` is a redacted native-value excerpt of at most 512 characters, with `actualTruncated`. Native verification compares the full private value; custom strategies compare committed selection evidence. A successfully selected custom control can have an empty search input and therefore an empty `actual`. Statuses are `verified`, `unverified` (explicit `verify: "none"`, or a
+sensitive control — see below), `failed`, `uncertain`, `skipped`, and
+`not_attempted`. A sensitive control (password, credential-autocomplete, or
+explicitly marked sensitive fill) reports `unverified` with
+`verificationWithheld: true` since 1.15.2: verification is deliberately not
+attempted so a withheld value can never produce a false mismatch, and such
+receipts carry no `actual` excerpt. A withheld receipt never aborts the
+remaining fields. HTTP 200 means a report is available: callers must inspect `ok` and each receipt. A partial controlled batch is recorded conservatively as failed or outcome-unknown, never wholly completed.
 
 Fill values may use existing `vault://` references: all are resolved privately before browser I/O, and the resolved values are used for comparison. Select option values remain literal. Missing or oversized resolved values reject the complete request before writes.
 

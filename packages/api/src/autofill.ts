@@ -573,12 +573,24 @@ export async function runAutofill(input: unknown, ports: AutofillPorts): Promise
           display(receipt, same.value);
           const strategy = selectedStrategies.get(receipt.field);
           if (!strategy?.isCommitted(same, expectedValues[receipt.field] as string)) {
-            receipt.verified = false;
-            receipt.status = 'failed';
-            receipt.error = {
-              code: 'VALUE_MISMATCH',
-              message: 'A later field changed this value before final verification',
-            };
+            // The per-field loop's withheld rule applies here too: a control
+            // newly classified sensitive has its value withheld by policy, and
+            // downgrading a verified receipt to a mismatch would invite a
+            // retry that double-writes a credential.
+            if (same.valueRedacted === true) {
+              receipt.verified = false;
+              receipt.status = 'unverified';
+              receipt.verificationWithheld = true;
+              Reflect.deleteProperty(receipt, 'actual');
+              Reflect.deleteProperty(receipt, 'actualTruncated');
+            } else {
+              receipt.verified = false;
+              receipt.status = 'failed';
+              receipt.error = {
+                code: 'VALUE_MISMATCH',
+                message: 'A later field changed this value before final verification',
+              };
+            }
           }
         } catch {
           receipt.verified = false;

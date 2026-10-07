@@ -56,6 +56,8 @@ ADRs capture significant architectural decisions, their context, and consequence
 | [ADR-013](adr/013-headed-sessions-and-walled-logins.md) | Headed Sessions, De-fingerprinting, and Walled Logins | Accepted | De-fingerprint headed only; no CDP arms race — cookie-seeding handoff is the prescribed route for turnstile-class walls |
 | [ADR-014](adr/014-npm-distribution.md) | npm Distribution for the MCP Server (Trusted Publishing, @anvailabs scope) | Accepted | npm = @anvailabs/agentbrowser-mcp via OIDC trusted publishing; server stays tarballs+Docker; verify enforced not token-keyed |
 | [ADR-015](adr/015-cross-package-contract-single-source-of-truth.md) | Single Source of Truth for Cross-Package Contract Primitives | Accepted | Contract primitives live once in protocol (REF_PATTERN/parseRef, extract formats, UsageError, compiled validators, type-level contracts); SDK mirrors protocol types; renumbered twice (011→012→015) after collisions |
+| [ADR-016](adr/016-branded-chrome-first-headed-launches.md) | Branded Chrome for First Headed Launches | Accepted | Headed sessions prefer real branded Chrome (brew/Mac, MSI/Windows) over bundled Chromium for the first launch of an operator flow; bundled fallback stays |
+| [ADR-017](adr/017-default-port-5709.md) | Default Port 5709 | Accepted | The service listens on 5709 by default (documented loopback port map; CLI/MCP default to it) |
 | [ADR-018](adr/018-upload-action.md) | The `upload` Action — Native File Attachment Without the OS Picker | Accepted | Delivered `upload` under the reserved protocol name: `paths` replace a file input's list, target ref optional (hidden inputs have no ref), no-target mode requires exactly one `input[type=file]`; stat-validated paths; evidence over assertion |
 | [ADR-019](adr/019-explicit-service-worker-opt-in.md) | Explicit Per-Session Service-Worker Opt-In | Accepted | Request policies block service workers by default (Playwright can't route their requests — a choke-point bypass hole); `allowServiceWorkers` is an explicit, off-by-default per-session opt-in for destinations whose anti-fraud tooling keys off service-worker presence |
 | [ADR-020](adr/020-inline-html-verification.md) | Inline HTML Verification via MCP | Accepted | `browser_html` returns page HTML inline (maxBytes-bounded, untrusted-framed, not secret-redacted — a disclosed trade-off) because a11y output cannot show custom-widget state and MCP clients cannot resolve REST artifact URLs; CLI `page html` prints inline and `page observe --continue-from` resumes truncation |
@@ -162,6 +164,12 @@ complete and remains in [technical-design.md](technical-design.md).
   indexed hot-path lookups). **Accepted, implemented** (all 8 sites; metrics
   quantiles read a bounded recent-sample window, `_count`/`_sum` stay all-time).
   Addresses `hygiene-audit.md` Theme A.
+- [TD-BROWSER-10](td/TD-BROWSER-10-session-extension-loading.md) - Session
+  extension loading for multi-document flows.
+- [TD-BROWSER-11](td/TD-BROWSER-11-session-initial-page-race.md) - The
+  create-session/initial-page race: deterministic first-page ownership.
+- [TD-BROWSER-12](td/TD-BROWSER-12-structured-extraction-gaps.md) -
+  Structured extraction gaps (forms/tables/records surfaces).
 - [TD-BROWSER-13](td/TD-BROWSER-13-observation-secret-redaction.md) -
   Observation secret redaction: one trusted sensitivity boundary at the
   DOM-binding point withholds password/credential values from observations,
@@ -188,6 +196,6 @@ New ADRs should use the [ADR template](adr/000-template.md).
 ---
 
 **Status**: 🟢 MVP shipped; post-MVP TDs in active development
-**Last Updated**: 2026-09-04
+**Last Updated**: 2026-10-07
 
 - [Bulk form-fill orchestration](bulk-autofill.md): structured payloads, block identity and verification contracts.

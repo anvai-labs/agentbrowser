@@ -104,11 +104,18 @@ catalog/CLI/schema sync. Each carries its own evidence record per T9.
 - **Slice 1 DELIVERED 2026-09-30**: G1 pageerror capture (untrusted, real
   Chromium-pinned); G2 cursor paging on replay (`since`/`limit` require a
   type filter — cursors are per-stream ledger sequences; the legacy
-  positional/array form is preserved for every existing caller); G3
+  positional/array form is preserved for every existing caller.
+  Amended 1.15.2: SDK object selectors now always resolve to the
+  `{events, nextCursor}` envelope — type-only and limit-only queries included
+  — and an unfiltered object selector returns the merged console+request
+  ledger; only the undefined/string selector keeps the bare array. REST
+  `limit` without `type` answers 400); G3
   verified as already-shipped (the event pump redacts through the
   SecretManager before storage — pinned by a canary test rather than
   rebuilt); G5 walker denials mapped to the bounded `egress_policy`
   reason with bounded `detail`, and redirect location fields stripped of
   query strings; G6 pageId confirmed present on rows.
-- **Slice 2 (G4 — MCP/CLI surface exposure)** remains.
+- **Slice 2 (G4 — MCP/CLI surface exposure) DELIVERED**: the
+  `browser_events_replay` tool and the `agentbrowser session events` command
+  expose the ledgers (envelope semantics amended 1.15.2, above).
 

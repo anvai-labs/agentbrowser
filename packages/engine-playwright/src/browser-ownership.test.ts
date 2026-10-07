@@ -187,9 +187,10 @@ describe('browser resource ownership', () => {
   );
 
   describe.each(['pooled', 'headed', 'remote'] as const)('%s setup failure', (lane) => {
-    const stages = (['newContext', 'addInitScript', 'route', 'addCookies'] as const).filter(
-      (stage) => lane !== 'pooled' || stage !== 'addInitScript'
-    );
+    // Every lane registers the sensitivity-policy init script since
+    // TD-BROWSER-13, so the addInitScript failure stage is reachable on the
+    // pooled lane too — its cleanup path belongs in this matrix.
+    const stages = ['newContext', 'addInitScript', 'route', 'addCookies'] as const;
     it.each(stages)('releases only owned resources after %s fails', async (stage) => {
       const failure = new Error(`failed ${stage}`);
       const host = browser();

@@ -530,7 +530,8 @@ entry-point path. Success emits JSON evidence; failures exit nonzero.
 Each child has a 20-second deadline and a combined 1 MiB stdout/stderr limit;
 failure cleanup escalates from termination to forced termination with bounded
 waits. CLI checks exact version and help. MCP checks the negotiated protocol,
-exact version, the full thirteen-tool catalog, valid output and clean shutdown, clearing the
+exact version, the full seventeen-tool catalog (fifteen in delegated mode),
+valid output and clean shutdown, clearing the
 runtime version override to prevent false version evidence. These checks do
 not launch a browser or certify API connectivity, downloads, containment or a
 Homebrew upgrade. Those are separate [release acceptance gates](release-milestones.md).
@@ -646,6 +647,9 @@ authority model and the acceptance fixture
 | Address (or other dependent) fields emptied after filling a country/region selector | Locale selectors re-render dependent blocks on change and the re-render starts empty. Select the country first, then fill dependents, and re-verify the block before saving. |
 | A search-as-you-type box ignores `fill` and its dropdown never filters | The widget only reacts to real keystrokes. Use the `typeText` action (per-character key events, optional `delay`) instead of `fill`, then pick from the filtered rows. See the [interactive forms recipe](recipes/interactive-forms.md). |
 | Observation shows a combobox as selected but you cannot tell what, or a checkbox state you cannot see | Custom-widget selections live in the DOM, not the accessibility output: read `browser_html` (inline, maxBytes-bounded, not secret-redacted). Checkbox/radio elements carry `checked` on observations; React-controlled widgets can still hide state in the DOM attribute, so trust the observation field over the raw HTML attribute. |
+| A password/credential field shows no `value` after a fill | That is the engine's sensitivity boundary (TD-BROWSER-13, 1.15.2): absent `value` + `valueRedacted: true` means *withheld*, not empty. The fill's own `verified` result (or the autofill receipt's `verificationWithheld`) is the proof of commit; sensitive controls never echo values. |
+| Autofill receipt `unverified` with `verificationWithheld: true` | Expected for sensitive controls: verification is deliberately not attempted so a withheld value can never produce a false mismatch. The write completed; do not retry on it — a retry double-writes the credential. |
+| Upgrading to 1.15.2 | Observation redaction is engine-side and needs a service restart to take effect; sessions created before the restart keep the old behavior for their lifetime. No client update is required (all new fields are optional). |
 | Browser download slow/failing | First service start bootstraps Chromium; on Homebrew installs it lands in `$(brew --prefix)/var/agentbrowser/browsers`. |
 | Engine crash loops | Check `sessions_crashed_total` and the JSON error log for the crash reason; the session is terminated cleanly — retry with a new session, and file an issue with the log line if it reproduces. |
 | A live-updating SPA never updates (a server-side action completes but the UI stays stale; reloading the page shows the final result) | With any active egress policy — the default SSRF policy included — page WebSocket upgrades are closed outright (close code `1014`, reason `blocked by egress policy`): a Playwright limitation makes allowed-WebSocket forwarding impossible under the fetch/fulfill choke point, so upgrades are denied cleanly instead of failing opaquely. Treat long-running actions as fire-and-reload (or poll a REST endpoint) rather than waiting for push; a page WebSocket closing with `1014` is this behavior, not a site or bot wall. `allowServiceWorkers` restores service-worker transport only, never WebSockets. See the [egress notes](threat-model.md) and [egress-transport feasibility](egress-transport-feasibility.md). |

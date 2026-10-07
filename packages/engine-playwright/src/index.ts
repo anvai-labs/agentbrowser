@@ -1336,7 +1336,12 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       // Sensitivity policy on the adopted operator context: best-effort for
       // future navigations. Documents that predate the attach carry no policy,
       // so classification there fails closed (values withheld, not exposed).
-      await context.addInitScript(sensitivityPolicyInit).catch(() => {});
+      // An install failure is never silent: the session carries a warning so
+      // an operator sees why observations degrade to withheld values.
+      const policyInstalled = await context
+        .addInitScript(sensitivityPolicyInit)
+        .then(() => true)
+        .catch(() => false);
       const version = browserVersion(browser);
       const diagnostics = captureSessionDiagnostics({
         attachment: 'cdp_attach',
@@ -1356,6 +1361,11 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
       const warnings = Object.freeze([
         'Operator CDP attachment shares the existing browser profile and storage; only fresh pages opened by this session and their popups are owned.',
         'Use a dedicated profile. Egress preflight covers only explicit HTTP(S) navigation targets, not redirects, DNS pinning, subresources, clicks, forms, popups, workers, or downloads.',
+        ...(policyInstalled
+          ? []
+          : [
+              'The observation sensitivity policy could not be installed on the adopted context: value redaction fails closed (observed values withheld) on documents without the policy.',
+            ]),
       ]);
       const release = () => {
         if (this.activeAttachedSession === session) this.activeAttachedSession = undefined;
@@ -3046,24 +3056,34 @@ class PlaywrightPage implements EnginePage {
           if (request.include?.includes('formControls') && stateHandle !== undefined) {
             try {
               const evidence = await handle.evaluate(captureFormEvidence, stateHandle);
-              element.attributes = { ...element.attributes, ...evidence.attributes };
-              if (evidence.value !== undefined) {
-                // captureFormEvidence excludes native password/hidden inputs,
-                // but an autocomplete-classified or explicitly-marked field
-                // can still surface a value here: classify before publishing.
-                if (sensitive === undefined) {
-                  sensitive = await handle
-                    .evaluate(classifySensitiveInput)
-                    .catch(() => true as const);
-                }
-                if (sensitive) {
-                  element.valueRedacted = true;
-                } else {
-                  element.value = evidence.value;
-                }
+              // captureFormEvidence excludes native password/hidden inputs,
+              // but an autocomplete-classified or explicitly-marked field can
+              // still surface a value — or its committed-selection text in
+              // the autofill-committed attributes. Classify before publishing
+              // either channel.
+              const valueBearingEvidence =
+                evidence.value !== undefined ||
+                evidence.attributes['autofill-committed'] !== undefined ||
+                evidence.attributes['autofill-committed-members'] !== undefined;
+              if (valueBearingEvidence && sensitive === undefined) {
+                sensitive = await handle
+                  .evaluate(classifySensitiveInput)
+                  .catch(() => true as const);
+              }
+              let evidenceAttributes = evidence.attributes;
+              if (sensitive === true) {
+                const withheld = { ...evidenceAttributes };
+                Reflect.deleteProperty(withheld, 'autofill-committed');
+                Reflect.deleteProperty(withheld, 'autofill-committed-members');
+                evidenceAttributes = withheld;
+                element.valueRedacted = true;
+              }
+              element.attributes = { ...element.attributes, ...evidenceAttributes };
+              if (sensitive !== true && evidence.value !== undefined) {
+                element.value = evidence.value;
               }
               const binding = this.bindings.get(element.ref ?? '');
-              if (binding) binding.formEvidence = evidence.attributes;
+              if (binding) binding.formEvidence = evidenceAttributes;
             } catch {
               // The frame context died mid-capture: degrade gracefully.
             }
