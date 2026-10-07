@@ -7,6 +7,8 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.15.2] — 2026-10-06
+
 ### Security — TD-BROWSER-13: observation secret redaction (release blocker)
 
 - **Password values no longer leak through observations.** Playwright's aria snapshot

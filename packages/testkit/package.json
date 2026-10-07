@@ -1,6 +1,6 @@
 {
   "name": "@agentbrowser/testkit",
-  "version": "1.15.1",
+  "version": "1.15.2",
   "private": true,
   "description": "Testing utilities, fake engine, and contract test suite",
   "main": "./dist/index.js",
