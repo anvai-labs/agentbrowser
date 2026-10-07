@@ -56,6 +56,7 @@ interface StoredElement {
   role: string;
   name: string;
   value?: string;
+  valueRedacted?: boolean;
   enabled: boolean;
 }
 
@@ -63,6 +64,16 @@ interface StoredElement {
 const OBSERVE_SCRIPT = `
   const rev = Number(arguments[0] || 0);
   window.__abRefs = window.__abRefs || {};
+  window.__abSensitive = window.__abSensitive || new WeakSet();
+  const CREDENTIAL_AUTOCOMPLETE = /(^|\\s)(current-password|new-password|one-time-code|cc-number|cc-csc|cc-exp)(\\s|$)/;
+  const sensitiveOf = (el) => {
+    if (window.__abSensitive.has(el)) return true;
+    if (el.tagName && el.tagName.toLowerCase() === 'input') {
+      const type = (el.getAttribute('type') || 'text').trim().toLowerCase();
+      if (type === 'password' || type === 'hidden') return true;
+    }
+    return CREDENTIAL_AUTOCOMPLETE.test((el.getAttribute('autocomplete') || '').toLowerCase());
+  };
   const out = [];
   const nodes = document.querySelectorAll('a, button, input, select, textarea, form, summary, [role], [contenteditable="true"]');
   nodes.forEach((el, i) => {
@@ -85,7 +96,12 @@ const OBSERVE_SCRIPT = `
     const ref = 'e' + rev + '_' + i;
     el.setAttribute('data-ab-ref', ref);
     window.__abRefs[ref] = el;
-    out.push({ ref, role, name, value: 'value' in el ? String(el.value).slice(0, 120) : undefined, enabled: !el.disabled && el.getAttribute('aria-disabled') !== 'true' });
+    // Same sensitivity policy as the Playwright engine (TD-BROWSER-13):
+    // credential values are withheld at the describe boundary, with
+    // valueRedacted marking the withholding.
+    const raw = 'value' in el ? String(el.value).slice(0, 120) : undefined;
+    const sensitive = raw !== undefined && sensitiveOf(el);
+    out.push({ ref, role, name, value: sensitive ? undefined : raw, ...(sensitive ? { valueRedacted: true } : {}), enabled: !el.disabled && el.getAttribute('aria-disabled') !== 'true' });
   });
   return { title: document.title, url: location.href, bodyText: ((document.body && document.body.innerText) || '').slice(0, 20000), elements: out };
 `;
@@ -660,6 +676,13 @@ class SafariPage implements EnginePage {
           `return (() => {
             const el = document.querySelector('[data-ab-ref="${ref}"]');
             if (!el) return false;
+            // Mark credential targets for the node lifetime (TD-BROWSER-13):
+            // show-password toggles change the type, never the classification.
+            const type = (el.getAttribute('type') || 'text').trim().toLowerCase();
+            const credential = /(^|\\s)(current-password|new-password|one-time-code|cc-number|cc-csc|cc-exp)(\\s|$)/.test((el.getAttribute('autocomplete') || '').toLowerCase());
+            if (${action.sensitive === true} || type === 'password' || type === 'hidden' || credential) {
+              (window.__abSensitive = window.__abSensitive || new WeakSet()).add(el);
+            }
             el.focus();
             el.value = ${JSON.stringify(value)};
             el.dispatchEvent(new Event('input', { bubbles: true }));

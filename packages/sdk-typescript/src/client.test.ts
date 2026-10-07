@@ -1503,6 +1503,30 @@ describe('SessionsClient.extract schema passthrough', () => {
       );
     });
 
+    it('keeps the legacy array shape for an explicitly-undefined selector', async () => {
+      // Regression: a default `= {}` parameter silently turned an explicit
+      // undefined into the object branch (paging envelope) while overload 1
+      // promises an array — callers mapping over the result crashed.
+      const fetchMock = global.fetch as unknown as {
+        mock: { calls: unknown[][] };
+        mockResolvedValueOnce(value: unknown): unknown;
+      };
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          events: [{ type: 'console.log', seq: 1 }],
+          nextCursor: -1,
+        }),
+      });
+      const localClient = new AgentBrowserClient({ baseUrl: 'http://localhost:5709' });
+      const events = await localClient.sessions.events('ses_1', undefined);
+      expect(Array.isArray(events)).toBe(true);
+      expect(events).toHaveLength(1);
+      const calls = fetchMock.mock.calls;
+      const eventsCall = calls[calls.length - 1] as unknown[];
+      expect(eventsCall[0]).toBe('http://localhost:5709/v1/sessions/ses_1/events/replay');
+    });
+
     it('returns the merged paging envelope when no filter is given', async () => {
       const fetchMock = global.fetch as unknown as {
         mock: { calls: unknown[][] };

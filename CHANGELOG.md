@@ -7,6 +7,8 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.15.2] — 2026-10-06
+
 ### Security — TD-BROWSER-13: observation secret redaction (release blocker)
 
 - **Password values no longer leak through observations.** Playwright's aria snapshot
@@ -22,7 +24,10 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   withheld values: absent `value` + `valueRedacted:true` means "withheld", not "empty".
   Native form evidence keeps hidden-input values (documented exception: the application
   witness's hidden-drift tamper check needs page-generated tokens; hidden inputs are not a
-  user-typeable channel).
+  user-typeable channel). The Safari and Firefox engines enforce the same policy at their
+  describe boundaries (Safari via its observe/fill scripts, Firefox extending its existing
+  password gate to hidden, credential autocomplete, and explicitly marked fields), so the
+  withholding is engine-neutral, not Playwright-only.
 - Autofill receipts for sensitive controls report `unverified` + `verificationWithheld`
   instead of a false value mismatch.
 - Approval-gate action fingerprints use a per-instance keyed HMAC (they cover full action
@@ -31,6 +36,10 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   `{events, nextCursor}` envelope — `--limit` without `--since` used to return a bare array
   and crash the CLI's formatted output (`envelope.events.map`); an unfiltered selector now
   returns the merged console+request ledger instead of an always-empty envelope.
+  *Behavior change*: a type-only object selector (e.g. `events(id, {type})`) previously
+  returned a bare array at runtime despite the declared envelope type — callers that
+  relied on the runtime array must read `.events` now; the undefined/string selector
+  keeps its legacy array shape.
   Design + honest boundaries (screenshots, raw HTML, page-side exfiltration):
   `docs/td/TD-BROWSER-13-observation-secret-redaction.md`.
 

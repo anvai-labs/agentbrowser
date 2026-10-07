@@ -52,8 +52,8 @@ Full operator guide: [Operations](operations.md). Tool-by-tool surface:
 The original MVP is shipped and released (v1.x). The post-MVP program is
 tracked as ten task packets, [T0–T9](spec/tasks/README.md): T0 (contract
 catalog), T2 (shared execution) and T3 (QA regressions) are complete; T1,
-T4, T5, T6 and T8 are active with named gates; T7 (audit/security) has not
-started; T9 is a recurring release gate. The
+T4, T5, T6 and T8 are active with named gates; T7 (audit/security) is active
+with slices 2a, 1 and 3 delivered; T9 is a recurring release gate. The
 [evidence index](spec/evidence/t0-foundation.md) records the qualification
 behind every claim — the repo's discipline is that each claim is
 adversarially reviewable.

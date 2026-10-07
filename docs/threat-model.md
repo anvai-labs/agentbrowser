@@ -34,7 +34,8 @@ proves the control works. Residual risks are named, not hidden.
 | Session policy weakening by tenant | `SessionHostPolicy` is restrict-only: the SSRF base always runs after session allow/blocked lists | `network-policy.test.ts` "still enforce the base SSRF policy" |
 | Cross-tenant session/artifact access | Bearer-key tenancy: keys held hashed, sessions stamped with tenantId, every /v1 session-scoped route (incl. WS, 4403) verifies ownership | `server.test.ts` authentication and tenancy suite |
 | Unauthorized use | 401 without/with-unknown key when AGENTBROWSER_API_KEYS configured; loud warning when unauthenticated | same suite |
-| Credential theft via vault references | `SecretManager`: vault:// refs resolved at execution time only; values redacted from observations, errors, logs, and spans; `toJSON` leaks nothing | `secret-manager.test.ts`; service redaction tests |
+| Credential theft via vault references | `SecretManager`: vault:// refs resolved at execution time only; values redacted from observations, errors, logs, and spans; `toJSON` leaks nothing. Default deployments register no secrets, so registered-secret redaction is inert by itself — the engine boundary below is the effective control for observed values | `secret-manager.test.ts`; service redaction tests |
+| Credential exposure via observations (filled password/OTP/card values) | Engine sensitivity boundary (TD-BROWSER-13, 1.15.2): values withheld at DOM-binding classification for password/hidden inputs, credential autocomplete tokens (incl. cc-*) and explicitly marked sensitive fills; withheld again from refStore, semantic fingerprints, native form evidence and autofill receipts (`valueRedacted` marks it; unclassifiable elements fail closed). Enforced by all three engines (Playwright, Safari, Firefox) | `observation-redaction.test.ts` (Playwright); Safari/Firefox describe boundaries; `plan-real-chromium.test.ts` canary assertions |
 | Prompt injection via page content | `untrustedContent: true` on every observation; CLI/MCP render banners; nothing page-derived is ever concatenated into instructions by the service | observation schema + CLI/MCP tests |
 | Stale-target mis-clicks | Revision-scoped refs + fingerprint checks before every action; STALE_TARGET never auto-retried; old-revision refs classify STALE, not missing | `action-executor.test.ts`; workflows 3 & 6 |
 | High-risk actions without consent | ApprovalGate: transaction/account-security/external-message/destructive elements require a single-use, session- and fingerprint-bound token (403 carries the tokenId) | `approval-gate.test.ts`; workflow 7 |
@@ -44,6 +45,14 @@ proves the control works. Residual risks are named, not hidden.
 
 ## Open gaps and residual risks
 
+- **Value redaction's honest boundaries (ACCEPTED, TD-BROWSER-13)**: value
+  redaction covers observed/form-evidence values only. Screenshots and PDFs of
+  a toggled-to-text password show the secret visually; raw HTML surfaces
+  (`browser_html`, HTML artifacts) reflect whatever the page itself wrote into
+  attributes or moved into its DOM; console/network ledgers carry whatever the
+  page logs or transmits; and arbitrary page JavaScript can exfiltrate any
+  credential legitimately supplied to it. None of these are solvable by
+  observation redaction; they are documented limits, not silent gaps.
 - **Later-hop redirects (RESOLVED 2026-09-30 for body-less routed chains,
   was R4, not accepted debt)**: the routing choke point now walks redirect
   chains itself — fresh host/address verdict, a ten-hop cap, and loop

@@ -422,6 +422,30 @@ class FirefoxPage implements EnginePage {
               'INVALID_REQUEST',
               'Fill requires a native text input and string value'
             );
+          // Mark credential targets for the node lifetime (TD-BROWSER-13):
+          // the describe boundary withholds marked values across
+          // show-password type toggles. Self-contained for serialization.
+          await handle
+            .evaluate((element, explicit) => {
+              const globals = globalThis as {
+                __agentbrowserSensitiveInputs?: WeakSet<object>;
+              };
+              const type =
+                element instanceof HTMLInputElement
+                  ? (element.getAttribute('type') ?? 'text').trim().toLowerCase()
+                  : '';
+              const credential =
+                /(^|\s)(current-password|new-password|one-time-code|cc-number|cc-csc|cc-exp)(\s|$)/.test(
+                  (element.getAttribute('autocomplete') ?? '').toLowerCase()
+                );
+              if (explicit || type === 'password' || type === 'hidden' || credential) {
+                const existing = globals.__agentbrowserSensitiveInputs;
+                const marks = existing !== undefined ? existing : new WeakSet();
+                if (existing === undefined) globals.__agentbrowserSensitiveInputs = marks;
+                marks.add(element);
+              }
+            }, action.sensitive === true)
+            .catch(() => {});
           await handle.focus();
           const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
           await this.page.keyboard.down(modifier);

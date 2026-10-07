@@ -48,7 +48,7 @@ agentbrowser/
 │   └── benchmarks/        # Release-gate benchmark and soak suites
 ├── docs/
 │   ├── adr/               # Architecture Decision Records
-│   ├── td/                # Post-MVP technical designs (TD-BROWSER-5..9)
+│   ├── td/                # Post-MVP technical designs (TD-BROWSER-5..13)
 │   ├── technical-design.md # MVP implementation plan (historical record)
 │   └── operations.md      # Operator guide
 └── agentbrowser-mvp-spec.md # Complete MVP specification
@@ -206,7 +206,13 @@ The following ADRs in `docs/adr/` are critical for understanding design choices:
 12. **ADR-012**: Snapshot-plan interaction model - batched plans + snapshots, adaptive stable/verified modes
 13. **ADR-013**: Headed sessions and walled logins - de-fingerprint headed only; cookie-seeding handoff over CDP arms races
 14. **ADR-014**: npm distribution - `@anvailabs/agentbrowser-mcp` via OIDC trusted publishing
-15. **ADR-015** (Proposed): cross-package contract single source of truth
+15. **ADR-015**: cross-package contract single source of truth
+16. **ADR-016**: branded Chrome for first headed launches
+17. **ADR-017**: default port 5709
+18. **ADR-018**: the `upload` action - native file attachment without the OS picker
+19. **ADR-019**: explicit per-session service-worker opt-in
+20. **ADR-020**: inline HTML verification via MCP (disclosed not-secret-redacted trade-off)
+21. **ADR-021**: form-controls enrichment for ARIA-invisible widgets
 
 ## Core Concepts
 
@@ -317,7 +323,7 @@ Before making changes that affect security boundaries:
 
 The MVP (TD-001..TD-026, `docs/technical-design.md`) is complete and shipped
 (2026-08); releases are cut from `main` (v1.x). Post-MVP work is tracked in
-`docs/td/` (TD-BROWSER-5..9) and summarized in `CHANGELOG.md`.
+`docs/td/` (TD-BROWSER-5..13) and summarized in `CHANGELOG.md`.
 
 ## Debugging Tips
 

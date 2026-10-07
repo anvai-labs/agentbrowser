@@ -609,13 +609,14 @@ export class SessionsClient {
   ): Promise<{ events: Array<Record<string, unknown>>; nextCursor: number }>;
   async events(
     sessionId: string,
-    selector: string | { type?: string; since?: number; limit?: number } = {}
+    selector?: string | { type?: string; since?: number; limit?: number }
   ): Promise<
     Array<Record<string, unknown>> | { events: Array<Record<string, unknown>>; nextCursor: number }
   > {
     let query = '';
-    if (typeof selector === 'string') {
-      query = selector !== '' ? `?type=${encodeURIComponent(selector)}` : '';
+    if (selector === undefined || typeof selector === 'string') {
+      query =
+        selector !== undefined && selector !== '' ? `?type=${encodeURIComponent(selector)}` : '';
     } else {
       const params = new URLSearchParams();
       if (selector.type !== undefined) params.set('type', selector.type);
@@ -627,8 +628,9 @@ export class SessionsClient {
       events: Array<Record<string, unknown>>;
       nextCursor?: number;
     }>(`/v1/sessions/${sessionId}/events/replay${query}`);
-    // The undefined/string selector keeps its legacy array shape (an
-    // explicitly-undefined argument must not silently become the envelope).
+    // No default parameter: an explicitly-undefined argument must keep the
+    // legacy array shape (a default `= {}` would silently turn it into the
+    // paging envelope and break overload-1 callers at runtime).
     if (selector === undefined || typeof selector === 'string') return body.events;
     return { events: body.events, nextCursor: body.nextCursor ?? -1 };
   }

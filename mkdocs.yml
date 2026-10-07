@@ -133,6 +133,7 @@ nav:
     - 'Td Browser 10 Session Extension Loading': td/TD-BROWSER-10-session-extension-loading.md
     - 'Td Browser 11 Session Initial Page Race': td/TD-BROWSER-11-session-initial-page-race.md
     - 'Td Browser 12 Structured Extraction Gaps': td/TD-BROWSER-12-structured-extraction-gaps.md
+    - 'Td Browser 13 Observation Secret Redaction': td/TD-BROWSER-13-observation-secret-redaction.md
     - 'Td Browser 5 Single Binary Mcp Distribution': td/TD-BROWSER-5-single-binary-mcp-distribution.md
     - 'Td Browser 6 Headed Sessions And Credential Handoff': td/TD-BROWSER-6-headed-sessions-and-credential-handoff.md
     - 'Td Browser 7 Safari Webdriver Engine': td/TD-BROWSER-7-safari-webdriver-engine.md
