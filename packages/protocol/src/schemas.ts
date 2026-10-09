@@ -295,6 +295,8 @@ export const PageElementSchema = Type.Object({
   hrefTruncated: Type.Optional(Type.Boolean()),
   attributes: Type.Optional(Type.Record(Type.String(), Type.String())),
   checked: Type.Optional(Type.Boolean()),
+  depth: Type.Optional(Type.Integer({ minimum: 0 })),
+  block: Type.Optional(Type.Integer({ minimum: 0 })),
 });
 
 export const OverlayBlockerSchema = Type.Object({

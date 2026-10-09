@@ -237,6 +237,19 @@ export interface RawElement {
   hrefTruncated?: boolean;
   /** Checked state for checkbox/radio/switch roles; absent when unknowable (e.g. tri-state mixed). */
   checked?: boolean | undefined;
+  /**
+   * 0-based nesting depth within the element's snapshot block (the a11y tree
+   * flattened in document order). Absent means 0 (top level of the block).
+   * Enables scope-by-ref projection without exposing a full tree shape.
+   */
+  depth?: number;
+  /**
+   * Snapshot block identity: 0 (absent) = main frame; each merged child-frame
+   * block increments. Depth is block-local, so scope slices must respect this
+   * boundary (frame content is appended at the end of the element list, not at
+   * the iframe's document position).
+   */
+  block?: number;
 }
 
 /**

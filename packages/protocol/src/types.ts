@@ -359,6 +359,19 @@ export interface PageElement {
    * (tri-state mixed, or degraded observations without bound handles).
    */
   checked?: boolean | undefined;
+  /**
+   * 0-based nesting depth within the element's snapshot block (the flattened
+   * a11y tree in document order). Absent means 0 (top level of the block).
+   * Present only when the engine records it; enables scope-by-ref projection.
+   */
+  depth?: number;
+  /**
+   * Snapshot block identity: absent/0 = main frame; each merged child-frame
+   * block increments. Depth is block-local, so a scope slice must stop at a
+   * block boundary (frame content is appended at the list end, not at the
+   * iframe's document position).
+   */
+  block?: number;
 }
 
 /**

@@ -7138,6 +7138,14 @@
                 },
                 "checked": {
                   "type": "boolean"
+                },
+                "depth": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "block": {
+                  "minimum": 0,
+                  "type": "integer"
                 }
               }
             }
@@ -7390,6 +7398,14 @@
           },
           "checked": {
             "type": "boolean"
+          },
+          "depth": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "block": {
+            "minimum": 0,
+            "type": "integer"
           }
         }
       },
@@ -9586,6 +9602,14 @@
                     },
                     "checked": {
                       "type": "boolean"
+                    },
+                    "depth": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "block": {
+                      "minimum": 0,
+                      "type": "integer"
                     }
                   }
                 }
