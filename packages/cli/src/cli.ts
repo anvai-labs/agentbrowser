@@ -307,6 +307,11 @@ export function buildCli(deps: CliDependencies): Cli {
         )
         .option('--timeout <ms>', 'request timeout in milliseconds', '30000')
         .option('--json', 'emit raw JSON instead of formatted output', false)
+        .option(
+          '--pretty',
+          'pretty-print --json output with 2-space indent for humans (default is minified for machines)',
+          false
+        )
         .option('--operation-id <id>', 'reconciliation ID for a controlled mutation')
         .option('--api-key <key>', 'bearer API key (or AGENTBROWSER_API_KEY env)')
         .exitOverride();
@@ -339,7 +344,9 @@ export function buildCli(deps: CliDependencies): Cli {
             out: deps.out,
             emit: (value: unknown, render: () => string[]) => {
               if (globals.json) {
-                deps.out(JSON.stringify(value, null, 2));
+                // Minified by default: --json output is machine-facing (agents,
+                // jq); --pretty restores indentation for human reading.
+                deps.out(globals.pretty ? JSON.stringify(value, null, 2) : JSON.stringify(value));
               } else {
                 for (const line of render()) {
                   deps.out(line);
@@ -2360,12 +2367,16 @@ function renderObservation(observation: ObservationResponse): string[] {
   lines.push('', 'Elements:');
 
   for (const element of observation.elements) {
-    const parts = [`  ${element.ref}`, element.role];
+    const parts = [`  ${element.focused ? '*' : ' '}${element.ref}`, element.role];
     if (element.name) {
       parts.push(`"${element.name}"`);
     }
     if (element.value !== undefined) {
       parts.push(`= "${element.value}"`);
+    }
+    if (element.valueRedacted === true) {
+      // Absent value + redacted marker means withheld, never empty.
+      parts.push('[redacted]');
     }
     if (!element.enabled) {
       parts.push('[disabled]');
@@ -2380,7 +2391,16 @@ function renderObservation(observation: ObservationResponse): string[] {
   }
 
   if (observation.truncated) {
-    lines.push('', 'Observation truncated.');
+    // The cursor is decision-relevant for agents: without it a truncated
+    // observation cannot be resumed, so callers fall back to full --json.
+    if (observation.continuation) {
+      lines.push(
+        '',
+        `Observation truncated. Resume with: agentbrowser observe <sessionId> <pageId> --continue-from ${observation.continuation.nextOrdinal} (${observation.continuation.remaining} elements remain)`
+      );
+    } else {
+      lines.push('', 'Observation truncated.');
+    }
   }
 
   if (observation.untrustedContent) {

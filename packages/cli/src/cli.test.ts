@@ -718,6 +718,101 @@ describe('AgentBrowser CLI', () => {
 
       expect(out.join('\n')).toContain('[checked]');
     });
+
+    it('renders a [redacted] marker so withheld reads as withheld, not empty', async () => {
+      sessions.observe.mockResolvedValueOnce({
+        sessionId: 'ses_1',
+        pageId: 'pg_1',
+        revision: 1,
+        url: 'https://example.com',
+        title: 'Example',
+        status: 'interactive',
+        elements: [
+          {
+            ref: 'e1_0',
+            role: 'textbox',
+            name: 'Password',
+            visible: true,
+            enabled: true,
+            valueRedacted: true,
+          },
+        ],
+        truncated: false,
+        untrustedContent: true,
+      });
+      await run('observe', 'ses_1', 'pg_1');
+
+      expect(out.join('\n')).toContain('[redacted]');
+    });
+
+    it('marks the focused element with a leading asterisk', async () => {
+      sessions.observe.mockResolvedValueOnce({
+        sessionId: 'ses_1',
+        pageId: 'pg_1',
+        revision: 1,
+        url: 'https://example.com',
+        title: 'Example',
+        status: 'interactive',
+        focusedRef: 'e1_1',
+        elements: [
+          { ref: 'e1_0', role: 'button', name: 'Other', visible: true, enabled: true },
+          {
+            ref: 'e1_1',
+            role: 'textbox',
+            name: 'Search',
+            visible: true,
+            enabled: true,
+            focused: true,
+          },
+        ],
+        truncated: false,
+        untrustedContent: true,
+      });
+      await run('observe', 'ses_1', 'pg_1');
+
+      const text = out.join('\n');
+      expect(text).toContain('*e1_1');
+      // Exactly one focused marker: unfocused rows keep the plain two-space prefix.
+      expect((text.match(/\*\w+\d+_\d+/g) ?? []).length).toBe(1);
+    });
+
+    it('prints the continuation cursor so a truncated observation can be resumed', async () => {
+      sessions.observe.mockResolvedValueOnce({
+        sessionId: 'ses_1',
+        pageId: 'pg_1',
+        revision: 1,
+        url: 'https://example.com',
+        title: 'Example',
+        status: 'interactive',
+        elements: [{ ref: 'e1_0', role: 'button', name: 'Submit', visible: true, enabled: true }],
+        truncated: true,
+        untrustedContent: true,
+        continuation: { nextOrdinal: 300, remaining: 5 },
+      });
+      await run('observe', 'ses_1', 'pg_1');
+
+      const text = out.join('\n');
+      expect(text).toContain('--continue-from 300');
+      expect(text).toContain('5 elements remain');
+    });
+  });
+
+  describe('--json output formatting', () => {
+    it('emits minified JSON by default for machine consumers', async () => {
+      const code = await run('--json', 'observe', 'ses_1', 'pg_1');
+
+      expect(code).toBe(0);
+      expect(out).toHaveLength(1);
+      expect(out[0]).not.toContain('\n');
+      expect(lastJson().sessionId).toBe('ses_1');
+    });
+
+    it('restores 2-space indentation with --pretty', async () => {
+      const code = await run('--json', '--pretty', 'observe', 'ses_1', 'pg_1');
+
+      expect(code).toBe(0);
+      expect(out.join('\n')).toContain('\n  "sessionId"');
+    });
   });
 
   describe('action commands', () => {
