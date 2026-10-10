@@ -210,6 +210,11 @@ export function g1DescribePageFunction(nodes: G1Element[], args: G1DescribeArgs)
             }
           } else {
             const nested = sibling.querySelectorAll(HEADING_SELECTOR);
+            // Round-9/F2: charge the subtree scan to the budget — a
+            // hostile sibling with a huge subtree must not turn each hop
+            // into an unbounded page-thread scan.
+            visits += nested.length;
+            if (visits >= SIBLING_VISIT_BUDGET) return undefined;
             for (let i = nested.length - 1; i >= 0; i -= 1) {
               const heading = nested[i] as El;
               if (heading.closest(SECTIONING) === scope) {

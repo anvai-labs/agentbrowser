@@ -2325,6 +2325,8 @@ class PlaywrightPage implements EnginePage {
   private lastBaseElementCount: number | undefined;
   /** Minted-control count of the last observation (like-for-like compare). */
   private lastFormControlCount: number | undefined;
+  /** Minted-fileinput count of the last observation (like-for-like compare). */
+  private lastFileInputCount: number | undefined;
   /** Owning page/frame for elements merged from frame traversal (T6). */
   private frameOfElement = new WeakMap<
     StoredElement,
@@ -2915,79 +2917,74 @@ class PlaywrightPage implements EnginePage {
         // Round-5/F5: a frame detaching between the two passes must degrade
         // that root to "unavailable" (like the frame-snapshot loop), not
         // reject the whole observation after main-frame work succeeded.
-        // Round-6/F1 + round-7/F4: no silent fallback. Main-frame scan
-        // errors propagate; a failed FRAME root is DISCLOSED via
-        // frameCoverage with the frame's identity (not a generic label), so
-        // an agent can tell WHICH frame's controls are missing.
-        const describeFormControlNamesSafely = async (
-          root: import('playwright').Page | import('playwright').Frame,
-          identity: string
-        ): Promise<string[]> => {
-          try {
-            return await this.describeFormControlNames(root);
-          } catch (error) {
-            if (root === this.page) throw error;
-            if (!failedScanIdentities.has(identity)) {
-              failedScanIdentities.add(identity);
-              frameCoverage.push({
-                frame: identity,
-                status: 'unavailable',
-                reason: 'form-controls scan failed',
-              });
-            }
-            return [];
-          }
-        };
-        const describeFormControlsSafely = async (
-          root: import('playwright').Page | import('playwright').Frame,
-          identity: string
-        ): Promise<FormControlInfo[]> => {
-          try {
-            return await this.describeFormControls(
-              root,
-              pageWideNameCounts,
-              perRootCounts.get(root) ?? {}
-            );
-          } catch (error) {
-            if (root === this.page) throw error;
-            if (!failedScanIdentities.has(identity)) {
-              failedScanIdentities.add(identity);
-              frameCoverage.push({
-                frame: identity,
-                status: 'unavailable',
-                reason: 'form-controls scan failed',
-              });
-            }
-            return [];
-          }
-        };
-        // Round-8/F4: one frame failure must produce ONE coverage entry —
-        // pass one and pass two can both fail on the same dead frame.
+        // Round-6/F1 + round-7/F4 + round-9/F5: no silent fallback, ONE
+        // parameterized wrapper for both passes (no copy-paste drift),
+        // main-frame errors propagate, failed frame roots disclose their
+        // identity exactly once via frameCoverage.
+        // Round-8/F4: one frame failure produces ONE coverage entry.
+        // Round-9/F6: identities are precomputed ONCE into a map — no
+        // mutable ordinal shared between the two loops to drift.
         const failedScanIdentities = new Set<string>();
         const pageWideNameCounts: Record<string, number> = {};
         const perRootCounts = new Map<
           import('playwright').Page | import('playwright').Frame,
           Record<string, number>
         >();
-        let scanOrdinal = 0;
-        const scanIdentity = (root: import('playwright').Page | import('playwright').Frame) => {
-          if (root === this.page) return 'main';
-          scanOrdinal += 1;
-          return frameIdentity(root as import('playwright').Frame, scanOrdinal);
+        const scanIdentities = new Map<
+          import('playwright').Page | import('playwright').Frame,
+          string
+        >();
+        for (const [i, root] of scanRoots.entries()) {
+          scanIdentities.set(
+            root,
+            root === this.page ? 'main' : frameIdentity(root as import('playwright').Frame, i + 1)
+          );
+        }
+        const scanIdentity = (root: import('playwright').Page | import('playwright').Frame) =>
+          scanIdentities.get(root) ?? 'unknown';
+        const scanSafely = async <T>(
+          root: import('playwright').Page | import('playwright').Frame,
+          scan: () => Promise<T[]>,
+          fallback: T[]
+        ): Promise<T[]> => {
+          try {
+            return await scan();
+          } catch (error) {
+            if (root === this.page) throw error;
+            const identity = scanIdentity(root);
+            if (!failedScanIdentities.has(identity)) {
+              failedScanIdentities.add(identity);
+              frameCoverage.push({
+                frame: identity,
+                status: 'unavailable',
+                reason: 'form-controls scan failed',
+              });
+            }
+            return fallback;
+          }
         };
         for (const root of scanRoots) {
           const own: Record<string, number> = {};
-          for (const name of await describeFormControlNamesSafely(root, scanIdentity(root))) {
+          for (const name of await scanSafely(
+            root,
+            () => this.describeFormControlNames(root),
+            []
+          )) {
             own[name] = (own[name] ?? 0) + 1;
             pageWideNameCounts[name] = (pageWideNameCounts[name] ?? 0) + 1;
           }
           perRootCounts.set(root, own);
         }
-        scanOrdinal = 0;
         for (const root of scanRoots) {
           const identity = scanIdentity(root);
+          void identity;
           const block = root === this.page ? undefined : blockOfFrame.get(root);
-          for (const info of await describeFormControlsSafely(root, identity)) {
+          for (const info of await scanSafely(
+            root,
+            () =>
+              this.describeFormControls(root, pageWideNameCounts, perRootCounts.get(root) ?? {}),
+            [] as FormControlInfo[]
+          )) {
             elements.push({
               ref: `e${this.revision}_${elements.length}`,
               role: 'control',

@@ -93,6 +93,8 @@ import {
 } from '@agentbrowser/extraction';
 import { EngagementScopePolicy, type NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
 import type { SnapshotControl } from '@agentbrowser/protocol';
+/** Mirrors the engine's per-root formControls mint bound (round-9/F7). */
+const MAX_FORM_CONTROLS = 200;
 import type {
   ArtifactRef,
   ObservationRequest,
@@ -2535,8 +2537,11 @@ export class AgentBrowserService {
       // Round-8/F1: the caller's byte budget applies to the controls list
       // too — a separate element cap alone let controls[] ride unbounded
       // past maxBytes by orders of magnitude.
+      // Round-9/F7: the element cap derives from the engine's per-root
+      // mint bound times a generous frame multiplier — no package-drifting
+      // magic number (200 * 10 roots covers every realistic frame fan-out).
       const budgetedControls = budgetObservationSafely(projected, {
-        maxElements: 2000,
+        maxElements: MAX_FORM_CONTROLS * 10,
         ...(bounds?.maxBytes !== undefined ? { maxBytes: bounds.maxBytes } : {}),
       });
       controlsBlock = {
