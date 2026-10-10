@@ -355,5 +355,9 @@ describe('observe compact projection', () => {
       'Contents — Repository permissions',
       'Pull requests — Repository permissions',
     ]);
+    // The controls pass is a projected observe: matched/total are disclosed
+    // and the fields budget can never touch it (round-4/F1). total counts
+    // the pass's source elements (2 controls + the Submit button).
+    expect(withControls.controlsProjection).toEqual({ matched: 2, total: 3 });
   });
 });

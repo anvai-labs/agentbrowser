@@ -193,7 +193,9 @@ export class ObservationNormalizer {
       // here so every engine (not just the Playwright 120+3+120 derivation)
       // satisfies PageElementSchema's maxLength 300 (review round-2/F7).
       if (rawEl.context !== undefined) {
-        element.context = rawEl.context.slice(0, 300);
+        // Code-point clamp: a UTF-16 slice can split a surrogate pair at the
+        // boundary (review round-4/F8).
+        element.context = Array.from(rawEl.context).slice(0, 300).join('');
       }
 
       return element;

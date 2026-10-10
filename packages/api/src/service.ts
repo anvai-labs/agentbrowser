@@ -92,6 +92,7 @@ import {
   extractVisibleText,
 } from '@agentbrowser/extraction';
 import { EngagementScopePolicy, type NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
+import type { SnapshotControl } from '@agentbrowser/protocol';
 import type {
   ArtifactRef,
   ObservationRequest,
@@ -2462,13 +2463,17 @@ export class AgentBrowserService {
     mode: 'stable' | 'verified';
     fields: Array<{ ref: string; role: string; label: string }>;
     /**
-     * Opt-in minted custom controls (review round-3/F5): a SEPARATE array,
-     * never merged into `fields` — the element budget sorts appended
-     * controls last, so merged controls would be exactly the rows any
-     * maxElements/maxBytes cut silently drops. Each carries `context` for
-     * generic-named menus (G1).
+     * Opt-in minted custom controls (review round-3/F5 + round-4/F1): a
+     * SEPARATE observe pass projected to role "control", so the fields
+     * element budget can never cut them. Truncation of the controls list
+     * itself is disclosed via controlsProjection (matched/total) and
+     * controlsContinuation. Engines without the formControls enrichment
+     * (Safari, Obscura) mint nothing — an empty array means "none minted",
+     * not "page has none" (ADR-021 scope).
      */
-    controls?: Array<{ ref: string; role: string; label: string; context?: string }>;
+    controls?: SnapshotControl[];
+    controlsProjection?: { matched: number; total: number };
+    controlsContinuation?: { nextOrdinal: number; remaining: number };
     truncated?: boolean;
     degraded?: boolean;
     degradedReason?:
@@ -2483,10 +2488,6 @@ export class AgentBrowserService {
       mode: 'interactive',
       ...(bounds?.maxElements !== undefined ? { maxElements: bounds.maxElements } : {}),
       ...(bounds?.maxBytes !== undefined ? { maxBytes: bounds.maxBytes } : {}),
-      // G1 parity (review round-2/F4): opt-in minted controls so the
-      // snapshot->plan round trip can address generic-named custom menus
-      // via context; default snapshots stay unchanged.
-      ...(bounds?.controls === true ? { include: ['formControls' as const] } : {}),
     });
     const view = state as unknown as {
       url?: string;
@@ -2501,7 +2502,45 @@ export class AgentBrowserService {
         | 'empty-snapshot-nonempty-dom';
     };
     const all = view.elements ?? [];
-    const minted = all.filter((e) => e.role === 'control');
+    // Controls pass (round-4/F1): a SEPARATE observe projected to
+    // role "control" — the fields budget slices from the front of the
+    // combined element list where minted controls sort last, so a shared
+    // pass silently cut exactly the rows the caller opted into.
+    let controlsBlock:
+      | {
+          controls: SnapshotControl[];
+          controlsProjection: { matched: number; total: number };
+          controlsContinuation?: { nextOrdinal: number; remaining: number };
+        }
+      | undefined;
+    if (bounds?.controls === true) {
+      const mintedView = (await this.observe(sessionId, pageId, {
+        mode: 'interactive',
+        include: ['formControls'],
+        roles: ['control'],
+      })) as unknown as {
+        elements?: Array<{ ref: string; role?: string; name?: string; context?: string }>;
+        projection?: { matched: number; total: number };
+        continuation?: { nextOrdinal: number; remaining: number };
+      };
+      controlsBlock = {
+        controls: (mintedView.elements ?? []).map(
+          (c): SnapshotControl => ({
+            ref: c.ref,
+            role: c.role ?? '',
+            label: c.name ?? '',
+            ...(c.context !== undefined ? { context: c.context } : {}),
+          })
+        ),
+        controlsProjection: {
+          matched: mintedView.projection?.matched ?? 0,
+          total: mintedView.projection?.total ?? 0,
+        },
+        ...(mintedView.continuation !== undefined
+          ? { controlsContinuation: mintedView.continuation }
+          : {}),
+      };
+    }
     return {
       url: view.url ?? '',
       title: view.title ?? '',
@@ -2510,15 +2549,12 @@ export class AgentBrowserService {
       fields: all
         .filter((e) => e.role !== 'control')
         .map((e) => ({ ref: e.ref, role: e.role ?? '', label: e.name ?? '' })),
-      ...(bounds?.controls === true
-        ? {
-            controls: minted.map((c) => ({
-              ref: c.ref,
-              role: c.role ?? '',
-              label: c.name ?? '',
-              ...(c.context !== undefined ? { context: c.context } : {}),
-            })),
-          }
+      ...(controlsBlock?.controls !== undefined ? { controls: controlsBlock.controls } : {}),
+      ...(controlsBlock?.controlsProjection !== undefined
+        ? { controlsProjection: controlsBlock.controlsProjection }
+        : {}),
+      ...(controlsBlock?.controlsContinuation !== undefined
+        ? { controlsContinuation: controlsBlock.controlsContinuation }
         : {}),
       ...(view.truncated === true ? { truncated: true } : {}),
       // Whole-body ariaSnapshot fallback signal (see observe()): a
@@ -2934,7 +2970,15 @@ export class AgentBrowserService {
       }
 
       const properties: Record<string, { old: unknown; new: unknown }> = {};
-      for (const field of ['role', 'name', 'value', 'visible', 'enabled', 'checked'] as const) {
+      for (const field of [
+        'role',
+        'name',
+        'value',
+        'visible',
+        'enabled',
+        'checked',
+        'context',
+      ] as const) {
         const old = before[field];
         const now = element[field];
         if (old !== now) {

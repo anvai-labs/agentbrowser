@@ -80,9 +80,15 @@ sectioning ancestor — under these rules:
   control's own name), dt of the enclosing dd group (no whole-dl fallback),
   or strong/label/th in the enclosing li/tr/[role=row], excluding the
   control's own subtree. Structural selectors only — no framework classes.
-- Section attribution walks outward through sectioning ancestors
-  (section/article/fieldset/main) and claims only their direct heading
-  children; headingless sections inherit nothing from siblings.
+- Section attribution is scope-bounded: inside the row's nearest sectioning
+  ancestor (section/article/fieldset/main) the walk runs backwards over
+  siblings and their subtrees accepting only same-scope headings, then
+  climbs outward; headingless sections inherit nothing from siblings.
 - The protocol field is optional (`context`, maxLength 300; the normalizer
   clamps), protected core under compact projection, and additive to every
-  surface (observe/CLI; snapshot carries it on fields opt-in).
+  surface: observe/CLI directly; snapshot exposes opt-in controls[] (a
+  SEPARATE projected pass, so the fields budget can never cut it, with
+  matched/total + continuation disclosure; declared once as
+  SnapshotControl in the protocol). Engines without this enrichment
+  (Safari, Obscura) mint no controls — an empty array there means "none
+  minted", not "the page has none".

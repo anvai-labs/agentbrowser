@@ -87,6 +87,16 @@ export function g1DescribePageFunction(
   };
 
   const rowLabelOf = (node: El, ownName: string | undefined): string | undefined => {
+    // All name-equality guards compare NORMALIZED forms: the own name may
+    // carry different whitespace or exceed the 120-char label budget
+    // (round-4/F2).
+    const own = norm(ownName);
+    // Structural row labels come FIRST (round-4/F6): Primer widgets chain
+    // labelledby="value-id section-heading-id"; adopting the section
+    // heading as the row label produced contexts like "X — X" while
+    // bypassing the real row <strong>. labelledby sources outside the row
+    // are a fallback only.
+    let labelledByFallback: string | undefined;
     const labelledBy = node.getAttribute('aria-labelledby');
     if (labelledBy) {
       for (const id of labelledBy.split(/\s+/)) {
@@ -95,7 +105,7 @@ export function g1DescribePageFunction(
         const label = norm(source.textContent);
         // A labelledby source repeating the generic name is not a row
         // label (round-2/F1).
-        if (label && label !== ownName) return label;
+        if (label && label !== own) labelledByFallback = label;
       }
     }
     // dl groups are dt/dd-scoped: a dd takes its preceding dt; multi-dd
@@ -105,12 +115,12 @@ export function g1DescribePageFunction(
       const dt = dd.previousElementSibling;
       if (dt?.tagName === 'DT') {
         const label = norm(dt.textContent);
-        if (label && label !== ownName) return label;
+        if (label && label !== own) return label;
       }
-      return undefined;
+      return labelledByFallback;
     }
     const row = node.closest(ROW_SELECTOR);
-    if (!row) return undefined;
+    if (!row) return labelledByFallback;
     const candidates = row.querySelectorAll(LABEL_SELECTOR);
     for (const candidate of candidates) {
       // Exclude the control's own subtree (round-1/F2)…
@@ -122,9 +132,9 @@ export function g1DescribePageFunction(
       const label = norm(candidate.textContent);
       // A label equal to the control's own generic name is not a
       // disambiguator (round-3/F1).
-      if (label && label !== ownName) return label;
+      if (label && label !== own) return label;
     }
-    return undefined;
+    return labelledByFallback;
   };
 
   // Scope-bounded reverse heading walk (round-1/F3 + round-2/F2 +

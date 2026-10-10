@@ -861,6 +861,18 @@ export interface ObservationRequest {
  * the changed set). A 0-match result on a large page means "no matching
  * elements", never "empty page".
  */
+/**
+ * A minted custom-widget control on an opt-in snapshot controls[] array
+ * (G1; ADR-015: declared once here, consumed by service/SDK/OpenAPI/MCP).
+ */
+export interface SnapshotControl {
+  ref: string;
+  role: string;
+  label: string;
+  /** Row/section context for generic-named menus (G1). */
+  context?: string;
+}
+
 export interface ObservationProjectionEcho {
   roles?: string[];
   name?: string;

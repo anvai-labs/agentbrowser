@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { type G1Element, g1DescribePageFunction } from './form-control-context.js';
+import {
+  type G1Element,
+  g1CollectNamesPageFunction,
+  g1DescribePageFunction,
+} from './form-control-context.js';
 
 /**
  * Unit tests for the G1 naming rules — the review round-3/F8 payoff: the
@@ -147,5 +151,28 @@ describe('g1 page-function naming rules (unit)', () => {
     };
     const described = g1DescribePageFunction([control], { 'Access: No access': 2 });
     expect(described[0]?.context).toBeUndefined();
+  });
+});
+
+describe('pass-one/pass-two name parity (round-4/F4)', () => {
+  it('collect names match the names the describe pass mints, for every fixture control', () => {
+    const fixtures = [
+      controlInRow('Contents', 'Access: No access'),
+      controlInRow('Pull requests', 'Access: No access'),
+      controlInRow('Solo', 'A unique menu'),
+    ];
+    const counts: Record<string, number> = {};
+    for (const name of g1CollectNamesPageFunction(fixtures)) {
+      counts[name] = (counts[name] ?? 0) + 1;
+    }
+    // If these two derivations ever drift (a name source edited in one
+    // pass only), needsContext evaluates against stale counts and context
+    // silently mis-gates — this pin fails first.
+    for (const described of g1DescribePageFunction(fixtures, counts)) {
+      expect(counts[described.name as string]).toBeGreaterThan(0);
+    }
+    expect(g1CollectNamesPageFunction(fixtures)).toEqual(
+      g1DescribePageFunction(fixtures, {}).map((d) => d.name)
+    );
   });
 });

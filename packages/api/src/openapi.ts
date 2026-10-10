@@ -762,9 +762,10 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               in: 'query',
               schema: { type: 'string', enum: ['true', 'false'] },
               description:
-                'Also mint custom widget controls as a separate controls[] array (each ' +
-                'with row/section context for generic-named menus); never merged into ' +
-                'fields, so the fields budget cannot drop them.',
+                'Mint custom widget controls via a SEPARATE projected observe pass ' +
+                '(each with row/section context for generic-named menus), so the fields ' +
+                'element budget can never cut them; controlsProjection/controlsContinuation ' +
+                'disclose matched/total and any truncation of the controls list itself.',
             },
           ],
           responses: {
