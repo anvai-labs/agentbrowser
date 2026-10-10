@@ -82,7 +82,7 @@ test('G2: .cmd shim launches via cmd.exe /c (WSL/npm-parent pattern)', { skip: !
   const target = join(dir, 'target.js');
   // What the target script proves: env + argv propagation through the two
   // exec layers (cmd.exe -> node), and that the shim resolves %~dp0 paths.
-  writeFileSync(target, `console.log(JSON.stringify({argv: process.argv.slice(2), marker: process.env.AB_GOTCHA}))\n`);
+  writeFileSync(target, `console.log(JSON.stringify({argv: process.argv.slice(1), marker: process.env.AB_GOTCHA}))\n`);
   // Shape mirrors npm's generated shims (npm.cmd): %~dp0-relative node call.
   const shim = join(dir, 'agentbrowser-fake.cmd');
   writeFileSync(shim, `@ECHO off\r\n"${NODE.replace(/"/g, '')}" "%~dp0target.js" %*\r\n`);
@@ -98,7 +98,7 @@ test('G2: .cmd shim launches via cmd.exe /c (WSL/npm-parent pattern)', { skip: !
     assert.equal(r.status, 0, `shim exit=${r.status} stderr=${r.stderr}`);
     const payload = JSON.parse(r.stdout.trim().split(/\r?\n/).find((l) => l.startsWith('{')));
     assert.equal(payload.marker, 'via-cmd', 'env must survive the cmd relay');
-    // argv.slice(1) in the target is [target.js, ...forwarded args]: index 0
+    // The target prints argv.slice(1) = [target.js, ...forwarded args]: index 0
     // proves the %~dp0-relative script resolution, index 1 proves %* relay.
     assert.match(payload.argv[0] ?? '', /target\.js$/, 'shim must resolve %~dp0-relative script');
     assert.equal(payload.argv[1], 'arg-one', 'argv must survive the cmd relay');
