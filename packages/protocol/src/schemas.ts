@@ -298,7 +298,9 @@ export const PageElementSchema = Type.Object({
   checked: Type.Optional(Type.Boolean()),
   depth: Type.Optional(Type.Integer({ minimum: 0 })),
   block: Type.Optional(Type.Integer({ minimum: 0 })),
+  minted: Type.Optional(Type.Boolean()),
   nameTruncated: Type.Optional(Type.Boolean()),
+  context: Type.Optional(Type.String({ maxLength: 300 })),
 });
 
 export const OverlayBlockerSchema = Type.Object({

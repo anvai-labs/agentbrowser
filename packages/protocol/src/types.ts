@@ -379,11 +379,23 @@ export interface PageElement {
    */
   block?: number;
   /**
+   * True on enrichment-minted elements (formControls/fileInputs scans):
+   * the declared marker separating minted rows from genuine aria content —
+   * never infer minted-ness from the role string or attribute keys.
+   */
+  minted?: boolean;
+  /**
    * True when a compact projection capped this element's name at 200 chars
    * (mirrors hrefTruncated). Only ever set in projected output; the stored
    * element keeps the full name.
    */
   nameTruncated?: boolean;
+  /**
+   * Row/section context for generic-named custom controls from the
+   * formControls enrichment (G1): nearest row label, optionally with the
+   * section heading. See docs/agent-handoffs/AGENTBROWSER_UI_GAPS_2026-10-10.md.
+   */
+  context?: string;
 }
 
 /**
@@ -806,6 +818,13 @@ export const DELIVERED_OBSERVATION_INCLUDES = ['overlays', 'fileInputs', 'formCo
 /** Additive element-field opt-ins for compact projection (protected core excluded). */
 export const DELIVERED_PROJECTION_FIELDS = ['href', 'attributes', 'required'] as const;
 
+/**
+ * Per-root mint bound for the formControls enrichment (ADR-015: declared
+ * once here; the engine enforces it at mint time and the api derives its
+ * cross-root controls budget from it — no textually-unrelated mirrors).
+ */
+export const MAX_FORM_CONTROLS_PER_ROOT = 200;
+
 export interface ObservationRequest {
   mode?: (typeof DELIVERED_OBSERVATION_MODES)[number];
   maxBytes?: number;
@@ -861,6 +880,18 @@ export interface ObservationProjectionEcho {
   scopeRef?: string;
   matched: number;
   total: number;
+}
+
+/**
+ * A minted custom-widget control on an opt-in snapshot controls[] array
+ * (G1; ADR-015: declared once here, consumed by service/SDK/OpenAPI/MCP).
+ */
+export interface SnapshotControl {
+  ref: string;
+  role: string;
+  label: string;
+  /** Row/section context for generic-named menus (G1). */
+  context?: string;
 }
 
 /**

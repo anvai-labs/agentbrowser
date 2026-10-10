@@ -43,6 +43,7 @@ import {
   parseNativeFormEvidence,
   readVerifiedUpload,
 } from '@agentbrowser/engine';
+import { MAX_FORM_CONTROLS_PER_ROOT } from '@agentbrowser/protocol';
 import {
   DELIVERED_ACTION_TYPES,
   DELIVERED_OBSERVATION_MODES,
@@ -63,6 +64,7 @@ import {
   type Page,
   chromium,
 } from 'playwright';
+import { g1CollectNamesPageFunction, g1DescribePageFunction } from './form-control-context.js';
 import {
   SnapshotBudget,
   type SnapshotEvidence,
@@ -112,6 +114,10 @@ interface StoredElement {
   depth?: number;
   /** Snapshot block identity (absent = 0 main frame; frames increment). */
   block?: number;
+  /** Row/section context for generic-named custom controls (G1). */
+  context?: string;
+  /** Enrichment-minted marker (protocol, round-15/F2). */
+  minted?: boolean;
 }
 
 /** Per-input metadata shared by the fileInputs observe scan and ambiguity details. */
@@ -129,10 +135,19 @@ interface FormControlInfo {
   /** Position within the full CONTROL_SELECTOR match list (document order). */
   index: number;
   name?: string;
+  /**
+   * Row/section context for controls whose accessible name is generic or
+   * duplicated ("Access: No access" style Primer menus): the nearest
+   * enclosing row label, plus the section heading when one is found. See
+   * docs/agent-handoffs/AGENTBROWSER_UI_GAPS_2026-10-10.md (G1).
+   */
+  context?: string;
   tag: string;
   id?: string;
   automationId?: string;
   visible: boolean;
+  /** Enrichment-minted marker (protocol, round-15/F2). */
+  minted?: boolean;
 }
 
 interface NodeBinding extends SnapshotEvidence {
@@ -607,7 +622,7 @@ const FORM_CONTROL_SELECTOR = [
 ].join(', ');
 
 /** Boundlessness guard: at most this many controls are minted per observation. */
-const MAX_FORM_CONTROLS = 200;
+const MAX_FORM_CONTROLS = MAX_FORM_CONTROLS_PER_ROOT;
 
 /**
  * Roles whose elements can carry an observed value. Only these (and any
@@ -2310,6 +2325,13 @@ class PlaywrightPage implements EnginePage {
   /** Include tokens the most recent observe ran with (tryRemap re-observes with them). */
   private lastObservationInclude: ObservationRequest['include'] = undefined;
   private refStore = new Map<string, StoredElement>();
+  /** Base (non-enrichment) element count of the last observation — the
+   * changed-detection baseline that enrichment toggles cannot perturb. */
+  private lastBaseElementCount: number | undefined;
+  /** Minted-control count of the last observation (like-for-like compare). */
+  private lastFormControlCount: number | undefined;
+  /** Minted-fileinput count of the last observation (like-for-like compare). */
+  private lastFileInputCount: number | undefined;
   /** Owning page/frame for elements merged from frame traversal (T6). */
   private frameOfElement = new WeakMap<
     StoredElement,
@@ -2858,7 +2880,9 @@ class PlaywrightPage implements EnginePage {
     // scans the DOM for every file input, hidden ones included, and appends
     // bindable elements after the accessibility-derived set.
     try {
-      this.lastObservationInclude = request.include;
+      // Round-13/F2: include bookkeeping is committed WITH the counts at
+      // the end of a successful observe (atomic pair) — a throw mid-scan
+      // must not advance one half and corrupt the next comparison.
       const scanRoots: Array<import('playwright').Page | import('playwright').Frame> = [
         this.page,
         ...this.page.frames().filter((frame) => frame !== mainFrame),
@@ -2873,6 +2897,7 @@ class PlaywrightPage implements EnginePage {
               ...(info.name !== undefined ? { name: info.name } : {}),
               visible: info.visible,
               enabled: true,
+              minted: true,
               fileInputIndex: info.index,
               ...(block !== undefined ? { block } : {}),
               attributes: {
@@ -2894,15 +2919,104 @@ class PlaywrightPage implements EnginePage {
       // refs; the :not([role]) candidate filter keeps elements the snapshot
       // covered from being minted twice.
       if (request.include?.includes('formControls') === true) {
+        // Two-pass, cross-root G1 design (round-3/F6): duplication counts
+        // are page-wide, so names are collected from EVERY root before any
+        // context is derived.
+        // Round-5/F5: a frame detaching between the two passes must degrade
+        // that root to "unavailable" (like the frame-snapshot loop), not
+        // reject the whole observation after main-frame work succeeded.
+        // Round-6/F1 + round-7/F4 + round-9/F5: no silent fallback, ONE
+        // parameterized wrapper for both passes (no copy-paste drift),
+        // main-frame errors propagate, failed frame roots disclose their
+        // identity exactly once via frameCoverage.
+        // Round-8/F4: one frame failure produces ONE coverage entry.
+        // Round-9/F6: identities are precomputed ONCE into a map — no
+        // mutable ordinal shared between the two loops to drift.
+        const failedScanIdentities = new Set<string>();
+        const pageWideNameCounts: Record<string, number> = {};
+        const perRootCounts = new Map<
+          import('playwright').Page | import('playwright').Frame,
+          Record<string, number>
+        >();
+        const scanIdentities = new Map<
+          import('playwright').Page | import('playwright').Frame,
+          string
+        >();
+        // Round-10/F2: scanRoots[0] is the page, so entries index i (>=1)
+        // is already the 1-based frame ordinal — matching frameOrdinal
+        // everywhere else. i+1 double-numbered anonymous frames.
+        for (const [i, root] of scanRoots.entries()) {
+          scanIdentities.set(
+            root,
+            root === this.page ? 'main' : frameIdentity(root as import('playwright').Frame, i)
+          );
+        }
+        const scanIdentity = (root: import('playwright').Page | import('playwright').Frame) =>
+          scanIdentities.get(root) ?? 'unknown';
+        // Round-13/F1: scanSafely records per-identity success so the
+        // recovery filter (below) only clears a pass-one failure when
+        // pass-two genuinely succeeded — a double-failed frame keeps its
+        // disclosure instead of silently contributing nothing.
+        // Round-14/F1: success is tracked PER PASS — a frame that
+        // succeeded in pass one but detached before pass two keeps its
+        // failure disclosure (the shared set silently dropped it).
+        const scanSafely = async <T>(
+          root: import('playwright').Page | import('playwright').Frame,
+          scan: () => Promise<T[]>,
+          fallback: T[],
+          pass: 1 | 2
+        ): Promise<T[]> => {
+          try {
+            const result = await scan();
+            return result;
+          } catch (error) {
+            if (root === this.page) throw error;
+            const identity = scanIdentity(root);
+            if (!failedScanIdentities.has(identity)) {
+              failedScanIdentities.add(identity);
+              frameCoverage.push({
+                frame: identity,
+                status: 'unavailable',
+                reason: 'form-controls scan failed',
+              });
+            }
+            return fallback;
+          }
+        };
+        for (const root of scanRoots) {
+          const own: Record<string, number> = {};
+          for (const name of await scanSafely(
+            root,
+            () => this.describeFormControlNames(root),
+            [],
+            1
+          )) {
+            own[name] = (own[name] ?? 0) + 1;
+            pageWideNameCounts[name] = (pageWideNameCounts[name] ?? 0) + 1;
+          }
+          perRootCounts.set(root, own);
+        }
+        // Round-12/F4: a frame whose pass-one names scan failed but whose
+        // pass-two describe succeeds must not keep a stale 'unavailable'
+        // entry — the controls ARE present in this same response.
+
         for (const root of scanRoots) {
           const block = root === this.page ? undefined : blockOfFrame.get(root);
-          for (const info of await this.describeFormControls(root)) {
+          for (const info of await scanSafely(
+            root,
+            () =>
+              this.describeFormControls(root, pageWideNameCounts, perRootCounts.get(root) ?? {}),
+            [] as FormControlInfo[],
+            2
+          )) {
             elements.push({
               ref: `e${this.revision}_${elements.length}`,
               role: 'control',
               ...(info.name !== undefined ? { name: info.name } : {}),
+              ...(info.context !== undefined ? { context: info.context } : {}),
               visible: info.visible,
               enabled: true,
+              minted: true,
               formControlIndex: info.index,
               ...(block !== undefined ? { block } : {}),
               attributes: {
@@ -2917,6 +3031,13 @@ class PlaywrightPage implements EnginePage {
             if (merged !== undefined && root !== this.page) this.frameOfElement.set(merged, root);
           }
         }
+        // Round-16/F4: the identity-string recovery filter is REMOVED —
+        // two frames can share an identity (same origin+path), and clearing
+        // one frame's genuine failure because the OTHER succeeded is a
+        // silent coverage loss. A possibly-stale 'unavailable' entry is the
+        // honest residue; the agent re-observes and the entry clears on the
+        // next successful pass (scanSafely only pushes once per identity
+        // per observe, and frameCoverage is rebuilt per observation).
       }
     } catch (error) {
       // An enrichment failure occurs before the ref-binding transaction adopts
@@ -2935,10 +3056,64 @@ class PlaywrightPage implements EnginePage {
     // within a revision (document order), so the same element maps to the
     // same ref until the page mutates.
     const previous = this.bindings;
-    const previousCount = this.refStore.size;
+    // Changed-detection (rounds 6-12): counts compare LIKE FOR LIKE.
+    // - Base (aria-snapshot) counts exclude enrichment rows entirely, so
+    //   toggling include:["formControls"] between calls never bumps the
+    //   revision via the base comparison.
+    // - A kind's minted count is compared ONLY when that include token was
+    //   present in BOTH the prior and current observation (priorInclude is
+    //   snapshotted before lastObservationInclude is overwritten); when the
+    //   same include set observes again, enrichment rows appearing or
+    //   disappearing IS a page change (lazy-mounted menus) and must bump.
+    // - Enrichment rows are identified by their mint index, never the role
+    //   string (a genuine aria role="control" element is base content).
+    const isEnrichment = (row: {
+      role: string;
+      formControlIndex?: number;
+      fileInputIndex?: number;
+    }): boolean => row.formControlIndex !== undefined || row.fileInputIndex !== undefined;
+    const countEnrichment = (
+      rows: Array<{ role: string; formControlIndex?: number; fileInputIndex?: number }>,
+      kind: 'formControl' | 'fileInput'
+    ): number =>
+      rows.filter((row) =>
+        kind === 'formControl'
+          ? row.formControlIndex !== undefined
+          : row.fileInputIndex !== undefined
+      ).length;
+    const baseCount = (
+      rows: Array<{ role: string; formControlIndex?: number; fileInputIndex?: number }>
+    ): number => rows.filter((row) => !isEnrichment(row)).length;
+    const previousCount = this.lastBaseElementCount ?? 0;
+    const includeHas = (
+      list: ObservationRequest['include'],
+      token: 'formControls' | 'fileInputs'
+    ): boolean => list?.includes(token) === true;
+    // Round-13/F2 correction: include bookkeeping is committed only at the
+    // END of a successful observe, so lastObservationInclude at comparison
+    // time IS the prior observation's include — a separate prior field
+    // double-lagged by one observation (the invariant suite caught this).
+    const priorInclude = this.lastObservationInclude;
+    const sameFormControls =
+      includeHas(priorInclude, 'formControls') === includeHas(request.include, 'formControls');
+    const sameFileInputs =
+      includeHas(priorInclude, 'fileInputs') === includeHas(request.include, 'fileInputs');
+    let enrichmentChanged = false;
+    if (sameFormControls && this.lastFormControlCount !== undefined) {
+      enrichmentChanged = this.lastFormControlCount !== countEnrichment(elements, 'formControl');
+    }
+    if (sameFileInputs && this.lastFileInputCount !== undefined) {
+      enrichmentChanged =
+        enrichmentChanged || this.lastFileInputCount !== countEnrichment(elements, 'fileInput');
+    }
+    this.lastBaseElementCount = baseCount(elements);
+    this.lastFormControlCount = countEnrichment(elements, 'formControl');
+    this.lastFileInputCount = countEnrichment(elements, 'fileInput');
+    this.lastObservationInclude = request.include;
     this.bindings = new Map();
     this.refStore.clear();
-    let changed = previousCount > 0 && previousCount !== elements.length;
+    let changed =
+      (previousCount > 0 && previousCount !== this.lastBaseElementCount) || enrichmentChanged;
     // (role, name) ordinals are PER FRAME: the same label in two frames is
     // two distinct bindable elements, each resolving inside its own frame.
     const ordinals = new Map<object, Map<string, number>>();
@@ -3016,12 +3191,18 @@ class PlaywrightPage implements EnginePage {
             binding.snapshot = snapshotDigest(captured);
             const prior = previous.get(ref);
             if (
-              previous.size > 0 &&
-              (!prior ||
-                !(await handle
+              (previous.size > 0 &&
+                // Rounds 7+10: enrichment-minted refs (identified by mint
+                // index, not role string) are an opt-in overlay — a ref
+                // absent from the prior store only because the prior pass
+                // omitted the include must NOT count as a page change.
+                !isEnrichment(element) &&
+                !prior) ||
+              (prior &&
+                (!(await handle
                   .evaluate((node, old) => node.isSameNode(old), prior.handle)
                   .catch(() => false)) ||
-                !sameSnapshotEvidence(prior, binding))
+                  !sameSnapshotEvidence(prior, binding)))
             )
               changed = true;
             boundElements.push({ element, handle, locator });
@@ -3216,7 +3397,11 @@ class PlaywrightPage implements EnginePage {
     // own degraded reason so callers can wait/retry or read via HTML. Only probe
     // the DOM when there is nothing to lose (no elements) to avoid per-observe cost.
     let emptyOverNonEmptyDom = false;
-    if (!ariaSnapshotDegraded && ariaSnapshotSucceeded && elements.length === 0) {
+    // Round-16/F5: the probe counts BASE elements — enrichment rows are
+    // appended into the same array, and any include token made the
+    // unhydrated-SPA signal unreachable (the PR's own G3 case).
+    const baseElements = elements.filter((el) => el.minted !== true);
+    if (!ariaSnapshotDegraded && ariaSnapshotSucceeded && baseElements.length === 0) {
       const { bodyTextLength, domNodeCount } = await this.measureDomContent();
       emptyOverNonEmptyDom = classifyEmptyObservation({
         elementCount: 0,
@@ -3526,47 +3711,29 @@ class PlaywrightPage implements EnginePage {
    * `visible` here is a layout-box heuristic; observe overwrites it with the
    * authoritative Playwright isVisible for bound elements.
    */
+  private async describeFormControlNames(
+    root: import('playwright').Page | import('playwright').Frame
+  ): Promise<string[]> {
+    // Pass one of the two-pass, cross-root G1 design: names only, cheap to
+    // run on every scan root before context derivation (round-3/F6).
+    return root.locator(FORM_CONTROL_SELECTOR).evaluateAll(g1CollectNamesPageFunction);
+  }
+
   private async describeFormControls(
-    root: import('playwright').Page | import('playwright').Frame = this.page
+    root: import('playwright').Page | import('playwright').Frame,
+    pageWideNameCounts: Record<string, number>,
+    ownRootPassOneCounts: Record<string, number>
   ): Promise<FormControlInfo[]> {
-    const described = await root.locator(FORM_CONTROL_SELECTOR).evaluateAll(
-      (
-        nodes: Array<{
-          tagName: string;
-          textContent: string | null;
-          id: string;
-          offsetWidth: number;
-          offsetHeight: number;
-          getAttribute(name: string): string | null;
-        }>
-      ): Array<{
-        index: number;
-        tag: string;
-        name?: string;
-        id?: string;
-        automationId?: string;
-        visible: boolean;
-      }> =>
-        nodes.map((node, index) => {
-          const text = node.textContent?.trim().slice(0, 200) || undefined;
-          const automationId = node.getAttribute('data-automation-id')?.trim() || undefined;
-          const name =
-            node.getAttribute('aria-label')?.trim() ||
-            text ||
-            automationId ||
-            node.id.trim() ||
-            undefined;
-          return {
-            index,
-            tag: node.tagName.toLowerCase(),
-            ...(name !== undefined ? { name } : {}),
-            ...(node.id !== '' ? { id: node.id } : {}),
-            ...(automationId !== undefined ? { automationId } : {}),
-            visible: node.offsetWidth > 0 || node.offsetHeight > 0,
-          };
-        })
-    );
-    return described.slice(0, MAX_FORM_CONTROLS);
+    // Pass two: full derivation using counts merged across ALL roots. The
+    // page functions live in form-control-context.ts — self-contained so
+    // evaluateAll can serialize their source, pure so the naming rules are
+    // unit-testable without Chromium (round-3/F8). The page function
+    // enforces the cap (args.cap) — the single enforcement point (round-7/F8).
+    return root.locator(FORM_CONTROL_SELECTOR).evaluateAll(g1DescribePageFunction, {
+      pageWideNameCounts,
+      ownRootPassOneCounts,
+      cap: MAX_FORM_CONTROLS,
+    });
   }
 
   /** Client-facing context for a refusal: which ref, in which revision, what it was. */

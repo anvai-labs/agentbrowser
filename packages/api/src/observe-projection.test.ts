@@ -298,4 +298,68 @@ describe('observe compact projection', () => {
     expect(resumed.projection).toMatchObject({ matched: 0 });
     expect(resumed.continuation).toBeUndefined();
   });
+
+  it('FakeEngine parity: seeded context reaches observations and survives projection (G1/F8)', async () => {
+    const engine = new FakeEngine();
+    const service = new AgentBrowserService({ engine });
+    const session = await service.createSession({ tenantId: 't1' });
+    const pageId = (await service.createPage(session.sessionId)).pageId;
+    const engineSessionId = engine.getSessionIds()[0];
+    const fakePage = engine.getFakePage(engineSessionId ?? '', pageId);
+    fakePage?.seedElements([
+      {
+        ref: 'e1_0',
+        role: 'control',
+        name: 'Access: No access',
+        context: 'Contents — Repository permissions',
+        minted: true,
+      },
+      {
+        ref: 'e1_1',
+        role: 'control',
+        name: 'Access: No access',
+        context: 'Pull requests — Repository permissions',
+        minted: true,
+      },
+      { ref: 'e1_2', role: 'button', name: 'Submit' },
+    ]);
+
+    const full = await service.observe(session.sessionId, pageId, {
+      include: ['formControls'],
+    });
+    expect(full.elements[0]).toMatchObject({
+      context: 'Contents — Repository permissions',
+    });
+
+    // Context is protected core: a compact projection must not strip the
+    // disambiguator from generic-named controls (review G1/F1).
+    const projected = await service.observe(session.sessionId, pageId, {
+      include: ['formControls'],
+      roles: ['control'],
+    });
+    expect(projected.elements).toHaveLength(2);
+    expect(projected.elements.map((e) => e.context)).toEqual([
+      'Contents — Repository permissions',
+      'Pull requests — Repository permissions',
+    ]);
+
+    // Snapshot parity (round-2/F4 + round-3/F5): opt-in controls arrive as
+    // a SEPARATE array the fields budget can never silently drop; default
+    // snapshots stay control-free.
+    const plain = await service.getSnapshot(session.sessionId, pageId);
+    expect(plain.fields.some((f) => f.role === 'control')).toBe(false);
+    expect(plain.controls).toBeUndefined();
+    const withControls = await service.getSnapshot(session.sessionId, pageId, {
+      controls: true,
+    });
+    expect(withControls.fields.some((f) => f.role === 'control')).toBe(false);
+    expect(withControls.controls?.map((c) => c.context)).toEqual([
+      'Contents — Repository permissions',
+      'Pull requests — Repository permissions',
+    ]);
+    // matched/total are ABOUT THE CONTROLS LIST (round-6/F2): total counts
+    // minted controls (2), not shared-pass elements — an agent reading
+    // "2 of 3" would wrongly conclude a control was truncated away.
+    expect(withControls.controlsProjection).toEqual({ matched: 2, total: 2 });
+  });
 });

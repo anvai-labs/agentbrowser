@@ -93,3 +93,15 @@ export function canonicalJson(value: unknown): string {
   visit(value, 0);
   return chunks.join('');
 }
+
+/**
+ * Clamp a string to maxCodeUnits UTF-16 code units without splitting a
+ * surrogate pair at the boundary (a lone high surrogate is dropped).
+ * Shared by the context/name clamps so the discipline lives once.
+ */
+export function clampUtf16(value: string, maxCodeUnits: number): string {
+  if (value.length <= maxCodeUnits) return value;
+  const units = value.slice(0, maxCodeUnits);
+  const last = units.charCodeAt(units.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? units.slice(0, -1) : units;
+}

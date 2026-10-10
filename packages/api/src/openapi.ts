@@ -757,6 +757,16 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               schema: { type: 'integer', minimum: 1 },
               description: 'Cap the serialized response size in bytes.',
             },
+            {
+              name: 'controls',
+              in: 'query',
+              schema: { type: 'string', enum: ['true', 'false'] },
+              description:
+                'Mint custom widget controls, PROJECTED from the same single observe ' +
+                '(each with row/section context for generic-named menus) and budgeted ' +
+                'separately from fields, so neither can cut the other; ' +
+                'controlsProjection discloses matched/total for the controls list.',
+            },
           ],
           responses: {
             '200': {
@@ -779,6 +789,34 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                         role: { type: 'string' },
                         label: { type: 'string' },
                       },
+                    },
+                  },
+                  controls: {
+                    type: 'array',
+                    description:
+                      'Present with ?controls=true: minted custom widget controls, a ' +
+                      'separate array the fields budget never drops.',
+                    items: {
+                      type: 'object',
+                      required: ['ref', 'role', 'label'],
+                      properties: {
+                        ref: { type: 'string' },
+                        role: { type: 'string' },
+                        label: { type: 'string' },
+                        context: {
+                          type: 'string',
+                          description: 'Row label + section heading for generic names.',
+                        },
+                      },
+                    },
+                  },
+                  controlsProjection: {
+                    type: 'object',
+                    description:
+                      'matched = controls returned, total = controls minted; matched < total discloses truncation of the controls list.',
+                    properties: {
+                      matched: { type: 'integer' },
+                      total: { type: 'integer' },
                     },
                   },
                   truncated: { type: 'boolean' },

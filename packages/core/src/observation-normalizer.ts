@@ -12,6 +12,7 @@ import type {
   PageElement,
   PageState,
 } from '@agentbrowser/protocol';
+import { clampUtf16 } from './canonical-json.js';
 
 const INTERACTIVE_ROLES = new Set<string>([
   'button',
@@ -187,6 +188,20 @@ export class ObservationNormalizer {
       }
       if (rawEl.block !== undefined) {
         element.block = rawEl.block;
+      }
+
+      // G1: row/section context for generic-named custom controls. Clamped
+      // here so every engine (not just the Playwright 120+3+120 derivation)
+      // satisfies PageElementSchema's maxLength 300 (review round-2/F7).
+      if (rawEl.context !== undefined) {
+        // UTF-16 code-unit clamp (round-7/F6): PageElementSchema's
+        // maxLength 300 counts code units, and a unit-slice can split a
+        // surrogate pair — when the last unit is a high surrogate, drop it.
+        element.context = clampUtf16(rawEl.context, 300);
+      }
+
+      if (rawEl.minted === true) {
+        element.minted = true;
       }
 
       return element;
