@@ -888,6 +888,26 @@ describe('AgentBrowser MCP server', () => {
       });
     });
 
+    it('should forward compact projection fields to observe', async () => {
+      await call('8c', 'browser_observe', {
+        sessionId: 'ses_1',
+        pageId: 'pg_1',
+        roles: ['dialog', 'checkbox'],
+        name: 'user-1',
+        scopeRef: 'e1_5',
+        limit: 20,
+        includeFields: ['href'],
+      });
+
+      expect(sessions.observe).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        roles: ['dialog', 'checkbox'],
+        name: 'user-1',
+        scopeRef: 'e1_5',
+        limit: 20,
+        includeFields: ['href'],
+      });
+    });
+
     it('should act through a ref', async () => {
       const response = JSON.parse(
         await call('9', 'browser_act', {

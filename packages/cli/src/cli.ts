@@ -1158,6 +1158,27 @@ export function buildCli(deps: CliDependencies): Cli {
           'resume a truncated observation from its continuation.nextOrdinal'
         )
         .option(
+          '--roles <role>',
+          'compact projection: exact role filter, repeatable (e.g. --roles dialog --roles checkbox)',
+          (role: string, acc: string[]) => [...acc, role],
+          []
+        )
+        .option(
+          '--name <substring>',
+          'compact projection: case-insensitive substring filter on element names (max 200 chars)'
+        )
+        .option(
+          '--scope-ref <ref>',
+          'compact projection: scope to this element and its subtree (same frame block, deeper)'
+        )
+        .option('--limit <n>', 'compact projection: cap on the filtered element count (1-500)')
+        .option(
+          '--include-fields <field>',
+          'compact projection: additive element fields, repeatable: href | attributes | required',
+          (field: string, acc: string[]) => [...acc, field],
+          []
+        )
+        .option(
           '--since-revision <n>',
           'only observe if the page revision is newer than this (else the previous observation stands)'
         )
@@ -1182,6 +1203,11 @@ export function buildCli(deps: CliDependencies): Cli {
                 include?: string[];
                 continueFrom?: string;
                 sinceRevision?: string;
+                roles?: string[];
+                name?: string;
+                scopeRef?: string;
+                limit?: string;
+                includeFields?: string[];
               } & WaitFlagOptions
             ) => {
               const request: ObservationRequest = {};
@@ -1203,16 +1229,50 @@ export function buildCli(deps: CliDependencies): Cli {
               if (options.sinceRevision !== undefined) {
                 request.sinceRevision = captureInteger(options.sinceRevision, '--since-revision');
               }
+              if (options.roles && options.roles.length > 0) {
+                request.roles = options.roles;
+              }
+              if (options.name !== undefined) {
+                request.name = options.name;
+              }
+              if (options.scopeRef !== undefined) {
+                request.scopeRef = options.scopeRef;
+              }
+              if (options.limit !== undefined) {
+                request.limit = captureInteger(options.limit, '--limit');
+              }
+              if (options.includeFields && options.includeFields.length > 0) {
+                request.includeFields = options.includeFields as NonNullable<
+                  ObservationRequest['includeFields']
+                >;
+              }
               const observeWait = waitFromOptions(options);
               if (observeWait) {
                 request.wait = observeWait;
               }
 
-              const observation = await ctx.client.sessions.observe(
-                sessionId,
-                pageId,
-                parseObservationRequest(request)
-              );
+              let observation: Awaited<ReturnType<typeof ctx.client.sessions.observe>>;
+              try {
+                observation = await ctx.client.sessions.observe(
+                  sessionId,
+                  pageId,
+                  parseObservationRequest(request)
+                );
+              } catch (error) {
+                // Version skew: a server older than this CLI rejects the
+                // projection options as unknown keys. Fail actionably — never
+                // silently strip the caller's request.
+                const message = error instanceof Error ? error.message : String(error);
+                if (
+                  (error as { code?: string }).code === 'INVALID_REQUEST' &&
+                  /roles|scopeRef|includeFields|\/name|--limit/.test(message)
+                ) {
+                  throw new UsageError(
+                    `The server rejected the projection options and may be older than this CLI (${message}). Re-run without --roles/--name/--scope-ref/--limit/--include-fields, or upgrade the server.`
+                  );
+                }
+                throw error;
+              }
 
               ctx.emit(observation, () => renderObservation(observation));
             }
@@ -2359,6 +2419,20 @@ function renderObservation(observation: ObservationResponse): string[] {
     lines.push(`  summary:  ${observation.summary}`);
   }
 
+  if (observation.projection) {
+    // A projected view is a subset: the echo keeps a 0-match result from
+    // reading as an empty page.
+    const filters = [
+      observation.projection.roles ? `roles=[${observation.projection.roles.join(',')}]` : null,
+      observation.projection.name ? `name~"${observation.projection.name}"` : null,
+      observation.projection.scopeRef ? `scope=${observation.projection.scopeRef}` : null,
+    ].filter((part): part is string => part !== null);
+    const prefix = filters.length > 0 ? `  projection: ${filters.join(' ')}` : '  projection:';
+    lines.push(
+      `${prefix} matched ${observation.projection.matched} of ${observation.projection.total} elements`
+    );
+  }
+
   if (observation.degraded)
     lines.push(
       `  Warning: degraded observation (${observation.degradedReason ?? 'unknown'}). Wait for readiness or inspect HTML before acting.`
@@ -2370,6 +2444,9 @@ function renderObservation(observation: ObservationResponse): string[] {
     const parts = [`  ${element.focused ? '*' : ' '}${element.ref}`, element.role];
     if (element.name) {
       parts.push(`"${element.name}"`);
+      if (element.nameTruncated) {
+        parts.push('[name truncated]');
+      }
     }
     if (element.value !== undefined) {
       parts.push(`= "${element.value}"`);

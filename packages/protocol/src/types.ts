@@ -290,6 +290,12 @@ export interface PageState {
    */
   continuation?: ContinuationCursor;
   /**
+   * Present only when a compact projection was applied: echoes the filters
+   * and the matched/total counts so a subset can never read as the whole
+   * page. See ObservationProjectionEcho.
+   */
+  projection?: ObservationProjectionEcho;
+  /**
    * dom-semantic-subset means an adapter supplies a limited DOM interpretation,
    * not native AX. Increasing snapshotTimeoutMs cannot restore missing support.
    *
@@ -372,6 +378,12 @@ export interface PageElement {
    * iframe's document position).
    */
   block?: number;
+  /**
+   * True when a compact projection capped this element's name at 200 chars
+   * (mirrors hrefTruncated). Only ever set in projected output; the stored
+   * element keeps the full name.
+   */
+  nameTruncated?: boolean;
 }
 
 /**
@@ -791,6 +803,9 @@ export type WaitType =
  */
 export const DELIVERED_OBSERVATION_INCLUDES = ['overlays', 'fileInputs', 'formControls'] as const;
 
+/** Additive element-field opt-ins for compact projection (protected core excluded). */
+export const DELIVERED_PROJECTION_FIELDS = ['href', 'attributes', 'required'] as const;
+
 export interface ObservationRequest {
   mode?: (typeof DELIVERED_OBSERVATION_MODES)[number];
   maxBytes?: number;
@@ -805,6 +820,47 @@ export interface ObservationRequest {
    * browser_act (settled/networkidle/selectorVisible/minElements/...).
    */
   wait?: DeliveredWaitCondition;
+  /**
+   * Compact projection (opt-in): keep only elements with these exact roles.
+   * Response carries a `projection` echo; without any projection field the
+   * observation is the unchanged full shape.
+   */
+  roles?: string[];
+  /**
+   * Compact projection: case-insensitive substring match against element
+   * NAMES only (never values — matching withheld values would leak a
+   * redaction side channel). Max 200 chars.
+   */
+  name?: string;
+  /**
+   * Compact projection: scope to this element's subtree — the scope element
+   * plus following elements in the same snapshot block with greater depth.
+   * Must resolve at the current revision, else STALE_TARGET (ADR-004
+   * symmetry); a removed element fails TARGET_NOT_FOUND, never an empty 200.
+   */
+  scopeRef?: string;
+  /** Compact projection: cap on the filtered element count (1-500). */
+  limit?: number;
+  /**
+   * Compact projection: additive opt-in element fields. The protected core
+   * (ref, role, name, value, valueRedacted, checked, risk, focused,
+   * non-default visible/enabled, depth/block) is never droppable.
+   */
+  includeFields?: (typeof DELIVERED_PROJECTION_FIELDS)[number][];
+}
+
+/**
+ * Echo of the applied compact projection. `matched` is the element count the
+ * predicate kept; `total` is the pre-projection count (under sinceRevision,
+ * the changed set). A 0-match result on a large page means "no matching
+ * elements", never "empty page".
+ */
+export interface ObservationProjectionEcho {
+  roles?: string[];
+  name?: string;
+  scopeRef?: string;
+  matched: number;
+  total: number;
 }
 
 /**

@@ -5,6 +5,7 @@
 export * from './session-coordinator.js';
 export * from './observation-normalizer.js';
 export * from './observation-budget.js';
+export * from './observation-projection.js';
 export * from './json-ledger.js';
 export * from './action-executor.js';
 export * from './approval-gate.js';
