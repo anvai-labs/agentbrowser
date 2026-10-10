@@ -7,6 +7,8 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.16.0] — 2026-10-10
+
 ### Changed — MCP surface refresh (owner-approved breaking rename)
 
 - **MCP tool names dropped the `browser_` prefix** (`browser_observe` → `observe`, `browser_act` →
