@@ -4,7 +4,7 @@ The agent sends one structured payload. The service owns the serial resolve → 
 
 ## Delivered contract
 
-`POST /v1/sessions/{sessionId}/pages/{pageId}/autofill`, SDK `sessions.autofill`, and MCP `browser_autofill` share the protocol schema. The canonical payload uses top-level `fields`, not `goal.fields`:
+`POST /v1/sessions/{sessionId}/pages/{pageId}/autofill`, SDK `sessions.autofill`, and MCP `autofill` share the protocol schema. The canonical payload uses top-level `fields`, not `goal.fields`:
 
 ```json
 {
