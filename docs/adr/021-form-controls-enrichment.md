@@ -64,3 +64,32 @@ Deliver `include:["formControls"]`:
 - The candidate selector is intentionally bounded and narrowed; operators can
   audit it in the engine source. Adding new candidate shapes is an engine
   change, not a caller change.
+
+## Addendum (2026-10-10): row/section context on minted controls
+
+G1 (docs/agent-handoffs/AGENTBROWSER_UI_GAPS_2026-10-10.md): pages whose
+custom menus share one generic accessible name (GitHub's permission editor
+renders 40+ "Access: No access" Primer menus) made minted refs
+indistinguishable. The enrichment now attaches `PageElement.context` — the
+nearest row label plus, when attributable, the DIRECT heading of the nearest
+sectioning ancestor — under these rules:
+
+- Context attaches only to controls whose name is absent or duplicated
+  page-wide; unique-named controls carry no context bytes.
+- Labels come from aria-labelledby (skipped when it merely repeats the
+  control's own name), dt of the enclosing dd group (no whole-dl fallback),
+  or strong/label/th in the enclosing li/tr/[role=row], excluding the
+  control's own subtree. Structural selectors only — no framework classes.
+- Section attribution is scope-bounded: inside the row's nearest sectioning
+  ancestor (section/article/fieldset/main) the walk runs backwards over
+  siblings and their subtrees accepting only same-scope headings, then
+  climbs outward; headingless sections inherit nothing from siblings.
+- The protocol field is optional (`context`, maxLength 300; the normalizer
+  clamps), protected core under compact projection, and additive to every
+  surface: observe/CLI directly; snapshot exposes opt-in controls[]
+  PROJECTED from the same single observation (never a second observe,
+  which would trip changed-detection and churn revisions) and budgeted
+  separately from fields, with matched/total disclosure (declared once
+  as SnapshotControl in the protocol). Engines without this enrichment
+  (Safari, Obscura) mint no controls — an empty array there means "none
+  minted", not "the page has none".

@@ -487,22 +487,48 @@ jobs:
           name: winget-manifests
           path: winget/
 
+      # Credential priority: GitHub App (org-fork push, no user credential, no
+      # expiry churn) over a user PAT. NOTE the platform limit: a GitHub App
+      # can only act where it is installed, and microsoft/winget-pkgs only
+      # installs Microsoft's own apps — so the App path pushes the manifests
+      # branch to anvai-labs/winget-pkgs and ATTEMPTS the PR, degrading to a
+      # one-click compare link in the step summary. WINGET_FORK_TOKEN (user
+      # PAT with public_repo) remains the only zero-click option.
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        continue-on-error: true
+        with:
+          app-id: ${{ secrets.WINGET_APP_ID }}
+          private-key: ${{ secrets.WINGET_APP_PRIVATE_KEY }}
+          owner: anvai-labs
+          repositories: winget-pkgs
+
       - name: Submit PR to microsoft/winget-pkgs
         env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
           WINGET_FORK_TOKEN: ${{ secrets.WINGET_FORK_TOKEN }}
         run: |
-          if [ -z "$WINGET_FORK_TOKEN" ]; then
-            echo "::notice::WINGET_FORK_TOKEN not set — manifests uploaded as artifact; submit manually from manifests/a/AnvaiLabs/AgentBrowser/${GITHUB_REF_NAME#v}/"
+          VER="${GITHUB_REF_NAME#v}"
+          BRANCH="ab-agentbrowser-${VER}"
+          TOKEN="$APP_TOKEN"
+          if [ -z "$TOKEN" ]; then TOKEN="$WINGET_FORK_TOKEN"; fi
+          if [ -z "$TOKEN" ]; then
+            echo "::notice::No winget credential (WINGET_APP_ID/WINGET_APP_PRIVATE_KEY or WINGET_FORK_TOKEN) — manifests uploaded as artifact; submit manually from manifests/a/AnvaiLabs/AgentBrowser/${VER}/"
             exit 0
           fi
           set -euo pipefail
-          VER="${GITHUB_REF_NAME#v}"
-          BRANCH="ab-agentbrowser-${VER}"
-          export GH_TOKEN="$WINGET_FORK_TOKEN"
-          # Fork (idempotent) + branch off microsoft/winget-pkgs master.
-          gh repo fork microsoft/winget-pkgs --clone=false >/dev/null 2>&1 || true
+          export GH_TOKEN="$TOKEN"
+          # The org fork exists; a no-op fork call keeps the PAT path self-healing.
+          # Round-11/F7: surface a missing org fork instead of failing at clone.
+          if ! gh repo fork microsoft/winget-pkgs --org anvai-labs --clone=false >/dev/null 2>&1; then
+            if ! gh repo view anvai-labs/winget-pkgs >/dev/null 2>&1; then
+              echo "::error::anvai-labs/winget-pkgs fork does not exist and could not be created. Create it once (gh repo fork microsoft/winget-pkgs --org anvai-labs) with an account authorized in the org."
+              exit 1
+            fi
+          fi
           sleep 5
-          rm -rf wpk && git clone -q --depth 1 https://x-access-token:"$WINGET_FORK_TOKEN"@github.com/${GITHUB_ACTOR}/winget-pkgs.git wpk
+          rm -rf wpk
+          git clone -q --depth 1 "https://x-access-token:${TOKEN}@github.com/anvai-labs/winget-pkgs.git" wpk
           cd wpk
           git checkout -q -b "$BRANCH"
           DEST="manifests/a/AnvaiLabs/AgentBrowser/${VER}"
@@ -511,6 +537,15 @@ jobs:
           git -c user.name="agentbrowser-release-bot" -c user.email="noreply@anvai-labs" \
             commit -qm "Add AnvaiLabs.AgentBrowser ${VER}"
           git push -q origin "$BRANCH"
-          gh pr create --repo microsoft/winget-pkgs --head "$BRANCH" \
+          if gh pr create --repo microsoft/winget-pkgs --head "anvai-labs:${BRANCH}" \
             --title "Add AnvaiLabs.AgentBrowser ${VER}" \
-            --body "Automated submission from anvai-labs/agentbrowser release ${GITHUB_REF_NAME}. Portable installers (agentbrowser-mcp, agentbrowser-cli). SHA256 verified by CI."
+            --body "Automated submission from anvai-labs/agentbrowser release ${GITHUB_REF_NAME}. Portable installers (agentbrowser-mcp, agentbrowser-cli, agentbrowser-server). SHA256 verified by CI."; then
+            echo "winget-pkgs submission PR opened." >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "### Winget submission ready — one click"
+              echo "Manifests branch pushed to anvai-labs/winget-pkgs (\`${BRANCH}\`)."
+              echo "The GitHub App cannot open PRs in microsoft/winget-pkgs (not installed there); open it here:"
+              echo "https://github.com/microsoft/winget-pkgs/compare/master...anvai-labs:${BRANCH}"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

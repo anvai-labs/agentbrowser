@@ -1323,15 +1323,31 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           const { sessionId, pageId } = params(request, 'sessionId', 'pageId');
           requireOwnership(sessionId, tenantOf(request));
           // Payload economics (TD-BROWSER-8 pressure matrix, row 4).
-          const query = request.query as { maxElements?: string; maxBytes?: string };
+          const query = request.query as {
+            maxElements?: string;
+            maxBytes?: string;
+            controls?: string;
+          };
           const maxElements =
             query.maxElements !== undefined ? Number.parseInt(query.maxElements, 10) : undefined;
           const maxBytes =
             query.maxBytes !== undefined ? Number.parseInt(query.maxBytes, 10) : undefined;
+          // Strict enum per the published OpenAPI contract: anything but
+          // true/false is a usage error, never a silent no-op that reads as
+          // "the page has no custom controls" (round-5/F7).
+          if (
+            query.controls !== undefined &&
+            query.controls !== 'true' &&
+            query.controls !== 'false'
+          ) {
+            throw new ServiceError('INVALID_REQUEST', "controls must be 'true' or 'false'");
+          }
+          const controls = query.controls === 'true';
           return responseDraft(
             await service.getSnapshot(sessionId, pageId, {
               ...(maxElements !== undefined ? { maxElements } : {}),
               ...(maxBytes !== undefined ? { maxBytes } : {}),
+              ...(controls ? { controls } : {}),
             })
           );
         },

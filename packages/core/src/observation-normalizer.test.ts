@@ -631,6 +631,27 @@ describe('scope projection metadata (depth/block)', () => {
     expect(observation.elements[1]).toMatchObject({ depth: 1, block: 1 });
   });
 
+  it('passes formControls context through when present (G1 parity)', () => {
+    const normalizer = new ObservationNormalizer();
+    const observation = normalizer.normalize(
+      baseRaw([
+        {
+          role: 'control',
+          visible: true,
+          enabled: true,
+          name: 'Access: No access',
+          context: 'Contents — Repository permissions',
+        },
+      ]),
+      { mode: 'interactive', revision: 2 }
+    );
+
+    expect(observation.elements[0]).toMatchObject({
+      role: 'control',
+      context: 'Contents — Repository permissions',
+    });
+  });
+
   it('omits depth and block when absent so flat output stays byte-identical', () => {
     const normalizer = new ObservationNormalizer();
     const observation = normalizer.normalize(

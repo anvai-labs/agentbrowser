@@ -29,6 +29,7 @@ import type {
   PageState,
 } from '@agentbrowser/protocol';
 import { parseRef } from '@agentbrowser/protocol';
+import { clampUtf16 } from './canonical-json.js';
 
 /** The projection subset of ObservationRequest (protocol-declared fields). */
 export interface ObservationProjection {
@@ -108,13 +109,7 @@ export function projectObservation(
         `Scope ref ${projection.scopeRef} is not present in the current observation. Observe again for current refs.`
       );
     }
-    const scope = ordered[scopeIndex];
-    if (scope === undefined) {
-      throw new EngineError(
-        'TARGET_NOT_FOUND',
-        `Scope ref ${projection.scopeRef} is not present in the current observation. Observe again for current refs.`
-      );
-    }
+    const scope = ordered[scopeIndex] as (typeof ordered)[number];
     const scopeBlock = scope.block ?? 0;
     const scopeDepth = scope.depth ?? 0;
     allowedRefs = new Set<string>([scope.ref]);
@@ -251,7 +246,9 @@ function shapeElement(element: PageElement, includeFields: Set<string> | undefin
   };
   if (element.name !== undefined) {
     if (element.name.length > NAME_CAP) {
-      shaped.name = element.name.slice(0, NAME_CAP);
+      // Round-11/F9: a raw UTF-16 slice can split a surrogate pair at the
+      // cap — drop a trailing lone high surrogate.
+      shaped.name = clampUtf16(element.name, NAME_CAP);
       shaped.nameTruncated = true;
     } else {
       shaped.name = element.name;
@@ -263,6 +260,9 @@ function shapeElement(element: PageElement, includeFields: Set<string> | undefin
   if (element.risk !== undefined) shaped.risk = element.risk;
   if (element.focused !== undefined) shaped.focused = element.focused;
   if (element.depth !== undefined) shaped.depth = element.depth;
+  // G1 context is protected core: compact projection must not strip the
+  // disambiguator from generic-named controls (review G1/F1).
+  if (element.context !== undefined) shaped.context = element.context;
   if (element.block !== undefined) shaped.block = element.block;
   if (includeFields?.has('href')) {
     if (element.href !== undefined) shaped.href = element.href;

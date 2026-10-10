@@ -396,18 +396,49 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
     {
       name: 'snapshot',
       requiredCapabilities: ['page.observe'],
-      description: `${INTERACTION_GUIDANCE.snapshot} Returns url, title, revision, fields ({ref, role, label}) and adaptive mode. Use autofill for supported native forms. In verified mode, plan requires a stricter role+label match when remapping stale refs. Degraded snapshots can omit custom widgets; do not treat missing fields as absent from the page.`,
+      description: `${INTERACTION_GUIDANCE.snapshot} Returns url, title, revision, fields ({ref, role, label}) and adaptive mode. Pass controls:true to also mint custom widget controls, PROJECTED from the same single observation and budgeted separately from fields (controlsProjection discloses matched/total), each carrying row/section context for generic-named menus (e.g. "Access: No access" + "Contents — Repository permissions"). Use autofill for supported native forms. In verified mode, plan requires a stricter role+label match when remapping stale refs. Degraded snapshots can omit custom widgets; do not treat missing fields as absent from the page.`,
       inputSchema: {
         type: 'object',
         properties: {
           sessionId: { type: 'string' },
           pageId: { type: 'string' },
+          controls: {
+            anyOf: [{ type: 'boolean' }, { type: 'string', enum: ['true', 'false'] }],
+            description:
+              'Also return minted custom controls (with context) as a separate controls[] array. Accepts true/false (boolean or string).',
+          },
         },
         required: ['sessionId', 'pageId'],
       },
       handler: async (args) => {
         const [sessionId, pageId] = sessionAndPage(args);
-        return await client.sessions.snapshot(sessionId, pageId);
+        // Round-6/F6: stringly-typed 'true' from an LLM client must never
+        // be a silent no-op that reads as "no custom controls".
+        const controls = args.controls;
+        if (
+          controls !== undefined &&
+          controls !== true &&
+          controls !== false &&
+          controls !== 'true' &&
+          controls !== 'false'
+        ) {
+          throw new UsageError('controls must be a boolean');
+        }
+        const wantsControls = controls === true || controls === 'true';
+        const snapshot = await client.sessions.snapshot(
+          sessionId,
+          pageId,
+          ...(wantsControls ? [{ controls: true } as const] : [])
+        );
+        // Round-16/F1: an old server ignores the unknown param and returns
+        // a controls-less snapshot — surface the no-op (CLI parity,
+        // round-12/F3) instead of reading it as "no custom controls".
+        if (wantsControls && (snapshot as { controls?: unknown }).controls === undefined) {
+          throw new UsageError(
+            'The server returned no controls list — it may be older than this MCP adapter. Re-run without controls, or upgrade the server.'
+          );
+        }
+        return snapshot;
       },
     },
 

@@ -1269,9 +1269,23 @@ export function buildCli(deps: CliDependencies): Cli {
                 // projection options as unknown keys. Fail actionably — never
                 // silently strip the caller's request.
                 const message = error instanceof Error ? error.message : String(error);
+                // Round-11/F2: only messages that say the property is
+                // UNRECOGNIZED indicate version skew — a genuine validation
+                // error ('Invalid scopeRef ...') must keep its real diagnosis.
+                // Round-15/F5: match the CURRENT TypeBox wording OR the
+                // structured issues detail (shape-based, survives message
+                // wording drift across server builds).
+                const issues = JSON.stringify(
+                  (error as { details?: { issues?: unknown } }).details?.issues ?? []
+                );
+                const unknownProperty =
+                  /[Uu]nrecognized (property|key|option)|[Uu]nexpected (property|key)/.test(
+                    message
+                  ) || /"path":"\/(roles|scopeRef|includeFields|name|limit)"/.test(issues);
                 if (
                   (error as { code?: string }).code === 'INVALID_REQUEST' &&
-                  /roles|scopeRef|includeFields|\/name|--limit/.test(message)
+                  unknownProperty &&
+                  /roles|scopeRef|includeFields|name|limit/.test(message + issues)
                 ) {
                   throw new UsageError(
                     `The server rejected the projection options and may be older than this CLI (${message}). Re-run without --roles/--name/--scope-ref/--limit/--include-fields, or upgrade the server.`
@@ -1313,26 +1327,58 @@ export function buildCli(deps: CliDependencies): Cli {
         .argument('<pageId>')
         .option('--max-elements <n>', 'maximum fields to return')
         .option('--max-bytes <n>', 'maximum snapshot size in bytes')
+        .option(
+          '--include-controls',
+          'also mint custom widget controls as a separate list with row context (G1)',
+          false
+        )
         .action(
           action(
             async (
               ctx,
               sessionId: string,
               pageId: string,
-              options: { maxElements?: string; maxBytes?: string }
+              options: { maxElements?: string; maxBytes?: string; includeControls?: boolean }
             ) => {
-              const bounds: { maxElements?: number; maxBytes?: number } = {};
+              const bounds: {
+                maxElements?: number;
+                maxBytes?: number;
+                controls?: boolean;
+              } = {};
               if (options.maxElements) {
                 bounds.maxElements = Number.parseInt(options.maxElements, 10);
               }
               if (options.maxBytes) {
                 bounds.maxBytes = Number.parseInt(options.maxBytes, 10);
               }
+              if (options.includeControls) {
+                bounds.controls = true;
+              }
               const snapshot = await ctx.client.sessions.snapshot(sessionId, pageId, bounds);
+              // Round-12/F3: an old server ignores the controls param —
+              // surface the no-op instead of reading it as "no controls".
+              if (
+                bounds.controls === true &&
+                (snapshot as { controls?: unknown }).controls === undefined
+              ) {
+                throw new UsageError(
+                  'The server returned no controls list — it may be older than this CLI. Re-run without --include-controls, or upgrade the server.'
+                );
+              }
 
               ctx.emit(snapshot, () => [
                 `${snapshot.url} (${snapshot.mode}, revision ${snapshot.revision})`,
                 ...snapshot.fields.map((f) => `  ${f.ref} [${f.role}] ${f.label}`),
+                ...(snapshot.controls && snapshot.controls.length > 0
+                  ? [
+                      '',
+                      'Controls:',
+                      ...snapshot.controls.map(
+                        (c) =>
+                          `  ${c.ref} [${c.role}] ${c.label}${c.context ? ` (${c.context})` : ''}`
+                      ),
+                    ]
+                  : []),
                 ...(snapshot.truncated ? ['  (truncated)'] : []),
               ]);
             }
@@ -2471,6 +2517,10 @@ function renderObservation(observation: ObservationResponse): string[] {
       if (element.nameTruncated) {
         parts.push('[name truncated]');
       }
+    }
+    if (element.context) {
+      // G1: row/section context separates generic-named custom controls.
+      parts.push(`(${element.context})`);
     }
     if (element.value !== undefined) {
       parts.push(`= "${element.value}"`);

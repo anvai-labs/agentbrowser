@@ -7,6 +7,40 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — formControls row/section context (G1)
+
+- Custom controls with generic, duplicated accessible names (GitHub's permission editor
+  renders 40+ "Access: No access" Primer menus) now carry `PageElement.context`: the nearest
+  enclosing row label plus the section heading (`Contents — Repository permissions`), minted
+  by the formControls enrichment and rendered by the CLI as `(context)`. Field evidence and
+  the full gap packet (forms-extract parity, lazy-section probes, autofill context matching,
+  scroll ergonomics, private-file downloads):
+  docs/agent-handoffs/AGENTBROWSER_UI_GAPS_2026-10-10.md.
+
+## [1.16.1] — 2026-10-10
+
+### Added — Windows CI + winget channel, App-based submission
+
+- **Windows CI gates** (`windows-ci.yml`): windows-latest build + W1–W6 gotcha gates
+  (stdio handshake, .cmd shim relay, spaced/UNC paths, PowerShell interop, browser
+  discovery — each encoding a real win32 failure) + a full-stack headless MCP e2e
+  through the real binary. The G2 shim gate caught its first real bug on first run:
+  a never-executed-on-Windows argv-slice mismatch.
+- **winget release channel**: manifests for all three portable commands
+  (`agentbrowser-mcp`, `agentbrowser-cli`, `agentbrowser-server`) generated from the
+  windows release exes; `winget install AnvaiLabs.AgentBrowser` provisions all three
+  with no Node runtime. Manifests always upload as a workflow artifact.
+- **App-based submission (no user credential)**: a GitHub App installed on
+  `anvai-labs/winget-pkgs` pushes the manifests branch per release (per-run
+  installation tokens via `WINGET_APP_ID`/`WINGET_APP_PRIVATE_KEY`); the PR into
+  `microsoft/winget-pkgs` is attempted and — because GitHub Apps cannot create PRs in
+  repos they are not installed on — degrades to a one-click compare link in the run
+  summary. `WINGET_FORK_TOKEN` (user PAT) remains the zero-click override.
+- Also in this train: waitFor 6s budget fix for four real-Chromium panel waits under
+  pre-commit parallel load, and honest `t.skip` (no bare passes) in G4/G5 when
+  preconditions are unavailable.
+
+
 ## [1.16.0] — 2026-10-10
 
 ### Changed — MCP surface refresh (owner-approved breaking rename)

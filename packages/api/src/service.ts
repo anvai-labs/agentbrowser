@@ -92,6 +92,8 @@ import {
   extractVisibleText,
 } from '@agentbrowser/extraction';
 import { EngagementScopePolicy, type NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
+import { MAX_FORM_CONTROLS_PER_ROOT, type SnapshotControl } from '@agentbrowser/protocol';
+
 import type {
   ArtifactRef,
   ObservationRequest,
@@ -2454,13 +2456,26 @@ export class AgentBrowserService {
   async getSnapshot(
     sessionId: string,
     pageId: string,
-    bounds?: { maxElements?: number; maxBytes?: number }
+    bounds?: { maxElements?: number; maxBytes?: number; controls?: boolean }
   ): Promise<{
     url: string;
     title: string;
     revision: number;
     mode: 'stable' | 'verified';
     fields: Array<{ ref: string; role: string; label: string }>;
+    /**
+     * Opt-in minted custom controls (rounds 3-6): PROJECTED from the single
+     * shared engine observe (never a second observe — that bumped revisions
+     * and invalidated the same response's refs), budgeted separately from
+     * fields so neither can cut the other. controlsProjection discloses
+     * matched/total for the controls list itself. Engines without the
+     * formControls enrichment (Safari, Obscura) mint nothing — an empty
+     * array means "none minted", not "page has none" (ADR-021 scope).
+     */
+    controls?: SnapshotControl[];
+    /** matched = controls returned, total = controls minted in the shared
+     * pass; matched < total discloses truncation of the controls list. */
+    controlsProjection?: { matched: number; total: number };
     truncated?: boolean;
     degraded?: boolean;
     degradedReason?:
@@ -2468,42 +2483,149 @@ export class AgentBrowserService {
       | 'dom-semantic-subset'
       | 'empty-snapshot-nonempty-dom';
   }> {
-    // Payload economics (TD-BROWSER-8 pressure matrix, row 4): the fields
-    // list previously had no way to bound its size from the caller's side;
-    // it now flows through the same byte/element budget as observe().
-    const state = await this.observe(sessionId, pageId, {
+    // ONE engine observe for everything (adversarial review round-5/F1):
+    // a second observe with a differing include set trips the engine's
+    // changed-detection (element count N vs N+M), bumps the revision, and
+    // invalidates every ref this same response just minted. The controls
+    // view is therefore PROJECTED from the shared pass, not re-observed.
+    const state = await this.observeInternal(sessionId, pageId, {
       mode: 'interactive',
-      ...(bounds?.maxElements !== undefined ? { maxElements: bounds.maxElements } : {}),
-      ...(bounds?.maxBytes !== undefined ? { maxBytes: bounds.maxBytes } : {}),
+      ...(bounds?.controls === true ? { include: ['formControls' as const] } : {}),
     });
-    const view = state as unknown as {
-      url?: string;
-      title?: string;
-      revision?: number;
-      elements?: Array<{ ref: string; role?: string; name?: string }>;
-      truncated?: boolean;
-      degraded?: boolean;
-      degradedReason?:
-        | 'aria-snapshot-timeout'
-        | 'dom-semantic-subset'
-        | 'empty-snapshot-nonempty-dom';
+    const redacted = this.secretManager.redact(state) as typeof state & {
+      elements: Array<{ ref: string; role: string; name?: string; context?: string }>;
     };
+    // Fields view: the caller's budget applied to the aria-snapshot
+    // elements ONLY — minted controls sort last in the combined list, so
+    // budgeting the combined list silently cut exactly the rows a
+    // controls=true caller opted into (round-4/F1).
+    // Round-7/F2: budget EngineErrors must surface as 400 INVALID_REQUEST,
+    // not 500 INTERNAL — the same normalization paginateObservation applies.
+    // Round-15/F3: ONE budget wrapper with an onTruncated policy — the
+    // fields and controls views shared two drifted catch blocks.
+    const budgetWithPolicy = (
+      source: Parameters<typeof budgetObservation>[0],
+      options: Parameters<typeof budgetObservation>[1],
+      onTruncated?: () => ReturnType<typeof budgetObservation>
+    ): ReturnType<typeof budgetObservation> => {
+      try {
+        return budgetObservation(source, options);
+      } catch (error) {
+        if (
+          onTruncated !== undefined &&
+          error instanceof Error &&
+          (error as { code?: string }).code === 'OUTPUT_TRUNCATED'
+        ) {
+          return onTruncated();
+        }
+        const detail = normalizeEngineError(error);
+        throw new ServiceError(detail.code, detail.message, detail.retryable, detail.details);
+      }
+    };
+    // Round-10/F4: minted enrichment rows carry attributes.tag (the DOM tag
+    // the scan discovered); a GENUINE aria role="control" element does not.
+    // Filter on that marker — never the bare role string — so legal custom
+    // roles stay in fields.
+    // Round-15/F2: the DECLARED protocol marker — no more textual
+    // role/attributes inference.
+    const isMinted = (e: { minted?: boolean }): boolean => e.minted === true;
+    const fieldsBudget = budgetWithPolicy(
+      {
+        ...redacted,
+        elements: redacted.elements.filter((e) => !isMinted(e)),
+      },
+      {
+        ...(bounds?.maxElements !== undefined ? { maxElements: bounds.maxElements } : {}),
+        ...(bounds?.maxBytes !== undefined ? { maxBytes: bounds.maxBytes } : {}),
+      }
+    );
+    // Controls view: same shared pass, projected to role "control" —
+    // truncation disclosed via matched/total + continuation.
+    let controlsBlock:
+      | { controls: SnapshotControl[]; controlsProjection: { matched: number; total: number } }
+      | undefined;
+    if (bounds?.controls === true) {
+      // Round-6/F2+F3: matched/total are ABOUT THE CONTROLS LIST — the
+      // projection echo's total counts every shared-pass element (aria
+      // fields included), which reads as truncation. The budget is a large
+      // explicit cap with truncation disclosed by matched < total; no
+      // resume cursor is exposed (snapshot has no continueFrom surface, so
+      // a cursor would be permanently dead).
+      // Round-12/F2: one predicate everywhere — the projection, the
+      // mintedTotal, and the fields filter all use isMinted so matched can
+      // never exceed total and no element lands in both lists. The minted
+      // REF SET is computed on the redacted (pre-projection) elements —
+      // the projection's element shaping strips attributes, so isMinted
+      // cannot run on the shaped list.
+      const mintedRefs = new Set(redacted.elements.filter((e) => isMinted(e)).map((e) => e.ref));
+      const mintedTotal = mintedRefs.size;
+      const projected = projectObservation(redacted, {
+        roles: ['control'],
+      });
+      // Restrict to minted rows only (a genuine aria role="control" element
+      // that matched the roles filter stays in fields).
+      projected.elements = projected.elements.filter((e) => mintedRefs.has(e.ref));
+      // (round-13/F6: the echo overwrite removed — controlsProjection is
+      // computed independently from budgeted.elements.length/mintedTotal;
+      // a dead second source invited drift.)
+      // Round-8/F1: the caller's byte budget applies to the controls list
+      // too — a separate element cap alone let controls[] ride unbounded
+      // past maxBytes by orders of magnitude.
+      // Round-13/F3: an ADDITIVE opt-in must never fail a snapshot that
+      // succeeded without it — if the byte budget cannot fit the controls
+      // view even at one element, degrade to the empty list with the
+      // matched<total disclosure instead of throwing OUTPUT_TRUNCATED.
+      // Round-14/F3: the caller's maxBytes caps the COMBINED response —
+      // the controls budget gets the bytes remaining after the fields view,
+      // never a second full allowance (which doubled the documented cap).
+      // Round-15/F1: UTF-8 bytes (the budget's unit), not code units.
+      const serializedFields = Buffer.byteLength(JSON.stringify(fieldsBudget), 'utf8');
+      const controlBudgetOptions = {
+        maxElements: MAX_FORM_CONTROLS_PER_ROOT * 10,
+        ...(bounds?.maxBytes !== undefined
+          ? { maxBytes: Math.max(1, bounds.maxBytes - serializedFields) }
+          : {}),
+      };
+      const budgetedControls = budgetWithPolicy(projected, controlBudgetOptions, () => ({
+        ...projected,
+        elements: [],
+        truncated: true,
+      }));
+      controlsBlock = {
+        controls: budgetedControls.elements.map(
+          (c): SnapshotControl => ({
+            ref: c.ref,
+            role: c.role,
+            label: c.name ?? '',
+            ...(c.context !== undefined ? { context: c.context } : {}),
+          })
+        ),
+        controlsProjection: {
+          matched: budgetedControls.elements.length,
+          total: mintedTotal,
+        },
+      };
+    }
     return {
-      url: view.url ?? '',
-      title: view.title ?? '',
-      revision: view.revision ?? 0,
+      url: fieldsBudget.url,
+      title: fieldsBudget.title,
+      revision: fieldsBudget.revision,
       mode: this.churnMode(`${sessionId}:${pageId}`),
-      fields: (view.elements ?? []).map((e) => ({
+      fields: fieldsBudget.elements.map((e) => ({
         ref: e.ref,
-        role: e.role ?? '',
+        role: e.role,
         label: e.name ?? '',
       })),
-      ...(view.truncated === true ? { truncated: true } : {}),
+      ...(controlsBlock?.controls !== undefined ? { controls: controlsBlock.controls } : {}),
+      ...(controlsBlock?.controlsProjection !== undefined
+        ? { controlsProjection: controlsBlock.controlsProjection }
+        : {}),
+      ...(fieldsBudget.truncated === true ? { truncated: true } : {}),
       // Whole-body ariaSnapshot fallback signal (see observe()): a
       // one-shot-plan caller must see this just as clearly as observe
       // does, since `fields` alone looks structurally identical either way.
-      ...(view.degraded === true ? { degraded: true } : {}),
-      ...(view.degradedReason !== undefined ? { degradedReason: view.degradedReason } : {}),
+      ...(redacted.degraded === true ? { degraded: true } : {}),
+      ...(redacted.degradedReason !== undefined ? { degradedReason: redacted.degradedReason } : {}),
     };
   }
 
@@ -2755,6 +2877,36 @@ export class AgentBrowserService {
     pageId: string,
     request: PartialObservation
   ): Promise<PageState> {
+    const observation = await this.observeInternal(sessionId, pageId, request);
+    if (request.sinceRevision !== undefined) {
+      // The diff path accepts maxBytes but previously returned unbounded;
+      // paginateObservation applies the same byte budget to the diff result.
+      // The full observation rides along so a projection scope can resolve
+      // against the whole page, not just the changed subset.
+      const page = this.requirePage(sessionId, pageId);
+      return this.paginateObservation(
+        this.diffObservation(page, observation, request.sinceRevision),
+        request,
+        observation
+      );
+    }
+    return this.paginateObservation(observation, request);
+  }
+
+  /**
+   * The engine+history pass of observe WITHOUT pagination: one engine
+   * observe, ref bridge, history. getSnapshot's controls path consumes this
+   * so its SECOND view derivation never runs a second engine observe — a
+   * differing element count trips the engine's changed-detection, bumps the
+   * revision, and invalidates every ref the first view just minted
+   * (adversarial review round-5/F1). Callers must redact before returning
+   * any derived view.
+   */
+  private async observeInternal(
+    sessionId: string,
+    pageId: string,
+    request: PartialObservation
+  ): Promise<PageState> {
     const checked = validateObservationRequest(request);
     if (!checked.ok)
       throw new ServiceError(
@@ -2843,19 +2995,7 @@ export class AgentBrowserService {
       }
     }
 
-    if (request.sinceRevision !== undefined) {
-      // The diff path accepts maxBytes but previously returned unbounded;
-      // paginateObservation applies the same byte budget to the diff result.
-      // The full observation rides along so a projection scope can resolve
-      // against the whole page, not just the changed subset.
-      return this.paginateObservation(
-        this.diffObservation(page, observation, request.sinceRevision),
-        request,
-        observation
-      );
-    }
-
-    return this.paginateObservation(observation, request);
+    return observation;
   }
 
   /**
@@ -2912,7 +3052,15 @@ export class AgentBrowserService {
       }
 
       const properties: Record<string, { old: unknown; new: unknown }> = {};
-      for (const field of ['role', 'name', 'value', 'visible', 'enabled', 'checked'] as const) {
+      for (const field of [
+        'role',
+        'name',
+        'value',
+        'visible',
+        'enabled',
+        'checked',
+        'context',
+      ] as const) {
         const old = before[field];
         const now = element[field];
         if (old !== now) {
@@ -2978,12 +3126,29 @@ export class AgentBrowserService {
       // budgetObservation strips an incoming cursor and only re-emits its own
       // when its window cuts. When the budget covered everything the projected
       // list had, the projection's own limit cursor is the live one.
+      // Round-11/F3: when the budget cut into a limit-windowed projection,
+      // the budget cursor's remaining counts only the in-window remainder —
+      // matches beyond the limit window are also unreturned. Recompute the
+      // true unreturned-match count from the projection's own echo.
       if (
         projected.continuation !== undefined &&
         budgeted.continuation === undefined &&
         budgeted.elements.length === projected.elements.length
       ) {
         return { ...budgeted, truncated: true, continuation: projected.continuation };
+      }
+      if (
+        projected.continuation !== undefined &&
+        budgeted.continuation !== undefined &&
+        projected.projection !== undefined
+      ) {
+        const unreturned = projected.projection.matched - budgeted.elements.length;
+        if (unreturned > budgeted.continuation.remaining) {
+          return {
+            ...budgeted,
+            continuation: { ...budgeted.continuation, remaining: unreturned },
+          };
+        }
       }
       return budgeted;
     } catch (error) {
