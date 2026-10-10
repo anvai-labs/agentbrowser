@@ -154,7 +154,17 @@ export async function checkCliApplicationOutcome(
       modules.commit,
       modules.dirty ? 'allow-dirty' : 'clean',
     ],
-    { env: { ...env, AGENTBROWSER_API_KEY: key }, label: 'cli-outcome', timings: options.managedChildren },
+    {
+      env: { ...env, AGENTBROWSER_API_KEY: key },
+      label: 'cli-outcome',
+      timings: options.managedChildren,
+      // Measured on the macOS release runners: ~60s case matrix plus a
+      // ~28s application-recipe. v1.15.1 finished at ~88s against the 90s
+      // default — runner variance now tips it over mid-recipe. 150s keeps
+      // the gate strict (a real hang still fails) while absorbing that
+      // variance; revisit if the measured total approaches this.
+      timeoutMs: 150_000,
+    },
     async (proc) => {
       const ready = await proc.message();
       assert.equal(ready.kind, 'ready');
