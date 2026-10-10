@@ -602,7 +602,7 @@ class SafariPage implements EnginePage {
     const descriptor = this.lastElements.get(ref);
     if (descriptor === undefined) {
       throw new Error(
-        `Element ref '${ref}' not found in the current observation. Call browser_observe to get fresh refs.`
+        `Element ref '${ref}' not found in the current observation. Call observe (via your AgentBrowser surface) to get fresh refs.`
       );
     }
     return descriptor;
@@ -647,7 +647,7 @@ class SafariPage implements EnginePage {
       case 'click': {
         const ref = action.target?.ref;
         if (ref === undefined) {
-          throw new Error('click requires a target ref from browser_observe');
+          throw new Error('click requires a target ref from an observe call');
         }
         this.descriptorFor(ref);
         const result = await this.execute<{ gone: boolean }>(
@@ -668,7 +668,7 @@ class SafariPage implements EnginePage {
       case 'fill': {
         const ref = action.target?.ref;
         if (ref === undefined) {
-          throw new Error('fill requires a target ref from browser_observe');
+          throw new Error('fill requires a target ref from an observe call');
         }
         this.descriptorFor(ref);
         const value = String(action.value ?? '');

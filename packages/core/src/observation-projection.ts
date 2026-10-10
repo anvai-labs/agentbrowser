@@ -108,13 +108,7 @@ export function projectObservation(
         `Scope ref ${projection.scopeRef} is not present in the current observation. Observe again for current refs.`
       );
     }
-    const scope = ordered[scopeIndex];
-    if (scope === undefined) {
-      throw new EngineError(
-        'TARGET_NOT_FOUND',
-        `Scope ref ${projection.scopeRef} is not present in the current observation. Observe again for current refs.`
-      );
-    }
+    const scope = ordered[scopeIndex] as (typeof ordered)[number];
     const scopeBlock = scope.block ?? 0;
     const scopeDepth = scope.depth ?? 0;
     allowedRefs = new Set<string>([scope.ref]);
@@ -251,7 +245,11 @@ function shapeElement(element: PageElement, includeFields: Set<string> | undefin
   };
   if (element.name !== undefined) {
     if (element.name.length > NAME_CAP) {
-      shaped.name = element.name.slice(0, NAME_CAP);
+      // Round-11/F9: a raw UTF-16 slice can split a surrogate pair at the
+      // cap — drop a trailing lone high surrogate.
+      const units = element.name.slice(0, NAME_CAP);
+      const last = units.charCodeAt(units.length - 1);
+      shaped.name = last >= 0xd800 && last <= 0xdbff ? units.slice(0, -1) : units;
       shaped.nameTruncated = true;
     } else {
       shaped.name = element.name;

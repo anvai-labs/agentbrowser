@@ -3088,12 +3088,29 @@ export class AgentBrowserService {
       // budgetObservation strips an incoming cursor and only re-emits its own
       // when its window cuts. When the budget covered everything the projected
       // list had, the projection's own limit cursor is the live one.
+      // Round-11/F3: when the budget cut into a limit-windowed projection,
+      // the budget cursor's remaining counts only the in-window remainder —
+      // matches beyond the limit window are also unreturned. Recompute the
+      // true unreturned-match count from the projection's own echo.
       if (
         projected.continuation !== undefined &&
         budgeted.continuation === undefined &&
         budgeted.elements.length === projected.elements.length
       ) {
         return { ...budgeted, truncated: true, continuation: projected.continuation };
+      }
+      if (
+        projected.continuation !== undefined &&
+        budgeted.continuation !== undefined &&
+        projected.projection !== undefined
+      ) {
+        const unreturned = projected.projection.matched - budgeted.elements.length;
+        if (unreturned > budgeted.continuation.remaining) {
+          return {
+            ...budgeted,
+            continuation: { ...budgeted.continuation, remaining: unreturned },
+          };
+        }
       }
       return budgeted;
     } catch (error) {

@@ -18,9 +18,10 @@ export async function writeObservationFile(path: string, observation: unknown) {
       constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
       0o600
     );
-  } catch {
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? 'unknown';
     throw new UsageError(
-      'Could not exclusively create observation output file (path exists, is a symlink, or is not writable).'
+      `Could not exclusively create observation output file (${code}: path exists, parent missing, is a symlink, or is not writable).`
     );
   }
   try {

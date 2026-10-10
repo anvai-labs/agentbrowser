@@ -519,7 +519,13 @@ jobs:
           set -euo pipefail
           export GH_TOKEN="$TOKEN"
           # The org fork exists; a no-op fork call keeps the PAT path self-healing.
-          gh repo fork microsoft/winget-pkgs --org anvai-labs --clone=false >/dev/null 2>&1 || true
+          # Round-11/F7: surface a missing org fork instead of failing at clone.
+          if ! gh repo fork microsoft/winget-pkgs --org anvai-labs --clone=false >/dev/null 2>&1; then
+            if ! gh repo view anvai-labs/winget-pkgs >/dev/null 2>&1; then
+              echo "::error::anvai-labs/winget-pkgs fork does not exist and could not be created. Create it once (gh repo fork microsoft/winget-pkgs --org anvai-labs) with an account authorized in the org."
+              exit 1
+            fi
+          fi
           sleep 5
           rm -rf wpk
           git clone -q --depth 1 "https://x-access-token:${TOKEN}@github.com/anvai-labs/winget-pkgs.git" wpk
