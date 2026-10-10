@@ -24,27 +24,51 @@ exclude_docs: |
 theme:
   name: material
   features:
+    - content.code.copy
     - content.tabs.link
     - navigation.indexes
+    - navigation.instant
     - navigation.sections
     - navigation.tabs
     - navigation.top
+    - navigation.tracking
     - search.highlight
     - search.suggest
+    - toc.follow
+  # Brand: teal, matching the Anvai accent system (AnvaiOps docs + marketing
+  # site) so the product family reads as one brand.
   palette:
     - media: '(prefers-color-scheme: light)'
       scheme: default
+      primary: teal
+      accent: teal
       toggle:
-        icon: material/weather-night
+        icon: material/brightness-7
         name: Switch to dark mode
     - media: '(prefers-color-scheme: dark)'
       scheme: slate
+      primary: teal
+      accent: teal
       toggle:
-        icon: material/weather-sunny
+        icon: material/brightness-4
         name: Switch to light mode
+  logo: assets/logo.svg
+  favicon: assets/favicon.svg
+  icon:
+    repo: fontawesome/brands/github
 
 hooks:
   - docs_hooks/rewrite_source_links.py
+
+extra_javascript:
+  - https://unpkg.com/mermaid@10/dist/mermaid.min.js
+  - javascripts/mermaid-init.js
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/anvai-labs/agentbrowser
+      name: AgentBrowser on GitHub
 
 plugins:
   - search
@@ -54,6 +78,9 @@ plugins:
 markdown_extensions:
   - admonition
   - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid

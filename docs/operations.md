@@ -278,7 +278,7 @@ returns `QUOTA_EXCEEDED` until used or expired tokens can be reclaimed.
 
 Sessions are **ephemeral by default** ([ADR-005](adr/005-ephemeral-sessions-explicit-persistence.md)):
 
-- default TTL **3.5 hours**, default idle timeout **10 minutes** — both
+- default TTL **4.375 hours**, default idle timeout **10 minutes** — both
   overridable per session (`ttlMs`, `idleTimeoutMs` on create), and the
   defaults themselves are operator-tunable. The only concurrency cap is
   `maxSessions` (1000), and headed sessions each own a dedicated browser, so
@@ -293,7 +293,7 @@ Sessions are **ephemeral by default** ([ADR-005](adr/005-ephemeral-sessions-expl
   and per-session policy state, and emitting `page.destroyed`
   (reason `session-expired`) on the session's event stream;
 - closing a session (`DELETE /v1/sessions/:id`, CLI `session close`,
-  MCP `browser_close`) releases the browser context immediately and
+  MCP `close`) releases the browser context immediately and
   invalidates all of its element refs.
 
 Engine crashes are not silent: the affected session is terminated,
@@ -308,7 +308,7 @@ Creating a session launches a browser context but **no page**
 response reports `pages: 0`, and the same live count appears on
 `GET /v1/sessions` and `GET /v1/sessions/{id}`. Clients create pages
 explicitly with `POST /v1/sessions/{id}/pages` (the MCP adapter's
-`browser_create` does this automatically for its callers). The create-page
+`create` does this automatically for its callers). The create-page
 request accepts an optional `url` that lands the new page on it immediately —
 validated exactly like `navigate` (absolute http(s) URL, network policy
 applies); without it the page starts on `about:blank`.
@@ -457,7 +457,7 @@ that lands, reload-to-read-final-state or REST polling is the supported
 pattern.
 
 Sessions name their engine (`engine` field on create / MCP
-`browser_create`). The registry resolves the primary engine by default
+`create`). The registry resolves the primary engine by default
 and fails loudly (`ENGINE_NOT_FOUND`) on unknown names — a session never
 silently runs on a different engine than requested. The full matrix,
 including per-engine egress guarantees, is in the
@@ -651,18 +651,18 @@ authority model and the acceptance fixture
 | Symptom | Likely cause / fix |
 | --- | --- |
 | Startup warns `/v1 is UNAUTHENTICATED` | `AGENTBROWSER_API_KEYS` unset — set `key:tenant` pairs before exposing the service. |
-| `404 SESSION_NOT_FOUND` for a session that existed | The session TTL/idle expired (3.5 h / 10 min defaults). Create a fresh session; seed cookies if continuity matters. |
-| `STALE_TARGET` on every action on a dynamic page | Refs die with their revision — re-observe, or prefer `browser_snapshot` + `browser_plan`, which self-heals stale refs once per step. |
+| `404 SESSION_NOT_FOUND` for a session that existed | The session TTL/idle expired (4.4 h / 10 min defaults). Create a fresh session; seed cookies if continuity matters. |
+| `STALE_TARGET` on every action on a dynamic page | Refs die with their revision — re-observe, or prefer `snapshot` + `plan`, which self-heals stale refs once per step. |
 | `upload` fails with `TARGET_AMBIGUOUS` naming several file inputs | The page has more than one `input[type=file]` (hidden Dropzone inputs are common). Observe with `include:["fileInputs"]` to mint refs for every input — hidden ones included — then pass `target: {ref}`. |
 | Observation shows a checkbox but no on/off state | Checkbox/radio/switch elements carry `checked` (true/false) on observations; tri-state mixed is reported as absent rather than guessed. React-controlled widgets can still hide state in the DOM attribute — trust the observation field, not the raw HTML attribute. |
 | Plan aborts with `AMBIGUOUS_REMAP` | The page churned enough to enter `verified` mode and no remap candidate matched the original element's role+label. Re-observe and rebuild the plan — the executor refused to guess rather than act on the wrong element. |
 | Custom dropdown shows no options after a click, or a later click lands in the wrong open menu | Design-system menus render options 0.5–2s after opening, and a failed menu interaction leaves the old listbox open. Wait for the options (`wait` action with `selectorVisible`/`minElements`, or re-observe), close stray menus by clicking a neutral element, and select by clicking the rendered option ref. See the [interactive forms recipe](recipes/interactive-forms.md). |
 | A visible form control never appears in observations | The control carries no ARIA role (div-based widget trigger). Observe with `include:["formControls"]` to mint refs for it; act-through works like a ref. See the [interactive forms recipe](recipes/interactive-forms.md). |
 | Dropdown option clicks report success but the value never commits | Some portals' selects are keyboard-commit-only: open the menu, walk with `press` + `count` of `ArrowDown`, commit with `Enter`. The highlight starts at the current value, not the first row. See the [interactive forms recipe](recipes/interactive-forms.md). |
-| `VALUE_MISMATCH` fires but the field looks right, or you cannot tell what the widget stored | First reads can race late async normalization — the engine settles and re-reads once before failing; non-sensitive errors carry `expected`/`actual`. For ground truth beyond that, read `browser_html`. |
+| `VALUE_MISMATCH` fires but the field looks right, or you cannot tell what the widget stored | First reads can race late async normalization — the engine settles and re-reads once before failing; non-sensitive errors carry `expected`/`actual`. For ground truth beyond that, read `html`. |
 | Address (or other dependent) fields emptied after filling a country/region selector | Locale selectors re-render dependent blocks on change and the re-render starts empty. Select the country first, then fill dependents, and re-verify the block before saving. |
 | A search-as-you-type box ignores `fill` and its dropdown never filters | The widget only reacts to real keystrokes. Use the `typeText` action (per-character key events, optional `delay`) instead of `fill`, then pick from the filtered rows. See the [interactive forms recipe](recipes/interactive-forms.md). |
-| Observation shows a combobox as selected but you cannot tell what, or a checkbox state you cannot see | Custom-widget selections live in the DOM, not the accessibility output: read `browser_html` (inline, maxBytes-bounded, not secret-redacted). Checkbox/radio elements carry `checked` on observations; React-controlled widgets can still hide state in the DOM attribute, so trust the observation field over the raw HTML attribute. |
+| Observation shows a combobox as selected but you cannot tell what, or a checkbox state you cannot see | Custom-widget selections live in the DOM, not the accessibility output: read `html` (inline, maxBytes-bounded, not secret-redacted). Checkbox/radio elements carry `checked` on observations; React-controlled widgets can still hide state in the DOM attribute, so trust the observation field over the raw HTML attribute. |
 | A password/credential field shows no `value` after a fill | That is the engine's sensitivity boundary (TD-BROWSER-13, 1.15.2): absent `value` + `valueRedacted: true` means *withheld*, not empty. The fill's own `verified` result (or the autofill receipt's `verificationWithheld`) is the proof of commit; sensitive controls never echo values. |
 | Autofill receipt `unverified` with `verificationWithheld: true` | Expected for sensitive controls: verification is deliberately not attempted so a withheld value can never produce a false mismatch. The write completed; do not retry on it — a retry double-writes the credential. |
 | Upgrading to 1.15.2 | Observation redaction is engine-side and needs a service restart to take effect; sessions created before the restart keep the old behavior for their lifetime. No client update is required (all new fields are optional). |
