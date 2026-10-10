@@ -273,4 +273,70 @@ describe('observation budgeting', () => {
       }
     });
   });
+
+  describe('ordinal addressing (compact projection)', () => {
+    // A projected list: three surviving matches whose page ordinals skip the
+    // elements the predicate filtered out.
+    const projected = () => source({ elements: [el(1), el(4), el(9)] });
+    const ordinals = [1, 4, 9];
+
+    it('identity ordinals reproduce index cursors exactly', () => {
+      const page = source({ elements: [el(0), el(1), el(2), el(3)] });
+      const identityOrdinals = [0, 1, 2, 3];
+      for (const options of [
+        { maxElements: 2 },
+        { maxElements: 2, continueFrom: 2 },
+        { continueFrom: 1 },
+      ] as const) {
+        expect(budgetObservation(page, { ...options, ordinals: identityOrdinals })).toEqual(
+          budgetObservation(page, { ...options })
+        );
+      }
+    });
+
+    it('addresses continueFrom by page ordinal when ordinals are supplied', () => {
+      const result = budgetObservation(projected(), {
+        ordinals,
+        continueFrom: 4,
+        maxElements: 300,
+      });
+
+      expect(result.elements.map((e) => e.ref)).toEqual(['e7_4', 'e7_9']);
+    });
+
+    it('emits an ordinal cursor when the projected window cuts', () => {
+      const result = budgetObservation(projected(), { ordinals, maxElements: 1 });
+
+      expect(result.elements.map((e) => e.ref)).toEqual(['e7_1']);
+      expect(result.continuation).toEqual({ nextOrdinal: 4, remaining: 2 });
+      expect(result.truncated).toBe(true);
+    });
+
+    it('continueFrom past every ordinal still mirrors the index-mode error', () => {
+      try {
+        budgetObservation(projected(), { ordinals, continueFrom: 11 });
+        fail('expected EngineError');
+      } catch (error) {
+        expect((error as EngineError).code).toBe('INVALID_REQUEST');
+        expect((error as EngineError).message).toContain('exceeds the element count');
+      }
+    });
+
+    it('rejects mismatched or non-ascending ordinals', () => {
+      try {
+        budgetObservation(projected(), { ordinals: [1, 4] });
+        fail('expected EngineError');
+      } catch (error) {
+        expect((error as EngineError).code).toBe('INVALID_REQUEST');
+        expect((error as EngineError).message).toContain('element count');
+      }
+      try {
+        budgetObservation(projected(), { ordinals: [4, 1, 9] });
+        fail('expected EngineError');
+      } catch (error) {
+        expect((error as EngineError).code).toBe('INVALID_REQUEST');
+        expect((error as EngineError).message).toContain('ascending');
+      }
+    });
+  });
 });

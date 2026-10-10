@@ -33,7 +33,7 @@ export const ROOT_USAGE: UsageGuidance = {
 export const SESSION_CREATE_USAGE: UsageGuidance = {
   notes: [
     'The CLI returns a sessionId; create a page separately with page create SESSION --url URL. ' +
-      'MCP browser_create instead returns both sessionId and an initial pageId. Never invent IDs.',
+      'MCP `create` instead returns both sessionId and an initial pageId. Never invent IDs.',
     INTERACTION_GUIDANCE.headedSession,
     'Cookie JSON must be an array, not an export wrapper. File formats are explicit; extensions do not select them. ' +
       'Use describe session cookies for format details and private export.',

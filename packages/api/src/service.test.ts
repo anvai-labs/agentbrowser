@@ -535,7 +535,7 @@ describe('AgentBrowserService', () => {
 
       await service.act(session.sessionId, pageId, { action: 'scroll', direction: 'down' });
 
-      // The exact flow browser_snapshot + browser_plan recommend: one plan
+      // The exact flow snapshot + plan recommend: one plan
       // addressing the same stale ref twice. Step 1's self-heal re-observes,
       // replacing lastObservation - step 2's baseline must come from the
       // mint-time revision history, or verified mode aborts a plan that

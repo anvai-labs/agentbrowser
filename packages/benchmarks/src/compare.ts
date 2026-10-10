@@ -45,6 +45,29 @@ const LONG_PAGE = `<!DOCTYPE html><html><body><main>
   ${Array.from({ length: 100 }, (_, i) => `<button>Button ${i}</button>`).join('\n  ')}
 </main></body></html>`;
 
+/**
+ * OVH-Manager-shaped workload (compact-output acceptance): global nav plus a
+ * policy dialog subtree and a user table, >300 elements so the normalizer's
+ * priority sort engages and the dialog must still be reachable by projection.
+ */
+const OVH_PAGE = `<!DOCTYPE html><html><body>
+  <nav>${Array.from({ length: 220 }, (_, i) => `<a href="/ovh?page=${i}">Nav ${i}</a>`).join('')}</nav>
+  <table><tbody>${Array.from(
+    { length: 12 },
+    (_, r) =>
+      `<tr><td>user-${r + 1}-prod</td><td>row ${r + 1}</td><td><button>Edit user ${r + 1}</button></td></tr>`
+  ).join('')}</tbody></table>
+  <dialog open>
+    <h2>Manage user policy</h2>
+    ${Array.from(
+      { length: 6 },
+      (_, c) => `<label><input type="checkbox" /> Policy ${c + 1}</label>`
+    ).join('')}
+    <button>Confirm</button><button>Cancel</button>
+  </dialog>
+  ${Array.from({ length: 80 }, (_, i) => `<button>Toolbar ${i}</button>`).join('')}
+</body></html>`;
+
 export interface FixtureServer {
   port: number;
   stop(): Promise<void>;
@@ -58,6 +81,7 @@ export function startFixtureServer(port = 0): Promise<FixtureServer> {
       '/links': LINKS_PAGE,
       '/form': FORM_PAGE,
       '/long': LONG_PAGE,
+      '/ovh': OVH_PAGE,
     };
     const path = url.split('?')[0] ?? '/';
     const body = pages[path];
@@ -234,6 +258,94 @@ export async function runRealBenchmarks(options: RealBenchmarkOptions): Promise<
         actions,
         elapsedMs: performance.now() - loopStarted,
       },
+    };
+  } finally {
+    await ownedServer?.stop();
+  }
+}
+
+export interface CompactProjectionBenchmark {
+  engineName: string;
+  /** Serialized bytes of a full observe vs the scoped projection, averaged. */
+  fullBytes: number;
+  compactBytes: number;
+  reductionPercent: number;
+  /** Both modes must find the same dialog checkbox ref (parity gate). */
+  fullFoundRef: boolean;
+  compactFoundRef: boolean;
+  /** Element counts reported by each mode. */
+  fullElements: number;
+  compactElements: number;
+}
+
+/**
+ * Compact-vs-full A/B on the /ovh fixture (compact-output acceptance §1/§5):
+ * the full observation and the scoped projection must both locate the policy
+ * dialog's first checkbox; the byte delta is the reported saving. Success
+ * parity is required — a cheaper observation that loses the target is a
+ * regression, not a win.
+ */
+export async function runCompactProjectionBenchmark(
+  options: RealBenchmarkOptions
+): Promise<CompactProjectionBenchmark> {
+  const ownedServer = options.fixturePort === undefined ? await startFixtureServer(0) : undefined;
+  const port = options.fixturePort ?? ownedServer?.port;
+  if (port === undefined) {
+    throw new Error('no fixture port');
+  }
+  const base = `http://127.0.0.1:${port}`;
+
+  try {
+    const service = new AgentBrowserService({
+      engine: options.engine,
+      networkPolicy: new NetworkPolicy({
+        blockLoopback: false,
+        blockPrivateIPs: true,
+        blockMetadata: true,
+      }),
+    });
+    const sessionId = (await service.createSession({ tenantId: 'bench' })).sessionId;
+    const pageId = (await service.createPage(sessionId)).pageId;
+    await service.navigate(sessionId, pageId, { url: `${base}/ovh` });
+
+    const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value), 'utf-8');
+    const iterations = options.iterations ?? 10;
+
+    let fullBytesTotal = 0;
+    let compactBytesTotal = 0;
+    let fullElements = 0;
+    let compactElements = 0;
+    let fullFound = false;
+    let compactFound = false;
+
+    for (let i = 0; i < iterations; i += 1) {
+      const full = await service.observe(sessionId, pageId, {});
+      fullBytesTotal += bytes(full);
+      fullElements = full.elements.length;
+      if (full.elements.some((element) => element.role === 'checkbox')) fullFound = true;
+
+      const compact = await service.observe(sessionId, pageId, {
+        roles: ['dialog', 'checkbox', 'heading', 'button'],
+        name: 'policy',
+      });
+      compactBytesTotal += bytes(compact);
+      compactElements = compact.elements.length;
+      if (compact.elements.some((element) => element.role === 'checkbox')) compactFound = true;
+    }
+
+    await service.shutdown();
+
+    const fullBytes = Math.round(fullBytesTotal / iterations);
+    const compactBytes = Math.round(compactBytesTotal / iterations);
+    return {
+      engineName: options.label ?? options.engine.name,
+      fullBytes,
+      compactBytes,
+      reductionPercent: Math.round((1 - compactBytes / Math.max(fullBytes, 1)) * 100),
+      fullFoundRef: fullFound,
+      compactFoundRef: compactFound,
+      fullElements,
+      compactElements,
     };
   } finally {
     await ownedServer?.stop();

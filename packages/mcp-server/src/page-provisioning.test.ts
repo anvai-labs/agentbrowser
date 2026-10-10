@@ -24,7 +24,7 @@ function fixture(options: Partial<McpDependencies> = {}) {
 
 it('provisions and lists server-owned pages through the existing SDK', async () => {
   const f = fixture();
-  const created = await f.call('browser_page_create', {
+  const created = await f.call('page_create', {
     sessionId: 's',
     url: 'https://example.com/',
     operationId: 'create-1',
@@ -36,7 +36,7 @@ it('provisions and lists server-owned pages through the existing SDK', async () 
     { url: 'https://example.com/' },
     { operationId: 'create-1' }
   );
-  const listed = await f.call('browser_pages', { sessionId: 's' });
+  const listed = await f.call('pages', { sessionId: 's' });
   expect(listed.result.isError).toBeUndefined();
   expect(JSON.parse(listed.result.content[0].text)).toEqual({
     sessionId: 's',
@@ -47,7 +47,7 @@ it('provisions and lists server-owned pages through the existing SDK', async () 
 
 it('creates a blank page without inventing a URL or an operation ID', async () => {
   const f = fixture();
-  expect((await f.call('browser_page_create', { sessionId: 's' })).result.isError).toBeUndefined();
+  expect((await f.call('page_create', { sessionId: 's' })).result.isError).toBeUndefined();
   expect(f.sessions.createPage).toHaveBeenCalledWith('s', undefined);
 });
 
@@ -58,32 +58,29 @@ it.each([
   { sessionId: 's', operationId: 'bad id' },
 ])('refuses invalid provisioning input before SDK dispatch: %j', async (args) => {
   const f = fixture();
-  expect((await f.call('browser_page_create', args)).result.isError).toBe(true);
+  expect((await f.call('page_create', args)).result.isError).toBe(true);
   expect(f.sessions.createPage).not.toHaveBeenCalled();
 });
 
 it('binds page creation to the delegated session and requires a caller-known ID', async () => {
   const f = fixture({ sessionId: 's' });
-  expect((await f.call('browser_page_create', {})).result.isError).toBe(true);
+  expect((await f.call('page_create', {})).result.isError).toBe(true);
   expect(
-    (await f.call('browser_page_create', { sessionId: 'other', operationId: 'create-1' })).result
-      .isError
+    (await f.call('page_create', { sessionId: 'other', operationId: 'create-1' })).result.isError
   ).toBe(true);
   expect(f.sessions.createPage).not.toHaveBeenCalled();
-  expect(
-    (await f.call('browser_page_create', { operationId: 'create-1' })).result.isError
-  ).toBeUndefined();
+  expect((await f.call('page_create', { operationId: 'create-1' })).result.isError).toBeUndefined();
   expect(f.sessions.createPage).toHaveBeenCalledWith('s', undefined, { operationId: 'create-1' });
   const tools = (await f.exchange('tools/list')).result.tools;
   expect(
-    tools.find((tool: { name: string }) => tool.name === 'browser_page_create').inputSchema.required
+    tools.find((tool: { name: string }) => tool.name === 'page_create').inputSchema.required
   ).toEqual(['operationId']);
 });
 
 it('does not retry uncertain creation or claim that inventory correlates its result', async () => {
   const f = fixture();
   f.sessions.createPage.mockRejectedValue(new Error('TIMEOUT: outcome may be unknown'));
-  const result = await f.call('browser_page_create', { sessionId: 's' });
+  const result = await f.call('page_create', { sessionId: 's' });
   expect(result.result.isError).toBe(true);
   expect(f.sessions.createPage).toHaveBeenCalledTimes(1);
   expect(f.sessions.listPages).not.toHaveBeenCalled();
@@ -92,7 +89,7 @@ it('does not retry uncertain creation or claim that inventory correlates its res
 it('respects mode capabilities in discovery and execution', async () => {
   const f = fixture({ mode: 'application' });
   const tools = (await f.exchange('tools/list')).result.tools;
-  expect(tools.map((tool: { name: string }) => tool.name)).not.toContain('browser_page_create');
-  expect((await f.call('browser_page_create', { sessionId: 's' })).error).toBeDefined();
+  expect(tools.map((tool: { name: string }) => tool.name)).not.toContain('page_create');
+  expect((await f.call('page_create', { sessionId: 's' })).error).toBeDefined();
   expect(f.sessions.createPage).not.toHaveBeenCalled();
 });

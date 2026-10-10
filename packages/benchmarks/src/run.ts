@@ -18,7 +18,7 @@ import { AgentBrowserService } from '@agentbrowser/api';
 import { createObscuraEngine } from '@agentbrowser/engine-obscura';
 import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
 import { FakeEngine } from '@agentbrowser/testkit';
-import { comparativeReport, runRealBenchmarks } from './compare.js';
+import { comparativeReport, runCompactProjectionBenchmark, runRealBenchmarks } from './compare.js';
 import { evaluateTarget, sample, summarize } from './harness.js';
 import type { BenchmarkResult } from './harness.js';
 import { runSoak, soakReport } from './soak.js';
@@ -127,8 +127,29 @@ async function compareReal(iterations: number): Promise<boolean> {
   }
 
   console.log(comparativeReport(rows));
+
+  // Compact projection A/B (compact-output acceptance): the scoped observe
+  // must find the same dialog checkbox as the full observe while cutting the
+  // serialized bytes. Parity is a gate, not an aspiration.
+  console.log('--- compact projection A/B: full vs scoped observe on /ovh ---');
+  const compact = await runCompactProjectionBenchmark({
+    engine: new PlaywrightChromiumEngine(),
+    iterations: 10,
+  });
+  console.log(
+    `full=${compact.fullBytes}B/${compact.fullElements} elements  ` +
+      `compact=${compact.compactBytes}B/${compact.compactElements} elements  ` +
+      `reduction=${compact.reductionPercent}%  ` +
+      `parity: full=${compact.fullFoundRef} compact=${compact.compactFoundRef}`
+  );
+
   // The ADR-010 gate cares about task success on the real engine.
-  return real.refLoop.successes === real.refLoop.attempts;
+  return (
+    real.refLoop.successes === real.refLoop.attempts &&
+    compact.fullFoundRef &&
+    compact.compactFoundRef &&
+    compact.reductionPercent >= 50
+  );
 }
 
 let ok = true;

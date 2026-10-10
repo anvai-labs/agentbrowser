@@ -29,15 +29,15 @@ function fixture(options: { sessionId?: string; mode?: (typeof AGENT_MODE_IDS)[n
     return JSON.parse(response);
   };
   const call = (args: Record<string, unknown>) =>
-    exchange('tools/call', { name: 'browser_session', arguments: args });
+    exchange('tools/call', { name: 'session', arguments: args });
   return { sessions, session, pages, control, exchange, call };
 }
 
-describe('browser_session inspection', () => {
+describe('session inspection', () => {
   it('is available unbound and requires the inspected session ID', async () => {
     const f = fixture();
     const tool = (await f.exchange('tools/list')).result.tools.find(
-      (candidate: { name: string }) => candidate.name === 'browser_session'
+      (candidate: { name: string }) => candidate.name === 'session'
     );
     expect(tool.inputSchema).toMatchObject({
       properties: { sessionId: { type: 'string', minLength: 1 } },
@@ -62,7 +62,7 @@ describe('browser_session inspection', () => {
   it('preserves the bound envelope and adds session metadata', async () => {
     const f = fixture({ sessionId: 'bound' });
     const tool = (await f.exchange('tools/list')).result.tools.find(
-      (candidate: { name: string }) => candidate.name === 'browser_session'
+      (candidate: { name: string }) => candidate.name === 'session'
     );
     expect(tool.inputSchema.required ?? []).not.toContain('sessionId');
 
@@ -94,7 +94,7 @@ describe('browser_session inspection', () => {
         const names = (await f.exchange('tools/list')).result.tools.map(
           (tool: { name: string }) => tool.name
         );
-        expect(names.includes('browser_session'), `${bound ? 'bound' : 'unbound'}/${mode}`).toBe(
+        expect(names.includes('session'), `${bound ? 'bound' : 'unbound'}/${mode}`).toBe(
           mode !== 'application'
         );
       }
@@ -105,17 +105,17 @@ describe('browser_session inspection', () => {
     const unbound = fixture({ mode: 'application' });
     expect((await unbound.exchange('tools/list')).result.tools).toEqual([]);
     const refused = await unbound.call({ sessionId: 'ses_1' });
-    expect(refused.error).toMatchObject({ code: -32602, message: 'Unknown tool: browser_session' });
+    expect(refused.error).toMatchObject({ code: -32602, message: 'Unknown tool: session' });
     expect(unbound.sessions.get).not.toHaveBeenCalled();
     expect(unbound.sessions.listPages).not.toHaveBeenCalled();
 
     const bound = fixture({ mode: 'application', sessionId: 'bound' });
     expect(
       (await bound.exchange('tools/list')).result.tools.map((tool: { name: string }) => tool.name)
-    ).toEqual(['browser_operation']);
+    ).toEqual(['operation']);
     expect((await bound.call({})).error).toMatchObject({
       code: -32602,
-      message: 'Unknown tool: browser_session',
+      message: 'Unknown tool: session',
     });
     expect(bound.sessions.get).not.toHaveBeenCalled();
     expect(bound.sessions.control).not.toHaveBeenCalled();

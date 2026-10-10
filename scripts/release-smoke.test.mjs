@@ -38,7 +38,7 @@ function mcp({ version = '1.2.3', protocol = '2024-11-05', tools = EXPECTED_TOOL
 test('MCP verifies explicit version independently of the checkout and supports live tool calls', async () => {
   const report = await checkMcp(mcp(), {
     ...options,
-    exercise: async ({ callTool }) => assert.deepEqual(await callTool('browser_create', {}), { ok: true }),
+    exercise: async ({ callTool }) => assert.deepEqual(await callTool('create', {}), { ok: true }),
   });
   assert.equal(report.version, '1.2.3');
   assert.deepEqual(report.tools, [...EXPECTED_TOOLS].sort());
@@ -49,17 +49,17 @@ test('wrong MCP release version fails', async () => {
 });
 
 const delegatedTools = [
-  'browser_events_replay',
-  'browser_page_create', 'browser_pages',
-  'browser_snapshot', 'browser_plan', 'browser_autofill', 'browser_navigate', 'browser_observe',
-  'browser_act', 'browser_extract', 'browser_html', 'browser_pdf',
-  'browser_screenshot', 'browser_session', 'browser_operation',
+  'events_replay',
+  'page_create', 'pages',
+  'snapshot', 'plan', 'autofill', 'navigate', 'observe',
+  'act', 'extract', 'html', 'pdf',
+  'screenshot', 'session', 'operation',
 ];
 
 test('delegated MCP acceptance requires the exact bound catalog', async () => {
   const report = await checkMcp(mcp({ tools: delegatedTools }), { ...options, catalog: 'delegated' });
   assert.deepEqual(report.tools, [...delegatedTools].sort());
-  for (const tool of ['browser_create', 'browser_close', 'browser_cookies']) {
+  for (const tool of ['create', 'close', 'cookies']) {
     await assert.rejects(checkMcp(mcp({ tools: [...delegatedTools, tool] }), {
       ...options, catalog: 'delegated',
     }), /catalog/);
@@ -92,7 +92,7 @@ test('MCP must exit after stdin EOF within its deadline', async () => {
 });
 
 test('incomplete or duplicated tool catalog fails', async () => {
-  for (const tools of [EXPECTED_TOOLS.slice(1), EXPECTED_TOOLS.filter(name => name !== 'browser_autofill'), [...EXPECTED_TOOLS, EXPECTED_TOOLS[0]]]) {
+  for (const tools of [EXPECTED_TOOLS.slice(1), EXPECTED_TOOLS.filter(name => name !== 'autofill'), [...EXPECTED_TOOLS, EXPECTED_TOOLS[0]]]) {
     await assert.rejects(checkMcp(mcp({ tools }), options), /catalog/);
   }
 });
@@ -114,7 +114,7 @@ test('MCP JSON-RPC and tool errors cannot masquerade as successful acceptance', 
   ]) {
     const reply = `if(request.method==='tools/call'){console.log(JSON.stringify(${payload}));return;}`;
     await assert.rejects(checkMcp(mcp({ reply }), {
-      ...options, exercise: async ({ callTool }) => callTool('browser_create', {}),
+      ...options, exercise: async ({ callTool }) => callTool('create', {}),
     }), /error/i);
   }
 });
@@ -128,7 +128,7 @@ test('MCP deadline kills a hung child even when graceful termination is ignored'
   }), {
     ...options, timeoutMs: 800,
     onSpawn(child) { pid = child.pid; },
-    exercise: async ({ callTool }) => callTool('browser_create', {}),
+    exercise: async ({ callTool }) => callTool('create', {}),
   }), /deadline/);
   assert.ok(performance.now() - started < 5000);
   assert.ok(pid);
@@ -333,7 +333,7 @@ test('MCP smoke rejects mismatched structured/text data and unflagged failed rep
   ]) {
     const reply = `if(request.method==='tools/call'){console.log(JSON.stringify({jsonrpc:'2.0',id:request.id,result:${JSON.stringify(result)}}));return;}`;
     await assert.rejects(checkMcp(mcp({ reply }), {
-      ...options, exercise: async ({ callTool }) => callTool('browser_autofill', {}),
+      ...options, exercise: async ({ callTool }) => callTool('autofill', {}),
     }), /structured|failed/);
   }
 });

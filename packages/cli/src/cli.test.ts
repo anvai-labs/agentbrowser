@@ -5,6 +5,10 @@
  * surface can be exercised without spawning a process or hitting a server.
  */
 
+import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildCli } from './cli';
@@ -690,6 +694,85 @@ describe('AgentBrowser CLI', () => {
 
       expect(out.join('\n').toLowerCase()).toContain('untrusted');
     });
+
+    it('should forward compact projection flags', async () => {
+      await run(
+        'observe',
+        'ses_1',
+        'pg_1',
+        '--roles',
+        'dialog',
+        '--roles',
+        'checkbox',
+        '--name',
+        'user-1',
+        '--scope-ref',
+        'e1_5',
+        '--limit',
+        '20',
+        '--include-fields',
+        'href'
+      );
+
+      expect(sessions.observe).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        roles: ['dialog', 'checkbox'],
+        name: 'user-1',
+        scopeRef: 'e1_5',
+        limit: 20,
+        includeFields: ['href'],
+      });
+    });
+
+    it('should omit projection keys when the flags are absent', async () => {
+      await run('observe', 'ses_1', 'pg_1', '--mode', 'content');
+
+      expect(sessions.observe).toHaveBeenCalledWith('ses_1', 'pg_1', { mode: 'content' });
+    });
+
+    it('maps an old-server projection rejection to actionable text', async () => {
+      sessions.observe.mockRejectedValueOnce(
+        Object.assign(
+          new Error('/roles: Unrecognized property; /scopeRef: Unrecognized property'),
+          { code: 'INVALID_REQUEST' }
+        )
+      );
+
+      const code = await run('observe', 'ses_1', 'pg_1', '--roles', 'dialog');
+
+      expect(code).toBe(1);
+      const text = err.join('\n');
+      expect(text).toContain('older than this CLI');
+      expect(text).toContain('--roles');
+    });
+
+    it('renders the projection echo with matched/total', async () => {
+      sessions.observe.mockResolvedValueOnce({
+        sessionId: 'ses_1',
+        pageId: 'pg_1',
+        revision: 1,
+        url: 'https://example.com',
+        title: 'Example',
+        status: 'interactive',
+        elements: [
+          {
+            ref: 'e1_0',
+            role: 'checkbox',
+            name: 'Object Storage read',
+            visible: true,
+            enabled: true,
+            checked: true,
+          },
+        ],
+        truncated: false,
+        untrustedContent: true,
+        projection: { roles: ['checkbox'], matched: 1, total: 192 },
+      });
+      await run('observe', 'ses_1', 'pg_1');
+
+      const text = out.join('\n');
+      expect(text).toContain('projection: roles=[checkbox]');
+      expect(text).toContain('matched 1 of 192 elements');
+    });
   });
 
   describe('observe command', () => {
@@ -717,6 +800,165 @@ describe('AgentBrowser CLI', () => {
       await run('observe', 'ses_1', 'pg_1');
 
       expect(out.join('\n')).toContain('[checked]');
+    });
+
+    it('renders a [redacted] marker so withheld reads as withheld, not empty', async () => {
+      sessions.observe.mockResolvedValueOnce({
+        sessionId: 'ses_1',
+        pageId: 'pg_1',
+        revision: 1,
+        url: 'https://example.com',
+        title: 'Example',
+        status: 'interactive',
+        elements: [
+          {
+            ref: 'e1_0',
+            role: 'textbox',
+            name: 'Password',
+            visible: true,
+            enabled: true,
+            valueRedacted: true,
+          },
+        ],
+        truncated: false,
+        untrustedContent: true,
+      });
+      await run('observe', 'ses_1', 'pg_1');
+
+      expect(out.join('\n')).toContain('[redacted]');
+    });
+
+    it('marks the focused element with a leading asterisk', async () => {
+      sessions.observe.mockResolvedValueOnce({
+        sessionId: 'ses_1',
+        pageId: 'pg_1',
+        revision: 1,
+        url: 'https://example.com',
+        title: 'Example',
+        status: 'interactive',
+        focusedRef: 'e1_1',
+        elements: [
+          { ref: 'e1_0', role: 'button', name: 'Other', visible: true, enabled: true },
+          {
+            ref: 'e1_1',
+            role: 'textbox',
+            name: 'Search',
+            visible: true,
+            enabled: true,
+            focused: true,
+          },
+        ],
+        truncated: false,
+        untrustedContent: true,
+      });
+      await run('observe', 'ses_1', 'pg_1');
+
+      const text = out.join('\n');
+      expect(text).toContain('*e1_1');
+      // Exactly one focused marker: unfocused rows keep the plain two-space prefix.
+      expect((text.match(/\*\w+\d+_\d+/g) ?? []).length).toBe(1);
+    });
+
+    it('prints the continuation cursor so a truncated observation can be resumed', async () => {
+      sessions.observe.mockResolvedValueOnce({
+        sessionId: 'ses_1',
+        pageId: 'pg_1',
+        revision: 1,
+        url: 'https://example.com',
+        title: 'Example',
+        status: 'interactive',
+        elements: [{ ref: 'e1_0', role: 'button', name: 'Submit', visible: true, enabled: true }],
+        truncated: true,
+        untrustedContent: true,
+        continuation: { nextOrdinal: 300, remaining: 5 },
+      });
+      await run('observe', 'ses_1', 'pg_1');
+
+      const text = out.join('\n');
+      expect(text).toContain('--continue-from 300');
+      expect(text).toContain('5 elements remain');
+    });
+  });
+
+  describe('observe --output <path>', () => {
+    it('writes the observation to a new private file and prints a receipt', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'ab-observe-'));
+      const path = join(dir, 'obs.json');
+      const code = await run('--json', 'observe', 'ses_1', 'pg_1', '--output', path);
+
+      expect(code).toBe(0);
+      const written = JSON.parse(readFileSync(path, 'utf8'));
+      expect(written.sessionId).toBe('ses_1');
+      expect(written.elements[0].ref).toBe('e1_0');
+      // Minified file: machine-facing, single JSON line.
+      expect(readFileSync(path, 'utf8').trim().split('\n')).toHaveLength(1);
+      const receipt = lastJson();
+      expect(receipt).toMatchObject({
+        sessionId: 'ses_1',
+        elements: 1,
+        file: { path },
+      });
+      expect(receipt.file.bytes).toBeGreaterThan(0);
+      // Default render: identity + counts + path, never the full element list.
+      expect(out.join('\n')).toContain(path);
+      expect(out.join('\n')).not.toContain('Submit');
+    });
+
+    it('refuses to overwrite an existing file', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'ab-observe-'));
+      const path = join(dir, 'exists.json');
+      writeFileSync(path, 'keep me');
+      const code = await run('--json', 'observe', 'ses_1', 'pg_1', '--output', path);
+
+      expect(code).toBe(1);
+      expect(err.join('\n')).toContain('exclusively create');
+      expect(readFileSync(path, 'utf8')).toBe('keep me');
+    });
+
+    it('includes the projection echo in the receipt', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'ab-observe-'));
+      sessions.observe.mockResolvedValueOnce({
+        sessionId: 'ses_1',
+        pageId: 'pg_1',
+        revision: 2,
+        url: 'https://example.com',
+        title: 'Example',
+        status: 'interactive',
+        elements: [{ ref: 'e2_0', role: 'checkbox', name: 'A', visible: true, enabled: true }],
+        truncated: false,
+        untrustedContent: true,
+        projection: { roles: ['checkbox'], matched: 1, total: 190 },
+      });
+      await run(
+        '--json',
+        'observe',
+        'ses_1',
+        'pg_1',
+        '--roles',
+        'checkbox',
+        '--output',
+        join(dir, 'p.json')
+      );
+
+      expect(lastJson().projection).toEqual({ roles: ['checkbox'], matched: 1, total: 190 });
+    });
+  });
+
+  describe('--json output formatting', () => {
+    it('emits minified JSON by default for machine consumers', async () => {
+      const code = await run('--json', 'observe', 'ses_1', 'pg_1');
+
+      expect(code).toBe(0);
+      expect(out).toHaveLength(1);
+      expect(out[0]).not.toContain('\n');
+      expect(lastJson().sessionId).toBe('ses_1');
+    });
+
+    it('restores 2-space indentation with --pretty', async () => {
+      const code = await run('--json', '--pretty', 'observe', 'ses_1', 'pg_1');
+
+      expect(code).toBe(0);
+      expect(out.join('\n')).toContain('\n  "sessionId"');
     });
   });
 

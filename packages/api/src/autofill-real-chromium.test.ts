@@ -162,7 +162,7 @@ it.each(transports)(
         });
       const callAutofill = async (args: Record<string, unknown>, expectedExitCode = 0) => {
         const result = bridge
-          ? await bridge.request('tools/call', { name: 'browser_autofill', arguments: args })
+          ? await bridge.request('tools/call', { name: 'autofill', arguments: args })
           : await (async () => {
               const { pageId: requestedPage, operationId, ...payload } = args;
               const cliResult = await runAgentCli(

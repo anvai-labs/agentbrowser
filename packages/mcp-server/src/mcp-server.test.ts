@@ -137,7 +137,7 @@ describe('AgentBrowser MCP server', () => {
     it('negotiates the supported structured protocol and preserves nested schemas and mutation hints', async () => {
       expect(JSON.parse(await initialize('2025-06-18')).result.protocolVersion).toBe('2025-06-18');
       const tools = JSON.parse(await request('list', 'tools/list')).result.tools;
-      const autofill = tools.find((tool: { name: string }) => tool.name === 'browser_autofill');
+      const autofill = tools.find((tool: { name: string }) => tool.name === 'autofill');
       expect(autofill.outputSchema.$id).toBe('urn:agentbrowser:autofill-report:v1');
       expect(
         autofill.outputSchema.properties.receipts.items.properties.status.anyOf
@@ -156,9 +156,77 @@ describe('AgentBrowser MCP server', () => {
         tools.every((tool: object) => !('outputSchema' in tool) && !('annotations' in tool))
       ).toBe(true);
       sessions.autofill = vi.fn().mockResolvedValue(report);
-      const result = JSON.parse(await call('call', 'browser_autofill', args)).result;
+      const result = JSON.parse(await call('call', 'autofill', args)).result;
       expect(result.structuredContent).toBeUndefined();
       expect(JSON.parse(result.content[0].text)).toEqual(report);
+    });
+
+    it('returns structured results with a minified text fallback', async () => {
+      await initialize('2025-06-18');
+      const outcome = {
+        status: 'success',
+        actionId: 'act_1',
+        newRevision: 4,
+      };
+      sessions.executeAction = vi.fn().mockResolvedValue(outcome);
+      const result = JSON.parse(
+        await call('act-structured', 'act', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          action: 'click',
+          target: { ref: 'e1_0' },
+        })
+      ).result;
+
+      expect(result.structuredContent).toEqual(outcome);
+      // The fallback text is the same JSON, minified (one line).
+      expect(result.content[0].text).toBe(JSON.stringify(outcome));
+      expect(result.content[0].text).not.toContain('\n');
+    });
+
+    it('advertises outcome output schemas for act, navigate and extract', async () => {
+      await initialize('2025-06-18');
+      const tools = JSON.parse(await request('list', 'tools/list')).result.tools;
+      const byName = new Map(
+        tools.map((tool: { name: string; outputSchema?: { $id?: string } }) => [
+          tool.name,
+          tool.outputSchema,
+        ])
+      );
+      expect(byName.get('act')?.$id).toBe('urn:agentbrowser:act-outcome:v1');
+      expect(byName.get('navigate')?.$id).toBeUndefined(); // inline schema, no $id
+      expect(byName.get('navigate')?.properties.status).toBeDefined();
+      expect(byName.get('extract')?.$id).toBe('urn:agentbrowser:extract-outcome:v1');
+    });
+
+    it('carries machine-readable structured errors with allowlisted details only', async () => {
+      await initialize('2025-06-18');
+      sessions.executeAction = vi.fn().mockRejectedValue(
+        Object.assign(new Error('STALE_TARGET: reference is stale'), {
+          code: 'STALE_TARGET',
+          details: { operationId: 'op-42', privateReason: 'secret' },
+        })
+      );
+      const result = JSON.parse(
+        await call('act-error', 'act', {
+          sessionId: 'ses_1',
+          pageId: 'pg_1',
+          action: 'click',
+          target: { ref: 'e1_0' },
+        })
+      ).result;
+
+      expect(result.isError).toBe(true);
+      // Text keeps the actionable remediation hint.
+      expect(result.content[0].text).toContain('observe');
+      // Structured shape carries code/message + the bounded operationId, and
+      // never private details from the error envelope.
+      expect(result.structuredContent.error).toMatchObject({
+        code: 'STALE_TARGET',
+        operationId: 'op-42',
+      });
+      expect(JSON.stringify(result.structuredContent)).not.toContain('secret');
+      expect(JSON.stringify(result.structuredContent)).not.toContain('privateReason');
     });
 
     it.each([true, false])(
@@ -173,7 +241,7 @@ describe('AgentBrowser MCP server', () => {
           ],
         };
         sessions.autofill = vi.fn().mockResolvedValue(receiptReport);
-        const result = JSON.parse(await call('call', 'browser_autofill', args)).result;
+        const result = JSON.parse(await call('call', 'autofill', args)).result;
         expect(result.structuredContent).toEqual(receiptReport);
         expect(JSON.parse(result.content[0].text)).toEqual(receiptReport);
         expect(result.isError).toBe(ok ? undefined : true);
@@ -192,7 +260,7 @@ describe('AgentBrowser MCP server', () => {
       };
       sessions.plan.mockResolvedValue(partial);
       const result = JSON.parse(
-        await call('plan', 'browser_plan', {
+        await call('plan', 'plan', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           actions: [{ action: 'press', key: 'Tab' }],
@@ -205,7 +273,7 @@ describe('AgentBrowser MCP server', () => {
     it('rejects an invalid upstream report without leaking it or retrying the write', async () => {
       await initialize('2025-06-18');
       sessions.autofill = vi.fn().mockResolvedValue({ ...report, secret: 'PRIVATE-REPORT' });
-      const result = JSON.parse(await call('call', 'browser_autofill', args)).result;
+      const result = JSON.parse(await call('call', 'autofill', args)).result;
       expect(result.isError).toBe(true);
       expect(result.structuredContent).toBeUndefined();
       expect(result.content[0].text).toContain('may have executed');
@@ -226,7 +294,7 @@ describe('AgentBrowser MCP server', () => {
           },
         ],
       });
-      const result = JSON.parse(await call('contradictory', 'browser_autofill', args)).result;
+      const result = JSON.parse(await call('contradictory', 'autofill', args)).result;
       expect(result.isError).toBe(true);
       expect(result.structuredContent).toBeUndefined();
       expect(result.content[0].text).toContain('may have executed');
@@ -244,7 +312,7 @@ describe('AgentBrowser MCP server', () => {
         };
       });
       const result = JSON.parse(
-        await call('truncated', 'browser_autofill', {
+        await call('truncated', 'autofill', {
           ...args,
           fields: [...args.fields, { match: { label: 'Email' }, value: 'private email' }],
         })
@@ -266,11 +334,11 @@ describe('AgentBrowser MCP server', () => {
           })
         );
         const result = JSON.parse(
-          await call('lost', 'browser_autofill', { ...args, operationId: 'known-id' })
+          await call('lost', 'autofill', { ...args, operationId: 'known-id' })
         ).result;
         expect(result.isError).toBe(true);
         expect(result.content[0].text).toContain(
-          delegated ? 'browser_operation' : 'SDK/REST operation status'
+          delegated ? 'operation' : 'SDK/REST operation status'
         );
         expect(result.content[0].text).toContain('known-id');
         expect(sessions.autofill).toHaveBeenCalledTimes(1);
@@ -297,7 +365,7 @@ describe('AgentBrowser MCP server', () => {
       ).toBe(true);
       await exchange('initialize', { protocolVersion: '2025-06-18' });
       const tools = (await exchange('tools/list')).result.tools;
-      const autofill = tools.find((tool: { name: string }) => tool.name === 'browser_autofill');
+      const autofill = tools.find((tool: { name: string }) => tool.name === 'autofill');
       expect(autofill.outputSchema.$id).toBe('urn:agentbrowser:autofill-report:v1');
       expect(autofill.inputSchema.required).toContain('operationId');
       expect(autofill.inputSchema.required).not.toContain('sessionId');
@@ -305,7 +373,7 @@ describe('AgentBrowser MCP server', () => {
       expect(
         (
           await exchange('tools/call', {
-            name: 'browser_autofill',
+            name: 'autofill',
             arguments: { ...args, sessionId: 'foreign', operationId: 'once' },
           })
         ).result.isError
@@ -315,7 +383,7 @@ describe('AgentBrowser MCP server', () => {
       expect(
         (
           await exchange('tools/call', {
-            name: 'browser_autofill',
+            name: 'autofill',
             arguments: { ...boundArgs, operationId: 'once' },
           })
         ).result.structuredContent
@@ -338,19 +406,17 @@ describe('AgentBrowser MCP server', () => {
           tool.description,
         ])
       );
-      expect(descriptions.get('browser_snapshot')).toContain('scoped bulk autofill');
-      expect(descriptions.get('browser_plan')).toContain('application commit');
-      expect(descriptions.get('browser_act')).toContain('reconcile');
-      expect(descriptions.get('browser_act')).not.toContain('one retry after observing');
-      expect(descriptions.get('browser_create')).toContain('blocked by egress policy');
-      expect(descriptions.get('browser_navigate')).toContain('reloading');
+      expect(descriptions.get('snapshot')).toContain('scoped bulk autofill');
+      expect(descriptions.get('plan')).toContain('application commit');
+      expect(descriptions.get('act')).toContain('reconcile');
+      expect(descriptions.get('act')).not.toContain('one retry after observing');
+      expect(descriptions.get('create')).toContain('blocked by egress policy');
+      expect(descriptions.get('navigate')).toContain('reloading');
     });
 
     it('advertises the ten-minute idle default without imposing a client-side default', async () => {
       const response = JSON.parse(await request('idle-help', 'tools/list'));
-      const create = response.result.tools.find(
-        (tool: { name: string }) => tool.name === 'browser_create'
-      );
+      const create = response.result.tools.find((tool: { name: string }) => tool.name === 'create');
       expect(create.inputSchema.properties.idleTimeoutMs.description).toContain('600000 = 10 min');
       expect(create.inputSchema.properties.idleTimeoutMs.default).toBeUndefined();
     });
@@ -370,17 +436,17 @@ describe('AgentBrowser MCP server', () => {
     });
   });
 
-  describe('browser_cookies (TD-BROWSER-6)', () => {
+  describe('cookies (TD-BROWSER-6)', () => {
     it('lists the tool', async () => {
       const response = JSON.parse(await request('td1', 'tools/list'));
       const names = response.result.tools.map((tool: { name: string }) => tool.name);
-      expect(names).toContain('browser_cookies');
+      expect(names).toContain('cookies');
     });
 
     it('exports cookies through the service client', async () => {
       const response = JSON.parse(
         await request('td2', 'tools/call', {
-          name: 'browser_cookies',
+          name: 'cookies',
           arguments: { sessionId: 'ses_1' },
         })
       );
@@ -391,17 +457,17 @@ describe('AgentBrowser MCP server', () => {
     });
   });
 
-  describe('browser_plan and browser_snapshot (TD-BROWSER-8)', () => {
+  describe('plan and snapshot (TD-BROWSER-8)', () => {
     it('lists both tools', async () => {
       const response = JSON.parse(await request('td3', 'tools/list'));
       const names = response.result.tools.map((tool: { name: string }) => tool.name);
-      expect(names).toContain('browser_plan');
-      expect(names).toContain('browser_snapshot');
+      expect(names).toContain('plan');
+      expect(names).toContain('snapshot');
     });
 
-    it('declares sessionId and pageId as required on browser_plan', async () => {
+    it('declares sessionId and pageId as required on plan', async () => {
       const response = JSON.parse(await request('td4', 'tools/list'));
-      const plan = response.result.tools.find((t: { name: string }) => t.name === 'browser_plan');
+      const plan = response.result.tools.find((t: { name: string }) => t.name === 'plan');
       expect(plan.inputSchema.required).toEqual(
         expect.arrayContaining(['sessionId', 'pageId', 'actions'])
       );
@@ -410,7 +476,7 @@ describe('AgentBrowser MCP server', () => {
     it('projects canonical nested plan inputs and negotiated outputs', async () => {
       await request('init-plan', 'initialize', { protocolVersion: '2025-06-18' });
       const tool = JSON.parse(await request('list-plan', 'tools/list')).result.tools.find(
-        (t: { name: string }) => t.name === 'browser_plan'
+        (t: { name: string }) => t.name === 'plan'
       );
       expect(tool.inputSchema.properties.actions.items.properties.waitMs.maximum).toBe(60000);
       expect(tool.inputSchema.properties.actions.items.properties.count.maximum).toBe(20);
@@ -422,7 +488,7 @@ describe('AgentBrowser MCP server', () => {
       };
       sessions.plan.mockResolvedValue(report);
       const result = JSON.parse(
-        await call('partial-plan', 'browser_plan', {
+        await call('partial-plan', 'plan', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           actions: [{ action: 'press', key: 'Tab' }],
@@ -435,7 +501,7 @@ describe('AgentBrowser MCP server', () => {
 
     it('rejects invalid plan steps locally and never proxies them', async () => {
       const result = JSON.parse(
-        await call('invalid-plan', 'browser_plan', {
+        await call('invalid-plan', 'plan', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           actions: [{ action: 'press', count: 21 }],
@@ -448,7 +514,7 @@ describe('AgentBrowser MCP server', () => {
     it('rejects malformed plan reports after a single dispatch without exposing their contents', async () => {
       sessions.plan.mockResolvedValue({ ok: true, completed: 'PRIVATE-REPORT', results: [] });
       const result = JSON.parse(
-        await call('invalid-report', 'browser_plan', {
+        await call('invalid-report', 'plan', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           actions: [],
@@ -468,7 +534,7 @@ describe('AgentBrowser MCP server', () => {
         error: { code: 'REMOTE_FAILURE', message: 'PRIVATE-REPORT' },
       });
       const result = JSON.parse(
-        await call('contradictory-report', 'browser_plan', {
+        await call('contradictory-report', 'plan', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           actions: [],
@@ -491,7 +557,7 @@ describe('AgentBrowser MCP server', () => {
         };
       });
       const result = JSON.parse(
-        await call('truncated-report', 'browser_plan', {
+        await call('truncated-report', 'plan', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           actions: [
@@ -514,7 +580,7 @@ describe('AgentBrowser MCP server', () => {
         results: [{ step: 0, ok: true, result: { verified: true, actual: 'PRIVATE-READBACK' } }],
       });
       const result = JSON.parse(
-        await call('missing-verification', 'browser_plan', {
+        await call('missing-verification', 'plan', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           actions: [
@@ -538,7 +604,7 @@ describe('AgentBrowser MCP server', () => {
 
     it('executes a plan through the service client', async () => {
       const response = JSON.parse(
-        await call('td5', 'browser_plan', {
+        await call('td5', 'plan', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           actions: [{ action: 'click', target: { ref: 'e1_0' } }],
@@ -550,18 +616,16 @@ describe('AgentBrowser MCP server', () => {
       expect(textOf(response).ok).toBe(true);
     });
 
-    it('rejects a browser_plan call missing sessionId or pageId instead of proxying "undefined"', async () => {
-      const response = JSON.parse(
-        await call('td6', 'browser_plan', { actions: [{ action: 'click' }] })
-      );
+    it('rejects a plan call missing sessionId or pageId instead of proxying "undefined"', async () => {
+      const response = JSON.parse(await call('td6', 'plan', { actions: [{ action: 'click' }] }));
       expect(response.result.isError).toBe(true);
       expect(response.result.content[0].text).toMatch(/sessionId/);
       expect(sessions.plan).not.toHaveBeenCalled();
     });
 
-    it('returns a self-contained snapshot payload usable as browser_plan targets', async () => {
+    it('returns a self-contained snapshot payload usable as plan targets', async () => {
       const response = JSON.parse(
-        await call('td7', 'browser_snapshot', { sessionId: 'ses_1', pageId: 'pg_1' })
+        await call('td7', 'snapshot', { sessionId: 'ses_1', pageId: 'pg_1' })
       );
       expect(sessions.snapshot).toHaveBeenCalledWith('ses_1', 'pg_1');
       const snapshot = textOf(response);
@@ -569,7 +633,7 @@ describe('AgentBrowser MCP server', () => {
       const ref = snapshot.fields[0].ref;
 
       const planResponse = JSON.parse(
-        await call('td8', 'browser_plan', {
+        await call('td8', 'plan', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           actions: [{ action: 'click', target: { ref } }],
@@ -578,16 +642,16 @@ describe('AgentBrowser MCP server', () => {
       expect(textOf(planResponse).ok).toBe(true);
     });
 
-    it('rejects a browser_snapshot call missing sessionId or pageId', async () => {
-      const response = JSON.parse(await call('td9', 'browser_snapshot', {}));
+    it('rejects a snapshot call missing sessionId or pageId', async () => {
+      const response = JSON.parse(await call('td9', 'snapshot', {}));
       expect(response.result.isError).toBe(true);
       expect(sessions.snapshot).not.toHaveBeenCalled();
     });
 
-    it('rejects a browser_plan call whose actions argument is missing or not an array, instead of returning an empty ok plan', async () => {
+    it('rejects a plan call whose actions argument is missing or not an array, instead of returning an empty ok plan', async () => {
       for (const badActions of [undefined, 'fill login', { action: 'click' }]) {
         const response = JSON.parse(
-          await call('td10', 'browser_plan', {
+          await call('td10', 'plan', {
             sessionId: 'ses_1',
             pageId: 'pg_1',
             actions: badActions,
@@ -599,12 +663,12 @@ describe('AgentBrowser MCP server', () => {
       expect(sessions.plan).not.toHaveBeenCalled();
     });
 
-    it('rejects browser_close and browser_cookies calls missing sessionId instead of proxying the string "undefined"', async () => {
-      const closed = JSON.parse(await call('td11', 'browser_close', {}));
+    it('rejects close and cookies calls missing sessionId instead of proxying the string "undefined"', async () => {
+      const closed = JSON.parse(await call('td11', 'close', {}));
       expect(closed.result.isError).toBe(true);
       expect(closed.result.content[0].text).toMatch(/sessionId/);
 
-      const cookies = JSON.parse(await call('td12', 'browser_cookies', {}));
+      const cookies = JSON.parse(await call('td12', 'cookies', {}));
       expect(cookies.result.isError).toBe(true);
       expect(cookies.result.content[0].text).toMatch(/sessionId/);
 
@@ -619,12 +683,12 @@ describe('AgentBrowser MCP server', () => {
       server = buildMcpServer({ ...deps, sessionId: 'ses_1', mode: 'audit' });
       const listed = JSON.parse(await request('profile-list', 'tools/list')).result.tools;
       const names = listed.map((tool: { name: string }) => tool.name);
-      expect(names).toContain('browser_screenshot');
-      expect(names).toContain('browser_observe');
-      expect(names).not.toContain('browser_autofill');
+      expect(names).toContain('screenshot');
+      expect(names).toContain('observe');
+      expect(names).not.toContain('autofill');
 
       const direct = JSON.parse(
-        await call('profile-direct', 'browser_autofill', {
+        await call('profile-direct', 'autofill', {
           pageId: 'pg_1',
           operationId: 'must-not-dispatch',
           fields: [{ match: { label: 'Name' }, value: 'private' }],
@@ -632,7 +696,7 @@ describe('AgentBrowser MCP server', () => {
       );
       expect(direct.error).toMatchObject({
         code: -32602,
-        message: 'Unknown tool: browser_autofill',
+        message: 'Unknown tool: autofill',
       });
       expect(sessions.autofill).not.toHaveBeenCalled();
     });
@@ -641,37 +705,37 @@ describe('AgentBrowser MCP server', () => {
       const legacyNames = JSON.parse(
         await request('legacy-profile', 'tools/list')
       ).result.tools.map((tool: { name: string }) => tool.name);
-      expect(legacyNames).toContain('browser_autofill');
+      expect(legacyNames).toContain('autofill');
 
       server = buildMcpServer({ ...deps, sessionId: 'ses_1', mode: 'application' });
       const applicationNames = JSON.parse(
         await request('application-profile', 'tools/list')
       ).result.tools.map((tool: { name: string }) => tool.name);
-      expect(applicationNames).toEqual(['browser_operation']);
+      expect(applicationNames).toEqual(['operation']);
     });
 
     it('should expose the ADR-009 high-level tool surface', async () => {
       const response = JSON.parse(await request('2', 'tools/list'));
       const names = response.result.tools.map((t: { name: string }) => t.name);
 
-      expect(names).toContain('browser_create');
-      expect(names).toContain('browser_close');
-      expect(names).toContain('browser_navigate');
-      expect(names).toContain('browser_observe');
-      expect(names).toContain('browser_act');
-      expect(names).toContain('browser_screenshot');
+      expect(names).toContain('create');
+      expect(names).toContain('close');
+      expect(names).toContain('navigate');
+      expect(names).toContain('observe');
+      expect(names).toContain('act');
+      expect(names).toContain('screenshot');
     });
 
-    it('should expose browser_pdf', async () => {
+    it('should expose pdf', async () => {
       const response = JSON.parse(await request('3c', 'tools/list'));
       const names = response.result.tools.map((t: { name: string }) => t.name);
-      expect(names).toContain('browser_pdf');
+      expect(names).toContain('pdf');
     });
 
-    it('should expose browser_extract', async () => {
+    it('should expose extract', async () => {
       const response = JSON.parse(await request('3b', 'tools/list'));
       const names = response.result.tools.map((t: { name: string }) => t.name);
-      expect(names).toContain('browser_extract');
+      expect(names).toContain('extract');
     });
 
     it('should not expose raw engine operations', async () => {
@@ -679,8 +743,8 @@ describe('AgentBrowser MCP server', () => {
       const names = response.result.tools.map((t: { name: string }) => t.name);
 
       // ADR-009: no evaluate, no init scripts, no routing, no selectors
-      expect(names).not.toContain('browser_evaluate');
-      expect(names).not.toContain('browser_route');
+      expect(names).not.toContain('evaluate');
+      expect(names).not.toContain('route');
       expect(names.some((n: string) => /selector|xpath|mouse|keyboard/.test(n))).toBe(false);
     });
 
@@ -693,9 +757,9 @@ describe('AgentBrowser MCP server', () => {
       }
     });
 
-    it('should require element refs, never selectors, on browser_act', async () => {
+    it('should require element refs, never selectors, on act', async () => {
       const response = JSON.parse(await request('5', 'tools/list'));
-      const act = response.result.tools.find((t: { name: string }) => t.name === 'browser_act');
+      const act = response.result.tools.find((t: { name: string }) => t.name === 'act');
 
       expect(act.inputSchema.properties.target.properties.ref.pattern).toBe('^e\\d+_\\d+$');
       expect(JSON.stringify(act.inputSchema.properties.target)).not.toMatch(/selector|xpath/i);
@@ -715,7 +779,7 @@ describe('AgentBrowser MCP server', () => {
 
   describe('tools/call', () => {
     it('should create a session', async () => {
-      const response = JSON.parse(await call('6', 'browser_create', { tenantId: 'tenant_1' }));
+      const response = JSON.parse(await call('6', 'create', { tenantId: 'tenant_1' }));
 
       expect(sessions.create).toHaveBeenCalledWith(
         expect.objectContaining({ tenantId: 'tenant_1' })
@@ -726,7 +790,7 @@ describe('AgentBrowser MCP server', () => {
 
     it('should forward idleTimeoutMs on session create (Phase 3)', async () => {
       const response = JSON.parse(
-        await call('6b', 'browser_create', { tenantId: 'tenant_1', idleTimeoutMs: 3600000 })
+        await call('6b', 'create', { tenantId: 'tenant_1', idleTimeoutMs: 3600000 })
       );
       expect(response.result.isError).toBeFalsy();
       expect(sessions.create).toHaveBeenCalledWith(
@@ -736,7 +800,7 @@ describe('AgentBrowser MCP server', () => {
 
     it('forwards allowServiceWorkers as a nested policy field (ADR-019)', async () => {
       const response = JSON.parse(
-        await call('6c', 'browser_create', { tenantId: 'tenant_1', allowServiceWorkers: true })
+        await call('6c', 'create', { tenantId: 'tenant_1', allowServiceWorkers: true })
       );
       expect(response.result.isError).toBeFalsy();
       expect(sessions.create).toHaveBeenCalledWith(
@@ -748,7 +812,7 @@ describe('AgentBrowser MCP server', () => {
     });
 
     it('omits policy entirely when allowServiceWorkers is not passed (no default flip)', async () => {
-      const response = JSON.parse(await call('6d', 'browser_create', { tenantId: 'tenant_1' }));
+      const response = JSON.parse(await call('6d', 'create', { tenantId: 'tenant_1' }));
       expect(response.result.isError).toBeFalsy();
       const createArgs = sessions.create.mock.calls.at(-1)?.[0];
       expect(createArgs.policy).toBeUndefined();
@@ -766,9 +830,7 @@ describe('AgentBrowser MCP server', () => {
           },
         ],
       };
-      const response = JSON.parse(
-        await call('6e', 'browser_create', { tenantId: 'tenant_1', scope })
-      );
+      const response = JSON.parse(await call('6e', 'create', { tenantId: 'tenant_1', scope }));
       expect(response.result.isError).toBeFalsy();
       expect(sessions.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -780,7 +842,7 @@ describe('AgentBrowser MCP server', () => {
 
     it('should navigate', async () => {
       const response = JSON.parse(
-        await call('7', 'browser_navigate', {
+        await call('7', 'navigate', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           url: 'https://example.com',
@@ -805,7 +867,7 @@ describe('AgentBrowser MCP server', () => {
         sessions.navigate.mockResolvedValueOnce(result);
 
         const response = JSON.parse(
-          await call('7-failed', 'browser_navigate', {
+          await call('7-failed', 'navigate', {
             sessionId: 'ses_1',
             pageId: 'pg_1',
             url: 'https://failure.test/',
@@ -832,7 +894,7 @@ describe('AgentBrowser MCP server', () => {
       );
 
       const response = JSON.parse(
-        await call('7-error', 'browser_navigate', {
+        await call('7-error', 'navigate', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           url: 'https://failure.test/',
@@ -856,7 +918,7 @@ describe('AgentBrowser MCP server', () => {
 
     it('should observe and return the semantic observation', async () => {
       const response = JSON.parse(
-        await call('8', 'browser_observe', { sessionId: 'ses_1', pageId: 'pg_1' })
+        await call('8', 'observe', { sessionId: 'ses_1', pageId: 'pg_1' })
       );
 
       const observation = textOf(response);
@@ -865,7 +927,7 @@ describe('AgentBrowser MCP server', () => {
     });
 
     it('should forward the include enrichments to observe', async () => {
-      await call('8', 'browser_observe', {
+      await call('8', 'observe', {
         sessionId: 'ses_1',
         pageId: 'pg_1',
         include: ['overlays'],
@@ -877,7 +939,7 @@ describe('AgentBrowser MCP server', () => {
     });
 
     it('should forward continueFrom to resume a truncated observation', async () => {
-      await call('8b', 'browser_observe', {
+      await call('8b', 'observe', {
         sessionId: 'ses_1',
         pageId: 'pg_1',
         continueFrom: 40,
@@ -888,9 +950,29 @@ describe('AgentBrowser MCP server', () => {
       });
     });
 
+    it('should forward compact projection fields to observe', async () => {
+      await call('8c', 'observe', {
+        sessionId: 'ses_1',
+        pageId: 'pg_1',
+        roles: ['dialog', 'checkbox'],
+        name: 'user-1',
+        scopeRef: 'e1_5',
+        limit: 20,
+        includeFields: ['href'],
+      });
+
+      expect(sessions.observe).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        roles: ['dialog', 'checkbox'],
+        name: 'user-1',
+        scopeRef: 'e1_5',
+        limit: 20,
+        includeFields: ['href'],
+      });
+    });
+
     it('should act through a ref', async () => {
       const response = JSON.parse(
-        await call('9', 'browser_act', {
+        await call('9', 'act', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           action: 'click',
@@ -907,7 +989,7 @@ describe('AgentBrowser MCP server', () => {
 
     it('should forward the wait action condition', async () => {
       const response = JSON.parse(
-        await call('9w', 'browser_act', {
+        await call('9w', 'act', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           action: 'wait',
@@ -924,7 +1006,7 @@ describe('AgentBrowser MCP server', () => {
     it('should accept untargeted Phase-1 actions without a ref', async () => {
       for (const action of ['goBack', 'goForward', 'reload']) {
         const response = JSON.parse(
-          await call(`9u-${action}`, 'browser_act', {
+          await call(`9u-${action}`, 'act', {
             sessionId: 'ses_1',
             pageId: 'pg_1',
             action,
@@ -937,7 +1019,7 @@ describe('AgentBrowser MCP server', () => {
 
     it('forwards untargeted press and consent fields', async () => {
       const response = JSON.parse(
-        await call('press-consent', 'browser_act', {
+        await call('press-consent', 'act', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           action: 'press',
@@ -957,7 +1039,7 @@ describe('AgentBrowser MCP server', () => {
 
     it('should still require a ref for targeted Phase-1 actions', async () => {
       const response = JSON.parse(
-        await call('9t', 'browser_act', {
+        await call('9t', 'act', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           action: 'hover',
@@ -969,7 +1051,7 @@ describe('AgentBrowser MCP server', () => {
 
     it('should extract through the tool', async () => {
       const response = JSON.parse(
-        await call('10b', 'browser_extract', {
+        await call('10b', 'extract', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           format: 'markdown',
@@ -988,7 +1070,7 @@ describe('AgentBrowser MCP server', () => {
 
     it('should forward schema extraction and reject a missing schema', async () => {
       const ok = JSON.parse(
-        await call('ex-s1', 'browser_extract', {
+        await call('ex-s1', 'extract', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           format: 'schema',
@@ -1004,7 +1086,7 @@ describe('AgentBrowser MCP server', () => {
       // The tool does not itself require schema (the service's 400 is the
       // single source of truth) - it forwards faithfully.
       const forwarded = JSON.parse(
-        await call('ex-s2', 'browser_extract', {
+        await call('ex-s2', 'extract', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           format: 'schema',
@@ -1023,7 +1105,7 @@ describe('AgentBrowser MCP server', () => {
         limit: 25,
       };
       const response = JSON.parse(
-        await call('ex-r1', 'browser_extract', {
+        await call('ex-r1', 'extract', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           format: 'records',
@@ -1040,7 +1122,7 @@ describe('AgentBrowser MCP server', () => {
 
     it('should reject an unknown extract format', async () => {
       const response = JSON.parse(
-        await call('10c', 'browser_extract', {
+        await call('10c', 'extract', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           format: 'yaml',
@@ -1053,7 +1135,7 @@ describe('AgentBrowser MCP server', () => {
 
     it('should capture a PDF through the tool', async () => {
       const response = JSON.parse(
-        await call('10d', 'browser_pdf', {
+        await call('10d', 'pdf', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           printBackground: true,
@@ -1066,16 +1148,16 @@ describe('AgentBrowser MCP server', () => {
 
     it('should capture a screenshot', async () => {
       const response = JSON.parse(
-        await call('10', 'browser_screenshot', { sessionId: 'ses_1', pageId: 'pg_1' })
+        await call('10', 'screenshot', { sessionId: 'ses_1', pageId: 'pg_1' })
       );
 
       expect(textOf(response).artifactId).toBe('art_1');
     });
 
-    describe('browser_html', () => {
+    describe('html', () => {
       it('returns inline decoded HTML with the untrusted-content warning', async () => {
         const response = JSON.parse(
-          await call('html-1', 'browser_html', { sessionId: 'ses_1', pageId: 'pg_1' })
+          await call('html-1', 'html', { sessionId: 'ses_1', pageId: 'pg_1' })
         );
         const result = textOf(response);
 
@@ -1091,7 +1173,7 @@ describe('AgentBrowser MCP server', () => {
 
       it('truncates to maxBytes with an explicit note', async () => {
         const response = JSON.parse(
-          await call('html-2', 'browser_html', { sessionId: 'ses_1', pageId: 'pg_1', maxBytes: 5 })
+          await call('html-2', 'html', { sessionId: 'ses_1', pageId: 'pg_1', maxBytes: 5 })
         );
         const result = textOf(response);
 
@@ -1109,7 +1191,7 @@ describe('AgentBrowser MCP server', () => {
         });
 
         const response = JSON.parse(
-          await call('html-3', 'browser_html', { sessionId: 'ses_1', pageId: 'pg_1' })
+          await call('html-3', 'html', { sessionId: 'ses_1', pageId: 'pg_1' })
         );
         const result = textOf(response);
 
@@ -1120,7 +1202,7 @@ describe('AgentBrowser MCP server', () => {
     });
 
     it('should close a session', async () => {
-      await call('11', 'browser_close', { sessionId: 'ses_1' });
+      await call('11', 'close', { sessionId: 'ses_1' });
 
       expect(sessions.close).toHaveBeenCalledWith('ses_1');
     });
@@ -1129,7 +1211,7 @@ describe('AgentBrowser MCP server', () => {
   describe('safety', () => {
     it('should reject a selector-shaped target without calling the API', async () => {
       const response = JSON.parse(
-        await call('12', 'browser_act', {
+        await call('12', 'act', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           action: 'click',
@@ -1152,7 +1234,7 @@ describe('AgentBrowser MCP server', () => {
       );
 
       const response = JSON.parse(
-        await call('13', 'browser_act', {
+        await call('13', 'act', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           action: 'click',
@@ -1167,7 +1249,7 @@ describe('AgentBrowser MCP server', () => {
 
     it('should mark observations as untrusted content', async () => {
       const response = JSON.parse(
-        await call('14', 'browser_observe', { sessionId: 'ses_1', pageId: 'pg_1' })
+        await call('14', 'observe', { sessionId: 'ses_1', pageId: 'pg_1' })
       );
 
       // The observation body itself carries untrustedContent, and the wrapper
@@ -1177,7 +1259,7 @@ describe('AgentBrowser MCP server', () => {
 
     it('should reject a non-http(s) navigation target', async () => {
       const response = JSON.parse(
-        await call('15', 'browser_navigate', {
+        await call('15', 'navigate', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           url: 'file:///etc/passwd',
@@ -1209,7 +1291,7 @@ describe('AgentBrowser MCP server', () => {
     });
 
     it('should return invalid-params for an unknown tool', async () => {
-      const response = JSON.parse(await call('18', 'browser_teleport', {}));
+      const response = JSON.parse(await call('18', 'teleport', {}));
       expect(response.error.code).toBe(-32602);
     });
 

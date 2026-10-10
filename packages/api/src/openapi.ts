@@ -734,10 +734,10 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
       '/v1/sessions/{sessionId}/pages/{pageId}/snapshot': {
         get: {
           operationId: 'getPageSnapshot',
-          summary: 'Self-contained observation for browser_plan',
+          summary: 'Self-contained observation for plan',
           description:
             'ADR-012/TD-BROWSER-8: a self-contained snapshot (url, title, revision, ' +
-            'mode, fields) usable as browser_plan targets in one round trip, with no ' +
+            'mode, fields) usable as plan targets in one round trip, with no ' +
             'separate observe call. `mode` reflects the adaptive stable/verified state ' +
             '(raised after repeated ref churn). Optional ?maxElements=/?maxBytes= bound ' +
             'the fields payload (pressure-matrix payload economics).',

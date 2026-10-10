@@ -6,15 +6,15 @@ import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 
 export const EXPECTED_TOOLS = Object.freeze([
-  'browser_create', 'browser_page_create', 'browser_pages', 'browser_close', 'browser_cookies', 'browser_snapshot',
-  'browser_plan', 'browser_autofill', 'browser_navigate', 'browser_observe', 'browser_act',
-  'browser_extract', 'browser_html', 'browser_pdf', 'browser_screenshot', 'browser_session',
-  'browser_events_replay',
+  'create', 'page_create', 'pages', 'close', 'cookies', 'snapshot',
+  'plan', 'autofill', 'navigate', 'observe', 'act',
+  'extract', 'html', 'pdf', 'screenshot', 'session',
+  'events_replay',
 ]);
 
 export const EXPECTED_DELEGATED_TOOLS = Object.freeze([
-  ...EXPECTED_TOOLS.filter((name) => !['browser_create', 'browser_close', 'browser_cookies'].includes(name)),
-  'browser_operation',
+  ...EXPECTED_TOOLS.filter((name) => !['create', 'close', 'cookies'].includes(name)),
+  'operation',
 ]);
 
 export const TEST_EVALUATION_INPUT_SCHEMA_ID =
@@ -326,7 +326,7 @@ export async function checkMcpContracts(command, options) {
         await checkMcp(command, { ...options, env, protocolVersion, catalog, exercise: async ({ request }) => {
           const listed = await request('tools/list');
           bytes.push({ protocolVersion, catalog, bytes: Buffer.byteLength(JSON.stringify(listed)) });
-          const autofill = listed.tools.find((tool) => tool.name === 'browser_autofill');
+          const autofill = listed.tools.find((tool) => tool.name === 'autofill');
           const modern = protocolVersion === '2025-06-18';
           if (modern) {
             assert.equal(autofill.outputSchema?.$id, 'urn:agentbrowser:autofill-report:v1', 'Missing canonical output schema');
@@ -336,14 +336,14 @@ export async function checkMcpContracts(command, options) {
           } else assert.ok(listed.tools.every((tool) => !tool.outputSchema && !tool.annotations), 'Legacy catalog gained modern fields');
           assert.equal(autofill.inputSchema.properties.fields.items.properties.match.properties.block.properties.label.maxLength, 512, 'Lost nested match schema');
           assert.equal(autofill.inputSchema.required.includes('operationId'), catalog === 'delegated');
-          const plan = listed.tools.find((tool) => tool.name === 'browser_plan');
+          const plan = listed.tools.find((tool) => tool.name === 'plan');
           assert.equal(plan.inputSchema.properties.actions.items.properties.waitMs.maximum, 60000, 'Lost canonical plan input');
           if (modern) assert.equal(plan.outputSchema?.$id, 'urn:agentbrowser:plan-report:v1', 'Missing canonical plan output');
           for (const scenario of cases) {
           const args = { ...scenario.payload, pageId: 'fixture-page', ...(catalog === 'unbound' ? { sessionId: 'fixture-session' } : {}) };
           for (const [operationId, expected] of [['success', scenario.report], ['failed', scenario.failed], ['invalid', null]]) {
             const before = requests.length;
-            const result = await request('tools/call', { name: `browser_${scenario.route}`, arguments: { ...args, operationId } });
+            const result = await request('tools/call', { name: `${scenario.route}`, arguments: { ...args, operationId } });
             assert.equal(requests.length, before + 1, 'Write dispatch must happen exactly once');
             const received = requests.at(-1);
             assert.equal(received.path, `/v1/sessions/fixture-session/pages/fixture-page/${scenario.route}`);
@@ -357,7 +357,14 @@ export async function checkMcpContracts(command, options) {
               assert.deepEqual(result.structuredContent, modern ? expected : undefined);
             } else {
               assert.equal(result.isError, true);
-              assert.equal(result.structuredContent, undefined);
+              if (modern) {
+                // Structured errors carry the allowlisted machine shape only.
+                assert.equal(result.structuredContent.error.code, 'INVALID_RESPONSE');
+                assert.equal(result.structuredContent.error.operationId, 'invalid');
+                assert.ok(!('details' in result.structuredContent.error));
+              } else {
+                assert.equal(result.structuredContent, undefined);
+              }
               assert.ok(!JSON.stringify(result).includes('PRIVATE-REPORT'));
               assert.match(result.content[0].text, /may have executed/);
             }

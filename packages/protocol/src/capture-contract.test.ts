@@ -48,3 +48,44 @@ describe.each([
     expect(validate({ waitUntil: 'load' }).ok).toBe(false);
   });
 });
+
+describe('observe compact projection contract', () => {
+  it.each([
+    { name: 'x'.repeat(201) },
+    { limit: 0 },
+    { limit: 501 },
+    { limit: 2.5 },
+    { roles: [] },
+    { roles: 'dialog' },
+    { roles: [1] },
+    { roles: ['x'.repeat(101)] },
+    { roles: Array.from({ length: 33 }, () => 'button') },
+    { scopeRef: 'not-a-ref' },
+    { scopeRef: 'e1_x' },
+    { includeFields: ['bounds'] },
+    { includeFields: 'href' },
+  ])('rejects invalid projection %j in schema and runtime', (body) => {
+    expect(TypeCompiler.Compile(ObservationRequestSchema).Check(body)).toBe(false);
+    expect(validateObservationRequest(body).ok).toBe(false);
+  });
+
+  it.each([
+    { roles: ['dialog', 'checkbox'] },
+    { name: 'user-1' },
+    { scopeRef: 'e12_345' },
+    { limit: 1 },
+    { limit: 500 },
+    { includeFields: ['href', 'attributes', 'required'] },
+    {
+      roles: ['dialog'],
+      name: 'policy',
+      scopeRef: 'e1_0',
+      limit: 20,
+      includeFields: ['href'],
+    },
+  ])('preserves valid projection %j', (body) => {
+    const compiled = TypeCompiler.Compile(ObservationRequestSchema);
+    expect(compiled.Check(body)).toBe(true);
+    expect(validateObservationRequest(body)).toEqual({ ok: true, value: body });
+  });
+});

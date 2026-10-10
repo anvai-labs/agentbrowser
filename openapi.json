@@ -1909,8 +1909,8 @@
     "/v1/sessions/{sessionId}/pages/{pageId}/snapshot": {
       "get": {
         "operationId": "getPageSnapshot",
-        "summary": "Self-contained observation for browser_plan",
-        "description": "ADR-012/TD-BROWSER-8: a self-contained snapshot (url, title, revision, mode, fields) usable as browser_plan targets in one round trip, with no separate observe call. `mode` reflects the adaptive stable/verified state (raised after repeated ref churn). Optional ?maxElements=/?maxBytes= bound the fields payload (pressure-matrix payload economics).",
+        "summary": "Self-contained observation for plan",
+        "description": "ADR-012/TD-BROWSER-8: a self-contained snapshot (url, title, revision, mode, fields) usable as plan targets in one round trip, with no separate observe call. `mode` reflects the adaptive stable/verified state (raised after repeated ref churn). Optional ?maxElements=/?maxBytes= bound the fields payload (pressure-matrix payload economics).",
         "tags": [
           "pages"
         ],
@@ -7138,6 +7138,17 @@
                 },
                 "checked": {
                   "type": "boolean"
+                },
+                "depth": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "block": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "nameTruncated": {
+                  "type": "boolean"
                 }
               }
             }
@@ -7239,6 +7250,39 @@
                 "type": "integer"
               },
               "remaining": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            }
+          },
+          "projection": {
+            "type": "object",
+            "required": [
+              "matched",
+              "total"
+            ],
+            "properties": {
+              "roles": {
+                "maxItems": 32,
+                "type": "array",
+                "items": {
+                  "maxLength": 100,
+                  "type": "string"
+                }
+              },
+              "name": {
+                "maxLength": 200,
+                "type": "string"
+              },
+              "scopeRef": {
+                "pattern": "^e\\d+_\\d+$",
+                "type": "string"
+              },
+              "matched": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "total": {
                 "minimum": 0,
                 "type": "integer"
               }
@@ -7389,6 +7433,17 @@
             }
           },
           "checked": {
+            "type": "boolean"
+          },
+          "depth": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "block": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "nameTruncated": {
             "type": "boolean"
           }
         }
@@ -7615,6 +7670,47 @@
                 }
               }
             ]
+          },
+          "roles": {
+            "minItems": 1,
+            "maxItems": 32,
+            "type": "array",
+            "items": {
+              "maxLength": 100,
+              "type": "string"
+            }
+          },
+          "name": {
+            "maxLength": 200,
+            "type": "string"
+          },
+          "scopeRef": {
+            "pattern": "^e\\d+_\\d+$",
+            "type": "string"
+          },
+          "limit": {
+            "minimum": 1,
+            "maximum": 500,
+            "type": "integer"
+          },
+          "includeFields": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "const": "href",
+                  "type": "string"
+                },
+                {
+                  "const": "attributes",
+                  "type": "string"
+                },
+                {
+                  "const": "required",
+                  "type": "string"
+                }
+              ]
+            }
           }
         }
       },
@@ -9586,6 +9682,17 @@
                     },
                     "checked": {
                       "type": "boolean"
+                    },
+                    "depth": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "block": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "nameTruncated": {
+                      "type": "boolean"
                     }
                   }
                 }
@@ -9687,6 +9794,39 @@
                     "type": "integer"
                   },
                   "remaining": {
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                }
+              },
+              "projection": {
+                "type": "object",
+                "required": [
+                  "matched",
+                  "total"
+                ],
+                "properties": {
+                  "roles": {
+                    "maxItems": 32,
+                    "type": "array",
+                    "items": {
+                      "maxLength": 100,
+                      "type": "string"
+                    }
+                  },
+                  "name": {
+                    "maxLength": 200,
+                    "type": "string"
+                  },
+                  "scopeRef": {
+                    "pattern": "^e\\d+_\\d+$",
+                    "type": "string"
+                  },
+                  "matched": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "total": {
                     "minimum": 0,
                     "type": "integer"
                   }
