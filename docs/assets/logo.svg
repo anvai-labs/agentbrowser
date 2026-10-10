@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+  <!-- AgentBrowser symbol: sibling of the AnvaiOps mark — same teal ring and
+       gradient 'A' monogram; the crossbar resolves into a click cursor,
+       "an agent driving a real page". Teal (#0f766e->#115e59) + amber (#f59e0b),
+       aligned to the Anvai marketing accent system. -->
+  <defs>
+    <linearGradient id="ringGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f766e"/>
+      <stop offset="100%" stop-color="#115e59"/>
+    </linearGradient>
+    <linearGradient id="markGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0f766e"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(60,60)">
+    <circle cx="0" cy="0" r="38" fill="none" stroke="url(#ringGradient)" stroke-width="3"/>
+    <path d="M -22.0,28.1 L 0,-28.1 L 22.0,28.1" fill="none" stroke="url(#markGradient)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M -14.0,8.0 H 4.0" fill="none" stroke="#f59e0b" stroke-width="4" stroke-linecap="round"/>
+    <path d="M 4.0,1.5 L 4.0,17.5 L 9.5,11.5 L 13.0,18.0 L 16.0,16.2 L 12.5,9.8 L 19.5,9.5 Z" fill="#f59e0b"/>
+  </g>
+</svg>

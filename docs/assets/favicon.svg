@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+  <!-- AnvaiOps favicon: symbol with strokes thickened for 16-32px rendering. -->
+  <defs>
+    <linearGradient id="ringGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f766e"/>
+      <stop offset="100%" stop-color="#115e59"/>
+    </linearGradient>
+    <linearGradient id="markGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0f766e"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(60,60)">
+    <circle cx="0" cy="0" r="36" fill="none" stroke="url(#ringGradient)" stroke-width="6"/>
+    <path d="M -20.9,26.6 L 0,-26.6 L 20.9,26.6" fill="none" stroke="url(#markGradient)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M -13.3,7.6 H -6.6 L -2.8,-0.9 L 1.9,15.2 L 5.7,7.6 H 13.3" fill="none" stroke="#f59e0b" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
