@@ -43,12 +43,107 @@ describe('formControls row context (G1)', () => {
     try {
       const page = await (await engine.createSession({ headless: true })).newPage();
       await page.navigate({
-        url: 'data:text/html,<body><main><button aria-haspopup="true">Access: No access</button></main></body>',
+        url: 'data:text/html,<body><main><ul><li><button aria-haspopup="true">Access: No access</button></li><li><button aria-haspopup="true">Access: No access</button></li></ul></main></body>',
       });
       const { elements } = await page.observe({ include: ['formControls'] });
       const control = elements.find((e) => e.role === 'control');
       expect(control).toBeDefined();
       expect(control?.context).toBeUndefined();
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('excludes the control own subtree from row-label candidates (review F2)', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const page = await (await engine.createSession({ headless: true })).newPage();
+      await page.navigate({
+        url: `data:text/html,${encodeURIComponent(
+          '<body><main><ul>' +
+            '<li><button aria-haspopup="true"><strong>Access: No access</strong></button><strong>Contents</strong></li>' +
+            '<li><button aria-haspopup="true"><strong>Access: No access</strong></button><strong>Pull requests</strong></li>' +
+            '</ul></main></body>'
+        )}`,
+      });
+      const { elements } = await page.observe({ include: ['formControls'] });
+      const contexts = elements.filter((e) => e.role === 'control').map((e) => e.context);
+      expect(contexts).toContain('Contents');
+      expect(contexts).toContain('Pull requests');
+      // The generic inner <strong> never becomes the context.
+      expect(contexts).not.toContain('Access: No access');
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('finds the heading of an enclosing preceding <section> (review F3)', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const page = await (await engine.createSession({ headless: true })).newPage();
+      await page.navigate({
+        url: `data:text/html,${encodeURIComponent(
+          '<body><main><h2>Account</h2>' +
+            '<section><h2>Notifications</h2><ul>' +
+            '<li><strong>Email</strong><button aria-haspopup="true">Access: No access</button></li>' +
+            '<li><strong>Web</strong><button aria-haspopup="true">Access: No access</button></li>' +
+            '</ul></section></main></body>'
+        )}`,
+      });
+      const { elements } = await page.observe({ include: ['formControls'] });
+      const contexts = elements.filter((e) => e.role === 'control').map((e) => e.context);
+      expect(contexts).toContain('Email — Notifications');
+      expect(contexts).not.toContain('Email — Account');
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('derives dt row labels for controls inside dd, and honors aria-labelledby (review F4)', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const page = await (await engine.createSession({ headless: true })).newPage();
+      await page.navigate({
+        url: `data:text/html,${encodeURIComponent(
+          '<body><main><dl>' +
+            '<dt>Contents</dt><dd><button aria-haspopup="true">Access: No access</button></dd>' +
+            '<dt>Pull requests</dt><dd><button aria-haspopup="true">Access: No access</button></dd>' +
+            '</dl><span id="lbl-a">Issues</span><button aria-haspopup="true" aria-labelledby="lbl-a">Access: No access</button></main></body>'
+        )}`,
+      });
+      const { elements } = await page.observe({ include: ['formControls'] });
+      const contexts = elements.filter((e) => e.role === 'control').map((e) => e.context);
+      expect(contexts).toContain('Contents');
+      expect(contexts).toContain('Pull requests');
+      expect(contexts).toContain('Issues');
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it('normalizes whitespace in labels and skips unique-named controls (review F5/F6)', async () => {
+    const engine = new PlaywrightChromiumEngine();
+    try {
+      const page = await (await engine.createSession({ headless: true })).newPage();
+      await page.navigate({
+        url: `data:text/html,${encodeURIComponent(
+          '<body><main><ul>' +
+            '<li><strong>Deploy\n   keys</strong><button aria-haspopup="true">Access: No access</button></li>' +
+            '<li><strong>Other</strong><button aria-haspopup="true">Access: No access</button></li>' +
+            '<li><strong>Solo row</strong><button aria-haspopup="true">A uniquely named menu</button></li>' +
+            '</ul></main></body>'
+        )}`,
+      });
+      const { elements } = await page.observe({ include: ['formControls'] });
+      const controls = elements.filter((e) => e.role === 'control');
+      const contexts = controls.map((e) => e.context);
+      // Whitespace-normalized, single-line contexts; both duplicated-name
+      // controls carry their row labels.
+      expect(contexts).toContain('Deploy keys');
+      expect(contexts).toContain('Other');
+      // A unique name needs no context: no bytes spent.
+      const unique = controls.find((e) => e.name === 'A uniquely named menu');
+      expect(unique?.context).toBeUndefined();
     } finally {
       await engine.close();
     }

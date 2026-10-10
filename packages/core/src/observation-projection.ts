@@ -263,6 +263,9 @@ function shapeElement(element: PageElement, includeFields: Set<string> | undefin
   if (element.risk !== undefined) shaped.risk = element.risk;
   if (element.focused !== undefined) shaped.focused = element.focused;
   if (element.depth !== undefined) shaped.depth = element.depth;
+  // G1 context is protected core: compact projection must not strip the
+  // disambiguator from generic-named controls (review G1/F1).
+  if (element.context !== undefined) shaped.context = element.context;
   if (element.block !== undefined) shaped.block = element.block;
   if (includeFields?.has('href')) {
     if (element.href !== undefined) shaped.href = element.href;

@@ -3548,19 +3548,6 @@ class PlaywrightPage implements EnginePage {
           offsetWidth: number;
           offsetHeight: number;
           getAttribute(name: string): string | null;
-          // DOM traversal available in the browser context (G1 context
-          // derivation); structurally declared so the node-side type-check
-          // stays DOM-library-free.
-          closest(selector: string): {
-            tagName: string;
-            textContent: string | null;
-            querySelector(selector: string): { textContent: string | null } | null;
-            previousElementSibling: unknown | null;
-            parentElement: unknown | null;
-          } | null;
-          querySelector(selector: string): { textContent: string | null } | null;
-          previousElementSibling: unknown | null;
-          parentElement: unknown | null;
         }>
       ): Array<{
         index: number;
@@ -3570,8 +3557,89 @@ class PlaywrightPage implements EnginePage {
         id?: string;
         automationId?: string;
         visible: boolean;
-      }> =>
-        nodes.map((node, index) => {
+      }> => {
+        // Full browser-context shape of a node (G1 context derivation);
+        // one cast keeps the declared parameter type DOM-library-free.
+        interface El {
+          tagName: string;
+          textContent: string | null;
+          id: string;
+          offsetWidth: number;
+          offsetHeight: number;
+          getAttribute(name: string): string | null;
+          contains(other: unknown): boolean;
+          ownerDocument: { getElementById(id: string): El | null };
+          closest(selector: string): El | null;
+          querySelectorAll(selector: string): El[];
+          previousElementSibling: El | null;
+          parentElement: El | null;
+        }
+        const els = nodes.map((n) => n as unknown as El);
+        // Semantic row/label detection only — no site-specific class names
+        // (review G1/F7): structure (li/tr/row/dl/dd), label elements, and
+        // aria-labelledby cover the Primer-style pages this targets.
+        const norm = (s: string | null | undefined): string | undefined =>
+          s?.replace(/\s+/g, ' ').trim().slice(0, 120) || undefined;
+        const rowLabelOf = (node: El): string | undefined => {
+          const labelledBy = node.getAttribute('aria-labelledby');
+          if (labelledBy) {
+            for (const id of labelledBy.split(/\s+/)) {
+              const source = node.ownerDocument.getElementById(id);
+              if (source && !node.contains(source)) {
+                const label = norm(source.textContent);
+                if (label) return label;
+              }
+            }
+          }
+          const dd = node.closest('dd');
+          if (dd) {
+            const dt = dd.previousElementSibling;
+            if (dt?.tagName === 'DT') {
+              const label = norm(dt.textContent);
+              if (label) return label;
+            }
+          }
+          const row = node.closest('li, tr, [role="row"], .form-group, .field, dl');
+          if (!row) return undefined;
+          const candidates = row.querySelectorAll('strong, label, th');
+          for (const candidate of candidates) {
+            // Exclude the control's own subtree: the generic name itself
+            // often lives in an inner <strong> (review G1/F2).
+            if (node.contains(candidate)) continue;
+            const label = norm(candidate.textContent);
+            if (label) return label;
+          }
+          return undefined;
+        };
+        const headingFor = (row: El): string | undefined => {
+          // Walk backwards; descend into preceding sibling subtrees so a
+          // <section><h2>…</h2>…</section> before the row finds its own
+          // heading instead of an earlier section's (review G1/F3).
+          let cursor: El | null = row;
+          while (cursor) {
+            const sibling: El | null = cursor.previousElementSibling;
+            if (sibling) {
+              if (/^H[1-4]$/.test(sibling.tagName)) {
+                return norm(sibling.textContent) ?? undefined;
+              }
+              const headings = sibling.querySelectorAll('h1, h2, h3, h4');
+              const nested = headings[headings.length - 1];
+              if (nested !== undefined) {
+                return norm(nested.textContent) ?? undefined;
+              }
+              cursor = sibling;
+              continue;
+            }
+            cursor = cursor.parentElement;
+            if (!cursor || cursor.tagName === 'MAIN' || cursor.tagName === 'BODY') break;
+            if (/^H[1-4]$/.test(cursor.tagName)) {
+              return norm(cursor.textContent) ?? undefined;
+            }
+          }
+          return undefined;
+        };
+
+        const basics = els.map((node, index) => {
           const text = node.textContent?.trim().slice(0, 200) || undefined;
           const automationId = node.getAttribute('data-automation-id')?.trim() || undefined;
           const name =
@@ -3580,46 +3648,34 @@ class PlaywrightPage implements EnginePage {
             automationId ||
             node.id.trim() ||
             undefined;
-          // Row/section context (G1): generic-named custom controls become
-          // distinguishable ("Access: No access" + context "Contents").
-          let context: string | undefined;
-          const row = node.closest(
-            'li, tr, [role="row"], .Box-row, .form-group, .field, dt, dl > div'
-          );
-          const rowLabel = row
-            ?.querySelector('strong, label, th, dt, .js-list-group-item strong')
-            ?.textContent?.trim()
-            .slice(0, 120);
-          if (rowLabel) {
-            const heading = ((): string | undefined => {
-              type Crawl = {
-                tagName: string;
-                textContent: string | null;
-                previousElementSibling: Crawl | null;
-                parentElement: Crawl | null;
-              };
-              let cursor: Crawl | null = row as Crawl;
-              while (cursor) {
-                cursor = cursor.previousElementSibling ?? cursor.parentElement;
-                if (!cursor || cursor.tagName === 'MAIN' || cursor.tagName === 'BODY') break;
-                if (/^H[1-4]$/.test(cursor.tagName)) {
-                  return cursor.textContent?.trim().slice(0, 80) || undefined;
-                }
-              }
-              return undefined;
-            })();
-            context = heading ? `${rowLabel} — ${heading}` : rowLabel;
-          }
           return {
+            node,
             index,
             tag: node.tagName.toLowerCase(),
             ...(name !== undefined ? { name } : {}),
-            ...(context !== undefined ? { context } : {}),
             ...(node.id !== '' ? { id: node.id } : {}),
             ...(automationId !== undefined ? { automationId } : {}),
             visible: node.offsetWidth > 0 || node.offsetHeight > 0,
           };
-        })
+        });
+        // Attach context only where it earns its bytes (review G1/F6):
+        // duplicated or absent names. Unique-named controls stay lean.
+        const nameCounts = new Map<string, number>();
+        for (const b of basics) {
+          if (b.name !== undefined) nameCounts.set(b.name, (nameCounts.get(b.name) ?? 0) + 1);
+        }
+        return basics.map((b) => {
+          const needsContext = b.name === undefined || (nameCounts.get(b.name) ?? 0) >= 2;
+          if (!needsContext) return b;
+          const rowLabel = rowLabelOf(b.node);
+          if (rowLabel === undefined) return b;
+          const heading = headingFor(b.node);
+          return {
+            ...b,
+            ...(heading ? { context: `${rowLabel} — ${heading}` } : { context: rowLabel }),
+          };
+        });
+      }
     );
     return described.slice(0, MAX_FORM_CONTROLS);
   }

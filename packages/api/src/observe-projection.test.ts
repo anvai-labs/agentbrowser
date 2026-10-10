@@ -298,4 +298,47 @@ describe('observe compact projection', () => {
     expect(resumed.projection).toMatchObject({ matched: 0 });
     expect(resumed.continuation).toBeUndefined();
   });
+
+  it('FakeEngine parity: seeded context reaches observations and survives projection (G1/F8)', async () => {
+    const engine = new FakeEngine();
+    const service = new AgentBrowserService({ engine });
+    const session = await service.createSession({ tenantId: 't1' });
+    const pageId = (await service.createPage(session.sessionId)).pageId;
+    const engineSessionId = engine.getSessionIds()[0];
+    const fakePage = engine.getFakePage(engineSessionId ?? '', pageId);
+    fakePage?.seedElements([
+      {
+        ref: 'e1_0',
+        role: 'control',
+        name: 'Access: No access',
+        context: 'Contents — Repository permissions',
+      },
+      {
+        ref: 'e1_1',
+        role: 'control',
+        name: 'Access: No access',
+        context: 'Pull requests — Repository permissions',
+      },
+      { ref: 'e1_2', role: 'button', name: 'Submit' },
+    ]);
+
+    const full = await service.observe(session.sessionId, pageId, {
+      include: ['formControls'],
+    });
+    expect(full.elements[0]).toMatchObject({
+      context: 'Contents — Repository permissions',
+    });
+
+    // Context is protected core: a compact projection must not strip the
+    // disambiguator from generic-named controls (review G1/F1).
+    const projected = await service.observe(session.sessionId, pageId, {
+      include: ['formControls'],
+      roles: ['control'],
+    });
+    expect(projected.elements).toHaveLength(2);
+    expect(projected.elements.map((e) => e.context)).toEqual([
+      'Contents — Repository permissions',
+      'Pull requests — Repository permissions',
+    ]);
+  });
 });
