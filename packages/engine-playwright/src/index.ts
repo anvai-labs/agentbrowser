@@ -2907,15 +2907,36 @@ class PlaywrightPage implements EnginePage {
         // Two-pass, cross-root G1 design (round-3/F6): duplication counts
         // are page-wide, so names are collected from EVERY root before any
         // context is derived.
+        // Round-5/F5: a frame detaching between the two passes must degrade
+        // that root to "unavailable" (like the frame-snapshot loop), not
+        // reject the whole observation after main-frame work succeeded.
+        const describeFormControlNamesSafely = async (
+          root: import('playwright').Page | import('playwright').Frame
+        ): Promise<string[]> => {
+          try {
+            return await this.describeFormControlNames(root);
+          } catch {
+            return [];
+          }
+        };
+        const describeFormControlsSafely = async (
+          root: import('playwright').Page | import('playwright').Frame
+        ): Promise<FormControlInfo[]> => {
+          try {
+            return await this.describeFormControls(root, pageWideNameCounts);
+          } catch {
+            return [];
+          }
+        };
         const pageWideNameCounts: Record<string, number> = {};
         for (const root of scanRoots) {
-          for (const name of await this.describeFormControlNames(root)) {
+          for (const name of await describeFormControlNamesSafely(root)) {
             pageWideNameCounts[name] = (pageWideNameCounts[name] ?? 0) + 1;
           }
         }
         for (const root of scanRoots) {
           const block = root === this.page ? undefined : blockOfFrame.get(root);
-          for (const info of await this.describeFormControls(root, pageWideNameCounts)) {
+          for (const info of await describeFormControlsSafely(root)) {
             elements.push({
               ref: `e${this.revision}_${elements.length}`,
               role: 'control',

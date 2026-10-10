@@ -123,8 +123,12 @@ export function g1DescribePageFunction(
     if (!row) return labelledByFallback;
     const candidates = row.querySelectorAll(LABEL_SELECTOR);
     for (const candidate of candidates) {
-      // Exclude the control's own subtree (round-1/F2)…
-      if (node.contains(candidate)) continue;
+      // Exclude the control's own subtree AND candidates that CONTAIN the
+      // control (round-1/F2 + round-5/F3): a wrapping <label> concatenates
+      // the control's own generic text into its textContent — the overlay
+      // scan's symmetric containment check (index.ts collectOverlays) is
+      // the in-file precedent.
+      if (node.contains(candidate) || candidate.contains(node)) continue;
       // …and subtrees of SIBLING interactives in the same row: their
       // inner labels belong to those controls, not this row (round-3/F2).
       const host = candidate.closest(INTERACTIVE_HOST);
@@ -144,13 +148,19 @@ export function g1DescribePageFunction(
   // siblings so the walk never escapes the scope into page-wide work; the
   // walk is intentionally NOT memoized per scope because the result depends
   // on the row's position within the scope (sibling headings between rows).
+  // Round-5/F4: the walk is bounded — a dashboard main with thousands of
+  // preceding siblings must not block the page thread for every control.
+  const SIBLING_VISIT_BUDGET = 60;
   const headingFor = (row: El): string | undefined => {
     let scope: El | null = row.closest(SECTIONING);
     while (scope) {
       let found: string | undefined;
       let cursor: El | null = row;
+      let visits = 0;
       while (cursor !== null) {
         if (cursor === scope) break;
+        if (visits >= SIBLING_VISIT_BUDGET) return undefined;
+        visits += 1;
         const sibling: El | null = cursor.previousElementSibling;
         if (sibling !== null) {
           if (/^H[1-4]$/.test(sibling.tagName)) {
@@ -180,7 +190,9 @@ export function g1DescribePageFunction(
     return undefined;
   };
 
-  return nodes.map((node, index) => {
+  // Round-5/F4: derive only the nodes the host will keep (mint cap) —
+  // the page-side derivation cost is bounded by the advertised budget.
+  return nodes.slice(0, 200).map((node, index) => {
     const automationId = node.getAttribute('data-automation-id')?.trim() || undefined;
     const name = basicName(node);
     const described: G1Described = {
@@ -199,9 +211,11 @@ export function g1DescribePageFunction(
     const rowLabel = rowLabelOf(node, name);
     if (rowLabel === undefined) return described;
     const heading = headingFor(node);
-    return {
-      ...described,
-      ...(heading ? { context: `${rowLabel} — ${heading}` } : { context: rowLabel }),
-    };
+    // Round-5/F2: when the fallback label came from a section heading, the
+    // walk finds the SAME heading — compose only a real disambiguator.
+    if (heading === undefined || heading === rowLabel) {
+      return { ...described, context: rowLabel };
+    }
+    return { ...described, context: `${rowLabel} — ${heading}` };
   });
 }

@@ -22,12 +22,21 @@ interface NodeSpec {
   children?: NodeSpec[];
 }
 
+/** Concatenated descendant text, matching the real DOM's textContent
+ * semantics (round-5/F8): ancestor text INCLUDES child text, so a mock that
+ * returns null for parents hides exactly the wrapping-label bug class. */
+function descendantText(spec: NodeSpec): string {
+  const own = spec.text ?? '';
+  const childText = (spec.children ?? []).map((child) => descendantText(child)).join('');
+  return (own + childText).trim();
+}
+
 /** Build a structural G1Element tree from a spec (parent/child/sibling links). */
 function tree(spec: NodeSpec, parent: G1Element | null = null): G1Element {
   const children: G1Element[] = (spec.children ?? []).map((child) => tree(child));
   const self: G1Element = {
     tagName: spec.tag.toUpperCase(),
-    textContent: spec.text ?? (spec.children?.length ? null : ''),
+    textContent: descendantText(spec),
     id: spec.id ?? '',
     offsetWidth: 10,
     offsetHeight: 10,

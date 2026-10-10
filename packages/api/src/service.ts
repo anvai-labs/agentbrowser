@@ -2481,31 +2481,31 @@ export class AgentBrowserService {
       | 'dom-semantic-subset'
       | 'empty-snapshot-nonempty-dom';
   }> {
-    // Payload economics (TD-BROWSER-8 pressure matrix, row 4): the fields
-    // list previously had no way to bound its size from the caller's side;
-    // it now flows through the same byte/element budget as observe().
-    const state = await this.observe(sessionId, pageId, {
+    // ONE engine observe for everything (adversarial review round-5/F1):
+    // a second observe with a differing include set trips the engine's
+    // changed-detection (element count N vs N+M), bumps the revision, and
+    // invalidates every ref this same response just minted. The controls
+    // view is therefore PROJECTED from the shared pass, not re-observed.
+    const state = await this.observeInternal(sessionId, pageId, {
       mode: 'interactive',
-      ...(bounds?.maxElements !== undefined ? { maxElements: bounds.maxElements } : {}),
-      ...(bounds?.maxBytes !== undefined ? { maxBytes: bounds.maxBytes } : {}),
+      ...(bounds?.controls === true ? { include: ['formControls' as const] } : {}),
     });
-    const view = state as unknown as {
-      url?: string;
-      title?: string;
-      revision?: number;
-      elements?: Array<{ ref: string; role?: string; name?: string; context?: string }>;
-      truncated?: boolean;
-      degraded?: boolean;
-      degradedReason?:
-        | 'aria-snapshot-timeout'
-        | 'dom-semantic-subset'
-        | 'empty-snapshot-nonempty-dom';
+    const redacted = this.secretManager.redact(state) as typeof state & {
+      elements: Array<{ ref: string; role: string; name?: string; context?: string }>;
     };
-    const all = view.elements ?? [];
-    // Controls pass (round-4/F1): a SEPARATE observe projected to
-    // role "control" — the fields budget slices from the front of the
-    // combined element list where minted controls sort last, so a shared
-    // pass silently cut exactly the rows the caller opted into.
+    // Fields view: the caller's budget applied to the aria-snapshot
+    // elements ONLY — minted controls sort last in the combined list, so
+    // budgeting the combined list silently cut exactly the rows a
+    // controls=true caller opted into (round-4/F1).
+    const fieldsBudget = budgetObservation(
+      { ...redacted, elements: redacted.elements.filter((e) => e.role !== 'control') },
+      {
+        ...(bounds?.maxElements !== undefined ? { maxElements: bounds.maxElements } : {}),
+        ...(bounds?.maxBytes !== undefined ? { maxBytes: bounds.maxBytes } : {}),
+      }
+    );
+    // Controls view: same shared pass, projected to role "control" —
+    // truncation disclosed via matched/total + continuation.
     let controlsBlock:
       | {
           controls: SnapshotControl[];
@@ -2514,41 +2514,36 @@ export class AgentBrowserService {
         }
       | undefined;
     if (bounds?.controls === true) {
-      const mintedView = (await this.observe(sessionId, pageId, {
-        mode: 'interactive',
-        include: ['formControls'],
-        roles: ['control'],
-      })) as unknown as {
-        elements?: Array<{ ref: string; role?: string; name?: string; context?: string }>;
-        projection?: { matched: number; total: number };
-        continuation?: { nextOrdinal: number; remaining: number };
-      };
+      const projected = projectObservation(redacted, { roles: ['control'] });
+      const budgetedControls = budgetObservation(projected, {});
       controlsBlock = {
-        controls: (mintedView.elements ?? []).map(
+        controls: budgetedControls.elements.map(
           (c): SnapshotControl => ({
             ref: c.ref,
-            role: c.role ?? '',
+            role: c.role,
             label: c.name ?? '',
             ...(c.context !== undefined ? { context: c.context } : {}),
           })
         ),
         controlsProjection: {
-          matched: mintedView.projection?.matched ?? 0,
-          total: mintedView.projection?.total ?? 0,
+          matched: projected.projection?.matched ?? 0,
+          total: projected.projection?.total ?? 0,
         },
-        ...(mintedView.continuation !== undefined
-          ? { controlsContinuation: mintedView.continuation }
+        ...(budgetedControls.continuation !== undefined
+          ? { controlsContinuation: budgetedControls.continuation }
           : {}),
       };
     }
     return {
-      url: view.url ?? '',
-      title: view.title ?? '',
-      revision: view.revision ?? 0,
+      url: fieldsBudget.url,
+      title: fieldsBudget.title,
+      revision: fieldsBudget.revision,
       mode: this.churnMode(`${sessionId}:${pageId}`),
-      fields: all
-        .filter((e) => e.role !== 'control')
-        .map((e) => ({ ref: e.ref, role: e.role ?? '', label: e.name ?? '' })),
+      fields: fieldsBudget.elements.map((e) => ({
+        ref: e.ref,
+        role: e.role,
+        label: e.name ?? '',
+      })),
       ...(controlsBlock?.controls !== undefined ? { controls: controlsBlock.controls } : {}),
       ...(controlsBlock?.controlsProjection !== undefined
         ? { controlsProjection: controlsBlock.controlsProjection }
@@ -2556,12 +2551,12 @@ export class AgentBrowserService {
       ...(controlsBlock?.controlsContinuation !== undefined
         ? { controlsContinuation: controlsBlock.controlsContinuation }
         : {}),
-      ...(view.truncated === true ? { truncated: true } : {}),
+      ...(fieldsBudget.truncated === true ? { truncated: true } : {}),
       // Whole-body ariaSnapshot fallback signal (see observe()): a
       // one-shot-plan caller must see this just as clearly as observe
       // does, since `fields` alone looks structurally identical either way.
-      ...(view.degraded === true ? { degraded: true } : {}),
-      ...(view.degradedReason !== undefined ? { degradedReason: view.degradedReason } : {}),
+      ...(redacted.degraded === true ? { degraded: true } : {}),
+      ...(redacted.degradedReason !== undefined ? { degradedReason: redacted.degradedReason } : {}),
     };
   }
 
@@ -2813,6 +2808,36 @@ export class AgentBrowserService {
     pageId: string,
     request: PartialObservation
   ): Promise<PageState> {
+    const observation = await this.observeInternal(sessionId, pageId, request);
+    if (request.sinceRevision !== undefined) {
+      // The diff path accepts maxBytes but previously returned unbounded;
+      // paginateObservation applies the same byte budget to the diff result.
+      // The full observation rides along so a projection scope can resolve
+      // against the whole page, not just the changed subset.
+      const page = this.requirePage(sessionId, pageId);
+      return this.paginateObservation(
+        this.diffObservation(page, observation, request.sinceRevision),
+        request,
+        observation
+      );
+    }
+    return this.paginateObservation(observation, request);
+  }
+
+  /**
+   * The engine+history pass of observe WITHOUT pagination: one engine
+   * observe, ref bridge, history. getSnapshot's controls path consumes this
+   * so its SECOND view derivation never runs a second engine observe — a
+   * differing element count trips the engine's changed-detection, bumps the
+   * revision, and invalidates every ref the first view just minted
+   * (adversarial review round-5/F1). Callers must redact before returning
+   * any derived view.
+   */
+  private async observeInternal(
+    sessionId: string,
+    pageId: string,
+    request: PartialObservation
+  ): Promise<PageState> {
     const checked = validateObservationRequest(request);
     if (!checked.ok)
       throw new ServiceError(
@@ -2901,19 +2926,7 @@ export class AgentBrowserService {
       }
     }
 
-    if (request.sinceRevision !== undefined) {
-      // The diff path accepts maxBytes but previously returned unbounded;
-      // paginateObservation applies the same byte budget to the diff result.
-      // The full observation rides along so a projection scope can resolve
-      // against the whole page, not just the changed subset.
-      return this.paginateObservation(
-        this.diffObservation(page, observation, request.sinceRevision),
-        request,
-        observation
-      );
-    }
-
-    return this.paginateObservation(observation, request);
+    return observation;
   }
 
   /**
