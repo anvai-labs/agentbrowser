@@ -65,6 +65,9 @@ export function g1CollectNamesPageFunction(nodes: G1Element[]): string[] {
  */
 export interface G1DescribeArgs {
   pageWideNameCounts: Record<string, number>;
+  /** THIS root's contribution to pageWideNameCounts in pass one — pass two
+   * REPLACES it with a recount, rather than adding (which double-counted). */
+  ownRootPassOneCounts?: Record<string, number>;
   /** Mint cap from the host's MAX_FORM_CONTROLS — one source of truth. */
   cap: number;
 }
@@ -112,8 +115,13 @@ export function g1DescribePageFunction(nodes: G1Element[], args: G1DescribeArgs)
         if (!source || node.contains(source)) continue;
         const label = norm(source.textContent);
         // A labelledby source repeating the generic name is not a row
-        // label (round-2/F1).
-        if (label && label !== own) labelledByFallback = label;
+        // label (round-2/F1). Round-7/F7: aria-labelledby sources are
+        // ORDERED — the first valid source is primary; later ids must not
+        // overwrite it.
+        if (label && label !== own) {
+          labelledByFallback = labelledByFallback ?? label;
+          break;
+        }
       }
     }
     // dl groups are dt/dd-scoped: a dd takes its preceding dt; multi-dd
@@ -129,13 +137,25 @@ export function g1DescribePageFunction(nodes: G1Element[], args: G1DescribeArgs)
     }
     const row = node.closest(ROW_SELECTOR);
     if (!row) return labelledByFallback;
+    // Round-7/F5: a row may hold SEVERAL labeled controls (table rows with
+    // multiple th/td widget pairs). The nearest label candidate PRECEDING
+    // the control in document order is that control's label — returning
+    // the first candidate labeled every control in the row identically.
     const candidates = row.querySelectorAll(LABEL_SELECTOR);
+    const everything = row.querySelectorAll('*');
+    const indexOf = (target: El): number => {
+      for (let i = 0; i < everything.length; i += 1) {
+        const el = everything[i] as El;
+        if (el === target || el.contains(target)) return i;
+      }
+      return everything.length;
+    };
+    const ownPosition = indexOf(node);
+    let nearest: { label: string; position: number; following: boolean } | undefined;
     for (const candidate of candidates) {
       // Exclude the control's own subtree AND candidates that CONTAIN the
       // control (round-1/F2 + round-5/F3): a wrapping <label> concatenates
-      // the control's own generic text into its textContent — the overlay
-      // scan's symmetric containment check (index.ts collectOverlays) is
-      // the in-file precedent.
+      // the control's own generic text into its textContent.
       if (node.contains(candidate) || candidate.contains(node)) continue;
       // …and subtrees of SIBLING interactives in the same row: their
       // inner labels belong to those controls, not this row (round-3/F2).
@@ -144,9 +164,20 @@ export function g1DescribePageFunction(nodes: G1Element[], args: G1DescribeArgs)
       const label = norm(candidate.textContent);
       // A label equal to the control's own generic name is not a
       // disambiguator (round-3/F1).
-      if (label && label !== own) return label;
+      if (!label || label === own) continue;
+      const position = indexOf(candidate);
+      // Prefer the nearest PRECEDING candidate (table th/td pairs label
+      // their control); a following candidate is accepted only when no
+      // preceding one exists (labels rendered after the widget).
+      if (nearest === undefined) {
+        nearest = { label, position, following: position > ownPosition };
+      } else if (position <= ownPosition && !nearest.following) {
+        if (position > nearest.position) nearest = { label, position, following: false };
+      } else if (position > ownPosition && nearest.following && position < nearest.position) {
+        nearest = { label, position, following: true };
+      }
     }
-    return labelledByFallback;
+    return nearest?.label ?? labelledByFallback;
   };
 
   // Scope-bounded reverse heading walk (round-1/F3 + round-2/F2 +
@@ -201,6 +232,21 @@ export function g1DescribePageFunction(nodes: G1Element[], args: G1DescribeArgs)
   // Round-5/F4: derive only the nodes the host will keep (mint cap) —
   // the page-side derivation cost is bounded by the advertised budget.
   const { pageWideNameCounts, cap } = args;
+  // Round-7/F9: the DOM may have changed between pass one and this pass.
+  // Recompute THIS root's names now and merge over the pass-one counts, so
+  // needsContext reflects the current DOM for this root while still seeing
+  // other roots' names from pass one (best-effort cross-frame consistency;
+  // a frame racing between passes is bounded by the frameCoverage
+  // disclosure).
+  const currentCounts: Record<string, number> = { ...pageWideNameCounts };
+  for (const [name, count] of Object.entries(args.ownRootPassOneCounts ?? {})) {
+    currentCounts[name] = (currentCounts[name] ?? 0) - count;
+    if ((currentCounts[name] ?? 0) <= 0) delete currentCounts[name];
+  }
+  for (const node of nodes) {
+    const name = basicName(node);
+    if (name !== undefined) currentCounts[name] = (currentCounts[name] ?? 0) + 1;
+  }
   return nodes.slice(0, cap).map((node, index) => {
     const automationId = node.getAttribute('data-automation-id')?.trim() || undefined;
     const name = basicName(node);
@@ -215,7 +261,7 @@ export function g1DescribePageFunction(nodes: G1Element[], args: G1DescribeArgs)
     // Context only where it earns its bytes: absent or page-wide
     // duplicated names (round-1/F6 + round-3/F6). The live-DOM handle is
     // never returned (round-2/F3).
-    const needsContext = name === undefined || (pageWideNameCounts[name] ?? 0) >= 2;
+    const needsContext = name === undefined || (currentCounts[name] ?? 0) >= 2;
     if (!needsContext) return described;
     const rowLabel = rowLabelOf(node, name);
     if (rowLabel === undefined) return described;

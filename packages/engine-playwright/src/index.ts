@@ -2913,49 +2913,70 @@ class PlaywrightPage implements EnginePage {
         // Round-5/F5: a frame detaching between the two passes must degrade
         // that root to "unavailable" (like the frame-snapshot loop), not
         // reject the whole observation after main-frame work succeeded.
-        // Round-6/F1: no silent fallback. Main-frame scan errors propagate
-        // (an empty count would strip all context while looking like a
-        // fact about the page); a failed FRAME root is DISCLOSED via
-        // frameCoverage, exactly like the frame-snapshot loop.
+        // Round-6/F1 + round-7/F4: no silent fallback. Main-frame scan
+        // errors propagate; a failed FRAME root is DISCLOSED via
+        // frameCoverage with the frame's identity (not a generic label), so
+        // an agent can tell WHICH frame's controls are missing.
         const describeFormControlNamesSafely = async (
-          root: import('playwright').Page | import('playwright').Frame
+          root: import('playwright').Page | import('playwright').Frame,
+          identity: string
         ): Promise<string[]> => {
           try {
             return await this.describeFormControlNames(root);
           } catch (error) {
             if (root === this.page) throw error;
             frameCoverage.push({
-              frame: 'form-controls scan',
+              frame: identity,
               status: 'unavailable',
-              reason: 'names pass failed',
+              reason: 'form-controls names scan failed',
             });
             return [];
           }
         };
         const describeFormControlsSafely = async (
-          root: import('playwright').Page | import('playwright').Frame
+          root: import('playwright').Page | import('playwright').Frame,
+          identity: string
         ): Promise<FormControlInfo[]> => {
           try {
-            return await this.describeFormControls(root, pageWideNameCounts);
+            return await this.describeFormControls(
+              root,
+              pageWideNameCounts,
+              perRootCounts.get(root) ?? {}
+            );
           } catch (error) {
             if (root === this.page) throw error;
             frameCoverage.push({
-              frame: 'form-controls scan',
+              frame: identity,
               status: 'unavailable',
-              reason: 'derive pass failed',
+              reason: 'form-controls derive scan failed',
             });
             return [];
           }
         };
         const pageWideNameCounts: Record<string, number> = {};
+        const perRootCounts = new Map<
+          import('playwright').Page | import('playwright').Frame,
+          Record<string, number>
+        >();
+        let scanOrdinal = 0;
+        const scanIdentity = (root: import('playwright').Page | import('playwright').Frame) => {
+          if (root === this.page) return 'main';
+          scanOrdinal += 1;
+          return frameIdentity(root as import('playwright').Frame, scanOrdinal);
+        };
         for (const root of scanRoots) {
-          for (const name of await describeFormControlNamesSafely(root)) {
+          const own: Record<string, number> = {};
+          for (const name of await describeFormControlNamesSafely(root, scanIdentity(root))) {
+            own[name] = (own[name] ?? 0) + 1;
             pageWideNameCounts[name] = (pageWideNameCounts[name] ?? 0) + 1;
           }
+          perRootCounts.set(root, own);
         }
+        scanOrdinal = 0;
         for (const root of scanRoots) {
+          const identity = scanIdentity(root);
           const block = root === this.page ? undefined : blockOfFrame.get(root);
-          for (const info of await describeFormControlsSafely(root)) {
+          for (const info of await describeFormControlsSafely(root, identity)) {
             elements.push({
               ref: `e${this.revision}_${elements.length}`,
               role: 'control',
@@ -3084,12 +3105,21 @@ class PlaywrightPage implements EnginePage {
             binding.snapshot = snapshotDigest(captured);
             const prior = previous.get(ref);
             if (
-              previous.size > 0 &&
-              (!prior ||
-                !(await handle
+              (previous.size > 0 &&
+                // Round-7/F1: enrichment-minted refs (control/fileinput) are an
+                // opt-in overlay — a ref absent from the prior store only
+                // because the prior pass omitted the include must NOT count as
+                // a page change (completes the round-6 count-only fix; the
+                // per-element !prior check alone still churned revisions on
+                // include toggles).
+                element.role !== 'control' &&
+                element.role !== 'fileinput' &&
+                !prior) ||
+              (prior &&
+                (!(await handle
                   .evaluate((node, old) => node.isSameNode(old), prior.handle)
                   .catch(() => false)) ||
-                !sameSnapshotEvidence(prior, binding))
+                  !sameSnapshotEvidence(prior, binding)))
             )
               changed = true;
             boundElements.push({ element, handle, locator });
@@ -3604,19 +3634,19 @@ class PlaywrightPage implements EnginePage {
 
   private async describeFormControls(
     root: import('playwright').Page | import('playwright').Frame,
-    pageWideNameCounts: Record<string, number>
+    pageWideNameCounts: Record<string, number>,
+    ownRootPassOneCounts: Record<string, number>
   ): Promise<FormControlInfo[]> {
     // Pass two: full derivation using counts merged across ALL roots. The
     // page functions live in form-control-context.ts — self-contained so
     // evaluateAll can serialize their source, pure so the naming rules are
-    // unit-testable without Chromium (round-3/F8).
-    const described = await root
-      .locator(FORM_CONTROL_SELECTOR)
-      .evaluateAll(g1DescribePageFunction, {
-        pageWideNameCounts,
-        cap: MAX_FORM_CONTROLS,
-      });
-    return described.slice(0, MAX_FORM_CONTROLS);
+    // unit-testable without Chromium (round-3/F8). The page function
+    // enforces the cap (args.cap) — the single enforcement point (round-7/F8).
+    return root.locator(FORM_CONTROL_SELECTOR).evaluateAll(g1DescribePageFunction, {
+      pageWideNameCounts,
+      ownRootPassOneCounts,
+      cap: MAX_FORM_CONTROLS,
+    });
   }
 
   /** Client-facing context for a refusal: which ref, in which revision, what it was. */

@@ -193,9 +193,12 @@ export class ObservationNormalizer {
       // here so every engine (not just the Playwright 120+3+120 derivation)
       // satisfies PageElementSchema's maxLength 300 (review round-2/F7).
       if (rawEl.context !== undefined) {
-        // Code-point clamp: a UTF-16 slice can split a surrogate pair at the
-        // boundary (review round-4/F8).
-        element.context = Array.from(rawEl.context).slice(0, 300).join('');
+        // UTF-16 code-unit clamp (round-7/F6): PageElementSchema's
+        // maxLength 300 counts code units, and a unit-slice can split a
+        // surrogate pair — when the last unit is a high surrogate, drop it.
+        const units = rawEl.context.slice(0, 300);
+        const last = units.charCodeAt(units.length - 1);
+        element.context = last >= 0xd800 && last <= 0xdbff ? units.slice(0, -1) : units;
       }
 
       return element;

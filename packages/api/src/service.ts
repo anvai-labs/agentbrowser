@@ -2498,7 +2498,20 @@ export class AgentBrowserService {
     // elements ONLY — minted controls sort last in the combined list, so
     // budgeting the combined list silently cut exactly the rows a
     // controls=true caller opted into (round-4/F1).
-    const fieldsBudget = budgetObservation(
+    // Round-7/F2: budget EngineErrors must surface as 400 INVALID_REQUEST,
+    // not 500 INTERNAL — the same normalization paginateObservation applies.
+    const budgetObservationSafely = (
+      source: Parameters<typeof budgetObservation>[0],
+      options: Parameters<typeof budgetObservation>[1]
+    ): ReturnType<typeof budgetObservation> => {
+      try {
+        return budgetObservation(source, options);
+      } catch (error) {
+        const detail = normalizeEngineError(error);
+        throw new ServiceError(detail.code, detail.message, detail.retryable, detail.details);
+      }
+    };
+    const fieldsBudget = budgetObservationSafely(
       { ...redacted, elements: redacted.elements.filter((e) => e.role !== 'control') },
       {
         ...(bounds?.maxElements !== undefined ? { maxElements: bounds.maxElements } : {}),
@@ -2519,7 +2532,7 @@ export class AgentBrowserService {
       // a cursor would be permanently dead).
       const mintedTotal = redacted.elements.filter((e) => e.role === 'control').length;
       const projected = projectObservation(redacted, { roles: ['control'] });
-      const budgetedControls = budgetObservation(projected, { maxElements: 2000 });
+      const budgetedControls = budgetObservationSafely(projected, { maxElements: 2000 });
       controlsBlock = {
         controls: budgetedControls.elements.map(
           (c): SnapshotControl => ({

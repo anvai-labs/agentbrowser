@@ -114,6 +114,7 @@ describe('g1 page-function naming rules (unit)', () => {
     const unique = controlInRow('Solo', 'A unique menu');
     const described = g1DescribePageFunction([a, unique], {
       pageWideNameCounts: { 'Access: No access': 1, 'A unique menu': 1 },
+      ownRootPassOneCounts: { 'Access: No access': 1, 'A unique menu': 1 },
       cap: 200,
     });
     expect(described[0]?.context).toBeUndefined();

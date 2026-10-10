@@ -810,6 +810,15 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                       },
                     },
                   },
+                  controlsProjection: {
+                    type: 'object',
+                    description:
+                      'matched = controls returned, total = controls minted; matched < total discloses truncation of the controls list.',
+                    properties: {
+                      matched: { type: 'integer' },
+                      total: { type: 'integer' },
+                    },
+                  },
                   truncated: { type: 'boolean' },
                 },
               }),
