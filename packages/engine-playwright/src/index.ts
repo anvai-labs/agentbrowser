@@ -2323,6 +2323,8 @@ class PlaywrightPage implements EnginePage {
   /** Base (non-enrichment) element count of the last observation — the
    * changed-detection baseline that enrichment toggles cannot perturb. */
   private lastBaseElementCount: number | undefined;
+  /** Minted-control count of the last observation (like-for-like compare). */
+  private lastFormControlCount: number | undefined;
   /** Owning page/frame for elements merged from frame traversal (T6). */
   private frameOfElement = new WeakMap<
     StoredElement,
@@ -2925,11 +2927,14 @@ class PlaywrightPage implements EnginePage {
             return await this.describeFormControlNames(root);
           } catch (error) {
             if (root === this.page) throw error;
-            frameCoverage.push({
-              frame: identity,
-              status: 'unavailable',
-              reason: 'form-controls names scan failed',
-            });
+            if (!failedScanIdentities.has(identity)) {
+              failedScanIdentities.add(identity);
+              frameCoverage.push({
+                frame: identity,
+                status: 'unavailable',
+                reason: 'form-controls scan failed',
+              });
+            }
             return [];
           }
         };
@@ -2945,14 +2950,20 @@ class PlaywrightPage implements EnginePage {
             );
           } catch (error) {
             if (root === this.page) throw error;
-            frameCoverage.push({
-              frame: identity,
-              status: 'unavailable',
-              reason: 'form-controls derive scan failed',
-            });
+            if (!failedScanIdentities.has(identity)) {
+              failedScanIdentities.add(identity);
+              frameCoverage.push({
+                frame: identity,
+                status: 'unavailable',
+                reason: 'form-controls scan failed',
+              });
+            }
             return [];
           }
         };
+        // Round-8/F4: one frame failure must produce ONE coverage entry —
+        // pass one and pass two can both fail on the same dead frame.
+        const failedScanIdentities = new Set<string>();
         const pageWideNameCounts: Record<string, number> = {};
         const perRootCounts = new Map<
           import('playwright').Page | import('playwright').Frame,
@@ -3021,13 +3032,22 @@ class PlaywrightPage implements EnginePage {
     // ENRICHMENT overlay, not page state — toggling include:["formControls"]
     // between calls must not bump the revision and invalidate every ref the
     // caller holds (snapshot controls=true ↔ plain observe alternation).
+    // Round-8/F2: like-for-like comparison. Base counts must be stable
+    // across include toggles (round-6/F4); but when the SAME include set
+    // observes again, enrichment rows appearing/disappearing IS a page
+    // change (lazy-mounted menus) and must bump the revision.
     const baseCount = (rows: Array<{ role: string }>): number =>
       rows.filter((row) => row.role !== 'control' && row.role !== 'fileinput').length;
+    const controlCount = elements.length - baseCount(elements);
     const previousCount = this.lastBaseElementCount ?? 0;
+    const enrichmentChanged =
+      this.lastFormControlCount !== undefined && this.lastFormControlCount !== controlCount;
     this.lastBaseElementCount = baseCount(elements);
+    this.lastFormControlCount = controlCount;
     this.bindings = new Map();
     this.refStore.clear();
-    let changed = previousCount > 0 && previousCount !== this.lastBaseElementCount;
+    let changed =
+      (previousCount > 0 && previousCount !== this.lastBaseElementCount) || enrichmentChanged;
     // (role, name) ordinals are PER FRAME: the same label in two frames is
     // two distinct bindable elements, each resolving inside its own frame.
     const ordinals = new Map<object, Map<string, number>>();

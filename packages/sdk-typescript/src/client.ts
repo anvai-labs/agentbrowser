@@ -1,6 +1,7 @@
 import {
   INTERACTION_GUIDANCE,
   SELF_ADMITTING_ROUTE_SEGMENTS,
+  type SnapshotControl,
   createOutcomeRunReportParser,
   createPlanReportParser,
   parseAutofillReport,
@@ -218,7 +219,7 @@ export interface PageSnapshot {
    * controlsProjection (matched < total). SnapshotControl is declared once
    * in @agentbrowser/protocol (ADR-015).
    */
-  controls?: import('@agentbrowser/protocol').SnapshotControl[];
+  controls?: SnapshotControl[];
   /** matched = returned, total = minted; matched < total = truncated list. */
   controlsProjection?: { matched: number; total: number };
   truncated?: boolean;

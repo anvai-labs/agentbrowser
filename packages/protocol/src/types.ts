@@ -861,7 +861,6 @@ export interface ObservationRequest {
  * the changed set). A 0-match result on a large page means "no matching
  * elements", never "empty page".
  */
-
 export interface ObservationProjectionEcho {
   roles?: string[];
   name?: string;

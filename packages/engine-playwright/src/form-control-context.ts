@@ -119,7 +119,7 @@ export function g1DescribePageFunction(nodes: G1Element[], args: G1DescribeArgs)
         // ORDERED — the first valid source is primary; later ids must not
         // overwrite it.
         if (label && label !== own) {
-          labelledByFallback = labelledByFallback ?? label;
+          labelledByFallback = label;
           break;
         }
       }
@@ -187,9 +187,10 @@ export function g1DescribePageFunction(nodes: G1Element[], args: G1DescribeArgs)
   // siblings so the walk never escapes the scope into page-wide work; the
   // walk is intentionally NOT memoized per scope because the result depends
   // on the row's position within the scope (sibling headings between rows).
-  // Round-5/F4: the walk is bounded — a dashboard main with thousands of
-  // preceding siblings must not block the page thread for every control.
-  const SIBLING_VISIT_BUDGET = 60;
+  // Round-5/F4 + round-8/F3: bounded, but generously — walking preceding
+  // ROWS of a long permission table is the common case the feature exists
+  // for; the budget exists for pathological page-wide scopes.
+  const SIBLING_VISIT_BUDGET = 400;
   const headingFor = (row: El): string | undefined => {
     let scope: El | null = row.closest(SECTIONING);
     while (scope) {

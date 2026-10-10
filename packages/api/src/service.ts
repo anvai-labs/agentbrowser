@@ -2532,7 +2532,13 @@ export class AgentBrowserService {
       // a cursor would be permanently dead).
       const mintedTotal = redacted.elements.filter((e) => e.role === 'control').length;
       const projected = projectObservation(redacted, { roles: ['control'] });
-      const budgetedControls = budgetObservationSafely(projected, { maxElements: 2000 });
+      // Round-8/F1: the caller's byte budget applies to the controls list
+      // too — a separate element cap alone let controls[] ride unbounded
+      // past maxBytes by orders of magnitude.
+      const budgetedControls = budgetObservationSafely(projected, {
+        maxElements: 2000,
+        ...(bounds?.maxBytes !== undefined ? { maxBytes: bounds.maxBytes } : {}),
+      });
       controlsBlock = {
         controls: budgetedControls.elements.map(
           (c): SnapshotControl => ({
