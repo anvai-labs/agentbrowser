@@ -98,12 +98,13 @@ export class SessionCoordinator {
     const tenantTerminalCeiling = Math.min(100, Math.max(1, Math.floor(maxTerminalRecords / 4)));
     this.config = {
       maxSessions,
-      // 3.5 hours: spans a real working block (morning→lunch, lunch→evening)
-      // across long multi-step forms that keep no server-side drafts, where
-      // expiry means full re-entry. This bounds total lifetime; unattended
-      // pauses are still reaped by idleTimeoutMs, which clients must raise
-      // for human-in-the-loop waits (default 10 min, per-session max 1 h).
-      defaultTtlMs: config.defaultTtlMs ?? 12600000,
+      // 4.375 hours (raised 25% from 3.5 h, 2026-10-10): spans a real working
+      // block (morning→lunch, lunch→evening) across long multi-step forms
+      // that keep no server-side drafts, where expiry means full re-entry.
+      // This bounds total lifetime; unattended pauses are still reaped by
+      // idleTimeoutMs, which clients must raise for human-in-the-loop waits
+      // (default 10 min, per-session max 1 h).
+      defaultTtlMs: config.defaultTtlMs ?? 15750000,
       defaultIdleTimeoutMs: config.defaultIdleTimeoutMs ?? 600000, // 10 minutes
       cleanupCheckIntervalMs: config.cleanupCheckIntervalMs ?? 30000, // 30 seconds
       terminalRetentionMs: config.terminalRetentionMs ?? 300_000,

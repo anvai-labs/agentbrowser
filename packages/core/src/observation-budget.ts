@@ -5,6 +5,14 @@ export interface ObservationBudget {
   maxElements?: number | undefined;
   maxBytes?: number | undefined;
   continueFrom?: number | undefined;
+  /**
+   * Page ordinals for each element of a PROJECTED list (compact projection).
+   * Without it, ordinals are list indexes (today's arithmetic, reproduced
+   * exactly by identity ordinals [0..n-1]). With it, continueFrom and the
+   * continuation cursor address page ordinals, so a projected window can be
+   * resumed without re-deriving which list positions matched.
+   */
+  ordinals?: readonly number[] | undefined;
 }
 
 const byteSize = (value: unknown) => Buffer.byteLength(JSON.stringify(value), 'utf8');
@@ -26,10 +34,39 @@ export function budgetObservation(source: PageState, options: ObservationBudget 
         `Invalid ${key}: expected a ${key === 'continueFrom' ? 'non-negative' : 'positive'} safe integer.`
       );
   }
-  const start = options.continueFrom ?? 0;
+  if (options.ordinals !== undefined) {
+    const ordinals = options.ordinals;
+    if (ordinals.length !== source.elements.length)
+      throw new EngineError('INVALID_REQUEST', 'ordinals must match the element count');
+    for (let i = 0; i < ordinals.length; i += 1) {
+      const ordinal = ordinals[i] ?? Number.NaN;
+      const previous = i > 0 ? (ordinals[i - 1] ?? Number.NaN) : Number.NaN;
+      if (!Number.isSafeInteger(ordinal) || ordinal < 0 || (i > 0 && ordinal <= previous)) {
+        throw new EngineError(
+          'INVALID_REQUEST',
+          'ordinals must be non-negative strictly ascending integers'
+        );
+      }
+    }
+  }
+
+  const ordinalAt = (index: number): number =>
+    options.ordinals !== undefined ? (options.ordinals[index] ?? index) : index;
+
   const total = source.elements.length;
-  if (start > total)
-    throw new EngineError('INVALID_REQUEST', 'continueFrom exceeds the element count');
+  // continueFrom is an ordinal floor: the window starts at the first element
+  // whose ordinal reaches it (identity ordinals: the list index itself).
+  let start = 0;
+  const continueFrom = options.continueFrom;
+  if (continueFrom !== undefined) {
+    start = source.elements.findIndex((_, index) => ordinalAt(index) >= continueFrom);
+    if (start === -1) {
+      const lastOrdinal = total > 0 ? ordinalAt(total - 1) : -1;
+      if (continueFrom > lastOrdinal + 1)
+        throw new EngineError('INVALID_REQUEST', 'continueFrom exceeds the element count');
+      start = total;
+    }
+  }
   const { continuation: _previousCursor, ...base } = source;
   let result: PageState = {
     ...base,
@@ -38,9 +75,9 @@ export function budgetObservation(source: PageState, options: ObservationBudget 
     ...(source.changes !== undefined ? { changes: [...source.changes] } : {}),
   };
   const updateCursor = () => {
-    const nextOrdinal = start + result.elements.length;
-    if (nextOrdinal < total) {
-      result.continuation = { nextOrdinal, remaining: total - nextOrdinal };
+    const nextOrdinal = ordinalAt(start + result.elements.length);
+    if (result.elements.length < total - start) {
+      result.continuation = { nextOrdinal, remaining: total - start - result.elements.length };
       result.truncated = true;
     }
   };

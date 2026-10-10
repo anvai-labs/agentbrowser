@@ -296,6 +296,8 @@ class FakePage implements EnginePage {
       focused: el.focused ?? false,
       ...(el.risk !== undefined ? { risk: el.risk } : {}),
       ...(el.checked !== undefined ? { checked: el.checked } : {}),
+      ...(el.depth !== undefined ? { depth: el.depth } : {}),
+      ...(el.block !== undefined ? { block: el.block } : {}),
       attributes: el.attributes ?? {},
     }));
     this.elements = [...this.elements, ...added];
@@ -483,6 +485,14 @@ class FakePage implements EnginePage {
 
         if (el.risk !== undefined) {
           element.risk = el.risk;
+        }
+
+        if (el.depth !== undefined) {
+          element.depth = el.depth;
+        }
+
+        if (el.block !== undefined) {
+          element.block = el.block;
         }
 
         return element;
@@ -964,6 +974,8 @@ class FakePage implements EnginePage {
       enabled: el.enabled ?? true,
       focused: el.focused ?? false,
       ...(el.risk !== undefined ? { risk: el.risk } : {}),
+      ...(el.depth !== undefined ? { depth: el.depth } : {}),
+      ...(el.block !== undefined ? { block: el.block } : {}),
       attributes: el.attributes ?? {},
     }));
     // Keep the ref index in sync: resolve() and act() read the Map.
@@ -1005,5 +1017,9 @@ interface FakeElement {
     | 'transaction'
     | 'account-security'
     | 'destructive';
+  /** Scope-projection metadata: block-local nesting depth (absent = 0). */
+  depth?: number;
+  /** Snapshot block identity (absent = 0 main frame; frames increment). */
+  block?: number;
   attributes: Record<string, string>;
 }

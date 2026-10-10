@@ -103,6 +103,26 @@ control package that T8's application-only execution requires is under a
 megabyte and imports no browser or model SDK, while the browser-carrying
 install is three orders of magnitude larger.
 
+## Blocker resolution status (2026-09-30)
+
+- **F1 (formula binding skew)**: RESOLVED — tap #95 bumped the vendored
+  sandhi-gateway resource to 0.11.0, which contains the
+  rustls-tls-native-roots private-CA loading (superseding this record's
+  local Cellar pip repair).
+- **F2 (self-signed gateway, no TLS override)**: the "Sandhi homelab
+  gateway CA" was subsequently imported and trusted at the OS level
+  (`security verify-cert` → successful), and the 0.11.0 binding's
+  native-roots loading now reaches the gateway — victor's transport
+  completes TLS and receives HTTP-level responses (first live call
+  surfaced a gateway-side `502: no upstream registered for this key`,
+  which is the gateway's own upstream-registration configuration on
+  aiserver1, outside victor). The transient transport failures observed
+  during parts of 2026-09-30 were the gateway service being down on the
+  host (SSH open, 18788 closed — port-scanned), not TLS.
+- Remaining T8 items are the interactive Codex approval run (operator at
+  keyboard) and the Victor live model-loop completing once the gateway's
+  upstream registrations are restored (operator, on the gateway).
+
 ## Consequences for the T8 gates
 
 - Slice 2 (schema/result fidelity): **qualified through the installed CLI

@@ -12,7 +12,7 @@ describe.each(['observe', 'screenshot'] as const)(
     const setup = () => {
       const invoke = vi.fn().mockResolvedValue({});
       const tool = buildTools({ sessions: { [operation]: invoke } } as unknown as McpClient).find(
-        (tool) => tool.name === `browser_${operation}`
+        (tool) => tool.name === `${operation}`
       );
       if (!tool) throw new Error('Missing tool');
       return { invoke, tool };

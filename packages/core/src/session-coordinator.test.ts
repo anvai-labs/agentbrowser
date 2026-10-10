@@ -250,8 +250,8 @@ describe('SessionCoordinator', () => {
       const response = await coordinator.create(request, mockEngine);
       const session = coordinator.get(response.sessionId);
 
-      expect(session?.metadata.ttlMs).toBe(12600000); // Default: 3.5 hours
-      expect(response.ttlMs).toBe(12600000);
+      expect(session?.metadata.ttlMs).toBe(15750000); // Default: 4.375 hours
+      expect(response.ttlMs).toBe(15750000);
     });
 
     it('should use default idle timeout when not specified', async () => {

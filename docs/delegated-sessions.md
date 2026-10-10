@@ -127,7 +127,7 @@ AGENTBROWSER_MODE=forms
 
 Use the built `packages/mcp-server/dist/bin.js` or a binary built from this change.
 Older installed releases do not implement this binding. With a session binding,
-`browser_session` discovers current control/pages, and `browser_operation`
+`session` discovers current control/pages, and `operation`
 reconciles a known operation ID. Session creation/closure and cookie tools are
 removed from the catalog. Mutation tools require a caller-chosen `operationId`;
 this survives a lost stdio response. A supplied different session ID is refused.

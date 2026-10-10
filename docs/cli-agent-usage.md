@@ -41,7 +41,7 @@ agentbrowser snapshot SESSION PAGE --max-elements 40
 ```
 
 The visible window belongs to the **server host**. A fresh isolated session does not
-inherit a daily Chrome profile. MCP `browser_create` differs from CLI creation: it
+inherit a daily Chrome profile. MCP `create` differs from CLI creation: it
 also provisions an initial page and returns both IDs. Cookie seeding is only an
 attempt to reuse authentication; verify the expected signed-in UI afterward.
 
@@ -286,6 +286,60 @@ Discovery includes static option defaults, never supplied option values or API k
 
 ## Execute with bounded context and explicit outcomes
 
+### Compact observations (after 1.16.0)
+
+Large pages (OVH-Manager-style: hundreds of nav elements around one dialog)
+made full observations the dominant token cost of a workflow. `observe` now
+accepts an opt-in compact projection; the full response stays the default and
+is unchanged.
+
+```sh
+# Full page (unchanged): ~27 KB on a 373-element fixture.
+agentbrowser --json observe "$session_id" "$page_id" > full.json
+
+# Role + name projection: ~1 KB, same page.
+agentbrowser --json observe "$session_id" "$page_id" \
+  --roles dialog --roles checkbox --name policy
+
+# Scope to a subtree (the dialog ref from any current observation).
+agentbrowser --json observe "$session_id" "$page_id" --scope-ref "$dialog_ref"
+
+# Window the matches; the cursor resumes exactly like full mode.
+agentbrowser observe "$session_id" "$page_id" --roles checkbox --limit 3
+agentbrowser observe "$session_id" "$page_id" --roles checkbox --limit 3 \
+  --continue-from 288
+```
+
+Rules that matter to an agent:
+
+- The response carries `projection: {…filters, matched, total}` — a 0-match
+  result on a big page means "nothing matched", never "empty page".
+- Refs are minted over the full page: an element filtered out of a response
+  stays actionable. Projection is response-shaping only.
+- A scope ref obeys ADR-004: minted at an older revision it fails
+  `STALE_TARGET`; removed elements fail `TARGET_NOT_FOUND` — never a silent
+  empty result. Scope slices stay inside the scope element's frame block
+  (frame content is its own block in the element list).
+- Protected evidence always rides along: `valueRedacted` (withheld ≠ empty),
+  `checked`, `risk`, `degraded`/`degradedReason`, `truncated` + `continuation`.
+  `href`/`attributes`/`required` are opt-in via `--include-fields`; long names
+  cap at 200 chars with `nameTruncated`.
+- `--name` matches element NAMES only (case-insensitive substring, max 200
+  chars), never values — withheld values cannot be probed by substring.
+- Under `--since-revision`, the diff's changes are filtered by the same
+  predicate and `total` counts the changed set.
+- A server older than the CLI rejects these options; the CLI maps that to an
+  actionable error naming the flags. Re-run without them or upgrade the server.
+
+`--json` output is minified by default (machine-facing); pass `--pretty` for
+2-space indentation. The default text rendering prints the projection echo,
+the continuation cursor, `[redacted]` markers and the focused element, so the
+cheapest surface is safe to script against. The same fields flow through the
+MCP `observe` schema and the REST API. For bulk capture without context cost,
+`observe --output /private/path/obs.json` writes the full observation to a new
+0600 file and prints an identity receipt. Agents can load the whole loop as a
+skill: `docs/skills/agentbrowser-cli/SKILL.md`.
+
 ### Extraction output budgets (after 1.10.1)
 
 `extract --max-bytes` passes a response budget to the service; ordinary output no
@@ -364,11 +418,11 @@ output: use `--json` for structured results; raw HTML is sensitive even in JSON 
 | Need | Surface today |
 | --- | --- |
 | Current semantic targets | CLI `snapshot` / `observe`; corresponding MCP tools |
-| Explicit bounded ordered steps | CLI `plan`; MCP `browser_plan` |
-| One interaction | CLI `act <command>`; MCP `browser_act` |
-| Qualified native scoped bulk forms | CLI `autofill`, SDK/REST autofill or MCP `browser_autofill` |
+| Explicit bounded ordered steps | CLI `plan`; MCP `plan` |
+| One interaction | CLI `act <command>`; MCP `act` |
+| Qualified native scoped bulk forms | CLI `autofill`, SDK/REST autofill or MCP `autofill` |
 | Plan plus independently registered outcome verifier | CLI `outcome` or SDK/REST outcome; MCP has no outcome tool |
-| Uncertain delegated mutation | CLI `session operation`; delegated MCP `browser_operation` |
+| Uncertain delegated mutation | CLI `session operation`; delegated MCP `operation` |
 | Offline finalized regression evaluation | CLI `test evaluate`; setup, observations and cleanup stay application-owned |
 | Durable workflow recovery | Planned; operation records do not survive a service restart |
 

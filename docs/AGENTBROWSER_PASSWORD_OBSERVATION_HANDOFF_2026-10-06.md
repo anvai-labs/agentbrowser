@@ -164,3 +164,32 @@ semantics; output must not encourage agents to dump raw credential-bearing logs.
 
 Sandesha will keep the identity account and vault mutation coordination here.
 Do not close/restart active browser sessions without coordinating with the owner.
+
+## Closeout — 2026-10-07
+
+**Fixed, qualified, released as 1.15.2** (delivery record:
+`spec/evidence/release-1.15.2.md`; design + honest boundaries:
+`td/TD-BROWSER-13-observation-secret-redaction.md`).
+
+- Hand-back facts: fix merged to develop via #377 (+ review-fix commit),
+  promoted to main via #379/#383/#384; tag `v1.15.2` → `47a32a6`; release
+  run 37689266638 (all assets + npm); Homebrew tap PR #96; local 5709 brew
+  service upgraded + restarted to 1.15.2 (restart performed after the active
+  operator session cleared).
+- Deployed engine identity at examination time: brew 1.15.1
+  (`/opt/homebrew/Cellar/agentbrowser/1.15.1`), since replaced by 1.15.2.
+- Regression evidence: `packages/engine-playwright/src/observation-redaction.test.ts`
+  (11 synthetic-canary tests) + API-level real-Chromium assertions + full CI on
+  the exact tag; the real credential never entered this repository, its tests
+  or its logs. Performance delta: no observation-overhead regression.
+- Retention/remediation: nothing ever persisted to disk; in-memory holders
+  (observation cache + history, ledgers, approval tokens, artifacts) are
+  clean at the source post-fix and were cleared by the service restart.
+  Categories of potentially affected pre-fix records existed only in memory
+  and only until that restart.
+- Consumer-side stripping (Sandesha's output filter) can be retired at their
+  discretion on 1.15.2+; `valueRedacted: true` is the honest signal for
+  withheld values.
+- Remaining with the owner: credential rotation (SentinelPass entry 53),
+  passkey enrollment retry (WebAuthn record:
+  `AGENTBROWSER_WEBAUTHN_TLS_INVESTIGATION_2026-10-06.md`).

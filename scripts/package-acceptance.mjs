@@ -617,21 +617,21 @@ async function workflow(baseUrl, key, fixture, process, options, report) {
     await surface((settings) => runExecutable([...options.cli, ...cliArgs, 'act', 'click', page.sessionId, page.pageId, cliRef], settings), { env: cliEnv });
     assert.equal((await request(`${page.path}/snapshot`)).title, 'Action complete');
     await surface((settings) => checkMcp(options.mcp, settings), { expectedVersion: options.expectedVersion, env: cliEnv, timeoutMs: 30_000, exercise: async ({ callTool, request: mcpRequest }) => {
-      const inspection = await callTool('browser_session', { sessionId: page.sessionId });
+      const inspection = await callTool('session', { sessionId: page.sessionId });
       assert.deepEqual(
         validatePackagedSessionParity(page.session, [inspection.session], options.captureSessionDiagnostics),
         sessionFacts
       );
-      const created = await callTool('browser_create', { tenantId: 'release-smoke' });
+      const created = await callTool('create', { tenantId: 'release-smoke' });
       sessions.add(created.sessionId);
       validatePackagedSessionParity(created, [], options.captureSessionDiagnostics);
-      await callTool('browser_navigate', { sessionId: created.sessionId, pageId: created.pageId, url: `${fixture.http}/page` });
-      assert.equal((await callTool('browser_snapshot', { sessionId: created.sessionId, pageId: created.pageId })).title, 'Package acceptance');
-      const added = await callTool('browser_page_create', {
+      await callTool('navigate', { sessionId: created.sessionId, pageId: created.pageId, url: `${fixture.http}/page` });
+      assert.equal((await callTool('snapshot', { sessionId: created.sessionId, pageId: created.pageId })).title, 'Package acceptance');
+      const added = await callTool('page_create', {
         sessionId: created.sessionId,
         url: `${fixture.http}/page`,
       });
-      const pages = await callTool('browser_pages', { sessionId: created.sessionId });
+      const pages = await callTool('pages', { sessionId: created.sessionId });
       assert.deepEqual(
         pages.pages.map((entry) => entry.pageId).sort(),
         [created.pageId, added.pageId].sort(),
@@ -639,8 +639,8 @@ async function workflow(baseUrl, key, fixture, process, options, report) {
       );
 
       const scope = { sessionId: created.sessionId, pageId: created.pageId };
-      await callTool('browser_navigate', { ...scope, url: `${fixture.http}/extract-large` });
-      const mcpExtract = await callTool('browser_extract', {
+      await callTool('navigate', { ...scope, url: `${fixture.http}/extract-large` });
+      const mcpExtract = await callTool('extract', {
         ...scope,
         format: 'text',
         maxBytes: 64 * 1024,
@@ -664,13 +664,13 @@ async function workflow(baseUrl, key, fixture, process, options, report) {
         assert.deepEqual(extracted, mcpExtract, 'Extraction changed across REST, SDK, CLI and MCP');
       }
       const limited = await mcpRequest('tools/call', {
-        name: 'browser_extract',
+        name: 'extract',
         arguments: { ...scope, format: 'text', maxBytes: exactBytes - 1 },
       });
       assert.equal(limited.isError, true, 'Packaged MCP accepted a truncated extraction');
       assert.match(limited.content[0].text, /OUTPUT_TRUNCATED/);
       assert.ok(!limited.content[0].text.includes(LARGE_EXTRACT_MARKER));
-      await callTool('browser_close', { sessionId: created.sessionId });
+      await callTool('close', { sessionId: created.sessionId });
       await request(`/v1/sessions/${created.sessionId}`, { statuses: [404] });
       sessions.delete(created.sessionId);
     } });

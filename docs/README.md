@@ -52,7 +52,7 @@ ADRs capture significant architectural decisions, their context, and consequence
 | [ADR-009](adr/009-mcp-high-level-tools.md) | MCP Exposes High-Level Safe Tools, Not Raw Playwright | Accepted | Small set of composable tools, dangerous operations excluded |
 | [ADR-010](adr/010-rust-engine-gated-by-benchmarks.md) | Rust Engine Investment Gated by Benchmarks | Accepted | Invest only when metrics prove Chromium is bottleneck |
 | [ADR-011](adr/011-safari-via-safaridriver-webdriver.md) | Real Safari via Safaridriver (WebDriver), Not Playwright WebKit | Accepted | Real-Safari login flows via macOS safaridriver; always headed; egress unenforceable (loud) |
-| [ADR-012](adr/012-snapshot-plan-interaction-model.md) | Snapshot-Plan Interaction Model with Adaptive Modes | Accepted | Batched action plans (`browser_plan`) + self-contained page snapshots (`browser_snapshot`), one round trip each; adaptive stable/verified remap mode driven by observed ref churn |
+| [ADR-012](adr/012-snapshot-plan-interaction-model.md) | Snapshot-Plan Interaction Model with Adaptive Modes | Accepted | Batched action plans (`plan`) + self-contained page snapshots (`snapshot`), one round trip each; adaptive stable/verified remap mode driven by observed ref churn |
 | [ADR-013](adr/013-headed-sessions-and-walled-logins.md) | Headed Sessions, De-fingerprinting, and Walled Logins | Accepted | De-fingerprint headed only; no CDP arms race — cookie-seeding handoff is the prescribed route for turnstile-class walls |
 | [ADR-014](adr/014-npm-distribution.md) | npm Distribution for the MCP Server (Trusted Publishing, @anvailabs scope) | Accepted | npm = @anvailabs/agentbrowser-mcp via OIDC trusted publishing; server stays tarballs+Docker; verify enforced not token-keyed |
 | [ADR-015](adr/015-cross-package-contract-single-source-of-truth.md) | Single Source of Truth for Cross-Package Contract Primitives | Accepted | Contract primitives live once in protocol (REF_PATTERN/parseRef, extract formats, UsageError, compiled validators, type-level contracts); SDK mirrors protocol types; renumbered twice (011→012→015) after collisions |
@@ -60,7 +60,7 @@ ADRs capture significant architectural decisions, their context, and consequence
 | [ADR-017](adr/017-default-port-5709.md) | Default Port 5709 | Accepted | The service listens on 5709 by default (documented loopback port map; CLI/MCP default to it) |
 | [ADR-018](adr/018-upload-action.md) | The `upload` Action — Native File Attachment Without the OS Picker | Accepted | Delivered `upload` under the reserved protocol name: `paths` replace a file input's list, target ref optional (hidden inputs have no ref), no-target mode requires exactly one `input[type=file]`; stat-validated paths; evidence over assertion |
 | [ADR-019](adr/019-explicit-service-worker-opt-in.md) | Explicit Per-Session Service-Worker Opt-In | Accepted | Request policies block service workers by default (Playwright can't route their requests — a choke-point bypass hole); `allowServiceWorkers` is an explicit, off-by-default per-session opt-in for destinations whose anti-fraud tooling keys off service-worker presence |
-| [ADR-020](adr/020-inline-html-verification.md) | Inline HTML Verification via MCP | Accepted | `browser_html` returns page HTML inline (maxBytes-bounded, untrusted-framed, not secret-redacted — a disclosed trade-off) because a11y output cannot show custom-widget state and MCP clients cannot resolve REST artifact URLs; CLI `page html` prints inline and `page observe --continue-from` resumes truncation |
+| [ADR-020](adr/020-inline-html-verification.md) | Inline HTML Verification via MCP | Accepted | `html` returns page HTML inline (maxBytes-bounded, untrusted-framed, not secret-redacted — a disclosed trade-off) because a11y output cannot show custom-widget state and MCP clients cannot resolve REST artifact URLs; CLI `page html` prints inline and `page observe --continue-from` resumes truncation |
 | [ADR-021](adr/021-form-controls-enrichment.md) | Form-Controls Enrichment for ARIA-Invisible Widgets | Accepted | `include:["formControls"]` mints refs for interactive controls the ARIA snapshot misses (div-based widget triggers); document-evidence gating; 200-control cap; remap reuses the last observation's include tokens |
 
 ## Technical Design
@@ -156,8 +156,8 @@ complete and remains in [technical-design.md](technical-design.md).
 - [TD-BROWSER-7](td/TD-BROWSER-7-safari-webdriver-engine.md) - Real Safari via
   `safaridriver`/WebDriver, engine registry. **Accepted, implemented.**
 - [TD-BROWSER-8](td/TD-BROWSER-8-batched-snapshots-and-action-plans.md) -
-  Batched action plans (`browser_plan`) and self-contained page snapshots
-  (`browser_snapshot`), adaptive stable/verified remap mode, `waitForLabel`
+  Batched action plans (`plan`) and self-contained page snapshots
+  (`snapshot`), adaptive stable/verified remap mode, `waitForLabel`
   for dynamically-revealed fields. **Accepted, Phase 1 and 2 implemented.**
 - [TD-BROWSER-9](td/TD-BROWSER-9-bounded-in-memory-collections.md) - Bounded
   in-memory collections & eviction discipline (shared `BoundedCache`/`RingBuffer`,
@@ -196,6 +196,6 @@ New ADRs should use the [ADR template](adr/000-template.md).
 ---
 
 **Status**: 🟢 MVP shipped; post-MVP TDs in active development
-**Last Updated**: 2026-10-07
+**Last Updated**: 2026-10-10
 
 - [Bulk form-fill orchestration](bulk-autofill.md): structured payloads, block identity and verification contracts.

@@ -12,6 +12,7 @@ import {
   DELIVERED_ACTION_TYPES,
   DELIVERED_OBSERVATION_INCLUDES,
   DELIVERED_OBSERVATION_MODES,
+  DELIVERED_PROJECTION_FIELDS,
   DELIVERED_WAIT_TYPES,
   REF_PATTERN,
 } from './types.js';
@@ -295,6 +296,9 @@ export const PageElementSchema = Type.Object({
   hrefTruncated: Type.Optional(Type.Boolean()),
   attributes: Type.Optional(Type.Record(Type.String(), Type.String())),
   checked: Type.Optional(Type.Boolean()),
+  depth: Type.Optional(Type.Integer({ minimum: 0 })),
+  block: Type.Optional(Type.Integer({ minimum: 0 })),
+  nameTruncated: Type.Optional(Type.Boolean()),
 });
 
 export const OverlayBlockerSchema = Type.Object({
@@ -319,6 +323,15 @@ export const ElementChangeSchema = Type.Object({
 export const ContinuationCursorSchema = Type.Object({
   nextOrdinal: Type.Integer({ minimum: 0 }),
   remaining: Type.Integer({ minimum: 0 }),
+});
+
+/** Echo of an applied compact projection: filters plus matched/total counts. */
+export const ProjectionEchoSchema = Type.Object({
+  roles: Type.Optional(Type.Array(Type.String({ maxLength: 100 }), { maxItems: 32 })),
+  name: Type.Optional(Type.String({ maxLength: 200 })),
+  scopeRef: Type.Optional(Type.String({ pattern: REF_PATTERN.source })),
+  matched: Type.Integer({ minimum: 0 }),
+  total: Type.Integer({ minimum: 0 }),
 });
 
 export const FrameCoverageSchema = Type.Object({
@@ -349,6 +362,7 @@ export const PageStateSchema = Type.Object({
   truncated: Type.Boolean(),
   untrustedContent: Type.Boolean(),
   continuation: Type.Optional(ContinuationCursorSchema),
+  projection: Type.Optional(ProjectionEchoSchema),
   frameCoverage: Type.Optional(Type.Array(FrameCoverageSchema)),
   degraded: Type.Optional(Type.Boolean()),
   degradedReason: Type.Optional(
@@ -681,6 +695,15 @@ export const ObservationRequestSchema = Type.Object(
       Type.Array(Type.Union(DELIVERED_OBSERVATION_INCLUDES.map((include) => Type.Literal(include))))
     ),
     wait: Type.Optional(DeliveredWaitConditionSchema),
+    roles: Type.Optional(
+      Type.Array(Type.String({ maxLength: 100 }), { minItems: 1, maxItems: 32 })
+    ),
+    name: Type.Optional(Type.String({ maxLength: 200 })),
+    scopeRef: Type.Optional(Type.String({ pattern: REF_PATTERN.source })),
+    limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })),
+    includeFields: Type.Optional(
+      Type.Array(Type.Union(DELIVERED_PROJECTION_FIELDS.map((field) => Type.Literal(field))))
+    ),
   },
   { additionalProperties: false }
 );
@@ -717,6 +740,49 @@ export const NavigationStatusSchema = Type.Object({
   redirectChain: Type.Array(Type.String()),
   reason: Type.Optional(NavigationFailureReasonSchema),
 });
+
+/**
+ * The act surface's wire outcome (what REST /act and the SDK return): the
+ * decision-relevant keep-list only — status, action id, the new revision for
+ * the next action's staleness check, an optional observe-after observation,
+ * wait reason, remap report, and evidence payloads (upload). Errors surface
+ * as the shared error envelope, never embedded here.
+ */
+export const ActOutcomeSchema = Type.Object(
+  {
+    status: Type.Literal('success'),
+    actionId: Type.String(),
+    newRevision: Type.Integer({ minimum: 1 }),
+    observation: Type.Optional(PageStateSchema),
+    waitReason: Type.Optional(Type.String()),
+    remap: Type.Optional(
+      Type.Object({ from: Type.String({ pattern: REF_PATTERN.source }), to: Type.String() })
+    ),
+    result: Type.Optional(Type.Unknown()),
+  },
+  { $id: 'urn:agentbrowser:act-outcome:v1' }
+);
+
+/** Deterministic extraction outcome with audit evidence (REST /extract). */
+export const ExtractOutcomeSchema = Type.Object(
+  {
+    data: Type.Unknown(),
+    evidence: Type.Array(
+      Type.Object({
+        url: Type.String(),
+        revision: Type.Integer({ minimum: 1 }),
+        ref: Type.Optional(Type.String()),
+        index: Type.Optional(Type.Integer()),
+        text: Type.Optional(Type.String()),
+        hash: Type.String(),
+      })
+    ),
+    warnings: Type.Optional(Type.Array(Type.String())),
+    modelUsed: Type.Optional(Type.String()),
+    tokenUsage: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  },
+  { $id: 'urn:agentbrowser:extract-outcome:v1' }
+);
 
 export const PolicyDecisionSchema = Type.Object({
   allowed: Type.Boolean(),
