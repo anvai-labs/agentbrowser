@@ -1,7 +1,7 @@
 /**
  * Edge-branch coverage for the MCP tool handlers and the JSON-RPC wrapper:
  * argument validation refusals, optional-field forwarding, the delegated
- * browser_operation reconciler, and the internal-error path. Drives the same
+ * operation reconciler, and the internal-error path. Drives the same
  * transport-neutral handler with an injected fake client as mcp-server.test.ts.
  */
 
@@ -74,29 +74,29 @@ describe('AgentBrowser MCP server edge branches', () => {
   });
 
   describe('argument validation refusals', () => {
-    it('browser_snapshot requires a pageId, not just a sessionId', async () => {
-      const response = JSON.parse(await call('e1', 'browser_snapshot', { sessionId: 'ses_1' })) as {
+    it('snapshot requires a pageId, not just a sessionId', async () => {
+      const response = JSON.parse(await call('e1', 'snapshot', { sessionId: 'ses_1' })) as {
         result: { isError: boolean };
       };
       expect(response.result.isError).toBe(true);
-      expect(errorText(await call('e1b', 'browser_snapshot', { sessionId: 'ses_1' }))).toContain(
+      expect(errorText(await call('e1b', 'snapshot', { sessionId: 'ses_1' }))).toContain(
         'pageId is required'
       );
       expect(sessions.snapshot).not.toHaveBeenCalled();
     });
 
-    it('browser_create requires a tenantId', async () => {
-      const response = JSON.parse(await call('e2', 'browser_create', {}));
+    it('create requires a tenantId', async () => {
+      const response = JSON.parse(await call('e2', 'create', {}));
       expect(response.result.isError).toBe(true);
-      expect(errorText(await call('e2b', 'browser_create', {}))).toContain('tenantId is required');
+      expect(errorText(await call('e2b', 'create', {}))).toContain('tenantId is required');
       expect(sessions.create).not.toHaveBeenCalled();
       expect(sessions.createPage).not.toHaveBeenCalled();
     });
 
-    it('browser_autofill maps a protocol-invalid payload to a usage error without dispatching', async () => {
+    it('autofill maps a protocol-invalid payload to a usage error without dispatching', async () => {
       sessions.autofill = vi.fn();
       const response = JSON.parse(
-        await call('e3', 'browser_autofill', {
+        await call('e3', 'autofill', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           fields: 'not-an-array',
@@ -105,7 +105,7 @@ describe('AgentBrowser MCP server edge branches', () => {
       expect(response.result.isError).toBe(true);
       expect(
         errorText(
-          await call('e3b', 'browser_autofill', {
+          await call('e3b', 'autofill', {
             sessionId: 'ses_1',
             pageId: 'pg_1',
             fields: 'not-an-array',
@@ -117,9 +117,9 @@ describe('AgentBrowser MCP server edge branches', () => {
   });
 
   describe('optional argument forwarding', () => {
-    it('browser_create forwards snapshotTimeoutMs', async () => {
+    it('create forwards snapshotTimeoutMs', async () => {
       const response = JSON.parse(
-        await call('e4', 'browser_create', { tenantId: 'tenant_1', snapshotTimeoutMs: 9000 })
+        await call('e4', 'create', { tenantId: 'tenant_1', snapshotTimeoutMs: 9000 })
       );
       expect(response.result.isError).toBeFalsy();
       expect(sessions.create).toHaveBeenCalledWith(
@@ -127,9 +127,9 @@ describe('AgentBrowser MCP server edge branches', () => {
       );
     });
 
-    it('browser_navigate forwards waitUntil', async () => {
+    it('navigate forwards waitUntil', async () => {
       const response = JSON.parse(
-        await call('e5', 'browser_navigate', {
+        await call('e5', 'navigate', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           url: 'https://example.com',
@@ -143,9 +143,9 @@ describe('AgentBrowser MCP server edge branches', () => {
       });
     });
 
-    it('browser_observe forwards mode and numeric bounds', async () => {
+    it('observe forwards mode and numeric bounds', async () => {
       const response = JSON.parse(
-        await call('e6', 'browser_observe', {
+        await call('e6', 'observe', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           mode: 'content',
@@ -161,8 +161,8 @@ describe('AgentBrowser MCP server edge branches', () => {
       });
     });
 
-    it('browser_observe rejects string cursors consistently with the canonical schema', async () => {
-      const response = await call('e7', 'browser_observe', {
+    it('observe rejects string cursors consistently with the canonical schema', async () => {
+      const response = await call('e7', 'observe', {
         sessionId: 'ses_1',
         pageId: 'pg_1',
         continueFrom: '40',
@@ -171,9 +171,9 @@ describe('AgentBrowser MCP server edge branches', () => {
       expect(sessions.observe).not.toHaveBeenCalled();
     });
 
-    it('browser_pdf forwards every print option', async () => {
+    it('pdf forwards every print option', async () => {
       const response = JSON.parse(
-        await call('e8', 'browser_pdf', {
+        await call('e8', 'pdf', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           landscape: true,
@@ -189,17 +189,15 @@ describe('AgentBrowser MCP server edge branches', () => {
       });
     });
 
-    it('browser_pdf sends an empty request when no print option is set', async () => {
-      const response = JSON.parse(
-        await call('e8b', 'browser_pdf', { sessionId: 'ses_1', pageId: 'pg_1' })
-      );
+    it('pdf sends an empty request when no print option is set', async () => {
+      const response = JSON.parse(await call('e8b', 'pdf', { sessionId: 'ses_1', pageId: 'pg_1' }));
       expect(response.result.isError).toBeFalsy();
       expect(sessions.pdf).toHaveBeenCalledWith('ses_1', 'pg_1', {});
     });
 
-    it('browser_screenshot forwards fullPage and format', async () => {
+    it('screenshot forwards fullPage and format', async () => {
       const response = JSON.parse(
-        await call('e9', 'browser_screenshot', {
+        await call('e9', 'screenshot', {
           sessionId: 'ses_1',
           pageId: 'pg_1',
           fullPage: true,
@@ -214,7 +212,7 @@ describe('AgentBrowser MCP server edge branches', () => {
     });
   });
 
-  describe('browser_html stored-but-empty artifact', () => {
+  describe('html stored-but-empty artifact', () => {
     it('refuses with a usage error when neither the export nor the store has bytes', async () => {
       sessions.html = vi.fn().mockResolvedValue({
         artifactId: 'html_9',
@@ -224,26 +222,24 @@ describe('AgentBrowser MCP server edge branches', () => {
       });
       sessions.artifact = vi.fn().mockResolvedValue({ metadata: { artifactId: 'html_9' } });
       const response = JSON.parse(
-        await call('e10', 'browser_html', { sessionId: 'ses_1', pageId: 'pg_1' })
+        await call('e10', 'html', { sessionId: 'ses_1', pageId: 'pg_1' })
       );
       expect(response.result.isError).toBe(true);
-      const text = errorText(
-        await call('e10b', 'browser_html', { sessionId: 'ses_1', pageId: 'pg_1' })
-      );
+      const text = errorText(await call('e10b', 'html', { sessionId: 'ses_1', pageId: 'pg_1' }));
       expect(text).toContain('html_9');
       expect(text).toContain('without inline content');
       expect(sessions.artifact).toHaveBeenCalledWith('ses_1', 'html_9');
     });
   });
 
-  describe('delegated browser_operation reconciler', () => {
+  describe('delegated operation reconciler', () => {
     const delegatedCall = (bound: McpServer, id: string, args: Record<string, unknown>) =>
       bound.handle(
         JSON.stringify({
           jsonrpc: '2.0',
           id,
           method: 'tools/call',
-          params: { name: 'browser_operation', arguments: args },
+          params: { name: 'operation', arguments: args },
         })
       );
 

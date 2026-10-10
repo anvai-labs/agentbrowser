@@ -95,9 +95,9 @@ for (const targetKind of ['button', 'formControls'] as const) {
             harnesses.push(harness);
             const catalog = await harness.request('tools/list');
             const names = catalog.tools.map((tool: { name: string }) => tool.name);
-            expect(names).toContain('browser_session');
-            expect(names).toContain('browser_operation');
-            for (const forbidden of ['browser_create', 'browser_close', 'browser_cookies'])
+            expect(names).toContain('session');
+            expect(names).toContain('operation');
+            for (const forbidden of ['create', 'close', 'cookies'])
               expect(names).not.toContain(forbidden);
             return (name: string, args: Record<string, unknown> = {}) =>
               harness.request('tools/call', { name, arguments: args });
@@ -105,14 +105,14 @@ for (const targetKind of ['button', 'formControls'] as const) {
           const call = await bind(token);
           const initial = JSON.parse(
             (
-              await call('browser_observe', {
+              await call('observe', {
                 pageId: page.pageId,
                 include: [targetKind === 'formControls' ? 'formControls' : 'overlays'],
               })
             ).content[0].text
           );
           let note = initial.elements.find((element: { name?: string }) => element.name === 'Note');
-          const mismatch = await call('browser_act', {
+          const mismatch = await call('act', {
             pageId: page.pageId,
             action: 'fill',
             target: { ref: note.ref },
@@ -124,7 +124,7 @@ for (const targetKind of ['button', 'formControls'] as const) {
           expect(mismatch.content[0].text).toContain('VALUE_MISMATCH');
           const afterMismatch = JSON.parse(
             (
-              await call('browser_observe', {
+              await call('observe', {
                 pageId: page.pageId,
                 include: [targetKind === 'formControls' ? 'formControls' : 'overlays'],
               })
@@ -133,7 +133,7 @@ for (const targetKind of ['button', 'formControls'] as const) {
           note = afterMismatch.elements.find(
             (element: { name?: string }) => element.name === 'Note'
           );
-          const verified = await call('browser_act', {
+          const verified = await call('act', {
             pageId: page.pageId,
             action: 'fill',
             target: { ref: note.ref },
@@ -145,7 +145,7 @@ for (const targetKind of ['button', 'formControls'] as const) {
           expect(JSON.parse(verified.content[0].text).result).toEqual({ verified: true });
           const observation = JSON.parse(
             (
-              await call('browser_observe', {
+              await call('observe', {
                 pageId: page.pageId,
                 include: [targetKind === 'formControls' ? 'formControls' : 'overlays'],
               })
@@ -156,7 +156,7 @@ for (const targetKind of ['button', 'formControls'] as const) {
           const action = { action: 'click' as const, target: { ref: button.ref } };
           expect(
             (
-              await call('browser_act', {
+              await call('act', {
                 pageId: page.pageId,
                 ...action,
                 operationId: 'one-click',
@@ -169,7 +169,7 @@ for (const targetKind of ['button', 'formControls'] as const) {
               operationId: 'one-click',
             })
           ).rejects.toMatchObject({ code: 'OPERATION_RECORDED' });
-          const duplicate = await call('browser_act', {
+          const duplicate = await call('act', {
             pageId: page.pageId,
             ...action,
             operationId: 'one-click',
@@ -177,8 +177,8 @@ for (const targetKind of ['button', 'formControls'] as const) {
           expect(duplicate.isError).toBe(true);
           expect(duplicate.content[0].text).toContain('OPERATION_RECORDED');
           const [receipt, attached] = await Promise.all([
-            call('browser_operation', { operationId: 'one-click' }),
-            call('browser_session'),
+            call('operation', { operationId: 'one-click' }),
+            call('session'),
           ]);
           expect(JSON.parse(receipt.content[0].text).status).toBe('completed');
           expect(JSON.parse(attached.content[0].text).pages[0].pageId).toBe(page.pageId);
@@ -189,7 +189,7 @@ for (const targetKind of ['button', 'formControls'] as const) {
           );
           expect(
             (
-              await call('browser_observe', {
+              await call('observe', {
                 pageId: page.pageId,
                 include: [targetKind === 'formControls' ? 'formControls' : 'overlays'],
               })
@@ -212,8 +212,8 @@ for (const targetKind of ['button', 'formControls'] as const) {
           const nextToken = await ui.locator('#grant').inputValue();
           expect(nextToken).not.toBe(token);
           const nextCall = await bind(nextToken);
-          expect((await call('browser_session')).isError).toBe(true);
-          const stale = await nextCall('browser_act', {
+          expect((await call('session')).isError).toBe(true);
+          const stale = await nextCall('act', {
             pageId: page.pageId,
             ...action,
             operationId: 'stale-click',
@@ -222,7 +222,7 @@ for (const targetKind of ['button', 'formControls'] as const) {
           expect(stale.content[0].text).toContain('STALE_TARGET');
           const fresh = JSON.parse(
             (
-              await nextCall('browser_observe', {
+              await nextCall('observe', {
                 pageId: page.pageId,
                 include: [targetKind === 'formControls' ? 'formControls' : 'overlays'],
               })
@@ -233,7 +233,7 @@ for (const targetKind of ['button', 'formControls'] as const) {
           const freshButton = fresh.elements.find((e: { name?: string }) => e.name === 'Add item');
           expect(
             (
-              await nextCall('browser_act', {
+              await nextCall('act', {
                 pageId: page.pageId,
                 action: 'click',
                 target: { ref: freshButton.ref },

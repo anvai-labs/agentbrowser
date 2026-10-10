@@ -5,7 +5,7 @@ it('advertises and forwards only the configured attach selector', async () => {
   const create = vi.fn(async () => ({ sessionId: 's', diagnostics: { attachment: 'cdp_attach' } }));
   const tool = buildTools({
     sessions: { create, createPage: async () => ({ pageId: 'p' }) },
-  } as unknown as McpClient).find((tool) => tool.name === 'browser_create');
+  } as unknown as McpClient).find((tool) => tool.name === 'create');
   expect(tool?.inputSchema).toMatchObject({ properties: { cdpAttach: { type: 'boolean' } } });
   const result = await tool?.handler({ tenantId: 'local', cdpAttach: true });
   expect(create).toHaveBeenCalledWith({ tenantId: 'local', cdpAttach: true });
@@ -23,7 +23,7 @@ it('releases the newly created session if initial page provisioning fails', asyn
       },
       close,
     },
-  } as unknown as McpClient).find((tool) => tool.name === 'browser_create');
+  } as unknown as McpClient).find((tool) => tool.name === 'create');
   await expect(tool?.handler({ tenantId: 'local', cdpAttach: true })).rejects.toBe(failure);
   expect(close).toHaveBeenCalledTimes(1);
   expect(close).toHaveBeenCalledWith('new-session');

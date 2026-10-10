@@ -61,7 +61,7 @@ describe('capture requests through every consumption surface', () => {
       const client = new AgentBrowserClient({ baseUrl: 'http://injected.test' });
       const created = await client.sessions.create({ tenantId: 'parity' });
       expect(created.warnings).toEqual(['Browser-host diagnostic']);
-      const tool = buildTools(client).find((tool) => tool.name === 'browser_create');
+      const tool = buildTools(client).find((tool) => tool.name === 'create');
       expect(await tool?.handler({ tenantId: 'parity' })).toMatchObject({
         warnings: ['Browser-host diagnostic'],
       });
@@ -135,7 +135,7 @@ describe('capture requests through every consumption surface', () => {
               client.sessions[operation](sessionId, pageId, { wait: null } as never)
             ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
           } else if (surface === 'mcp') {
-            const tool = tools.find((tool) => tool.name === `browser_${operation}`);
+            const tool = tools.find((tool) => tool.name === `${operation}`);
             await expect(tool?.handler({ sessionId, pageId, wait })).rejects.toMatchObject({
               code: 'ACTION_TIMEOUT',
             });

@@ -39,17 +39,17 @@ export async function checkPackagedCoexistence({ request, surface, process, fixt
   };
   const token = await operator('grant');
   await bind(token, async (client) => {
-    const observe = () => client.callTool('browser_observe', { pageId: page.pageId });
+    const observe = () => client.callTool('observe', { pageId: page.pageId });
     const note = (observation) => {
       const field = observation.elements.find((element) => element.name === 'Note');
       assert.ok(field?.ref, 'Missing Note binding');
       return field;
     };
-    await denied(client, 'browser_act', {
+    await denied(client, 'act', {
       pageId: page.pageId, action: 'fill', target: { ref: note(await observe()).ref },
       value: '', expectValue: 'different', operationId: 'packaged-mismatch',
     }, 'VALUE_MISMATCH');
-    const verified = await client.callTool('browser_act', {
+    const verified = await client.callTool('act', {
       pageId: page.pageId, action: 'fill', target: { ref: note(await observe()).ref },
       value: '', expectValue: '', operationId: 'packaged-verified',
     });
@@ -57,30 +57,30 @@ export async function checkPackagedCoexistence({ request, surface, process, fixt
     const button = (await observe()).elements.find((element) => element.name === 'Add item');
     assert.ok(button?.ref, 'Missing button binding');
     const action = { pageId: page.pageId, action: 'click', target: { ref: button.ref }, operationId: 'packaged-one-click' };
-    await client.callTool('browser_act', action);
+    await client.callTool('act', action);
     await effects([{ trusted: true, value: '' }]);
-    await denied(client, 'browser_act', action, 'OPERATION_RECORDED');
+    await denied(client, 'act', action, 'OPERATION_RECORDED');
     const [receipt, attached] = await Promise.all([
-      client.callTool('browser_operation', { operationId: action.operationId }),
-      client.callTool('browser_session', {}),
+      client.callTool('operation', { operationId: action.operationId }),
+      client.callTool('session', {}),
     ]);
     assert.equal(receipt.status, 'completed');
     assert.equal(attached.pages[0].pageId, page.pageId);
     await operator('takeover');
-    await denied(client, 'browser_observe', { pageId: page.pageId });
-    await denied(client, 'browser_act', { ...action, operationId: 'packaged-revoked-click' });
+    await denied(client, 'observe', { pageId: page.pageId });
+    await denied(client, 'act', { ...action, operationId: 'packaged-revoked-click' });
     await process.rpc('humanEdit', { pageId: page.pageId });
     const nextToken = await operator('grant');
     assert.notEqual(nextToken, token);
     await bind(nextToken, async (next) => {
-      await denied(client, 'browser_session', {});
-      await denied(next, 'browser_act', { ...action, operationId: 'packaged-stale-click' }, 'STALE_TARGET');
-      const fresh = await next.callTool('browser_observe', { pageId: page.pageId });
+      await denied(client, 'session', {});
+      await denied(next, 'act', { ...action, operationId: 'packaged-stale-click' }, 'STALE_TARGET');
+      const fresh = await next.callTool('observe', { pageId: page.pageId });
       assert.equal(note(fresh).value, 'human edit');
       await effects([{ trusted: true, value: '' }]);
       const freshButton = fresh.elements.find((element) => element.name === 'Add item');
       assert.ok(freshButton?.ref);
-      await next.callTool('browser_act', {
+      await next.callTool('act', {
         ...action, target: { ref: freshButton.ref }, operationId: 'packaged-after-human',
       });
       await effects([{ trusted: true, value: '' }, { trusted: true, value: 'human edit' }]);

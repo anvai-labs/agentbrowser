@@ -56,7 +56,7 @@ it('preserves Firefox policy refusal through REST, SDK and MCP without launching
           id: 'gate',
           method: 'tools/call',
           params: {
-            name: 'browser_create',
+            name: 'create',
             arguments: { tenantId: 'owner', engine: 'firefox-bidi' },
           },
         })

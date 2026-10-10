@@ -7,6 +7,34 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Changed — MCP surface refresh (owner-approved breaking rename)
+
+- **MCP tool names dropped the `browser_` prefix** (`browser_observe` → `observe`, `browser_act` →
+  `act`, …; 17 tools + the delegated `operation`). Owner decision: consumers are few and adapt now
+  rather than after wider adoption. Registered MCP clients must update tool names once.
+- **Tool descriptions slimmed ~24%** (11.6K → 8.8K chars; `act` −54%) in telegraphic style with the
+  repo's anchor-pinning tests as the deterioration boundary (they rejected two over-compressions:
+  the egress-1014 "not a bot wall" cue and the reloading-recovery verb). Operator configuration
+  essays moved out of agent-facing descriptions; `observe`'s description now teaches the compact
+  projection.
+- **Structured results everywhere it matters:** `act`/`navigate`/`extract` advertise outcome
+  output schemas (`urn:agentbrowser:act-outcome:v1`, `urn:agentbrowser:extract-outcome:v1`, inline
+  NavigationStatus) so their results arrive as `structuredContent` — previously `act` results were
+  pretty-printed text only. The text fallback is now minified (−29% on that copy of every result).
+- **Machine-readable structured errors:** tool failures keep the actionable remediation text and
+  add `structuredContent {error: {code, message, operationId?}}` — with allowlisted details only
+  (a raw `details` passthrough would have leaked `privateReason` from terminal close facts).
+- **CLI `observe --output FILE`:** full observation to a new exclusive 0600 file (cookie-export
+  discipline), stdout carries an identity receipt with the projection echo — the artifact escape
+  hatch for evidence capture.
+- **Agent skill shipped:** `docs/skills/agentbrowser-cli/SKILL.md` — the compact loop, ref
+  discipline, and invariants as a copy-in skill for any harness.
+- **Defaults raised 25% (owner direction):** default session TTL 3.5 h → **4.375 h**
+  (15,750,000 ms; per-request `ttlMs` and the operator `AGENTBROWSER_DEFAULT_TTL_MS` override
+  unchanged in precedence), and the per-page diffable revision history 8 → **10**
+  (`sinceRevision` window). The application-authority TTL cap (3.5 h on control-plane
+  application sessions, a separate subsystem) is unchanged.
+
 ### Added — compact observation output (CLI-first agent token reduction)
 
 Design review and prior art: `docs/agent-handoffs/AGENTBROWSER_COMPACT_OUTPUT_REVIEW_2026-10-09.md`.

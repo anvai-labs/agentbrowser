@@ -12,7 +12,7 @@ The package is **only the MCP stdio adapter** — it proxies to an AgentBrowser 
 ## Discover usage before inspecting source
 
 `tools/list` includes headed-session, cookie-handoff and LAN policy guidance on the
-relevant tools. `browser_create` returns both a `sessionId` and an initial `pageId`;
+relevant tools. `create` returns both a `sessionId` and an initial `pageId`;
 set `headless: false` for a visible window on the **server** host. CLI `session create`
 only returns a session, so shell clients must also call `page create`.
 
@@ -41,11 +41,11 @@ responses, with a digest over complete descriptions and schemas. The existing re
 artifact check rejects drift. Regenerate after building with
 `node scripts/mcp-catalog-docs.mjs --write`.
 
-`browser_session` inspects metadata and pages when given a `sessionId`. On a delegated
+`session` inspects metadata and pages when given a `sessionId`. On a delegated
 connection the binding supplies that ID and the same response also includes current
 control status. The tool requires both `session.control` and `page.observe`; application
 mode therefore does not expose it. Delegated mode removes create/close/cookies and adds
-`browser_operation` (operation status). `AGENTBROWSER_MODE` fixes one profile for the
+`operation` (operation status). `AGENTBROWSER_MODE` fixes one profile for the
 lifetime of the bridge connection. Reconnect to change profiles; clients may cache
 catalogs. Obtain the effective catalog from your own connection with `tools/list`;
 metadata never enlarges a session grant, and the service rejects a tool call that the
@@ -65,7 +65,7 @@ unknown requested versions are offered `2025-06-18`; clients must support that r
 version or disconnect. Missing initialization retains historical text behavior; clients
 should always perform the handshake. A connection cannot renegotiate while calls run.
 
-Under `2025-06-18`, `browser_autofill` and `browser_plan` advertise canonical
+Under `2025-06-18`, `autofill` and `plan` advertise canonical
 `urn:agentbrowser:autofill-report:v1` and `urn:agentbrowser:plan-report:v1` schemas and return validated
 `structuredContent` **plus identical serialized JSON text**. Plan retains optional mode/revision metadata to preserve the existing SDK contract;
 the current server always supplies it. Other tools still return
@@ -85,16 +85,16 @@ Errors before a valid report exists remain text diagnostics without structured c
 This transport qualification does not yet certify structured-result consumption by
 installed Victor, Codex or Claude clients. That remains T8 harness acceptance.
 
-For qualified native forms, prefer `browser_autofill`; inspect each field's verification
+For qualified native forms, prefer `autofill`; inspect each field's verification
 receipt and preserve uncertain writes. For explicit heterogeneous steps use
-`browser_snapshot` → `browser_plan` — see the
+`snapshot` → `plan` — see the
 [main README](../../README.md#the-fast-path-for-forms-snapshot-then-plan).
 
 ## Multiple pages and large research results
 
-`browser_create` still returns its initial `pageId`. Use `browser_page_create` with
+`create` still returns its initial `pageId`. Use `page_create` with
 that `sessionId` and an optional HTTP(S) `url` to create another page in the same
-cookie context. Use `browser_pages` to discover page IDs, including adopted popups;
+cookie context. Use `pages` to discover page IDs, including adopted popups;
 never invent an ID or expect navigation to create a page implicitly. These tools
 delegate to the existing SDK, and the service remains the authorization/policy owner.
 The equivalent shell interfaces remain `agentbrowser page create --help` and
@@ -102,12 +102,12 @@ The equivalent shell interfaces remain `agentbrowser page create --help` and
 
 Bound creation requires `operationId` chosen before dispatch. Controlled sessions
 deduplicate that ID, but operation status does not retain the resulting page ID.
-Ordinary sessions made by `browser_create` do not acquire deduplication from an ID
+Ordinary sessions made by `create` do not acquire deduplication from an ID
 alone. Do not automatically retry an uncertain create in either case; inventory is
 not proof of which page a concurrent create produced. A general explicit-page quota
 and result correlation remain follow-ups, separate from the existing popup cap.
 
-`browser_extract` preserves complete `data` and evidence within `maxBytes`. Its
+`extract` preserves complete `data` and evidence within `maxBytes`. Its
 default ceiling is 1 MiB of compact JSON including evidence; the operator can raise
 the ceiling with `AGENTBROWSER_EXTRACT_MAX_BYTES` before starting the service.
 Raw HTML size is not the extracted result size. Over-limit results fail explicitly,

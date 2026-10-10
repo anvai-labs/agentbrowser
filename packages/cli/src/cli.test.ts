@@ -5,6 +5,10 @@
  * surface can be exercised without spawning a process or hitting a server.
  */
 
+import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildCli } from './cli';
@@ -873,6 +877,70 @@ describe('AgentBrowser CLI', () => {
       const text = out.join('\n');
       expect(text).toContain('--continue-from 300');
       expect(text).toContain('5 elements remain');
+    });
+  });
+
+  describe('observe --output <path>', () => {
+    it('writes the observation to a new private file and prints a receipt', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'ab-observe-'));
+      const path = join(dir, 'obs.json');
+      const code = await run('--json', 'observe', 'ses_1', 'pg_1', '--output', path);
+
+      expect(code).toBe(0);
+      const written = JSON.parse(readFileSync(path, 'utf8'));
+      expect(written.sessionId).toBe('ses_1');
+      expect(written.elements[0].ref).toBe('e1_0');
+      // Minified file: machine-facing, single JSON line.
+      expect(readFileSync(path, 'utf8').trim().split('\n')).toHaveLength(1);
+      const receipt = lastJson();
+      expect(receipt).toMatchObject({
+        sessionId: 'ses_1',
+        elements: 1,
+        file: { path },
+      });
+      expect(receipt.file.bytes).toBeGreaterThan(0);
+      // Default render: identity + counts + path, never the full element list.
+      expect(out.join('\n')).toContain(path);
+      expect(out.join('\n')).not.toContain('Submit');
+    });
+
+    it('refuses to overwrite an existing file', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'ab-observe-'));
+      const path = join(dir, 'exists.json');
+      writeFileSync(path, 'keep me');
+      const code = await run('--json', 'observe', 'ses_1', 'pg_1', '--output', path);
+
+      expect(code).toBe(1);
+      expect(err.join('\n')).toContain('exclusively create');
+      expect(readFileSync(path, 'utf8')).toBe('keep me');
+    });
+
+    it('includes the projection echo in the receipt', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'ab-observe-'));
+      sessions.observe.mockResolvedValueOnce({
+        sessionId: 'ses_1',
+        pageId: 'pg_1',
+        revision: 2,
+        url: 'https://example.com',
+        title: 'Example',
+        status: 'interactive',
+        elements: [{ ref: 'e2_0', role: 'checkbox', name: 'A', visible: true, enabled: true }],
+        truncated: false,
+        untrustedContent: true,
+        projection: { roles: ['checkbox'], matched: 1, total: 190 },
+      });
+      await run(
+        '--json',
+        'observe',
+        'ses_1',
+        'pg_1',
+        '--roles',
+        'checkbox',
+        '--output',
+        join(dir, 'p.json')
+      );
+
+      expect(lastJson().projection).toEqual({ roles: ['checkbox'], matched: 1, total: 190 });
     });
   });
 

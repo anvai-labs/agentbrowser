@@ -153,6 +153,7 @@ The "occasional `INTERNAL` text block with an operation ID" comes from `errorRes
 ## 5. Tool names, descriptions, and catalog redundancy
 
 **Names: keep `browser_*`.** Renaming to shorter verbs saves ~7 chars per call mention but breaks every deployed consumer (Sandesha, Victor), forfeits the namespacing Anthropic explicitly recommends, and risks collisions in multi-server clients. The measured catalog cost is in prose and duplicated vocabularies, not names: all 17 names joined are 284 chars.
+*Owner decision, 2026-10-10 (recorded after this review): the prefix was removed anyway — consumers are few and adapt now rather than after wider adoption; the collision and compat concerns above were accepted as a one-time migration cost.*
 
 **Descriptions: compress ~50–60% without losing behavioral anchors.** Validated on the worst offender: `browser_act`'s 2,511-char description was rewritten in 1,111 chars (−56%) with all 23 behavioral anchors retained (ref-not-selector, STALE_TARGET/re-observe, remap semantics, blockedBy+screenshot on timeout, typeText-vs-fill, delay, press count/spinbutton, combobox late-render recipe, upload/fileInputs, uncertain-write/operationId). Rules that survived the experiment:
 - Telegraphic lines, one behavior per bullet; cut connective prose, keep the trigger→action pairs.

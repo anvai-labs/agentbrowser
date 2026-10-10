@@ -1,6 +1,6 @@
 // windows-mcp-e2e.test.mjs — full-stack win32 roundtrip through the real
-// MCP server binary: initialize -> tools/list -> browser_create (headless)
-// -> browser_observe -> browser_close.
+// MCP server binary: initialize -> tools/list -> create (headless)
+// -> observe -> close.
 //
 // This is the test class that would have caught the WSL interop failures
 // (UNC cwd, .cmd relay) before users hit them: it exercises the actual
@@ -87,11 +87,11 @@ test('MCP end-to-end: create -> observe -> close on win32', { skip: !IS_WIN && '
 
   const tools = await c.request('tools/list', {});
   const names = (tools.tools || []).map((x) => x.name);
-  for (const expected of ['browser_create', 'browser_observe', 'browser_close']) {
+  for (const expected of ['create', 'observe', 'close']) {
     assert.ok(names.includes(expected), `tools/list must expose ${expected} (have ${names.length} tools)`);
   }
 
-  const created = await c.call('browser_create', {
+  const created = await c.call('create', {
     tenantId: 'win-ci-e2e',
     headless: true,
     ttlMs: 120000,
@@ -100,14 +100,14 @@ test('MCP end-to-end: create -> observe -> close on win32', { skip: !IS_WIN && '
   const text = (created.content || []).map((p) => p.text || '').join('');
   const createdJson = (() => { try { return JSON.parse(text || '{}'); } catch { return {}; } })();
   const sessionId = created.sessionId ?? createdJson.sessionId;
-  assert.ok(sessionId, `browser_create must return sessionId (text=${text.slice(0, 200)})`);
+  assert.ok(sessionId, `create must return sessionId (text=${text.slice(0, 200)})`);
   const pageId = created.pageId ?? createdJson.pageId;
-  assert.ok(pageId, 'browser_create must return pageId');
+  assert.ok(pageId, 'create must return pageId');
 
-  const observed = await c.call('browser_observe', { sessionId, pageId });
-  assert.ok(observed, 'browser_observe must answer');
+  const observed = await c.call('observe', { sessionId, pageId });
+  assert.ok(observed, 'observe must answer');
   // An empty about:blank observation is still a structured result; the gate
   // is that the engine spawned and the roundtrip completed without error.
 
-  await c.call('browser_close', { sessionId });
+  await c.call('close', { sessionId });
 });
