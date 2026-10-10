@@ -464,8 +464,8 @@ interface ObservationSnapshot {
   byEngineRef: Map<string, PageElement>;
 }
 
-/** How many recent revisions per page are diffable. */
-const HISTORY_LIMIT = 8;
+/** How many recent revisions per page are diffable (raised 25% from 8, 2026-10-10). */
+const HISTORY_LIMIT = 10;
 
 /** Observation options as they arrive from a route body (possibly undefined). */
 export type PartialObservation = {
@@ -2500,7 +2500,7 @@ export class AgentBrowserService {
       })),
       ...(view.truncated === true ? { truncated: true } : {}),
       // Whole-body ariaSnapshot fallback signal (see observe()): a
-      // one-shot-plan caller must see this just as clearly as browser_observe
+      // one-shot-plan caller must see this just as clearly as observe
       // does, since `fields` alone looks structurally identical either way.
       ...(view.degraded === true ? { degraded: true } : {}),
       ...(view.degradedReason !== undefined ? { degradedReason: view.degradedReason } : {}),
@@ -2769,7 +2769,7 @@ export class AgentBrowserService {
     // Capture schemas validate delivered modes and enrichments before any browser work.
     // Normalize the full element list; pagination and diffing are service concerns.
     // Optional readiness wait (SPA hydration): run the same wait machinery as
-    // browser_act BEFORE snapshotting, so a slow-mounting page does not observe
+    // act BEFORE snapshotting, so a slow-mounting page does not observe
     // as empty. Omitting `wait` keeps the fast default path unchanged.
     if (request.wait !== undefined) {
       await this.waitFor(page.enginePage, request.wait);

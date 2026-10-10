@@ -16,7 +16,7 @@ function fixture(options: { sessionId?: string; mode?: (typeof AGENT_MODE_IDS)[n
   };
   const call = async (args: Record<string, unknown>) => {
     const response = await exchange('tools/call', {
-      name: 'browser_events_replay',
+      name: 'events_replay',
       arguments: args,
     });
     const text = response?.result?.content?.[0]?.text;
@@ -30,14 +30,14 @@ function fixture(options: { sessionId?: string; mode?: (typeof AGENT_MODE_IDS)[n
   return { events, exchange, call };
 }
 
-describe('browser_events_replay', () => {
+describe('events_replay', () => {
   it('is listed in the unbound profile with the sessionId + paging schema', async () => {
     const f = fixture();
     const tools = (await f.exchange('tools/list')).result.tools as Array<{
       name: string;
       inputSchema: { properties: Record<string, unknown>; required?: string[] };
     }>;
-    const tool = tools.find((candidate) => candidate.name === 'browser_events_replay');
+    const tool = tools.find((candidate) => candidate.name === 'events_replay');
     expect(tool).toBeDefined();
     expect(tool?.inputSchema.properties).toMatchObject({
       sessionId: { type: 'string', minLength: 1 },

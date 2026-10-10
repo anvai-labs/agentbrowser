@@ -741,6 +741,49 @@ export const NavigationStatusSchema = Type.Object({
   reason: Type.Optional(NavigationFailureReasonSchema),
 });
 
+/**
+ * The act surface's wire outcome (what REST /act and the SDK return): the
+ * decision-relevant keep-list only — status, action id, the new revision for
+ * the next action's staleness check, an optional observe-after observation,
+ * wait reason, remap report, and evidence payloads (upload). Errors surface
+ * as the shared error envelope, never embedded here.
+ */
+export const ActOutcomeSchema = Type.Object(
+  {
+    status: Type.Literal('success'),
+    actionId: Type.String(),
+    newRevision: Type.Integer({ minimum: 1 }),
+    observation: Type.Optional(PageStateSchema),
+    waitReason: Type.Optional(Type.String()),
+    remap: Type.Optional(
+      Type.Object({ from: Type.String({ pattern: REF_PATTERN.source }), to: Type.String() })
+    ),
+    result: Type.Optional(Type.Unknown()),
+  },
+  { $id: 'urn:agentbrowser:act-outcome:v1' }
+);
+
+/** Deterministic extraction outcome with audit evidence (REST /extract). */
+export const ExtractOutcomeSchema = Type.Object(
+  {
+    data: Type.Unknown(),
+    evidence: Type.Array(
+      Type.Object({
+        url: Type.String(),
+        revision: Type.Integer({ minimum: 1 }),
+        ref: Type.Optional(Type.String()),
+        index: Type.Optional(Type.Integer()),
+        text: Type.Optional(Type.String()),
+        hash: Type.String(),
+      })
+    ),
+    warnings: Type.Optional(Type.Array(Type.String())),
+    modelUsed: Type.Optional(Type.String()),
+    tokenUsage: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  },
+  { $id: 'urn:agentbrowser:extract-outcome:v1' }
+);
+
 export const PolicyDecisionSchema = Type.Object({
   allowed: Type.Boolean(),
   reason: Type.String(),

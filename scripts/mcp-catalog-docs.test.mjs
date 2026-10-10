@@ -60,7 +60,7 @@ test('generated catalog checks detect stale files across fixed profiles and bind
     assert.match(original, /## unbound\/application \(0 tools; \d+ result bytes\)/);
     assert.match(original, /## delegated\/application \(1 tool; \d+ result bytes\)/);
     assert.match(original, /urn:agentbrowser:autofill-report:v1/);
-    await writeFile(file, original.replace('browser_autofill', 'missing-tool'));
+    await writeFile(file, original.replace('autofill', 'missing-tool'));
     await assert.rejects(checkCatalogDocument({ file }), /stale/);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

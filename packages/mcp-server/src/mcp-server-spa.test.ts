@@ -1,7 +1,7 @@
 /**
  * SPA-capture robustness surface on the MCP server:
- *  - browser_observe / browser_screenshot forward an optional `wait`
- *  - browser_create warns when a headed session has no reachable display
+ *  - observe / screenshot forward an optional `wait`
+ *  - create warns when a headed session has no reachable display
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -68,8 +68,8 @@ describe('MCP SPA-capture surface', () => {
     server = buildMcpServer(deps);
   });
 
-  it('browser_observe forwards a valid wait condition to the client', async () => {
-    await call('1', 'browser_observe', {
+  it('observe forwards a valid wait condition to the client', async () => {
+    await call('1', 'observe', {
       sessionId: 'ses_1',
       pageId: 'pg_1',
       wait: { until: 'networkidle', timeoutMs: 8000 },
@@ -81,8 +81,8 @@ describe('MCP SPA-capture surface', () => {
     );
   });
 
-  it('browser_observe rejects wait when the until value is unknown', async () => {
-    const response = await call('2', 'browser_observe', {
+  it('observe rejects wait when the until value is unknown', async () => {
+    const response = await call('2', 'observe', {
       sessionId: 'ses_1',
       pageId: 'pg_1',
       wait: { until: 'bogus' },
@@ -91,8 +91,8 @@ describe('MCP SPA-capture surface', () => {
     expect(sessions.observe).not.toHaveBeenCalled();
   });
 
-  it('browser_screenshot forwards a selectorVisible wait', async () => {
-    await call('3', 'browser_screenshot', {
+  it('screenshot forwards a selectorVisible wait', async () => {
+    await call('3', 'screenshot', {
       sessionId: 'ses_1',
       pageId: 'pg_1',
       wait: { until: 'selectorVisible', selector: '#root [data-loaded]' },
@@ -106,24 +106,20 @@ describe('MCP SPA-capture surface', () => {
     );
   });
 
-  it('browser_create preserves warnings from the browser host', async () => {
+  it('create preserves warnings from the browser host', async () => {
     sessions.create.mockResolvedValueOnce({
       sessionId: 'ses_1',
       warnings: ['No display detected on remote browser host'],
     });
-    const result = textOf(
-      await call('4', 'browser_create', { tenantId: 't1', headless: false })
-    ) as {
+    const result = textOf(await call('4', 'create', { tenantId: 't1', headless: false })) as {
       warnings?: string[];
     };
     expect(Array.isArray(result.warnings)).toBe(true);
     expect(result.warnings?.[0]).toMatch(/no display detected/i);
   });
 
-  it('browser_create does not warn for a headless session', async () => {
-    const result = textOf(
-      await call('5', 'browser_create', { tenantId: 't1', headless: true })
-    ) as {
+  it('create does not warn for a headless session', async () => {
+    const result = textOf(await call('5', 'create', { tenantId: 't1', headless: true })) as {
       warnings?: string[];
     };
     expect(result.warnings).toBeUndefined();

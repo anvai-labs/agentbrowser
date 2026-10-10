@@ -76,6 +76,7 @@ import {
   createJsonArgumentReader,
   createTextArgumentReader,
 } from './json-input.js';
+import { observationReceipt, writeObservationFile } from './observation-file.js';
 import { PRODUCT_VERSION } from './product-version.js';
 import {
   COOKIE_USAGE,
@@ -1173,6 +1174,10 @@ export function buildCli(deps: CliDependencies): Cli {
         )
         .option('--limit <n>', 'compact projection: cap on the filtered element count (1-500)')
         .option(
+          '--output <path>',
+          'write the observation JSON to a new private file (0600, refuses existing paths) and print an identity receipt instead'
+        )
+        .option(
           '--include-fields <field>',
           'compact projection: additive element fields, repeatable: href | attributes | required',
           (field: string, acc: string[]) => [...acc, field],
@@ -1208,6 +1213,7 @@ export function buildCli(deps: CliDependencies): Cli {
                 scopeRef?: string;
                 limit?: string;
                 includeFields?: string[];
+                output?: string;
               } & WaitFlagOptions
             ) => {
               const request: ObservationRequest = {};
@@ -1272,6 +1278,24 @@ export function buildCli(deps: CliDependencies): Cli {
                   );
                 }
                 throw error;
+              }
+
+              if (options.output !== undefined) {
+                // Artifact escape hatch: the full observation lands in a new
+                // 0600 file and stdout carries only the identity receipt.
+                const file = await writeObservationFile(options.output, observation);
+                const receipt = observationReceipt(observation, file);
+                ctx.emit(receipt, () => [
+                  `${receipt.url} (revision ${receipt.revision})`,
+                  `  elements: ${receipt.elements}${receipt.truncated ? ' (truncated)' : ''}`,
+                  ...(receipt.projection
+                    ? [
+                        `  projection: matched ${receipt.projection.matched} of ${receipt.projection.total}`,
+                      ]
+                    : []),
+                  `  wrote ${receipt.file.bytes} bytes to ${receipt.file.path}`,
+                ]);
+                return;
               }
 
               ctx.emit(observation, () => renderObservation(observation));

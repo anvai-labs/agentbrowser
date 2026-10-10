@@ -21,18 +21,18 @@ it('binds an agent to an existing session without exposing owner or cookie tools
     JSON.parse((await server.handle(JSON.stringify({ jsonrpc: '2.0', id: 1, method, params })))!);
   const list = await call('tools/list');
   const names = list.result.tools.map((t: { name: string }) => t.name);
-  expect(names).toContain('browser_session');
-  expect(names).not.toContain('browser_create');
-  expect(names).not.toContain('browser_close');
-  expect(names).not.toContain('browser_cookies');
-  const attached = await call('tools/call', { name: 'browser_session', arguments: {} });
+  expect(names).toContain('session');
+  expect(names).not.toContain('create');
+  expect(names).not.toContain('close');
+  expect(names).not.toContain('cookies');
+  const attached = await call('tools/call', { name: 'session', arguments: {} });
   expect(JSON.parse(attached.result.content[0].text)).toMatchObject({
     sessionId: 's',
     session,
     pages: [{ pageId: 'p' }],
   });
   const wrong = await call('tools/call', {
-    name: 'browser_snapshot',
+    name: 'snapshot',
     arguments: { sessionId: 'other', pageId: 'p' },
   });
   expect(wrong.result.isError).toBe(true);
@@ -52,7 +52,7 @@ it('requires a caller-known operation ID for bound mutations and forwards it out
           jsonrpc: '2.0',
           id: 2,
           method: 'tools/call',
-          params: { name: 'browser_act', arguments: args },
+          params: { name: 'act', arguments: args },
         })
       ))!
     );

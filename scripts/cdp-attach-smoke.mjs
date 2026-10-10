@@ -196,7 +196,7 @@ try {
     timeoutMs: 120000,
     async exercise({ request }) {
       const created = await request('tools/call', {
-        name: 'browser_create',
+        name: 'create',
         arguments: { tenantId: 'cdp-smoke', cdpAttach: true },
       });
       assert.notEqual(created.isError, true);
@@ -272,7 +272,7 @@ try {
       timeoutMs: 120000,
       async exercise({ request }) {
         const value = await request('tools/call', {
-          name: 'browser_session',
+          name: 'session',
           arguments: { sessionId: attached.sessionId },
         });
         assert.equal(value.isError, true);

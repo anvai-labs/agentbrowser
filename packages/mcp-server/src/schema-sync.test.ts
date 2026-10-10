@@ -29,26 +29,24 @@ const propertiesOf = (name: string): Set<string> => {
 };
 
 describe('MCP tool-schema sync', () => {
-  it('browser_session reads exactly the one advertised session identity', () => {
-    expect(propertiesOf('browser_session')).toEqual(new Set(['sessionId']));
+  it('session reads exactly the one advertised session identity', () => {
+    expect(propertiesOf('session')).toEqual(new Set(['sessionId']));
   });
 
-  it('browser_navigate reads exactly what it advertises', () => {
+  it('navigate reads exactly what it advertises', () => {
     // The clean derivation candidate: handler reads url + waitUntil only.
-    expect(propertiesOf('browser_navigate')).toEqual(
-      new Set(['sessionId', 'pageId', 'url', 'waitUntil'])
-    );
+    expect(propertiesOf('navigate')).toEqual(new Set(['sessionId', 'pageId', 'url', 'waitUntil']));
   });
 
-  it('browser_pdf reads exactly what it advertises', () => {
-    expect(propertiesOf('browser_pdf')).toEqual(
+  it('pdf reads exactly what it advertises', () => {
+    expect(propertiesOf('pdf')).toEqual(
       new Set(['sessionId', 'pageId', 'landscape', 'displayHeaderFooter', 'printBackground'])
     );
   });
 
   it.each([
-    ['browser_observe', ObservationRequestSchema],
-    ['browser_screenshot', ScreenshotRequestSchema],
+    ['observe', ObservationRequestSchema],
+    ['screenshot', ScreenshotRequestSchema],
   ] as const)('%s projects the complete canonical request schema', (name, canonical) => {
     const schema = toolSchemas.get(name) as {
       properties: Record<string, unknown>;
@@ -59,7 +57,7 @@ describe('MCP tool-schema sync', () => {
     expect(schema.additionalProperties).toBe(false);
   });
 
-  it('browser_create advertises a subset of the session request contract', () => {
+  it('create advertises a subset of the session request contract', () => {
     const schema = SessionRequestSchema as {
       properties: Record<string, { properties?: Record<string, unknown> }>;
     };
@@ -70,21 +68,21 @@ describe('MCP tool-schema sync', () => {
       ...Object.keys(schema.properties),
       ...Object.keys(schema.properties.policy?.properties ?? {}),
     ]);
-    const advertised = propertiesOf('browser_create');
+    const advertised = propertiesOf('create');
     advertised.delete('sessionId');
     for (const property of advertised) {
       expect(
         sessionProperties.has(property),
-        `browser_create advertises '${property}' but the protocol SessionRequestSchema does not know it`
+        `create advertises '${property}' but the protocol SessionRequestSchema does not know it`
       ).toBe(true);
     }
   });
 
-  it('browser_observe advertises a subset of the observation contract', () => {
+  it('observe advertises a subset of the observation contract', () => {
     const observationProperties = new Set(
       Object.keys((ObservationRequestSchema as { properties: Record<string, unknown> }).properties)
     );
-    const advertised = propertiesOf('browser_observe');
+    const advertised = propertiesOf('observe');
     advertised.delete('sessionId');
     advertised.delete('pageId');
     // The MCP projection includes the REST diff and pagination vocabulary.
@@ -92,7 +90,7 @@ describe('MCP tool-schema sync', () => {
     for (const property of advertised) {
       expect(
         observationProperties.has(property),
-        `browser_observe advertises '${property}' but the protocol ObservationRequestSchema does not know it`
+        `observe advertises '${property}' but the protocol ObservationRequestSchema does not know it`
       ).toBe(true);
     }
   });

@@ -66,7 +66,7 @@ try {
           const response = await fetch(baseUrl+path,{method:'POST',headers:{authorization:`Bearer ${key}`,'content-type':'application/json'},body:JSON.stringify({url:target.url,waitUntil:'domcontentloaded'})});
           const rest = await response.json();
           const sdk = await client.sessions.navigate(session.sessionId,page.pageId,{url:target.url,waitUntil:'domcontentloaded'}).catch(error => ({error:{code:error.code,details:error.details}}));
-          const mcp = await request('tools/call',{name:'browser_navigate',arguments:{sessionId:session.sessionId,pageId:page.pageId,url:target.url,waitUntil:'domcontentloaded'}});
+          const mcp = await request('tools/call',{name:'navigate',arguments:{sessionId:session.sessionId,pageId:page.pageId,url:target.url,waitUntil:'domcontentloaded'}});
           const mcpValue = mcp.structuredContent ?? JSON.parse(mcp.content[0].text);
           const expected = classify(rest);
           const cli = await runExecutable([...cliCommand,'--base-url',baseUrl,'--timeout','60000','--json','navigate',session.sessionId,page.pageId,target.url,'--wait-until','domcontentloaded'],{env,timeoutMs:65000,expectedExitCode: expected === 'success' ? 0 : 1});

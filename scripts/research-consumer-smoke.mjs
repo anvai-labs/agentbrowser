@@ -75,7 +75,7 @@ try {
   await checkMcp(mcpCommand, {
     expectedVersion: version, env, timeoutMs: 180_000, maxOutputBytes: 32 * MiB,
     async exercise({ callTool, request }) {
-      const session = await callTool('browser_create', { tenantId: 'research-smoke', headless: !headed });
+      const session = await callTool('create', { tenantId: 'research-smoke', headless: !headed });
       assert.equal(typeof session.pageId, 'string');
       const scope = { sessionId: session.sessionId, pageId: session.pageId };
       let explicitlyClosed = false;
@@ -86,7 +86,7 @@ try {
         })).json();
         const cliResult = await runExecutable([...cliCommand, '--base-url', baseUrl, '--json', 'session', 'get', scope.sessionId], { env });
         const cliView = JSON.parse(cliResult.stdout);
-        const inspected = await callTool('browser_session', { sessionId: scope.sessionId });
+        const inspected = await callTool('session', { sessionId: scope.sessionId });
         const listedSession = (await client.sessions.list()).find((item) => item.sessionId === scope.sessionId);
         assert.ok(session.diagnostics, 'The creating engine captures launch diagnostics');
         assert.ok(sdkView.lease, 'Service lease must be visible');
@@ -111,17 +111,17 @@ try {
         for (const size of sizes) {
           const started = performance.now();
           const url = `${fixtureUrl}/${size}`;
-          const navigated = await request('tools/call', { name: 'browser_navigate', arguments: { ...scope, url } });
+          const navigated = await request('tools/call', { name: 'navigate', arguments: { ...scope, url } });
           assert.notEqual(navigated.isError, true, `Fixture navigation failed: ${JSON.stringify(navigated.content)}`);
           assert.equal(JSON.parse(navigated.content[0].text).url, url);
-          const result = await callTool('browser_extract', { ...scope, format: 'text' });
+          const result = await callTool('extract', { ...scope, format: 'text' });
           assert.equal(result.data.text, `Quarterly filing ${text.trim()} END-FILING-${size}`);
           assert.equal(result.evidence[0].url, url);
           assert.ok(result.evidence[0].revision > 0);
           assert.match(result.evidence[0].hash, /^[a-f0-9]{8}$/);
           const bytes = Buffer.byteLength(JSON.stringify(result));
           assert.ok(bytes > MiB && bytes < 2 * MiB, 'Fixture must cross the default extraction ceiling');
-          const limited = await request('tools/call', { name: 'browser_extract', arguments: { ...scope, format: 'text', maxBytes: MiB } });
+          const limited = await request('tools/call', { name: 'extract', arguments: { ...scope, format: 'text', maxBytes: MiB } });
           assert.equal(limited.isError, true);
           assert.match(limited.content[0].text, /OUTPUT_TRUNCATED/);
           assert.ok(!limited.content[0].text.includes('END-FILING'));
@@ -133,37 +133,37 @@ try {
           assert.equal(grep.stdout.trim(), `END-FILING-${size}`);
           measurements.push({ htmlBytes: size * MiB, resultBytes: bytes, evidenceHash: result.evidence[0].hash, elapsedMs: Math.round(performance.now() - started) });
         }
-        await callTool('browser_navigate', { ...scope, url: `${fixtureUrl}/submissions.json` });
-        const result = await callTool('browser_extract', { ...scope, format: 'text' });
+        await callTool('navigate', { ...scope, url: `${fixtureUrl}/submissions.json` });
+        const result = await callTool('extract', { ...scope, format: 'text' });
         assert.ok(result.data.text.includes('END-JSON'));
         assert.ok(result.data.text.includes('0000000001'));
-        const unknown = await request('tools/call', { name: 'browser_navigate', arguments: { ...scope, pageId: 'invented-page', url: fixtureUrl } });
+        const unknown = await request('tools/call', { name: 'navigate', arguments: { ...scope, pageId: 'invented-page', url: fixtureUrl } });
         assert.equal(unknown.isError, true);
         assert.equal((await client.sessions.listPages(scope.sessionId)).length, 1);
-        await callTool('browser_navigate', { ...scope, url: `${fixtureUrl}/cookie` });
-        const page = await callTool('browser_page_create', { sessionId: scope.sessionId, url: `${fixtureUrl}/echo` });
+        await callTool('navigate', { ...scope, url: `${fixtureUrl}/cookie` });
+        const page = await callTool('page_create', { sessionId: scope.sessionId, url: `${fixtureUrl}/echo` });
         assert.notEqual(page.pageId, scope.pageId);
         const second = { sessionId: scope.sessionId, pageId: page.pageId };
-        const cookie = await callTool('browser_extract', { ...second, format: 'text' });
+        const cookie = await callTool('extract', { ...second, format: 'text' });
         assert.equal(cookie.data.text, 'cookie:research=shared');
-        const listed = await callTool('browser_pages', { sessionId: scope.sessionId });
+        const listed = await callTool('pages', { sessionId: scope.sessionId });
         assert.deepEqual(listed.pages.map((p) => p.pageId).sort(), [scope.pageId, page.pageId].sort());
         for (const url of ['file:///private', `${fixtureUrl}/disconnect`]) {
-          const failed = await request('tools/call', { name: 'browser_page_create', arguments: { sessionId: scope.sessionId, url } });
+          const failed = await request('tools/call', { name: 'page_create', arguments: { sessionId: scope.sessionId, url } });
           assert.equal(failed.isError, true);
           assert.equal((await client.sessions.listPages(scope.sessionId)).length, 2, 'Failed create must not leave a registered page');
         }
-        const isolated = await callTool('browser_create', { tenantId: 'research-smoke', headless: !headed });
+        const isolated = await callTool('create', { tenantId: 'research-smoke', headless: !headed });
         try {
           const isolatedScope = { sessionId: isolated.sessionId, pageId: isolated.pageId };
-          await callTool('browser_navigate', { ...isolatedScope, url: `${fixtureUrl}/echo` });
-          assert.equal((await callTool('browser_extract', { ...isolatedScope, format: 'text' })).data.text, 'cookie:none');
+          await callTool('navigate', { ...isolatedScope, url: `${fixtureUrl}/echo` });
+          assert.equal((await callTool('extract', { ...isolatedScope, format: 'text' })).data.text, 'cookie:none');
         } finally { await client.sessions.close(isolated.sessionId); }
-        assert.equal((await callTool('browser_navigate', { ...second, url: `${fixtureUrl}/redirect` })).url, `${fixtureUrl}/echo`);
-        assert.equal((await callTool('browser_navigate', { ...second, url: `${fixtureUrl}/maintenance` })).status, 'success');
-        assert.equal((await callTool('browser_extract', { ...second, format: 'text' })).data.text, 'Maintenance');
+        assert.equal((await callTool('navigate', { ...second, url: `${fixtureUrl}/redirect` })).url, `${fixtureUrl}/echo`);
+        assert.equal((await callTool('navigate', { ...second, url: `${fixtureUrl}/maintenance` })).status, 'success');
+        assert.equal((await callTool('extract', { ...second, format: 'text' })).data.text, 'Maintenance');
         await client.sessions.closePage(scope.sessionId, page.pageId);
-        assert.equal((await callTool('browser_pages', { sessionId: scope.sessionId })).pages.length, 1);
+        assert.equal((await callTool('pages', { sessionId: scope.sessionId })).pages.length, 1);
         await client.sessions.close(scope.sessionId);
         explicitlyClosed = true;
         const endedRest = await fetch(`${baseUrl}/v1/sessions/${scope.sessionId}`, { headers: { authorization: `Bearer ${key}` } });
@@ -178,7 +178,7 @@ try {
         });
         const cliEnded = await runExecutable([...cliCommand, '--base-url', baseUrl, 'session', 'get', scope.sessionId], { env, expectedExitCode: 1 });
         assert.match(cliEnded.stderr, /close-cause=explicit_close/);
-        const mcpEnded = await request('tools/call', { name: 'browser_session', arguments: { sessionId: scope.sessionId } });
+        const mcpEnded = await request('tools/call', { name: 'session', arguments: { sessionId: scope.sessionId } });
         assert.equal(mcpEnded.isError, true);
         assert.match(mcpEnded.content[0].text, /close-cause=explicit_close/);
       } finally { if (!explicitlyClosed) await client.sessions.close(scope.sessionId); }
@@ -191,29 +191,29 @@ try {
     await checkMcp(mcpCommand, {
       expectedVersion: version, env: { ...env, AGENTBROWSER_API_KEY: grant.token, AGENTBROWSER_SESSION_ID: controlled.sessionId }, catalog: 'delegated', timeoutMs: 30_000,
       async exercise({ callTool, request }) {
-        const inspection = await callTool('browser_session', {});
+        const inspection = await callTool('session', {});
         assert.deepEqual(inspection.session.diagnostics, controlled.diagnostics);
         assert.deepEqual(inspection.session.engine, controlled.engine);
         assert.ok(inspection.control);
         assert.equal(inspection.session.lease.expiresAt, controlled.lease.expiresAt);
         assert.ok(Number.isSafeInteger(inspection.session.lease.sampledAt));
         const args = { url: `${fixtureUrl}/echo`, operationId: 'controlled-page-1' };
-        const page = await callTool('browser_page_create', args);
+        const page = await callTool('page_create', args);
         // Model a lost first result: use only known operation ID + inventory afterwards.
-        const replay = await request('tools/call', { name: 'browser_page_create', arguments: args });
+        const replay = await request('tools/call', { name: 'page_create', arguments: args });
         assert.equal(replay.isError, true);
         assert.match(replay.content[0].text, /OPERATION_RECORDED/);
-        const conflict = await request('tools/call', { name: 'browser_page_create', arguments: { ...args, url: `${fixtureUrl}/maintenance` } });
+        const conflict = await request('tools/call', { name: 'page_create', arguments: { ...args, url: `${fixtureUrl}/maintenance` } });
         assert.equal(conflict.isError, true);
         assert.match(conflict.content[0].text, /OPERATION_CONFLICT/);
-        const status = await callTool('browser_operation', { operationId: args.operationId });
+        const status = await callTool('operation', { operationId: args.operationId });
         assert.equal(status.status, 'completed');
         assert.equal(status.pageId, undefined, 'No result correlation is promised');
-        assert.deepEqual((await callTool('browser_pages', {})).pages.map((p) => p.pageId), [page.pageId]);
-        const wrong = await request('tools/call', { name: 'browser_page_create', arguments: { ...args, sessionId: 'other' } });
+        assert.deepEqual((await callTool('pages', {})).pages.map((p) => p.pageId), [page.pageId]);
+        const wrong = await request('tools/call', { name: 'page_create', arguments: { ...args, sessionId: 'other' } });
         assert.equal(wrong.isError, true);
         await client.sessions.takeover(controlled.sessionId);
-        for (const [name, arguments_] of [['browser_page_create', { operationId: 'revoked-create' }], ['browser_pages', {}], ['browser_session', {}]]) {
+        for (const [name, arguments_] of [['page_create', { operationId: 'revoked-create' }], ['pages', {}], ['session', {}]]) {
           const revoked = await request('tools/call', { name, arguments: arguments_ });
           assert.equal(revoked.isError, true, 'An old grant cannot list or create after takeover');
           assert.ok(!JSON.stringify(revoked).includes('idleExpiresAt'));

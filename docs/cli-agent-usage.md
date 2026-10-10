@@ -41,7 +41,7 @@ agentbrowser snapshot SESSION PAGE --max-elements 40
 ```
 
 The visible window belongs to the **server host**. A fresh isolated session does not
-inherit a daily Chrome profile. MCP `browser_create` differs from CLI creation: it
+inherit a daily Chrome profile. MCP `create` differs from CLI creation: it
 also provisions an initial page and returns both IDs. Cookie seeding is only an
 attempt to reuse authentication; verify the expected signed-in UI afterward.
 
@@ -335,7 +335,10 @@ Rules that matter to an agent:
 2-space indentation. The default text rendering prints the projection echo,
 the continuation cursor, `[redacted]` markers and the focused element, so the
 cheapest surface is safe to script against. The same fields flow through the
-MCP `browser_observe` schema and the REST API.
+MCP `observe` schema and the REST API. For bulk capture without context cost,
+`observe --output /private/path/obs.json` writes the full observation to a new
+0600 file and prints an identity receipt. Agents can load the whole loop as a
+skill: `docs/skills/agentbrowser-cli/SKILL.md`.
 
 ### Extraction output budgets (after 1.10.1)
 
@@ -415,11 +418,11 @@ output: use `--json` for structured results; raw HTML is sensitive even in JSON 
 | Need | Surface today |
 | --- | --- |
 | Current semantic targets | CLI `snapshot` / `observe`; corresponding MCP tools |
-| Explicit bounded ordered steps | CLI `plan`; MCP `browser_plan` |
-| One interaction | CLI `act <command>`; MCP `browser_act` |
-| Qualified native scoped bulk forms | CLI `autofill`, SDK/REST autofill or MCP `browser_autofill` |
+| Explicit bounded ordered steps | CLI `plan`; MCP `plan` |
+| One interaction | CLI `act <command>`; MCP `act` |
+| Qualified native scoped bulk forms | CLI `autofill`, SDK/REST autofill or MCP `autofill` |
 | Plan plus independently registered outcome verifier | CLI `outcome` or SDK/REST outcome; MCP has no outcome tool |
-| Uncertain delegated mutation | CLI `session operation`; delegated MCP `browser_operation` |
+| Uncertain delegated mutation | CLI `session operation`; delegated MCP `operation` |
 | Offline finalized regression evaluation | CLI `test evaluate`; setup, observations and cleanup stay application-owned |
 | Durable workflow recovery | Planned; operation records do not survive a service restart |
 

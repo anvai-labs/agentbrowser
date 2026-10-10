@@ -54,10 +54,10 @@ it('shares service sessions across stdio bridges without replaying a disconnecte
       key: 'Tab',
       operationId: 'shared-write',
     };
-    const pending = call(first, 'browser_act', action);
+    const pending = call(first, 'act', action);
     const disconnected = expect(pending).rejects.toThrow('closed');
     await entered.promise;
-    const duplicate = await call(second, 'browser_act', action);
+    const duplicate = await call(second, 'act', action);
     expect(duplicate.isError).toBe(true);
     expect(duplicate.content[0].text).toContain('OPERATION_RECORDED');
     expect(effects).toBe(1);
@@ -69,20 +69,20 @@ it('shares service sessions across stdio bridges without replaying a disconnecte
       expect((await owner.sessions.control(sessionId)).busy).toBe(false)
     );
     const replacement = await attach();
-    const state = JSON.parse((await call(replacement, 'browser_session')).content[0].text);
+    const state = JSON.parse((await call(replacement, 'session')).content[0].text);
     expect(state.control.cursor).toEqual(cursor);
     expect(state.pages.map((page: { pageId: string }) => page.pageId).sort()).toEqual(
       [firstPage.pageId, secondPage.pageId].sort()
     );
     const receipt = JSON.parse(
-      (await call(second, 'browser_operation', { operationId: 'shared-write' })).content[0].text
+      (await call(second, 'operation', { operationId: 'shared-write' })).content[0].text
     );
     expect(receipt).toMatchObject({ status: 'completed', dispatched: true });
-    expect((await call(replacement, 'browser_act', action)).isError).toBe(true);
+    expect((await call(replacement, 'act', action)).isError).toBe(true);
     expect(effects).toBe(1);
     await owner.sessions.takeover(sessionId);
     for (const harness of [second, replacement])
-      expect((await call(harness, 'browser_session')).isError).toBe(true);
+      expect((await call(harness, 'session')).isError).toBe(true);
     await owner.sessions.closePage(sessionId, firstPage.pageId);
     expect((await owner.sessions.listPages(sessionId)).map((page) => page.pageId)).toEqual([
       secondPage.pageId,
@@ -91,10 +91,10 @@ it('shares service sessions across stdio bridges without replaying a disconnecte
     const fresh = await owner.sessions.delegate(sessionId, nextReview.epoch);
     expect(fresh.cursor.bindingGeneration).not.toBe(cursor.bindingGeneration);
     const resumed = await attach(fresh.token);
-    const resumedState = JSON.parse((await call(resumed, 'browser_session')).content[0].text);
+    const resumedState = JSON.parse((await call(resumed, 'session')).content[0].text);
     expect(resumedState.control.cursor).toEqual(fresh.cursor);
     expect(resumedState.pages[0].pageId).toBe(secondPage.pageId);
-    expect((await call(second, 'browser_session')).isError).toBe(true);
+    expect((await call(second, 'session')).isError).toBe(true);
     expect(effects).toBe(1);
   } finally {
     release.resolve();
