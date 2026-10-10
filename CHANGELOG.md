@@ -7,6 +7,42 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — compact observation output (CLI-first agent token reduction)
+
+Design review and prior art: `docs/agent-handoffs/AGENTBROWSER_COMPACT_OUTPUT_REVIEW_2026-10-09.md`.
+Measured on the OVH-Manager-shaped benchmark fixture (373 elements) against real Chromium:
+full observe 27,462 B vs role+name projection 986 B and dialog scope 1,305 B — **96% reduction**
+with the dialog's checkboxes found even where the default 300-element window truncated them away.
+
+- **`observe` compact projection (opt-in)**: `roles` (exact), `name` (case-insensitive
+  substring on names only, never values), `scopeRef` (subtree slice within the scope
+  element's snapshot block), `limit`, and `includeFields` (`href`/`attributes`/`required`;
+  the protected core — `ref`, `role`, `name`, `value`, `valueRedacted`, `checked`, `risk`,
+  `focused`, non-default `visible`/`enabled`, `depth`/`block` — is never droppable).
+  Responses carry a `projection` echo (`matched`/`total`) so a subset can never read as
+  the whole page. Projection runs after secret redaction and before the byte budget;
+  refs keep being minted over the full page, so filtered-out elements stay actionable.
+- **Scope refs obey ADR-004**: an older-revision scope fails `STALE_TARGET`, a removed
+  element fails `TARGET_NOT_FOUND` — never a silent empty result. Names cap at 200 chars
+  (`nameTruncated`, mirroring `hrefTruncated`). Under `sinceRevision`, `changes` are
+  filtered by the same predicate.
+- **Element `depth`/`block` metadata** (engine a11y parse, stamped only when non-zero):
+  block-local nesting and merged-frame block identity — the basis for scope slicing;
+  flat top-level output is byte-identical.
+- **Element-list cursors address page ordinals** under projection (`remaining` counts
+  matches only); `budgetObservation` gained an `ordinals` mode whose identity case
+  reproduces the previous index arithmetic exactly.
+- **CLI**: `--roles/--name/--scope-ref/--limit/--include-fields` on `observe`;
+  `--json` is minified by default with a new `--pretty` flag; the default text render
+  now prints the continuation cursor (`--continue-from N (K elements remain)`),
+  `[redacted]` markers and the focused element, plus the projection echo. An older
+  server's rejection of projection options maps to an actionable error.
+- MCP `browser_observe` and the REST API pick the projection fields up from the shared
+  protocol schema (no adapter changes); OpenAPI and the MCP catalog digest regenerated.
+- Benchmarks: `/ovh` fixture and `runCompactProjectionBenchmark` A/B (success parity is
+  part of the `benchmarks run real` gate). The act result's existing lean keep-list is
+  pinned by a regression test (`act-response-shape.test.ts`).
+
 ## [1.15.2] — 2026-10-06
 
 ### Security — TD-BROWSER-13: observation secret redaction (release blocker)
