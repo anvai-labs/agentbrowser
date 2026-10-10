@@ -396,7 +396,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
     {
       name: 'snapshot',
       requiredCapabilities: ['page.observe'],
-      description: `${INTERACTION_GUIDANCE.snapshot} Returns url, title, revision, fields ({ref, role, label}) and adaptive mode. Pass controls:true to also mint custom widget controls from a SEPARATE projected pass (the fields budget can never cut them; controlsProjection/controlsContinuation disclose truncation), each carrying row/section context for generic-named menus (e.g. "Access: No access" + "Contents — Repository permissions"). Use autofill for supported native forms. In verified mode, plan requires a stricter role+label match when remapping stale refs. Degraded snapshots can omit custom widgets; do not treat missing fields as absent from the page.`,
+      description: `${INTERACTION_GUIDANCE.snapshot} Returns url, title, revision, fields ({ref, role, label}) and adaptive mode. Pass controls:true to also mint custom widget controls, PROJECTED from the same single observation and budgeted separately from fields (controlsProjection discloses matched/total), each carrying row/section context for generic-named menus (e.g. "Access: No access" + "Contents — Repository permissions"). Use autofill for supported native forms. In verified mode, plan requires a stricter role+label match when remapping stale refs. Degraded snapshots can omit custom widgets; do not treat missing fields as absent from the page.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -412,10 +412,23 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
       },
       handler: async (args) => {
         const [sessionId, pageId] = sessionAndPage(args);
+        // Round-6/F6: stringly-typed 'true' from an LLM client must never
+        // be a silent no-op that reads as "no custom controls".
+        const controls = args.controls;
+        if (
+          controls !== undefined &&
+          controls !== true &&
+          controls !== false &&
+          controls !== 'true' &&
+          controls !== 'false'
+        ) {
+          throw new UsageError('controls must be a boolean');
+        }
+        const wantsControls = controls === true || controls === 'true';
         return await client.sessions.snapshot(
           sessionId,
           pageId,
-          ...(args.controls === true ? [{ controls: true } as const] : [])
+          ...(wantsControls ? [{ controls: true } as const] : [])
         );
       },
     },

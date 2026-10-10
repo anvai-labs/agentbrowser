@@ -2320,6 +2320,9 @@ class PlaywrightPage implements EnginePage {
   /** Include tokens the most recent observe ran with (tryRemap re-observes with them). */
   private lastObservationInclude: ObservationRequest['include'] = undefined;
   private refStore = new Map<string, StoredElement>();
+  /** Base (non-enrichment) element count of the last observation — the
+   * changed-detection baseline that enrichment toggles cannot perturb. */
+  private lastBaseElementCount: number | undefined;
   /** Owning page/frame for elements merged from frame traversal (T6). */
   private frameOfElement = new WeakMap<
     StoredElement,
@@ -2910,12 +2913,22 @@ class PlaywrightPage implements EnginePage {
         // Round-5/F5: a frame detaching between the two passes must degrade
         // that root to "unavailable" (like the frame-snapshot loop), not
         // reject the whole observation after main-frame work succeeded.
+        // Round-6/F1: no silent fallback. Main-frame scan errors propagate
+        // (an empty count would strip all context while looking like a
+        // fact about the page); a failed FRAME root is DISCLOSED via
+        // frameCoverage, exactly like the frame-snapshot loop.
         const describeFormControlNamesSafely = async (
           root: import('playwright').Page | import('playwright').Frame
         ): Promise<string[]> => {
           try {
             return await this.describeFormControlNames(root);
-          } catch {
+          } catch (error) {
+            if (root === this.page) throw error;
+            frameCoverage.push({
+              frame: 'form-controls scan',
+              status: 'unavailable',
+              reason: 'names pass failed',
+            });
             return [];
           }
         };
@@ -2924,7 +2937,13 @@ class PlaywrightPage implements EnginePage {
         ): Promise<FormControlInfo[]> => {
           try {
             return await this.describeFormControls(root, pageWideNameCounts);
-          } catch {
+          } catch (error) {
+            if (root === this.page) throw error;
+            frameCoverage.push({
+              frame: 'form-controls scan',
+              status: 'unavailable',
+              reason: 'derive pass failed',
+            });
             return [];
           }
         };
@@ -2976,10 +2995,18 @@ class PlaywrightPage implements EnginePage {
     // within a revision (document order), so the same element maps to the
     // same ref until the page mutates.
     const previous = this.bindings;
-    const previousCount = this.refStore.size;
+    // Changed-detection counts ONLY the aria-snapshot base elements
+    // (adversarial review round-6/F4): minted formControls are an opt-in
+    // ENRICHMENT overlay, not page state — toggling include:["formControls"]
+    // between calls must not bump the revision and invalidate every ref the
+    // caller holds (snapshot controls=true ↔ plain observe alternation).
+    const baseCount = (rows: Array<{ role: string }>): number =>
+      rows.filter((row) => row.role !== 'control' && row.role !== 'fileinput').length;
+    const previousCount = this.lastBaseElementCount ?? 0;
+    this.lastBaseElementCount = baseCount(elements);
     this.bindings = new Map();
     this.refStore.clear();
-    let changed = previousCount > 0 && previousCount !== elements.length;
+    let changed = previousCount > 0 && previousCount !== this.lastBaseElementCount;
     // (role, name) ordinals are PER FRAME: the same label in two frames is
     // two distinct bindable elements, each resolving inside its own frame.
     const ordinals = new Map<object, Map<string, number>>();
@@ -3585,7 +3612,10 @@ class PlaywrightPage implements EnginePage {
     // unit-testable without Chromium (round-3/F8).
     const described = await root
       .locator(FORM_CONTROL_SELECTOR)
-      .evaluateAll(g1DescribePageFunction, pageWideNameCounts);
+      .evaluateAll(g1DescribePageFunction, {
+        pageWideNameCounts,
+        cap: MAX_FORM_CONTROLS,
+      });
     return described.slice(0, MAX_FORM_CONTROLS);
   }
 

@@ -212,14 +212,15 @@ export interface PageSnapshot {
   mode: 'stable' | 'verified';
   fields: Array<{ ref: string; role: string; label: string }>;
   /**
-   * Opt-in minted custom controls (controls: true): a SEPARATE projected
-   * pass, so the fields budget can never cut them; truncation of the list
-   * itself is disclosed via controlsProjection/controlsContinuation.
-   * SnapshotControl is declared once in @agentbrowser/protocol (ADR-015).
+   * Opt-in minted custom controls (controls: true): PROJECTED from the same
+   * single observation and budgeted separately from fields, so neither can
+   * cut the other; truncation of the list is disclosed via
+   * controlsProjection (matched < total). SnapshotControl is declared once
+   * in @agentbrowser/protocol (ADR-015).
    */
   controls?: import('@agentbrowser/protocol').SnapshotControl[];
+  /** matched = returned, total = minted; matched < total = truncated list. */
   controlsProjection?: { matched: number; total: number };
-  controlsContinuation?: { nextOrdinal: number; remaining: number };
   truncated?: boolean;
   /**
    * True when the whole-page ariaSnapshot budget was exceeded and `fields`

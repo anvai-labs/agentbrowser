@@ -2463,17 +2463,18 @@ export class AgentBrowserService {
     mode: 'stable' | 'verified';
     fields: Array<{ ref: string; role: string; label: string }>;
     /**
-     * Opt-in minted custom controls (review round-3/F5 + round-4/F1): a
-     * SEPARATE observe pass projected to role "control", so the fields
-     * element budget can never cut them. Truncation of the controls list
-     * itself is disclosed via controlsProjection (matched/total) and
-     * controlsContinuation. Engines without the formControls enrichment
-     * (Safari, Obscura) mint nothing — an empty array means "none minted",
-     * not "page has none" (ADR-021 scope).
+     * Opt-in minted custom controls (rounds 3-6): PROJECTED from the single
+     * shared engine observe (never a second observe — that bumped revisions
+     * and invalidated the same response's refs), budgeted separately from
+     * fields so neither can cut the other. controlsProjection discloses
+     * matched/total for the controls list itself. Engines without the
+     * formControls enrichment (Safari, Obscura) mint nothing — an empty
+     * array means "none minted", not "page has none" (ADR-021 scope).
      */
     controls?: SnapshotControl[];
+    /** matched = controls returned, total = controls minted in the shared
+     * pass; matched < total discloses truncation of the controls list. */
     controlsProjection?: { matched: number; total: number };
-    controlsContinuation?: { nextOrdinal: number; remaining: number };
     truncated?: boolean;
     degraded?: boolean;
     degradedReason?:
@@ -2507,15 +2508,18 @@ export class AgentBrowserService {
     // Controls view: same shared pass, projected to role "control" —
     // truncation disclosed via matched/total + continuation.
     let controlsBlock:
-      | {
-          controls: SnapshotControl[];
-          controlsProjection: { matched: number; total: number };
-          controlsContinuation?: { nextOrdinal: number; remaining: number };
-        }
+      | { controls: SnapshotControl[]; controlsProjection: { matched: number; total: number } }
       | undefined;
     if (bounds?.controls === true) {
+      // Round-6/F2+F3: matched/total are ABOUT THE CONTROLS LIST — the
+      // projection echo's total counts every shared-pass element (aria
+      // fields included), which reads as truncation. The budget is a large
+      // explicit cap with truncation disclosed by matched < total; no
+      // resume cursor is exposed (snapshot has no continueFrom surface, so
+      // a cursor would be permanently dead).
+      const mintedTotal = redacted.elements.filter((e) => e.role === 'control').length;
       const projected = projectObservation(redacted, { roles: ['control'] });
-      const budgetedControls = budgetObservation(projected, {});
+      const budgetedControls = budgetObservation(projected, { maxElements: 2000 });
       controlsBlock = {
         controls: budgetedControls.elements.map(
           (c): SnapshotControl => ({
@@ -2526,12 +2530,9 @@ export class AgentBrowserService {
           })
         ),
         controlsProjection: {
-          matched: projected.projection?.matched ?? 0,
-          total: projected.projection?.total ?? 0,
+          matched: budgetedControls.elements.length,
+          total: mintedTotal,
         },
-        ...(budgetedControls.continuation !== undefined
-          ? { controlsContinuation: budgetedControls.continuation }
-          : {}),
       };
     }
     return {
@@ -2547,9 +2548,6 @@ export class AgentBrowserService {
       ...(controlsBlock?.controls !== undefined ? { controls: controlsBlock.controls } : {}),
       ...(controlsBlock?.controlsProjection !== undefined
         ? { controlsProjection: controlsBlock.controlsProjection }
-        : {}),
-      ...(controlsBlock?.controlsContinuation !== undefined
-        ? { controlsContinuation: controlsBlock.controlsContinuation }
         : {}),
       ...(fieldsBudget.truncated === true ? { truncated: true } : {}),
       // Whole-body ariaSnapshot fallback signal (see observe()): a

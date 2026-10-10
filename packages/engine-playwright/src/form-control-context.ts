@@ -63,10 +63,13 @@ export function g1CollectNamesPageFunction(nodes: G1Element[]): string[] {
  * one scan root, using page-wide name counts from pass one. Self-contained
  * for evaluateAll serialization; unit-testable with structural mocks.
  */
-export function g1DescribePageFunction(
-  nodes: G1Element[],
-  pageWideNameCounts: Record<string, number>
-): G1Described[] {
+export interface G1DescribeArgs {
+  pageWideNameCounts: Record<string, number>;
+  /** Mint cap from the host's MAX_FORM_CONTROLS — one source of truth. */
+  cap: number;
+}
+
+export function g1DescribePageFunction(nodes: G1Element[], args: G1DescribeArgs): G1Described[] {
   const SECTIONING = 'section, article, fieldset, main';
   const ROW_SELECTOR = 'li, tr, [role="row"]';
   const LABEL_SELECTOR = 'strong, label, th';
@@ -75,8 +78,13 @@ export function g1DescribePageFunction(
 
   type El = G1Element;
 
-  const norm = (s: string | null | undefined): string | undefined =>
-    s?.replace(/\s+/g, ' ').trim().slice(0, 120) || undefined;
+  // Round-6/F7: code-point clamp — a UTF-16 slice can split a surrogate
+  // pair at the 120 boundary (same class as round-4/F8).
+  const norm = (s: string | null | undefined): string | undefined => {
+    const collapsed = s?.replace(/\s+/g, ' ').trim();
+    if (!collapsed) return undefined;
+    return Array.from(collapsed).slice(0, 120).join('') || undefined;
+  };
 
   const basicName = (node: El): string | undefined => {
     const text = node.textContent?.trim().slice(0, 200) || undefined;
@@ -192,7 +200,8 @@ export function g1DescribePageFunction(
 
   // Round-5/F4: derive only the nodes the host will keep (mint cap) —
   // the page-side derivation cost is bounded by the advertised budget.
-  return nodes.slice(0, 200).map((node, index) => {
+  const { pageWideNameCounts, cap } = args;
+  return nodes.slice(0, cap).map((node, index) => {
     const automationId = node.getAttribute('data-automation-id')?.trim() || undefined;
     const name = basicName(node);
     const described: G1Described = {

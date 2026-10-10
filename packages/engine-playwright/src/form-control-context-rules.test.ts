@@ -101,7 +101,10 @@ describe('g1 page-function naming rules (unit)', () => {
   it('derives context for duplicated names from the row label', () => {
     const a = controlInRow('Contents', 'Access: No access');
     const b = controlInRow('Pull requests', 'Access: No access');
-    const described = g1DescribePageFunction([a, b], { 'Access: No access': 2 });
+    const described = g1DescribePageFunction([a, b], {
+      pageWideNameCounts: { 'Access: No access': 2 },
+      cap: 200,
+    });
     expect(described[0]?.context).toBe('Contents');
     expect(described[1]?.context).toBe('Pull requests');
   });
@@ -110,8 +113,8 @@ describe('g1 page-function naming rules (unit)', () => {
     const a = controlInRow('Contents', 'Access: No access');
     const unique = controlInRow('Solo', 'A unique menu');
     const described = g1DescribePageFunction([a, unique], {
-      'Access: No access': 1,
-      'A unique menu': 1,
+      pageWideNameCounts: { 'Access: No access': 1, 'A unique menu': 1 },
+      cap: 200,
     });
     expect(described[0]?.context).toBeUndefined();
     expect(described[1]?.context).toBeUndefined();
@@ -132,7 +135,10 @@ describe('g1 page-function naming rules (unit)', () => {
     (row as G1Element & { querySelectorAll: (s: string) => G1Element[] }).querySelectorAll = (
       s: string
     ) => (s.includes('strong') ? [strong] : []);
-    const described = g1DescribePageFunction([control], { 'Access: No access': 2 });
+    const described = g1DescribePageFunction([control], {
+      pageWideNameCounts: { 'Access: No access': 2 },
+      cap: 200,
+    });
     expect(described[0]?.context).toBeUndefined();
   });
 
@@ -158,7 +164,10 @@ describe('g1 page-function naming rules (unit)', () => {
       if (s.includes('button') || s.includes('aria-haspopup')) return kids[0] as G1Element;
       return null;
     };
-    const described = g1DescribePageFunction([control], { 'Access: No access': 2 });
+    const described = g1DescribePageFunction([control], {
+      pageWideNameCounts: { 'Access: No access': 2 },
+      cap: 200,
+    });
     expect(described[0]?.context).toBeUndefined();
   });
 });
@@ -177,11 +186,14 @@ describe('pass-one/pass-two name parity (round-4/F4)', () => {
     // If these two derivations ever drift (a name source edited in one
     // pass only), needsContext evaluates against stale counts and context
     // silently mis-gates — this pin fails first.
-    for (const described of g1DescribePageFunction(fixtures, counts)) {
+    for (const described of g1DescribePageFunction(fixtures, {
+      pageWideNameCounts: counts,
+      cap: 200,
+    })) {
       expect(counts[described.name as string]).toBeGreaterThan(0);
     }
     expect(g1CollectNamesPageFunction(fixtures)).toEqual(
-      g1DescribePageFunction(fixtures, {}).map((d) => d.name)
+      g1DescribePageFunction(fixtures, { pageWideNameCounts: {}, cap: 200 }).map((d) => d.name)
     );
   });
 });

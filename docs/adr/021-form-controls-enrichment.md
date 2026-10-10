@@ -86,9 +86,10 @@ sectioning ancestor — under these rules:
   climbs outward; headingless sections inherit nothing from siblings.
 - The protocol field is optional (`context`, maxLength 300; the normalizer
   clamps), protected core under compact projection, and additive to every
-  surface: observe/CLI directly; snapshot exposes opt-in controls[] (a
-  SEPARATE projected pass, so the fields budget can never cut it, with
-  matched/total + continuation disclosure; declared once as
-  SnapshotControl in the protocol). Engines without this enrichment
+  surface: observe/CLI directly; snapshot exposes opt-in controls[]
+  PROJECTED from the same single observation (never a second observe,
+  which would trip changed-detection and churn revisions) and budgeted
+  separately from fields, with matched/total disclosure (declared once
+  as SnapshotControl in the protocol). Engines without this enrichment
   (Safari, Obscura) mint no controls — an empty array there means "none
   minted", not "the page has none".
