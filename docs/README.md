@@ -196,6 +196,6 @@ New ADRs should use the [ADR template](adr/000-template.md).
 ---
 
 **Status**: 🟢 MVP shipped; post-MVP TDs in active development
-**Last Updated**: 2026-10-10 (v1.16.1: Windows CI + winget)
+**Last Updated**: 2026-10-10 (v1.16.1 released)
 
 - [Bulk form-fill orchestration](bulk-autofill.md): structured payloads, block identity and verification contracts.
