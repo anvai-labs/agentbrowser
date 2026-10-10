@@ -210,7 +210,7 @@ export interface PageSnapshot {
   title: string;
   revision: number;
   mode: 'stable' | 'verified';
-  fields: Array<{ ref: string; role: string; label: string }>;
+  fields: Array<{ ref: string; role: string; label: string; context?: string }>;
   truncated?: boolean;
   /**
    * True when the whole-page ariaSnapshot budget was exceeded and `fields`
@@ -687,11 +687,12 @@ export class SessionsClient {
   async snapshot(
     sessionId: string,
     pageId: string,
-    bounds?: { maxElements?: number; maxBytes?: number }
+    bounds?: { maxElements?: number; maxBytes?: number; controls?: boolean }
   ): Promise<PageSnapshot> {
     const query = new URLSearchParams();
     if (bounds?.maxElements !== undefined) query.set('maxElements', String(bounds.maxElements));
     if (bounds?.maxBytes !== undefined) query.set('maxBytes', String(bounds.maxBytes));
+    if (bounds?.controls === true) query.set('controls', 'true');
     const qs = query.toString();
     return this.http.requestJson(
       `/v1/sessions/${sessionId}/pages/${pageId}/snapshot${qs ? `?${qs}` : ''}`

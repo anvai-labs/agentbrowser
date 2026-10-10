@@ -3575,31 +3575,37 @@ class PlaywrightPage implements EnginePage {
           parentElement: El | null;
         }
         const els = nodes.map((n) => n as unknown as El);
-        // Semantic row/label detection only — no site-specific class names
-        // (review G1/F7): structure (li/tr/row/dl/dd), label elements, and
-        // aria-labelledby cover the Primer-style pages this targets.
+        // Semantic row/label detection only — structural selectors (li, tr,
+        // [role=row], dl/dd) plus label elements and aria-labelledby; no
+        // site or framework class names (review G1 round-2/F6).
         const norm = (s: string | null | undefined): string | undefined =>
           s?.replace(/\s+/g, ' ').trim().slice(0, 120) || undefined;
-        const rowLabelOf = (node: El): string | undefined => {
+        const rowLabelOf = (node: El, ownName: string | undefined): string | undefined => {
           const labelledBy = node.getAttribute('aria-labelledby');
           if (labelledBy) {
             for (const id of labelledBy.split(/\s+/)) {
               const source = node.ownerDocument.getElementById(id);
-              if (source && !node.contains(source)) {
-                const label = norm(source.textContent);
-                if (label) return label;
-              }
+              if (!source || node.contains(source)) continue;
+              const label = norm(source.textContent);
+              // A labelledby source that merely repeats the control's own
+              // generic name is not a row label — keep looking (round-2/F1).
+              if (label && label !== ownName) return label;
             }
           }
+          // dl groups are dt/dd-scoped: a dd takes its preceding dt; when the
+          // preceding sibling is another dd (multi-dd groups) there is no row
+          // label — never scan the whole dl and attribute another row's
+          // label (round-2/F5).
           const dd = node.closest('dd');
           if (dd) {
             const dt = dd.previousElementSibling;
             if (dt?.tagName === 'DT') {
               const label = norm(dt.textContent);
-              if (label) return label;
+              if (label && label !== ownName) return label;
             }
+            return undefined;
           }
-          const row = node.closest('li, tr, [role="row"], .form-group, .field, dl');
+          const row = node.closest('li, tr, [role="row"]');
           if (!row) return undefined;
           const candidates = row.querySelectorAll('strong, label, th');
           for (const candidate of candidates) {
@@ -3611,30 +3617,46 @@ class PlaywrightPage implements EnginePage {
           }
           return undefined;
         };
+        // Section attribution (round-1/F3 + round-2/F2): a heading is claimed
+        // only when it belongs to the SAME sectioning scope as the row. Walk
+        // backwards from the row inside its nearest sectioning ancestor
+        // (section/article/fieldset/main) — across siblings and into their
+        // subtrees — accepting only headings whose own nearest sectioning
+        // ancestor IS that scope; then climb outward. A headingless section
+        // therefore inherits nothing from a preceding sibling section, while
+        // flat pages (headings as siblings under main) still resolve.
+        const SECTIONING = 'section, article, fieldset, main';
         const headingFor = (row: El): string | undefined => {
-          // Walk backwards; descend into preceding sibling subtrees so a
-          // <section><h2>…</h2>…</section> before the row finds its own
-          // heading instead of an earlier section's (review G1/F3).
-          let cursor: El | null = row;
-          while (cursor) {
-            const sibling: El | null = cursor.previousElementSibling;
-            if (sibling) {
-              if (/^H[1-4]$/.test(sibling.tagName)) {
-                return norm(sibling.textContent) ?? undefined;
+          let scope: El | null = row.closest(SECTIONING);
+          while (scope) {
+            const scopeId = scope;
+            const scopedHeadingText = (heading: El): string | undefined =>
+              heading.closest(SECTIONING) === scopeId
+                ? (norm(heading.textContent) ?? undefined)
+                : undefined;
+            let cursor: El = row;
+            while (cursor) {
+              const sibling: El | null = cursor.previousElementSibling;
+              if (sibling) {
+                if (/^H[1-4]$/.test(sibling.tagName)) {
+                  const text = scopedHeadingText(sibling);
+                  if (text) return text;
+                } else {
+                  const nested = sibling.querySelectorAll('h1, h2, h3, h4');
+                  for (let i = nested.length - 1; i >= 0; i -= 1) {
+                    const text = scopedHeadingText(nested[i] as El);
+                    if (text) return text;
+                  }
+                }
+                cursor = sibling;
+                continue;
               }
-              const headings = sibling.querySelectorAll('h1, h2, h3, h4');
-              const nested = headings[headings.length - 1];
-              if (nested !== undefined) {
-                return norm(nested.textContent) ?? undefined;
-              }
-              cursor = sibling;
-              continue;
+              if (cursor === scopeId) break;
+              const parent: El | null = cursor.parentElement;
+              if (parent === null) break;
+              cursor = parent;
             }
-            cursor = cursor.parentElement;
-            if (!cursor || cursor.tagName === 'MAIN' || cursor.tagName === 'BODY') break;
-            if (/^H[1-4]$/.test(cursor.tagName)) {
-              return norm(cursor.textContent) ?? undefined;
-            }
+            scope = scope.parentElement ? (scope.parentElement as El).closest(SECTIONING) : null;
           }
           return undefined;
         };
@@ -3665,13 +3687,16 @@ class PlaywrightPage implements EnginePage {
           if (b.name !== undefined) nameCounts.set(b.name, (nameCounts.get(b.name) ?? 0) + 1);
         }
         return basics.map((b) => {
+          // Never ship the live-DOM handle back through evaluateAll's
+          // serialization (round-2/F3): strip it from every return path.
+          const { node: _node, ...serializable } = b;
           const needsContext = b.name === undefined || (nameCounts.get(b.name) ?? 0) >= 2;
-          if (!needsContext) return b;
-          const rowLabel = rowLabelOf(b.node);
-          if (rowLabel === undefined) return b;
+          if (!needsContext) return serializable;
+          const rowLabel = rowLabelOf(b.node, b.name);
+          if (rowLabel === undefined) return serializable;
           const heading = headingFor(b.node);
           return {
-            ...b,
+            ...serializable,
             ...(heading ? { context: `${rowLabel} — ${heading}` } : { context: rowLabel }),
           };
         });

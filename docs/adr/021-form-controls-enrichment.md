@@ -64,3 +64,25 @@ Deliver `include:["formControls"]`:
 - The candidate selector is intentionally bounded and narrowed; operators can
   audit it in the engine source. Adding new candidate shapes is an engine
   change, not a caller change.
+
+## Addendum (2026-10-10): row/section context on minted controls
+
+G1 (docs/agent-handoffs/AGENTBROWSER_UI_GAPS_2026-10-10.md): pages whose
+custom menus share one generic accessible name (GitHub's permission editor
+renders 40+ "Access: No access" Primer menus) made minted refs
+indistinguishable. The enrichment now attaches `PageElement.context` — the
+nearest row label plus, when attributable, the DIRECT heading of the nearest
+sectioning ancestor — under these rules:
+
+- Context attaches only to controls whose name is absent or duplicated
+  page-wide; unique-named controls carry no context bytes.
+- Labels come from aria-labelledby (skipped when it merely repeats the
+  control's own name), dt of the enclosing dd group (no whole-dl fallback),
+  or strong/label/th in the enclosing li/tr/[role=row], excluding the
+  control's own subtree. Structural selectors only — no framework classes.
+- Section attribution walks outward through sectioning ancestors
+  (section/article/fieldset/main) and claims only their direct heading
+  children; headingless sections inherit nothing from siblings.
+- The protocol field is optional (`context`, maxLength 300; the normalizer
+  clamps), protected core under compact projection, and additive to every
+  surface (observe/CLI; snapshot carries it on fields opt-in).

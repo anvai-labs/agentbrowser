@@ -2454,13 +2454,13 @@ export class AgentBrowserService {
   async getSnapshot(
     sessionId: string,
     pageId: string,
-    bounds?: { maxElements?: number; maxBytes?: number }
+    bounds?: { maxElements?: number; maxBytes?: number; controls?: boolean }
   ): Promise<{
     url: string;
     title: string;
     revision: number;
     mode: 'stable' | 'verified';
-    fields: Array<{ ref: string; role: string; label: string }>;
+    fields: Array<{ ref: string; role: string; label: string; context?: string }>;
     truncated?: boolean;
     degraded?: boolean;
     degradedReason?:
@@ -2475,12 +2475,16 @@ export class AgentBrowserService {
       mode: 'interactive',
       ...(bounds?.maxElements !== undefined ? { maxElements: bounds.maxElements } : {}),
       ...(bounds?.maxBytes !== undefined ? { maxBytes: bounds.maxBytes } : {}),
+      // G1 parity (review round-2/F4): opt-in minted controls so the
+      // snapshot->plan round trip can address generic-named custom menus
+      // via context; default snapshots stay unchanged.
+      ...(bounds?.controls === true ? { include: ['formControls' as const] } : {}),
     });
     const view = state as unknown as {
       url?: string;
       title?: string;
       revision?: number;
-      elements?: Array<{ ref: string; role?: string; name?: string }>;
+      elements?: Array<{ ref: string; role?: string; name?: string; context?: string }>;
       truncated?: boolean;
       degraded?: boolean;
       degradedReason?:
@@ -2497,6 +2501,7 @@ export class AgentBrowserService {
         ref: e.ref,
         role: e.role ?? '',
         label: e.name ?? '',
+        ...(e.context !== undefined ? { context: e.context } : {}),
       })),
       ...(view.truncated === true ? { truncated: true } : {}),
       // Whole-body ariaSnapshot fallback signal (see observe()): a

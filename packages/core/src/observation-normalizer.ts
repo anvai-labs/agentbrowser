@@ -189,9 +189,11 @@ export class ObservationNormalizer {
         element.block = rawEl.block;
       }
 
-      // G1: row/section context for generic-named custom controls.
+      // G1: row/section context for generic-named custom controls. Clamped
+      // here so every engine (not just the Playwright 120+3+120 derivation)
+      // satisfies PageElementSchema's maxLength 300 (review round-2/F7).
       if (rawEl.context !== undefined) {
-        element.context = rawEl.context;
+        element.context = rawEl.context.slice(0, 300);
       }
 
       return element;

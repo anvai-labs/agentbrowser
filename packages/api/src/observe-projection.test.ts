@@ -340,5 +340,19 @@ describe('observe compact projection', () => {
       'Contents — Repository permissions',
       'Pull requests — Repository permissions',
     ]);
+
+    // Snapshot parity (round-2/F4): opt-in controls surface context on
+    // fields, so the snapshot->plan round trip can address generic-named
+    // menus; default snapshots stay control-free.
+    const plain = await service.getSnapshot(session.sessionId, pageId);
+    expect(plain.fields.some((f) => f.role === 'control')).toBe(false);
+    const withControls = await service.getSnapshot(session.sessionId, pageId, {
+      controls: true,
+    });
+    const controlFields = withControls.fields.filter((f) => f.role === 'control');
+    expect(controlFields.map((f) => f.context)).toEqual([
+      'Contents — Repository permissions',
+      'Pull requests — Repository permissions',
+    ]);
   });
 });
