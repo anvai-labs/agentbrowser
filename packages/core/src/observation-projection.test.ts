@@ -209,6 +209,56 @@ describe('observation projection', () => {
     expect(result.elements.map((e) => e.ref)).toEqual(['e7_0', 'e7_1']);
     expect(result.truncated).toBe(true);
     expect(result.continuation).toEqual({ nextOrdinal: 2, remaining: 3 });
+    // matched reports the PREDICATE count (5 checkboxes), not the windowed
+    // length — "3 of 5 returned" stays derivable from the cursor.
+    expect(result.projection).toMatchObject({ matched: 5, total: 5 });
+  });
+
+  it('empty opt-ins are no-ops: includeFields [], blank name, and empty roles pass through', () => {
+    const page = source([el(0, { role: 'link', name: 'A', href: 'https://e.com/a' })]);
+
+    expect(projectObservation(page, { includeFields: [] })).toBe(page);
+    expect(projectObservation(page, { name: '   ' })).toBe(page);
+    expect(projectObservation(page, { roles: [] })).toBe(page);
+    expect(projectionActive({ includeFields: [], name: '', roles: [] })).toBe(false);
+  });
+
+  it('keeps removed-element changes whose embedded element matches the predicate', () => {
+    // The sinceRevision diff: a checkbox and a link were removed; their
+    // changes carry OLD-revision refs that can never be in the surviving set.
+    const page = source([el(0, { role: 'textbox', name: 'Kept' })], {
+      revision: 7,
+      changes: [
+        {
+          ref: 'e6_1',
+          change: 'removed',
+          properties: {
+            element: { old: el(1, { role: 'checkbox', name: 'Policy A' }), new: null },
+          },
+        },
+        {
+          ref: 'e6_2',
+          change: 'removed',
+          properties: {
+            element: { old: el(2, { role: 'link', name: 'Nav' }), new: null },
+          },
+        },
+        {
+          ref: 'e7_0',
+          change: 'modified',
+          properties: { name: { old: 'k', new: 'Kept' } },
+        },
+      ],
+    });
+
+    const result = projectObservation(page, { roles: ['checkbox', 'textbox'] });
+
+    // The removed checkbox survives the predicate via its embedded element;
+    // the removed link does not match roles and is dropped.
+    expect(result.changes?.map((c) => [c.ref, c.change])).toEqual([
+      ['e6_1', 'removed'],
+      ['e7_0', 'modified'],
+    ]);
   });
 
   it('continueFrom resumes past consumed matches and walks every match exactly once', () => {

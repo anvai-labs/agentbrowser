@@ -54,12 +54,20 @@ const NAME_CAP = 200;
 
 export function projectionActive(projection: ObservationProjection | undefined): boolean {
   if (projection === undefined) return false;
+  // Empty opt-ins are no-ops, not activation: `includeFields: []` must never
+  // trigger full response reshaping (which would drop href/attributes the
+  // unprojected default always carries). Same for an empty roles list or a
+  // blank name needle.
+  const rolesActive = projection.roles !== undefined && projection.roles.length > 0;
+  const nameActive = projection.name !== undefined && projection.name.trim().length > 0;
+  const fieldsActive =
+    projection.includeFields !== undefined && projection.includeFields.length > 0;
   return (
-    projection.roles !== undefined ||
-    projection.name !== undefined ||
+    rolesActive ||
+    nameActive ||
     projection.scopeRef !== undefined ||
     projection.limit !== undefined ||
-    projection.includeFields !== undefined
+    fieldsActive
   );
 }
 
@@ -125,7 +133,10 @@ export function projectObservation(
     projection.roles !== undefined && projection.roles.length > 0
       ? new Set(projection.roles)
       : undefined;
-  const needle = projection.name !== undefined ? projection.name.toLowerCase() : undefined;
+  // Blank needles are inert (projectionActive already treats them as no-ops).
+  const trimmedName = projection.name?.trim();
+  const needle =
+    trimmedName !== undefined && trimmedName.length > 0 ? trimmedName.toLowerCase() : undefined;
 
   const matchesFilter = (element: PageElement): boolean => {
     if (allowedRefs !== undefined && !allowedRefs.has(element.ref)) return false;
@@ -162,7 +173,10 @@ export function projectObservation(
     ...(projection.roles !== undefined ? { roles: projection.roles } : {}),
     ...(projection.name !== undefined ? { name: projection.name } : {}),
     ...(projection.scopeRef !== undefined ? { scopeRef: projection.scopeRef } : {}),
-    matched: windowed.length,
+    // The PREDICATE match count, not the windowed length: "matched 100 of
+    // 373" with a limit window and continuation.remaining stays honest about
+    // how many matching elements exist, not just how many returned.
+    matched: matched.length,
     total,
   };
 
@@ -182,10 +196,12 @@ export function projectObservation(
     ...(focusedRef !== undefined ? { focusedRef } : {}),
     // A projection cursor points at the first unreturned MATCH (page ordinal);
     // when the window covers every match there is nothing left to resume here.
+    // `windowed` is a prefix slice of `matched`, so the first unreturned match
+    // is exactly matched[windowed.length].
     ...(remaining > 0
       ? {
           continuation: {
-            nextOrdinal: nextUnreturnedOrdinal(ordered, sourceOrder, matchesFilter, windowed),
+            nextOrdinal: parseRef(matched[windowed.length]?.ref ?? '')?.ordinal ?? 0,
             remaining,
           },
         }
@@ -194,35 +210,30 @@ export function projectObservation(
   };
 
   if (source.changes !== undefined) {
+    // Added/modified changes carry current-revision refs: keep them when the
+    // element survived the window. Removed changes carry the OLD revision's
+    // ref, which can never be in `surviving` — filter those by applying the
+    // roles/name predicate to the embedded element instead. A removal is the
+    // highest-value diff signal; it must never vanish just because the page
+    // moved on. (Scope membership of a removed element cannot be resolved
+    // against current refs, so scope filtering applies to current entries
+    // only.)
     result.changes = source.changes
-      .filter((change) => surviving.has(change.ref))
+      .filter((change) => {
+        if (surviving.has(change.ref)) return true;
+        if (change.change !== 'removed') return false;
+        const old = (change.properties.element as { old?: PageElement | null } | undefined)?.old;
+        if (old === null || old === undefined) return false;
+        if (roles !== undefined && !roles.has(old.role)) return false;
+        if (needle !== undefined && !(old.name ?? '').toLowerCase().includes(needle)) {
+          return false;
+        }
+        return true;
+      })
       .map((change) => shapeChange(change, shape));
   }
 
   return result;
-}
-
-/**
- * The first match after the returned window, as a page ordinal — the value a
- * follow-up call passes as continueFrom. Computed from the ordered full list
- * so it stays stable even when the response list was windowed.
- */
-function nextUnreturnedOrdinal(
-  ordered: PageElement[],
-  sourceOrder: Map<string, PageElement>,
-  matchesFilter: (element: PageElement) => boolean,
-  windowed: PageElement[]
-): number {
-  const last = windowed[windowed.length - 1];
-  if (last === undefined) return 0;
-  const lastOrdinal = parseRef(last.ref)?.ordinal ?? 0;
-  for (const el of ordered) {
-    const candidate = sourceOrder.get(el.ref);
-    if (candidate === undefined) continue;
-    const ordinal = parseRef(el.ref)?.ordinal ?? 0;
-    if (ordinal > lastOrdinal && matchesFilter(candidate)) return ordinal;
-  }
-  return lastOrdinal + 1;
 }
 
 /**

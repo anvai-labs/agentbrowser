@@ -241,4 +241,61 @@ describe('observe compact projection', () => {
     expect(diff.projection?.matched).toBeLessThanOrEqual(diff.projection?.total ?? 0);
     expect(changed.revision).toBeGreaterThan(baseline.revision);
   });
+
+  it('a removed element matching the filter appears in the projected diff', async () => {
+    const { service, session, pageId, fakePage } = await setup();
+
+    const baseline = await service.observe(session.sessionId, pageId, {});
+    // Replace the page keeping the nav/dialog (same engine refs) but with
+    // FRESH engine refs for the new buttons — the checkboxes' engine refs
+    // genuinely vanish, so the diff reports them as removed.
+    fakePage?.setElements([
+      ...Array.from({ length: 12 }, (_, i) => ({ ref: `e1_${i}`, role: 'link', name: `Nav ${i}` })),
+      { ref: 'e1_12', role: 'dialog', name: 'Manage user policy', depth: 0 },
+      { ref: 'x1_13', role: 'button', name: 'Confirm', depth: 1 },
+      { ref: 'x1_14', role: 'button', name: 'Cancel', depth: 1 },
+    ]);
+    await service.act(session.sessionId, pageId, { action: 'press', key: 'Enter' });
+
+    const diff = await service.observe(session.sessionId, pageId, {
+      sinceRevision: baseline.revision,
+      roles: ['checkbox'],
+    });
+
+    // The removals are the decision-relevant signal: they must surface even
+    // though their old-revision refs can never be in the surviving window.
+    const removedCheckboxes = (diff.changes ?? []).filter(
+      (change) =>
+        change.change === 'removed' &&
+        (change.properties.element as { old?: { role?: string } }).old?.role === 'checkbox'
+    );
+    expect(removedCheckboxes.length).toBe(2);
+  });
+
+  it('resuming a projection cursor after every match vanished returns empty, not INVALID_REQUEST', async () => {
+    const { service, session, pageId, fakePage } = await setup(4);
+
+    const first = await service.observe(session.sessionId, pageId, {
+      roles: ['checkbox'],
+      limit: 1,
+    });
+    expect(first.continuation).toBeDefined();
+
+    // All checkboxes disappear; the page moves to a new revision.
+    fakePage?.setElements([{ ref: 'e9_0', role: 'button', name: 'Only a button' }]);
+    await service.act(session.sessionId, pageId, { action: 'press', key: 'Enter' });
+
+    const resumed = await service.observe(session.sessionId, pageId, {
+      roles: ['checkbox'],
+      limit: 1,
+      continueFrom: first.continuation?.nextOrdinal,
+    });
+
+    // The CLI prints this exact resume command on every truncated result:
+    // an exhausted cursor is an empty projected view with an honest echo,
+    // never a 400 misread as "continueFrom exceeds the element count".
+    expect(resumed.elements).toEqual([]);
+    expect(resumed.projection).toMatchObject({ matched: 0 });
+    expect(resumed.continuation).toBeUndefined();
+  });
 });

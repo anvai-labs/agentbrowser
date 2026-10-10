@@ -2968,7 +2968,11 @@ export class AgentBrowserService {
       const budgeted = budgetObservation(projected, {
         maxBytes: request.maxBytes,
         maxElements: request.maxElements,
-        continueFrom: request.continueFrom,
+        // Under projection the continueFrom floor already applied to the
+        // matches; re-applying it to the projected list would misread an
+        // exhausted cursor (every match below the floor) as "continueFrom
+        // exceeds the element count" — the resume the CLI itself prints.
+        ...(projected === redacted ? { continueFrom: request.continueFrom } : {}),
         ...(ordinals !== undefined ? { ordinals } : {}),
       });
       // budgetObservation strips an incoming cursor and only re-emits its own
