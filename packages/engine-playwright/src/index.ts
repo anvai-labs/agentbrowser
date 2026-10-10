@@ -2319,6 +2319,8 @@ class PlaywrightPage implements EnginePage {
   private revision = 1;
   /** Include tokens the most recent observe ran with (tryRemap re-observes with them). */
   private lastObservationInclude: ObservationRequest['include'] = undefined;
+  /** The include set of the observation BEFORE lastObservationInclude. */
+  private priorObservationInclude: ObservationRequest['include'] = undefined;
   private refStore = new Map<string, StoredElement>();
   /** Base (non-enrichment) element count of the last observation — the
    * changed-detection baseline that enrichment toggles cannot perturb. */
@@ -2875,6 +2877,7 @@ class PlaywrightPage implements EnginePage {
     // scans the DOM for every file input, hidden ones included, and appends
     // bindable elements after the accessibility-derived set.
     try {
+      this.priorObservationInclude = this.lastObservationInclude;
       this.lastObservationInclude = request.include;
       const scanRoots: Array<import('playwright').Page | import('playwright').Frame> = [
         this.page,
@@ -2934,10 +2937,13 @@ class PlaywrightPage implements EnginePage {
           import('playwright').Page | import('playwright').Frame,
           string
         >();
+        // Round-10/F2: scanRoots[0] is the page, so entries index i (>=1)
+        // is already the 1-based frame ordinal — matching frameOrdinal
+        // everywhere else. i+1 double-numbered anonymous frames.
         for (const [i, root] of scanRoots.entries()) {
           scanIdentities.set(
             root,
-            root === this.page ? 'main' : frameIdentity(root as import('playwright').Frame, i + 1)
+            root === this.page ? 'main' : frameIdentity(root as import('playwright').Frame, i)
           );
         }
         const scanIdentity = (root: import('playwright').Page | import('playwright').Frame) =>
@@ -2976,8 +2982,6 @@ class PlaywrightPage implements EnginePage {
           perRootCounts.set(root, own);
         }
         for (const root of scanRoots) {
-          const identity = scanIdentity(root);
-          void identity;
           const block = root === this.page ? undefined : blockOfFrame.get(root);
           for (const info of await scanSafely(
             root,

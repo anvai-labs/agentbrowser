@@ -2513,8 +2513,17 @@ export class AgentBrowserService {
         throw new ServiceError(detail.code, detail.message, detail.retryable, detail.details);
       }
     };
+    // Round-10/F4: minted enrichment rows carry attributes.tag (the DOM tag
+    // the scan discovered); a GENUINE aria role="control" element does not.
+    // Filter on that marker — never the bare role string — so legal custom
+    // roles stay in fields.
+    const isMinted = (e: { role: string; attributes?: Record<string, string> }): boolean =>
+      e.role === 'control' && e.attributes?.tag !== undefined;
     const fieldsBudget = budgetObservationSafely(
-      { ...redacted, elements: redacted.elements.filter((e) => e.role !== 'control') },
+      {
+        ...redacted,
+        elements: redacted.elements.filter((e) => !isMinted(e)),
+      },
       {
         ...(bounds?.maxElements !== undefined ? { maxElements: bounds.maxElements } : {}),
         ...(bounds?.maxBytes !== undefined ? { maxBytes: bounds.maxBytes } : {}),
@@ -2532,7 +2541,7 @@ export class AgentBrowserService {
       // explicit cap with truncation disclosed by matched < total; no
       // resume cursor is exposed (snapshot has no continueFrom surface, so
       // a cursor would be permanently dead).
-      const mintedTotal = redacted.elements.filter((e) => e.role === 'control').length;
+      const mintedTotal = redacted.elements.filter((e) => isMinted(e)).length;
       const projected = projectObservation(redacted, { roles: ['control'] });
       // Round-8/F1: the caller's byte budget applies to the controls list
       // too — a separate element cap alone let controls[] ride unbounded

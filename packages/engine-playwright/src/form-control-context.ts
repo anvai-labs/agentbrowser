@@ -25,6 +25,7 @@ export interface G1Element {
   querySelectorAll(selector: string): G1Element[];
   previousElementSibling: G1Element | null;
   parentElement: G1Element | null;
+  childElementCount: number;
 }
 
 export interface G1Described {
@@ -209,10 +210,15 @@ export function g1DescribePageFunction(nodes: G1Element[], args: G1DescribeArgs)
               if (found) break;
             }
           } else {
+            // Round-10/F3: querySelectorAll's traversal cost is the subtree
+            // size even when it matches nothing — skip huge siblings
+            // outright (childElementCount is a cheap property read).
+            if (sibling.childElementCount > 2000) {
+              cursor = sibling;
+              continue;
+            }
             const nested = sibling.querySelectorAll(HEADING_SELECTOR);
-            // Round-9/F2: charge the subtree scan to the budget — a
-            // hostile sibling with a huge subtree must not turn each hop
-            // into an unbounded page-thread scan.
+            // Round-9/F2: charge the subtree scan to the budget.
             visits += nested.length;
             if (visits >= SIBLING_VISIT_BUDGET) return undefined;
             for (let i = nested.length - 1; i >= 0; i -= 1) {
