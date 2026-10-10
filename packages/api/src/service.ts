@@ -2541,8 +2541,24 @@ export class AgentBrowserService {
       // explicit cap with truncation disclosed by matched < total; no
       // resume cursor is exposed (snapshot has no continueFrom surface, so
       // a cursor would be permanently dead).
-      const mintedTotal = redacted.elements.filter((e) => isMinted(e)).length;
-      const projected = projectObservation(redacted, { roles: ['control'] });
+      // Round-12/F2: one predicate everywhere — the projection, the
+      // mintedTotal, and the fields filter all use isMinted so matched can
+      // never exceed total and no element lands in both lists. The minted
+      // REF SET is computed on the redacted (pre-projection) elements —
+      // the projection's element shaping strips attributes, so isMinted
+      // cannot run on the shaped list.
+      const mintedRefs = new Set(redacted.elements.filter((e) => isMinted(e)).map((e) => e.ref));
+      const mintedTotal = mintedRefs.size;
+      const projected = projectObservation(redacted, {
+        roles: ['control'],
+      });
+      // Restrict to minted rows only (a genuine aria role="control" element
+      // that matched the roles filter stays in fields).
+      projected.elements = projected.elements.filter((e) => mintedRefs.has(e.ref));
+      if (projected.projection !== undefined) {
+        projected.projection.matched = projected.elements.length;
+        projected.projection.total = mintedTotal;
+      }
       // Round-8/F1: the caller's byte budget applies to the controls list
       // too — a separate element cap alone let controls[] ride unbounded
       // past maxBytes by orders of magnitude.

@@ -2981,6 +2981,10 @@ class PlaywrightPage implements EnginePage {
           }
           perRootCounts.set(root, own);
         }
+        // Round-12/F4: a frame whose pass-one names scan failed but whose
+        // pass-two describe succeeds must not keep a stale 'unavailable'
+        // entry — the controls ARE present in this same response.
+        const recoveredScanIdentities = new Set<string>();
         for (const root of scanRoots) {
           const block = root === this.page ? undefined : blockOfFrame.get(root);
           for (const info of await scanSafely(
@@ -3009,6 +3013,16 @@ class PlaywrightPage implements EnginePage {
             const merged = elements.at(-1);
             if (merged !== undefined && root !== this.page) this.frameOfElement.set(merged, root);
           }
+          if (root !== this.page) recoveredScanIdentities.add(scanIdentity(root));
+        }
+        if (recoveredScanIdentities.size > 0) {
+          const kept = frameCoverage.filter(
+            (entry) =>
+              entry.reason !== 'form-controls scan failed' ||
+              !recoveredScanIdentities.has(entry.frame)
+          );
+          frameCoverage.length = 0;
+          frameCoverage.push(...kept);
         }
       }
     } catch (error) {
@@ -3028,23 +3042,55 @@ class PlaywrightPage implements EnginePage {
     // within a revision (document order), so the same element maps to the
     // same ref until the page mutates.
     const previous = this.bindings;
-    // Changed-detection counts ONLY the aria-snapshot base elements
-    // (adversarial review round-6/F4): minted formControls are an opt-in
-    // ENRICHMENT overlay, not page state — toggling include:["formControls"]
-    // between calls must not bump the revision and invalidate every ref the
-    // caller holds (snapshot controls=true ↔ plain observe alternation).
-    // Round-8/F2: like-for-like comparison. Base counts must be stable
-    // across include toggles (round-6/F4); but when the SAME include set
-    // observes again, enrichment rows appearing/disappearing IS a page
-    // change (lazy-mounted menus) and must bump the revision.
-    const baseCount = (rows: Array<{ role: string }>): number =>
-      rows.filter((row) => row.role !== 'control' && row.role !== 'fileinput').length;
-    const controlCount = elements.length - baseCount(elements);
+    // Changed-detection (rounds 6-12): counts compare LIKE FOR LIKE.
+    // - Base (aria-snapshot) counts exclude enrichment rows entirely, so
+    //   toggling include:["formControls"] between calls never bumps the
+    //   revision via the base comparison.
+    // - A kind's minted count is compared ONLY when that include token was
+    //   present in BOTH the prior and current observation (priorInclude is
+    //   snapshotted before lastObservationInclude is overwritten); when the
+    //   same include set observes again, enrichment rows appearing or
+    //   disappearing IS a page change (lazy-mounted menus) and must bump.
+    // - Enrichment rows are identified by their mint index, never the role
+    //   string (a genuine aria role="control" element is base content).
+    const isEnrichment = (row: {
+      role: string;
+      formControlIndex?: number;
+      fileInputIndex?: number;
+    }): boolean => row.formControlIndex !== undefined || row.fileInputIndex !== undefined;
+    const countEnrichment = (
+      rows: Array<{ role: string; formControlIndex?: number; fileInputIndex?: number }>,
+      kind: 'formControl' | 'fileInput'
+    ): number =>
+      rows.filter((row) =>
+        kind === 'formControl'
+          ? row.formControlIndex !== undefined
+          : row.fileInputIndex !== undefined
+      ).length;
+    const baseCount = (
+      rows: Array<{ role: string; formControlIndex?: number; fileInputIndex?: number }>
+    ): number => rows.filter((row) => !isEnrichment(row)).length;
     const previousCount = this.lastBaseElementCount ?? 0;
-    const enrichmentChanged =
-      this.lastFormControlCount !== undefined && this.lastFormControlCount !== controlCount;
+    const includeHas = (
+      list: ObservationRequest['include'],
+      token: 'formControls' | 'fileInputs'
+    ): boolean => list?.includes(token) === true;
+    const priorInclude = this.priorObservationInclude;
+    const sameFormControls =
+      includeHas(priorInclude, 'formControls') === includeHas(request.include, 'formControls');
+    const sameFileInputs =
+      includeHas(priorInclude, 'fileInputs') === includeHas(request.include, 'fileInputs');
+    let enrichmentChanged = false;
+    if (sameFormControls && this.lastFormControlCount !== undefined) {
+      enrichmentChanged = this.lastFormControlCount !== countEnrichment(elements, 'formControl');
+    }
+    if (sameFileInputs && this.lastFileInputCount !== undefined) {
+      enrichmentChanged =
+        enrichmentChanged || this.lastFileInputCount !== countEnrichment(elements, 'fileInput');
+    }
     this.lastBaseElementCount = baseCount(elements);
-    this.lastFormControlCount = controlCount;
+    this.lastFormControlCount = countEnrichment(elements, 'formControl');
+    this.lastFileInputCount = countEnrichment(elements, 'fileInput');
     this.bindings = new Map();
     this.refStore.clear();
     let changed =
@@ -3127,14 +3173,11 @@ class PlaywrightPage implements EnginePage {
             const prior = previous.get(ref);
             if (
               (previous.size > 0 &&
-                // Round-7/F1: enrichment-minted refs (control/fileinput) are an
-                // opt-in overlay — a ref absent from the prior store only
-                // because the prior pass omitted the include must NOT count as
-                // a page change (completes the round-6 count-only fix; the
-                // per-element !prior check alone still churned revisions on
-                // include toggles).
-                element.role !== 'control' &&
-                element.role !== 'fileinput' &&
+                // Rounds 7+10: enrichment-minted refs (identified by mint
+                // index, not role string) are an opt-in overlay — a ref
+                // absent from the prior store only because the prior pass
+                // omitted the include must NOT count as a page change.
+                !isEnrichment(element) &&
                 !prior) ||
               (prior &&
                 (!(await handle

@@ -12,6 +12,7 @@ import type {
   PageElement,
   PageState,
 } from '@agentbrowser/protocol';
+import { clampUtf16 } from './canonical-json.js';
 
 const INTERACTIVE_ROLES = new Set<string>([
   'button',
@@ -196,9 +197,7 @@ export class ObservationNormalizer {
         // UTF-16 code-unit clamp (round-7/F6): PageElementSchema's
         // maxLength 300 counts code units, and a unit-slice can split a
         // surrogate pair — when the last unit is a high surrogate, drop it.
-        const units = rawEl.context.slice(0, 300);
-        const last = units.charCodeAt(units.length - 1);
-        element.context = last >= 0xd800 && last <= 0xdbff ? units.slice(0, -1) : units;
+        element.context = clampUtf16(rawEl.context, 300);
       }
 
       return element;

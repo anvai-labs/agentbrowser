@@ -29,6 +29,7 @@ import type {
   PageState,
 } from '@agentbrowser/protocol';
 import { parseRef } from '@agentbrowser/protocol';
+import { clampUtf16 } from './canonical-json.js';
 
 /** The projection subset of ObservationRequest (protocol-declared fields). */
 export interface ObservationProjection {
@@ -247,9 +248,7 @@ function shapeElement(element: PageElement, includeFields: Set<string> | undefin
     if (element.name.length > NAME_CAP) {
       // Round-11/F9: a raw UTF-16 slice can split a surrogate pair at the
       // cap — drop a trailing lone high surrogate.
-      const units = element.name.slice(0, NAME_CAP);
-      const last = units.charCodeAt(units.length - 1);
-      shaped.name = last >= 0xd800 && last <= 0xdbff ? units.slice(0, -1) : units;
+      shaped.name = clampUtf16(element.name, NAME_CAP);
       shaped.nameTruncated = true;
     } else {
       shaped.name = element.name;

@@ -1347,6 +1347,16 @@ export function buildCli(deps: CliDependencies): Cli {
                 bounds.controls = true;
               }
               const snapshot = await ctx.client.sessions.snapshot(sessionId, pageId, bounds);
+              // Round-12/F3: an old server ignores the controls param —
+              // surface the no-op instead of reading it as "no controls".
+              if (
+                bounds.controls === true &&
+                (snapshot as { controls?: unknown }).controls === undefined
+              ) {
+                throw new UsageError(
+                  'The server returned no controls list — it may be older than this CLI. Re-run without --include-controls, or upgrade the server.'
+                );
+              }
 
               ctx.emit(snapshot, () => [
                 `${snapshot.url} (${snapshot.mode}, revision ${snapshot.revision})`,
