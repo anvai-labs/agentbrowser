@@ -93,8 +93,8 @@ import {
 } from '@agentbrowser/extraction';
 import { EngagementScopePolicy, type NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
 import type { SnapshotControl } from '@agentbrowser/protocol';
-/** Mirrors the engine's per-root formControls mint bound (round-9/F7). */
-const MAX_FORM_CONTROLS = 200;
+import { MAX_FORM_CONTROLS_PER_ROOT } from '@agentbrowser/protocol';
+
 import type {
   ArtifactRef,
   ObservationRequest,
@@ -2565,9 +2565,15 @@ export class AgentBrowserService {
       // succeeded without it — if the byte budget cannot fit the controls
       // view even at one element, degrade to the empty list with the
       // matched<total disclosure instead of throwing OUTPUT_TRUNCATED.
+      // Round-14/F3: the caller's maxBytes caps the COMBINED response —
+      // the controls budget gets the bytes remaining after the fields view,
+      // never a second full allowance (which doubled the documented cap).
+      const serializedFields = JSON.stringify(fieldsBudget).length;
       const controlBudgetOptions = {
-        maxElements: MAX_FORM_CONTROLS * 10,
-        ...(bounds?.maxBytes !== undefined ? { maxBytes: bounds.maxBytes } : {}),
+        maxElements: MAX_FORM_CONTROLS_PER_ROOT * 10,
+        ...(bounds?.maxBytes !== undefined
+          ? { maxBytes: Math.max(1, bounds.maxBytes - serializedFields) }
+          : {}),
       };
       let budgetedControls: ReturnType<typeof budgetObservation>;
       try {
@@ -2575,7 +2581,10 @@ export class AgentBrowserService {
       } catch (error) {
         const isTruncated =
           error instanceof Error && (error as { code?: string }).code === 'OUTPUT_TRUNCATED';
-        if (!isTruncated) throw error;
+        if (!isTruncated) {
+          const detail = normalizeEngineError(error);
+          throw new ServiceError(detail.code, detail.message, detail.retryable, detail.details);
+        }
         budgetedControls = {
           ...projected,
           elements: [],

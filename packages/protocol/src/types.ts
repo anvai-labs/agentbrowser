@@ -812,6 +812,13 @@ export const DELIVERED_OBSERVATION_INCLUDES = ['overlays', 'fileInputs', 'formCo
 /** Additive element-field opt-ins for compact projection (protected core excluded). */
 export const DELIVERED_PROJECTION_FIELDS = ['href', 'attributes', 'required'] as const;
 
+/**
+ * Per-root mint bound for the formControls enrichment (ADR-015: declared
+ * once here; the engine enforces it at mint time and the api derives its
+ * cross-root controls budget from it — no textually-unrelated mirrors).
+ */
+export const MAX_FORM_CONTROLS_PER_ROOT = 200;
+
 export interface ObservationRequest {
   mode?: (typeof DELIVERED_OBSERVATION_MODES)[number];
   maxBytes?: number;

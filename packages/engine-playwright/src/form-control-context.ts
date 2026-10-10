@@ -46,7 +46,16 @@ export interface G1Described {
 export function g1CollectNamesPageFunction(nodes: G1Element[]): string[] {
   const names: string[] = [];
   for (const node of nodes) {
-    const text = node.textContent?.trim().slice(0, 200) || undefined;
+    const text = // Round-14/F6: code-unit clamp with a lone-surrogate drop (same
+      // discipline as clampUtf16 in core; inlined for evaluateAll
+      // self-containment).
+      (() => {
+        const t = node.textContent?.trim() ?? '';
+        if (t.length <= 200) return t || undefined;
+        const cut = t.slice(0, 200);
+        const last = cut.charCodeAt(cut.length - 1);
+        return (last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut) || undefined;
+      })();
     const automationId = node.getAttribute('data-automation-id')?.trim() || undefined;
     const name =
       node.getAttribute('aria-label')?.trim() ||
@@ -91,7 +100,16 @@ export function g1DescribePageFunction(nodes: G1Element[], args: G1DescribeArgs)
   };
 
   const basicName = (node: El): string | undefined => {
-    const text = node.textContent?.trim().slice(0, 200) || undefined;
+    const text = // Round-14/F6: code-unit clamp with a lone-surrogate drop (same
+      // discipline as clampUtf16 in core; inlined for evaluateAll
+      // self-containment).
+      (() => {
+        const t = node.textContent?.trim() ?? '';
+        if (t.length <= 200) return t || undefined;
+        const cut = t.slice(0, 200);
+        const last = cut.charCodeAt(cut.length - 1);
+        return (last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut) || undefined;
+      })();
     const automationId = node.getAttribute('data-automation-id')?.trim() || undefined;
     return (
       node.getAttribute('aria-label')?.trim() || text || automationId || node.id.trim() || undefined

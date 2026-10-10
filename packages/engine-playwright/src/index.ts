@@ -43,6 +43,7 @@ import {
   parseNativeFormEvidence,
   readVerifiedUpload,
 } from '@agentbrowser/engine';
+import { MAX_FORM_CONTROLS_PER_ROOT } from '@agentbrowser/protocol';
 import {
   DELIVERED_ACTION_TYPES,
   DELIVERED_OBSERVATION_MODES,
@@ -617,7 +618,7 @@ const FORM_CONTROL_SELECTOR = [
 ].join(', ');
 
 /** Boundlessness guard: at most this many controls are minted per observation. */
-const MAX_FORM_CONTROLS = 200;
+const MAX_FORM_CONTROLS = MAX_FORM_CONTROLS_PER_ROOT;
 
 /**
  * Roles whose elements can carry an observed value. Only these (and any
@@ -2951,15 +2952,21 @@ class PlaywrightPage implements EnginePage {
         // recovery filter (below) only clears a pass-one failure when
         // pass-two genuinely succeeded — a double-failed frame keeps its
         // disclosure instead of silently contributing nothing.
-        const scanSucceededIdentities = new Set<string>();
+        // Round-14/F1: success is tracked PER PASS — a frame that
+        // succeeded in pass one but detached before pass two keeps its
+        // failure disclosure (the shared set silently dropped it).
+        const passTwoSucceededIdentities = new Set<string>();
         const scanSafely = async <T>(
           root: import('playwright').Page | import('playwright').Frame,
           scan: () => Promise<T[]>,
-          fallback: T[]
+          fallback: T[],
+          pass: 1 | 2
         ): Promise<T[]> => {
           try {
             const result = await scan();
-            if (root !== this.page) scanSucceededIdentities.add(scanIdentity(root));
+            if (pass === 2 && root !== this.page) {
+              passTwoSucceededIdentities.add(scanIdentity(root));
+            }
             return result;
           } catch (error) {
             if (root === this.page) throw error;
@@ -2980,7 +2987,8 @@ class PlaywrightPage implements EnginePage {
           for (const name of await scanSafely(
             root,
             () => this.describeFormControlNames(root),
-            []
+            [],
+            1
           )) {
             own[name] = (own[name] ?? 0) + 1;
             pageWideNameCounts[name] = (pageWideNameCounts[name] ?? 0) + 1;
@@ -2997,7 +3005,8 @@ class PlaywrightPage implements EnginePage {
             root,
             () =>
               this.describeFormControls(root, pageWideNameCounts, perRootCounts.get(root) ?? {}),
-            [] as FormControlInfo[]
+            [] as FormControlInfo[],
+            2
           )) {
             elements.push({
               ref: `e${this.revision}_${elements.length}`,
@@ -3020,11 +3029,11 @@ class PlaywrightPage implements EnginePage {
             if (merged !== undefined && root !== this.page) this.frameOfElement.set(merged, root);
           }
         }
-        if (scanSucceededIdentities.size > 0) {
+        if (passTwoSucceededIdentities.size > 0) {
           const kept = frameCoverage.filter(
             (entry) =>
               entry.reason !== 'form-controls scan failed' ||
-              !scanSucceededIdentities.has(entry.frame)
+              !passTwoSucceededIdentities.has(entry.frame)
           );
           frameCoverage.length = 0;
           frameCoverage.push(...kept);
