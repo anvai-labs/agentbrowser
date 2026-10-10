@@ -231,12 +231,13 @@ export function g1DescribePageFunction(nodes: G1Element[], args: G1DescribeArgs)
             // Round-10/F3: querySelectorAll's traversal cost is the subtree
             // size even when it matches nothing — skip huge siblings
             // outright (childElementCount is a cheap property read).
-            if (sibling.childElementCount > 2000) {
-              cursor = sibling;
-              continue;
-            }
+            // Round-16/F3: charge the subtree SIZE to the budget —
+            // querySelectorAll's traversal cost is childElementCount even
+            // when it matches nothing; matched-count charging left ~800k
+            // unbounded visits on dense permission tables.
+            visits += sibling.childElementCount;
+            if (visits >= SIBLING_VISIT_BUDGET) return undefined;
             const nested = sibling.querySelectorAll(HEADING_SELECTOR);
-            // Round-9/F2: charge the subtree scan to the budget.
             visits += nested.length;
             if (visits >= SIBLING_VISIT_BUDGET) return undefined;
             for (let i = nested.length - 1; i >= 0; i -= 1) {

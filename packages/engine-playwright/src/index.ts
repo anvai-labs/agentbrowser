@@ -2960,7 +2960,6 @@ class PlaywrightPage implements EnginePage {
         // Round-14/F1: success is tracked PER PASS — a frame that
         // succeeded in pass one but detached before pass two keeps its
         // failure disclosure (the shared set silently dropped it).
-        const passTwoSucceededIdentities = new Set<string>();
         const scanSafely = async <T>(
           root: import('playwright').Page | import('playwright').Frame,
           scan: () => Promise<T[]>,
@@ -2969,9 +2968,6 @@ class PlaywrightPage implements EnginePage {
         ): Promise<T[]> => {
           try {
             const result = await scan();
-            if (pass === 2 && root !== this.page) {
-              passTwoSucceededIdentities.add(scanIdentity(root));
-            }
             return result;
           } catch (error) {
             if (root === this.page) throw error;
@@ -3035,15 +3031,13 @@ class PlaywrightPage implements EnginePage {
             if (merged !== undefined && root !== this.page) this.frameOfElement.set(merged, root);
           }
         }
-        if (passTwoSucceededIdentities.size > 0) {
-          const kept = frameCoverage.filter(
-            (entry) =>
-              entry.reason !== 'form-controls scan failed' ||
-              !passTwoSucceededIdentities.has(entry.frame)
-          );
-          frameCoverage.length = 0;
-          frameCoverage.push(...kept);
-        }
+        // Round-16/F4: the identity-string recovery filter is REMOVED —
+        // two frames can share an identity (same origin+path), and clearing
+        // one frame's genuine failure because the OTHER succeeded is a
+        // silent coverage loss. A possibly-stale 'unavailable' entry is the
+        // honest residue; the agent re-observes and the entry clears on the
+        // next successful pass (scanSafely only pushes once per identity
+        // per observe, and frameCoverage is rebuilt per observation).
       }
     } catch (error) {
       // An enrichment failure occurs before the ref-binding transaction adopts
@@ -3403,7 +3397,11 @@ class PlaywrightPage implements EnginePage {
     // own degraded reason so callers can wait/retry or read via HTML. Only probe
     // the DOM when there is nothing to lose (no elements) to avoid per-observe cost.
     let emptyOverNonEmptyDom = false;
-    if (!ariaSnapshotDegraded && ariaSnapshotSucceeded && elements.length === 0) {
+    // Round-16/F5: the probe counts BASE elements — enrichment rows are
+    // appended into the same array, and any include token made the
+    // unhydrated-SPA signal unreachable (the PR's own G3 case).
+    const baseElements = elements.filter((el) => el.minted !== true);
+    if (!ariaSnapshotDegraded && ariaSnapshotSucceeded && baseElements.length === 0) {
       const { bodyTextLength, domNodeCount } = await this.measureDomContent();
       emptyOverNonEmptyDom = classifyEmptyObservation({
         elementCount: 0,

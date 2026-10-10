@@ -425,11 +425,20 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
           throw new UsageError('controls must be a boolean');
         }
         const wantsControls = controls === true || controls === 'true';
-        return await client.sessions.snapshot(
+        const snapshot = await client.sessions.snapshot(
           sessionId,
           pageId,
           ...(wantsControls ? [{ controls: true } as const] : [])
         );
+        // Round-16/F1: an old server ignores the unknown param and returns
+        // a controls-less snapshot — surface the no-op (CLI parity,
+        // round-12/F3) instead of reading it as "no custom controls".
+        if (wantsControls && (snapshot as { controls?: unknown }).controls === undefined) {
+          throw new UsageError(
+            'The server returned no controls list — it may be older than this MCP adapter. Re-run without controls, or upgrade the server.'
+          );
+        }
+        return snapshot;
       },
     },
 
