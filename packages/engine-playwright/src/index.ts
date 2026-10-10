@@ -2319,8 +2319,6 @@ class PlaywrightPage implements EnginePage {
   private revision = 1;
   /** Include tokens the most recent observe ran with (tryRemap re-observes with them). */
   private lastObservationInclude: ObservationRequest['include'] = undefined;
-  /** The include set of the observation BEFORE lastObservationInclude. */
-  private priorObservationInclude: ObservationRequest['include'] = undefined;
   private refStore = new Map<string, StoredElement>();
   /** Base (non-enrichment) element count of the last observation — the
    * changed-detection baseline that enrichment toggles cannot perturb. */
@@ -2877,8 +2875,9 @@ class PlaywrightPage implements EnginePage {
     // scans the DOM for every file input, hidden ones included, and appends
     // bindable elements after the accessibility-derived set.
     try {
-      this.priorObservationInclude = this.lastObservationInclude;
-      this.lastObservationInclude = request.include;
+      // Round-13/F2: include bookkeeping is committed WITH the counts at
+      // the end of a successful observe (atomic pair) — a throw mid-scan
+      // must not advance one half and corrupt the next comparison.
       const scanRoots: Array<import('playwright').Page | import('playwright').Frame> = [
         this.page,
         ...this.page.frames().filter((frame) => frame !== mainFrame),
@@ -2948,13 +2947,20 @@ class PlaywrightPage implements EnginePage {
         }
         const scanIdentity = (root: import('playwright').Page | import('playwright').Frame) =>
           scanIdentities.get(root) ?? 'unknown';
+        // Round-13/F1: scanSafely records per-identity success so the
+        // recovery filter (below) only clears a pass-one failure when
+        // pass-two genuinely succeeded — a double-failed frame keeps its
+        // disclosure instead of silently contributing nothing.
+        const scanSucceededIdentities = new Set<string>();
         const scanSafely = async <T>(
           root: import('playwright').Page | import('playwright').Frame,
           scan: () => Promise<T[]>,
           fallback: T[]
         ): Promise<T[]> => {
           try {
-            return await scan();
+            const result = await scan();
+            if (root !== this.page) scanSucceededIdentities.add(scanIdentity(root));
+            return result;
           } catch (error) {
             if (root === this.page) throw error;
             const identity = scanIdentity(root);
@@ -2984,7 +2990,7 @@ class PlaywrightPage implements EnginePage {
         // Round-12/F4: a frame whose pass-one names scan failed but whose
         // pass-two describe succeeds must not keep a stale 'unavailable'
         // entry — the controls ARE present in this same response.
-        const recoveredScanIdentities = new Set<string>();
+
         for (const root of scanRoots) {
           const block = root === this.page ? undefined : blockOfFrame.get(root);
           for (const info of await scanSafely(
@@ -3013,13 +3019,12 @@ class PlaywrightPage implements EnginePage {
             const merged = elements.at(-1);
             if (merged !== undefined && root !== this.page) this.frameOfElement.set(merged, root);
           }
-          if (root !== this.page) recoveredScanIdentities.add(scanIdentity(root));
         }
-        if (recoveredScanIdentities.size > 0) {
+        if (scanSucceededIdentities.size > 0) {
           const kept = frameCoverage.filter(
             (entry) =>
               entry.reason !== 'form-controls scan failed' ||
-              !recoveredScanIdentities.has(entry.frame)
+              !scanSucceededIdentities.has(entry.frame)
           );
           frameCoverage.length = 0;
           frameCoverage.push(...kept);
@@ -3075,7 +3080,11 @@ class PlaywrightPage implements EnginePage {
       list: ObservationRequest['include'],
       token: 'formControls' | 'fileInputs'
     ): boolean => list?.includes(token) === true;
-    const priorInclude = this.priorObservationInclude;
+    // Round-13/F2 correction: include bookkeeping is committed only at the
+    // END of a successful observe, so lastObservationInclude at comparison
+    // time IS the prior observation's include — a separate prior field
+    // double-lagged by one observation (the invariant suite caught this).
+    const priorInclude = this.lastObservationInclude;
     const sameFormControls =
       includeHas(priorInclude, 'formControls') === includeHas(request.include, 'formControls');
     const sameFileInputs =
@@ -3091,6 +3100,7 @@ class PlaywrightPage implements EnginePage {
     this.lastBaseElementCount = baseCount(elements);
     this.lastFormControlCount = countEnrichment(elements, 'formControl');
     this.lastFileInputCount = countEnrichment(elements, 'fileInput');
+    this.lastObservationInclude = request.include;
     this.bindings = new Map();
     this.refStore.clear();
     let changed =

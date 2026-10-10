@@ -403,9 +403,9 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
           sessionId: { type: 'string' },
           pageId: { type: 'string' },
           controls: {
-            type: 'boolean',
+            anyOf: [{ type: 'boolean' }, { type: 'string', enum: ['true', 'false'] }],
             description:
-              'Also return minted custom controls (with context) as a separate controls[] array.',
+              'Also return minted custom controls (with context) as a separate controls[] array. Accepts true/false (boolean or string).',
           },
         },
         required: ['sessionId', 'pageId'],

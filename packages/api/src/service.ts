@@ -2555,20 +2555,33 @@ export class AgentBrowserService {
       // Restrict to minted rows only (a genuine aria role="control" element
       // that matched the roles filter stays in fields).
       projected.elements = projected.elements.filter((e) => mintedRefs.has(e.ref));
-      if (projected.projection !== undefined) {
-        projected.projection.matched = projected.elements.length;
-        projected.projection.total = mintedTotal;
-      }
+      // (round-13/F6: the echo overwrite removed — controlsProjection is
+      // computed independently from budgeted.elements.length/mintedTotal;
+      // a dead second source invited drift.)
       // Round-8/F1: the caller's byte budget applies to the controls list
       // too — a separate element cap alone let controls[] ride unbounded
       // past maxBytes by orders of magnitude.
-      // Round-9/F7: the element cap derives from the engine's per-root
-      // mint bound times a generous frame multiplier — no package-drifting
-      // magic number (200 * 10 roots covers every realistic frame fan-out).
-      const budgetedControls = budgetObservationSafely(projected, {
+      // Round-13/F3: an ADDITIVE opt-in must never fail a snapshot that
+      // succeeded without it — if the byte budget cannot fit the controls
+      // view even at one element, degrade to the empty list with the
+      // matched<total disclosure instead of throwing OUTPUT_TRUNCATED.
+      const controlBudgetOptions = {
         maxElements: MAX_FORM_CONTROLS * 10,
         ...(bounds?.maxBytes !== undefined ? { maxBytes: bounds.maxBytes } : {}),
-      });
+      };
+      let budgetedControls: ReturnType<typeof budgetObservation>;
+      try {
+        budgetedControls = budgetObservation(projected, controlBudgetOptions);
+      } catch (error) {
+        const isTruncated =
+          error instanceof Error && (error as { code?: string }).code === 'OUTPUT_TRUNCATED';
+        if (!isTruncated) throw error;
+        budgetedControls = {
+          ...projected,
+          elements: [],
+          truncated: true,
+        };
+      }
       controlsBlock = {
         controls: budgetedControls.elements.map(
           (c): SnapshotControl => ({
