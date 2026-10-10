@@ -57,6 +57,8 @@ import {
   SessionState,
   budgetObservation,
   canonicalJson,
+  projectObservation,
+  projectionActive,
 } from '@agentbrowser/core';
 import type { ApprovalReviewBinding, ArtifactMetadata, SessionContext } from '@agentbrowser/core';
 import type { InMemoryTracer, Span } from '@agentbrowser/core';
@@ -475,6 +477,12 @@ export type PartialObservation = {
   include?: string[] | undefined;
   /** Optional readiness wait applied BEFORE the snapshot (SPA readiness). */
   wait?: ServiceWaitCondition | undefined;
+  /** Compact projection (opt-in): roles/name/scopeRef/limit/includeFields. */
+  roles?: string[] | undefined;
+  name?: string | undefined;
+  scopeRef?: string | undefined;
+  limit?: number | undefined;
+  includeFields?: ObservationRequest['includeFields'] | undefined;
 };
 
 /** Optional observation enrichments the stack actually delivers. */
@@ -2838,9 +2846,12 @@ export class AgentBrowserService {
     if (request.sinceRevision !== undefined) {
       // The diff path accepts maxBytes but previously returned unbounded;
       // paginateObservation applies the same byte budget to the diff result.
+      // The full observation rides along so a projection scope can resolve
+      // against the whole page, not just the changed subset.
       return this.paginateObservation(
         this.diffObservation(page, observation, request.sinceRevision),
-        request
+        request,
+        observation
       );
     }
 
@@ -2925,15 +2936,56 @@ export class AgentBrowserService {
 
   /**
    * Apply element pagination in stable document order, with a continuation
-   * cursor when elements remain.
+   * cursor when elements remain. Compact projection (roles/name/scopeRef/
+   * limit/includeFields) runs here — AFTER redaction, BEFORE budgeting — so
+   * the byte/element budget measures the projected envelope and the name
+   * predicate only ever sees redacted names.
    */
-  private paginateObservation(observation: PageState, request: PartialObservation): PageState {
+  private paginateObservation(
+    observation: PageState,
+    request: PartialObservation,
+    full?: PageState
+  ): PageState {
     try {
-      return budgetObservation(this.secretManager.redact(observation), {
+      const redacted = this.secretManager.redact(observation);
+      const projection = {
+        ...(request.roles !== undefined ? { roles: request.roles } : {}),
+        ...(request.name !== undefined ? { name: request.name } : {}),
+        ...(request.scopeRef !== undefined ? { scopeRef: request.scopeRef } : {}),
+        ...(request.limit !== undefined ? { limit: request.limit } : {}),
+        ...(request.includeFields !== undefined ? { includeFields: request.includeFields } : {}),
+      };
+      const projected = projectionActive(projection)
+        ? projectObservation(redacted, projection, {
+            ...(full !== undefined ? { full: this.secretManager.redact(full) } : {}),
+            ...(request.continueFrom !== undefined ? { continueFrom: request.continueFrom } : {}),
+          })
+        : redacted;
+      const ordinals =
+        projected !== redacted
+          ? projected.elements.map((element) => parseRef(element.ref)?.ordinal ?? 0)
+          : undefined;
+      const budgeted = budgetObservation(projected, {
         maxBytes: request.maxBytes,
         maxElements: request.maxElements,
-        continueFrom: request.continueFrom,
+        // Under projection the continueFrom floor already applied to the
+        // matches; re-applying it to the projected list would misread an
+        // exhausted cursor (every match below the floor) as "continueFrom
+        // exceeds the element count" — the resume the CLI itself prints.
+        ...(projected === redacted ? { continueFrom: request.continueFrom } : {}),
+        ...(ordinals !== undefined ? { ordinals } : {}),
       });
+      // budgetObservation strips an incoming cursor and only re-emits its own
+      // when its window cuts. When the budget covered everything the projected
+      // list had, the projection's own limit cursor is the live one.
+      if (
+        projected.continuation !== undefined &&
+        budgeted.continuation === undefined &&
+        budgeted.elements.length === projected.elements.length
+      ) {
+        return { ...budgeted, truncated: true, continuation: projected.continuation };
+      }
+      return budgeted;
     } catch (error) {
       const detail = normalizeEngineError(error);
       throw new ServiceError(detail.code, detail.message, detail.retryable, detail.details);

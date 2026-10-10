@@ -606,3 +606,39 @@ describe('frame coverage passthrough (T6)', () => {
     ]);
   });
 });
+
+describe('scope projection metadata (depth/block)', () => {
+  const baseRaw = (elements: Array<Record<string, unknown>>) =>
+    ({
+      url: 'https://example.com',
+      title: 'Test Page',
+      status: 'interactive',
+      content: '<html><body></body></html>',
+      elements,
+    }) as unknown as RawPageState;
+
+  it('passes depth and block through when present', () => {
+    const normalizer = new ObservationNormalizer();
+    const observation = normalizer.normalize(
+      baseRaw([
+        { role: 'dialog', visible: true, enabled: true, depth: 0, block: 1 },
+        { role: 'button', visible: true, enabled: true, depth: 1, block: 1 },
+      ]),
+      { mode: 'interactive', revision: 4 }
+    );
+
+    expect(observation.elements[0]).toMatchObject({ depth: 0, block: 1 });
+    expect(observation.elements[1]).toMatchObject({ depth: 1, block: 1 });
+  });
+
+  it('omits depth and block when absent so flat output stays byte-identical', () => {
+    const normalizer = new ObservationNormalizer();
+    const observation = normalizer.normalize(
+      baseRaw([{ role: 'button', visible: true, enabled: true }]),
+      { mode: 'interactive', revision: 1 }
+    );
+
+    expect(observation.elements[0]).not.toHaveProperty('depth');
+    expect(observation.elements[0]).not.toHaveProperty('block');
+  });
+});

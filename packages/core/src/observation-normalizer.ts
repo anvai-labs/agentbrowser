@@ -180,6 +180,15 @@ export class ObservationNormalizer {
         element.checked = rawEl.checked;
       }
 
+      // Scope-projection metadata (block-local depth, snapshot block id):
+      // copied only when present so flat top-level output stays byte-identical.
+      if (rawEl.depth !== undefined) {
+        element.depth = rawEl.depth;
+      }
+      if (rawEl.block !== undefined) {
+        element.block = rawEl.block;
+      }
+
       return element;
     });
   }

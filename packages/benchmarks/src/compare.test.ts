@@ -18,7 +18,7 @@ import { FakeEngine } from '@agentbrowser/testkit';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { startFixtureServer } from './compare';
 import type { FixtureServer } from './compare';
-import { comparativeReport, runRealBenchmarks } from './compare';
+import { comparativeReport, runCompactProjectionBenchmark, runRealBenchmarks } from './compare';
 
 describe('fixture server', () => {
   let server: FixtureServer;
@@ -132,6 +132,20 @@ describe('runRealBenchmarks (plumbing, against FakeEngine)', () => {
     ).rejects.toThrow('no fixture port');
   });
 
+  it('should serve the OVH-shaped fixture with the dialog subtree', async () => {
+    const server = await startFixtureServer(0);
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/ovh`);
+      expect(response.status).toBe(200);
+      const body = await response.text();
+      expect(body).toContain('Manage user policy');
+      expect(body).toContain('user-12-prod');
+      expect((body.match(/<a href/g) ?? []).length).toBeGreaterThan(200);
+    } finally {
+      await server.stop();
+    }
+  });
+
   it('should complete and verify the ref loop when the engine serves the form fields', async () => {
     const server = await startFixtureServer(0);
     try {
@@ -166,6 +180,41 @@ describe('runRealBenchmarks (plumbing, against FakeEngine)', () => {
     } finally {
       await server.stop();
     }
+  });
+});
+
+describe('runCompactProjectionBenchmark (plumbing, against FakeEngine)', () => {
+  it('should report the A/B shape with the reduction computed from real bytes', async () => {
+    const server = await startFixtureServer(0);
+    try {
+      const result = await runCompactProjectionBenchmark({
+        engine: new FakeEngine(),
+        iterations: 3,
+        fixturePort: server.port,
+      });
+
+      expect(result.engineName).toBe('fake-engine');
+      expect(result.fullBytes).toBeGreaterThan(0);
+      expect(result.compactBytes).toBeGreaterThan(0);
+      expect(result.reductionPercent).toBe(
+        Math.round((1 - result.compactBytes / Math.max(result.fullBytes, 1)) * 100)
+      );
+      // FakeEngine serves synthetic elements, not the fixture HTML: parity
+      // signals stay false or true together, never divergent (the real-engine
+      // run in `benchmarks run real` carries the true parity gate).
+      expect(result.fullFoundRef).toBe(result.compactFoundRef);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('should reject when no fixture port can be resolved', async () => {
+    await expect(
+      runCompactProjectionBenchmark({
+        engine: new FakeEngine(),
+        fixturePort: null as unknown as number,
+      })
+    ).rejects.toThrow('no fixture port');
   });
 });
 

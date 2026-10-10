@@ -108,6 +108,10 @@ interface StoredElement {
    */
   formControlIndex?: number;
   attributes?: Record<string, string>;
+  /** Block-local nesting depth from the aria snapshot (absent = 0). */
+  depth?: number;
+  /** Snapshot block identity (absent = 0 main frame; frames increment). */
+  block?: number;
 }
 
 /** Per-input metadata shared by the fileInputs observe scan and ambiguity details. */
@@ -2705,6 +2709,11 @@ class PlaywrightPage implements EnginePage {
 
     // Get accessibility tree if requested
     let elements: StoredElement[] = [];
+    // Snapshot block numbering for scope projection: 0 = main frame; each
+    // merged child-frame block increments. Shared by the frame-merge loop
+    // and the include scans so both stamp from one numbering.
+    let blockCounter = 0;
+    const blockOfFrame = new Map<import('playwright').Page | import('playwright').Frame, number>();
     // Set only when the whole-body ariaSnapshot budget was actually spent
     // and exceeded (never merely because mode skipped this branch) - a
     // caller-visible signal that `elements` came from getContentElements()'s
@@ -2797,7 +2806,18 @@ class PlaywrightPage implements EnginePage {
             frameCoverage.push({ frame: identity, status });
             continue;
           }
-          const parsed = this.parseAriaSnapshot(frameYaml, this.revision, refOffset);
+          const parsed = this.parseAriaSnapshot(
+            frameYaml,
+            this.revision,
+            refOffset,
+            // Frame content is a separate snapshot block: depth restarts and
+            // the merged list position does not imply main-tree nesting.
+            blockCounter + 1
+          );
+          if (parsed.length > 0) {
+            blockCounter += 1;
+            blockOfFrame.set(frame, blockCounter);
+          }
           for (const element of parsed) this.frameOfElement.set(element, frame);
           refOffset += parsed.length;
           elements.push(...parsed);
@@ -2845,6 +2865,7 @@ class PlaywrightPage implements EnginePage {
       ];
       if (request.include?.includes('fileInputs') === true) {
         for (const root of scanRoots) {
+          const block = root === this.page ? undefined : blockOfFrame.get(root);
           for (const info of await this.describeFileInputs(root)) {
             elements.push({
               ref: `e${this.revision}_${elements.length}`,
@@ -2853,6 +2874,7 @@ class PlaywrightPage implements EnginePage {
               visible: info.visible,
               enabled: true,
               fileInputIndex: info.index,
+              ...(block !== undefined ? { block } : {}),
               attributes: {
                 ...(info.id !== undefined ? { id: info.id } : {}),
                 ...(info.accept !== undefined ? { accept: info.accept } : {}),
@@ -2873,6 +2895,7 @@ class PlaywrightPage implements EnginePage {
       // covered from being minted twice.
       if (request.include?.includes('formControls') === true) {
         for (const root of scanRoots) {
+          const block = root === this.page ? undefined : blockOfFrame.get(root);
           for (const info of await this.describeFormControls(root)) {
             elements.push({
               ref: `e${this.revision}_${elements.length}`,
@@ -2881,6 +2904,7 @@ class PlaywrightPage implements EnginePage {
               visible: info.visible,
               enabled: true,
               formControlIndex: info.index,
+              ...(block !== undefined ? { block } : {}),
               attributes: {
                 tag: info.tag,
                 ...(info.id !== undefined ? { id: info.id } : {}),
@@ -3246,9 +3270,18 @@ class PlaywrightPage implements EnginePage {
    *     - /value: "typed text"
    * Attribute lines (`/attr: value`) annotate the preceding element.
    */
-  private parseAriaSnapshot(yaml: string, revision: number, refOffset = 0): StoredElement[] {
+  private parseAriaSnapshot(
+    yaml: string,
+    revision: number,
+    refOffset = 0,
+    block = 0
+  ): StoredElement[] {
     const elements: StoredElement[] = [];
     const lines = yaml.split('\n');
+    // Indent stack for block-local depth: kept-element nesting level is the
+    // stack position, so any consistent indent width works. Attribute and
+    // skipped-role lines never touch it.
+    const indents: number[] = [];
 
     for (const line of lines) {
       if (line.trim() === '' || line.trim() === '-') {
@@ -3304,6 +3337,13 @@ class PlaywrightPage implements EnginePage {
         visible: true,
         enabled: true,
       };
+      while (indents.length > 0 && (indents.at(-1) ?? 0) > indent) indents.pop();
+      if (indents.length === 0 || (indents.at(-1) ?? 0) < indent) indents.push(indent);
+      const depth = indents.length - 1;
+      // Stamp only when non-zero: full-mode payloads stay byte-identical for
+      // flat top-level elements (increment-2 invisibility contract).
+      if (depth > 0) element.depth = depth;
+      if (block > 0) element.block = block;
       if (elementMatch[2] !== undefined) {
         try {
           element.name = JSON.parse(`"${elementMatch[2]}"`) as string;

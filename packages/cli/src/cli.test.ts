@@ -690,6 +690,85 @@ describe('AgentBrowser CLI', () => {
 
       expect(out.join('\n').toLowerCase()).toContain('untrusted');
     });
+
+    it('should forward compact projection flags', async () => {
+      await run(
+        'observe',
+        'ses_1',
+        'pg_1',
+        '--roles',
+        'dialog',
+        '--roles',
+        'checkbox',
+        '--name',
+        'user-1',
+        '--scope-ref',
+        'e1_5',
+        '--limit',
+        '20',
+        '--include-fields',
+        'href'
+      );
+
+      expect(sessions.observe).toHaveBeenCalledWith('ses_1', 'pg_1', {
+        roles: ['dialog', 'checkbox'],
+        name: 'user-1',
+        scopeRef: 'e1_5',
+        limit: 20,
+        includeFields: ['href'],
+      });
+    });
+
+    it('should omit projection keys when the flags are absent', async () => {
+      await run('observe', 'ses_1', 'pg_1', '--mode', 'content');
+
+      expect(sessions.observe).toHaveBeenCalledWith('ses_1', 'pg_1', { mode: 'content' });
+    });
+
+    it('maps an old-server projection rejection to actionable text', async () => {
+      sessions.observe.mockRejectedValueOnce(
+        Object.assign(
+          new Error('/roles: Unrecognized property; /scopeRef: Unrecognized property'),
+          { code: 'INVALID_REQUEST' }
+        )
+      );
+
+      const code = await run('observe', 'ses_1', 'pg_1', '--roles', 'dialog');
+
+      expect(code).toBe(1);
+      const text = err.join('\n');
+      expect(text).toContain('older than this CLI');
+      expect(text).toContain('--roles');
+    });
+
+    it('renders the projection echo with matched/total', async () => {
+      sessions.observe.mockResolvedValueOnce({
+        sessionId: 'ses_1',
+        pageId: 'pg_1',
+        revision: 1,
+        url: 'https://example.com',
+        title: 'Example',
+        status: 'interactive',
+        elements: [
+          {
+            ref: 'e1_0',
+            role: 'checkbox',
+            name: 'Object Storage read',
+            visible: true,
+            enabled: true,
+            checked: true,
+          },
+        ],
+        truncated: false,
+        untrustedContent: true,
+        projection: { roles: ['checkbox'], matched: 1, total: 192 },
+      });
+      await run('observe', 'ses_1', 'pg_1');
+
+      const text = out.join('\n');
+      expect(text).toContain('projection: roles=[checkbox]');
+      expect(text).toContain('matched 1 of 192 elements');
+    });
   });
 
   describe('observe command', () => {
@@ -717,6 +796,101 @@ describe('AgentBrowser CLI', () => {
       await run('observe', 'ses_1', 'pg_1');
 
       expect(out.join('\n')).toContain('[checked]');
+    });
+
+    it('renders a [redacted] marker so withheld reads as withheld, not empty', async () => {
+      sessions.observe.mockResolvedValueOnce({
+        sessionId: 'ses_1',
+        pageId: 'pg_1',
+        revision: 1,
+        url: 'https://example.com',
+        title: 'Example',
+        status: 'interactive',
+        elements: [
+          {
+            ref: 'e1_0',
+            role: 'textbox',
+            name: 'Password',
+            visible: true,
+            enabled: true,
+            valueRedacted: true,
+          },
+        ],
+        truncated: false,
+        untrustedContent: true,
+      });
+      await run('observe', 'ses_1', 'pg_1');
+
+      expect(out.join('\n')).toContain('[redacted]');
+    });
+
+    it('marks the focused element with a leading asterisk', async () => {
+      sessions.observe.mockResolvedValueOnce({
+        sessionId: 'ses_1',
+        pageId: 'pg_1',
+        revision: 1,
+        url: 'https://example.com',
+        title: 'Example',
+        status: 'interactive',
+        focusedRef: 'e1_1',
+        elements: [
+          { ref: 'e1_0', role: 'button', name: 'Other', visible: true, enabled: true },
+          {
+            ref: 'e1_1',
+            role: 'textbox',
+            name: 'Search',
+            visible: true,
+            enabled: true,
+            focused: true,
+          },
+        ],
+        truncated: false,
+        untrustedContent: true,
+      });
+      await run('observe', 'ses_1', 'pg_1');
+
+      const text = out.join('\n');
+      expect(text).toContain('*e1_1');
+      // Exactly one focused marker: unfocused rows keep the plain two-space prefix.
+      expect((text.match(/\*\w+\d+_\d+/g) ?? []).length).toBe(1);
+    });
+
+    it('prints the continuation cursor so a truncated observation can be resumed', async () => {
+      sessions.observe.mockResolvedValueOnce({
+        sessionId: 'ses_1',
+        pageId: 'pg_1',
+        revision: 1,
+        url: 'https://example.com',
+        title: 'Example',
+        status: 'interactive',
+        elements: [{ ref: 'e1_0', role: 'button', name: 'Submit', visible: true, enabled: true }],
+        truncated: true,
+        untrustedContent: true,
+        continuation: { nextOrdinal: 300, remaining: 5 },
+      });
+      await run('observe', 'ses_1', 'pg_1');
+
+      const text = out.join('\n');
+      expect(text).toContain('--continue-from 300');
+      expect(text).toContain('5 elements remain');
+    });
+  });
+
+  describe('--json output formatting', () => {
+    it('emits minified JSON by default for machine consumers', async () => {
+      const code = await run('--json', 'observe', 'ses_1', 'pg_1');
+
+      expect(code).toBe(0);
+      expect(out).toHaveLength(1);
+      expect(out[0]).not.toContain('\n');
+      expect(lastJson().sessionId).toBe('ses_1');
+    });
+
+    it('restores 2-space indentation with --pretty', async () => {
+      const code = await run('--json', '--pretty', 'observe', 'ses_1', 'pg_1');
+
+      expect(code).toBe(0);
+      expect(out.join('\n')).toContain('\n  "sessionId"');
     });
   });
 
