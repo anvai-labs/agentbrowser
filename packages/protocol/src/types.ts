@@ -379,6 +379,12 @@ export interface PageElement {
    */
   block?: number;
   /**
+   * True on enrichment-minted elements (formControls/fileInputs scans):
+   * the declared marker separating minted rows from genuine aria content —
+   * never infer minted-ness from the role string or attribute keys.
+   */
+  minted?: boolean;
+  /**
    * True when a compact projection capped this element's name at 200 chars
    * (mirrors hrefTruncated). Only ever set in projected output; the stored
    * element keeps the full name.

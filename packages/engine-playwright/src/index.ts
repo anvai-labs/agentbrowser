@@ -116,6 +116,8 @@ interface StoredElement {
   block?: number;
   /** Row/section context for generic-named custom controls (G1). */
   context?: string;
+  /** Enrichment-minted marker (protocol, round-15/F2). */
+  minted?: boolean;
 }
 
 /** Per-input metadata shared by the fileInputs observe scan and ambiguity details. */
@@ -144,6 +146,8 @@ interface FormControlInfo {
   id?: string;
   automationId?: string;
   visible: boolean;
+  /** Enrichment-minted marker (protocol, round-15/F2). */
+  minted?: boolean;
 }
 
 interface NodeBinding extends SnapshotEvidence {
@@ -2893,6 +2897,7 @@ class PlaywrightPage implements EnginePage {
               ...(info.name !== undefined ? { name: info.name } : {}),
               visible: info.visible,
               enabled: true,
+              minted: true,
               fileInputIndex: info.index,
               ...(block !== undefined ? { block } : {}),
               attributes: {
@@ -3015,6 +3020,7 @@ class PlaywrightPage implements EnginePage {
               ...(info.context !== undefined ? { context: info.context } : {}),
               visible: info.visible,
               enabled: true,
+              minted: true,
               formControlIndex: info.index,
               ...(block !== undefined ? { block } : {}),
               attributes: {

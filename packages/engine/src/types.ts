@@ -258,6 +258,8 @@ export interface RawElement {
    * enrichment; see docs/agent-handoffs/AGENTBROWSER_UI_GAPS_2026-10-10.md.
    */
   context?: string;
+  /** True on enrichment-minted elements (the declared protocol marker). */
+  minted?: boolean;
 }
 
 /**

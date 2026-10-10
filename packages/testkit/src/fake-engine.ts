@@ -299,6 +299,7 @@ class FakePage implements EnginePage {
       ...(el.depth !== undefined ? { depth: el.depth } : {}),
       ...(el.block !== undefined ? { block: el.block } : {}),
       ...(el.context !== undefined ? { context: el.context } : {}),
+      ...(el.minted !== undefined ? { minted: el.minted } : {}),
       attributes: el.attributes ?? {},
     }));
     this.elements = [...this.elements, ...added];
@@ -498,6 +499,10 @@ class FakePage implements EnginePage {
 
         if (el.context !== undefined) {
           element.context = el.context;
+        }
+
+        if (el.minted !== undefined) {
+          element.minted = el.minted;
         }
 
         return element;
@@ -982,6 +987,7 @@ class FakePage implements EnginePage {
       ...(el.depth !== undefined ? { depth: el.depth } : {}),
       ...(el.block !== undefined ? { block: el.block } : {}),
       ...(el.context !== undefined ? { context: el.context } : {}),
+      ...(el.minted !== undefined ? { minted: el.minted } : {}),
       attributes: el.attributes ?? {},
     }));
     // Keep the ref index in sync: resolve() and act() read the Map.
@@ -1029,5 +1035,7 @@ interface FakeElement {
   block?: number;
   /** Row/section context for generic-named controls (G1). */
   context?: string;
+  /** Enrichment-minted marker (protocol). */
+  minted?: boolean;
   attributes: Record<string, string>;
 }

@@ -73,7 +73,23 @@ describe('enrichment invariants (real Chromium)', () => {
         )}`,
       });
       const first = await page.observe({ include: ['formControls'] });
-      await new Promise((resolve) => setTimeout(resolve, 700));
+      // Deterministic (round-15/F6): poll until the minted count actually
+      // grows — a fixed wall-clock sleep raced the in-page timer under CI
+      // load and failed spuriously.
+      const countControls = async (): Promise<number> =>
+        (await page.observe({ include: ['formControls'] })).elements.filter(
+          (e) => e.role === 'control'
+        ).length;
+      const deadline = Date.now() + 10_000;
+      let mounted = false;
+      while (Date.now() < deadline) {
+        // eslint-disable-next-line no-await-in-loop
+        if ((await countControls()) > 1) {
+          mounted = true;
+          break;
+        }
+      }
+      expect(mounted).toBe(true);
       const second = await page.observe({ include: ['formControls'] });
       // Same include set + a new minted control = a real page change: the
       // revision MUST bump (round-8/F2's lazy-mount scenario).

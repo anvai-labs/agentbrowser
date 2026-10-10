@@ -1272,12 +1272,20 @@ export function buildCli(deps: CliDependencies): Cli {
                 // Round-11/F2: only messages that say the property is
                 // UNRECOGNIZED indicate version skew — a genuine validation
                 // error ('Invalid scopeRef ...') must keep its real diagnosis.
-                if (
-                  (error as { code?: string }).code === 'INVALID_REQUEST' &&
+                // Round-15/F5: match the CURRENT TypeBox wording OR the
+                // structured issues detail (shape-based, survives message
+                // wording drift across server builds).
+                const issues = JSON.stringify(
+                  (error as { details?: { issues?: unknown } }).details?.issues ?? []
+                );
+                const unknownProperty =
                   /[Uu]nrecognized (property|key|option)|[Uu]nexpected (property|key)/.test(
                     message
-                  ) &&
-                  /roles|scopeRef|includeFields|name|limit/.test(message)
+                  ) || /"path":"\/(roles|scopeRef|includeFields|name|limit)"/.test(issues);
+                if (
+                  (error as { code?: string }).code === 'INVALID_REQUEST' &&
+                  unknownProperty &&
+                  /roles|scopeRef|includeFields|name|limit/.test(message + issues)
                 ) {
                   throw new UsageError(
                     `The server rejected the projection options and may be older than this CLI (${message}). Re-run without --roles/--name/--scope-ref/--limit/--include-fields, or upgrade the server.`

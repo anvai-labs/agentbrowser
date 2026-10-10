@@ -7198,6 +7198,9 @@
                   "minimum": 0,
                   "type": "integer"
                 },
+                "minted": {
+                  "type": "boolean"
+                },
                 "nameTruncated": {
                   "type": "boolean"
                 },
@@ -7497,6 +7500,9 @@
           "block": {
             "minimum": 0,
             "type": "integer"
+          },
+          "minted": {
+            "type": "boolean"
           },
           "nameTruncated": {
             "type": "boolean"
@@ -9749,6 +9755,9 @@
                     "block": {
                       "minimum": 0,
                       "type": "integer"
+                    },
+                    "minted": {
+                      "type": "boolean"
                     },
                     "nameTruncated": {
                       "type": "boolean"

@@ -312,14 +312,14 @@ describe('observe compact projection', () => {
         role: 'control',
         name: 'Access: No access',
         context: 'Contents — Repository permissions',
-        attributes: { tag: 'span' },
+        minted: true,
       },
       {
         ref: 'e1_1',
         role: 'control',
         name: 'Access: No access',
         context: 'Pull requests — Repository permissions',
-        attributes: { tag: 'span' },
+        minted: true,
       },
       { ref: 'e1_2', role: 'button', name: 'Submit' },
     ]);

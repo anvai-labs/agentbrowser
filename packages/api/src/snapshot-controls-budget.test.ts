@@ -23,14 +23,14 @@ describe('snapshot controls budget invariants (round-13)', () => {
         role: 'control',
         name: 'Access: No access',
         context: 'Contents — Repository permissions',
-        attributes: { tag: 'span' },
+        minted: true,
       },
       {
         ref: 'e1_3',
         role: 'control',
         name: 'Access: No access',
         context: 'Pull requests — Repository permissions',
-        attributes: { tag: 'span' },
+        minted: true,
       },
     ]);
 

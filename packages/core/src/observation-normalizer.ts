@@ -200,6 +200,10 @@ export class ObservationNormalizer {
         element.context = clampUtf16(rawEl.context, 300);
       }
 
+      if (rawEl.minted === true) {
+        element.minted = true;
+      }
+
       return element;
     });
   }

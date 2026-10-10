@@ -92,8 +92,7 @@ import {
   extractVisibleText,
 } from '@agentbrowser/extraction';
 import { EngagementScopePolicy, type NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
-import type { SnapshotControl } from '@agentbrowser/protocol';
-import { MAX_FORM_CONTROLS_PER_ROOT } from '@agentbrowser/protocol';
+import { MAX_FORM_CONTROLS_PER_ROOT, type SnapshotControl } from '@agentbrowser/protocol';
 
 import type {
   ArtifactRef,
@@ -2502,13 +2501,23 @@ export class AgentBrowserService {
     // controls=true caller opted into (round-4/F1).
     // Round-7/F2: budget EngineErrors must surface as 400 INVALID_REQUEST,
     // not 500 INTERNAL — the same normalization paginateObservation applies.
-    const budgetObservationSafely = (
+    // Round-15/F3: ONE budget wrapper with an onTruncated policy — the
+    // fields and controls views shared two drifted catch blocks.
+    const budgetWithPolicy = (
       source: Parameters<typeof budgetObservation>[0],
-      options: Parameters<typeof budgetObservation>[1]
+      options: Parameters<typeof budgetObservation>[1],
+      onTruncated?: () => ReturnType<typeof budgetObservation>
     ): ReturnType<typeof budgetObservation> => {
       try {
         return budgetObservation(source, options);
       } catch (error) {
+        if (
+          onTruncated !== undefined &&
+          error instanceof Error &&
+          (error as { code?: string }).code === 'OUTPUT_TRUNCATED'
+        ) {
+          return onTruncated();
+        }
         const detail = normalizeEngineError(error);
         throw new ServiceError(detail.code, detail.message, detail.retryable, detail.details);
       }
@@ -2517,9 +2526,10 @@ export class AgentBrowserService {
     // the scan discovered); a GENUINE aria role="control" element does not.
     // Filter on that marker — never the bare role string — so legal custom
     // roles stay in fields.
-    const isMinted = (e: { role: string; attributes?: Record<string, string> }): boolean =>
-      e.role === 'control' && e.attributes?.tag !== undefined;
-    const fieldsBudget = budgetObservationSafely(
+    // Round-15/F2: the DECLARED protocol marker — no more textual
+    // role/attributes inference.
+    const isMinted = (e: { minted?: boolean }): boolean => e.minted === true;
+    const fieldsBudget = budgetWithPolicy(
       {
         ...redacted,
         elements: redacted.elements.filter((e) => !isMinted(e)),
@@ -2568,29 +2578,19 @@ export class AgentBrowserService {
       // Round-14/F3: the caller's maxBytes caps the COMBINED response —
       // the controls budget gets the bytes remaining after the fields view,
       // never a second full allowance (which doubled the documented cap).
-      const serializedFields = JSON.stringify(fieldsBudget).length;
+      // Round-15/F1: UTF-8 bytes (the budget's unit), not code units.
+      const serializedFields = Buffer.byteLength(JSON.stringify(fieldsBudget), 'utf8');
       const controlBudgetOptions = {
         maxElements: MAX_FORM_CONTROLS_PER_ROOT * 10,
         ...(bounds?.maxBytes !== undefined
           ? { maxBytes: Math.max(1, bounds.maxBytes - serializedFields) }
           : {}),
       };
-      let budgetedControls: ReturnType<typeof budgetObservation>;
-      try {
-        budgetedControls = budgetObservation(projected, controlBudgetOptions);
-      } catch (error) {
-        const isTruncated =
-          error instanceof Error && (error as { code?: string }).code === 'OUTPUT_TRUNCATED';
-        if (!isTruncated) {
-          const detail = normalizeEngineError(error);
-          throw new ServiceError(detail.code, detail.message, detail.retryable, detail.details);
-        }
-        budgetedControls = {
-          ...projected,
-          elements: [],
-          truncated: true,
-        };
-      }
+      const budgetedControls = budgetWithPolicy(projected, controlBudgetOptions, () => ({
+        ...projected,
+        elements: [],
+        truncated: true,
+      }));
       controlsBlock = {
         controls: budgetedControls.elements.map(
           (c): SnapshotControl => ({
