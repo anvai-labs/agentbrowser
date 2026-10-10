@@ -7149,6 +7149,10 @@
                 },
                 "nameTruncated": {
                   "type": "boolean"
+                },
+                "context": {
+                  "maxLength": 300,
+                  "type": "string"
                 }
               }
             }
@@ -7445,6 +7449,10 @@
           },
           "nameTruncated": {
             "type": "boolean"
+          },
+          "context": {
+            "maxLength": 300,
+            "type": "string"
           }
         }
       },
@@ -9693,6 +9701,10 @@
                     },
                     "nameTruncated": {
                       "type": "boolean"
+                    },
+                    "context": {
+                      "maxLength": 300,
+                      "type": "string"
                     }
                   }
                 }

@@ -250,6 +250,14 @@ export interface RawElement {
    * the iframe's document position).
    */
   block?: number;
+  /**
+   * Row/section context for controls whose accessible name is generic or
+   * duplicated across the page ("Access: No access" style menus): the nearest
+   * enclosing row label, optionally suffixed with the section heading
+   * ("Contents — Repository permissions"). Populated by the formControls
+   * enrichment; see docs/agent-handoffs/AGENTBROWSER_UI_GAPS_2026-10-10.md.
+   */
+  context?: string;
 }
 
 /**

@@ -384,6 +384,12 @@ export interface PageElement {
    * element keeps the full name.
    */
   nameTruncated?: boolean;
+  /**
+   * Row/section context for generic-named custom controls from the
+   * formControls enrichment (G1): nearest row label, optionally with the
+   * section heading. See docs/agent-handoffs/AGENTBROWSER_UI_GAPS_2026-10-10.md.
+   */
+  context?: string;
 }
 
 /**

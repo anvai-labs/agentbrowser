@@ -112,6 +112,8 @@ interface StoredElement {
   depth?: number;
   /** Snapshot block identity (absent = 0 main frame; frames increment). */
   block?: number;
+  /** Row/section context for generic-named custom controls (G1). */
+  context?: string;
 }
 
 /** Per-input metadata shared by the fileInputs observe scan and ambiguity details. */
@@ -129,6 +131,13 @@ interface FormControlInfo {
   /** Position within the full CONTROL_SELECTOR match list (document order). */
   index: number;
   name?: string;
+  /**
+   * Row/section context for controls whose accessible name is generic or
+   * duplicated ("Access: No access" style Primer menus): the nearest
+   * enclosing row label, plus the section heading when one is found. See
+   * docs/agent-handoffs/AGENTBROWSER_UI_GAPS_2026-10-10.md (G1).
+   */
+  context?: string;
   tag: string;
   id?: string;
   automationId?: string;
@@ -2901,6 +2910,7 @@ class PlaywrightPage implements EnginePage {
               ref: `e${this.revision}_${elements.length}`,
               role: 'control',
               ...(info.name !== undefined ? { name: info.name } : {}),
+              ...(info.context !== undefined ? { context: info.context } : {}),
               visible: info.visible,
               enabled: true,
               formControlIndex: info.index,
@@ -3538,11 +3548,25 @@ class PlaywrightPage implements EnginePage {
           offsetWidth: number;
           offsetHeight: number;
           getAttribute(name: string): string | null;
+          // DOM traversal available in the browser context (G1 context
+          // derivation); structurally declared so the node-side type-check
+          // stays DOM-library-free.
+          closest(selector: string): {
+            tagName: string;
+            textContent: string | null;
+            querySelector(selector: string): { textContent: string | null } | null;
+            previousElementSibling: unknown | null;
+            parentElement: unknown | null;
+          } | null;
+          querySelector(selector: string): { textContent: string | null } | null;
+          previousElementSibling: unknown | null;
+          parentElement: unknown | null;
         }>
       ): Array<{
         index: number;
         tag: string;
         name?: string;
+        context?: string;
         id?: string;
         automationId?: string;
         visible: boolean;
@@ -3556,10 +3580,41 @@ class PlaywrightPage implements EnginePage {
             automationId ||
             node.id.trim() ||
             undefined;
+          // Row/section context (G1): generic-named custom controls become
+          // distinguishable ("Access: No access" + context "Contents").
+          let context: string | undefined;
+          const row = node.closest(
+            'li, tr, [role="row"], .Box-row, .form-group, .field, dt, dl > div'
+          );
+          const rowLabel = row
+            ?.querySelector('strong, label, th, dt, .js-list-group-item strong')
+            ?.textContent?.trim()
+            .slice(0, 120);
+          if (rowLabel) {
+            const heading = ((): string | undefined => {
+              type Crawl = {
+                tagName: string;
+                textContent: string | null;
+                previousElementSibling: Crawl | null;
+                parentElement: Crawl | null;
+              };
+              let cursor: Crawl | null = row as Crawl;
+              while (cursor) {
+                cursor = cursor.previousElementSibling ?? cursor.parentElement;
+                if (!cursor || cursor.tagName === 'MAIN' || cursor.tagName === 'BODY') break;
+                if (/^H[1-4]$/.test(cursor.tagName)) {
+                  return cursor.textContent?.trim().slice(0, 80) || undefined;
+                }
+              }
+              return undefined;
+            })();
+            context = heading ? `${rowLabel} — ${heading}` : rowLabel;
+          }
           return {
             index,
             tag: node.tagName.toLowerCase(),
             ...(name !== undefined ? { name } : {}),
+            ...(context !== undefined ? { context } : {}),
             ...(node.id !== '' ? { id: node.id } : {}),
             ...(automationId !== undefined ? { automationId } : {}),
             visible: node.offsetWidth > 0 || node.offsetHeight > 0,

@@ -298,6 +298,7 @@ class FakePage implements EnginePage {
       ...(el.checked !== undefined ? { checked: el.checked } : {}),
       ...(el.depth !== undefined ? { depth: el.depth } : {}),
       ...(el.block !== undefined ? { block: el.block } : {}),
+      ...(el.context !== undefined ? { context: el.context } : {}),
       attributes: el.attributes ?? {},
     }));
     this.elements = [...this.elements, ...added];
@@ -493,6 +494,10 @@ class FakePage implements EnginePage {
 
         if (el.block !== undefined) {
           element.block = el.block;
+        }
+
+        if (el.context !== undefined) {
+          element.context = el.context;
         }
 
         return element;
@@ -976,6 +981,7 @@ class FakePage implements EnginePage {
       ...(el.risk !== undefined ? { risk: el.risk } : {}),
       ...(el.depth !== undefined ? { depth: el.depth } : {}),
       ...(el.block !== undefined ? { block: el.block } : {}),
+      ...(el.context !== undefined ? { context: el.context } : {}),
       attributes: el.attributes ?? {},
     }));
     // Keep the ref index in sync: resolve() and act() read the Map.
@@ -1021,5 +1027,7 @@ interface FakeElement {
   depth?: number;
   /** Snapshot block identity (absent = 0 main frame; frames increment). */
   block?: number;
+  /** Row/section context for generic-named controls (G1). */
+  context?: string;
   attributes: Record<string, string>;
 }

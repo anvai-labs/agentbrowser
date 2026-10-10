@@ -2472,6 +2472,10 @@ function renderObservation(observation: ObservationResponse): string[] {
         parts.push('[name truncated]');
       }
     }
+    if (element.context) {
+      // G1: row/section context separates generic-named custom controls.
+      parts.push(`(${element.context})`);
+    }
     if (element.value !== undefined) {
       parts.push(`= "${element.value}"`);
     }

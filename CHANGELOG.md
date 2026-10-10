@@ -7,6 +7,16 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — formControls row/section context (G1)
+
+- Custom controls with generic, duplicated accessible names (GitHub's permission editor
+  renders 40+ "Access: No access" Primer menus) now carry `PageElement.context`: the nearest
+  enclosing row label plus the section heading (`Contents — Repository permissions`), minted
+  by the formControls enrichment and rendered by the CLI as `(context)`. Field evidence and
+  the full gap packet (forms-extract parity, lazy-section probes, autofill context matching,
+  scroll ergonomics, private-file downloads):
+  docs/agent-handoffs/AGENTBROWSER_UI_GAPS_2026-10-10.md.
+
 ## [1.16.1] — 2026-10-10
 
 ### Added — Windows CI + winget channel, App-based submission

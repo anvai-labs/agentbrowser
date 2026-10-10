@@ -189,6 +189,11 @@ export class ObservationNormalizer {
         element.block = rawEl.block;
       }
 
+      // G1: row/section context for generic-named custom controls.
+      if (rawEl.context !== undefined) {
+        element.context = rawEl.context;
+      }
+
       return element;
     });
   }
