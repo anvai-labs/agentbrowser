@@ -341,16 +341,17 @@ describe('observe compact projection', () => {
       'Pull requests — Repository permissions',
     ]);
 
-    // Snapshot parity (round-2/F4): opt-in controls surface context on
-    // fields, so the snapshot->plan round trip can address generic-named
-    // menus; default snapshots stay control-free.
+    // Snapshot parity (round-2/F4 + round-3/F5): opt-in controls arrive as
+    // a SEPARATE array the fields budget can never silently drop; default
+    // snapshots stay control-free.
     const plain = await service.getSnapshot(session.sessionId, pageId);
     expect(plain.fields.some((f) => f.role === 'control')).toBe(false);
+    expect(plain.controls).toBeUndefined();
     const withControls = await service.getSnapshot(session.sessionId, pageId, {
       controls: true,
     });
-    const controlFields = withControls.fields.filter((f) => f.role === 'control');
-    expect(controlFields.map((f) => f.context)).toEqual([
+    expect(withControls.fields.some((f) => f.role === 'control')).toBe(false);
+    expect(withControls.controls?.map((c) => c.context)).toEqual([
       'Contents — Repository permissions',
       'Pull requests — Repository permissions',
     ]);

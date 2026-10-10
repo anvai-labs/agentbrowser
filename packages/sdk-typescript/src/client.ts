@@ -210,7 +210,13 @@ export interface PageSnapshot {
   title: string;
   revision: number;
   mode: 'stable' | 'verified';
-  fields: Array<{ ref: string; role: string; label: string; context?: string }>;
+  fields: Array<{ ref: string; role: string; label: string }>;
+  /**
+   * Opt-in minted custom controls (controls: true): a separate array so the
+   * fields budget never silently drops them; each carries context for
+   * generic-named menus (G1).
+   */
+  controls?: Array<{ ref: string; role: string; label: string; context?: string }>;
   truncated?: boolean;
   /**
    * True when the whole-page ariaSnapshot budget was exceeded and `fields`

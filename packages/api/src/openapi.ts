@@ -757,6 +757,15 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
               schema: { type: 'integer', minimum: 1 },
               description: 'Cap the serialized response size in bytes.',
             },
+            {
+              name: 'controls',
+              in: 'query',
+              schema: { type: 'string', enum: ['true', 'false'] },
+              description:
+                'Also mint custom widget controls as a separate controls[] array (each ' +
+                'with row/section context for generic-named menus); never merged into ' +
+                'fields, so the fields budget cannot drop them.',
+            },
           ],
           responses: {
             '200': {
@@ -778,6 +787,25 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                         ref: { type: 'string' },
                         role: { type: 'string' },
                         label: { type: 'string' },
+                      },
+                    },
+                  },
+                  controls: {
+                    type: 'array',
+                    description:
+                      'Present with ?controls=true: minted custom widget controls, a ' +
+                      'separate array the fields budget never drops.',
+                    items: {
+                      type: 'object',
+                      required: ['ref', 'role', 'label'],
+                      properties: {
+                        ref: { type: 'string' },
+                        role: { type: 'string' },
+                        label: { type: 'string' },
+                        context: {
+                          type: 'string',
+                          description: 'Row label + section heading for generic names.',
+                        },
                       },
                     },
                   },

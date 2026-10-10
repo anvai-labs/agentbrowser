@@ -2460,7 +2460,15 @@ export class AgentBrowserService {
     title: string;
     revision: number;
     mode: 'stable' | 'verified';
-    fields: Array<{ ref: string; role: string; label: string; context?: string }>;
+    fields: Array<{ ref: string; role: string; label: string }>;
+    /**
+     * Opt-in minted custom controls (review round-3/F5): a SEPARATE array,
+     * never merged into `fields` — the element budget sorts appended
+     * controls last, so merged controls would be exactly the rows any
+     * maxElements/maxBytes cut silently drops. Each carries `context` for
+     * generic-named menus (G1).
+     */
+    controls?: Array<{ ref: string; role: string; label: string; context?: string }>;
     truncated?: boolean;
     degraded?: boolean;
     degradedReason?:
@@ -2492,17 +2500,26 @@ export class AgentBrowserService {
         | 'dom-semantic-subset'
         | 'empty-snapshot-nonempty-dom';
     };
+    const all = view.elements ?? [];
+    const minted = all.filter((e) => e.role === 'control');
     return {
       url: view.url ?? '',
       title: view.title ?? '',
       revision: view.revision ?? 0,
       mode: this.churnMode(`${sessionId}:${pageId}`),
-      fields: (view.elements ?? []).map((e) => ({
-        ref: e.ref,
-        role: e.role ?? '',
-        label: e.name ?? '',
-        ...(e.context !== undefined ? { context: e.context } : {}),
-      })),
+      fields: all
+        .filter((e) => e.role !== 'control')
+        .map((e) => ({ ref: e.ref, role: e.role ?? '', label: e.name ?? '' })),
+      ...(bounds?.controls === true
+        ? {
+            controls: minted.map((c) => ({
+              ref: c.ref,
+              role: c.role ?? '',
+              label: c.name ?? '',
+              ...(c.context !== undefined ? { context: c.context } : {}),
+            })),
+          }
+        : {}),
       ...(view.truncated === true ? { truncated: true } : {}),
       // Whole-body ariaSnapshot fallback signal (see observe()): a
       // one-shot-plan caller must see this just as clearly as observe

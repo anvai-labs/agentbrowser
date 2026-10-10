@@ -1313,26 +1313,48 @@ export function buildCli(deps: CliDependencies): Cli {
         .argument('<pageId>')
         .option('--max-elements <n>', 'maximum fields to return')
         .option('--max-bytes <n>', 'maximum snapshot size in bytes')
+        .option(
+          '--include-controls',
+          'also mint custom widget controls as a separate list with row context (G1)',
+          false
+        )
         .action(
           action(
             async (
               ctx,
               sessionId: string,
               pageId: string,
-              options: { maxElements?: string; maxBytes?: string }
+              options: { maxElements?: string; maxBytes?: string; includeControls?: boolean }
             ) => {
-              const bounds: { maxElements?: number; maxBytes?: number } = {};
+              const bounds: {
+                maxElements?: number;
+                maxBytes?: number;
+                controls?: boolean;
+              } = {};
               if (options.maxElements) {
                 bounds.maxElements = Number.parseInt(options.maxElements, 10);
               }
               if (options.maxBytes) {
                 bounds.maxBytes = Number.parseInt(options.maxBytes, 10);
               }
+              if (options.includeControls) {
+                bounds.controls = true;
+              }
               const snapshot = await ctx.client.sessions.snapshot(sessionId, pageId, bounds);
 
               ctx.emit(snapshot, () => [
                 `${snapshot.url} (${snapshot.mode}, revision ${snapshot.revision})`,
                 ...snapshot.fields.map((f) => `  ${f.ref} [${f.role}] ${f.label}`),
+                ...(snapshot.controls && snapshot.controls.length > 0
+                  ? [
+                      '',
+                      'Controls:',
+                      ...snapshot.controls.map(
+                        (c) =>
+                          `  ${c.ref} [${c.role}] ${c.label}${c.context ? ` (${c.context})` : ''}`
+                      ),
+                    ]
+                  : []),
                 ...(snapshot.truncated ? ['  (truncated)'] : []),
               ]);
             }

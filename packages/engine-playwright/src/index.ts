@@ -63,6 +63,7 @@ import {
   type Page,
   chromium,
 } from 'playwright';
+import { g1CollectNamesPageFunction, g1DescribePageFunction } from './form-control-context.js';
 import {
   SnapshotBudget,
   type SnapshotEvidence,
@@ -2903,9 +2904,18 @@ class PlaywrightPage implements EnginePage {
       // refs; the :not([role]) candidate filter keeps elements the snapshot
       // covered from being minted twice.
       if (request.include?.includes('formControls') === true) {
+        // Two-pass, cross-root G1 design (round-3/F6): duplication counts
+        // are page-wide, so names are collected from EVERY root before any
+        // context is derived.
+        const pageWideNameCounts: Record<string, number> = {};
+        for (const root of scanRoots) {
+          for (const name of await this.describeFormControlNames(root)) {
+            pageWideNameCounts[name] = (pageWideNameCounts[name] ?? 0) + 1;
+          }
+        }
         for (const root of scanRoots) {
           const block = root === this.page ? undefined : blockOfFrame.get(root);
-          for (const info of await this.describeFormControls(root)) {
+          for (const info of await this.describeFormControls(root, pageWideNameCounts)) {
             elements.push({
               ref: `e${this.revision}_${elements.length}`,
               role: 'control',
@@ -3536,172 +3546,25 @@ class PlaywrightPage implements EnginePage {
    * `visible` here is a layout-box heuristic; observe overwrites it with the
    * authoritative Playwright isVisible for bound elements.
    */
-  private async describeFormControls(
-    root: import('playwright').Page | import('playwright').Frame = this.page
-  ): Promise<FormControlInfo[]> {
-    const described = await root.locator(FORM_CONTROL_SELECTOR).evaluateAll(
-      (
-        nodes: Array<{
-          tagName: string;
-          textContent: string | null;
-          id: string;
-          offsetWidth: number;
-          offsetHeight: number;
-          getAttribute(name: string): string | null;
-        }>
-      ): Array<{
-        index: number;
-        tag: string;
-        name?: string;
-        context?: string;
-        id?: string;
-        automationId?: string;
-        visible: boolean;
-      }> => {
-        // Full browser-context shape of a node (G1 context derivation);
-        // one cast keeps the declared parameter type DOM-library-free.
-        interface El {
-          tagName: string;
-          textContent: string | null;
-          id: string;
-          offsetWidth: number;
-          offsetHeight: number;
-          getAttribute(name: string): string | null;
-          contains(other: unknown): boolean;
-          ownerDocument: { getElementById(id: string): El | null };
-          closest(selector: string): El | null;
-          querySelectorAll(selector: string): El[];
-          previousElementSibling: El | null;
-          parentElement: El | null;
-        }
-        const els = nodes.map((n) => n as unknown as El);
-        // Semantic row/label detection only — structural selectors (li, tr,
-        // [role=row], dl/dd) plus label elements and aria-labelledby; no
-        // site or framework class names (review G1 round-2/F6).
-        const norm = (s: string | null | undefined): string | undefined =>
-          s?.replace(/\s+/g, ' ').trim().slice(0, 120) || undefined;
-        const rowLabelOf = (node: El, ownName: string | undefined): string | undefined => {
-          const labelledBy = node.getAttribute('aria-labelledby');
-          if (labelledBy) {
-            for (const id of labelledBy.split(/\s+/)) {
-              const source = node.ownerDocument.getElementById(id);
-              if (!source || node.contains(source)) continue;
-              const label = norm(source.textContent);
-              // A labelledby source that merely repeats the control's own
-              // generic name is not a row label — keep looking (round-2/F1).
-              if (label && label !== ownName) return label;
-            }
-          }
-          // dl groups are dt/dd-scoped: a dd takes its preceding dt; when the
-          // preceding sibling is another dd (multi-dd groups) there is no row
-          // label — never scan the whole dl and attribute another row's
-          // label (round-2/F5).
-          const dd = node.closest('dd');
-          if (dd) {
-            const dt = dd.previousElementSibling;
-            if (dt?.tagName === 'DT') {
-              const label = norm(dt.textContent);
-              if (label && label !== ownName) return label;
-            }
-            return undefined;
-          }
-          const row = node.closest('li, tr, [role="row"]');
-          if (!row) return undefined;
-          const candidates = row.querySelectorAll('strong, label, th');
-          for (const candidate of candidates) {
-            // Exclude the control's own subtree: the generic name itself
-            // often lives in an inner <strong> (review G1/F2).
-            if (node.contains(candidate)) continue;
-            const label = norm(candidate.textContent);
-            if (label) return label;
-          }
-          return undefined;
-        };
-        // Section attribution (round-1/F3 + round-2/F2): a heading is claimed
-        // only when it belongs to the SAME sectioning scope as the row. Walk
-        // backwards from the row inside its nearest sectioning ancestor
-        // (section/article/fieldset/main) — across siblings and into their
-        // subtrees — accepting only headings whose own nearest sectioning
-        // ancestor IS that scope; then climb outward. A headingless section
-        // therefore inherits nothing from a preceding sibling section, while
-        // flat pages (headings as siblings under main) still resolve.
-        const SECTIONING = 'section, article, fieldset, main';
-        const headingFor = (row: El): string | undefined => {
-          let scope: El | null = row.closest(SECTIONING);
-          while (scope) {
-            const scopeId = scope;
-            const scopedHeadingText = (heading: El): string | undefined =>
-              heading.closest(SECTIONING) === scopeId
-                ? (norm(heading.textContent) ?? undefined)
-                : undefined;
-            let cursor: El = row;
-            while (cursor) {
-              const sibling: El | null = cursor.previousElementSibling;
-              if (sibling) {
-                if (/^H[1-4]$/.test(sibling.tagName)) {
-                  const text = scopedHeadingText(sibling);
-                  if (text) return text;
-                } else {
-                  const nested = sibling.querySelectorAll('h1, h2, h3, h4');
-                  for (let i = nested.length - 1; i >= 0; i -= 1) {
-                    const text = scopedHeadingText(nested[i] as El);
-                    if (text) return text;
-                  }
-                }
-                cursor = sibling;
-                continue;
-              }
-              if (cursor === scopeId) break;
-              const parent: El | null = cursor.parentElement;
-              if (parent === null) break;
-              cursor = parent;
-            }
-            scope = scope.parentElement ? (scope.parentElement as El).closest(SECTIONING) : null;
-          }
-          return undefined;
-        };
+  private async describeFormControlNames(
+    root: import('playwright').Page | import('playwright').Frame
+  ): Promise<string[]> {
+    // Pass one of the two-pass, cross-root G1 design: names only, cheap to
+    // run on every scan root before context derivation (round-3/F6).
+    return root.locator(FORM_CONTROL_SELECTOR).evaluateAll(g1CollectNamesPageFunction);
+  }
 
-        const basics = els.map((node, index) => {
-          const text = node.textContent?.trim().slice(0, 200) || undefined;
-          const automationId = node.getAttribute('data-automation-id')?.trim() || undefined;
-          const name =
-            node.getAttribute('aria-label')?.trim() ||
-            text ||
-            automationId ||
-            node.id.trim() ||
-            undefined;
-          return {
-            node,
-            index,
-            tag: node.tagName.toLowerCase(),
-            ...(name !== undefined ? { name } : {}),
-            ...(node.id !== '' ? { id: node.id } : {}),
-            ...(automationId !== undefined ? { automationId } : {}),
-            visible: node.offsetWidth > 0 || node.offsetHeight > 0,
-          };
-        });
-        // Attach context only where it earns its bytes (review G1/F6):
-        // duplicated or absent names. Unique-named controls stay lean.
-        const nameCounts = new Map<string, number>();
-        for (const b of basics) {
-          if (b.name !== undefined) nameCounts.set(b.name, (nameCounts.get(b.name) ?? 0) + 1);
-        }
-        return basics.map((b) => {
-          // Never ship the live-DOM handle back through evaluateAll's
-          // serialization (round-2/F3): strip it from every return path.
-          const { node: _node, ...serializable } = b;
-          const needsContext = b.name === undefined || (nameCounts.get(b.name) ?? 0) >= 2;
-          if (!needsContext) return serializable;
-          const rowLabel = rowLabelOf(b.node, b.name);
-          if (rowLabel === undefined) return serializable;
-          const heading = headingFor(b.node);
-          return {
-            ...serializable,
-            ...(heading ? { context: `${rowLabel} — ${heading}` } : { context: rowLabel }),
-          };
-        });
-      }
-    );
+  private async describeFormControls(
+    root: import('playwright').Page | import('playwright').Frame,
+    pageWideNameCounts: Record<string, number>
+  ): Promise<FormControlInfo[]> {
+    // Pass two: full derivation using counts merged across ALL roots. The
+    // page functions live in form-control-context.ts — self-contained so
+    // evaluateAll can serialize their source, pure so the naming rules are
+    // unit-testable without Chromium (round-3/F8).
+    const described = await root
+      .locator(FORM_CONTROL_SELECTOR)
+      .evaluateAll(g1DescribePageFunction, pageWideNameCounts);
     return described.slice(0, MAX_FORM_CONTROLS);
   }
 
