@@ -52,7 +52,8 @@ updates:
         update-types: ['version-update:semver-major']
       # The Playwright image ships browsers for exactly one Playwright version:
       # it must move together with the npm `playwright` dependency, never alone.
-      - dependency-name: mcr.microsoft.com/playwright
+      # Dependabot names docker deps by image name, without the registry.
+      - dependency-name: playwright
 
   # mkdocs-requirements.txt (docs site build).
   - package-ecosystem: pip
