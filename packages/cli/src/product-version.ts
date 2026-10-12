@@ -1,2 +1,2 @@
 // Generated from root package.json by pnpm release:sync. Do not edit.
-export const PRODUCT_VERSION = '1.16.1';
+export const PRODUCT_VERSION = '1.17.0';

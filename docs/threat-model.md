@@ -49,7 +49,9 @@ proves the control works. Residual risks are named, not hidden.
 - **Browser request guard residuals (ACCEPTED)**: keyed wide binds skip the
   `Host` check unless `AGENTBROWSER_ALLOWED_HOSTS` is set — a rebound page can
   reach the API but holds no bearer key, so every `/v1` route answers 401; the
-  unversioned infra routes (`/health`, `/openapi.json`) stay readable. With
+  unversioned infra routes (`/health`, `/health/live`, `/health/ready`,
+  `/openapi.json`) and the static `/operator` page stay readable (no session
+  data; `/metrics` is key-gated). With
   `AGENTBROWSER_ALLOW_LOOPBACK`, the engine's interception strips fetch
   metadata, so no-cors GETs from in-session pages reach GET routes; run keyed
   in that mode. See operations.md "Browser request guard".
