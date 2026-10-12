@@ -43,6 +43,8 @@ test('version manifest declares the default locale the schema requires', () => {
   const { version, locale } = generate();
   assert.match(version, /^DefaultLocale: en-US$/m);
   assert.match(locale, /^PackageLocale: en-US$/m);
+  // winget-pkgs checks URL reachability: the release page, not the download path.
+  assert.match(locale, /^ReleaseNotesUrl: https:\/\/github\.com\/anvai-labs\/agentbrowser\/releases\/tag\/v1\.2\.3$/m);
 });
 
 test('refuses a malformed zip hash', () => {

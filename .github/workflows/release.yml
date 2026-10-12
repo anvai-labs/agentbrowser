@@ -457,7 +457,7 @@ jobs:
           gh release upload "$TAG" --repo "$REPO" release-assets/*
 
   winget:
-    name: Winget manifests (combined MCP + CLI)
+    name: Winget manifests (zip with MCP, CLI and server)
     # Generates winget-pkgs manifests for the Windows zip (all three portable
     # commands as nested files) and,
     # when WINGET_FORK_TOKEN is configured, opens the submission PR to
@@ -549,7 +549,7 @@ jobs:
           git push -q origin "$BRANCH"
           if gh pr create --repo microsoft/winget-pkgs --head "anvai-labs:${BRANCH}" \
             --title "Add AnvaiLabs.AgentBrowser ${VER}" \
-            --body "Automated submission from anvai-labs/agentbrowser release ${GITHUB_REF_NAME}. Portable installers (agentbrowser-mcp, agentbrowser-cli, agentbrowser-server). SHA256 verified by CI."; then
+            --body "Automated submission from anvai-labs/agentbrowser release ${GITHUB_REF_NAME}. One zip installer with three nested portable commands (agentbrowser-mcp, agentbrowser-cli, agentbrowser-server). SHA256 verified by CI."; then
             echo "winget-pkgs submission PR opened." >> "$GITHUB_STEP_SUMMARY"
           else
             {

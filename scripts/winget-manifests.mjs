@@ -124,7 +124,7 @@ Tags:
 - ai
 - playwright
 - cli
-ReleaseNotesUrl: ${base}/v${version.replace(/^v/, '')}
+ReleaseNotesUrl: https://github.com/anvai-labs/agentbrowser/releases/tag/v${version.replace(/^v/, '')}
 ManifestType: defaultLocale
 ManifestVersion: ${MANIFEST_VERSION}
 `,
