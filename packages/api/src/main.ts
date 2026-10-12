@@ -1,0 +1,97 @@
+/**
+ * Server startup, loaded by bin.ts only after argument handling so that
+ * --help/--version never pull in the engine graph (Playwright).
+ * Port and host come from the PORT/HOST environment variables or the
+ * ServerOptions defaults (5709 on 127.0.0.1; set HOST=0.0.0.0 for
+ * network/container exposure).
+ */
+
+import { MetricsRegistry, StructuredLogger } from '@agentbrowser/core';
+import type { BrowserEngine } from '@agentbrowser/engine';
+import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
+import { deploymentModeFromEnvironment } from './cdp-config.js';
+import { operatorCdpFromEnvironment } from './cdp-startup.js';
+import { extractMaxBytesFromEnvironment } from './extraction-config.js';
+import { networkPolicyFromEnvironment } from './network-policy-config.js';
+import { startServer } from './server.js';
+
+// Validate before engine/server startup; invalid operator policy aborts startup.
+const networkPolicy = networkPolicyFromEnvironment(process.env);
+const extractMaxBytes = extractMaxBytesFromEnvironment(process.env);
+const operatorCdp = operatorCdpFromEnvironment(process.env);
+const deploymentMode = deploymentModeFromEnvironment(process.env);
+const engine = new PlaywrightChromiumEngine(operatorCdp ? { operatorCdp } : {});
+if (operatorCdp)
+  console.warn(
+    '[agentbrowser] Operator CDP attachment configured (local authenticated admission required): dedicated profile required. Only initial explicit navigation URLs are checked; redirects, subresources, workers, clicks, forms, downloads and operator activity are outside network containment.'
+  );
+
+// TD-BROWSER-7 Phase 2: real Safari via safaridriver, registered for
+// capability discovery. The guarded service always attaches an egress policy,
+// so Safari creation returns ENGINE_UNSUPPORTED / EGRESS_UNSUPPORTED even
+// after driver enablement; direct-engine local use is a separate deployment.
+const engines: Record<string, BrowserEngine> = {};
+if (process.platform === 'darwin') {
+  const { SafaridriverEngine } = await import('@agentbrowser/engine-safari');
+  engines.safari = new SafaridriverEngine();
+}
+const metrics = new MetricsRegistry();
+const logger = new StructuredLogger({
+  level: process.env.AGENTBROWSER_LOG_LEVEL === 'debug' ? 'debug' : 'info',
+});
+
+/** Parse a positive-int env var; undefined when unset or garbage (loud default). */
+const envMs = (name: string): number | undefined => {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') {
+    return undefined;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    console.warn(
+      `[agentbrowser] Ignoring ${name}="${raw}" - must be a positive integer of milliseconds.`
+    );
+    return undefined;
+  }
+  return parsed;
+};
+
+// Operator-level session defaults (per-request values still win).
+const defaultTtlMs = envMs('AGENTBROWSER_DEFAULT_TTL_MS');
+const defaultIdleTimeoutMs = envMs('AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS');
+const server = await startServer({
+  ...(operatorCdp ? { operatorCdp } : {}),
+  deploymentMode,
+  extractMaxBytes,
+  networkPolicy,
+  engine,
+  engines,
+  metrics,
+  logger,
+  ...(defaultTtlMs !== undefined ? { defaultTtlMs } : {}),
+  ...(defaultIdleTimeoutMs !== undefined ? { defaultIdleTimeoutMs } : {}),
+});
+
+// Ensure the browser process goes down with the server. Idempotent: a second
+// signal (or stdin EOF racing a signal) must not close the server twice.
+let shuttingDown = false;
+const shutdown = async () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  await server.close(); // onClose shuts the service down, which closes the engine
+  process.exit(0);
+};
+const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+// Ctrl-Break / console close on Windows.
+if (process.platform === 'win32') signals.push('SIGBREAK');
+for (const signal of signals) process.on(signal, () => void shutdown());
+
+// Launcher lifeline (opt-in): a supervising launcher holds our stdin open and
+// closes it to stop us — and if the launcher is killed outright (Windows
+// TerminateProcess), the OS closes the pipe, so the server still shuts down
+// cleanly and takes Chromium with it instead of leaking an orphan.
+if (process.env.AGENTBROWSER_SHUTDOWN_ON_STDIN_EOF === '1') {
+  process.stdin.on('end', () => void shutdown());
+  process.stdin.on('close', () => void shutdown());
+  process.stdin.resume();
+}

@@ -7,6 +7,17 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed — server command line
+
+- `agentbrowser-server --help` and `--version` now answer without starting the service or
+  loading the browser engine (previously every argument was ignored and the server started). The
+  entrypoint parses arguments first and loads the server lazily, so help works even when
+  Playwright cannot load. Unknown arguments exit 2; configuration stays environment-only.
+- The server also shuts down cleanly on `SIGHUP` and, on Windows, `SIGBREAK`. Shutdown is
+  idempotent. A new opt-in `AGENTBROWSER_SHUTDOWN_ON_STDIN_EOF=1` stops it when stdin closes,
+  which gives the Windows launcher a lifeline: if the launcher dies, the server still exits and
+  closes Chromium.
+
 ### Fixed — winget package
 
 - The winget manifests were not valid: three portable `x64` installers in one package are rejected
