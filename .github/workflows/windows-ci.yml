@@ -78,7 +78,8 @@ jobs:
       # The Windows server ships as a symlink-free (hoisted) tree, because
       # Windows tar cannot extract pnpm's links. Build it with the release
       # packager, then extract and run it from RUNNER_TEMP — outside the
-      # checkout, where v1.17.0's build-path bug went unseen.
+      # checkout, where v1.17.0's build-path bug went unseen — including a
+      # real Chromium session against the browsers provisioned above.
       - name: Package and check the win32-x64 server tree
         shell: pwsh
         run: |
@@ -86,7 +87,7 @@ jobs:
           $out = Join-Path $env:RUNNER_TEMP 'win32-server'
           node scripts/package-server.mjs --output-dir $out --target win32-x64 --expected-version $version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node scripts/check-win32-server-tree.mjs --zip (Join-Path $out 'agentbrowser-server-win32-x64.zip') --expected-version $version
+          node scripts/check-win32-server-tree.mjs --zip (Join-Path $out 'agentbrowser-server-win32-x64.zip') --expected-version $version --session
           exit $LASTEXITCODE
 
       - name: Windows gotcha gates (W1-W6)

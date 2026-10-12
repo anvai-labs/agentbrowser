@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, mkdir, readFile, readdir, readlink, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, readFile, readdir, readlink, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { packageServer } from './package-server.mjs';
+import { basename, dirname, join } from 'node:path';
+import { packageServer, stagingBase } from './package-server.mjs';
+import { runExecutable } from './release-smoke.mjs';
 
 const gitReply = (args, dirty = false) => args[0] === 'git'
   ? { stdout: args[3] === 'rev-parse' ? 'a'.repeat(40) : dirty ? ' M changed-source.ts\n' : '', stderr: '' }
@@ -183,6 +184,15 @@ test('refuses wrong checkout attribution and dirty candidates before deployment'
 
 // --- win32-x64: symlink-free hoisted tree (Windows cannot extract pnpm links) ---
 
+// Stands in for materialize-hoisted.mjs (tested on its own): copies the
+// deployed fixture verbatim, links included, so the win32 gates still see them.
+const materializeCalls = [];
+async function copyTree(from, to) {
+  materializeCalls.push([from, to]);
+  await cp(from, to, { recursive: true, verbatimSymlinks: true });
+  return { packages: ['fastify@5.0.0'] };
+}
+
 async function hoistedDeploy(server, { extraLink, longPath } = {}) {
   await mkdir(join(server, 'node_modules/.bin'), { recursive: true });
   await mkdir(join(server, 'node_modules/fastify/node_modules/.bin'), { recursive: true });
@@ -231,10 +241,17 @@ test('win32-x64 deploys hoisted, strips links and dev-only files, and zips witho
       }
       return { stdout: '', stderr: '' };
     };
-    const result = await packageServer({ root, run, platform: 'linux', outputDir: join(root, 'out'), target: 'win32-x64', expectedVersion: '1.2.3', commit: 'a'.repeat(40) });
+    const result = await packageServer({ root, run, platform: 'linux', outputDir: join(root, 'out'), target: 'win32-x64', materialize: copyTree, expectedVersion: '1.2.3', commit: 'a'.repeat(40) });
     assert.equal(result.file, join(root, 'out', 'agentbrowser-server-win32-x64.zip'));
+    assert.equal(result.packages, 1);
     const deploy = calls.find(({ args }) => args.includes('deploy')).args;
-    assert.ok(deploy.includes('--config.node-linker=hoisted'), 'win32 must deploy a hoisted, link-free tree');
+    // pnpm 9's hoisted deploy ignores the lockfile: win32 must start from the
+    // same isolated deploy as every other target, then materialize it.
+    assert.ok(!deploy.some((arg) => arg.includes('node-linker')), 'win32 must use the lockfile-faithful isolated deploy');
+    const [from, to] = materializeCalls.at(-1);
+    assert.equal(from, deploy.at(-1));
+    assert.equal(basename(to), 'server');
+    assert.notEqual(from, to);
     assert.ok(archivedTree.includes('VERSION.json'));
     assert.ok(archivedTree.includes('dist/bin.js'));
     assert.ok(!archivedTree.includes('agentbrowser-server'), 'no POSIX sh launcher in the Windows tree');
@@ -245,7 +262,7 @@ test('win32-x64 deploys hoisted, strips links and dev-only files, and zips witho
   });
 });
 
-test('POSIX targets keep the isolated deploy (no hoisted flag)', async () => {
+test('POSIX targets deploy straight into server/ without materializing', async () => {
   await fixture(async (root) => {
     let deploy;
     const run = async (args) => {
@@ -275,7 +292,7 @@ test('win32-x64 refuses any remaining link and any path too long for MAX_PATH', 
         return { stdout: '', stderr: '' };
       };
       await assert.rejects(
-        packageServer({ root, run, platform: 'linux', outputDir: join(root, 'out'), target: 'win32-x64', expectedVersion: '1.2.3', commit: 'a'.repeat(40) }),
+        packageServer({ root, run, platform: 'linux', outputDir: join(root, 'out'), target: 'win32-x64', materialize: copyTree, expectedVersion: '1.2.3', commit: 'a'.repeat(40) }),
         pattern
       );
       await assert.rejects(stat(join(root, 'out')), /ENOENT/, 'failed packaging leaves no output');
@@ -294,7 +311,7 @@ test('win32 hosts zip with the system tar.exe and invoke pnpm without relying on
       else if (/tar\.exe$/i.test(args[0])) await writeFile(args[args.indexOf('-f') + 1], 'zip bytes');
       return { stdout: '', stderr: '' };
     };
-    await packageServer({ root, run, platform: 'win32', env: { SystemRoot: 'C:\\Windows' }, outputDir: join(root, 'out'), target: 'win32-x64', expectedVersion: '1.2.3', commit: 'a'.repeat(40) });
+    await packageServer({ root, run, platform: 'win32', env: { SystemRoot: 'C:\\Windows' }, outputDir: join(root, 'out'), target: 'win32-x64', materialize: copyTree, expectedVersion: '1.2.3', commit: 'a'.repeat(40) });
     const deploy = calls.find((args) => args.includes('deploy'));
     assert.deepEqual(deploy.slice(0, 5), ['cmd.exe', '/d', '/s', '/c', 'pnpm']);
     const archive = calls.find((args) => /tar\.exe$/i.test(args[0]));
@@ -314,7 +331,24 @@ test('pnpm runs through npm_execpath when the packager is itself started by pnpm
       return { stdout: '', stderr: '' };
     };
     const npmExecpath = '/opt/pnpm/bin/pnpm.cjs';
-    await packageServer({ root, run, platform: 'linux', env: { npm_execpath: npmExecpath }, outputDir: join(root, 'out'), target: 'win32-x64', expectedVersion: '1.2.3', commit: 'a'.repeat(40) });
+    await packageServer({ root, run, platform: 'linux', env: { npm_execpath: npmExecpath }, outputDir: join(root, 'out'), target: 'win32-x64', materialize: copyTree, expectedVersion: '1.2.3', commit: 'a'.repeat(40) });
     assert.deepEqual(deploy.slice(0, 2), [process.execPath, npmExecpath]);
   });
+});
+
+test('stages beside the checkout on Windows when %TEMP% is on another drive', () => {
+  assert.equal(stagingBase('D:\\a\\agentbrowser\\agentbrowser', { platform: 'win32', temp: 'C:\\Users\\r\\AppData\\Local\\Temp' }), 'D:\\a\\agentbrowser');
+  assert.equal(stagingBase('C:\\src\\agentbrowser', { platform: 'win32', temp: 'c:\\Temp' }), 'c:\\Temp');
+  assert.equal(stagingBase('/repo', { platform: 'linux', temp: '/tmp' }), '/tmp');
+});
+
+test('build-tool failures carry the tool output when diagnostics are requested', async () => {
+  await assert.rejects(
+    runExecutable([process.execPath, '-e', 'console.error("ERR_PNPM_SOMETHING detail"); process.exit(1)'], { diagnostics: true }),
+    /exited unsuccessfully \(1\)\nERR_PNPM_SOMETHING detail/
+  );
+  await assert.rejects(
+    runExecutable([process.execPath, '-e', 'console.error("secret"); process.exit(1)']),
+    (error) => error.message.startsWith('Executable exited unsuccessfully (1)') && !error.message.includes('secret')
+  );
 });

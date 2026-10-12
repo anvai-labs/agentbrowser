@@ -43,15 +43,28 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ### Added — Windows server tree (packaging)
 
-- `scripts/package-server.mjs` gains a `win32-x64` target. It deploys the server with
-  `--config.node-linker=hoisted`, removes `node_modules/.bin` link shims and type/source-map files,
-  and fails if any link or junction remains or a path exceeds the MAX_PATH budget under winget's
-  install root. It produces `agentbrowser-server-win32-x64.zip` (about 9 MB, 35 MB extracted).
-  Windows `tar` cannot extract the POSIX tarballs' pnpm symlinks without Developer Mode. pnpm is
-  invoked without relying on `.cmd` resolution, so the packager runs on Windows hosts.
-- `scripts/check-win32-server-tree.mjs` extracts that zip outside the checkout, proves it has no
-  links, runs the extracted-package dependency audit, and starts the server to `/health`. It runs
-  in Windows CI.
+- `scripts/package-server.mjs` gains a `win32-x64` target. Windows `tar` cannot extract the POSIX
+  tarballs' pnpm symlinks without Developer Mode, so the Windows tree must contain no links. It starts
+  from the **same lockfile-faithful isolated deploy** as every other target. The new
+  `scripts/materialize-hoisted.mjs` then rewrites that deploy into a link-free hoisted layout.
+  - It reads the dependency graph with Node's own lookup.
+  - It places each package at the highest ancestor that doesn't shadow an existing resolution.
+  - It re-verifies every dependency edge against the written files.
+  - So Windows ships exactly the versions in `pnpm-lock.yaml`. pnpm 9's own hoisted `deploy` was
+    rejected: it ignores the lockfile and re-resolves from the registry.
+- The target removes `node_modules/.bin` and type/source-map files. It fails if any link remains, if
+  a package can't run on win32-x64, or if a path exceeds the MAX_PATH budget under winget's install
+  root (files and directories are gated separately). It produces `agentbrowser-server-win32-x64.zip`.
+- On Windows hosts the packager runs pnpm through `npm_execpath`, or else through `cmd.exe` with
+  checked arguments. It stages on the checkout's drive, because pnpm deploy fails across drive
+  letters. Build-tool failures now include the tool's output.
+- `scripts/check-win32-server-tree.mjs` extracts that zip outside the checkout and checks it:
+  - no links;
+  - the extracted-package dependency audit;
+  - the server reaches `/health`;
+  - with `--session`, a real Chromium session.
+
+  It runs in Windows CI.
 
 ### Fixed — server command line
 

@@ -10,7 +10,10 @@
  *
  * Proves: Windows-extractable (no links/junctions), complete dependency
  * closure (the extracted-package audit), `--version`, and a real server start
- * that answers /health and stops cleanly through the stdin lifeline.
+ * that answers /health and stops cleanly through the stdin lifeline. With
+ * --session it also launches Chromium (PLAYWRIGHT_BROWSERS_PATH must hold the
+ * revision the packaged Playwright pins): create a session and page, observe
+ * the blank page, close — no network access needed.
  */
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -52,7 +55,31 @@ async function freePort() {
   });
 }
 
-async function startAndProbe(server, expectedVersion) {
+async function exerciseSession(base) {
+  const call = async (method, path, body) => {
+    const response = await fetch(`${base}${path}`, {
+      method,
+      headers: body === undefined ? {} : { 'content-type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(120_000),
+    });
+    const text = await response.text();
+    assert.ok(response.ok, `${method} ${path} failed (${response.status}): ${text.slice(0, 500)}`);
+    return text ? JSON.parse(text) : undefined;
+  };
+  const session = await call('POST', '/v1/sessions', { tenantId: 'win32-tree-check' });
+  try {
+    assert.equal(session.engine?.name, 'playwright-chromium', 'Expected a real Chromium session');
+    const page = await call('POST', `/v1/sessions/${session.sessionId}/pages`, {});
+    const observed = await call('POST', `/v1/sessions/${session.sessionId}/pages/${page.pageId}/observe`, {});
+    assert.ok(Array.isArray(observed.elements), 'Observation lacked elements');
+  } finally {
+    await call('DELETE', `/v1/sessions/${session.sessionId}`);
+  }
+  return 'PASS';
+}
+
+async function startAndProbe(server, expectedVersion, { session = false } = {}) {
   const port = await freePort();
   const child = spawn(process.execPath, [join(server, 'dist', 'bin.js')], {
     cwd: server,
@@ -75,16 +102,17 @@ async function startAndProbe(server, expectedVersion) {
     }
     assert.ok(health, `Packaged server never answered /health:\n${output.slice(-2000)}`);
     assert.equal(health.version, expectedVersion, 'Packaged server reported the wrong version');
+    const sessionResult = session ? await exerciseSession(`http://127.0.0.1:${port}`) : undefined;
     child.stdin.end();
     const code = await Promise.race([exited, new Promise((r) => setTimeout(() => r('timeout'), 30_000))]);
     assert.equal(code, 0, `Packaged server did not stop cleanly on stdin EOF (${code}):\n${output.slice(-2000)}`);
-    return health;
+    return { health, session: sessionResult };
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
   }
 }
 
-export async function checkWin32ServerTree({ zip, expectedVersion, expectedCommit, allowDirty = false, run = runExecutable }) {
+export async function checkWin32ServerTree({ zip, expectedVersion, expectedCommit, allowDirty = false, session = false, run = runExecutable }) {
   assert.ok(zip, '--zip is required');
   assert.ok(expectedVersion, '--expected-version is required');
   const work = await mkdtemp(join(tmpdir(), 'agentbrowser-win32-check-'));
@@ -96,8 +124,11 @@ export async function checkWin32ServerTree({ zip, expectedVersion, expectedCommi
     const modules = await resolvePackagedModules(server, expectedVersion, { expectedCommit, allowDirty });
     const version = (await run([process.execPath, join(server, 'dist', 'bin.js'), '--version'])).stdout.trim();
     assert.equal(version, expectedVersion, 'Packaged --version mismatch');
-    const health = await startAndProbe(server, expectedVersion);
-    return { server: 'PASS', version, commit: modules.commit, dirty: modules.dirty, health: health.status };
+    const probe = await startAndProbe(server, expectedVersion, { session });
+    return {
+      server: 'PASS', version, commit: modules.commit, dirty: modules.dirty, health: probe.health.status,
+      ...(probe.session ? { session: probe.session } : {}),
+    };
   } finally {
     await rm(work, { recursive: true, force: true });
   }
@@ -108,10 +139,11 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     const { values } = parseArgs({ options: {
       zip: { type: 'string' }, 'expected-version': { type: 'string' },
       'expected-commit': { type: 'string' }, 'allow-dirty': { type: 'boolean', default: false },
+      session: { type: 'boolean', default: false },
     } });
     const report = await checkWin32ServerTree({
       zip: values.zip, expectedVersion: values['expected-version'],
-      expectedCommit: values['expected-commit'], allowDirty: values['allow-dirty'],
+      expectedCommit: values['expected-commit'], allowDirty: values['allow-dirty'], session: values.session,
     });
     console.log(JSON.stringify(report));
   } catch (error) {
