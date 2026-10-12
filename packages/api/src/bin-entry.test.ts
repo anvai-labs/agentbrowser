@@ -106,18 +106,53 @@ describe('server shutdown on stdin EOF (launcher lifeline)', () => {
     });
     const exited = new Promise<number | null>((resolve) => child.once('exit', resolve));
 
-    const deadline = Date.now() + 20_000;
-    while (!output.includes('Server listening') && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    expect(output).toContain('Server listening');
+    try {
+      const deadline = Date.now() + 20_000;
+      while (!output.includes('Server listening') && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(output).toContain('Server listening');
 
-    child.stdin.end();
-    const code = await Promise.race([
-      exited,
-      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 15_000)),
-    ]);
-    if (code === 'timeout') child.kill('SIGKILL');
-    expect(code).toBe(0);
+      child.stdin.end();
+      const code = await Promise.race([
+        exited,
+        new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 15_000)),
+      ]);
+      expect(code).toBe(0);
+    } finally {
+      // Never leak a server: kill on any failure path (a no-op once exited).
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    }
+  }, 45_000);
+
+  it('exits promptly on a burst of signals (second signal cannot wedge shutdown)', async () => {
+    if (process.platform === 'win32') return; // POSIX signals; Windows covered by the launcher tests
+    const port = await freePort();
+    const child = spawn(process.execPath, [BIN], {
+      env: { ...process.env, HOST: '127.0.0.1', PORT: String(port) },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let output = '';
+    child.stdout.on('data', (chunk) => {
+      output += chunk;
+    });
+    const exited = new Promise<number | null>((resolve) => child.once('exit', resolve));
+    try {
+      const deadline = Date.now() + 20_000;
+      while (!output.includes('Server listening') && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(output).toContain('Server listening');
+      // Two signals back to back: the second lands while the first close runs.
+      child.kill('SIGTERM');
+      child.kill('SIGTERM');
+      const code = await Promise.race([
+        exited,
+        new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 15_000)),
+      ]);
+      expect([0, 1]).toContain(code);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    }
   }, 45_000);
 });

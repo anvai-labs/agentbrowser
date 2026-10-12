@@ -72,19 +72,30 @@ const server = await startServer({
   ...(defaultIdleTimeoutMs !== undefined ? { defaultIdleTimeoutMs } : {}),
 });
 
-// Ensure the browser process goes down with the server. Idempotent: a second
-// signal (or stdin EOF racing a signal) must not close the server twice.
+// Ensure the browser process goes down with the server. The close runs once:
+// stdin EOF racing a signal must not close the server twice. A second signal
+// while the close is still pending (e.g. a wedged browser) forces exit 1 —
+// the operator's way out of a hung shutdown.
 let shuttingDown = false;
 const shutdown = async () => {
   if (shuttingDown) return;
   shuttingDown = true;
-  await server.close(); // onClose shuts the service down, which closes the engine
-  process.exit(0);
+  try {
+    await server.close(); // onClose shuts the service down, which closes the engine
+    process.exit(0);
+  } catch (error) {
+    console.error('[agentbrowser] shutdown failed:', error);
+    process.exit(1);
+  }
+};
+const onSignal = () => {
+  if (shuttingDown) process.exit(1);
+  void shutdown();
 };
 const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
 // Ctrl-Break / console close on Windows.
 if (process.platform === 'win32') signals.push('SIGBREAK');
-for (const signal of signals) process.on(signal, () => void shutdown());
+for (const signal of signals) process.on(signal, onSignal);
 
 // Launcher lifeline (opt-in): a supervising launcher holds our stdin open and
 // closes it to stop us — and if the launcher is killed outright (Windows
