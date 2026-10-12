@@ -7,7 +7,7 @@
  */
 
 import { PRODUCT_VERSION } from './product-version.js';
-import { SERVER_HELP, parseServerArgs } from './server-args.js';
+import { parseServerArgs, SERVER_HELP } from './server-args.js';
 
 const args = parseServerArgs(process.argv.slice(2));
 if (args.kind === 'help') {

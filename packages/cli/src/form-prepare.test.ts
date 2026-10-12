@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildCli } from './cli.js';
-import { MAX_JSON_INPUT_BYTES, createJsonArgumentReader } from './json-input.js';
+import { createJsonArgumentReader, MAX_JSON_INPUT_BYTES } from './json-input.js';
 
 function harness(stdin?: Readable) {
   const out: string[] = [];

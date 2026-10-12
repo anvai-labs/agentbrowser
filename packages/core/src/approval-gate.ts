@@ -267,8 +267,7 @@ export class ApprovalGate {
     const snapshot = this.snapshotReviewed({ request, context });
     const record = this.reviewedToken(tokenId, snapshot.contextFingerprint, Date.now());
     if (
-      !record ||
-      record.token.status !== 'approved' ||
+      record?.token.status !== 'approved' ||
       record.sessionId !== snapshot.binding.sessionId ||
       record.actionFingerprint !== snapshot.binding.actionFingerprint
     )

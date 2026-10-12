@@ -12,23 +12,22 @@ import { ErrorCode } from './errors';
 import {
   ACTION_TYPE_LITERALS,
   ActionRequestSchema,
+  ActionSchema,
   ApiErrorSchema,
   DELIVERED_ACTION_TYPES,
   DELIVERED_OBSERVATION_MODES,
   EngineCapabilitiesSchema,
-  ErrorCodeEnum,
+  isValid,
   ObservationRequestSchema,
   PageElementSchema,
   PageStateSchema,
   SessionPolicySchema,
   SessionRequestSchema,
   ViewportSchema,
-  isValid,
   validate,
 } from './schemas';
-import { ActionSchema } from './schemas';
-import { DELIVERED_EXTRACT_FORMATS, REF_PATTERN, parseRef } from './types';
 import type { SupportedAction } from './types';
+import { DELIVERED_EXTRACT_FORMATS, parseRef, REF_PATTERN } from './types';
 import { validateAction, validatePlanStep, validateSessionRequest } from './validators';
 
 describe('Schema Validation - Session Request', () => {

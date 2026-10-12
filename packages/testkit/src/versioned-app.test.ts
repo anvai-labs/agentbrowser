@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { VersionedCounter, assertCounterOutcome, startVersionedApp } from './versioned-app.js';
+import { assertCounterOutcome, startVersionedApp, VersionedCounter } from './versioned-app.js';
 
 it('shares one version and idempotency boundary across application callers', () => {
   const app = new VersionedCounter();

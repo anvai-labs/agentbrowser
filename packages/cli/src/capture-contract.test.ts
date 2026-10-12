@@ -4,7 +4,7 @@ import {
   ScreenshotRequestSchema,
 } from '@agentbrowser/sdk-typescript';
 import { describe, expect, it, vi } from 'vitest';
-import { type CliClient, buildCli } from './cli.js';
+import { buildCli, type CliClient } from './cli.js';
 
 describe.each(['observe', 'screenshot'] as const)('%s capture CLI', (operation) => {
   function setup() {

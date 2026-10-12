@@ -1,21 +1,21 @@
-import {
-  INTERACTION_GUIDANCE,
-  SELF_ADMITTING_ROUTE_SEGMENTS,
-  type SnapshotControl,
-  createOutcomeRunReportParser,
-  createPlanReportParser,
-  parseAutofillReport,
-  parseOperationReplay,
-  parseOperatorApprovalView,
-  validateApplicationReview,
-  validateOperatorApprovalDecision,
-} from '@agentbrowser/protocol';
 import type {
   OperationReplay,
   OperatorApprovalView,
   OutcomeRunReport,
   OutcomeRunRequest,
   PlanReport,
+} from '@agentbrowser/protocol';
+import {
+  createOutcomeRunReportParser,
+  createPlanReportParser,
+  INTERACTION_GUIDANCE,
+  parseAutofillReport,
+  parseOperationReplay,
+  parseOperatorApprovalView,
+  SELF_ADMITTING_ROUTE_SEGMENTS,
+  type SnapshotControl,
+  validateApplicationReview,
+  validateOperatorApprovalDecision,
 } from '@agentbrowser/protocol';
 /**
  * AgentBrowser TypeScript SDK Client
@@ -39,15 +39,19 @@ import type {
   SessionRequest,
 } from '@agentbrowser/protocol';
 
-export type { ControlView, OperationRecord, RunCursor } from '@agentbrowser/protocol';
-export type { AutofillRequest, AutofillReport } from '@agentbrowser/protocol';
-export type { OutcomeRunReport, OutcomeRunRequest } from '@agentbrowser/protocol';
 export type {
   ApplicationBinding,
   ApplicationDiscovery,
   ApplicationExecuteRequest,
   ApplicationOperationResult,
   ApplicationReviewRequest,
+  AutofillReport,
+  AutofillRequest,
+  ControlView,
+  OperationRecord,
+  OutcomeRunReport,
+  OutcomeRunRequest,
+  RunCursor,
 } from '@agentbrowser/protocol';
 export interface MutationOptions {
   operationId?: string;
@@ -94,6 +98,7 @@ export interface NavigationResponse {
 }
 
 export type { ObservationRequest, ScreenshotRequest } from '@agentbrowser/protocol';
+
 import type { ObservationRequest, ScreenshotRequest } from '@agentbrowser/protocol';
 import { validateObservationRequest, validateScreenshotRequest } from '@agentbrowser/protocol';
 
@@ -123,17 +128,19 @@ export interface ExtractRequest {
   records?: { container: string; fields: Record<string, string>; limit?: number };
 }
 
+export type { DeliveredExtractFormat } from '@agentbrowser/protocol';
 // ADR-015 single-source-of-truth re-exports: surfaces (CLI, MCP) import
 // these from the SDK rather than redeclaring them.
 export {
   DELIVERED_EXTRACT_FORMATS,
-  parseExtractMaxBytesText,
-  REF_PATTERN,
-  parseRef,
+  formatErrorForUser,
+  navigationFailureDetail,
   parseAutofillRequest,
+  parseExtractMaxBytesText,
+  parseRef,
+  REF_PATTERN,
+  UsageError,
 } from '@agentbrowser/protocol';
-export type { DeliveredExtractFormat } from '@agentbrowser/protocol';
-export { UsageError, formatErrorForUser, navigationFailureDetail } from '@agentbrowser/protocol';
 
 export interface ExtractResult {
   data: unknown;
@@ -152,6 +159,7 @@ export interface ExtractResult {
 }
 
 export type { ArtifactRef } from '@agentbrowser/protocol';
+
 import type { ArtifactRef } from '@agentbrowser/protocol';
 
 export interface PdfRequest {

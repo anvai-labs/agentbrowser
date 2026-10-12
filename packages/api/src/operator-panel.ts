@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 import {
   AGENT_MODE_IDS,
+  agentModeProfile,
   CONTROL_OPERATION_ID,
   DEFAULT_AGENT_MODE,
-  agentModeProfile,
 } from '@agentbrowser/protocol';
 
 const modeProfiles = JSON.stringify(

@@ -12,8 +12,8 @@
  */
 import { DatabaseSync } from 'node:sqlite';
 import {
-  type JournalChildRequest,
   isJournalChildRequest,
+  type JournalChildRequest,
 } from './journal-sqlite-child-protocol.js';
 import {
   closeJournalSqliteNamespace,

@@ -1,9 +1,9 @@
 import {
+  parseTrustedVerifierDescriptor,
+  snapshotJsonData,
   type TrustedVerifierDescriptor,
   VERIFICATION_SNAPSHOT_LIMITS,
   type VerificationProjection,
-  parseTrustedVerifierDescriptor,
-  snapshotJsonData,
 } from '@agentbrowser/protocol';
 import { snapshotAuthorizationInput, synchronousResult } from './trusted-callback.js';
 

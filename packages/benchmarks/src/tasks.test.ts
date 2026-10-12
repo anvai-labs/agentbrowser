@@ -7,19 +7,19 @@
  * ctx.fail guard fires and asserts its exact reason.
  */
 
-import { type AgentBrowserService, ServiceError } from '@agentbrowser/api';
 import type { ServiceSessionView } from '@agentbrowser/api';
+import { type AgentBrowserService, ServiceError } from '@agentbrowser/api';
 import type {
   EnginePage,
   EngineSession,
   EngineSessionOptions,
   RawPageState,
 } from '@agentbrowser/engine';
-import { FakeEngine } from '@agentbrowser/testkit';
 import type { FakeEngine as FakeEngineType } from '@agentbrowser/testkit';
+import { FakeEngine } from '@agentbrowser/testkit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { TASKS, TASK_GATE, runTasks, taskReport } from './tasks';
 import type { TaskContext, TaskDefinition } from './tasks';
+import { runTasks, TASK_GATE, TASKS, taskReport } from './tasks';
 
 // ---------------------------------------------------------------------------
 // Sabotage switches (passthrough module mocks - inert while false)

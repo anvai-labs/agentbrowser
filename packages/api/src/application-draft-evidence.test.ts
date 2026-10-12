@@ -4,8 +4,8 @@ import { canonicalJson } from '@agentbrowser/core';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { expect, it, vi } from 'vitest';
 import { AgentBrowserService, type ServiceOutcomeEvidenceContext } from './service.js';
-import { createDraftDataQualifier } from './test-support/application-draft-evidence.js';
 import { createApplicationDraft } from './test-support/application-draft.js';
+import { createDraftDataQualifier } from './test-support/application-draft-evidence.js';
 
 function fixture() {
   const draft = createApplicationDraft({ id: 'qualified-draft' });

@@ -5,7 +5,7 @@ import {
   type SessionPrincipal,
 } from '@agentbrowser/control';
 import { expect, it, vi } from 'vitest';
-import { type DraftSnapshot, createApplicationDraft } from './test-support/application-draft.js';
+import { createApplicationDraft, type DraftSnapshot } from './test-support/application-draft.js';
 
 const operator: SessionPrincipal = { actor: 'operator', tenant: 'owner' };
 const fields = {

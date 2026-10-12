@@ -1,5 +1,6 @@
 import { expect, it, vi } from 'vitest';
-import { type CliClient, buildCli } from './cli.js';
+import { buildCli, type CliClient } from './cli.js';
+
 const view = {
   tokenId: 'tok_1',
   status: 'pending',

@@ -7,8 +7,8 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createManagedServer } from './subprocess';
 import type { SubprocessLauncher } from './subprocess';
+import { createManagedServer } from './subprocess';
 
 describe('managed subprocess server', () => {
   let child: { exited: boolean; killed: boolean; code: number | null };

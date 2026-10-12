@@ -11,7 +11,7 @@
 import type { EngineError } from '@agentbrowser/engine';
 import type { PageElement, PageState } from '@agentbrowser/protocol';
 import { describe, expect, it } from 'vitest';
-import { projectObservation, projectionActive } from './observation-projection.js';
+import { projectionActive, projectObservation } from './observation-projection.js';
 
 const el = (index: number, overrides: Partial<PageElement> = {}): PageElement => ({
   ref: `e7_${index}`,
@@ -314,8 +314,10 @@ describe('observation projection', () => {
     const result = projectObservation(page, { roles: ['checkbox'] });
 
     expect(result.changes).toHaveLength(1);
-    expect(result.changes?.[0]?.ref).toBe('e7_0');
-    const embedded = (result.changes?.[0]?.properties.element as { new: PageElement }).new;
+    const change = result.changes?.[0];
+    if (!change) throw new Error('expected one projected change');
+    expect(change.ref).toBe('e7_0');
+    const embedded = (change.properties.element as { new: PageElement }).new;
     expect(embedded.name).toHaveLength(200);
     expect(embedded.nameTruncated).toBe(true);
     expect(embedded).not.toHaveProperty('href');

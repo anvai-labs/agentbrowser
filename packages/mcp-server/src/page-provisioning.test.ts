@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { type McpClient, type McpDependencies, buildMcpServer } from './mcp-server.js';
+import { buildMcpServer, type McpClient, type McpDependencies } from './mcp-server.js';
 
 function fixture(options: Partial<McpDependencies> = {}) {
   const sessions = {

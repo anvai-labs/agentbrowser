@@ -6,8 +6,7 @@
  * hashes, so an extraction can be audited against its revision.
  */
 
-import type { ExtractionResult } from '@agentbrowser/engine';
-import type { RawPageState } from '@agentbrowser/engine';
+import type { ExtractionResult, RawPageState } from '@agentbrowser/engine';
 import { parseHTML } from 'linkedom';
 
 /** FNV-1a: short, deterministic, dependency-free content hash. */

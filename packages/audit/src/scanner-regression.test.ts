@@ -1,10 +1,10 @@
-import { type Server, createServer } from 'node:http';
+import { createServer, type Server } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  compareScannerFindings,
   type ScannerBaseline,
   type ScannerScanResult,
   ZapClient,
-  compareScannerFindings,
 } from './scanner-regression.js';
 
 const cleanup: Array<Promise<void>> = [];

@@ -1,6 +1,7 @@
 import { FakeEngine } from '@agentbrowser/testkit';
 import { expect, it } from 'vitest';
 import { buildServer } from './server.js';
+
 it('serves a same-origin operator panel with no embedded credentials or third-party scripts', async () => {
   const server = await buildServer({ engine: new FakeEngine() });
   try {

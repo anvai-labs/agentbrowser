@@ -3,8 +3,8 @@ import { ControlError, type SessionControl } from '@agentbrowser/core';
 import {
   type ApplicationDiscovery,
   CONTROL_OPERATION_ID,
-  VERIFICATION_SNAPSHOT_LIMITS,
   snapshotJsonData,
+  VERIFICATION_SNAPSHOT_LIMITS,
   validateApplicationOperationDescriptors,
 } from '@agentbrowser/protocol';
 import { canonicalJson } from './canonical-json.js';
@@ -714,7 +714,7 @@ export class ApplicationAuthority {
     )
       throw new ControlError('INVALID_REQUEST', 'Invalid application read request');
     const operation = owner.adapter.operations[pinned.operation];
-    if (!operation || operation.mode !== 'read')
+    if (operation?.mode !== 'read')
       throw new ControlError('INVALID_REQUEST', 'Invalid application read request');
     const serialized = canonicalJson(pinned.input);
     owner.assertAuthority();

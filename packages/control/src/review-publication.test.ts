@@ -1,8 +1,8 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import {
   ApplicationAuthority,
-  type PreparedApplicationOperationReview,
   defineApplicationOperation,
+  type PreparedApplicationOperationReview,
 } from './application-authority.js';
 import { SessionAuthority } from './session-authority.js';
 

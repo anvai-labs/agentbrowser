@@ -27,7 +27,7 @@
   },
   "devDependencies": {
     "@agentbrowser/testkit": "workspace:*",
-    "@biomejs/biome": "^1.9.4",
+    "@biomejs/biome": "^2.5.15",
     "@puppeteer/browsers": "3.2.2",
     "@types/node": "^22.10.2",
     "typescript": "^5.7.2",

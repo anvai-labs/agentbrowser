@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { validateAction, validatePlanStep } from './validators.js';
 import {
-  MAX_BATCH_STEPS,
   decodeWireAction,
+  MAX_BATCH_STEPS,
   validateWireAction,
   validateWireActionBatch,
 } from './wire-action.js';

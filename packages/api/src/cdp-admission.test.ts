@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { expect, it, vi } from 'vitest';
-import { type ServerOptions, buildServer } from './server.js';
+import { buildServer, type ServerOptions } from './server.js';
 
 const key = (value: string) => createHash('sha256').update(value).digest('hex');
 

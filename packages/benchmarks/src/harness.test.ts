@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { TARGETS, evaluateTarget, percentile, summarize } from './harness';
+import { evaluateTarget, percentile, summarize, TARGETS } from './harness';
 
 describe('percentile', () => {
   it('should compute nearest-rank percentiles', () => {

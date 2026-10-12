@@ -1,4 +1,4 @@
-import { type Server, createServer } from 'node:http';
+import { createServer } from 'node:http';
 import { expect, it } from 'vitest';
 import { PlaywrightChromiumEngine } from './index.js';
 
