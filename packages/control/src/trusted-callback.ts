@@ -1,4 +1,4 @@
-import { VERIFICATION_SNAPSHOT_LIMITS, snapshotJsonData } from '@agentbrowser/protocol';
+import { snapshotJsonData, VERIFICATION_SNAPSHOT_LIMITS } from '@agentbrowser/protocol';
 
 /** Fail closed on misconfigured async callbacks and consume their rejection safely. */
 export function synchronousResult<T>(value: T): T {

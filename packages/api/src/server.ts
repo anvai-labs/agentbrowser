@@ -1,9 +1,9 @@
 import { ControlError } from '@agentbrowser/core';
 import {
-  type OperatorCdpAdmissionOptions,
   cdpAttachAdmission,
   deploymentModeFromEnvironment,
   isOperatorLoopback,
+  type OperatorCdpAdmissionOptions,
   requireCdpAttachAdmission,
 } from './cdp-config.js';
 import { operatorCsp, operatorHtml } from './operator-panel.js';
@@ -19,15 +19,16 @@ import type { SessionPrincipal } from './session-authority.js';
 
 import { createHash, randomBytes } from 'node:crypto';
 import type { TrustedEvidenceSourceRegistry, TrustedVerifierRegistry } from '@agentbrowser/control';
-import { InMemoryTracer, MetricsRegistry, type SecretManager } from '@agentbrowser/core';
 import type { StructuredLogger } from '@agentbrowser/core';
+import { InMemoryTracer, MetricsRegistry, type SecretManager } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
+import type { AgentCapability, SessionPolicy } from '@agentbrowser/protocol';
 import {
+  agentModeAllows,
   DEFAULT_EXTRACT_MAX_BYTES,
   DELIVERED_ACTION_TYPES,
   DELIVERED_EXTRACT_FORMATS,
   ErrorCode,
-  agentModeAllows,
   isAgentMode,
   parseExtractMaxBytes,
   parsePlanSteps,
@@ -36,15 +37,14 @@ import {
   validateWireAction,
   validateWireActionBatch,
 } from '@agentbrowser/protocol';
-import type { AgentCapability, SessionPolicy } from '@agentbrowser/protocol';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
-import Fastify from 'fastify';
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import Fastify from 'fastify';
 import { ArtifactAuthorizer } from './artifact-auth.js';
 import {
-  type HttpResponseDraft,
   createHttpPublication,
+  type HttpResponseDraft,
   responseDraft,
 } from './http-publication.js';
 import { buildOpenApiDocument } from './openapi.js';

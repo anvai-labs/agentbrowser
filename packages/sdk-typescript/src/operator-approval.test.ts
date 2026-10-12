@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { AgentBrowserClient } from './client.js';
+
 const view = {
   tokenId: 'tok_1',
   status: 'pending',

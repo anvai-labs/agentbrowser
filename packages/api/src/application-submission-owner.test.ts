@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import type { ApplicationScope } from '@agentbrowser/control';
 import { expect, it } from 'vitest';
-import { startDraftFixture } from './test-support/application-draft-http.js';
 import { createApplicationDraft } from './test-support/application-draft.js';
+import { startDraftFixture } from './test-support/application-draft-http.js';
 
 function complete(id = 'draft') {
   const owner = createApplicationDraft({ id });

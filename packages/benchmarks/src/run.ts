@@ -19,10 +19,10 @@ import { createObscuraEngine } from '@agentbrowser/engine-obscura';
 import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { comparativeReport, runCompactProjectionBenchmark, runRealBenchmarks } from './compare.js';
-import { evaluateTarget, sample, summarize } from './harness.js';
 import type { BenchmarkResult } from './harness.js';
+import { evaluateTarget, sample, summarize } from './harness.js';
 import { runSoak, soakReport } from './soak.js';
-import { TASK_GATE, runTasks, taskReport } from './tasks.js';
+import { runTasks, TASK_GATE, taskReport } from './tasks.js';
 
 const ITERATIONS = 50;
 

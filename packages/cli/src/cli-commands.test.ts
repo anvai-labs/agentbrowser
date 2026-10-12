@@ -10,8 +10,8 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildCli } from './cli.js';
 import type { CliClient, CliDependencies } from './cli.js';
+import { buildCli } from './cli.js';
 import { assertCookieRequestSize, parseCookieText } from './cookie-file.js';
 import { PRODUCT_VERSION } from './product-version.js';
 

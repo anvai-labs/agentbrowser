@@ -1,5 +1,4 @@
 import { NetworkPolicyError } from './network-policy.js';
-import type { RedirectRequest } from './network-policy.js';
 
 /**
  * T7 slice 2: engagement scope enforcement for authorized security

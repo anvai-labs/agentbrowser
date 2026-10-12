@@ -8,7 +8,6 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { BrowserEngine, EngineCapabilities } from '@agentbrowser/engine';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FakeEngine } from './fake-engine';
 

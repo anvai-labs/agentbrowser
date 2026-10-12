@@ -22,6 +22,11 @@ import {
   type ApplicationReceiptEvidenceSourceOptions,
   type ApplicationRequest,
   type ApplicationReviewSelector,
+  captureEvidenceReviewSource,
+  captureReviewDisclosure,
+  composePublicationContext,
+  defineApplicationReadEvidenceSource,
+  defineApplicationReceiptEvidenceSource,
   type EvidenceReviewSelector,
   type EvidenceReviewSource,
   NATIVE_FORM_REVIEW_TYPE,
@@ -30,59 +35,60 @@ import {
   type PreparedApplicationOperationReview,
   type PreparedEvidenceReview,
   type PreparedReviewDisclosure,
-  type SessionPublication,
-  TrustedEvidenceSourceRegistry,
-  type TrustedVerifierRegistry,
-  captureEvidenceReviewSource,
-  captureReviewDisclosure,
-  composePublicationContext,
-  defineApplicationReadEvidenceSource,
-  defineApplicationReceiptEvidenceSource,
   prepareEvidenceReview,
   runVerifiedOutcome,
+  type SessionPublication,
   selectApplicationReview,
   selectEvidenceReview,
   snapshotAuthorizationInput,
   snapshotPublication,
   synchronousResult,
+  TrustedEvidenceSourceRegistry,
+  type TrustedVerifierRegistry,
 } from '@agentbrowser/control';
+import type {
+  ApprovalReviewBinding,
+  ArtifactMetadata,
+  InMemoryTracer,
+  MetricsRegistry,
+  SessionContext,
+  Span,
+  StructuredLogger,
+} from '@agentbrowser/core';
 import {
   ActionExecutor,
+  ActionRiskPolicy,
+  type ActionRiskPolicyOptions,
   ApprovalGate,
   ArtifactStore,
+  budgetObservation,
+  canonicalJson,
   JsonLedger,
   ObservationNormalizer,
+  projectionActive,
+  projectObservation,
   SecretManager,
   SessionCoordinator,
   SessionState,
-  budgetObservation,
-  canonicalJson,
-  projectObservation,
-  projectionActive,
 } from '@agentbrowser/core';
-import type { ApprovalReviewBinding, ArtifactMetadata, SessionContext } from '@agentbrowser/core';
-import type { InMemoryTracer, Span } from '@agentbrowser/core';
-import type { MetricsRegistry } from '@agentbrowser/core';
-import type { StructuredLogger } from '@agentbrowser/core';
-import { ActionRiskPolicy, type ActionRiskPolicyOptions } from '@agentbrowser/core';
+import type {
+  EngineSession,
+  EngineSessionOptions,
+  NormalizedCookie,
+  RawPageState,
+  RequestPolicy,
+} from '@agentbrowser/engine';
 import {
   type BrowserEngine,
   type EngineEvent,
   type EnginePage,
   type NativeFormEvidence,
-  parseNativeFormEvidence,
-} from '@agentbrowser/engine';
-import type { EngineSession, EngineSessionOptions, NormalizedCookie } from '@agentbrowser/engine';
-import type { RawPageState } from '@agentbrowser/engine';
-import type { RequestPolicy } from '@agentbrowser/engine';
-import {
-  type ProtocolErrorCode,
   normalizeEngineError,
   normalizeNavigationFailure,
+  type ProtocolErrorCode,
+  parseNativeFormEvidence,
 } from '@agentbrowser/engine';
-import { SchemaExtractor } from '@agentbrowser/extraction';
 import {
-  RecordsSelectorError,
   extractForms,
   extractJsonLd,
   extractLinks,
@@ -90,12 +96,11 @@ import {
   extractRecords,
   extractTables,
   extractVisibleText,
+  RecordsSelectorError,
+  SchemaExtractor,
 } from '@agentbrowser/extraction';
 import { EngagementScopePolicy, type NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
-import { MAX_FORM_CONTROLS_PER_ROOT, type SnapshotControl } from '@agentbrowser/protocol';
-
 import type {
-  ArtifactRef,
   ObservationRequest,
   OperatorApprovalView,
   OutcomeRunReport,
@@ -107,19 +112,20 @@ import type {
   ScreenshotRequest,
 } from '@agentbrowser/protocol';
 import {
+  createOutcomeRunReportParser,
   DEFAULT_EXTRACT_MAX_BYTES,
-  DELIVERED_EXTRACT_FORMATS,
   DELIVERED_OBSERVATION_INCLUDES,
   DELIVERED_WAIT_TYPES,
   type DeliveredExtractFormat,
-  REF_PATTERN,
-  VERIFICATION_SNAPSHOT_LIMITS,
-  createOutcomeRunReportParser,
   decodeWireAction,
+  MAX_FORM_CONTROLS_PER_ROOT,
   parseExtractMaxBytes,
   parseOutcomeRunRequest,
   parseRef,
+  REF_PATTERN,
+  type SnapshotControl,
   snapshotJsonData,
+  VERIFICATION_SNAPSHOT_LIMITS,
   validateApplicationBinding,
   validateApplicationExecute,
   validateApplicationReview,
@@ -2803,11 +2809,7 @@ export class AgentBrowserService {
         // choke point is the only spender (a navigation is not charged
         // twice). Other policies preflight through checkRequest as before.
         const scoped = policy as unknown as {
-          preflightCheck?: (r: {
-            hostname: string;
-            url: string;
-            method?: string;
-          }) => Promise<void>;
+          preflightCheck?: (r: { hostname: string; url: string; method?: string }) => Promise<void>;
         };
         if (typeof scoped.preflightCheck === 'function') {
           // Document navigations are GETs; the preflight must say so or a

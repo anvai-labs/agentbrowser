@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,9 +6,9 @@ import { PNG } from 'pngjs';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   BaselineStore,
+  compareVisual,
   VisualAuditError,
   type VisualBaseline,
-  compareVisual,
 } from './visual-audit.js';
 
 function solidPng(width: number, height: number, rgb: [number, number, number]): Buffer {

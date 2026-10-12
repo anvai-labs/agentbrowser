@@ -8,11 +8,11 @@
 import { type BrowserEngine, EngineError } from '@agentbrowser/engine';
 import type { SessionRequest, SessionResponse } from '@agentbrowser/protocol';
 import {
+  captureSessionDiagnostics,
   type SessionCloseCause,
   type SessionDiagnostics,
   type SessionLease,
   type SessionTerminalView,
-  captureSessionDiagnostics,
 } from '@agentbrowser/protocol';
 import type { StructuredLogger } from './logger.js';
 

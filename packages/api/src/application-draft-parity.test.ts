@@ -9,8 +9,8 @@ import { NetworkPolicy } from '@agentbrowser/policy';
 import { expect, it } from 'vitest';
 import { runAgentCli } from '../../../scripts/cli-outcome-acceptance.mjs';
 import { buildServer } from './server.js';
+import { createApplicationDraft, type DraftSnapshot } from './test-support/application-draft.js';
 import { startDraftFixture } from './test-support/application-draft-http.js';
-import { type DraftSnapshot, createApplicationDraft } from './test-support/application-draft.js';
 
 const cli = fileURLToPath(new URL('../../cli/dist/bin.js', import.meta.url));
 const baseFields = {

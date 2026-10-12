@@ -5,9 +5,9 @@ import {
   AGENT_CAPABILITIES,
   AGENT_MODE_IDS,
   AgentModeSchema,
-  DEFAULT_AGENT_MODE,
   agentModeAllows,
   agentModeProfile,
+  DEFAULT_AGENT_MODE,
   isAgentMode,
 } from './mode-profile.js';
 

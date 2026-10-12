@@ -29,8 +29,8 @@
 import { existsSync } from 'node:fs';
 import http from 'node:http';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createObscuraEngine } from './engine';
 import type { ObscuraEngine } from './engine';
+import { createObscuraEngine } from './engine';
 
 function resolveBinary(): string | undefined {
   const override = process.env.OBSCURA_BIN;

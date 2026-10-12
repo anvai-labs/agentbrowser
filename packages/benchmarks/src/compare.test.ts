@@ -8,17 +8,16 @@
  * the real run injects PlaywrightChromiumEngine.
  */
 
-import type {
-  BrowserEngine,
-  EnginePage,
-  EngineSession,
-  EngineSessionOptions,
-} from '@agentbrowser/engine';
+import type { EnginePage, EngineSession, EngineSessionOptions } from '@agentbrowser/engine';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { startFixtureServer } from './compare';
 import type { FixtureServer } from './compare';
-import { comparativeReport, runCompactProjectionBenchmark, runRealBenchmarks } from './compare';
+import {
+  comparativeReport,
+  runCompactProjectionBenchmark,
+  runRealBenchmarks,
+  startFixtureServer,
+} from './compare';
 
 describe('fixture server', () => {
   let server: FixtureServer;

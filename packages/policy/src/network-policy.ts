@@ -132,7 +132,7 @@ export class NetworkPolicy {
     // Do not fall through as a DNS name after rejecting malformed IP syntax.
     // Raw dotted quads with leading zeroes are ambiguous; URL callers already
     // supply WHATWG-normalized hosts, while raw policy callers must be explicit.
-    if (!address && (/[:\[\]%]/.test(hostname) || /^\d+(?:\.\d+){3}$/.test(hostname))) {
+    if (!address && (/[:[\]%]/.test(hostname) || /^\d+(?:\.\d+){3}$/.test(hostname))) {
       throw new NetworkPolicyError('POLICY_DENIED', 'Invalid or scoped IP hostname', false, {
         rule: 'requestAddressInvalid',
       });

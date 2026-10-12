@@ -12,7 +12,7 @@ import { type Static, Type } from '@sinclair/typebox';
 import { TypeCompiler } from '@sinclair/typebox/compiler';
 import { OperationIdSchema, OperationRecordSchema } from './control.js';
 import { VERIFICATION_SNAPSHOT_LIMITS } from './outcome.js';
-import { type Validated, type ValidationIssue, snapshotJsonData } from './validators.js';
+import { snapshotJsonData, type Validated, type ValidationIssue } from './validators.js';
 
 const strict = { additionalProperties: false };
 

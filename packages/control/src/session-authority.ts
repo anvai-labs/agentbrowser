@@ -9,12 +9,12 @@ import {
 import type { EnginePage } from '@agentbrowser/engine';
 import {
   type AgentMode,
+  agentModeProfile,
   CONTROL_OPERATION_ID,
   type ControlView,
   DEFAULT_AGENT_MODE,
   type OperationRecord,
   type RunCursor,
-  agentModeProfile,
 } from '@agentbrowser/protocol';
 import { journalData, journalObject, parseJournalIntent } from './journal-record.js';
 import type {
@@ -27,17 +27,19 @@ import type {
 } from './journal-types.js';
 import {
   type OperationPublication,
-  type SessionPublication,
-  type TerminalStatus,
   publishWithin,
+  type SessionPublication,
   snapshotPublication,
+  type TerminalStatus,
 } from './publication.js';
+
 export type {
   OperationPublication,
   PublicationContext,
   SessionPublication,
   SessionPublicationContext,
 } from './publication.js';
+
 import { deeplyFreezeSnapshot, synchronousResult } from './trusted-callback.js';
 
 /** Trusted internal composition; never accepted from service or wire options. */
@@ -765,7 +767,7 @@ export class SessionAuthority {
     const entry =
       this.active(sessionId) ?? (scope?.sessionId === sessionId ? scope.entry : undefined);
     if (!entry) throw new ControlError('CONTROL_REVOKED', 'Controlled session is unavailable');
-    if (!scope || !scope.open || scope.sessionId !== sessionId || scope.entry !== entry)
+    if (!scope?.open || scope.sessionId !== sessionId || scope.entry !== entry)
       throw new ControlError(
         'CONTROL_REQUIRED',
         'Controlled browser access requires an admitted principal'
@@ -907,7 +909,7 @@ export class SessionAuthority {
   }
   isAgent(): boolean {
     const scope = this.scope.getStore();
-    if (!scope || !scope.open || scope.ticket.actor !== 'agent') return false;
+    if (!scope?.open || scope.ticket.actor !== 'agent') return false;
     try {
       this.assert(scope.sessionId);
       return true;

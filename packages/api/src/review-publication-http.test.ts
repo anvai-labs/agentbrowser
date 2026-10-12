@@ -4,7 +4,7 @@ import { setImmediate as settlePublication } from 'node:timers/promises';
 import { SecretManager } from '@agentbrowser/core';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { expect, it, vi } from 'vitest';
-import { type ServerOptions, buildServer } from './server.js';
+import { buildServer, type ServerOptions } from './server.js';
 import { AgentBrowserService } from './service.js';
 import { createApplicationDraft } from './test-support/application-draft.js';
 

@@ -1,10 +1,10 @@
-export * from './session-authority.js';
 export * from './application-authority.js';
-export * from './verifier-registry.js';
-export * from './outcome-runner.js';
 export * from './application-evidence.js';
-export * from './reviewed-evidence.js';
-export { composePublicationContext, snapshotPublication } from './publication.js';
-export { snapshotAuthorizationInput, synchronousResult } from './trusted-callback.js';
-export { openOperationJournal } from './operation-journal.js';
 export type * from './journal-types.js';
+export { openOperationJournal } from './operation-journal.js';
+export * from './outcome-runner.js';
+export { composePublicationContext, snapshotPublication } from './publication.js';
+export * from './reviewed-evidence.js';
+export * from './session-authority.js';
+export { snapshotAuthorizationInput, synchronousResult } from './trusted-callback.js';
+export * from './verifier-registry.js';

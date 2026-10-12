@@ -8,12 +8,12 @@ import { setImmediate as settlePublication } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import {
   type ApplicationReviewSelector,
-  type PreparedEvidenceReview,
-  TrustedEvidenceSourceRegistry,
-  TrustedVerifierRegistry,
   defineEvidenceSource,
   defineVerifier,
+  type PreparedEvidenceReview,
   runVerifiedOutcome,
+  TrustedEvidenceSourceRegistry,
+  TrustedVerifierRegistry,
 } from '@agentbrowser/control';
 import { canonicalJson } from '@agentbrowser/core';
 import type { EnginePage } from '@agentbrowser/engine';
@@ -29,13 +29,13 @@ import {
   type ServiceDependencies,
   type ServiceOutcomeEvidenceContext,
 } from './service.js';
-import { createDraftWitnessCollector } from './test-support/application-draft-evidence.js';
-import { startDraftFixture } from './test-support/application-draft-http.js';
 import {
+  createApplicationDraft,
   type DraftAcceptance,
   type DraftSnapshot,
-  createApplicationDraft,
 } from './test-support/application-draft.js';
+import { createDraftWitnessCollector } from './test-support/application-draft-evidence.js';
+import { startDraftFixture } from './test-support/application-draft-http.js';
 
 const SUBMISSION_VERIFIER = Object.freeze({
   id: 'synthetic.submission.accepted',

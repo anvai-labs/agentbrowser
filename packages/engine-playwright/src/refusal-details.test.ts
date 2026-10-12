@@ -1,5 +1,5 @@
 import type { EnginePage } from '@agentbrowser/engine';
-import { type Locator, type Page, errors } from 'playwright';
+import { errors, type Locator, type Page } from 'playwright';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PlaywrightChromiumEngine } from './index.js';
 

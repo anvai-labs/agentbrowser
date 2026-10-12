@@ -10,7 +10,7 @@
  */
 
 import type { AgentCapability } from '@agentbrowser/protocol';
-import { SELF_ADMITTING_ROUTE_SEGMENTS, agentModeAllows } from '@agentbrowser/protocol';
+import { agentModeAllows, SELF_ADMITTING_ROUTE_SEGMENTS } from '@agentbrowser/protocol';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildServer } from './server.js';

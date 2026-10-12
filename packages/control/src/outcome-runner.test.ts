@@ -1,11 +1,11 @@
 import { isPassingOutcome } from '@agentbrowser/protocol';
 import { describe, expect, it, vi } from 'vitest';
 import {
-  TrustedEvidenceSourceRegistry,
   defineEvidenceSource,
   runVerifiedOutcome,
+  TrustedEvidenceSourceRegistry,
 } from './outcome-runner.js';
-import { TrustedVerifierRegistry, defineVerifier } from './verifier-registry.js';
+import { defineVerifier, TrustedVerifierRegistry } from './verifier-registry.js';
 
 const verifierDescriptor = (overrides: Record<string, unknown> = {}) => ({
   id: 'counter-equals',

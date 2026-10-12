@@ -2,9 +2,6 @@
  * API package exports
  */
 
-export * from './server.js';
-export * from './service.js';
-export * from './outcome-composition.js';
 export type {
   ApplicationReadAuthorizationRequest,
   ApplicationReadEvidenceSourceOptions,
@@ -12,3 +9,6 @@ export type {
   ApplicationReceiptEvidenceSourceOptions,
   EvidencePermission,
 } from '@agentbrowser/control';
+export * from './outcome-composition.js';
+export * from './server.js';
+export * from './service.js';

@@ -16,7 +16,7 @@ import {
   SessionRequestSchema,
 } from '@agentbrowser/protocol';
 import { describe, expect, it } from 'vitest';
-import { type McpClient, buildTools } from './mcp-server.js';
+import { buildTools, type McpClient } from './mcp-server.js';
 
 const toolSchemas = new Map(
   buildTools({} as McpClient).map((tool) => [tool.name, tool.inputSchema])

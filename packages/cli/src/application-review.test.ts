@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { expect, it, vi } from 'vitest';
-import { type CliClient, buildCli } from './cli.js';
+import { buildCli, type CliClient } from './cli.js';
 
 const body = {
   pageId: 'page-1',

@@ -7,7 +7,6 @@
  * in lockstep with the protocol by construction.
  */
 
-import { DELIVERED_ACTION_TYPES, DELIVERED_EXTRACT_FORMATS } from '@agentbrowser/protocol';
 import {
   ActionResultSchema,
   AgentModeSchema,
@@ -24,6 +23,7 @@ import {
   ControlGrantSchema,
   ControlReviewSchema,
   ControlViewSchema,
+  DELIVERED_EXTRACT_FORMATS,
   ElementTargetSchema,
   EngineCapabilitiesSchema,
   EngineInfoSchema,

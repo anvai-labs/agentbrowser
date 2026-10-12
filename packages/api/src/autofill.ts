@@ -3,8 +3,8 @@ import {
   type AutofillReceipt,
   type AutofillReport,
   type AutofillRequest,
-  type PageElement,
   labelPattern,
+  type PageElement,
   parseAutofillRequest,
 } from '@agentbrowser/protocol';
 import type { ServiceActRequest } from './service.js';
@@ -127,7 +127,7 @@ const runTypeahead: NonNullable<WidgetStrategy['run']> = async (field, ref, iden
     if (matches.length > 1)
       throw new AutofillFailure('TARGET_AMBIGUOUS', 'Multiple exact options in the owned popup');
     const match = matches[0];
-    if (!match || !match.enabled) return undefined;
+    if (!match?.enabled) return undefined;
     if (
       match.attributes?.['autofill-popup-state'] !== 'ready' ||
       match.attributes['autofill-owner-focused'] !== 'true'

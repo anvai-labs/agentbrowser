@@ -11,8 +11,7 @@
  */
 
 import type { SecretManager } from '@agentbrowser/core';
-import type { ExtractionResult } from '@agentbrowser/engine';
-import type { RawPageState } from '@agentbrowser/engine';
+import type { ExtractionResult, RawPageState } from '@agentbrowser/engine';
 
 /** Adapter contract for model-based extraction (spec 12.2). */
 export interface ModelExtractProvider {

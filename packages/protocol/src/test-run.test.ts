@@ -2,14 +2,14 @@ import { describe, expect, it } from 'vitest';
 import type { OutcomeRunReport, OutcomeRunRequest } from './outcome.js';
 import {
   type AssertionInvocation,
+  createTestCaseRunContract,
+  evaluateTestCaseRun,
   type TestCaseDescriptor,
   TestCaseDescriptorSchema,
   TestCaseEvaluationInputSchema,
   TestCaseEvaluationReportSchema,
   type TestCaseRunReport,
   TestCaseRunReportSchema,
-  createTestCaseRunContract,
-  evaluateTestCaseRun,
 } from './test-run.js';
 
 const request = (): OutcomeRunRequest => ({

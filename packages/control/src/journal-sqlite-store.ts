@@ -3,9 +3,8 @@
  */
 import { randomUUID } from 'node:crypto';
 import {
-  constants,
-  type Stats,
   closeSync,
+  constants,
   fstatSync,
   fsyncSync,
   lstatSync,
@@ -13,6 +12,7 @@ import {
   readSync,
   realpathSync,
   renameSync,
+  type Stats,
   writeFileSync,
 } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';

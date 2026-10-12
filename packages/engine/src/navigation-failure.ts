@@ -1,4 +1,4 @@
-import { type NavigationFailureReason, isNavigationFailureReason } from '@agentbrowser/protocol';
+import { isNavigationFailureReason, type NavigationFailureReason } from '@agentbrowser/protocol';
 import { EngineError, normalizeEngineError } from './errors.js';
 
 /** Classify only the operation's own code/prefix, never a URL or later call-log text. */

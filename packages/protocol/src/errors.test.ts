@@ -6,15 +6,15 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import type { ApiErrorDetail } from './errors';
 import {
-  ErrorCode,
-  UsageError,
   createApiError,
   createApiErrorDetail,
+  ErrorCode,
   formatErrorForUser,
   isApiError,
+  UsageError,
 } from './errors';
-import type { ApiErrorDetail } from './errors';
 
 describe('Error Codes', () => {
   it('should have all required error codes', () => {

@@ -8,8 +8,8 @@ import {
 import { ControlError, canonicalJson } from '@agentbrowser/core';
 import {
   CONTROL_OPERATION_ID,
-  VERIFICATION_SNAPSHOT_LIMITS,
   snapshotJsonData,
+  VERIFICATION_SNAPSHOT_LIMITS,
 } from '@agentbrowser/protocol';
 
 /** Common fixture limit leaves room for canonical base64 inside the existing JSON envelope. */
