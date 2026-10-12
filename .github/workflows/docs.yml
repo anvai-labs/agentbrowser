@@ -1,8 +1,11 @@
 name: Deploy Documentation
 
 # Publishes the mkdocs site (anvai-labs.github.io/agentbrowser) from main.
-# PRs touching docs build the site as a preview gate (strict mode: warnings
-# fail) without publishing. Path-filtered so prose edits elsewhere stay free.
+# Every PR builds the site as a preview gate (strict mode: warnings fail)
+# without publishing: `build` and `deploy` are required checks on develop and
+# main, so a path-filtered PR run would leave them missing and block merges of
+# PRs that touch no docs (deploy is skipped on PRs, which satisfies the check).
+# Pushes to main stay path-filtered: only docs changes republish the site.
 on:
   push:
     branches: [main]
@@ -15,21 +18,16 @@ on:
       - 'scripts/test_check_brand_tokens.py'
   pull_request:
     branches: [main, develop]
-    paths:
-      - 'docs/**'
-      - 'mkdocs.yml'
-      - 'mkdocs-requirements.txt'
-      - '.github/workflows/docs.yml'
-      - 'scripts/check_brand_tokens.py'
-      - 'scripts/test_check_brand_tokens.py'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  # Deploys serialize on one group; PR preview builds get their own group per
+  # PR so they never queue behind (or alongside) a Pages deployment.
+  group: ${{ github.event_name == 'pull_request' && format('docs-pr-{0}', github.ref) || 'pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
