@@ -49,6 +49,7 @@ import {
 } from './http-publication.js';
 import { buildOpenApiDocument } from './openapi.js';
 import { PRODUCT_VERSION } from './product-version.js';
+import { requestOriginGuardFromEnvironment } from './request-origin-guard.js';
 import {
   AgentBrowserService,
   type ServiceActRequest,
@@ -92,6 +93,11 @@ export interface ServerOptions extends OperatorCdpAdmissionOptions {
   networkPolicy?: import('@agentbrowser/policy').NetworkPolicy;
   port?: number;
   host?: string;
+  /**
+   * Exact browser origins allowed to call the API, merged with
+   * AGENTBROWSER_CORS_ORIGINS. Default none: cross-origin browser requests
+   * are refused (request-origin-guard.ts). '*' opts out, loudly warned.
+   */
   corsOrigin?: string | string[];
   /** Browser engine backing the server. Production must inject a real one. */
   engine?: BrowserEngine;
@@ -231,10 +237,12 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   // caller clearing it later cannot switch a running service into local mode.
   const configuredKeys = options.apiKeys ?? apiKeysFromEnv();
   const apiKeys = configuredKeys === undefined ? undefined : new Map(configuredKeys);
+  const bindHost = options.host ?? process.env.HOST ?? '127.0.0.1';
+  const originGuard = requestOriginGuardFromEnvironment(process.env, bindHost, options.corsOrigin);
   const attachAdmission = cdpAttachAdmission(
     {
       ...options,
-      host: options.host ?? process.env.HOST ?? '127.0.0.1',
+      host: bindHost,
       deploymentMode:
         deploymentModeFromEnvironment(process.env) === 'hosted'
           ? 'hosted'
@@ -325,6 +333,18 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     });
   });
 
+  // Browser-provenance guard (request-origin-guard.ts): refuse DNS-rebound
+  // Host names and cross-origin browser requests before auth or routing, so
+  // a page in the operator's own browser cannot drive a no-keys service.
+  fastify.addHook('onRequest', async (request, reply) => {
+    const verdict = originGuard.check(request.headers);
+    if (!verdict.allowed) {
+      return reply.code(403).send({
+        error: { code: 'FORBIDDEN', message: verdict.reason, retryable: false },
+      });
+    }
+  });
+
   // Contract-completeness collector (the MCP generated-catalog pattern
   // applied to the REST surface): record every route so openapi.test.ts can
   // enforce that implemented ⇔ documented bidirectionally. Must be added
@@ -384,9 +404,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       .send(operatorHtml)
   );
 
-  // Register CORS plugin
+  // CORS only for operator-allowed origins (AGENTBROWSER_CORS_ORIGINS /
+  // options.corsOrigin); none by default — CLI, SDK and MCP clients are not
+  // browsers and need no CORS headers.
   await fastify.register(cors, {
-    origin: options.corsOrigin || '*',
+    origin: originGuard.corsOrigin,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     preflight: true,
   });
