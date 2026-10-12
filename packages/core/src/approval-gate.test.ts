@@ -6,7 +6,7 @@
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { ApprovalError, ApprovalGate, ApprovalToken } from './approval-gate';
+import { ApprovalError, ApprovalGate } from './approval-gate';
 import { StructuredLogger } from './logger';
 
 describe('Approval Gates', () => {

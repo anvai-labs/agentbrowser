@@ -5,7 +5,7 @@ import {
   type NativeFormEvidence,
   parseNativeFormEvidence,
 } from '@agentbrowser/engine';
-import { VERIFICATION_SNAPSHOT_LIMITS, snapshotJsonData } from '@agentbrowser/protocol';
+import { snapshotJsonData, VERIFICATION_SNAPSHOT_LIMITS } from '@agentbrowser/protocol';
 import type { PreparedNativeFormRead } from '../service.js';
 import type { DraftSnapshot } from './application-draft.js';
 

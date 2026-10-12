@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  captureSessionDiagnostics,
   SessionCloseCauseSchema,
   SessionTerminalViewSchema,
-  captureSessionDiagnostics,
   sessionLeaseRemainingMs,
   sessionTerminalFailureDetail,
 } from './session-diagnostics.js';

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  OutcomeRunReportSchema,
-  OutcomeRunRequestSchema,
   createOutcomeRunReportParser,
   isPassingOutcome,
+  OutcomeRunReportSchema,
+  OutcomeRunRequestSchema,
   parseOutcomeProjection,
   parseOutcomeRunReport,
   parseOutcomeRunRequest,

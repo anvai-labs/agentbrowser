@@ -3,9 +3,9 @@ import { setImmediate as settlePublication } from 'node:timers/promises';
 import {
   type ApplicationReceiptAuthorizationRequest,
   type ApplicationScope,
+  defineVerifier,
   TrustedEvidenceSourceRegistry,
   TrustedVerifierRegistry,
-  defineVerifier,
 } from '@agentbrowser/control';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { describe, expect, it, vi } from 'vitest';

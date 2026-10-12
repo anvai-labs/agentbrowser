@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { TrustedVerifierRegistry, defineVerifier } from './verifier-registry.js';
+import { defineVerifier, TrustedVerifierRegistry } from './verifier-registry.js';
 
 const descriptor = () => ({
   id: 'counter-equals',
@@ -107,18 +107,20 @@ describe('trusted verifier registry', () => {
     ]);
 
     const prepared = registry.prepare('counter-equals', '1.0.0', caller);
-    expect(prepared?.authorizationInput).toEqual({
+    // Narrow first: an optional chain here would turn a missing preparation into
+    // a TypeError that the `toThrow(TypeError)` assertion below would accept.
+    if (!prepared) throw new Error('verifier did not prepare');
+    const input = prepared.authorizationInput as typeof caller;
+    expect(prepared.authorizationInput).toEqual({
       expected: { value: 2 },
       policy: { tenants: ['fixture-tenant'] },
     });
-    expect(prepared?.authorizationInput).not.toBe(caller);
-    expect((prepared?.authorizationInput as typeof caller).expected).not.toBe(caller.expected);
-    expect(Object.isFrozen(prepared?.authorizationInput)).toBe(true);
-    expect(Object.isFrozen((prepared?.authorizationInput as typeof caller).expected)).toBe(true);
-    expect(Object.isFrozen((prepared?.authorizationInput as typeof caller).policy.tenants)).toBe(
-      true
-    );
-    expect(parserInput).not.toBe(prepared?.authorizationInput);
+    expect(prepared.authorizationInput).not.toBe(caller);
+    expect(input.expected).not.toBe(caller.expected);
+    expect(Object.isFrozen(prepared.authorizationInput)).toBe(true);
+    expect(Object.isFrozen(input.expected)).toBe(true);
+    expect(Object.isFrozen(input.policy.tenants)).toBe(true);
+    expect(parserInput).not.toBe(prepared.authorizationInput);
     expect(parserInput).toEqual({
       expected: { value: 3 },
       policy: { tenants: ['fixture-tenant', 'parser-only'] },
@@ -131,9 +133,9 @@ describe('trusted verifier registry', () => {
     caller.expected.value = 99;
     caller.policy.tenants.push('caller-only');
     expect(() => {
-      (prepared?.authorizationInput as typeof caller).expected.value = 100;
+      input.expected.value = 100;
     }).toThrow(TypeError);
-    expect(prepared?.authorizationInput).toEqual({
+    expect(prepared.authorizationInput).toEqual({
       expected: { value: 2 },
       policy: { tenants: ['fixture-tenant'] },
     });

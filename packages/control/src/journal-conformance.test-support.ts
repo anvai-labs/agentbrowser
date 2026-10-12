@@ -1,7 +1,6 @@
 import { canonicalJson } from '@agentbrowser/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
-  JournalIdentity,
   JournalIntent,
   JournalKey,
   JournalNamespace,

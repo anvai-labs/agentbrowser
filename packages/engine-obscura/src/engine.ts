@@ -10,10 +10,10 @@
  */
 
 import type { BrowserEngine } from '@agentbrowser/engine';
-import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
 import type { PlaywrightEngineOptions } from '@agentbrowser/engine-playwright';
-import { startObscura } from './launcher.js';
+import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
 import type { ObscuraLaunchOptions, ObscuraServer } from './launcher.js';
+import { startObscura } from './launcher.js';
 
 export interface ObscuraEngineOptions {
   /** Launcher options (binary path, port, extra serve args). */

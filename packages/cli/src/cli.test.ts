@@ -11,8 +11,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildCli } from './cli';
 import type { CliClient, CliDependencies } from './cli';
+import { buildCli } from './cli';
 import { PRODUCT_VERSION } from './product-version.js';
 
 describe('AgentBrowser CLI', () => {

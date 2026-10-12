@@ -9,7 +9,7 @@
 
 import type { RawPageState } from '@agentbrowser/engine';
 import { describe, expect, it } from 'vitest';
-import { RecordsSelectorError, extractRecords } from './records-extraction';
+import { extractRecords, RecordsSelectorError } from './records-extraction';
 
 const CARDS: RawPageState = {
   url: 'https://jobs.example.com/search',

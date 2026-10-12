@@ -16,8 +16,8 @@ import type { AddressInfo, Server } from 'node:net';
 import { AgentBrowserService } from '@agentbrowser/api';
 import type { BrowserEngine } from '@agentbrowser/engine';
 import { NetworkPolicy } from '@agentbrowser/policy';
-import { evaluateTarget, percentile, sample } from './harness.js';
 import type { BenchmarkResult } from './harness.js';
+import { evaluateTarget, percentile, sample } from './harness.js';
 
 // ---------------------------------------------------------------------------
 // Fixture pages

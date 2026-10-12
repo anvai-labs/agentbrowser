@@ -3,8 +3,8 @@ import {
   type AutofillReceipt,
   type AutofillReport,
   type AutofillRequest,
-  type PageElement,
   labelPattern,
+  type PageElement,
   parseAutofillRequest,
 } from '@agentbrowser/protocol';
 import type { ServiceActRequest } from './service.js';

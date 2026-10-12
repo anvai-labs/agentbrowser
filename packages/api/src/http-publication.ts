@@ -1,5 +1,5 @@
 import { finished } from 'node:stream/promises';
-import { type PublicationContext, composePublicationContext } from '@agentbrowser/control';
+import { composePublicationContext, type PublicationContext } from '@agentbrowser/control';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
 interface HttpPublication<T> {

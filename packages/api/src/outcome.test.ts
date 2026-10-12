@@ -1,11 +1,11 @@
 import { setImmediate as settlePublication } from 'node:timers/promises';
 import {
   type ApplicationScope,
+  defineEvidenceSource,
+  defineVerifier,
   type EvidenceAuthorizationRequest,
   TrustedEvidenceSourceRegistry,
   TrustedVerifierRegistry,
-  defineEvidenceSource,
-  defineVerifier,
 } from '@agentbrowser/control';
 import { isPassingOutcome } from '@agentbrowser/protocol';
 import { FakeEngine } from '@agentbrowser/testkit';
@@ -969,4 +969,5 @@ describe('verified outcome REST projection', () => {
     }
   );
 });
+
 import { createHash } from 'node:crypto';

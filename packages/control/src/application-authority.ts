@@ -3,8 +3,8 @@ import { ControlError, type SessionControl } from '@agentbrowser/core';
 import {
   type ApplicationDiscovery,
   CONTROL_OPERATION_ID,
-  VERIFICATION_SNAPSHOT_LIMITS,
   snapshotJsonData,
+  VERIFICATION_SNAPSHOT_LIMITS,
   validateApplicationOperationDescriptors,
 } from '@agentbrowser/protocol';
 import { canonicalJson } from './canonical-json.js';

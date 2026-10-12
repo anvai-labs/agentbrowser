@@ -1,8 +1,8 @@
 import { once } from 'node:events';
 import { createServer as httpServer } from 'node:http';
 import { createServer as httpsServer } from 'node:https';
-import { type Server, type Socket, isIP, createServer as tcpServer } from 'node:net';
-import { type TLSSocket, connect as connectTls } from 'node:tls';
+import { isIP, type Server, type Socket, createServer as tcpServer } from 'node:net';
+import { connect as connectTls, type TLSSocket } from 'node:tls';
 import { NetworkPolicy } from '@agentbrowser/policy';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import {

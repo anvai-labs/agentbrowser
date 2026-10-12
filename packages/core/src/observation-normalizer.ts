@@ -6,12 +6,7 @@
  */
 
 import type { RawElement, RawPageState } from '@agentbrowser/engine';
-import type {
-  ObservationMode,
-  ObservationRequest,
-  PageElement,
-  PageState,
-} from '@agentbrowser/protocol';
+import type { ObservationMode, PageElement, PageState } from '@agentbrowser/protocol';
 import { clampUtf16 } from './canonical-json.js';
 
 const INTERACTIVE_ROLES = new Set<string>([

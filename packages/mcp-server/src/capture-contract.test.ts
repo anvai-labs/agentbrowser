@@ -4,7 +4,7 @@ import {
   ScreenshotRequestSchema,
 } from '@agentbrowser/protocol';
 import { describe, expect, it, vi } from 'vitest';
-import { type McpClient, buildTools } from './mcp-server.js';
+import { buildTools, type McpClient } from './mcp-server.js';
 
 describe.each(['observe', 'screenshot'] as const)(
   'MCP %s canonical capture contract',

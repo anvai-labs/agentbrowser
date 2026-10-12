@@ -1,8 +1,8 @@
 import { expect, it } from 'vitest';
 import { probeFirefoxEgress } from '../scripts/probe-egress.mjs';
 import {
-  SESSION_CANDIDATE,
   launchSessionEgressBrowser,
+  SESSION_CANDIDATE,
 } from '../scripts/session-egress-browser.mjs';
 
 it.skipIf(!process.env.AGENTBROWSER_FIREFOX_EXECUTABLE)(

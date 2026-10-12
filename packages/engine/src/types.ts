@@ -21,16 +21,16 @@ import type {
 
 // Re-export protocol types used in engine interface
 export type {
-  EngineCapabilities,
-  Viewport,
-  PageState,
   ActionRequest,
   ActionResult,
   ArtifactRef,
+  EngineCapabilities,
   ObservationRequest,
   OverlayBlocker,
-  ScreenshotRequest,
+  PageState,
   PdfRequest,
+  ScreenshotRequest,
+  Viewport,
 };
 
 /**

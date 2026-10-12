@@ -24,8 +24,8 @@ import {
 import {
   type Browser,
   type ElementHandle,
-  type Page,
   launch as launchFirefox,
+  type Page,
 } from 'puppeteer-core';
 import { describeElement, fingerprint } from './semantics.js';
 

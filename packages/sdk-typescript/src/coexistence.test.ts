@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { AgentBrowserClient } from './client.js';
+
 afterEach(() => vi.unstubAllGlobals());
 it('sends unique operation IDs and supports explicit reconciliation', async () => {
   const fetch = vi.fn().mockImplementation(async () => new Response('{}'));

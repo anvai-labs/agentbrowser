@@ -6,7 +6,7 @@ import {
   UsageError,
   validateSessionRequest,
 } from '@agentbrowser/sdk-typescript';
-import { MAX_JSON_INPUT_BYTES, createTextArgumentReader } from './json-input.js';
+import { createTextArgumentReader, MAX_JSON_INPUT_BYTES } from './json-input.js';
 
 type Cookie = NonNullable<SessionRequest['cookies']>[number];
 export const MAX_COOKIE_COUNT = 1000;

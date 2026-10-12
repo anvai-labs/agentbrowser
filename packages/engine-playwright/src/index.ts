@@ -7,7 +7,6 @@
 import { randomUUID } from 'node:crypto';
 import type {
   ActionEffect,
-  ArtifactRef,
   BrowserEngine,
   CapturedArtifact,
   EngineAction,
@@ -30,46 +29,46 @@ import type {
   PdfRequest,
   RawFrameCoverage,
   RawPageState,
+  RequestPolicy,
   ResolvedTarget,
   ScreenshotRequest,
 } from '@agentbrowser/engine';
-import type { RequestPolicy } from '@agentbrowser/engine';
 import {
+  classifyNavigationFailure,
   EngineError,
   NATIVE_FORM_EVIDENCE_LIMITS,
-  classifyNavigationFailure,
   normalizeEngineError,
   normalizeNavigationFailure,
   parseNativeFormEvidence,
   readVerifiedUpload,
 } from '@agentbrowser/engine';
-import { MAX_FORM_CONTROLS_PER_ROOT } from '@agentbrowser/protocol';
 import {
-  DELIVERED_ACTION_TYPES,
-  DELIVERED_OBSERVATION_MODES,
-  type NavigationFailureReason,
-  type SessionDiagnostics,
   captureBrowserVersion,
   captureSessionDiagnostics,
+  DELIVERED_ACTION_TYPES,
+  DELIVERED_OBSERVATION_MODES,
   headedDisplayWarnings,
   isNavigationFailureReason,
+  MAX_FORM_CONTROLS_PER_ROOT,
+  type NavigationFailureReason,
+  type SessionDiagnostics,
   validateUploadIntegrity,
 } from '@agentbrowser/protocol';
 import {
   type Browser,
   type BrowserContext,
+  chromium,
   type ElementHandle,
   type JSHandle,
   type Locator,
   type Page,
-  chromium,
 } from 'playwright';
 import { g1CollectNamesPageFunction, g1DescribePageFunction } from './form-control-context.js';
 import {
-  SnapshotBudget,
-  type SnapshotEvidence,
   classifyEmptyObservation,
   frameSliceMs,
+  SnapshotBudget,
+  type SnapshotEvidence,
   sameSnapshotEvidence,
   snapshotDigest,
   snapshotTimeout,

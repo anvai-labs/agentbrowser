@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  defineEvidenceSource,
   type EvidenceAuthorizationRequest,
   type EvidencePermission,
-  TrustedEvidenceSourceRegistry,
-  defineEvidenceSource,
   runVerifiedOutcome,
+  TrustedEvidenceSourceRegistry,
 } from './outcome-runner.js';
-import { TrustedVerifierRegistry, defineVerifier } from './verifier-registry.js';
+import { defineVerifier, TrustedVerifierRegistry } from './verifier-registry.js';
 
 const descriptor = {
   id: 'receipt.equals',

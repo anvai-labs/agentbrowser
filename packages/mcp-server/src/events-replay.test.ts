@@ -1,6 +1,6 @@
 import type { AGENT_MODE_IDS } from '@agentbrowser/protocol';
 import { describe, expect, it, vi } from 'vitest';
-import { type McpClient, buildMcpServer } from './mcp-server.js';
+import { buildMcpServer, type McpClient } from './mcp-server.js';
 
 function fixture(options: { sessionId?: string; mode?: (typeof AGENT_MODE_IDS)[number] } = {}) {
   const events = vi.fn();

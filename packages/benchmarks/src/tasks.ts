@@ -11,8 +11,8 @@
 
 import { AgentBrowserService, ServiceError } from '@agentbrowser/api';
 import { SecretManager } from '@agentbrowser/core';
-import { FakeEngine } from '@agentbrowser/testkit';
 import type { FakeEngine as FakeEngineType } from '@agentbrowser/testkit';
+import { FakeEngine } from '@agentbrowser/testkit';
 
 export interface TaskOutcome {
   name: string;

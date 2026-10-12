@@ -1,6 +1,6 @@
 import { type Static, Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import { type Validated, snapshotJsonData } from './validators.js';
+import { snapshotJsonData, type Validated } from './validators.js';
 
 export const OperatorApprovalDecisionSchema = Type.Object(
   {

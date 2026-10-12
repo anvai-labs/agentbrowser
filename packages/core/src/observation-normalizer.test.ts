@@ -5,7 +5,7 @@
  * Following TDD principles, tests are written before implementation.
  */
 
-import type { ObservationRequest, PageState, RawPageState } from '@agentbrowser/protocol';
+import type { RawPageState } from '@agentbrowser/protocol';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ObservationNormalizer } from './observation-normalizer';
 

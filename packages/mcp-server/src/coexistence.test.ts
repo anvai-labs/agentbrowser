@@ -1,5 +1,6 @@
 import { expect, it, vi } from 'vitest';
-import { type McpClient, buildMcpServer } from './mcp-server.js';
+import { buildMcpServer, type McpClient } from './mcp-server.js';
+
 it('binds an agent to an existing session without exposing owner or cookie tools', async () => {
   const session = {
     sessionId: 's',

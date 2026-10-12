@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { TrustedEvidenceSourceRegistry, defineEvidenceSource } from './outcome-runner.js';
+import { defineEvidenceSource, TrustedEvidenceSourceRegistry } from './outcome-runner.js';
 
 const descriptor = { id: 'source', capability: 'receipt', authorization: 'required' as const };
 const verifier = { id: 'equals', version: '1', input: 2 };

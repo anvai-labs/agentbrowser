@@ -16,7 +16,6 @@ import type {
   EngineSession,
   EngineSessionOptions,
   EngineTarget,
-  ExtractionRequest,
   ExtractionResult,
   NavigationRequest,
   NavigationResult,

@@ -2,8 +2,8 @@ import type { PreparedEvidenceRead } from '@agentbrowser/control';
 import type { NativeFormEvidence } from '@agentbrowser/engine';
 import { expect, it, vi } from 'vitest';
 import type { PreparedNativeFormRead } from './service.js';
-import { createDraftWitnessCollector } from './test-support/application-draft-evidence.js';
 import { createApplicationDraft } from './test-support/application-draft.js';
+import { createDraftWitnessCollector } from './test-support/application-draft-evidence.js';
 
 function fixture() {
   const draft = createApplicationDraft({ id: 'witness' });

@@ -5,7 +5,7 @@
 // runs. Probes are fixture-scripted (pages carry their own fetch
 // scripts) because engine pages expose act/observe/navigate, not
 // arbitrary evaluation.
-import { type Server, createServer } from 'node:http';
+import { createServer, type Server } from 'node:http';
 import type { EnginePage } from '@agentbrowser/engine';
 import { EngagementScopePolicy, NetworkPolicy } from '@agentbrowser/policy';
 import { describe, expect, it } from 'vitest';
