@@ -14,9 +14,12 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   the operator visited could create sessions and drive them — including `upload`, which reads
   local paths — directly or through DNS rebinding. A root `onRequest` guard
   (`packages/api/src/request-origin-guard.ts`) now refuses non-loopback `Host` names on a
-  loopback bind, foreign or `null` browser origins, and `Sec-Fetch-Site: cross-site|same-site`
-  requests with `403 FORBIDDEN`. CLI/SDK/MCP clients (no `Origin`) and the same-origin operator
-  panel are unaffected.
+  loopback bind, foreign or `null` browser origins, and browser fetch metadata other than a typed
+  navigation unless the origin is allowed or same-origin on a trusted host name — which also stops
+  a rebound page reading GET routes on a wide (`0.0.0.0`, Docker) bind. CLI/SDK/MCP clients (no
+  `Origin`, no fetch metadata) and the same-origin operator panel are unaffected. Residual risks
+  (pre-fetch-metadata browsers on wide binds, `AGENTBROWSER_ALLOW_LOOPBACK` sessions) are documented
+  in docs/threat-model.md; run keyed for those setups.
 - **CORS is disabled unless configured.** New startup-only `AGENTBROWSER_CORS_ORIGINS` (exact
   origins, merged with `ServerOptions.corsOrigin`) and `AGENTBROWSER_ALLOWED_HOSTS`. **Breaking
   for browser apps on other origins** that called the API: list their origins in

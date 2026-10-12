@@ -93,6 +93,49 @@ describe('request origin guard: browser origins (drive-by requests)', () => {
     });
   });
 
+  it('refuses a rebound same-origin GET without Origin on a wide bind (review F1)', () => {
+    // Browsers omit Origin on same-origin GETs; only fetch metadata marks them.
+    const exposed = createRequestOriginGuard({ bindHost: '0.0.0.0' });
+    const verdict = exposed.check({
+      host: 'attacker.example:5709',
+      'sec-fetch-site': 'same-origin',
+    });
+    expect(verdict.allowed).toBe(false);
+  });
+
+  it('accepts same-origin fetch metadata on a trusted name over a wide bind', () => {
+    const exposed = createRequestOriginGuard({ bindHost: '0.0.0.0' });
+    expect(exposed.check({ host: 'localhost:5709', 'sec-fetch-site': 'same-origin' })).toEqual({
+      allowed: true,
+    });
+    const named = createRequestOriginGuard({
+      bindHost: '0.0.0.0',
+      allowedHosts: ['agentbrowser.internal'],
+    });
+    expect(
+      named.check({ host: 'agentbrowser.internal:5709', 'sec-fetch-site': 'same-origin' })
+    ).toEqual({ allowed: true });
+  });
+
+  it('keeps non-browser clients and typed navigations working on a wide bind', () => {
+    const exposed = createRequestOriginGuard({ bindHost: '0.0.0.0' });
+    expect(exposed.check({ host: 'agentbrowser:5709' })).toEqual({ allowed: true });
+    expect(exposed.check({ host: 'agentbrowser:5709', 'sec-fetch-site': 'none' })).toEqual({
+      allowed: true,
+    });
+  });
+
+  it('refuses malformed, mis-cased or duplicated fetch metadata without an allowed Origin', () => {
+    for (const site of ['Cross-Site', 'same-origin, cross-site', 'bogus']) {
+      expect(loopback.check({ host: '127.0.0.1:5709', 'sec-fetch-site': site }).allowed).toBe(
+        false
+      );
+    }
+    expect(loopback.check({ host: '127.0.0.1:5709', 'sec-fetch-site': 'Same-Origin' })).toEqual({
+      allowed: true,
+    });
+  });
+
   it('accepts operator-allowed origins, including cross-site fetch metadata', () => {
     const guard = createRequestOriginGuard({
       bindHost: '127.0.0.1',

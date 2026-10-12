@@ -34,6 +34,7 @@ proves the control works. Residual risks are named, not hidden.
 | Session policy weakening by tenant | `SessionHostPolicy` is restrict-only: the SSRF base always runs after session allow/blocked lists | `network-policy.test.ts` "still enforce the base SSRF policy" |
 | Cross-tenant session/artifact access | Bearer-key tenancy: keys held hashed, sessions stamped with tenantId, every /v1 session-scoped route (incl. WS, 4403) verifies ownership | `server.test.ts` authentication and tenancy suite |
 | Unauthorized use | 401 without/with-unknown key when AGENTBROWSER_API_KEYS configured; loud warning when unauthenticated | same suite |
+| Drive-by and DNS-rebinding control of a no-keys local service from the operator's own browser | `request-origin-guard.ts` root hook before auth/routing: loopback-name `Host` check (loopback binds or `AGENTBROWSER_ALLOWED_HOSTS`), `Origin` allowlist or trusted same-origin, fetch metadata (`Sec-Fetch-Site`) other than `none` refused unless allowed origin or trusted same-origin; CORS off unless `AGENTBROWSER_CORS_ORIGINS` | `request-origin-guard.test.ts`; `server.test.ts` CORS and security suite (cross-origin preflight, drive-by POST, rebound Host, wide-bind rebound GET) |
 | Credential theft via vault references | `SecretManager`: vault:// refs resolved at execution time only; values redacted from observations, errors, logs, and spans; `toJSON` leaks nothing. Default deployments register no secrets, so registered-secret redaction is inert by itself — the engine boundary below is the effective control for observed values | `secret-manager.test.ts`; service redaction tests |
 | Credential exposure via observations (filled password/OTP/card values) | Engine sensitivity boundary (TD-BROWSER-13, 1.15.2): values withheld at DOM-binding classification for password/hidden inputs, credential autocomplete tokens (incl. cc-*) and explicitly marked sensitive fills; withheld again from refStore, semantic fingerprints, native form evidence and autofill receipts (`valueRedacted` marks it; unclassifiable elements fail closed). Enforced by all three engines (Playwright, Safari, Firefox) | `observation-redaction.test.ts` (Playwright); Safari/Firefox describe boundaries; `plan-real-chromium.test.ts` canary assertions |
 | Prompt injection via page content | `untrustedContent: true` on every observation; CLI/MCP render banners; nothing page-derived is ever concatenated into instructions by the service | observation schema + CLI/MCP tests |
@@ -45,6 +46,13 @@ proves the control works. Residual risks are named, not hidden.
 
 ## Open gaps and residual risks
 
+- **Browser request guard residuals (ACCEPTED)**: browsers that send no fetch
+  metadata (Safari < 16.4) on a wide bind without `AGENTBROWSER_ALLOWED_HOSTS`
+  are covered only by the `Origin` rule, so rebound same-origin GETs are not
+  refused; and with `AGENTBROWSER_ALLOW_LOOPBACK` the engine's interception
+  strips fetch metadata, so no-cors GETs from in-session pages reach GET
+  routes. Both are mitigated by running keyed (`AGENTBROWSER_API_KEYS`); see
+  operations.md "Browser request guard".
 - **Value redaction's honest boundaries (ACCEPTED, TD-BROWSER-13)**: value
   redaction covers observed/form-evidence values only. Screenshots and PDFs of
   a toggled-to-text password show the secret visually; raw HTML surfaces

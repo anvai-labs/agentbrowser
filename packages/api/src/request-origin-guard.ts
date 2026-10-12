@@ -15,8 +15,13 @@
  * - Origin allowlist (cross-origin requests): an Origin must be operator-allowed
  *   or same-origin on a checked hostname — same-origin alone is what a
  *   rebound page looks like, so it is never trusted on an unchecked Host.
- * - Fetch metadata: `Sec-Fetch-Site: cross-site|same-site` without an
- *   allowed Origin is refused (no-cors subresource requests omit Origin).
+ * - Fetch metadata: any `Sec-Fetch-Site` other than `none` (a typed URL)
+ *   needs an allowed Origin, or `same-origin` on a trusted Host name. Browsers
+ *   omit Origin on same-origin GETs and no-cors subresource requests, so this
+ *   is what stops a rebound page reading GET routes on a wide (0.0.0.0) bind.
+ *
+ * Residual: browsers too old to send fetch metadata (Safari < 16.4) are only
+ * covered by the Host check (loopback binds) and Origin rules.
  *
  * Startup-only configuration; request input can never widen it.
  */
@@ -129,9 +134,24 @@ export function createRequestOriginGuard(
           return { allowed: false, reason: 'Browser origin is not allowed to call this service' };
         }
       }
-      const site = header(headers, 'sec-fetch-site');
-      if ((site === 'cross-site' || site === 'same-site') && !allowedOrigin) {
-        return { allowed: false, reason: 'Cross-site browser requests are not allowed' };
+      // Fetch metadata marks every modern-browser request, including same-origin
+      // GETs that carry no Origin. Only a user navigation ('none') or same-origin
+      // on a trusted Host name passes; on an unchecked (wide) bind a rebound
+      // page is "same-origin" with the attacker's name, so it is refused too.
+      // Anything else — cross-site, same-site, malformed or duplicated values —
+      // needs an operator-allowed Origin.
+      const site = header(headers, 'sec-fetch-site')?.trim().toLowerCase();
+      if (site !== undefined && site !== 'none' && !allowedOrigin) {
+        if (site !== 'same-origin') {
+          return { allowed: false, reason: 'Cross-site browser requests are not allowed' };
+        }
+        if (hostname === undefined || !trustedHostname(hostname)) {
+          return {
+            allowed: false,
+            reason:
+              'Browser requests must use a trusted host name; set AGENTBROWSER_ALLOWED_HOSTS for non-loopback names',
+          };
+        }
       }
       return { allowed: true };
     },

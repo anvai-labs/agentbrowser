@@ -249,13 +249,35 @@ clients send no `Origin`, so they are unaffected. The guard refuses with
 - an `Origin` that is neither in `AGENTBROWSER_CORS_ORIGINS` nor this
   service's own origin on a checked hostname (the operator panel at
   `/operator` is same-origin and keeps working); `Origin: null` is refused;
-- `Sec-Fetch-Site: cross-site` or `same-site` without an allowed origin — a
-  page on another local port (a dev server) is not this service.
+- browser fetch metadata (`Sec-Fetch-Site`) other than `none` (a typed URL)
+  unless the `Origin` is allowed or it is `same-origin` on a trusted host name.
+  Browsers omit `Origin` on same-origin GETs, so this is what stops a DNS-rebound
+  page reading GET routes (session lists, cookies, artifacts); a page on another
+  local port (a dev server) is `same-site`, not this service.
 
-On a wide bind (`HOST=0.0.0.0`) without `AGENTBROWSER_ALLOWED_HOSTS` the
-Host check is off, and same-origin browser requests are only trusted for
-loopback hostnames; set `AGENTBROWSER_ALLOWED_HOSTS` to use the operator panel
-through a LAN or container hostname.
+Trusted host names are loopback (`localhost`, `127.0.0.0/8`, `::1`) plus
+`AGENTBROWSER_ALLOWED_HOSTS`. On a wide bind (`HOST=0.0.0.0`, the Docker
+image's default) without that list, the `Host` check is off but browser
+requests still need a trusted name: non-browser clients work through any
+name, while the operator panel works only via `localhost`/`127.0.0.1` until
+you list the LAN or container hostname in `AGENTBROWSER_ALLOWED_HOSTS`.
+
+Compatibility notes:
+
+- `Host: 0.0.0.0` (e.g. `curl http://0.0.0.0:5709`) and mapped forms such as
+  `[::ffff:127.0.0.1]` are not loopback names and are refused on a loopback
+  bind; use `127.0.0.1` or `localhost`.
+- Behind a reverse proxy that rewrites `Host` to the upstream (nginx's default
+  `proxy_pass`), the browser's `Origin` is the public origin and never matches,
+  so list that origin in `AGENTBROWSER_CORS_ORIGINS`; if the proxy preserves
+  `Host`, list the public name in `AGENTBROWSER_ALLOWED_HOSTS` instead.
+- Browsers too old to send fetch metadata (Safari before 16.4) are covered only
+  by the `Host` check and `Origin` rules, so on a wide bind run keyed
+  (`AGENTBROWSER_API_KEYS`).
+- With `AGENTBROWSER_ALLOW_LOOPBACK` set, pages inside AgentBrowser sessions can
+  reach this API. The engine's request interception strips fetch metadata, so
+  for those pages only the `Origin` rule applies: CORS reads are refused, but
+  no-cors GETs (images, scripts) reach GET routes. Run keyed in that mode.
 
 ## Health, metrics, and logs
 

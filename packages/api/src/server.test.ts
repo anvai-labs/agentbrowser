@@ -939,6 +939,27 @@ describe('AgentBrowser REST API', () => {
       expect(response.status).toBe(200);
     });
 
+    it('should refuse a rebound same-origin GET on a wide bind (no Origin header)', async () => {
+      const wide = await buildServer({ host: '0.0.0.0' });
+      try {
+        const rebound = await wide.inject({
+          method: 'GET',
+          url: '/v1/sessions',
+          headers: { host: 'attacker.example:5709', 'sec-fetch-site': 'same-origin' },
+        });
+        expect(rebound.statusCode).toBe(403);
+        // Non-browser clients (no fetch metadata) on the same wide bind still work.
+        const client = await wide.inject({
+          method: 'GET',
+          url: '/v1/sessions',
+          headers: { host: 'agentbrowser:5709' },
+        });
+        expect(client.statusCode).toBe(200);
+      } finally {
+        await wide.close();
+      }
+    });
+
     it('should serve CORS only to operator-allowed origins', async () => {
       const allowed = await buildServer({ corsOrigin: 'https://console.example' });
       try {
