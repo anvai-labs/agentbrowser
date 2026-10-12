@@ -11,6 +11,8 @@ on:
       - 'mkdocs.yml'
       - 'mkdocs-requirements.txt'
       - '.github/workflows/docs.yml'
+      - 'scripts/check_brand_tokens.py'
+      - 'scripts/test_check_brand_tokens.py'
   pull_request:
     branches: [main, develop]
     paths:
@@ -18,6 +20,8 @@ on:
       - 'mkdocs.yml'
       - 'mkdocs-requirements.txt'
       - '.github/workflows/docs.yml'
+      - 'scripts/check_brand_tokens.py'
+      - 'scripts/test_check_brand_tokens.py'
   workflow_dispatch:
 
 permissions:
@@ -46,6 +50,10 @@ jobs:
 
       - name: Install pinned docs toolchain
         run: pip install -r mkdocs-requirements.txt
+
+      # Shared family brand files are pinned; fail before building on drift.
+      - name: Check family brand tokens
+        run: python scripts/test_check_brand_tokens.py && python scripts/check_brand_tokens.py .
 
       - name: Build the site (strict — warnings fail)
         run: mkdocs build --strict
