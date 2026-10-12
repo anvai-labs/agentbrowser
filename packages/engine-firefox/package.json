@@ -28,7 +28,7 @@
   "devDependencies": {
     "@agentbrowser/testkit": "workspace:*",
     "@biomejs/biome": "^1.9.4",
-    "@types/node": "^22.10.2",
+    "@types/node": "^26.6.5",
     "typescript": "^5.7.2",
     "vitest": "^2.1.9",
     "@puppeteer/browsers": "3.2.2"
