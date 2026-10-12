@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PRODUCT_VERSION } from './product-version.js';
-import { SERVER_HELP, parseServerArgs } from './server-args.js';
+import { parseServerArgs, SERVER_HELP } from './server-args.js';
 
 describe('parseServerArgs', () => {
   it('runs the server when no arguments are given (Docker, brew services, SDK)', () => {

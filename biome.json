@@ -33,14 +33,16 @@
         "noBannedTypes": "error",
         "noCommaOperator": "error",
         "noEmptyTypeParameters": "error",
+        "noExcessiveNestedTestSuites": "error",
         "noExtraBooleanCast": "error",
         "noFlatMapIdentity": "error",
+        "noForEach": "error",
         "noStaticOnlyClass": "error",
         "noThisInStatic": "error",
         "noUselessCatch": "error",
         "noUselessConstructor": "error",
+        "noUselessContinue": "error",
         "noUselessEmptyExport": "error",
-        "noUselessEscapeInRegex": "error",
         "noUselessFragments": "error",
         "noUselessLabel": "error",
         "noUselessLoneBlockStatements": "error",
@@ -55,41 +57,64 @@
         "useNumericLiterals": "error",
         "useOptionalChain": "error",
         "useRegexLiterals": "error",
-        "useSimpleNumberKeys": "error"
+        "useSimpleNumberKeys": "error",
+        "useWhile": "error"
       },
       "correctness": {
-        "noUnusedLabels": "error"
+        "noChildrenProp": "error",
+        "noRenderReturnValue": "error",
+        "noUnusedLabels": "error",
+        "useExhaustiveDependencies": "error",
+        "useJsxKeyInIterable": "error"
       },
       "performance": {
-        "noAccumulatingSpread": "error"
+        "noAccumulatingSpread": "error",
+        "noDelete": "error"
+      },
+      "security": {
+        "noDangerouslySetInnerHtml": "error",
+        "noDangerouslySetInnerHtmlWithChildren": "error"
       },
       "style": {
-        "noDescendingSpecificity": "error",
+        "noInferrableTypes": "error",
         "noNonNullAssertion": "error",
+        "noParameterAssign": "error",
+        "noUnusedTemplateLiteral": "error",
+        "noUselessElse": "error",
+        "useAsConstAssertion": "error",
         "useConst": "error",
-        "useDeprecatedReason": "error",
+        "useDefaultParameterLast": "error",
+        "useEnumInitializers": "error",
         "useExponentiationOperator": "error",
         "useExportType": "error",
         "useImportType": "error",
         "useLiteralEnumMembers": "error",
         "useNodejsImportProtocol": "error",
+        "useNumberNamespace": "error",
+        "useSelfClosingElements": "error",
         "useShorthandFunctionType": "error",
+        "useSingleVarDeclarator": "error",
         "useTemplate": "error"
       },
       "suspicious": {
         "noApproximativeNumericConstant": "error",
+        "noArrayIndexKey": "error",
         "noCatchAssign": "error",
         "noConfusingLabels": "error",
         "noConfusingVoidType": "error",
         "noConstEnum": "error",
+        "noDuplicateTestHooks": "error",
         "noEmptyBlock": "error",
         "noExplicitAny": "error",
+        "noExportsInTest": "error",
         "noExtraNonNullAssertion": "error",
+        "noFocusedTests": "error",
         "noGlobalIsFinite": "error",
         "noGlobalIsNan": "error",
         "noPrototypeBuiltins": "error",
         "noRedundantUseStrict": "error",
         "noSuspiciousSemicolonInJsx": "error",
+        "noVar": "error",
         "useDefaultSwitchClauseLast": "error",
         "useIsArray": "error"
       }
