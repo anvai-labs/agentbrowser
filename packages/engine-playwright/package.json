@@ -5,6 +5,9 @@
   "type": "module",
   "description": "Playwright Chromium browser engine implementation",
   "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",

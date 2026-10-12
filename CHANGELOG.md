@@ -27,6 +27,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   outright, the server and its Chromium still shut down (verified on Windows 11 with a live session).
   The first stop signal closes the lifeline; a second kills the server.
 
+### Fixed — server artifacts ship only built output
+
+- The server's workspace packages (`api`, `core`, `engine`, `engine-playwright`, `engine-safari`,
+  `extraction`, `policy`, `protocol`) now declare `"files": ["dist"]`, as `control` already did.
+  `pnpm deploy` had been copying whole package directories into every server artifact (the
+  tarballs, the Docker image and the Windows tree): `src/`, `tsconfig*`, `vitest.config.ts`, and on
+  a machine that had run tests, `coverage/` reports embedding the build checkout's absolute paths.
+  A new test walks the API's workspace dependency closure and requires the allowlist.
+
 ### Fixed — server command line
 
 - `agentbrowser-server --help` and `--version` now answer without starting the service or

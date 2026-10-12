@@ -5,6 +5,9 @@
   "type": "module",
   "description": "Real Safari engine via macOS safaridriver (W3C WebDriver) - TD-BROWSER-7 Phase 2. Always headed, macOS only.",
   "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
