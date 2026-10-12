@@ -43,13 +43,13 @@ jobs:
     name: Windows gotchas + build
     runs-on: ${{ vars.CI_WINDOWS_RUNNER || 'windows-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.tool-versions'
           cache: 'pnpm'

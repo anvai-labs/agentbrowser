@@ -24,13 +24,13 @@ jobs:
     name: Type Check
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.tool-versions'
           cache: 'pnpm'
@@ -63,11 +63,11 @@ jobs:
     timeout-minutes: 10
     needs: [type-check]
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.tool-versions'
           cache: 'pnpm'
@@ -100,13 +100,13 @@ jobs:
     name: Lint
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.tool-versions'
           cache: 'pnpm'
@@ -141,13 +141,13 @@ jobs:
     # The org's ubuntu-latest overflow pool also includes restricted containers.
     runs-on: ${{ vars.CI_TEST_RUNNER || 'ubuntu-24.04' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.tool-versions'
           cache: 'pnpm'
@@ -166,7 +166,7 @@ jobs:
 
       # One cached Firefox qualification in this existing job, no browser matrix.
       - name: Cache native Firefox
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .cache/firefox
           key: firefox-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/engine-firefox/scripts/browser-config.mjs') }}
@@ -196,7 +196,7 @@ jobs:
 
       - name: Upload coverage
         if: hashFiles('coverage/coverage-final.json') != ''
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage/coverage-final.json
@@ -206,13 +206,13 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     needs: [type-check, lint]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.tool-versions'
           cache: 'pnpm'
@@ -229,7 +229,7 @@ jobs:
     # A repo override can reuse qualified self-hosted capacity.
     runs-on: ${{ vars.CI_DOCKER_RUNNER || 'ubuntu-24.04' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build the production image
         run: docker build -t agentbrowser:${{ github.sha }} .
@@ -260,13 +260,13 @@ jobs:
     name: Benchmarks
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.tool-versions'
           cache: 'pnpm'
@@ -304,13 +304,13 @@ jobs:
     # where this native binary has not qualified. Override only with a vetted host.
     runs-on: ${{ vars.CI_OBSCURA_RUNNER || 'ubuntu-24.04' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.tool-versions'
           cache: 'pnpm'
@@ -322,7 +322,7 @@ jobs:
         run: pnpm -r build
 
       - name: Cache Obscura binary
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .cache/obscura
           key: obscura-v0.2.1-linux-x64
@@ -340,13 +340,13 @@ jobs:
     name: Bun compile + smoke
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.tool-versions'
           cache: 'pnpm'
