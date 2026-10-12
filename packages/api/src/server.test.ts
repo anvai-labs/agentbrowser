@@ -891,7 +891,7 @@ describe('AgentBrowser REST API', () => {
   });
 
   describe('CORS and security', () => {
-    it('should handle CORS preflight requests', async () => {
+    it('should refuse a cross-origin CORS preflight by default', async () => {
       const response = await fetch(`${baseUrl}/v1/sessions`, {
         method: 'OPTIONS',
         headers: {
@@ -900,16 +900,116 @@ describe('AgentBrowser REST API', () => {
         },
       });
 
-      expect(response.status).toBe(204);
-      expect(response.headers.get('access-control-allow-origin')).toBeDefined();
-      expect(response.headers.get('access-control-allow-methods')).toContain('POST');
+      expect(response.status).toBe(403);
+      expect(response.headers.get('access-control-allow-origin')).toBeNull();
+    });
+
+    it('should refuse a drive-by session create from a foreign browser origin', async () => {
+      const list = async () =>
+        ((await (await fetch(`${baseUrl}/v1/sessions`)).json()) as { sessions: unknown[] })
+          .sessions;
+      const before = await list();
+      const response = await fetch(`${baseUrl}/v1/sessions`, {
+        method: 'POST',
+        headers: { Origin: 'https://evil.example', 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+
+      expect(response.status).toBe(403);
+      expect(((await response.json()) as { error: { code: string } }).error.code).toBe('FORBIDDEN');
+      expect(await list()).toHaveLength(before.length);
+    });
+
+    it('should refuse a DNS-rebound Host header on the loopback bind', async () => {
+      const response = await server.inject({
+        method: 'GET',
+        url: '/health',
+        headers: { host: 'rebind.attacker.example:5709' },
+      });
+
+      expect(response.statusCode).toBe(403);
+    });
+
+    it('should accept same-origin requests from the operator console', async () => {
+      const origin = new URL(baseUrl).origin;
+      const response = await fetch(`${baseUrl}/health`, {
+        headers: { Origin: origin, 'Sec-Fetch-Site': 'same-origin' },
+      });
+
+      expect(response.status).toBe(200);
+    });
+
+    it('should refuse a rebound GET on a wide no-keys bind as a real browser sends it', async () => {
+      // Over plain HTTP a rebound page's same-origin GET carries no Origin and no
+      // fetch metadata (browsers send it only to trustworthy origins).
+      const wide = await buildServer({ host: '0.0.0.0' });
+      try {
+        const rebound = await wide.inject({
+          method: 'GET',
+          url: '/v1/sessions',
+          headers: { host: 'attacker.example:5709' },
+        });
+        expect(rebound.statusCode).toBe(403);
+        const local = await wide.inject({
+          method: 'GET',
+          url: '/v1/sessions',
+          headers: { host: 'localhost:5709' },
+        });
+        expect(local.statusCode).toBe(200);
+      } finally {
+        await wide.close();
+      }
+    });
+
+    it('should leave keyed wide binds to bearer auth for unlisted host names', async () => {
+      const { createHash } = await import('node:crypto');
+      const keyed = await buildServer({
+        host: '0.0.0.0',
+        apiKeys: new Map([[createHash('sha256').update('k1').digest('hex'), 't1']]),
+      });
+      try {
+        const anonymous = await keyed.inject({
+          method: 'GET',
+          url: '/v1/sessions',
+          headers: { host: 'agentbrowser:5709' },
+        });
+        expect(anonymous.statusCode).toBe(401);
+        const client = await keyed.inject({
+          method: 'GET',
+          url: '/v1/sessions',
+          headers: { host: 'agentbrowser:5709', authorization: 'Bearer k1' },
+        });
+        expect(client.statusCode).toBe(200);
+      } finally {
+        await keyed.close();
+      }
+    });
+
+    it('should serve CORS only to operator-allowed origins', async () => {
+      const allowed = await buildServer({ corsOrigin: 'https://console.example' });
+      try {
+        const response = await allowed.inject({
+          method: 'OPTIONS',
+          url: '/v1/sessions',
+          headers: {
+            host: '127.0.0.1:5709',
+            origin: 'https://console.example',
+            'access-control-request-method': 'POST',
+          },
+        });
+        expect(response.statusCode).toBe(204);
+        expect(response.headers['access-control-allow-origin']).toBe('https://console.example');
+      } finally {
+        await allowed.close();
+      }
     });
 
     it('should reject an OPTIONS request that is not a valid preflight', async () => {
       // No Origin / Access-Control-Request-Method: not a preflight at all.
+      // With no allowed origins CORS is disabled, so OPTIONS is not served.
       const response = await fetch(`${baseUrl}/v1/sessions`, { method: 'OPTIONS' });
 
-      expect(response.status).toBe(400);
+      expect(response.status).toBe(404);
     });
 
     it('should include security headers', async () => {

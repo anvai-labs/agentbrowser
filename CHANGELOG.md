@@ -7,6 +7,42 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.17.0] — 2026-10-12
+
+### Security — browser request guard, CORS off by default, dependency advisories
+
+- **Drive-by control of the local service closed.** The no-keys local service sent
+  `Access-Control-Allow-Origin: *` and checked neither `Host` nor `Origin`, so any web page
+  the operator visited could create sessions and drive them — including `upload`, which reads
+  local paths — directly or through DNS rebinding. A root `onRequest` guard
+  (`packages/api/src/request-origin-guard.ts`) now answers `403 FORBIDDEN` to a `Host` that is
+  not a trusted name (loopback or `AGENTBROWSER_ALLOWED_HOSTS`) on loopback binds and on **every
+  bind without API keys**, to foreign or `null` browser origins, and to browser fetch metadata
+  other than a typed navigation unless the origin is allowed or same-origin on a trusted name.
+  CLI/SDK/MCP clients and the same-origin operator panel are unaffected when they use a trusted
+  name. Residuals are documented in docs/threat-model.md.
+- **Breaking for no-keys wide binds** (`HOST=0.0.0.0`, the Docker image's default): clients that
+  reach the service by a container, service or LAN name now get 403 — list those names in
+  `AGENTBROWSER_ALLOWED_HOSTS` or set `AGENTBROWSER_API_KEYS` (logged at startup). `localhost` /
+  `127.0.0.1` (port publishing, the healthcheck) keep working; keyed deployments are unchanged.
+- **CORS is disabled unless configured.** New startup-only `AGENTBROWSER_CORS_ORIGINS` (exact
+  origins, merged with `ServerOptions.corsOrigin`) and `AGENTBROWSER_ALLOWED_HOSTS`. **Breaking
+  for browser apps on other origins** that called the API: list their origins in
+  `AGENTBROWSER_CORS_ORIGINS`. See docs/operations.md#browser-request-guard.
+- **Dependencies:** fastify 5.12.1 → 5.12.5 plus lockfile refresh of `fast-uri` and
+  `source-map-js`; `pnpm audit --prod` goes from 13 advisories (9 high) to none.
+- **Dependabot version updates** (`.github/dependabot.yml`): npm, GitHub Actions, Docker and
+  the docs pip toolchain, targeting `develop`.
+
+### Docs — Anvai family brand
+
+- The docs site adopts the shared Anvai family brand (v1.3), the same as the AnvaiOps, genmedia,
+  InferFlux, ProximaDB, Sandhi and Victor docs. It includes the ink brand bar, teal accent and
+  self-hosted Inter, which removes the Google Fonts request. `scripts/check_brand_tokens.py`
+  pins the shared files and runs before the docs build (#400).
+
+## [1.16.1] — 2026-10-10
+
 ### Added — formControls row/section context (G1)
 
 - Custom controls with generic, duplicated accessible names (GitHub's permission editor
@@ -16,8 +52,6 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   the full gap packet (forms-extract parity, lazy-section probes, autofill context matching,
   scroll ergonomics, private-file downloads):
   docs/agent-handoffs/AGENTBROWSER_UI_GAPS_2026-10-10.md.
-
-## [1.16.1] — 2026-10-10
 
 ### Added — Windows CI + winget channel, App-based submission
 
