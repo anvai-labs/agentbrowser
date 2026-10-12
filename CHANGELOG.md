@@ -7,6 +7,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.17.0] — 2026-10-12
+
+### Docs — Anvai family brand
+
+- The docs site adopts the shared Anvai family brand (v1.3), the same as the AnvaiOps, genmedia,
+  InferFlux, ProximaDB, Sandhi and Victor docs. It includes the ink brand bar, teal accent and
+  self-hosted Inter, which removes the Google Fonts request. `scripts/check_brand_tokens.py`
+  pins the shared files and runs before the docs build (#400).
+
 ### Security — browser request guard, CORS off by default, dependency advisories
 
 - **Drive-by control of the local service closed.** The no-keys local service sent
@@ -32,6 +41,8 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - **Dependabot version updates** (`.github/dependabot.yml`): npm, GitHub Actions, Docker and
   the docs pip toolchain, targeting `develop`.
 
+## [1.16.1] — 2026-10-10
+
 ### Added — formControls row/section context (G1)
 
 - Custom controls with generic, duplicated accessible names (GitHub's permission editor
@@ -41,8 +52,6 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   the full gap packet (forms-extract parity, lazy-section probes, autofill context matching,
   scroll ergonomics, private-file downloads):
   docs/agent-handoffs/AGENTBROWSER_UI_GAPS_2026-10-10.md.
-
-## [1.16.1] — 2026-10-10
 
 ### Added — Windows CI + winget channel, App-based submission
 
