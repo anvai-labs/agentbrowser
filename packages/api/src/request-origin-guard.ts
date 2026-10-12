@@ -1,0 +1,213 @@
+/**
+ * Browser-request guard for the local service.
+ *
+ * In no-keys local mode the API is unauthenticated by design: anything that
+ * can reach 127.0.0.1:5709 controls every session, including `upload`,
+ * which reads arbitrary local paths. Loopback binding keeps the LAN out but
+ * not the operator's own web browser: any page they visit can address the
+ * service directly (cross-origin fetch) or through a DNS-rebound hostname.
+ * Non-browser clients (CLI, SDK, MCP) send neither Origin nor fetch
+ * metadata, so the guard refuses requests that carry browser provenance from
+ * anywhere other than this service's own origin or an operator allowlist:
+ *
+ * - Host allowlist (DNS rebinding): the Host header must name loopback
+ *   (`localhost`, 127/8, `::1`) or an operator-allowed host on a loopback bind
+ *   and on ANY bind without API keys. A rebound page's requests are ordinary
+ *   same-origin requests to the attacker's name: over plain HTTP browsers send
+ *   no fetch metadata and no Origin on GETs, so only the Host check stops it.
+ *   Keyed wide binds skip it: the bearer key is the barrier there.
+ * - Origin allowlist (cross-origin requests): an Origin must be operator-allowed
+ *   or same-origin on a checked hostname — same-origin alone is what a
+ *   rebound page looks like, so it is never trusted on an unchecked Host.
+ * - Fetch metadata: any `Sec-Fetch-Site` other than `none` (a typed URL)
+ *   needs an allowed Origin, or `same-origin` on a trusted Host name. Browsers
+ *   send it only to potentially trustworthy origins (HTTPS, localhost), so it
+ *   adds cover for no-cors requests from other local origins, not rebinding.
+ *
+ * Startup-only configuration; request input can never widen it.
+ */
+
+export interface RequestOriginGuardOptions {
+  /** The listen address; a loopback bind enables the Host check. */
+  bindHost: string;
+  /**
+   * Whether bearer API keys are configured. Without them the Host check is
+   * enforced on every bind (DNS rebinding cannot be stopped otherwise).
+   */
+  authenticated?: boolean;
+  /** Extra hostnames (no port) accepted in the Host header; enables the Host check on any bind. */
+  allowedHosts?: readonly string[];
+  /** Exact browser origins allowed to call the API (and to receive CORS headers). '*' opts out. */
+  allowedOrigins?: readonly string[];
+}
+
+export type RequestOriginVerdict = { allowed: true } | { allowed: false; reason: string };
+
+export interface RequestOriginGuard {
+  check(headers: Record<string, string | string[] | undefined>): RequestOriginVerdict;
+  /** The @fastify/cors `origin` option: false (no CORS), '*', or the exact allowlist. */
+  readonly corsOrigin: false | '*' | string[];
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '::1' || /^127(?:\.\d{1,3}){3}$/.test(hostname);
+}
+
+function normalizeHostname(hostname: string): string {
+  return hostname
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '')
+    .replace(/\.$/, '');
+}
+
+/** Hostname of a Host header value, or undefined when it does not parse. */
+function hostnameOf(hostHeader: string): string | undefined {
+  try {
+    return normalizeHostname(new URL(`http://${hostHeader}`).hostname);
+  } catch {
+    return undefined;
+  }
+}
+
+function header(
+  headers: Record<string, string | string[] | undefined>,
+  name: string
+): string | undefined {
+  const value = headers[name];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function validateOrigin(origin: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    throw new Error(`Invalid allowed origin '${origin}': expected scheme://host[:port]`);
+  }
+  if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.origin !== origin) {
+    throw new Error(`Invalid allowed origin '${origin}': expected scheme://host[:port]`);
+  }
+  return origin;
+}
+
+function validateHostname(host: string): string {
+  const hostname = normalizeHostname(host);
+  const bracketedIpv6 = /^\[[0-9a-f:]+\]$/i.test(host);
+  if ((host.includes(':') && !bracketedIpv6) || hostnameOf(host) !== hostname) {
+    throw new Error(`Invalid allowed host '${host}': expected a hostname without port`);
+  }
+  return hostname;
+}
+
+export function createRequestOriginGuard(
+  options: RequestOriginGuardOptions,
+  warn: (message: string) => void = console.warn
+): RequestOriginGuard {
+  const wildcard = options.allowedOrigins?.includes('*') ?? false;
+  const origins = (options.allowedOrigins ?? []).filter((o) => o !== '*').map(validateOrigin);
+  const hosts = new Set((options.allowedHosts ?? []).map(validateHostname));
+  const checkHost =
+    isLoopbackHostname(normalizeHostname(options.bindHost)) ||
+    hosts.size > 0 ||
+    options.authenticated !== true;
+  const trustedHostname = (hostname: string) => isLoopbackHostname(hostname) || hosts.has(hostname);
+  if (options.authenticated !== true && !isLoopbackHostname(normalizeHostname(options.bindHost))) {
+    warn(
+      `[agentbrowser] Bound to ${options.bindHost} without API keys: only loopback Host names${hosts.size > 0 ? ` and AGENTBROWSER_ALLOWED_HOSTS (${[...hosts].join(', ')})` : ''} are accepted (DNS-rebinding defense). Clients reaching this service by another name (container or service names, LAN hosts) get 403: list those names in AGENTBROWSER_ALLOWED_HOSTS, or set AGENTBROWSER_API_KEYS.`
+    );
+  }
+  if (wildcard) {
+    warn(
+      "[agentbrowser] AGENTBROWSER_CORS_ORIGINS includes '*': ANY web page the operator visits can call this API. In no-keys local mode that is full unauthenticated control of every session, including local file upload. Use exact origins instead."
+    );
+  }
+
+  return {
+    corsOrigin: wildcard ? '*' : origins.length > 0 ? origins : false,
+    check(headers) {
+      const host = header(headers, 'host');
+      const hostname = host === undefined ? undefined : hostnameOf(host);
+      if (checkHost && (hostname === undefined || !trustedHostname(hostname))) {
+        return { allowed: false, reason: 'Host header is not an allowed name for this service' };
+      }
+      const origin = header(headers, 'origin');
+      const allowedOrigin = origin !== undefined && (wildcard || origins.includes(origin));
+      if (origin !== undefined && !allowedOrigin) {
+        let sameOrigin = false;
+        try {
+          const parsed = new URL(origin);
+          sameOrigin =
+            host !== undefined &&
+            hostname !== undefined &&
+            trustedHostname(hostname) &&
+            parsed.host === new URL(`${parsed.protocol}//${host}`).host;
+        } catch {
+          // 'null' and malformed origins are never same-origin.
+        }
+        if (!sameOrigin) {
+          return { allowed: false, reason: 'Browser origin is not allowed to call this service' };
+        }
+      }
+      // Fetch metadata marks every modern-browser request, including same-origin
+      // GETs that carry no Origin. Only a user navigation ('none') or same-origin
+      // on a trusted Host name passes; on an unchecked (wide) bind a rebound
+      // page is "same-origin" with the attacker's name, so it is refused too.
+      // Anything else — cross-site, same-site, malformed or duplicated values —
+      // needs an operator-allowed Origin.
+      const site = header(headers, 'sec-fetch-site')?.trim().toLowerCase();
+      if (site !== undefined && site !== 'none' && !allowedOrigin) {
+        if (site !== 'same-origin') {
+          return { allowed: false, reason: 'Cross-site browser requests are not allowed' };
+        }
+        if (hostname === undefined || !trustedHostname(hostname)) {
+          return {
+            allowed: false,
+            reason:
+              'Browser requests must use a trusted host name; set AGENTBROWSER_ALLOWED_HOSTS for non-loopback names',
+          };
+        }
+      }
+      return { allowed: true };
+    },
+  };
+}
+
+function listFromEnvironment(name: string, raw: string | undefined): string[] {
+  const value = raw?.trim() ?? '';
+  if (value === '') return [];
+  const entries = value.split(',').map((entry) => entry.trim());
+  if (entries.some((entry) => entry === '')) {
+    throw new Error(`${name} contains an empty entry`);
+  }
+  return entries;
+}
+
+/** Operator startup configuration only; never read from session/request input. */
+export function requestOriginGuardFromEnvironment(
+  env: {
+    AGENTBROWSER_CORS_ORIGINS?: string | undefined;
+    AGENTBROWSER_ALLOWED_HOSTS?: string | undefined;
+  },
+  bindHost: string,
+  corsOrigin?: string | readonly string[],
+  warn: (message: string) => void = console.warn,
+  authenticated = false
+): RequestOriginGuard {
+  const programmatic =
+    corsOrigin === undefined ? [] : typeof corsOrigin === 'string' ? [corsOrigin] : corsOrigin;
+  return createRequestOriginGuard(
+    {
+      bindHost,
+      authenticated,
+      allowedHosts: listFromEnvironment(
+        'AGENTBROWSER_ALLOWED_HOSTS',
+        env.AGENTBROWSER_ALLOWED_HOSTS
+      ),
+      allowedOrigins: [
+        ...listFromEnvironment('AGENTBROWSER_CORS_ORIGINS', env.AGENTBROWSER_CORS_ORIGINS),
+        ...programmatic,
+      ],
+    },
+    warn
+  );
+}
