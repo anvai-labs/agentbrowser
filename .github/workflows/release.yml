@@ -350,10 +350,23 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      # winget allows one installer per architecture/type/scope, so the three
+      # Windows commands ship as one zip whose manifest lists them as nested
+      # portable files (scripts/winget-manifests.mjs). -X drops extra file
+      # attributes; -j stores bare names, which NestedInstallerFiles reference.
+      - name: Bundle Windows commands for winget
+        run: |
+          cd release-assets
+          zip -X -j agentbrowser-windows-x64.zip \
+            agentbrowser-mcp-windows-x64.exe \
+            agentbrowser-cli-windows-x64.exe \
+            agentbrowser-server-windows-x64.exe
+          unzip -l agentbrowser-windows-x64.zip
+
       - name: Compute checksums
         run: |
           cd release-assets
-          sha256sum agentbrowser-mcp-* agentbrowser-cli-* agentbrowser-server-* > sha256sums.txt
+          sha256sum agentbrowser-mcp-* agentbrowser-cli-* agentbrowser-server-* agentbrowser-windows-x64.zip > sha256sums.txt
           cat sha256sums.txt
 
       - name: Write release notes
@@ -444,12 +457,13 @@ jobs:
           gh release upload "$TAG" --repo "$REPO" release-assets/*
 
   winget:
-    name: Winget manifests (combined MCP + CLI)
-    # Generates winget-pkgs manifests for the windows portable exes and,
+    name: Winget manifests (zip with MCP, CLI and server)
+    # Generates winget-pkgs manifests for the Windows zip (all three portable
+    # commands as nested files) and,
     # when WINGET_FORK_TOKEN is configured, opens the submission PR to
     # microsoft/winget-pkgs so any Windows user can:
     #   winget install AnvaiLabs.AgentBrowser
-    # (installs BOTH agentbrowser-mcp and agentbrowser-cli commands).
+    # (installs agentbrowser-mcp, agentbrowser-cli and agentbrowser-server).
     # Manifests always upload as a workflow artifact for manual submission.
     # InstallerUrl must point at the PUBLIC release repo (anvai-labs), never
     # the private anvaiops remote — winget validates public reachability.
@@ -469,17 +483,13 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           mkdir -p winget-assets && cd winget-assets
           gh release download "$TAG" --repo "${{ github.repository }}" \
-            --pattern 'agentbrowser-mcp-windows-x64.exe' \
-            --pattern 'agentbrowser-cli-windows-x64.exe' \
-            --pattern 'agentbrowser-server-windows-x64.exe'
+            --pattern 'agentbrowser-windows-x64.zip'
 
       - name: Generate winget manifests
         run: |
           node scripts/winget-manifests.mjs \
             --version "${GITHUB_REF_NAME#v}" \
-            --mcp-file winget-assets/agentbrowser-mcp-windows-x64.exe \
-            --cli-file winget-assets/agentbrowser-cli-windows-x64.exe \
-            --server-file winget-assets/agentbrowser-server-windows-x64.exe \
+            --zip-file winget-assets/agentbrowser-windows-x64.zip \
             --out winget
 
       - uses: actions/upload-artifact@v4
@@ -539,7 +549,7 @@ jobs:
           git push -q origin "$BRANCH"
           if gh pr create --repo microsoft/winget-pkgs --head "anvai-labs:${BRANCH}" \
             --title "Add AnvaiLabs.AgentBrowser ${VER}" \
-            --body "Automated submission from anvai-labs/agentbrowser release ${GITHUB_REF_NAME}. Portable installers (agentbrowser-mcp, agentbrowser-cli, agentbrowser-server). SHA256 verified by CI."; then
+            --body "Automated submission from anvai-labs/agentbrowser release ${GITHUB_REF_NAME}. One zip installer with three nested portable commands (agentbrowser-mcp, agentbrowser-cli, agentbrowser-server). SHA256 verified by CI."; then
             echo "winget-pkgs submission PR opened." >> "$GITHUB_STEP_SUMMARY"
           else
             {

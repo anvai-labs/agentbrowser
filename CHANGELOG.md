@@ -7,6 +7,16 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed — winget package
+
+- The winget manifests were not valid: three portable `x64` installers in one package are rejected
+  as duplicate installer entries, and the version manifest lacked `DefaultLocale`. Releases now
+  also publish `agentbrowser-windows-x64.zip` with the three Windows commands, and the manifest
+  declares it as one zip installer with nested portable files, so
+  `winget install AnvaiLabs.AgentBrowser` provides `agentbrowser-mcp`, `agentbrowser-cli` and
+  `agentbrowser-server`. Regression tests in `scripts/winget-manifests.test.mjs` run with
+  `pnpm test:release`.
+
 ## [1.17.0] — 2026-10-12
 
 ### Security — browser request guard, CORS off by default, dependency advisories
