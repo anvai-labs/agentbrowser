@@ -767,7 +767,7 @@ export class SessionAuthority {
     const entry =
       this.active(sessionId) ?? (scope?.sessionId === sessionId ? scope.entry : undefined);
     if (!entry) throw new ControlError('CONTROL_REVOKED', 'Controlled session is unavailable');
-    if (!scope || !scope.open || scope.sessionId !== sessionId || scope.entry !== entry)
+    if (!scope?.open || scope.sessionId !== sessionId || scope.entry !== entry)
       throw new ControlError(
         'CONTROL_REQUIRED',
         'Controlled browser access requires an admitted principal'
@@ -909,7 +909,7 @@ export class SessionAuthority {
   }
   isAgent(): boolean {
     const scope = this.scope.getStore();
-    if (!scope || !scope.open || scope.ticket.actor !== 'agent') return false;
+    if (!scope?.open || scope.ticket.actor !== 'agent') return false;
     try {
       this.assert(scope.sessionId);
       return true;

@@ -1,61 +1,125 @@
 {
-	"$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
-	"vcs": {
-		"enabled": true,
-		"clientKind": "git",
-		"useIgnoreFile": true,
-		"defaultBranch": "main"
-	},
-	"files": {
-		"ignoreUnknown": false,
-		"includes": [
-			"**",
-			"!**/node_modules",
-			"!**/dist",
-			"!**/*.md",
-			"!**/.git",
-			"!**/coverage"
-		]
-	},
-	"formatter": {
-		"indentStyle": "space",
-		"indentWidth": 2,
-		"lineWidth": 100,
-		"lineEnding": "lf"
-	},
-	"linter": {
-		"enabled": true,
-		"rules": {
-			"preset": "recommended",
-			"suspicious": {
-				"noExplicitAny": "error"
-			},
-			"style": {
-				"noNonNullAssertion": "error"
-			}
-		}
-	},
-	"javascript": {
-		"formatter": {
-			"quoteStyle": "single",
-			"jsxQuoteStyle": "double",
-			"trailingCommas": "es5",
-			"semicolons": "always"
-		}
-	},
-	"overrides": [
-		{
-			"includes": ["**/*.test.ts", "**/*.test.tsx", "**/test-support/**"],
-			"linter": {
-				"rules": {
-					"style": {
-						"noNonNullAssertion": "off"
-					},
-					"suspicious": {
-						"noExplicitAny": "off"
-					}
-				}
-			}
-		}
-	]
+  "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true,
+    "defaultBranch": "main"
+  },
+  "files": {
+    "ignoreUnknown": false,
+    "includes": [
+      "**",
+      "!**/node_modules",
+      "!**/dist",
+      "!**/*.md",
+      "!**/.git",
+      "!**/coverage"
+    ]
+  },
+  "formatter": {
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100,
+    "lineEnding": "lf"
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "complexity": {
+        "noAdjacentSpacesInRegex": "error",
+        "noArguments": "error",
+        "noBannedTypes": "error",
+        "noCommaOperator": "error",
+        "noEmptyTypeParameters": "error",
+        "noExtraBooleanCast": "error",
+        "noFlatMapIdentity": "error",
+        "noStaticOnlyClass": "error",
+        "noThisInStatic": "error",
+        "noUselessCatch": "error",
+        "noUselessConstructor": "error",
+        "noUselessEmptyExport": "error",
+        "noUselessEscapeInRegex": "error",
+        "noUselessFragments": "error",
+        "noUselessLabel": "error",
+        "noUselessLoneBlockStatements": "error",
+        "noUselessRename": "error",
+        "noUselessSwitchCase": "error",
+        "noUselessTernary": "error",
+        "noUselessThisAlias": "error",
+        "noUselessTypeConstraint": "error",
+        "useArrowFunction": "error",
+        "useFlatMap": "error",
+        "useLiteralKeys": "error",
+        "useNumericLiterals": "error",
+        "useOptionalChain": "error",
+        "useRegexLiterals": "error",
+        "useSimpleNumberKeys": "error"
+      },
+      "correctness": {
+        "noUnusedLabels": "error"
+      },
+      "performance": {
+        "noAccumulatingSpread": "error"
+      },
+      "style": {
+        "noDescendingSpecificity": "error",
+        "noNonNullAssertion": "error",
+        "useConst": "error",
+        "useDeprecatedReason": "error",
+        "useExponentiationOperator": "error",
+        "useExportType": "error",
+        "useImportType": "error",
+        "useLiteralEnumMembers": "error",
+        "useNodejsImportProtocol": "error",
+        "useShorthandFunctionType": "error",
+        "useTemplate": "error"
+      },
+      "suspicious": {
+        "noApproximativeNumericConstant": "error",
+        "noCatchAssign": "error",
+        "noConfusingLabels": "error",
+        "noConfusingVoidType": "error",
+        "noConstEnum": "error",
+        "noEmptyBlock": "error",
+        "noExplicitAny": "error",
+        "noExtraNonNullAssertion": "error",
+        "noGlobalIsFinite": "error",
+        "noGlobalIsNan": "error",
+        "noPrototypeBuiltins": "error",
+        "noRedundantUseStrict": "error",
+        "noSuspiciousSemicolonInJsx": "error",
+        "useDefaultSwitchClauseLast": "error",
+        "useIsArray": "error"
+      }
+    }
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single",
+      "jsxQuoteStyle": "double",
+      "trailingCommas": "es5",
+      "semicolons": "always"
+    }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/test-support/**"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noNonNullAssertion": "off"
+          },
+          "suspicious": {
+            "noExplicitAny": "off"
+          }
+        }
+      }
+    }
+  ]
 }
