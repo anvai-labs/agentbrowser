@@ -1,52 +1,57 @@
 #!/usr/bin/env node
 /**
- * The docs site wears the Anvai family brand: docs/stylesheets/tokens.css is a
+ * The docs site wears the Anvai family brand. docs/stylesheets/tokens.css is a
  * VERBATIM copy of anvaiops design/tokens.css (the family's single source of
- * truth, guarded there by services/dqcp/tests/test_theme.py). This repo cannot
- * read anvaiops in CI, so the copy is pinned by digest: a local edit fails here.
- * brand.css (the Material mapping) is shared verbatim by every Anvai docs site
- * and pinned the same way. To adopt a change, re-copy and update the digests.
+ * truth, guarded there by services/dqcp/tests/test_theme.py); brand.css (the
+ * Material mapping) and the self-hosted Inter font are shared verbatim by every
+ * Anvai docs site. This repo cannot read anvaiops in CI, so every shared file is
+ * pinned by digest: a local edit fails here. To adopt a change, re-copy and
+ * update the digests (the Python repos use scripts/check_brand_tokens.py).
  */
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-const CANONICAL_COMMIT = 'anvai-labs/anvaiops@e8215fc design/tokens.css';
-const CANONICAL_SHA256 = '2ea50eda33844d7c1ae58a264c8356b5f08841c665365f97aa61df53b175bca6';
+const CANONICAL = 'anvaiops design/tokens.css (as of e8215fc) + shared brand.css v1.1';
+const PINNED = {
+  'tokens.css': '2ea50eda33844d7c1ae58a264c8356b5f08841c665365f97aa61df53b175bca6',
+  'brand.css': '53338f26b8d1d0f08d170bb8557f067143206ac382ae83164259d7e7ed2583cf',
+  'fonts/inter-latin-wght-normal.woff2': '313809049cc15a226aaca190f5aee5f18d8125a5219eafe1cd0b52098a9b9699',
+  'fonts/Inter-OFL.txt': '3b0a5fca3d17942cde889069889dedbbbd075e9b599968c82a95f4d944e9b345',
+};
+const REQUIRED_EXTRA_CSS = ['stylesheets/tokens.css', 'stylesheets/brand.css'];
 
 const ROOT = resolve(process.argv[2] ?? '.');
 const failures = [];
 
-const tokens = readFileSync(join(ROOT, 'docs/stylesheets/tokens.css'));
-const digest = createHash('sha256').update(tokens).digest('hex');
-if (digest !== CANONICAL_SHA256) {
-  failures.push(
-    `docs/stylesheets/tokens.css drifted from ${CANONICAL_COMMIT} (sha256 ${digest}); re-copy the canonical file`
-  );
+for (const [name, digest] of Object.entries(PINNED)) {
+  const path = join(ROOT, 'docs/stylesheets', name);
+  if (!existsSync(path)) {
+    failures.push(`docs/stylesheets/${name} is missing`);
+    continue;
+  }
+  const actual = createHash('sha256').update(readFileSync(path)).digest('hex');
+  if (actual !== digest) {
+    failures.push(`docs/stylesheets/${name} drifted (sha256 ${actual}); re-copy the shared file`);
+  }
 }
 
-const BRAND_SHA256 = '7ffe54af26dde70b8f275f3b8c833f480ee9c76dad0bfe31aa371aaad43a0402';
-const FONT_SHA256 = '3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62';
-const brand = readFileSync(join(ROOT, 'docs/stylesheets/brand.css'));
-const brandDigest = createHash('sha256').update(brand).digest('hex');
-if (brandDigest !== BRAND_SHA256) {
-  failures.push(
-    `docs/stylesheets/brand.css drifted from the shared family v1 file (sha256 ${brandDigest}); re-copy it`
-  );
-}
-
-const font = readFileSync(join(ROOT, 'docs/stylesheets/fonts/inter-latin-wght-normal.woff2'));
-if (createHash('sha256').update(font).digest('hex') !== FONT_SHA256) {
-  failures.push('docs/stylesheets/fonts/inter-latin-wght-normal.woff2 drifted from the shared family font');
-}
-
+// Parse the top-level extra_css list; a comment that merely mentions a path does not count.
 const mkdocs = readFileSync(join(ROOT, 'mkdocs.yml'), 'utf8');
-for (const needle of ['stylesheets/tokens.css', 'stylesheets/brand.css', 'primary: custom']) {
-  if (!mkdocs.includes(needle)) failures.push(`mkdocs.yml is missing ${needle}`);
+const block = /^extra_css:[ \t]*\n((?:[ \t]+-[^\n]*\n?)+)/m.exec(mkdocs)?.[1] ?? '';
+const entries = [...block.matchAll(/^[ \t]+-[ \t]*([^#\n]+)/gm)].map((m) =>
+  m[1].trim().replace(/^['"]|['"]$/g, '')
+);
+const listed = entries.filter((entry) => REQUIRED_EXTRA_CSS.includes(entry));
+if (listed.join() !== REQUIRED_EXTRA_CSS.join()) {
+  failures.push(`mkdocs.yml extra_css must list ${REQUIRED_EXTRA_CSS.join(' then ')} (found ${entries.join(', ') || 'none'})`);
+}
+if (!/^[ \t]+primary:[ \t]*custom[ \t]*$/m.test(mkdocs)) {
+  failures.push('mkdocs.yml palette must set primary: custom');
 }
 
 if (failures.length > 0) {
   for (const failure of failures) console.error(`brand: ${failure}`);
   process.exit(1);
 }
-console.log(`brand tokens OK (${CANONICAL_COMMIT})`);
+console.log(`brand tokens OK (${CANONICAL})`);
