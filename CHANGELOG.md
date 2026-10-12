@@ -41,14 +41,26 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - A new test walks the API's workspace dependency closure (dependencies, optional and peer) and
   requires an exact `files` allowlist.
 
+### Added — Windows server tree (packaging)
+
+- `scripts/package-server.mjs` gains a `win32-x64` target. It deploys the server with
+  `--config.node-linker=hoisted`, removes `node_modules/.bin` link shims and type/source-map files,
+  and fails if any link or junction remains or a path exceeds the MAX_PATH budget under winget's
+  install root. It produces `agentbrowser-server-win32-x64.zip` (about 9 MB, 35 MB extracted).
+  Windows `tar` cannot extract the POSIX tarballs' pnpm symlinks without Developer Mode. pnpm is
+  invoked without relying on `.cmd` resolution, so the packager runs on Windows hosts.
+- `scripts/check-win32-server-tree.mjs` extracts that zip outside the checkout, proves it has no
+  links, runs the extracted-package dependency audit, and starts the server to `/health`. It runs
+  in Windows CI.
+
 ### Fixed — server command line
 
 - `agentbrowser-server --help` and `--version` now answer without starting the service or
   loading the browser engine (previously every argument was ignored and the server started). The
   entrypoint parses arguments first and loads the server lazily, so help works even when
   Playwright cannot load. Unknown arguments exit 2; configuration stays environment-only.
-- The server also shuts down cleanly on `SIGHUP` and, on Windows, `SIGBREAK`. Shutdown is
-  idempotent. A new opt-in `AGENTBROWSER_SHUTDOWN_ON_STDIN_EOF=1` stops it when stdin closes,
+- The server also shuts down cleanly on `SIGHUP` and, on Windows, `SIGBREAK`. A second signal
+  force-exits a hung shutdown. A new opt-in `AGENTBROWSER_SHUTDOWN_ON_STDIN_EOF=1` stops it when stdin closes,
   which gives the Windows launcher a lifeline: if the launcher dies, the server still exits and
   closes Chromium.
 
