@@ -181,7 +181,7 @@ jobs:
           pnpm exec biome check scripts/probe-journal-sqlite.mjs
           node scripts/probe-journal-sqlite.mjs
           pnpm test:job-eligibility
-          pnpm -r --workspace-concurrency=1 run test --maxWorkers=2 --minWorkers=1
+          pnpm -r --workspace-concurrency=1 run test --maxWorkers=2
 
       - name: Qualify Firefox production dependency independence
         run: |

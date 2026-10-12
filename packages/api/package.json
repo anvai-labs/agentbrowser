@@ -17,6 +17,7 @@
     "openapi": "node dist/emit-openapi.js"
   },
   "dependencies": {
+    "@agentbrowser/control": "workspace:*",
     "@agentbrowser/core": "workspace:*",
     "@agentbrowser/engine": "workspace:*",
     "@agentbrowser/engine-playwright": "workspace:^",
@@ -26,8 +27,7 @@
     "@agentbrowser/protocol": "workspace:*",
     "@fastify/cors": "^10.0.0",
     "@fastify/websocket": "^11.3.0",
-    "fastify": "^5.12.5",
-    "@agentbrowser/control": "workspace:*"
+    "fastify": "^5.12.5"
   },
   "devDependencies": {
     "@agentbrowser/testkit": "workspace:^",
@@ -35,7 +35,7 @@
     "@types/node": "^22.10.2",
     "ajv": "^8.20.0",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.9"
+    "vitest": "^5.0.4"
   },
   "bin": {
     "agentbrowser-server": "dist/bin.js"
