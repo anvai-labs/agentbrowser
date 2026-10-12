@@ -213,7 +213,7 @@ and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 | `AGENTBROWSER_ALLOW_LOOPBACK` | service entrypoint | Set `1`/`true` to disable the loopback/unspecified-address block (127/8, `0.0.0.0`, `::1`, `::`, `localhost` hostnames) for **all** sessions on this server — local-machine testing against `127.0.0.1` dev servers. Startup-only; session/request input can never set it. **With this set, visited pages can reach every loopback service, including this server's own API: in no-keys local mode that is full unauthenticated control of all sessions; in keyed mode the service is auth-gated but other loopback services are exposed.** Cloud-metadata blocking and session host restrictions still apply. Loud warning at startup. |
 | `AGENTBROWSER_ALLOWED_CIDRS` | service entrypoint | Comma-separated operator private-IP exceptions, e.g. `192.168.1.89/32,fd12::/64`. Unset/blank: none. Invalid CIDRs or empty list entries abort startup; `/0` warns. Loopback, metadata and session host restrictions still apply. See [LAN CIDR policy](HANDOFF-LAN-CIDR-ALLOWLIST.md). |
 | `AGENTBROWSER_CORS_ORIGINS` | service entrypoint | Comma-separated exact browser origins (`scheme://host[:port]`) allowed to call the API and to receive CORS headers, e.g. `https://console.example`. Unset/blank: none — cross-origin browser requests are refused with `403 FORBIDDEN` and no CORS headers are sent; the same-origin [operator panel](#browser-request-guard) still works. Malformed origins or empty list entries abort startup. `*` disables the origin check (loud warning). Merged with `ServerOptions.corsOrigin`. |
-| `AGENTBROWSER_ALLOWED_HOSTS` | service entrypoint | Comma-separated hostnames (no port) accepted in the `Host` header in addition to loopback names, e.g. `agentbrowser.internal`. On a loopback bind only `localhost`, `127.0.0.0/8` and `::1` are accepted by default (DNS-rebinding defense); setting this list also enables the Host check on wider binds such as `HOST=0.0.0.0`. |
+| `AGENTBROWSER_ALLOWED_HOSTS` | service entrypoint | Comma-separated hostnames (no port) accepted in the `Host` header in addition to loopback names, e.g. `agentbrowser.internal`. Without API keys only loopback names are accepted on **any** bind (DNS-rebinding defense), so Compose/LAN clients that use a container or host name must be listed here; setting the list also enables the Host check on keyed wide binds. See [browser request guard](#browser-request-guard). |
 | `AGENTBROWSER_MAX_RESPONSE_BYTES` | service entrypoint | Per-response network byte cap, default 10485760 (10 MiB). Startup-only decimal integer from 1 to 67108864 (64 MiB); unset/blank keeps the default, invalid input aborts startup. Example: 33554432 for large LinkedIn JavaScript bundles. Applies to all sessions on that server; session input cannot raise it. Host/SSRF rules remain intact. Distinct from extraction and download budgets. Playwright buffers before its actual-byte check, so this does not bound peak transport memory. |
 | `AGENTBROWSER_CHROME_PATH` | service (Playwright engine) | Explicit Chrome binary for headed sessions; wrapper scripts included ([ADR-013](adr/013-headed-sessions-and-walled-logins.md)). When set, branded-Chrome auto-detection is skipped — an existing path launches that exact binary, a missing path falls back to bundled Chromium ([ADR-016](adr/016-branded-chrome-first-headed-launches.md)). |
 | `AGENTBROWSER_PREFER_BUNDLED` | service (Playwright engine) | `1`/`true` skips branded-Chrome auto-detection for headed sessions — always launches bundled Chromium, for deterministic CI and test farms ([ADR-016](adr/016-branded-chrome-first-headed-launches.md)). An explicit `AGENTBROWSER_CHROME_PATH` still wins. |
@@ -239,45 +239,50 @@ service beyond localhost, set
 Every request passes a browser-provenance guard before authentication and
 routing, because loopback binding keeps the LAN out but not the operator's
 own web browser: without it, any page they visit could call a no-keys
-service (including `upload`, which reads local paths). CLI, SDK and MCP
-clients send no `Origin`, so they are unaffected. The guard refuses with
-`403 FORBIDDEN`:
+service (including `upload`, which reads local paths), directly or through a
+DNS-rebound hostname. The guard refuses with `403 FORBIDDEN`:
 
-- a `Host` header that is not a loopback name (or an
-  `AGENTBROWSER_ALLOWED_HOSTS` entry) while the service is bound to loopback —
-  the DNS-rebinding case;
+- a `Host` header that is not a trusted name — loopback (`localhost`,
+  `127.0.0.0/8`, `::1`) or an `AGENTBROWSER_ALLOWED_HOSTS` entry. This check
+  runs on a loopback bind, whenever `AGENTBROWSER_ALLOWED_HOSTS` is set, and
+  on **every bind without API keys**: a rebound page's requests are ordinary
+  same-origin requests to the attacker's name, and over plain HTTP browsers
+  send neither `Origin` (on GETs) nor fetch metadata, so only the `Host` name
+  distinguishes them from a CLI call;
 - an `Origin` that is neither in `AGENTBROWSER_CORS_ORIGINS` nor this
-  service's own origin on a checked hostname (the operator panel at
-  `/operator` is same-origin and keeps working); `Origin: null` is refused;
+  service's own origin on a trusted name (the operator panel at `/operator`
+  is same-origin and keeps working); `Origin: null` is refused;
 - browser fetch metadata (`Sec-Fetch-Site`) other than `none` (a typed URL)
-  unless the `Origin` is allowed or it is `same-origin` on a trusted host name.
-  Browsers omit `Origin` on same-origin GETs, so this is what stops a DNS-rebound
-  page reading GET routes (session lists, cookies, artifacts); a page on another
-  local port (a dev server) is `same-site`, not this service.
+  unless the `Origin` is allowed or it is `same-origin` on a trusted name.
+  Browsers send it only to trustworthy origins (HTTPS, localhost), so it adds
+  cover against other local origins, e.g. a dev server on another port.
 
-Trusted host names are loopback (`localhost`, `127.0.0.0/8`, `::1`) plus
-`AGENTBROWSER_ALLOWED_HOSTS`. On a wide bind (`HOST=0.0.0.0`, the Docker
-image's default) without that list, the `Host` check is off but browser
-requests still need a trusted name: non-browser clients work through any
-name, while the operator panel works only via `localhost`/`127.0.0.1` until
-you list the LAN or container hostname in `AGENTBROWSER_ALLOWED_HOSTS`.
+CLI, SDK and MCP clients send no `Origin` and no fetch metadata, so they are
+unaffected as long as they use a trusted name.
+
+**Wide binds** (`HOST=0.0.0.0`, the Docker image's default): without API keys
+only trusted names are accepted, for every client — `docker run -p 5709:5709`
+reached via `localhost:5709` works, but Compose services or LAN clients that
+use a container or host name get 403 until that name is listed in
+`AGENTBROWSER_ALLOWED_HOSTS` (the service logs this at startup). With
+`AGENTBROWSER_API_KEYS` set the `Host` check is skipped unless names are
+listed: the bearer key is the barrier, and a rebound page has none.
 
 Compatibility notes:
 
 - `Host: 0.0.0.0` (e.g. `curl http://0.0.0.0:5709`) and mapped forms such as
-  `[::ffff:127.0.0.1]` are not loopback names and are refused on a loopback
-  bind; use `127.0.0.1` or `localhost`.
+  `[::ffff:127.0.0.1]` are not trusted names; use `127.0.0.1` or `localhost`.
 - Behind a reverse proxy that rewrites `Host` to the upstream (nginx's default
   `proxy_pass`), the browser's `Origin` is the public origin and never matches,
   so list that origin in `AGENTBROWSER_CORS_ORIGINS`; if the proxy preserves
   `Host`, list the public name in `AGENTBROWSER_ALLOWED_HOSTS` instead.
-- Browsers too old to send fetch metadata (Safari before 16.4) are covered only
-  by the `Host` check and `Origin` rules, so on a wide bind run keyed
-  (`AGENTBROWSER_API_KEYS`).
+- Following a link to `/operator` from another site is refused (the navigation
+  is `cross-site`); type the URL or reload.
 - With `AGENTBROWSER_ALLOW_LOOPBACK` set, pages inside AgentBrowser sessions can
-  reach this API. The engine's request interception strips fetch metadata, so
-  for those pages only the `Origin` rule applies: CORS reads are refused, but
-  no-cors GETs (images, scripts) reach GET routes. Run keyed in that mode.
+  reach this API by a loopback name. The engine's request interception strips
+  fetch metadata, so for those pages only the `Origin` rule applies: CORS reads
+  are refused, but no-cors GETs (images, scripts) reach GET routes. Run keyed
+  in that mode.
 
 ## Health, metrics, and logs
 

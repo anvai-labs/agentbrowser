@@ -13,13 +13,16 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   `Access-Control-Allow-Origin: *` and checked neither `Host` nor `Origin`, so any web page
   the operator visited could create sessions and drive them — including `upload`, which reads
   local paths — directly or through DNS rebinding. A root `onRequest` guard
-  (`packages/api/src/request-origin-guard.ts`) now refuses non-loopback `Host` names on a
-  loopback bind, foreign or `null` browser origins, and browser fetch metadata other than a typed
-  navigation unless the origin is allowed or same-origin on a trusted host name — which also stops
-  a rebound page reading GET routes on a wide (`0.0.0.0`, Docker) bind. CLI/SDK/MCP clients (no
-  `Origin`, no fetch metadata) and the same-origin operator panel are unaffected. Residual risks
-  (pre-fetch-metadata browsers on wide binds, `AGENTBROWSER_ALLOW_LOOPBACK` sessions) are documented
-  in docs/threat-model.md; run keyed for those setups.
+  (`packages/api/src/request-origin-guard.ts`) now answers `403 FORBIDDEN` to a `Host` that is
+  not a trusted name (loopback or `AGENTBROWSER_ALLOWED_HOSTS`) on loopback binds and on **every
+  bind without API keys**, to foreign or `null` browser origins, and to browser fetch metadata
+  other than a typed navigation unless the origin is allowed or same-origin on a trusted name.
+  CLI/SDK/MCP clients and the same-origin operator panel are unaffected when they use a trusted
+  name. Residuals are documented in docs/threat-model.md.
+- **Breaking for no-keys wide binds** (`HOST=0.0.0.0`, the Docker image's default): clients that
+  reach the service by a container, service or LAN name now get 403 — list those names in
+  `AGENTBROWSER_ALLOWED_HOSTS` or set `AGENTBROWSER_API_KEYS` (logged at startup). `localhost` /
+  `127.0.0.1` (port publishing, the healthcheck) keep working; keyed deployments are unchanged.
 - **CORS is disabled unless configured.** New startup-only `AGENTBROWSER_CORS_ORIGINS` (exact
   origins, merged with `ServerOptions.corsOrigin`) and `AGENTBROWSER_ALLOWED_HOSTS`. **Breaking
   for browser apps on other origins** that called the API: list their origins in

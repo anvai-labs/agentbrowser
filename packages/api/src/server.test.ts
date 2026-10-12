@@ -939,24 +939,49 @@ describe('AgentBrowser REST API', () => {
       expect(response.status).toBe(200);
     });
 
-    it('should refuse a rebound same-origin GET on a wide bind (no Origin header)', async () => {
+    it('should refuse a rebound GET on a wide no-keys bind as a real browser sends it', async () => {
+      // Over plain HTTP a rebound page's same-origin GET carries no Origin and no
+      // fetch metadata (browsers send it only to trustworthy origins).
       const wide = await buildServer({ host: '0.0.0.0' });
       try {
         const rebound = await wide.inject({
           method: 'GET',
           url: '/v1/sessions',
-          headers: { host: 'attacker.example:5709', 'sec-fetch-site': 'same-origin' },
+          headers: { host: 'attacker.example:5709' },
         });
         expect(rebound.statusCode).toBe(403);
-        // Non-browser clients (no fetch metadata) on the same wide bind still work.
-        const client = await wide.inject({
+        const local = await wide.inject({
+          method: 'GET',
+          url: '/v1/sessions',
+          headers: { host: 'localhost:5709' },
+        });
+        expect(local.statusCode).toBe(200);
+      } finally {
+        await wide.close();
+      }
+    });
+
+    it('should leave keyed wide binds to bearer auth for unlisted host names', async () => {
+      const { createHash } = await import('node:crypto');
+      const keyed = await buildServer({
+        host: '0.0.0.0',
+        apiKeys: new Map([[createHash('sha256').update('k1').digest('hex'), 't1']]),
+      });
+      try {
+        const anonymous = await keyed.inject({
           method: 'GET',
           url: '/v1/sessions',
           headers: { host: 'agentbrowser:5709' },
         });
+        expect(anonymous.statusCode).toBe(401);
+        const client = await keyed.inject({
+          method: 'GET',
+          url: '/v1/sessions',
+          headers: { host: 'agentbrowser:5709', authorization: 'Bearer k1' },
+        });
         expect(client.statusCode).toBe(200);
       } finally {
-        await wide.close();
+        await keyed.close();
       }
     });
 

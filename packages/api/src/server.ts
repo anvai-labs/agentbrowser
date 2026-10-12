@@ -238,7 +238,13 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   const configuredKeys = options.apiKeys ?? apiKeysFromEnv();
   const apiKeys = configuredKeys === undefined ? undefined : new Map(configuredKeys);
   const bindHost = options.host ?? process.env.HOST ?? '127.0.0.1';
-  const originGuard = requestOriginGuardFromEnvironment(process.env, bindHost, options.corsOrigin);
+  const originGuard = requestOriginGuardFromEnvironment(
+    process.env,
+    bindHost,
+    options.corsOrigin,
+    console.warn,
+    (apiKeys?.size ?? 0) > 0
+  );
   const attachAdmission = cdpAttachAdmission(
     {
       ...options,

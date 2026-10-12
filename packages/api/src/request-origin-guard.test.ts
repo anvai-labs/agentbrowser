@@ -28,9 +28,29 @@ describe('request origin guard: Host allowlist (DNS rebinding)', () => {
     expect(loopback.check({}).allowed).toBe(false);
   });
 
-  it('does not check Host on a non-loopback bind without an allowlist', () => {
-    const exposed = createRequestOriginGuard({ bindHost: '0.0.0.0' });
-    expect(exposed.check({ host: 'agentbrowser.internal:5709' })).toEqual({ allowed: true });
+  it('does not check Host on a keyed wide bind without an allowlist (the key is the barrier)', () => {
+    const keyed = createRequestOriginGuard({ bindHost: '0.0.0.0', authenticated: true });
+    expect(keyed.check({ host: 'agentbrowser.internal:5709' })).toEqual({ allowed: true });
+  });
+
+  it('warns at startup when a wide bind runs without API keys', () => {
+    const warn = vi.fn();
+    createRequestOriginGuard({ bindHost: '0.0.0.0' }, warn);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('AGENTBROWSER_ALLOWED_HOSTS'));
+    const quiet = vi.fn();
+    createRequestOriginGuard({ bindHost: '0.0.0.0', authenticated: true }, quiet);
+    createRequestOriginGuard({ bindHost: '127.0.0.1' }, quiet);
+    expect(quiet).not.toHaveBeenCalled();
+  });
+
+  it('checks Host on every bind when no API keys are configured (review F1)', () => {
+    // A rebound page over plain HTTP sends neither Origin (GET) nor fetch
+    // metadata (not a trustworthy origin), exactly like a non-browser client:
+    // only the Host name tells them apart.
+    const open = createRequestOriginGuard({ bindHost: '0.0.0.0' });
+    expect(open.check({ host: 'attacker.example:5709' }).allowed).toBe(false);
+    expect(open.check({ host: 'localhost:5709' })).toEqual({ allowed: true });
+    expect(open.check({ host: '127.0.0.1:5709' })).toEqual({ allowed: true });
   });
 
   it('applies operator-allowed hostnames on any bind', () => {
@@ -93,13 +113,9 @@ describe('request origin guard: browser origins (drive-by requests)', () => {
     });
   });
 
-  it('refuses a rebound same-origin GET without Origin on a wide bind (review F1)', () => {
-    // Browsers omit Origin on same-origin GETs; only fetch metadata marks them.
-    const exposed = createRequestOriginGuard({ bindHost: '0.0.0.0' });
-    const verdict = exposed.check({
-      host: 'attacker.example:5709',
-      'sec-fetch-site': 'same-origin',
-    });
+  it('refuses same-origin fetch metadata on an unlisted name even when keyed', () => {
+    const keyed = createRequestOriginGuard({ bindHost: '0.0.0.0', authenticated: true });
+    const verdict = keyed.check({ host: 'attacker.example:5709', 'sec-fetch-site': 'same-origin' });
     expect(verdict.allowed).toBe(false);
   });
 
@@ -118,11 +134,16 @@ describe('request origin guard: browser origins (drive-by requests)', () => {
   });
 
   it('keeps non-browser clients and typed navigations working on a wide bind', () => {
-    const exposed = createRequestOriginGuard({ bindHost: '0.0.0.0' });
-    expect(exposed.check({ host: 'agentbrowser:5709' })).toEqual({ allowed: true });
-    expect(exposed.check({ host: 'agentbrowser:5709', 'sec-fetch-site': 'none' })).toEqual({
+    const keyed = createRequestOriginGuard({ bindHost: '0.0.0.0', authenticated: true });
+    expect(keyed.check({ host: 'agentbrowser:5709' })).toEqual({ allowed: true });
+    expect(keyed.check({ host: 'agentbrowser:5709', 'sec-fetch-site': 'none' })).toEqual({
       allowed: true,
     });
+    const named = createRequestOriginGuard({
+      bindHost: '0.0.0.0',
+      allowedHosts: ['agentbrowser'],
+    });
+    expect(named.check({ host: 'agentbrowser:5709' })).toEqual({ allowed: true });
   });
 
   it('refuses malformed, mis-cased or duplicated fetch metadata without an allowed Origin', () => {

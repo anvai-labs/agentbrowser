@@ -10,18 +10,19 @@
  * metadata, so the guard refuses requests that carry browser provenance from
  * anywhere other than this service's own origin or an operator allowlist:
  *
- * - Host allowlist (DNS rebinding): on a loopback bind, the Host header must
- *   name loopback (`localhost`, 127/8, `::1`) or an operator-allowed host.
+ * - Host allowlist (DNS rebinding): the Host header must name loopback
+ *   (`localhost`, 127/8, `::1`) or an operator-allowed host on a loopback bind
+ *   and on ANY bind without API keys. A rebound page's requests are ordinary
+ *   same-origin requests to the attacker's name: over plain HTTP browsers send
+ *   no fetch metadata and no Origin on GETs, so only the Host check stops it.
+ *   Keyed wide binds skip it: the bearer key is the barrier there.
  * - Origin allowlist (cross-origin requests): an Origin must be operator-allowed
  *   or same-origin on a checked hostname — same-origin alone is what a
  *   rebound page looks like, so it is never trusted on an unchecked Host.
  * - Fetch metadata: any `Sec-Fetch-Site` other than `none` (a typed URL)
  *   needs an allowed Origin, or `same-origin` on a trusted Host name. Browsers
- *   omit Origin on same-origin GETs and no-cors subresource requests, so this
- *   is what stops a rebound page reading GET routes on a wide (0.0.0.0) bind.
- *
- * Residual: browsers too old to send fetch metadata (Safari < 16.4) are only
- * covered by the Host check (loopback binds) and Origin rules.
+ *   send it only to potentially trustworthy origins (HTTPS, localhost), so it
+ *   adds cover for no-cors requests from other local origins, not rebinding.
  *
  * Startup-only configuration; request input can never widen it.
  */
@@ -29,6 +30,11 @@
 export interface RequestOriginGuardOptions {
   /** The listen address; a loopback bind enables the Host check. */
   bindHost: string;
+  /**
+   * Whether bearer API keys are configured. Without them the Host check is
+   * enforced on every bind (DNS rebinding cannot be stopped otherwise).
+   */
+  authenticated?: boolean;
   /** Extra hostnames (no port) accepted in the Host header; enables the Host check on any bind. */
   allowedHosts?: readonly string[];
   /** Exact browser origins allowed to call the API (and to receive CORS headers). '*' opts out. */
@@ -100,8 +106,16 @@ export function createRequestOriginGuard(
   const wildcard = options.allowedOrigins?.includes('*') ?? false;
   const origins = (options.allowedOrigins ?? []).filter((o) => o !== '*').map(validateOrigin);
   const hosts = new Set((options.allowedHosts ?? []).map(validateHostname));
-  const checkHost = isLoopbackHostname(normalizeHostname(options.bindHost)) || hosts.size > 0;
+  const checkHost =
+    isLoopbackHostname(normalizeHostname(options.bindHost)) ||
+    hosts.size > 0 ||
+    options.authenticated !== true;
   const trustedHostname = (hostname: string) => isLoopbackHostname(hostname) || hosts.has(hostname);
+  if (options.authenticated !== true && !isLoopbackHostname(normalizeHostname(options.bindHost))) {
+    warn(
+      `[agentbrowser] Bound to ${options.bindHost} without API keys: only loopback Host names${hosts.size > 0 ? ` and AGENTBROWSER_ALLOWED_HOSTS (${[...hosts].join(', ')})` : ''} are accepted (DNS-rebinding defense). Clients reaching this service by another name (container or service names, LAN hosts) get 403: list those names in AGENTBROWSER_ALLOWED_HOSTS, or set AGENTBROWSER_API_KEYS.`
+    );
+  }
   if (wildcard) {
     warn(
       "[agentbrowser] AGENTBROWSER_CORS_ORIGINS includes '*': ANY web page the operator visits can call this API. In no-keys local mode that is full unauthenticated control of every session, including local file upload. Use exact origins instead."
@@ -176,13 +190,15 @@ export function requestOriginGuardFromEnvironment(
   },
   bindHost: string,
   corsOrigin?: string | readonly string[],
-  warn: (message: string) => void = console.warn
+  warn: (message: string) => void = console.warn,
+  authenticated = false
 ): RequestOriginGuard {
   const programmatic =
     corsOrigin === undefined ? [] : typeof corsOrigin === 'string' ? [corsOrigin] : corsOrigin;
   return createRequestOriginGuard(
     {
       bindHost,
+      authenticated,
       allowedHosts: listFromEnvironment(
         'AGENTBROWSER_ALLOWED_HOSTS',
         env.AGENTBROWSER_ALLOWED_HOSTS
