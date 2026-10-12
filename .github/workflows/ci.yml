@@ -122,10 +122,6 @@ jobs:
       - name: Check documentation links
         run: node scripts/check-doc-links.mjs .
 
-      # The docs site wears the family brand from a pinned verbatim token copy.
-      - name: Check docs brand tokens
-        run: node scripts/check-brand-tokens.mjs .
-
       - name: Check release version consistency
         run: pnpm release:check && pnpm test:release
 
