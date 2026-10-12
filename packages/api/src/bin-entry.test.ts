@@ -125,7 +125,7 @@ describe('server shutdown on stdin EOF (launcher lifeline)', () => {
     }
   }, 45_000);
 
-  it('exits promptly on a burst of signals (second signal cannot wedge shutdown)', async () => {
+  it('does not hang on a burst of signals (smoke)', async () => {
     if (process.platform === 'win32') return; // POSIX signals; Windows covered by the launcher tests
     const port = await freePort();
     const child = spawn(process.execPath, [BIN], {

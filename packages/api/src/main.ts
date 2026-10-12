@@ -73,10 +73,11 @@ const server = await startServer({
 });
 
 // Ensure the browser process goes down with the server. The close runs once:
-// stdin EOF racing a signal must not close the server twice. A second signal
-// while the close is still pending (e.g. a wedged browser) forces exit 1 —
-// the operator's way out of a hung shutdown.
+// stdin EOF racing a signal must not close the server twice. A SECOND SIGNAL
+// (not a signal after stdin EOF) while the close is still pending — e.g. a
+// wedged browser — forces exit 1: the operator's way out of a hung shutdown.
 let shuttingDown = false;
+let signalled = false;
 const shutdown = async () => {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -89,7 +90,8 @@ const shutdown = async () => {
   }
 };
 const onSignal = () => {
-  if (shuttingDown) process.exit(1);
+  if (signalled) process.exit(1);
+  signalled = true;
   void shutdown();
 };
 const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
