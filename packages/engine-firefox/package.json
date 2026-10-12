@@ -23,12 +23,12 @@
   "dependencies": {
     "@agentbrowser/engine": "workspace:*",
     "@agentbrowser/protocol": "workspace:*",
-    "puppeteer-core": "25.11.0"
+    "puppeteer-core": "25.13.0"
   },
   "devDependencies": {
     "@agentbrowser/testkit": "workspace:*",
     "@biomejs/biome": "^2.5.15",
-    "@puppeteer/browsers": "3.2.2",
+    "@puppeteer/browsers": "3.2.4",
     "@types/node": "^22.10.2",
     "typescript": "^5.7.2",
     "vitest": "^5.0.4"
