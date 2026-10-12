@@ -39,7 +39,7 @@ theme:
   # copy of anvaiops design/tokens.css) mapped onto Material by brand.css —
   # ink brand bar, teal #0f766e accent, Inter. `custom` stops Material's
   # stock teal (#009688) from overriding them; `font: false` stops it
-  # loading Roboto (brand.css loads Inter).
+  # loading Roboto (brand.css uses the tokens' Inter/system stack).
   font: false
   palette:
     - media: '(prefers-color-scheme: light)'

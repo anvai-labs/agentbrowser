@@ -25,13 +25,19 @@ if (digest !== CANONICAL_SHA256) {
   );
 }
 
-const BRAND_SHA256 = '2993272af0bdc0b2c5e88d9dd07bb3e3ab3cade1edeb61627b5f7c352a79e2d9';
+const BRAND_SHA256 = '7ffe54af26dde70b8f275f3b8c833f480ee9c76dad0bfe31aa371aaad43a0402';
+const FONT_SHA256 = '3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62';
 const brand = readFileSync(join(ROOT, 'docs/stylesheets/brand.css'));
 const brandDigest = createHash('sha256').update(brand).digest('hex');
 if (brandDigest !== BRAND_SHA256) {
   failures.push(
     `docs/stylesheets/brand.css drifted from the shared family v1 file (sha256 ${brandDigest}); re-copy it`
   );
+}
+
+const font = readFileSync(join(ROOT, 'docs/stylesheets/fonts/inter-latin-wght-normal.woff2'));
+if (createHash('sha256').update(font).digest('hex') !== FONT_SHA256) {
+  failures.push('docs/stylesheets/fonts/inter-latin-wght-normal.woff2 drifted from the shared family font');
 }
 
 const mkdocs = readFileSync(join(ROOT, 'mkdocs.yml'), 'utf8');
