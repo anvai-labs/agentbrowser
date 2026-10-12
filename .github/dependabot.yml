@@ -13,6 +13,18 @@ updates:
     groups:
       npm-minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      # Qualification-pinned: the Firefox egress evidence
+      # (docs/evidence/firefox-egress-*.json) is recorded against an exact
+      # driver; bumping it requires re-running docs/firefox-egress-gate.md.
+      - dependency-name: puppeteer-core
+      - dependency-name: '@puppeteer/browsers'
+      # Types track the minimum supported Node (22), not the newest release.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
+      # TypeScript 7 (native compiler) is a deliberate migration, not a bump.
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
 
   - package-ecosystem: github-actions
     directory: /
@@ -28,6 +40,11 @@ updates:
     target-branch: develop
     schedule:
       interval: weekly
+    ignore:
+      # The runtime is pinned to the Node LTS in .tool-versions; move majors
+      # deliberately (Node 25+ also drops corepack, which the build uses).
+      - dependency-name: node
+        update-types: ['version-update:semver-major']
 
   # mkdocs-requirements.txt (docs site build).
   - package-ecosystem: pip

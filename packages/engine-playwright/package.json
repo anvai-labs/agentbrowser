@@ -18,7 +18,7 @@
   "dependencies": {
     "@agentbrowser/engine": "workspace:*",
     "@agentbrowser/protocol": "workspace:*",
-    "playwright": "^1.62.1"
+    "playwright": "^1.64.0"
   },
   "devDependencies": {
     "@agentbrowser/policy": "workspace:*",
@@ -27,6 +27,6 @@
     "@types/node": "^22.10.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.9",
-    "ws": "^8.21.3"
+    "ws": "^8.22.0"
   }
 }

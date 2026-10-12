@@ -17,6 +17,7 @@
     "openapi": "node dist/emit-openapi.js"
   },
   "dependencies": {
+    "@agentbrowser/control": "workspace:*",
     "@agentbrowser/core": "workspace:*",
     "@agentbrowser/engine": "workspace:*",
     "@agentbrowser/engine-playwright": "workspace:^",
@@ -24,10 +25,9 @@
     "@agentbrowser/extraction": "workspace:^",
     "@agentbrowser/policy": "workspace:^",
     "@agentbrowser/protocol": "workspace:*",
-    "@fastify/cors": "^10.0.0",
-    "@fastify/websocket": "^11.3.0",
-    "fastify": "^5.12.5",
-    "@agentbrowser/control": "workspace:*"
+    "@fastify/cors": "^11.3.1",
+    "@fastify/websocket": "^11.3.4",
+    "fastify": "^5.12.5"
   },
   "devDependencies": {
     "@agentbrowser/testkit": "workspace:^",
