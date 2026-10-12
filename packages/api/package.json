@@ -34,7 +34,7 @@
     "@biomejs/biome": "^1.9.4",
     "@types/node": "^22.10.2",
     "ajv": "^8.20.0",
-    "typescript": "^5.7.2",
+    "typescript": "^7.0.2",
     "vitest": "^2.1.9"
   },
   "bin": {
