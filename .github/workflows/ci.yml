@@ -129,7 +129,7 @@ jobs:
         run: node --test scripts/release-smoke.test.mjs
 
       - name: Test candidate packaging and acceptance failure controls
-        run: node --test scripts/package-files.test.mjs scripts/package-server.test.mjs scripts/package-acceptance.test.mjs scripts/consumer-smoke-candidate.test.mjs scripts/application-recipe.test.mjs scripts/application-recipe-lifecycle.test.mjs
+        run: node --test scripts/package-files.test.mjs scripts/package-server.test.mjs scripts/materialize-hoisted.test.mjs scripts/package-acceptance.test.mjs scripts/consumer-smoke-candidate.test.mjs scripts/application-recipe.test.mjs scripts/application-recipe-lifecycle.test.mjs
 
       # Offline evidence validation only; does not certify browser containment.
       - name: Check worker feasibility evidence verifier
