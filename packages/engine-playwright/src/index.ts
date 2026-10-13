@@ -1295,7 +1295,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         'ENGINE_UNSUPPORTED',
         'Operator CDP attachment is disabled; configure AGENTBROWSER_CDP_ENDPOINT and AGENTBROWSER_CDP_ALLOW_UNENFORCED_EGRESS=true.',
         false,
-        { reason: 'CDP_ATTACH_DISABLED' }
+        { reason: 'CDP_ATTACH_DISABLED', rule: 'floor.cdp.disabled' }
       );
     }
     if (
@@ -1320,7 +1320,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         'ENGINE_UNSUPPORTED',
         'Operator CDP attachment requires explicit acceptance of navigation-only egress checks.',
         false,
-        { reason: 'EGRESS_UNSUPPORTED' }
+        { reason: 'EGRESS_UNSUPPORTED', rule: 'floor.cdp.egress' }
       );
     }
     if (this.operatorAttachReserved) {

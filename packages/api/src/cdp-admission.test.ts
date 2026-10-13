@@ -29,7 +29,7 @@ it.each([
       ]),
     },
     'HOSTED_UNSUPPORTED',
-    'floor.cdp.hosted',
+    'floor.cdp.multi_tenant',
   ],
   [
     'remote listener',

@@ -2266,7 +2266,9 @@ export class AgentBrowserService {
       publicationOptions === undefined ? undefined : snapshotPublication(publicationOptions);
     let disclosure: PreparedReviewDisclosure | undefined;
     if (principal.actor !== 'operator')
-      throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+      throw new ServiceError('FORBIDDEN', 'Operator authority is required', false, {
+        rule: 'floor.delegated.operator',
+      });
     const validated = validateApplicationReview(input);
     if (!validated.ok)
       throw new ServiceError('INVALID_REQUEST', 'Invalid application review request');

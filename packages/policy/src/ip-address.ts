@@ -119,9 +119,10 @@ const METADATA_SHORT_NAMES = new Set(['metadata', 'instance-data']); // GCP, AWS
  * True for a metadata service name. Case-insensitive, and a fully qualified
  * trailing dot is ignored: `metadata.google.internal.` names the same host, and
  * the CDP-attach lane, which checks only the name, has no DNS answer to fall back on.
+ * Repeated trailing dots are stripped too.
  */
 export function isMetadataHostname(hostname: string): boolean {
-  const name = hostname.toLowerCase().replace(/\.$/, '');
+  const name = hostname.toLowerCase().replace(/\.+$/, '');
   return (
     METADATA_SHORT_NAMES.has(name) ||
     METADATA_DOMAINS.some((domain) => name === domain || name.endsWith(`.${domain}`))

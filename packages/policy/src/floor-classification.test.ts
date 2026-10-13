@@ -210,6 +210,8 @@ describe('metadata hostnames: trailing dot and short names', () => {
     'instance-data', // AWS
     'instance-data.ec2.internal',
     'instance-data.ec2.internal.',
+    'metadata..', // repeated root dots
+    'metadata.google.internal..',
   ])('refuses %s as a request hostname under blockMetadata', async (hostname) => {
     await expect(
       new NetworkPolicy({ blockMetadata: true }).checkRequest({ hostname })

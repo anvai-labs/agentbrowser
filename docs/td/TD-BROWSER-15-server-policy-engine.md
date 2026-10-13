@@ -17,8 +17,16 @@ hardens the floor.
 
 ### Phase 0: harden the floor (before anything becomes grantable)
 
-**Delivered:** #444 (classifier), #445 (`MetadataFloorPolicy` wraps every session chain), and the
-floor rule ids plus metadata-name normalisation PR.
+**Delivered:**
+- **#444:** the classifier;
+- **#445:** `MetadataFloorPolicy` wraps every session chain;
+- **#446:** floor rule ids on every unconditional refusal (`floor.cdp.*`,
+  `floor.delegated.operator`) and metadata-name normalisation.
+
+**Deferred:** moving the CDP-attach refusals and the delegated-operator check into a single `floor`
+module. They keep their current homes (`cdp-config.ts`, `server.ts`, `service.ts`, engine-playwright)
+and are identified by their rule ids. Consolidation happens with phase 1's `Authorizer` seam, which
+already touches each call site.
 
 **Wider metadata set.** The metadata set gains:
 - `fd00:ec2::/64` (AWS: IMDS at `::254`, EKS Pod Identity at `::23`);

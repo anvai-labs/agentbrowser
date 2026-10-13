@@ -6,6 +6,7 @@ export type CdpAttachAdmission =
   | 'disabled'
   | 'egress'
   | 'hosted'
+  | 'multi_tenant'
   | 'local_only'
   | 'auth_required';
 export interface OperatorCdpAdmissionOptions {
@@ -29,7 +30,8 @@ export function cdpAttachAdmission(
   )
     throw new Error('Invalid deployment mode');
   const tenantCount = new Set(tenants).size;
-  if (options.deploymentMode === 'hosted' || tenantCount > 1) return 'hosted';
+  if (options.deploymentMode === 'hosted') return 'hosted';
+  if (tenantCount > 1) return 'multi_tenant';
   if (!options.operatorCdp) return 'disabled';
   if (!isOperatorLoopback(options.host ?? '127.0.0.1')) return 'local_only';
   if (options.operatorCdp.allowUnenforcedEgress !== true) return 'egress';
@@ -53,6 +55,11 @@ export function requireCdpAttachAdmission(admission: CdpAttachAdmission): void {
       'Operator attachment cannot enforce ADR-006 across the existing profile. A trusted local operator must explicitly set AGENTBROWSER_CDP_ALLOW_UNENFORCED_EGRESS=true; only initial explicit navigation URLs are checked.',
     ],
     hosted: [
+      'HOSTED_UNSUPPORTED',
+      'Operator attachment is unavailable in hosted or multi-tenant deployments (ADR-008). Use an isolated browser session.',
+    ],
+    // Same client-facing reason as hosted; a distinct floor rule (ADR-024 §1).
+    multi_tenant: [
       'HOSTED_UNSUPPORTED',
       'Operator attachment is unavailable in hosted or multi-tenant deployments (ADR-008). Use an isolated browser session.',
     ],
