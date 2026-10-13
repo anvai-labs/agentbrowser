@@ -24,6 +24,30 @@ export interface NetworkPolicyOptions {
    * of the process. Oldest entries are evicted first once the cap is hit.
    */
   maxLogEntries?: number;
+  /**
+   * Who decides the loopback and private exceptions (TD-BROWSER-15 phase 1).
+   * Consulted only when the corresponding block is on. Default: never allow
+   * loopback; allow private only when `allowedPrivateCIDRs` covers every source.
+   * Metadata is never an exception.
+   */
+  exceptions?: EgressExceptions;
+}
+
+/** What an egress exception is asked about. */
+export interface EgressExceptionContext {
+  /** The hostname as requested, or one resolved address. */
+  phase: 'hostname' | 'resolved';
+  target: string;
+  /** `loopback` and/or `private` (an address can be both, e.g. `::1`). */
+  addressClasses: Array<'loopback' | 'private'>;
+  /** What makes it private: the address as written and each private embedded IPv4. */
+  privateSources: Array<{ address: string; type: 'ipv4' | 'ipv6' }>;
+}
+
+/** The operator-chosen egress exceptions, answerable by an Authorizer. */
+export interface EgressExceptions {
+  allowLoopback(context: EgressExceptionContext): boolean;
+  allowPrivate(context: EgressExceptionContext): boolean;
 }
 
 export interface NetworkRequest {
@@ -83,8 +107,11 @@ export class NetworkPolicyError extends Error {
  * Network Policy enforcer for SSRF defense and safety
  */
 export class NetworkPolicy {
-  private readonly options: Required<NetworkPolicyOptions>;
+  private readonly options: Required<Omit<NetworkPolicyOptions, 'exceptions'>>;
   private allowedPrivate: BlockList;
+  private exceptions: EgressExceptions;
+  /** Only an injected hook is shared with snapshots; the default is rebuilt per copy. */
+  private customExceptions: EgressExceptions | undefined;
   private readonly logs: RingBuffer<LogEntry>;
 
   constructor(options: NetworkPolicyOptions = {}) {
@@ -109,6 +136,35 @@ export class NetworkPolicy {
     }
 
     this.logs = new RingBuffer({ capacity: this.options.maxLogEntries });
+    this.customExceptions = options.exceptions;
+    this.exceptions = options.exceptions ?? this.defaultExceptions();
+  }
+
+  /** Today's rules: no loopback exception; private only within the operator CIDRs. */
+  /**
+   * An operator exception must cover every source of privateness: the address
+   * as written, and each private IPv4 it embeds. So an IPv4 CIDR admits that
+   * IPv4 behind NAT64/6to4/SIIT too, and an IPv6 wrapper CIDR (::/0,
+   * 64:ff9b::/96) never grants the private IPv4 inside it.
+   */
+  private defaultExceptions(): EgressExceptions {
+    return {
+      allowLoopback: () => false,
+      allowPrivate: ({ privateSources }) =>
+        privateSources.every((source) => this.allowedPrivate.check(source.address, source.type)),
+    };
+  }
+
+  private exceptionContext(
+    phase: EgressExceptionContext['phase'],
+    target: string,
+    address: ReturnType<typeof classifyIPAddress>,
+    loopbackByName = false
+  ): EgressExceptionContext {
+    const addressClasses: EgressExceptionContext['addressClasses'] = [];
+    if (address?.loopback || loopbackByName) addressClasses.push('loopback');
+    if (address?.privateIP) addressClasses.push('private');
+    return { phase, target, addressClasses, privateSources: address?.privateSources ?? [] };
   }
 
   /**
@@ -131,9 +187,13 @@ export class NetworkPolicy {
       });
     }
 
+    const loopbackByName = hostname === 'localhost' || hostname === 'localhost.localdomain';
     if (
       this.options.blockLoopback &&
-      (address?.loopback || hostname === 'localhost' || hostname === 'localhost.localdomain')
+      (address?.loopback || loopbackByName) &&
+      !this.exceptions.allowLoopback(
+        this.exceptionContext('hostname', hostname, address, loopbackByName)
+      )
     ) {
       throw new NetworkPolicyError(
         'POLICY_DENIED',
@@ -143,7 +203,11 @@ export class NetworkPolicy {
       );
     }
 
-    if (this.options.blockPrivateIPs && address?.privateIP && !this.isAllowedPrivate(address)) {
+    if (
+      this.options.blockPrivateIPs &&
+      address?.privateIP &&
+      !this.exceptions.allowPrivate(this.exceptionContext('hostname', hostname, address))
+    ) {
       throw new NetworkPolicyError(
         'POLICY_DENIED',
         `Private IP addresses are blocked: ${hostname}`,
@@ -207,7 +271,11 @@ export class NetworkPolicy {
           rule: 'resolvedAddressInvalid',
         });
       }
-      if (this.options.blockLoopback && classification.loopback) {
+      if (
+        this.options.blockLoopback &&
+        classification.loopback &&
+        !this.exceptions.allowLoopback(this.exceptionContext('resolved', address, classification))
+      ) {
         throw new NetworkPolicyError(
           'POLICY_DENIED',
           `Resolved address is loopback (DNS rebinding): ${address}`,
@@ -218,7 +286,7 @@ export class NetworkPolicy {
       if (
         this.options.blockPrivateIPs &&
         classification.privateIP &&
-        !this.isAllowedPrivate(classification)
+        !this.exceptions.allowPrivate(this.exceptionContext('resolved', address, classification))
       ) {
         throw new NetworkPolicyError(
           'POLICY_DENIED',
@@ -236,18 +304,6 @@ export class NetworkPolicy {
         );
       }
     }
-  }
-
-  /**
-   * An operator exception must cover every source of privateness: the address
-   * as written, and each private IPv4 it embeds. So an IPv4 CIDR admits that
-   * IPv4 behind NAT64/6to4/SIIT too, and an IPv6 wrapper CIDR (::/0,
-   * 64:ff9b::/96) never grants the private IPv4 inside it.
-   */
-  private isAllowedPrivate(address: NonNullable<ReturnType<typeof classifyIPAddress>>): boolean {
-    return address.privateSources.every((source) =>
-      this.allowedPrivate.check(source.address, source.type)
-    );
   }
 
   /**
@@ -340,7 +396,12 @@ export class NetworkPolicy {
         'Custom policy requires an immutable snapshot implementation'
       );
     }
-    const snapshot = new NetworkPolicy({ ...this.options, enableLogging: false, maxLogEntries: 1 });
+    const snapshot = new NetworkPolicy({
+      ...this.options,
+      enableLogging: false,
+      maxLogEntries: 1,
+      ...(this.customExceptions ? { exceptions: this.customExceptions } : {}),
+    });
     Object.freeze(snapshot.options);
     return snapshot;
   }
@@ -351,7 +412,12 @@ export class NetworkPolicy {
     const allowedPorts = portGate(options.allowedPorts);
     // Do not dispatch overridable snapshot/getConfig methods or infer that a
     // download snapshot confers gateway capability. Both views share this copy.
-    const snapshot = new NetworkPolicy({ ...this.options, enableLogging: false, maxLogEntries: 1 });
+    const snapshot = new NetworkPolicy({
+      ...this.options,
+      enableLogging: false,
+      maxLogEntries: 1,
+      ...(this.customExceptions ? { exceptions: this.customExceptions } : {}),
+    });
     Object.freeze(snapshot.options);
     const checkHostname = snapshot.checkHostname.bind(snapshot);
     const checkAddresses = snapshot.checkResolvedAddresses.bind(snapshot);
@@ -384,15 +450,23 @@ export class NetworkPolicy {
       options.allowedPrivateCIDRs !== undefined
         ? compilePrivateCIDRs(options.allowedPrivateCIDRs)
         : undefined;
-    Object.assign(this.options, options, {
+    const { exceptions, ...rest } = options;
+    Object.assign(this.options, rest, {
       allowedPrivateCIDRs: allowed?.cidrs ?? this.options.allowedPrivateCIDRs,
     });
     if (allowed) this.allowedPrivate = allowed.ranges;
+    if (exceptions !== undefined) {
+      this.customExceptions = exceptions;
+      this.exceptions = exceptions;
+    }
   }
 }
 
-/** Strict CIDR syntax: no implicit prefix, DNS names, scoped literals or numeric coercion. */
-function compilePrivateCIDRs(input: string[]): { cidrs: string[]; ranges: BlockList } {
+/**
+ * Strict CIDR syntax (no implicit prefix, DNS names, scoped literals or numeric
+ * coercion), compiled into a matcher. Shared with the legacy Authorizer.
+ */
+export function compilePrivateCIDRs(input: string[]): { cidrs: string[]; ranges: BlockList } {
   if (!Array.isArray(input)) throw new Error('allowedPrivateCIDRs must be an array of CIDRs');
   const cidrs = [...input];
   const ranges = new BlockList();

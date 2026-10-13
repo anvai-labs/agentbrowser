@@ -408,6 +408,9 @@ importers:
       '@agentbrowser/core':
         specifier: workspace:*
         version: link:../core
+      '@agentbrowser/policy':
+        specifier: workspace:*
+        version: link:../policy
       '@agentbrowser/protocol':
         specifier: workspace:*
         version: link:../protocol

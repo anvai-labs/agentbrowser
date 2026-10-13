@@ -1,4 +1,5 @@
 import type { ActionRiskClassification, ApprovalMode } from '@agentbrowser/core';
+import type { EgressExceptionContext, EgressExceptions } from '@agentbrowser/policy';
 import type { PolicyDecision } from '@agentbrowser/protocol';
 
 /**
@@ -10,7 +11,16 @@ export type ActAuthorizationRequest = {
   context: ActionRiskClassification;
 };
 
-export type AuthorizationRequest = ActAuthorizationRequest;
+/**
+ * ADR-024 §3: exceptions to the floor-default loopback and private blocks,
+ * which only these dedicated actions can grant.
+ */
+export type EgressAuthorizationRequest = {
+  action: 'request.loopback' | 'request.private';
+  context: EgressExceptionContext;
+};
+
+export type AuthorizationRequest = ActAuthorizationRequest | EgressAuthorizationRequest;
 
 /**
  * The one seam every operator-chosen decision goes through (TD-BROWSER-15).
@@ -30,4 +40,14 @@ export function approvalModeOf(
 ): ApprovalMode {
   if (!authorizer.decide({ action: 'act', context }).allowed) return 'deny';
   return authorizer.decide({ action: 'act.unattended', context }).allowed ? 'allow' : 'required';
+}
+
+/** NetworkPolicy's exception hook, answered by an Authorizer. */
+export function egressExceptionsOf(authorizer: Authorizer): EgressExceptions {
+  return Object.freeze({
+    allowLoopback: (context: EgressExceptionContext) =>
+      authorizer.decide({ action: 'request.loopback', context }).allowed,
+    allowPrivate: (context: EgressExceptionContext) =>
+      authorizer.decide({ action: 'request.private', context }).allowed,
+  });
 }

@@ -1,4 +1,5 @@
 import { NetworkPolicy } from '@agentbrowser/policy';
+import { egressExceptionsOf, LegacyAuthorizer } from '@agentbrowser/policy-engine';
 
 const MAX_OPERATOR_RESPONSE_BYTES = 64 * 1024 * 1024;
 
@@ -25,6 +26,8 @@ export function createDefaultNetworkPolicy(allowedPrivateCIDRs: string[] = []): 
     blockPrivateIPs: true,
     blockMetadata: true,
     allowedPrivateCIDRs,
+    // TD-BROWSER-15 phase 1: the exceptions are answered through the Authorizer seam.
+    exceptions: egressExceptionsOf(new LegacyAuthorizer({ allowedPrivateCIDRs })),
   });
 }
 
@@ -53,6 +56,10 @@ export function networkPolicyFromEnvironment(
     blockMetadata: true,
     allowedPrivateCIDRs: cidrs,
     ...(maxResponseSize !== undefined ? { maxResponseSize } : {}),
+    // TD-BROWSER-15 phase 1: the exceptions are answered through the Authorizer seam.
+    exceptions: egressExceptionsOf(
+      new LegacyAuthorizer({ allowLoopback, allowedPrivateCIDRs: cidrs })
+    ),
   });
   if (allowLoopback) {
     warn(

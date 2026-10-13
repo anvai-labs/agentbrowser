@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@agentbrowser/core": "workspace:*",
+    "@agentbrowser/policy": "workspace:*",
     "@agentbrowser/protocol": "workspace:*"
   },
   "devDependencies": {

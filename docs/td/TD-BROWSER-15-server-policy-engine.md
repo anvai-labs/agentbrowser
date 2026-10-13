@@ -66,7 +66,11 @@ change**, and the existing tests pass unchanged.
 
 ### Phase 1: the `Authorizer` seam (no behaviour change)
 
-**Progress:** approvals are delivered. `@agentbrowser/policy-engine` holds `Authorizer`,
+**Progress:** approvals and egress exceptions are delivered.
+- **Egress:** `NetworkPolicy` asks an `EgressExceptions` hook, and the API answers it through
+  `LegacyAuthorizer`'s `request.loopback` and `request.private` (`env.allow-loopback`,
+  `env.block-loopback`, `env.allowed-cidrs`, `env.block-private`).
+- **Approvals:** `@agentbrowser/policy-engine` holds `Authorizer`,
 `LegacyAuthorizer` and `approvalModeOf`; core's `ActionRiskPolicy.classify()` is split from the
 outcome, and rules gain an optional `id`. Egress exceptions and capability grants follow, along
 with the single floor module deferred from phase 0.
