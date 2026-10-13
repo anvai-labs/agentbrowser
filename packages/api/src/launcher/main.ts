@@ -9,6 +9,8 @@
  *   cleanly, and if this launcher is killed outright (Windows
  *   TerminateProcess) the OS closes it, so Chromium is never orphaned;
  * - the first stop signal closes the lifeline, a second kills the server;
+ * - with AGENTBROWSER_SHUTDOWN_ON_STDIN_EOF=1, EOF on the launcher's own
+ *   stdin stops it the same way (a supervisor's lifeline on Windows);
  * - the server's exit code becomes the launcher's.
  */
 import { spawn, spawnSync } from 'node:child_process';
@@ -129,3 +131,17 @@ const stopSignals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
 // Ctrl-Break / console close on Windows.
 if (process.platform === 'win32') stopSignals.push('SIGBREAK');
 for (const signal of stopSignals) process.on(signal, stop);
+
+// A supervisor may hold *our* stdin as its lifeline too (Windows has no
+// deliverable SIGTERM): with the same opt-in the server honours, EOF on the
+// launcher's stdin stops the server gracefully, like a first signal. Opt-in
+// only — a service manager starts us with an empty stdin.
+if (process.env.AGENTBROWSER_SHUTDOWN_ON_STDIN_EOF === '1') {
+  const onEof = () => {
+    if (signals === 0) stop();
+  };
+  process.stdin.on('end', onEof);
+  process.stdin.on('close', onEof);
+  process.stdin.on('error', () => undefined);
+  process.stdin.resume();
+}
