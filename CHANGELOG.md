@@ -9,6 +9,9 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ### Changed — policy engine seam (TD-BROWSER-15 phase 1)
 
+- **The floor refusals live in one module** (`packages/api/src/floor.ts`). That covers CDP-attach
+  admission, attach options, delegated sessions, operator-only routes and the metadata wrap. Codes,
+  messages and `floor.*` rule ids are unchanged.
 - **Capability grants go through the `Authorizer`.**
   - When a session will get operator CDP attachment, downloads, service workers, cookie seeding or
     a headed browser, the service asks its authorizer. An always-headed engine (Safari) counts as
