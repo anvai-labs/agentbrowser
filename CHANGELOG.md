@@ -27,6 +27,12 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   loopback and private addresses blocked by default, and the CDP-attach refusals. Engine errors
   fail closed. Implementation plan: TD-BROWSER-15. Also adds ADR-022, which was missing, to the
   docs index.
+- **ADR-025 (Proposed): operator login browser and cookie handoff.** AgentBrowser launches an
+  operator-only, headed login browser on a persistent profile over a private pipe, with no
+  debugging port that a local process could read. The operator signs in there once, then approves
+  one-time copies of selected domains' cookies into contained sessions, using a separate operator
+  credential the agent never holds. In those sessions, high-risk and unknown-effect actions need the
+  operator's review, or an operator-granted lease. Implementation plan: TD-BROWSER-16.
 
 ## [1.17.1] — 2026-10-13
 
