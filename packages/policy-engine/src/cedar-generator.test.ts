@@ -267,6 +267,16 @@ describe('cedarPolicySetFromLegacyConfig validates its input', () => {
       })
     ).toThrow(/Invalid operator approval rule/);
   });
+  it('rejects unknownRisk values ActionRiskPolicy would refuse', () => {
+    for (const bad of ['garbage', 'ALLOW', '']) {
+      expect(() => cedarPolicySetFromLegacyConfig({ unknownRisk: bad as 'allow' })).toThrow(
+        /Invalid operator approval policy/
+      );
+      expect(() => policyDocumentFromLegacyConfig({ unknownRisk: bad as 'allow' })).toThrow(
+        /Invalid operator approval policy/
+      );
+    }
+  });
   it('accepts every id shape the system allows', () => {
     expect(() =>
       cedarPolicySetFromLegacyConfig({

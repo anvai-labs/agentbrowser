@@ -30,8 +30,9 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - **Hardened after review** (every equivalence claim held under 100k+ referee checks): the
   generator validates its rules with the validator `ActionRiskPolicy` uses — now one shared
   exported validator in core — so an id the system would reject at startup can never reach the
-  Cedar text; and `normalizeSourceForCedar` refuses family-mismatched (address, type) pairs, which
-  `BlockList` answers false for.
+  Cedar text, and `unknownRisk` is validated the same way; and
+  `normalizeSourceForCedar` refuses family-mismatched (address, type) pairs, which `BlockList`
+  answers false for.
 - `PolicyDecision` gains `rulesMatched` (every deciding id; `ruleMatched` stays the first).
 
 ### Added — differential oracle (TD-BROWSER-15 phase 2)

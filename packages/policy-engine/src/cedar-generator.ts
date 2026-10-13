@@ -79,13 +79,15 @@ function addMode(
     emitter.add(ruleId, `forbid(principal, ${ACT_SCOPE}, resource) when { ${condition} }`);
     return;
   }
+  // 'allow' covers both asks; anything else (only 'required' can reach here)
+  // splits them — so an unrecognized mode could only ever fail closed.
   const scope = mode === 'allow' ? ACT_SCOPE : `action == ${ACT}`;
   emitter.add(ruleId, `permit(principal, ${scope}, resource) when { ${condition} }`);
   emitter.add(
     ruleId,
-    mode === 'required'
-      ? `forbid(principal, action == ${UNATTENDED}, resource) when { ${condition} }`
-      : `permit(principal, action == ${UNATTENDED}, resource) when { ${condition} }`
+    mode === 'allow'
+      ? `permit(principal, action == ${UNATTENDED}, resource) when { ${condition} }`
+      : `forbid(principal, action == ${UNATTENDED}, resource) when { ${condition} }`
   );
 }
 
@@ -102,6 +104,8 @@ export function cedarPolicySetFromLegacyConfig(
   // validates exactly what ActionRiskPolicy validates at startup — one shared
   // validator — and can never be fed rules the rest of the system rejects.
   validateActionRiskRules(config.rules);
+  if (config.unknownRisk !== undefined && !['allow', 'required'].includes(config.unknownRisk))
+    throw new Error('Invalid operator approval policy');
   const emitter = new Emitter();
 
   // Loopback: today a single flag decides; the paired id names the outcome.
