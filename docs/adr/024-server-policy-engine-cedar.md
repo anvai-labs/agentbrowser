@@ -53,6 +53,8 @@ ADR-007 and the CDP-attach design guarantee unconditionally:
   - **Embedded IPv4 is decoded first:** IPv4-mapped (`::ffff:0:0/96`), NAT64 (`64:ff9b::/96`,
     `64:ff9b:1::/48`) and 6to4 (`2002::/16`). So `64:ff9b::a9fe:a9fe` is metadata and
     `64:ff9b::7f00:1` is loopback, where today both classify as public.
+  - **Known limits:** operator-chosen network-specific NAT64 `/96` prefixes cannot be recognized,
+    and the deprecated IPv4-compatible `::a.b.c.d` form (`::/96`) is decoded too, for safety.
   - **The trade-off:** link-local devices reached today through `ALLOWED_CIDRS` become unreachable.
     The release notes say so.
   - **Timing:** this lands before private ranges can be granted (TD phase 0).
@@ -78,6 +80,19 @@ ADR-007 and the CDP-attach design guarantee unconditionally:
 again to connect (`engine-playwright`, `installEgress`). Only `ConnectionAuthority`, used for
 downloads, pins a connection to the address it checked. This ADR does not change that, and nothing
 below relies on pinning.
+
+The floor's metadata, loopback and private checks run at the egress choke point, so they bind only
+traffic that passes through it. Three existing lanes do not, as documented elsewhere:
+- **Operator CDP attachment.** Only the initial explicit navigation is preflighted
+  (operator-cdp-attach.md).
+- **Service workers, in sessions granted them.** Their requests are not routed through the choke
+  point (ADR-019).
+- **Redirect hops of POST, PUT and PATCH requests.** These continue through `route.continue`, and
+  their hops are not re-checked (ADR-006).
+
+So "always refused" means "always refused at the choke point". Granting `serviceWorkers` is
+therefore an **egress-containment exception**, not just a capability. The startup warning and
+`GET /v1/policy` report it as one.
 
 **Cedar** decides what an operator chooses, within the floor:
 - which tenants may reach which destinations, including loopback and private exceptions;
@@ -169,12 +184,15 @@ needs every one of them allowed.
 - If its classes include `loopback`, it is also checked with `request.loopback`; if they include
   `private`, also with `request.private`. All the applicable checks must allow it.
 - The floor refuses `metadata` before Cedar is consulted.
-- **The address itself is in the context** (`context.ip`, a Cedar `ipaddr`), so exceptions can
-  name ranges. For example, `context.ip.isInRange(ip("192.168.1.89/32"))` reproduces
+- **The address itself is in the context** as an optional attribute (`ip?: ipaddr`), so exceptions
+  can name ranges. Policies test it as `context has ip && …`. For example, `context.ip.isInRange(ip("192.168.1.89/32"))` reproduces
   `ALLOWED_CIDRS=192.168.1.89/32`, and the generator emits one such permit per configured CIDR.
   - **IPv4-mapped IPv6 is normalized to IPv4 before the context is built.** Cedar refuses
     `ip("::ffff:192.168.1.65")` as an evaluation error. The hex form `::ffff:c0a8:141` does not
     match `192.168.1.0/24`. Today's `BlockList` treats both as their IPv4 identity.
+  - **Only a single host address is ever passed.** A Cedar `ipaddr` may also be a range, and
+    `"192.168.1.0/24"` as the context `ip` is accepted and can match a permit. Any `ip` a caller
+    supplies to `check` with a prefix length is refused.
 
 So `permit (principal, action == AgentBrowser::Action::"request", resource);` grants only public
 egress. Opening loopback takes a deliberately named permit, and the server prints a loud startup
@@ -244,7 +262,8 @@ combined with any policy-bearing variable or embedder option. Startup fails and 
 | **Bootstrap** (stay variables) | `HOST`, `PORT`, `API_KEYS` and `ServerOptions.apiKeys`, `ARTIFACT_KEY` (a secret), `CORS_ORIGINS` / `corsOrigin` and `ALLOWED_HOSTS` (API-surface admission), `POLICY_FILE` and `POLICY_SHADOW`, file paths, logging (`LOG_LEVEL`), lifecycle (`SHUTDOWN_ON_STDIN_EOF`), and engine tuning (`SNAPSHOT_TIMEOUT_MS`, `EMPTY_DOM_*`, `ASSUME_DISPLAY`, `CHROME_PATH`, `PREFER_BUNDLED`) |
 | **Trusted operator configuration** (stays a variable; documented as security-relevant) | `CHROMIUM_ARGS`. Flags such as `--proxy-server` or `--host-resolver-rules` can undermine egress, so it is treated like the binary path: trusted, never caller-supplied |
 
-The table lists every setting at the time of writing; the policy guide keeps it current. The stock
+The table lists every **service** setting at the time of writing. The MCP, CLI and launcher
+variables are client-side and out of scope; the policy guide keeps it current. The stock
 entrypoint (`packages/api/src/main.ts`) builds `networkPolicy` and `extractMaxBytes` from the
 environment and passes them on every start. With a policy file it stops doing so, so the conflict
 rule fires only on genuine double configuration.
@@ -260,10 +279,15 @@ is first-match, classifies effects, and has three outcomes, so the work is split
 - **Classification stays in TypeScript.** `approvalRules` in the document, or today's variable,
   feed `ActionRiskPolicy`'s first-match matcher unchanged, including each rule's optional
   `decision` and the policy-wide `unknownRisk`. Both become fields of the document. The matcher
-  yields the action's effect (or `unknown`) and the id of the first matching rule (or none).
+  yields the action's effect (or `unknown`) and the first matching rule's identifier (or none).
+  That identifier is its optional `id`, or `rule-<index>` when no id is given.
 - **Both reach Cedar in the context:** `context.effect` and `context.matchedRule`. A rule's own
   `decision` is a generated policy keyed on its id: `deny` becomes a `forbid` on `act`, and
   `allow` or `required` becomes a `permit` or `forbid` on `act.unattended`.
+- **The baseline contains no `forbid` on `act` or `act.unattended`.** High-risk effects need
+  approval through the *absence* of an `act.unattended` permit, never through a `forbid`, because
+  a `forbid` would override any operator rule `decision: "allow"`. Operator documents may use
+  `forbid` freely.
 - **`unknownRisk` is a parameter of the baseline**, written into the generated baseline policy for
   `effect == "unknown"`. The baseline therefore stays a fixed, versioned template.
 - **Cedar decides from the effect,** which arrives in the context together with hostname, action,
@@ -317,11 +341,17 @@ tenant in no-keys mode.
 - **`POST /v1/policy/check`** is a dry run that takes `{ action, url?, context? }`.
   - It never acts and never resolves DNS.
   - An IP literal is classified exactly as at request time.
-  - A hostname is decided **once per possible address-class combination**. The domain is finite
-    (`public`, `loopback`, `private`; metadata is floor), so each combination is a normal,
-    validated decision. The answer is `allowed`, `denied`, or `depends on resolved address`,
-    listing the class combinations that decide it. So it cannot be used as a DNS oracle for
-    internal names.
+  - A hostname first goes through the name-level rules enforcement applies: `localhost` and
+    `localhost.localdomain` are loopback by name, and `metadata.google.internal` is floor by name.
+  - Otherwise the hostname is decided **once per address-class set the classifier can actually
+    produce**: `{public}`, `{loopback}`, `{private}` and `{loopback, private}` (`public` means "no
+    other class", and metadata is floor). That list is generated from the classifier's own table,
+    so the two cannot drift. Each set is a normal, validated decision.
+  - Actions whose policies reference `context.ip` (found at load by walking `policyToJson`) answer
+    `depends on resolved address` for a hostname, never `denied`, because a CIDR exception might
+    match the resolved address.
+  - The answer is `allowed`, `denied`, or `depends on resolved address` with the deciding sets.
+    So `check` cannot be used as a DNS oracle for internal names.
   - **Without a policy file**, both routes answer through `LegacyAuthorizer` by the same
     enumeration. Answers that would need partial evaluation are reported as `unconditional for a
     default session`.

@@ -24,7 +24,8 @@ hardens the floor.
 - both link-local ranges, `169.254.0.0/16` and `fe80::/10`.
 
 **Embedded IPv4 is decoded before classification:** IPv4-mapped (`::ffff:0:0/96`), NAT64
-(`64:ff9b::/96`, `64:ff9b:1::/48`) and 6to4 (`2002::/16`). For example, `64:ff9b::a9fe:a9fe` is
+(`64:ff9b::/96`, `64:ff9b:1::/48`), 6to4 (`2002::/16`) and the deprecated IPv4-compatible form
+(`::/96`). Operator-chosen network-specific NAT64 prefixes are a known limit. For example, `64:ff9b::a9fe:a9fe` is
 metadata and `64:ff9b::7f00:1` is loopback.
 
 **A floor module the service always applies.** The metadata and CDP-attach checks move out of the
@@ -92,7 +93,7 @@ phase 3 adds its real subject.
 ### Phase 3: Cedar schema, `CedarAuthorizer`, generator, baseline
 
 **Schema** (`packages/protocol/src/policy/agentbrowser.cedarschema`), with TypeBox for the
-document (`version`, `baseline`, `policies`, `approvalRules`, `limits`):
+document (`version`, `baseline`, `policies`, `approvalRules`, `unknownRisk`, `limits`):
 - **Entities:** `Tenant`; `Session in [Tenant]` (engine, cdpAttach, controlMode, headless); `Host`
   (domain).
 - **Actions:**
@@ -101,10 +102,11 @@ document (`version`, `baseline`, `policies`, `approvalRules`, `limits`):
   - capabilities: `cdp.attach`, `serviceWorkers`, `downloads`, `cookie.export`, `cookie.seed`,
     `session.headed`.
 - **Context:** declared per action.
-  - The `request*` actions carry `addressClasses` (a `Set<String>`) and `ip` (an `ipaddr`, already
-    normalized).
-  - The `act*` actions carry `effect`, `matchedRule` (the id of the first matching approval rule, or
-    `"none"`), `hostname`, `action`, `role` and `name`.
+  - The `request*` actions carry `addressClasses` (a `Set<String>`) and an **optional** `ip`
+    (`ip?: ipaddr`): one normalized host address, never a prefix. Generated policies test it as
+    `context has ip && context.ip.isInRange(…)`.
+  - The `act*` actions carry `effect`, `matchedRule` (the first matching approval rule's optional `id`,
+    otherwise `rule-<index>`, or `"none"`), `hostname`, `action`, `role` and `name`.
 - **Protocol first (ADR-015):** `PolicyDecisionSchema` gains `rulesMatched: string[]`. The existing
   `ruleMatched` keeps the first id.
 - **Generated from the schema:** docs and fixtures.
@@ -116,7 +118,7 @@ document (`version`, `baseline`, `policies`, `approvalRules`, `limits`):
 - **Fail closed:** any `diagnostics.errors`, any `type: "failure"`, or any thrown exception means
   deny with `engine.error`. A trap marks the authorizer unhealthy, `/health` reports it, and every
   policy-gated decision denies until restart.
-- **Rule ids:** `ruleMatched` is the deciding ids, sorted. `@reason` and `@internal` come from an
+- **Rule ids:** `rulesMatched` is all deciding ids, sorted; `ruleMatched` is the first. `@reason` and `@internal` come from an
   id → annotation map built at load with `policyToJson`.
 - **Pre-parsed set ids:** namespaced by the policy version.
 - **Reserved prefixes:** ids starting `floor.`, `default.`, `engine.` or `env.` are rejected.
@@ -185,7 +187,10 @@ document (`version`, `baseline`, `policies`, `approvalRules`, `limits`):
   - deny-wins against session narrowing and engagement scope;
   - a capability needs both the session request and the Cedar grant;
   - the memo key changes with the class set;
-  - the version is stable across key order and whitespace.
+  - the version is stable across key order and whitespace;
+  - the baseline contains no `forbid` on `act` or `act.unattended`, so an operator rule
+    `decision: "allow"` can relax a high-risk effect, as today;
+  - granting `serviceWorkers` produces the egress-exception startup warning.
 
 ### Phase 5: query surface
 
@@ -198,10 +203,12 @@ document (`version`, `baseline`, `policies`, `approvalRules`, `limits`):
     loaded.
   - There is no raw policy text.
 - **`POST /v1/policy/check`:** `{ action, url?, context? }` → `PolicyDecision`.
-  - No DNS. An IP literal is classified. A hostname gets one normal, validated decision per
-    possible address-class combination (`public`, `loopback`, `private`, and their unions), and
-    reports `depends on resolved address` together with the deciding combinations. There is no
-    partial evaluation.
+  - No DNS. An IP literal is classified; a caller-supplied `ip` with a prefix length is refused.
+  - A hostname first passes the name-level rules (`localhost`, `metadata.google.internal`). It
+    then gets one validated decision per class set the classifier can produce (`{public}`,
+    `{loopback}`, `{private}`, `{loopback, private}`, generated from the classifier's table).
+  - Actions whose policies reference `context.ip` answer `depends on resolved address`, never
+    `denied`. There is no partial evaluation.
   - **Without a policy file**, both routes answer through `LegacyAuthorizer` by the same
     enumeration, and the summary reports `unconditional for a default session`.
   - Request size is bounded.
