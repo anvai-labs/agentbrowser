@@ -90,17 +90,52 @@ jobs:
           node scripts/check-win32-server-tree.mjs --zip (Join-Path $out 'agentbrowser-server-win32-x64.zip') --expected-version $version --session
           exit $LASTEXITCODE
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          # Same pin as release.yml: part of the build environment.
+          bun-version: '1.4.0'
+
+      # The release artifact itself: launcher + CLI + MCP exes, pinned Node,
+      # and the server tree from the step above, with the shipped-path,
+      # link and MAX_PATH gates applied during assembly.
+      - name: Assemble the Windows bundle
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $exes = Join-Path $env:RUNNER_TEMP 'win-bundle-exes'
+          $launcher = Join-Path $exes 'launcher.exe'
+          $cli = Join-Path $exes 'cli.exe'
+          $mcp = Join-Path $exes 'mcp.exe'
+          # One string per argument: pwsh splits `--outfile=(expr)` into two.
+          node packages/api/scripts/compile-launcher.mjs --target=bun-windows-x64 "--outfile=$launcher"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node packages/cli/scripts/compile.mjs --target=bun-windows-x64 "--outfile=$cli"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node packages/mcp-server/scripts/compile.mjs --target=bun-windows-x64 "--outfile=$mcp"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/assemble-windows-bundle.mjs --output-dir (Join-Path $env:RUNNER_TEMP 'win-bundle') --expected-version $version `
+            --server-zip (Join-Path $env:RUNNER_TEMP 'win32-server\agentbrowser-server-win32-x64.zip') `
+            --launcher $launcher --cli $cli --mcp $mcp
+          exit $LASTEXITCODE
+
+      # Clean room: the smoke runs from a copy outside the checkout, with no
+      # node_modules on any parent path, against the extracted bundle — real
+      # Chromium sessions through the shipped CLI and MCP executables, kill
+      # cleanup, and invocation through a symlink (as winget's Links dir).
+      # This replaces the non-blocking MCP end-to-end step: that test now
+      # runs inside the smoke, blocking, against agentbrowser-mcp.exe.
+      - name: Clean-room Windows bundle smoke
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $room = Join-Path $env:RUNNER_TEMP 'clean-room'
+          New-Item -ItemType Directory $room -Force | Out-Null
+          Copy-Item scripts/windows-bundle-smoke.mjs, scripts/windows-mcp-e2e.test.mjs $room
+          Set-Location $room
+          node windows-bundle-smoke.mjs --zip (Join-Path $env:RUNNER_TEMP 'win-bundle\agentbrowser-windows-x64.zip') `
+            --expected-version $version --browsers $env:PLAYWRIGHT_BROWSERS_PATH --require-symlink
+          exit $LASTEXITCODE
+
       - name: Windows gotcha gates (W1-W6)
         run: node --test scripts/windows-gotchas.test.mjs
 
-      # Real end-to-end on win32: MCP server spawns a headless session and
-      # answers a browser observation through the full stack. This is the
-      # test that would have caught the UNC/.cmd class of failures before
-      # they reached WSL users.
-      - name: MCP end-to-end (headless session roundtrip)
-        shell: pwsh
-        run: |
-          $env:AGENTBROWSER_TEST_HEADLESS = "1"
-          node --test scripts/windows-mcp-e2e.test.mjs
-        continue-on-error: true # TODO(TD-BROWSER): promote to blocking after
-        # two consecutive green windows runs, same policy as journal-gates.

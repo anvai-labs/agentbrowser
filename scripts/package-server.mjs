@@ -29,8 +29,8 @@ const DEV_ONLY_FILE = /\.(?:map|d\.ts|d\.mts|d\.cts)$/;
 // Directories: CreateDirectory allows 248 including NUL, so 247 usable:
 //   111 + 20 + 116 = 247.
 // Both are measured relative to the archive root, so they include `server/`.
-const MAX_WIN32_RELATIVE_PATH = 125;
-const MAX_WIN32_RELATIVE_DIR = 116;
+export const MAX_WIN32_RELATIVE_PATH = 125;
+export const MAX_WIN32_RELATIVE_DIR = 116;
 
 // pnpm is a .cmd shim on Windows: libuv cannot spawn it without a shell, and
 // Node 24 refuses to spawn .cmd files without one. Prefer the pnpm that is
