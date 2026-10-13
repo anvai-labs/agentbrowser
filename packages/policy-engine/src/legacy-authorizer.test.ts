@@ -69,3 +69,23 @@ describe('LegacyAuthorizer', () => {
     expect(new LegacyAuthorizer({}).version).toBe('legacy');
   });
 });
+
+describe('LegacyAuthorizer capability grants', () => {
+  it('grants every capability a session requests, as today', () => {
+    const authorizer = new LegacyAuthorizer({});
+    for (const action of [
+      'cdp.attach',
+      'downloads',
+      'serviceWorkers',
+      'cookie.seed',
+      'cookie.export',
+      'session.headed',
+    ] as const) {
+      expect(authorizer.decide({ action, context: { tenantId: 't1' } })).toEqual({
+        allowed: true,
+        reason: 'granted on request; no policy file is loaded',
+        ruleMatched: 'env.capability.default',
+      });
+    }
+  });
+});

@@ -20,7 +20,24 @@ export type EgressAuthorizationRequest = {
   context: EgressExceptionContext;
 };
 
-export type AuthorizationRequest = ActAuthorizationRequest | EgressAuthorizationRequest;
+/** ADR-024 §1: capabilities a session can ask for, which the operator grants. */
+export type CapabilityAction =
+  | 'cdp.attach'
+  | 'downloads'
+  | 'serviceWorkers'
+  | 'cookie.seed'
+  | 'cookie.export'
+  | 'session.headed';
+
+export type CapabilityAuthorizationRequest = {
+  action: CapabilityAction;
+  context: { tenantId?: string };
+};
+
+export type AuthorizationRequest =
+  | ActAuthorizationRequest
+  | EgressAuthorizationRequest
+  | CapabilityAuthorizationRequest;
 
 /**
  * The one seam every operator-chosen decision goes through (TD-BROWSER-15).
