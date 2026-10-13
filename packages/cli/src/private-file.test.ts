@@ -1,8 +1,13 @@
 import { lstat, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { writePrivateFile } from './private-file.js';
+import {
+  PRIVATE_PATH_ENV,
+  type RunWindowsWriter,
+  WINDOWS_WRITER_SCRIPT,
+  writePrivateFile,
+} from './private-file.js';
 
 let dir: string;
 beforeEach(async () => {
@@ -32,53 +37,81 @@ describe.runIf(process.platform !== 'win32')('private files on POSIX', () => {
   });
 });
 
-describe('private files on Windows (owner-only ACL before any secret is written)', () => {
-  const sid = 'S-1-5-21-1111111111-2222222222-3333333333-1001';
-  const windowsEnv = { SystemRoot: 'C:\\Windows' };
+describe('private files on Windows (created atomically with an owner-only DACL)', () => {
+  const windowsEnv = { SystemRoot: 'C:\\Windows', PATH: 'C:\\Windows' };
 
-  function fakeRunner(fail?: 'whoami' | 'icacls') {
-    const calls: { command: string; args: string[]; sizeAtCall: number }[] = [];
-    const run = async (command: string, args: string[]) => {
-      const target = args[0] ?? '';
-      const sizeAtCall = command.endsWith('icacls.exe') ? (await stat(target)).size : -1;
-      calls.push({ command, args, sizeAtCall });
-      if (fail && command.toLowerCase().includes(fail)) throw new Error(`${fail} failed`);
-      return command.endsWith('whoami.exe') ? `"desktop\\\\user","${sid}"\r\n` : 'processed file';
+  function fakeWriter(result: { code: number; stderr: string } = { code: 0, stderr: '' }) {
+    const calls: Parameters<RunWindowsWriter>[0][] = [];
+    const run: RunWindowsWriter = async (request) => {
+      calls.push(request);
+      return result;
     };
     return { run, calls };
   }
 
-  it('restricts the new, still-empty file to the current user, then writes', async () => {
-    const path = join(dir, 'cookies.json');
-    const { run, calls } = fakeRunner();
-    await writePrivateFile(path, 'secret\n', { platform: 'win32', env: windowsEnv, run });
-    expect(calls.map((c) => c.command)).toEqual([
-      join('C:\\Windows', 'System32', 'whoami.exe'),
-      join('C:\\Windows', 'System32', 'icacls.exe'),
+  it('runs the fixed script through System32 PowerShell; path by env, secret by stdin only', async () => {
+    const { run, calls } = fakeWriter();
+    const result = await writePrivateFile('rel\\cookies.json', 'cookie-secret\n', {
+      platform: 'win32',
+      env: windowsEnv,
+      runWindowsWriter: run,
+    });
+    expect(result.bytes).toBe(14);
+    const call = calls[0];
+    expect(call?.command).toBe(
+      join('C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    );
+    expect(call?.args).toEqual([
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      WINDOWS_WRITER_SCRIPT,
     ]);
-    const icacls = calls[1];
-    expect(icacls?.args).toEqual([path, '/inheritance:r', '/grant:r', `*${sid}:F`]);
-    expect(icacls?.sizeAtCall).toBe(0); // nothing secret on disk before the ACL is in place
-    expect(await readFile(path, 'utf8')).toBe('secret\n');
+    expect(call?.env[PRIVATE_PATH_ENV]).toBe(resolve('rel\\cookies.json'));
+    expect(call?.input.toString('utf8')).toBe('cookie-secret\n');
+    // The secret never reaches argv or the environment.
+    expect(JSON.stringify([call?.args, call?.env])).not.toContain('cookie-secret');
   });
 
-  it('fails closed and removes the empty file when the ACL cannot be applied', async () => {
-    for (const failing of ['whoami', 'icacls'] as const) {
-      const path = join(dir, `cookies-${failing}.json`);
-      const { run } = fakeRunner(failing);
+  it('the script creates exclusively with a protected, single-ACE DACL for the current user', () => {
+    expect(WINDOWS_WRITER_SCRIPT).toContain('[System.IO.FileMode]::CreateNew');
+    expect(WINDOWS_WRITER_SCRIPT).toContain('SetAccessRuleProtection($true, $false)');
+    expect(WINDOWS_WRITER_SCRIPT).toContain('WindowsIdentity]::GetCurrent().User');
+    expect(WINDOWS_WRITER_SCRIPT).toContain('[System.IO.FileShare]::None');
+    expect(WINDOWS_WRITER_SCRIPT.match(/AddAccessRule/g)).toHaveLength(1);
+    expect(WINDOWS_WRITER_SCRIPT).not.toMatch(/\$\{|`\$/); // a constant: nothing interpolated
+  });
+
+  it('maps writer failures to typed stages', async () => {
+    for (const [stderr, stage, code] of [
+      ['create:EEXIST', 'create', 'EEXIST'],
+      ['create:ENOENT', 'create', 'ENOENT'],
+      ['write:EIO', 'write', 'EIO'],
+      ['', 'create', 'EUNKNOWN'],
+    ] as const) {
+      const { run } = fakeWriter({ code: stderr.startsWith('write') ? 4 : 3, stderr });
       await expect(
-        writePrivateFile(path, 'secret\n', { platform: 'win32', env: windowsEnv, run })
-      ).rejects.toThrow(/owner-only/);
-      await expect(lstat(path)).rejects.toMatchObject({ code: 'ENOENT' });
+        writePrivateFile('C:\\x\\c.json', 'x', {
+          platform: 'win32',
+          env: windowsEnv,
+          runWindowsWriter: run,
+        })
+      ).rejects.toMatchObject({ name: 'PrivateFileError', stage, code });
     }
   });
 
-  it('rejects an unparseable SID instead of granting to a guessed principal', async () => {
-    const path = join(dir, 'cookies.json');
-    const run = async (command: string) => (command.endsWith('whoami.exe') ? 'garbage' : '');
+  it('fails as a create error when PowerShell cannot be started', async () => {
+    const run: RunWindowsWriter = async () => {
+      throw Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' });
+    };
     await expect(
-      writePrivateFile(path, 'x', { platform: 'win32', env: windowsEnv, run })
-    ).rejects.toThrow(/owner-only/);
-    await expect(lstat(path)).rejects.toMatchObject({ code: 'ENOENT' });
+      writePrivateFile('C:\\x\\c.json', 'x', {
+        platform: 'win32',
+        env: windowsEnv,
+        runWindowsWriter: run,
+      })
+    ).rejects.toMatchObject({ stage: 'create', code: 'ESPAWN' });
   });
 });

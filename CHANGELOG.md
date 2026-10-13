@@ -32,17 +32,20 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   files inherited their folder's ACL. In a shared folder such as `C:\Users\Public`, that grants
   Modify to every interactive user, so exported session cookies were readable by other local
   users.
-- **The fix:** a shared `writePrivateFile`.
-  - On Windows it creates the file exclusively.
-  - While the file is still empty, it removes inherited ACEs and grants access only to the
-    current user's SID, using `icacls` and `whoami` from System32.
-  - Only then is the secret written.
-  - Any failure deletes the empty file and fails closed.
-  - POSIX keeps `O_EXCL | O_NOFOLLOW`, mode `0600`.
-- **Verified on Windows 11:** a file written to `C:\Users\Public` has exactly one ACE, the
-  user's own, and the extracted-package acceptance checks it with `icacls`.
-- **Residual risk:** a principal that opens the empty file in the instant between creation and
-  the ACL change keeps that handle. Writing into your own profile avoids this.
+- **The fix:** on Windows the file is now created **atomically with its security descriptor**.
+  - A fixed Windows PowerShell script calls .NET `FileStream(CreateNew, FileShare.None,
+    FileSecurity)`. The DACL is protected and holds exactly one ACE: the current user,
+    FullControl. At no moment does the file exist with any other ACL.
+  - The secret goes over stdin, never in argv or the environment.
+  - An existing name, a link included, is refused.
+  - POSIX keeps `O_EXCL | O_NOFOLLOW`, mode `0600`, and a failed `close` now counts as a failed
+    write.
+- **Why atomic creation:** an earlier approach set the ACL after creating the file. Review showed
+  that leaves a race: another user can swap the file for a decoy, or keep an early read handle.
+  Re-running that attack against the new code, the rename fails (the file is held with
+  `FileShare.None`), and every file carries the owner-only DACL from birth.
+- **Acceptance:** the extracted-package acceptance requires the SDDL DACL to be exactly
+  `D:P(A;;FA;;;<current user SID>)`.
 
 ### Added — Windows server launcher
 

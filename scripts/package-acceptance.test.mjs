@@ -843,11 +843,21 @@ test('serverCommand runs the POSIX launcher, or the server entry on Node on Wind
   assert.deepEqual(serverCommand('/srv', { platform: 'win32', override: 'C:/b/agentbrowser-server.exe' }), ['C:/b/agentbrowser-server.exe']);
 });
 
-test('assertOwnerOnly: one non-inherited ACL entry on Windows', async () => {
-  const icacls = (stdout) => async () => ({ stdout });
-  const one = 'C:\\x\\c.json DESKTOP\\u:(F)\r\n\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n';
-  await assertOwnerOnly('C:\\x\\c.json', 'Cookie export', { platform: 'win32', run: icacls(one) });
-  const inherited = 'C:\\x\\c.json BUILTIN\\Administrators:(I)(F)\r\n            DESKTOP\\u:(I)(F)\r\n            NT AUTHORITY\\INTERACTIVE:(I)(M,DC)\r\n';
-  await assert.rejects(assertOwnerOnly('C:\\x\\c.json', 'Cookie export', { platform: 'win32', run: icacls(inherited) }), /not owner-only/);
-  await assert.rejects(assertOwnerOnly('C:\\x\\c.json', 'Cookie export', { platform: 'win32', run: icacls('C:\\x\\c.json DESKTOP\\u:(I)(F)\r\n') }), /inherited/);
+test('assertOwnerOnly: exactly a protected single-ACE DACL for the current user on Windows', async () => {
+  const sid = 'S-1-5-21-1-2-3-1001';
+  const fake = (dacl) => ({
+    run: async (args) => ({ stdout: args[0].endsWith('whoami.exe') ? `"pc\\u","${sid}"\r\n` : '' }),
+    readText: async () => `\uFEFFc.json\r\n${dacl}\r\n`,
+  });
+  const check = (dacl) => assertOwnerOnly('C:\\x\\c.json', 'Cookie export', { platform: 'win32', ...fake(dacl) });
+  await check(`D:P(A;;FA;;;${sid})`);
+  await check(`D:P(A;;FA;;;${sid})S:(ML;;NW;;;ME)`); // an integrity label is not access
+  for (const bad of [
+    'D:P(A;;FA;;;WD)', // Everyone:(F) — one ACE, wrong principal
+    `D:AI(A;ID;FA;;;${sid})`, // inherited, not protected
+    `D:P(A;;FA;;;${sid})(A;;FA;;;SY)`, // a second principal
+    `D:P(A;;0x1200a9;;;${sid})`, // not FullControl
+  ]) {
+    await assert.rejects(check(bad), /not owner-only/, bad);
+  }
 });
