@@ -192,6 +192,14 @@ shipped-path gate rejects (phase 6). So:
 - Denials report the ids of forbidding policies, so each deny branch is an explicit `forbid`
   carrying its `env.*` id, and a `required` outcome is a permit/forbid pair.
 
+**Review of 3a (all claims held; the reviewer ran 100k+ equivalence checks) hardened two edges:**
+- The generator validates its rules with the validator `ActionRiskPolicy` itself uses (now shared,
+  `validateActionRiskRules` in core). Rule ids are interpolated into Cedar text; an id the system
+  would reject at startup must fail at the generator too, not become a set that parses loudly but
+  wrongly (duplicate decided ids diverge; reserved ids suppress the defaults).
+- `normalizeSourceForCedar` refuses a family-mismatched (address, type) pair, which `BlockList`
+  answers false for; the Cedar side must not grant it.
+
 **Schema** (`packages/protocol/src/policy-document.ts`, exported as `CEDAR_SCHEMA`), with TypeBox
 for the document (`version`, `baseline`, `policies`, `approvalRules`, `unknownRisk`; `limits`
 arrives with phase 4):

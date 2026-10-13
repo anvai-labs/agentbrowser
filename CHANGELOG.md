@@ -27,6 +27,11 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
     decision matrix matches `LegacyAuthorizer` under the real wasm build.
 - `cedar-wasm` 4.13 is a dev-only dependency of `policy-engine`; it never enters the prod
   deploy trees the tarball, image and Windows bundle are built from.
+- **Hardened after review** (every equivalence claim held under 100k+ referee checks): the
+  generator validates its rules with the validator `ActionRiskPolicy` uses — now one shared
+  exported validator in core — so an id the system would reject at startup can never reach the
+  Cedar text; and `normalizeSourceForCedar` refuses family-mismatched (address, type) pairs, which
+  `BlockList` answers false for.
 - `PolicyDecision` gains `rulesMatched` (every deciding id; `ruleMatched` stays the first).
 
 ### Added — differential oracle (TD-BROWSER-15 phase 2)

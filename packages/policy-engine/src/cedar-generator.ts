@@ -1,5 +1,5 @@
 import { isIP } from 'node:net';
-import type { ActionRiskRule } from '@agentbrowser/core';
+import { type ActionRiskRule, validateActionRiskRules } from '@agentbrowser/core';
 import type { ExportedApprovalRule, PolicyDocument } from '@agentbrowser/protocol';
 
 /**
@@ -98,6 +98,10 @@ function addMode(
 export function cedarPolicySetFromLegacyConfig(
   config: CedarGenerationConfig
 ): GeneratedCedarPolicy[] {
+  // Review 3a: rule ids are interpolated into Cedar text, so the generator
+  // validates exactly what ActionRiskPolicy validates at startup — one shared
+  // validator — and can never be fed rules the rest of the system rejects.
+  validateActionRiskRules(config.rules);
   const emitter = new Emitter();
 
   // Loopback: today a single flag decides; the paired id names the outcome.
@@ -319,7 +323,11 @@ export function expandRangesForCedar(cidrs: readonly string[]): string[] {
  * written. Throws on input that is not an address.
  */
 export function normalizeSourceForCedar(address: string, type: 'ipv4' | 'ipv6'): string {
-  if (isIP(address) === 0) throw new Error(`not an IP address: ${JSON.stringify(address)}`);
+  const family = isIP(address);
+  // Review 3a: a family-mismatched pair would be granted by the Cedar side
+  // where BlockList answers false, so it is refused rather than guessed.
+  if (family === 0 || (type === 'ipv4' ? family !== 4 : family !== 6))
+    throw new Error(`not a valid ${type} address: ${JSON.stringify(address)}`);
   if (type === 'ipv4') return address;
   const value = v6ToBigInt(address);
   if (isMappedSpace(value)) return v4Of(value & 0xffffffffn);

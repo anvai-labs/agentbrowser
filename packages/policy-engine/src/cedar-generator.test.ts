@@ -69,8 +69,12 @@ describe('normalizeSourceForCedar', () => {
     expect(normalizeSourceForCedar('64:ff9b::a01:203', 'ipv6')).toBe('64:ff9b::a01:203');
     expect(normalizeSourceForCedar('::1', 'ipv6')).toBe('::1');
   });
-  it('throws on non-addresses', () => {
-    expect(() => normalizeSourceForCedar('example.com', 'ipv4')).toThrow(/not an IP address/);
+  it('throws on non-addresses and family mismatches', () => {
+    expect(() => normalizeSourceForCedar('example.com', 'ipv4')).toThrow(
+      /not a valid ipv4 address/
+    );
+    expect(() => normalizeSourceForCedar('fd12::1', 'ipv4')).toThrow(/not a valid ipv4 address/);
+    expect(() => normalizeSourceForCedar('10.1.2.3', 'ipv6')).toThrow(/not a valid ipv6 address/);
   });
 });
 
@@ -234,6 +238,41 @@ describe('cedarPolicySetFromLegacyConfig', () => {
           .join(', ') +
         '], resource);'
     );
+  });
+});
+
+describe('cedarPolicySetFromLegacyConfig validates its input', () => {
+  it('rejects rule ids ActionRiskPolicy would refuse', () => {
+    for (const id of ['\x00null', 'a\x1b[31mb', 'a\uD800', 'Bad-ID', 'rule-2', 'none', '-x']) {
+      expect(() =>
+        cedarPolicySetFromLegacyConfig({ rules: [{ id, effect: 'read', decision: 'allow' }] })
+      ).toThrow(/Invalid operator approval rule/);
+    }
+  });
+  it('rejects duplicate ids, bad decisions and over-long matchers', () => {
+    expect(() =>
+      cedarPolicySetFromLegacyConfig({
+        rules: [
+          { id: 'dup', effect: 'read', decision: 'allow' },
+          { id: 'dup', effect: 'read', decision: 'deny' },
+        ],
+      })
+    ).toThrow(/duplicates an earlier rule id/);
+    expect(() =>
+      cedarPolicySetFromLegacyConfig({ rules: [{ effect: 'read', decision: 'maybe' }] })
+    ).toThrow(/Invalid operator approval rule/);
+    expect(() =>
+      cedarPolicySetFromLegacyConfig({
+        rules: [{ effect: 'read', name: 'x'.repeat(201) }],
+      })
+    ).toThrow(/Invalid operator approval rule/);
+  });
+  it('accepts every id shape the system allows', () => {
+    expect(() =>
+      cedarPolicySetFromLegacyConfig({
+        rules: [{ id: 'a1.b_c-d', effect: 'read', decision: 'required' }],
+      })
+    ).not.toThrow();
   });
 });
 
