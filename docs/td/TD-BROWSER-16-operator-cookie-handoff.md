@@ -96,6 +96,10 @@ infrastructure; phase 6 enables the handoff.
     The CLI's writer creates one file and cannot be reused. Startup parses the DACL and refuses any
     ACE beyond the owner; SYSTEM and Administrators are reported, not refused. Tested on the
     Windows CI job.
+- **Launch arguments.** The login browser reuses `headedChromiumOptions` (ADR-013), and removes
+  `--disable-client-side-phishing-detection`, `--disable-component-update` and
+  `--disable-background-networking` with `ignoreDefaultArgs`. A test asserts the resulting argument
+  list.
 - **Pinned binary.** The `executablePath` is resolved once at enablement. Launch refuses if that
   binary's version has moved backwards since it last wrote the profile; the version is recorded in
   the profile directory.

@@ -62,6 +62,13 @@ The server gains an **operator login browser**:
     with `LOGIN_PROFILE_IN_USE`.
   - A stale `SingletonLock` after a crash is taken over by Chrome on the same host. The guide
     documents the manual recovery for a changed hostname.
+- **It launches as a normal browser for a human.**
+  - It reuses ADR-013's headed launch arguments (`--disable-blink-features=AutomationControlled`),
+    so walled sign-ins such as Google's "this browser may not be secure" do not refuse the operator
+    in the one browser built for logging in.
+  - It drops, through `ignoreDefaultArgs`, the Playwright defaults that weaken the operator's own
+    browsing: `--disable-client-side-phishing-detection`, `--disable-component-update` and
+    `--disable-background-networking`. The last of these stops Safe Browsing list updates.
 - **Its own browsing is not contained.** The login browser is the operator's own browsing, like any
   browser: its egress does not go through the choke point.
 - **Enablement:** `AGENTBROWSER_LOGIN_BROWSER=1`, plus the operator credential.
