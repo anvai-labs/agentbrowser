@@ -10,13 +10,6 @@
 import { isAbsolute } from 'node:path';
 import type { ActionEffect, EngineAction, EnginePage, ResolvedTarget } from '@agentbrowser/engine';
 import { normalizeEngineError } from '@agentbrowser/engine';
-import {
-  DELIVERED_ACTION_TYPES,
-  ErrorCode,
-  createApiErrorDetail,
-  parseRef,
-  validateUploadIntegrity,
-} from '@agentbrowser/protocol';
 import type {
   ActionRequest,
   ActionResult,
@@ -26,6 +19,13 @@ import type {
   PageElement,
   PageState,
   SupportedAction,
+} from '@agentbrowser/protocol';
+import {
+  createApiErrorDetail,
+  DELIVERED_ACTION_TYPES,
+  ErrorCode,
+  parseRef,
+  validateUploadIntegrity,
 } from '@agentbrowser/protocol';
 import { budgetObservation } from './observation-budget.js';
 import { ObservationNormalizer } from './observation-normalizer.js';

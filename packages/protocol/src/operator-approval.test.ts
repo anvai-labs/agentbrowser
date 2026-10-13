@@ -4,6 +4,7 @@ import {
   validateOperatorApprovalDecision,
 } from './operator-approval.js';
 import { validateSessionRequest } from './validators.js';
+
 const view = {
   tokenId: 'tok_1',
   status: 'pending',

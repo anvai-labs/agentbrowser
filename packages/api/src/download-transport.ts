@@ -1,15 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import { type ClientRequest, type IncomingMessage, request as httpRequest } from 'node:http';
+import { type ClientRequest, request as httpRequest, type IncomingMessage } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
 import type { Transform } from 'node:stream';
-import { type TLSSocket, connect as connectTls } from 'node:tls';
+import { connect as connectTls, type TLSSocket } from 'node:tls';
 import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib';
 import {
   EngineError,
+  normalizeEngineError,
   type ProtocolErrorCode,
   type RequestPolicy,
-  normalizeEngineError,
 } from '@agentbrowser/engine';
 import {
   ConnectionAuthority,

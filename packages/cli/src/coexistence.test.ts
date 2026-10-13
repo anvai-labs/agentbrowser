@@ -1,5 +1,6 @@
 import { expect, it, vi } from 'vitest';
-import { type CliClient, buildCli } from './cli.js';
+import { buildCli, type CliClient } from './cli.js';
+
 it('exposes controlled creation and operator review/delegation', async () => {
   const sessions = {
     create: vi.fn().mockResolvedValue({ sessionId: 's' }),

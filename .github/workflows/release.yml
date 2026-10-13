@@ -15,9 +15,9 @@ jobs:
     name: Tag matches package version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.tool-versions'
 
@@ -63,20 +63,15 @@ jobs:
             os: windows-latest
             artifact: agentbrowser-mcp-windows-x64.exe
             cli_artifact: agentbrowser-cli-windows-x64.exe
-            # Windows-only: the REST server exe closes the gap the tar.gz
-            # server-packages channel cannot reach (that deploy layout ships
-            # darwin/linux with node_modules + acceptance tooling; Windows
-            # gets the single-binary exe via winget + release download).
-            server_artifact: agentbrowser-server-windows-x64.exe
             smoke: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.tool-versions'
           cache: 'pnpm'
@@ -106,7 +101,7 @@ jobs:
         if: ${{ !matrix.smoke }}
         run: echo "::warning::Smoke SKIPPED for ${{ matrix.artifact }} - cross-compiled for a target with no runner. Recorded in the release notes."
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: packages/mcp-server/dist-bin/${{ matrix.artifact }}
@@ -123,33 +118,109 @@ jobs:
         if: ${{ matrix.smoke }}
         run: node packages/cli/scripts/smoke.mjs packages/cli/dist-bin/${{ matrix.cli_artifact }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.cli_artifact }}
           path: packages/cli/dist-bin/${{ matrix.cli_artifact }}
           if-no-files-found: error
 
-      # Server exe rides only the windows matrix entry (server_artifact is
-      # unset on the other targets): same bun --compile pipeline, and the
-      # smoke boots the exe on an ephemeral port and requires GET /health to
-      # answer healthy — that is the gate which catches runtime-only breaks
-      # bundling cannot see, most importantly node:sqlite (control/journal
-      # layer) under bun's runtime. Validated end-to-end on 2026-10-04
-      # (darwin host compile+boot; the windows runner smoke re-proves it
-      # per release).
-      - name: Compile the server binary
-        if: ${{ matrix.server_artifact }}
-        run: node packages/api/scripts/compile.mjs --target=${{ matrix.target }} --outfile=packages/api/dist-bin/${{ matrix.server_artifact }}
+  # The Windows service ships as one zip: the launcher, the exact CLI/MCP
+  # executables built above, a pinned official Node runtime and the
+  # lockfile-faithful server tree. A single-file server exe cannot work —
+  # Playwright is bundler-hostile, and v1.17.0's Bun-compiled exe froze its
+  # __dirname lookups to the CI checkout. Assembled and clean-room smoked on
+  # a hosted Windows runner, outside the checkout, before anything publishes.
+  windows-bundle:
+    name: Windows bundle
+    runs-on: windows-latest
+    needs: [tag-guard, binaries]
+    steps:
+      - uses: actions/checkout@v7
 
-      - name: Server smoke (boot + GET /health)
-        if: ${{ matrix.server_artifact }}
-        run: node packages/api/scripts/smoke.mjs packages/api/dist-bin/${{ matrix.server_artifact }}
-
-      - uses: actions/upload-artifact@v4
-        if: ${{ matrix.server_artifact }}
+      - uses: pnpm/action-setup@v6
         with:
-          name: ${{ matrix.server_artifact }}
-          path: packages/api/dist-bin/${{ matrix.server_artifact }}
+          version: 9.15.0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.tool-versions'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace dependencies
+        run: pnpm -r build
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          # Same pin as the binaries job: part of the build environment.
+          bun-version: '1.4.0'
+
+      # The bundle carries the same bytes as the standalone release assets.
+      - uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/win-exes
+          pattern: agentbrowser-*-windows-x64.exe
+          merge-multiple: true
+
+      - name: Provision Chromium for the smoke
+        shell: pwsh
+        run: |
+          $env:PLAYWRIGHT_BROWSERS_PATH = "$env:RUNNER_TEMP\bundle-browsers"
+          pnpm --filter @agentbrowser/engine-playwright exec playwright install chromium
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "PLAYWRIGHT_BROWSERS_PATH=$env:PLAYWRIGHT_BROWSERS_PATH" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Package the win32-x64 server tree
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          node scripts/package-server.mjs --output-dir (Join-Path $env:RUNNER_TEMP 'win32-server') --target win32-x64 --expected-version $version --commit $env:GITHUB_SHA
+          exit $LASTEXITCODE
+
+      - name: Assemble the Windows bundle
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $exes = Join-Path $env:RUNNER_TEMP 'win-exes'
+          $launcher = Join-Path $env:RUNNER_TEMP 'launcher\agentbrowser-server.exe'
+          # One string per argument: pwsh splits `--outfile=(expr)` into two.
+          node packages/api/scripts/compile-launcher.mjs --target=bun-windows-x64 "--outfile=$launcher"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/assemble-windows-bundle.mjs --output-dir (Join-Path $env:RUNNER_TEMP 'win-bundle') --expected-version $version `
+            --server-zip (Join-Path $env:RUNNER_TEMP 'win32-server\agentbrowser-server-win32-x64.zip') --launcher $launcher `
+            --cli (Join-Path $exes 'agentbrowser-cli-windows-x64.exe') --mcp (Join-Path $exes 'agentbrowser-mcp-windows-x64.exe')
+          exit $LASTEXITCODE
+
+      - name: Clean-room Windows bundle smoke
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $room = Join-Path $env:RUNNER_TEMP 'clean-room'
+          New-Item -ItemType Directory $room -Force | Out-Null
+          Copy-Item scripts/windows-bundle-smoke.mjs, scripts/windows-mcp-e2e.test.mjs $room
+          Set-Location $room
+          node windows-bundle-smoke.mjs --zip (Join-Path $env:RUNNER_TEMP 'win-bundle\agentbrowser-windows-x64.zip') `
+            --expected-version $version --browsers $env:PLAYWRIGHT_BROWSERS_PATH --require-symlink
+          exit $LASTEXITCODE
+
+      # Once per release, the path users actually take: no provisioned
+      # browsers, so the launcher's first start downloads Chromium itself.
+      - name: Clean-room smoke with a first-start Chromium download
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          Set-Location (Join-Path $env:RUNNER_TEMP 'clean-room')
+          Remove-Item Env:PLAYWRIGHT_BROWSERS_PATH
+          node windows-bundle-smoke.mjs --zip (Join-Path $env:RUNNER_TEMP 'win-bundle\agentbrowser-windows-x64.zip') `
+            --expected-version $version --require-symlink
+          exit $LASTEXITCODE
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: agentbrowser-windows-x64.zip
+          path: ${{ runner.temp }}/win-bundle/agentbrowser-windows-x64.zip
           if-no-files-found: error
 
   server-packages:
@@ -179,13 +250,13 @@ jobs:
           - target: linux-arm64
             os: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.tool-versions'
           cache: 'pnpm'
@@ -214,12 +285,12 @@ jobs:
           fi
           qpdf --version
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: agentbrowser-cli-${{ matrix.target }}
           path: out-clients
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: agentbrowser-mcp-${{ matrix.target }}
           path: out-clients
@@ -236,7 +307,7 @@ jobs:
             --cli "$GITHUB_WORKSPACE/out-clients/agentbrowser-cli-${{ matrix.target }}" \
             --mcp "$GITHUB_WORKSPACE/out-clients/agentbrowser-mcp-${{ matrix.target }}" --install-browser
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: server-${{ matrix.target }}
           path: out-packages/agentbrowser-server-${{ matrix.target }}.tar.gz
@@ -245,7 +316,7 @@ jobs:
   npm-publish:
     name: npm (@anvailabs/agentbrowser-mcp)
     # Publication must not race ahead of failed executable or packaged-server smoke.
-    needs: [tag-guard, binaries, server-packages]
+    needs: [tag-guard, binaries, server-packages, windows-bundle]
     # Hosted-only label: org self-hosted runners advertise ubuntu-latest, and
     # npm rejects provenance bundles minted on self-hosted runners (E422).
     runs-on: ubuntu-24.04
@@ -260,9 +331,9 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.tool-versions'
           registry-url: 'https://registry.npmjs.org'
@@ -341,19 +412,28 @@ jobs:
     # off self-hosted hardware the same way npm-publish is.
     runs-on: ubuntu-24.04
     # The server tarballs are part of the release: wait for them too.
-    needs: [binaries, server-packages, npm-publish]
+    needs: [binaries, server-packages, windows-bundle, npm-publish]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: release-assets
           merge-multiple: true
 
+      # agentbrowser-windows-x64.zip arrives from the windows-bundle job:
+      # winget's single installer for all three Windows commands
+      # (scripts/winget-manifests.mjs lists them as nested portable files).
+      - name: Show the Windows bundle
+        run: |
+          # No pipe: a missing or corrupt zip must fail this step itself.
+          unzip -l release-assets/agentbrowser-windows-x64.zip > bundle-listing.txt
+          tail -n 3 bundle-listing.txt
+
       - name: Compute checksums
         run: |
           cd release-assets
-          sha256sum agentbrowser-mcp-* agentbrowser-cli-* agentbrowser-server-* > sha256sums.txt
+          sha256sum agentbrowser-mcp-* agentbrowser-cli-* agentbrowser-server-* agentbrowser-windows-x64.zip > sha256sums.txt
           cat sha256sums.txt
 
       - name: Write release notes
@@ -389,6 +469,17 @@ jobs:
           `brew install anvai-labs/tap/agentbrowser`
           (`brew services start anvai-labs/tap/agentbrowser` runs the service).
 
+          Windows users get all three in `agentbrowser-windows-x64.zip`
+          (`winget install AnvaiLabs.AgentBrowser`, or extract the zip anywhere):
+          `agentbrowser-server.exe` runs the service on the bundled Node.js
+          runtime (`node\`) and downloads its Chromium on first start
+          (`--install-browser` pre-provisions it).
+
+          ```powershell
+          agentbrowser-server --version
+          agentbrowser-server            # first start downloads Chromium (~300 MB)
+          ```
+
           ### Smoke coverage
 
           | Artifact | Stdio smoke |
@@ -409,8 +500,12 @@ jobs:
 
           Server acceptance uses Node 24.21.0 on native Linux x64/ARM and Darwin ARM.
           The Darwin x64 tarball is exercised on ARM Node with Rosetta x64 clients;
-          this is not native Intel server-runtime proof. Windows has executable
-          acceptance only: no Windows server tarball is shipped.
+          this is not native Intel server-runtime proof. The Windows bundle was
+          assembled and smoke-tested on a hosted Windows runner from a clean room
+          outside the build checkout: first start, a real Chromium session through
+          the CLI and MCP executables, launcher-kill cleanup, invocation through
+          a symlink (winget's Links directory), and a first start that downloads
+          Chromium itself.
 
           ### Install
 
@@ -444,21 +539,22 @@ jobs:
           gh release upload "$TAG" --repo "$REPO" release-assets/*
 
   winget:
-    name: Winget manifests (combined MCP + CLI)
-    # Generates winget-pkgs manifests for the windows portable exes and,
+    name: Winget manifests (zip with MCP, CLI and server)
+    # Generates winget-pkgs manifests for the Windows zip (all three portable
+    # commands as nested files) and,
     # when WINGET_FORK_TOKEN is configured, opens the submission PR to
     # microsoft/winget-pkgs so any Windows user can:
     #   winget install AnvaiLabs.AgentBrowser
-    # (installs BOTH agentbrowser-mcp and agentbrowser-cli commands).
+    # (installs agentbrowser-mcp, agentbrowser-cli and agentbrowser-server).
     # Manifests always upload as a workflow artifact for manual submission.
     # InstallerUrl must point at the PUBLIC release repo (anvai-labs), never
     # the private anvaiops remote — winget validates public reachability.
     runs-on: ubuntu-latest
     needs: [release]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.tool-versions'
 
@@ -469,20 +565,16 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           mkdir -p winget-assets && cd winget-assets
           gh release download "$TAG" --repo "${{ github.repository }}" \
-            --pattern 'agentbrowser-mcp-windows-x64.exe' \
-            --pattern 'agentbrowser-cli-windows-x64.exe' \
-            --pattern 'agentbrowser-server-windows-x64.exe'
+            --pattern 'agentbrowser-windows-x64.zip'
 
       - name: Generate winget manifests
         run: |
           node scripts/winget-manifests.mjs \
             --version "${GITHUB_REF_NAME#v}" \
-            --mcp-file winget-assets/agentbrowser-mcp-windows-x64.exe \
-            --cli-file winget-assets/agentbrowser-cli-windows-x64.exe \
-            --server-file winget-assets/agentbrowser-server-windows-x64.exe \
+            --zip-file winget-assets/agentbrowser-windows-x64.zip \
             --out winget
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: winget-manifests
           path: winget/
@@ -494,7 +586,7 @@ jobs:
       # branch to anvai-labs/winget-pkgs and ATTEMPTS the PR, degrading to a
       # one-click compare link in the step summary. WINGET_FORK_TOKEN (user
       # PAT with public_repo) remains the only zero-click option.
-      - uses: actions/create-github-app-token@v2
+      - uses: actions/create-github-app-token@v3
         id: app-token
         continue-on-error: true
         with:
@@ -539,7 +631,7 @@ jobs:
           git push -q origin "$BRANCH"
           if gh pr create --repo microsoft/winget-pkgs --head "anvai-labs:${BRANCH}" \
             --title "Add AnvaiLabs.AgentBrowser ${VER}" \
-            --body "Automated submission from anvai-labs/agentbrowser release ${GITHUB_REF_NAME}. Portable installers (agentbrowser-mcp, agentbrowser-cli, agentbrowser-server). SHA256 verified by CI."; then
+            --body "Automated submission from anvai-labs/agentbrowser release ${GITHUB_REF_NAME}. One zip installer with three nested portable commands (agentbrowser-mcp, agentbrowser-cli, agentbrowser-server). SHA256 verified by CI."; then
             echo "winget-pkgs submission PR opened." >> "$GITHUB_STEP_SUMMARY"
           else
             {

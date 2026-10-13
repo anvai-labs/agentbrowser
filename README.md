@@ -27,6 +27,21 @@ macOS, Linux or Windows. Service archives are published for macOS and Linux as
 provisioned Chromium (plus its platform libraries on Linux). See the
 [operations guide](docs/operations.md#release-assets) for deployment details.
 
+## Install (Windows)
+
+```powershell
+# once the package is accepted into winget-pkgs (not yet published):
+winget install AnvaiLabs.AgentBrowser
+agentbrowser-server                     # first start downloads Chromium (~300 MB)
+# or extract agentbrowser-windows-x64.zip from v1.17.1 or later and run .\agentbrowser-server.exe
+```
+
+The zip is self-contained: the service runs on its own bundled Node.js runtime, and
+`agentbrowser-cli` and `agentbrowser-mcp` are standalone executables. Nothing is registered as a
+Windows service; see [Windows in the operations guide](docs/operations.md#windows-install). On
+Windows the CLI command is `agentbrowser-cli`.
+npm carries only the MCP adapter (`@anvailabs/agentbrowser-mcp`), not the service.
+
 ### Consuming directly from a shell
 
 The CLI is the smallest universal agent interface. It connects directly to the

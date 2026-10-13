@@ -10,12 +10,12 @@ import type {
 } from './application-authority.js';
 import { canonicalJson } from './canonical-json.js';
 import {
+  defineEvidenceSource,
   type EvidenceAuthorizationRequest,
   type EvidencePermission,
   type EvidenceRead,
   type TrustedEvidenceSourceDefinition,
   type TrustedEvidenceSourceDescriptor,
-  defineEvidenceSource,
 } from './outcome-runner.js';
 import {
   evidencePermissionGuard,

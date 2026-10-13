@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
-import { BlockList, Socket, isIP } from 'node:net';
+import { BlockList, isIP, Socket } from 'node:net';
 import { EngineError, type ProtocolErrorCode, type RequestPolicy } from '@agentbrowser/engine';
 import type { DestinationPolicy } from '@agentbrowser/policy';
 import { ErrorCode } from '@agentbrowser/protocol';
@@ -104,7 +104,7 @@ function destinationOf(
     const url = new URL(input.url);
     const hostname = url.hostname.replace(/^\[|\]$/g, '');
     if (
-      /[\[\]]/.test(input.hostname) &&
+      /[[\]]/.test(input.hostname) &&
       !(
         input.hostname.startsWith('[') &&
         input.hostname.endsWith(']') &&

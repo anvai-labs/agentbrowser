@@ -1,7 +1,7 @@
 import { request } from 'node:http';
 import { expect, it } from 'vitest';
-import { startDraftFixture } from './test-support/application-draft-http.js';
 import { createApplicationDraft } from './test-support/application-draft.js';
+import { startDraftFixture } from './test-support/application-draft-http.js';
 
 it('commits only bounded fully received upload bytes and refuses submission', async () => {
   const draft = createApplicationDraft({ id: 'transport' });

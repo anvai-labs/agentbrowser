@@ -6,6 +6,7 @@ import { FakeEngine } from '@agentbrowser/testkit';
 import { expect, it, vi } from 'vitest';
 import { runAgentCli } from '../../../scripts/cli-outcome-acceptance.mjs';
 import { buildServer } from './server.js';
+
 const operator = { authorization: 'Bearer owner' };
 const writeHeaders = (id: string) => ({ ...operator, 'x-agentbrowser-operation-id': id });
 async function fixture(

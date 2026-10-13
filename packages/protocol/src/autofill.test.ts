@@ -5,6 +5,7 @@ import {
   parseAutofillReport,
   parseAutofillRequest,
 } from './autofill.js';
+
 const field = { match: { label: 'Company' }, value: 'Example' };
 it.each([
   { fields: [] },

@@ -5,8 +5,8 @@ import {
   ApplicationAuthority,
   type ApplicationConsentPolicy,
   type ApplicationRequest,
-  type PreparedApplicationOperationReview,
   defineApplicationOperation,
+  type PreparedApplicationOperationReview,
 } from './application-authority.js';
 import { SessionAuthority } from './session-authority.js';
 

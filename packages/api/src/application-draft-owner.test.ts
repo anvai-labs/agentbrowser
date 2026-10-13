@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto';
 import type { ApplicationScope } from '@agentbrowser/control';
 import { expect, it } from 'vitest';
 import {
-  DRAFT_UPLOAD_MAX_BYTES,
   createApplicationDraft,
+  DRAFT_UPLOAD_MAX_BYTES,
 } from './test-support/application-draft.js';
 
 const completeFields = {

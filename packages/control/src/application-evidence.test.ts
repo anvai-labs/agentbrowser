@@ -7,11 +7,11 @@ import {
 import {
   type EvidencePermission,
   type PreparedEvidenceRead,
-  TrustedEvidenceSourceRegistry,
   runVerifiedOutcome,
+  TrustedEvidenceSourceRegistry,
 } from './outcome-runner.js';
 import { SessionAuthority } from './session-authority.js';
-import { TrustedVerifierRegistry, defineVerifier } from './verifier-registry.js';
+import { defineVerifier, TrustedVerifierRegistry } from './verifier-registry.js';
 
 const descriptor = { id: 'receipt', capability: 'receipt.predicate' };
 const verifier = { id: 'receipt.equals', version: '1', input: { expected: 2 } };

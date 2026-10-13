@@ -8,9 +8,8 @@
 
 import {
   type ApplicationReceiptAuthorizationRequest,
-  TrustedEvidenceSourceRegistry,
-  TrustedVerifierRegistry,
   defineVerifier,
+  TrustedVerifierRegistry,
 } from '@agentbrowser/control';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { describe, expect, it, vi } from 'vitest';

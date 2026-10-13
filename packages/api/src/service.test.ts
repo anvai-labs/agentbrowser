@@ -21,8 +21,7 @@ import {
 } from '@agentbrowser/core';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AgentBrowserService } from './service';
-import { ServiceError } from './service';
+import { AgentBrowserService, ServiceError } from './service';
 
 describe('AgentBrowserService', () => {
   let engine: FakeEngine;

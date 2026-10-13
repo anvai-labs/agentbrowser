@@ -10,6 +10,11 @@
 // Browser policy mirrors windows-ci.yml: system Chrome when present,
 // otherwise PLAYWRIGHT_BROWSERS_PATH (set by the runner provisioning step).
 // Skips on non-Windows so the file can live in the shared scripts dir.
+//
+// It needs a running service (AGENTBROWSER_BASE_URL). The Windows bundle
+// smoke (scripts/windows-bundle-smoke.mjs) runs it against the bundle's own
+// server with AGENTBROWSER_E2E_MCP_COMMAND set to the shipped
+// agentbrowser-mcp.exe, so the release artifact itself is exercised.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,6 +27,10 @@ const IS_WIN = process.platform === 'win32';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const MCP_BIN = join(ROOT, 'packages', 'mcp-server', 'dist', 'bin.js');
 const NODE = process.execPath;
+// A shipped executable when given; otherwise the built entry on this Node.
+const MCP_COMMAND = process.env.AGENTBROWSER_E2E_MCP_COMMAND
+  ? [process.env.AGENTBROWSER_E2E_MCP_COMMAND]
+  : [NODE, MCP_BIN];
 
 class McpClient {
   constructor() {
@@ -31,7 +40,7 @@ class McpClient {
     this.child = null;
   }
   start() {
-    this.child = spawn(NODE, [MCP_BIN], { stdio: ['pipe', 'pipe', 'pipe'] });
+    this.child = spawn(MCP_COMMAND[0], MCP_COMMAND.slice(1), { stdio: ['pipe', 'pipe', 'pipe'] });
     this.child.stdout.on('data', (d) => this.#ingest(d));
     this.child.stderr.on('data', (d) => process.stderr.write(`[mcp-server] ${d}`));
     return this.child;
@@ -73,7 +82,8 @@ class McpClient {
 }
 
 test('MCP end-to-end: create -> observe -> close on win32', { skip: !IS_WIN && 'windows-only' }, async (t) => {
-  assert.ok(existsSync(MCP_BIN), `built MCP entry missing: ${MCP_BIN} — run pnpm -r build first`);
+  assert.ok(existsSync(MCP_COMMAND.at(-1)), `MCP entry missing: ${MCP_COMMAND.at(-1)} — run pnpm -r build first`);
+  assert.ok(process.env.AGENTBROWSER_BASE_URL, 'AGENTBROWSER_BASE_URL must point at a running service');
   const c = new McpClient();
   t.after(() => c.stop());
   c.start();
@@ -83,6 +93,10 @@ test('MCP end-to-end: create -> observe -> close on win32', { skip: !IS_WIN && '
     clientInfo: { name: 'win-e2e', version: '0.0.0' },
   });
   assert.ok(init.serverInfo, 'initialize returns serverInfo');
+  // The bundle smoke pins the shipped MCP executable to the release version.
+  if (process.env.AGENTBROWSER_E2E_EXPECTED_VERSION) {
+    assert.equal(init.serverInfo.version, process.env.AGENTBROWSER_E2E_EXPECTED_VERSION, 'MCP executable version');
+  }
   c.child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
 
   const tools = await c.request('tools/list', {});

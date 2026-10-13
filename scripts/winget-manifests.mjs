@@ -2,29 +2,30 @@
 // winget-manifests.mjs — generate winget-pkgs manifests for the combined
 // AgentBrowser MCP server + CLI single-binary distribution (TD-BROWSER-5).
 //
-// Why portable installers: the release already publishes two bare exes
-// (agentbrowser-mcp-windows-x64.exe / agentbrowser-cli-windows-x64.exe).
-// winget's `portable` installer type ingests exactly that — no MSI wrapping
-// needed — and one package can carry multiple PortableCommandAlias entries,
-// so a single `winget install AnvaiLabs.AgentBrowser` provisions BOTH
-// `agentbrowser-mcp` and `agentbrowser-cli` commands on PATH.
+// Why one zip: winget allows a single installer per architecture/type/scope
+// combination, so three bare portable exes in one package fail validation
+// as duplicate installer entries. The release publishes
+// agentbrowser-windows-x64.zip (scripts/assemble-windows-bundle.mjs: the three
+// exes plus the bundled node\ runtime and server\ tree);
+// the manifest declares it as `InstallerType: zip` with
+// `NestedInstallerType: portable` and one NestedInstallerFiles entry per
+// command, so a single `winget install AnvaiLabs.AgentBrowser` provisions
+// `agentbrowser-mcp`, `agentbrowser-cli` and `agentbrowser-server` on PATH.
 //
 // IMPORTANT winget-pkgs requirement: InstallerUrl must be PUBLIC and
 // immutable. The public release repo (anvai-labs/agentbrowser) is the asset
 // host — never point manifests at the private anvaiops remote.
 //
 // Usage:
-//   node scripts/winget-manifests.mjs --version 1.15.1 \
-//     --mcp-file agentbrowser-mcp-windows-x64.exe \
-//     --cli-file agentbrowser-cli-windows-x64.exe \
+//   node scripts/winget-manifests.mjs --version 1.17.0 \
+//     --zip-file agentbrowser-windows-x64.zip \
 //     --out winget/            # optional, default: winget/
-//   # or pass precomputed hashes instead of local files:
-//   node scripts/winget-manifests.mjs --version 1.15.1 \
-//     --mcp-sha256 <64hex> --cli-sha256 <64hex>
+//   # or pass the precomputed hash instead of the local file:
+//   node scripts/winget-manifests.mjs --version 1.17.0 --zip-sha256 <64hex>
 //
 // Output (winget-pkgs directory layout):
 //   winget/AnvaiLabs.AgentBrowser.yaml            (version manifest)
-//   winget/AnvaiLabs.AgentBrowser.installer.yaml  (2x portable installers)
+//   winget/AnvaiLabs.AgentBrowser.installer.yaml  (one zip installer, three nested portable commands)
 //   winget/AnvaiLabs.AgentBrowser.locale.en-US.yaml
 // Copy these to manifests/a/AnvaiLabs/AgentBrowser/<version>/ in a
 // winget-pkgs fork and open the PR. release.yml automates this when
@@ -49,41 +50,38 @@ function sha256(file) {
 const version = arg('version');
 const outDir = arg('out', 'winget');
 const base = arg('base-url', DEFAULT_BASE).replace(/\/+$/, '');
-const mcpName = 'agentbrowser-mcp-windows-x64.exe';
-const cliName = 'agentbrowser-cli-windows-x64.exe';
-const mcpFile = arg('mcp-file');
-const cliFile = arg('cli-file');
-const serverFile = arg('server-file');
-let mcpSha = arg('mcp-sha256');
-let cliSha = arg('cli-sha256');
-let serverSha = arg('server-sha256');
+const zipName = 'agentbrowser-windows-x64.zip';
+// RelativeFilePath -> PortableCommandAlias: the file names inside the bundle
+// built by scripts/assemble-windows-bundle.mjs (flat zip). winget extracts the
+// whole zip into the package directory, so the server launcher finds its
+// bundled node\ and server\ beside it.
+const COMMANDS = [
+  ['agentbrowser-mcp.exe', 'agentbrowser-mcp'],
+  ['agentbrowser-cli.exe', 'agentbrowser-cli'],
+  ['agentbrowser-server.exe', 'agentbrowser-server'],
+];
+const zipFile = arg('zip-file');
+let zipSha = arg('zip-sha256');
 
 if (!version) { console.error('--version is required'); exit(1); }
-if (!mcpSha) {
-  if (!mcpFile) { console.error('need --mcp-file or --mcp-sha256'); exit(1); }
-  mcpSha = sha256(mcpFile);
+if (!zipSha) {
+  if (!zipFile) { console.error('need --zip-file or --zip-sha256'); exit(1); }
+  zipSha = sha256(zipFile);
 }
-if (!cliSha) {
-  if (!cliFile) { console.error('need --cli-file or --cli-sha256'); exit(1); }
-  cliSha = sha256(cliFile);
-}
-// Optional: the REST server exe is a third portable command. Emit its
-// installer entry only when the caller provides it (backwards compatible).
-if (!serverSha && serverFile) serverSha = sha256(serverFile);
-for (const [label, h] of [['mcp', mcpSha], ['cli', cliSha], ...(serverSha ? [['server', serverSha]] : [])]) {
-  if (!/^[0-9A-Fa-f]{64}$/.test(h)) { console.error(`${label} sha256 malformed: ${h}`); exit(1); }
-}
+if (!/^[0-9A-Fa-f]{64}$/.test(zipSha)) { console.error(`zip sha256 malformed: ${zipSha}`); exit(1); }
+zipSha = zipSha.toUpperCase();
 
 mkdirSync(outDir, { recursive: true });
-const mcpUrl = `${base}/v${version.replace(/^v/, '')}/${mcpName}`;
-const cliUrl = `${base}/v${version.replace(/^v/, '')}/${cliName}`;
-const serverName = 'agentbrowser-server-windows-x64.exe';
-const serverUrl = serverSha ? `${base}/v${version.replace(/^v/, '')}/${serverName}` : null;
+const zipUrl = `${base}/v${version.replace(/^v/, '')}/${zipName}`;
+const nestedFiles = COMMANDS.map(
+  ([file, alias]) => `  - RelativeFilePath: ${file}\n    PortableCommandAlias: ${alias}\n`
+).join('');
 
 const yamls = {
   'AnvaiLabs.AgentBrowser.yaml':
 `PackageIdentifier: AnvaiLabs.AgentBrowser
 PackageVersion: ${version}
+DefaultLocale: en-US
 ManifestType: version
 ManifestVersion: ${MANIFEST_VERSION}
 `,
@@ -96,21 +94,12 @@ Platform:
 MinimumOSVersion: 10.0.17763.0
 Installers:
 - Architecture: x64
-  InstallerType: portable
-  InstallerUrl: ${mcpUrl}
-  InstallerSha256: ${mcpSha}
-  PortableCommandAlias: agentbrowser-mcp
-- Architecture: x64
-  InstallerType: portable
-  InstallerUrl: ${cliUrl}
-  InstallerSha256: ${cliSha}
-  PortableCommandAlias: agentbrowser-cli
-${serverSha ? `- Architecture: x64
-  InstallerType: portable
-  InstallerUrl: ${serverUrl}
-  InstallerSha256: ${serverSha}
-  PortableCommandAlias: agentbrowser-server
-` : ''}ManifestType: installer
+  InstallerType: zip
+  NestedInstallerType: portable
+  NestedInstallerFiles:
+${nestedFiles}  InstallerUrl: ${zipUrl}
+  InstallerSha256: ${zipSha}
+ManifestType: installer
 ManifestVersion: ${MANIFEST_VERSION}
 `,
   'AnvaiLabs.AgentBrowser.locale.en-US.yaml':
@@ -123,13 +112,14 @@ PackageName: AgentBrowser
 PackageUrl: https://github.com/anvai-labs/agentbrowser
 License: Apache-2.0
 LicenseUrl: https://github.com/anvai-labs/agentbrowser/blob/main/LICENSE
-ShortDescription: Browser automation for AI agents - MCP server and CLI (single-binary)
+ShortDescription: Browser automation for AI agents - MCP server, CLI and browser service
 Description: |-
-  AgentBrowser drives a real Chromium/Chrome browser for AI agents and test
-  automation. This package installs both the Model Context Protocol server
-  (agentbrowser-mcp) and the command-line client (agentbrowser-cli) as
-  standalone executables. System Chrome is auto-detected; no Node.js
-  runtime is required.
+  AgentBrowser drives a real Chromium browser for AI agents and test
+  automation. This package installs the Model Context Protocol server
+  (agentbrowser-mcp), the command-line client (agentbrowser-cli) and the
+  browser service (agentbrowser-server). The service runs on its own
+  bundled Node.js runtime; on first start it downloads the Chromium build it
+  needs (roughly 300 MB) into %LOCALAPPDATA%\\agentbrowser\\browsers.
 Moniker: agentbrowser
 Tags:
 - mcp
@@ -138,7 +128,7 @@ Tags:
 - ai
 - playwright
 - cli
-ReleaseNotesUrl: ${base}/v${version.replace(/^v/, '')}
+ReleaseNotesUrl: https://github.com/anvai-labs/agentbrowser/releases/tag/v${version.replace(/^v/, '')}
 ManifestType: defaultLocale
 ManifestVersion: ${MANIFEST_VERSION}
 `,
@@ -150,7 +140,7 @@ for (const [name, body] of Object.entries(yamls)) {
 }
 console.log(`
 Next steps:
-  1) Verify URLs resolve (public repo): ${mcpUrl}
+  1) Verify the URL resolves (public repo): ${zipUrl}
   2) Copy the three files to a winget-pkgs fork at
      manifests/a/AnvaiLabs/AgentBrowser/${version}/
      (release.yml does this automatically when WINGET_FORK_TOKEN is set)

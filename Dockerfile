@@ -40,8 +40,7 @@ RUN pnpm -r build
 # dependencies inlined (real files, no workspace symlinks).
 RUN pnpm --filter @agentbrowser/api deploy --prod /deploy \
   && find /deploy -name "*.test.ts" -delete \
-  && find /deploy -name "*.tsbuildinfo" -delete \
-  && find /deploy -type d -name src -prune -exec rm -rf {} +
+  && find /deploy -name "*.tsbuildinfo" -delete
 
 # ---------------------------------------------------------------------------
 # Runtime stage: the Playwright base ships Node 24, Chromium and its system
@@ -49,7 +48,7 @@ RUN pnpm --filter @agentbrowser/api deploy --prod /deploy \
 # The service is stateless by design (ephemeral sessions, in-memory stores),
 # so the container is safe under --read-only with a tmpfs on /tmp.
 # ---------------------------------------------------------------------------
-FROM mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
+FROM mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
 
 ENV NODE_ENV=production \
     PORT=5709 \

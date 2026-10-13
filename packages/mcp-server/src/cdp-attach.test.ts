@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { type McpClient, buildTools } from './mcp-server.js';
+import { buildTools, type McpClient } from './mcp-server.js';
 
 it('advertises and forwards only the configured attach selector', async () => {
   const create = vi.fn(async () => ({ sessionId: 's', diagnostics: { attachment: 'cdp_attach' } }));

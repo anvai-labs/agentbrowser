@@ -31,7 +31,6 @@ it('captures the operator response cap at startup and enforces it through sessio
     }
   } finally {
     if (previous === undefined) {
-      // biome-ignore lint/performance/noDelete: restore an absent environment setting.
       delete process.env.AGENTBROWSER_MAX_RESPONSE_BYTES;
     } else process.env.AGENTBROWSER_MAX_RESPONSE_BYTES = previous;
   }
@@ -91,7 +90,6 @@ it('the operator loopback opt-in (env) allows loopback without injecting a polic
       await server.close();
     }
   } finally {
-    // biome-ignore lint/performance/noDelete: env restore requires the delete.
     delete process.env.AGENTBROWSER_ALLOW_LOOPBACK;
   }
 });

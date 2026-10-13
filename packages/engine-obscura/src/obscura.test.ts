@@ -7,12 +7,10 @@
  * probe-verified 2026-08-29 (v0.2.1) with every assertion passing.
  */
 
-import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createObscuraEngine } from './engine';
 import type { ObscuraEngine } from './engine';
+import { createObscuraEngine } from './engine';
 
 function resolveBinary(): string | undefined {
   const override = process.env.OBSCURA_BIN;

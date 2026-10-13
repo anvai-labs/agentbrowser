@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { type Locator, errors } from 'playwright';
+import { errors, type Locator } from 'playwright';
 
 // Was 1000ms; too small for real multi-section forms (200+ elements, custom
 // React-Select-style comboboxes) where a whole-body ariaSnapshot legitimately

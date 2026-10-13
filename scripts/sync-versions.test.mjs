@@ -5,12 +5,12 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { synchronizeVersions } from './sync-versions.mjs';
 
-test('npm publication waits for tag validation and executable/server acceptance', () => {
+test('npm publication waits for tag validation, executable/server acceptance and the Windows bundle', () => {
   const workflow = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
   const job = workflow.split(/\n(?=  [\w-]+:)/).find((block) => block.startsWith('  npm-publish:\n'));
   assert.ok(job, 'Missing npm-publish job');
   const dependencies = job.match(/^    needs: \[([^\]]+)\]\s*$/m)?.[1].split(',').map((value) => value.trim());
-  assert.deepEqual(dependencies?.sort(), ['binaries', 'server-packages', 'tag-guard']);
+  assert.deepEqual(dependencies?.sort(), ['binaries', 'server-packages', 'tag-guard', 'windows-bundle']);
   const server = workflow.split(/\n(?=  [\w-]+:)/).find((block) => block.startsWith('  server-packages:\n'));
   assert.match(server ?? '', /^    needs: \[tag-guard, binaries\]\s*$/m);
 });

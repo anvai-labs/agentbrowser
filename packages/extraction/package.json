@@ -1,10 +1,13 @@
 {
   "name": "@agentbrowser/extraction",
-  "version": "1.17.0",
+  "version": "1.17.1",
   "private": true,
   "type": "module",
   "description": "Deterministic page extractors with evidence provenance (spec 12)",
   "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
@@ -22,9 +25,9 @@
     "linkedom": "^0.18.13"
   },
   "devDependencies": {
-    "@biomejs/biome": "^1.9.4",
+    "@biomejs/biome": "^2.5.15",
     "@types/node": "^22.10.2",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.9"
+    "vitest": "^5.0.4"
   }
 }

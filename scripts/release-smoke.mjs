@@ -161,12 +161,19 @@ export async function runExecutable(command, options = {}) {
     if (Buffer.byteLength(stdin) === 0) child.stdin.end();
     else child.stdin.end(stdin);
     const result = await closed;
+    // Opt-in for build tooling (pnpm, zip): acceptance checks never echo the
+    // output of the executable under test.
+    const tail = () => {
+      if (!options.diagnostics) return '';
+      const { stdout, stderr } = output();
+      return `\n${`${stderr}\n${stdout}`.trim().slice(-2000)}`;
+    };
     assert.equal(
       result.code,
       expectedExitCode,
       expectedExitCode === 0
-        ? `Executable exited unsuccessfully (${result.code ?? result.signal})`
-        : `Executable exited unexpectedly (${result.code ?? result.signal}; expected ${expectedExitCode})`
+        ? `Executable exited unsuccessfully (${result.code ?? result.signal})${tail()}`
+        : `Executable exited unexpectedly (${result.code ?? result.signal}; expected ${expectedExitCode})${tail()}`
     );
     return { ...output(), code: result.code };
   });

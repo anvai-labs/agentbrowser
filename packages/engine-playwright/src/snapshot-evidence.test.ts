@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SnapshotBudget, classifyEmptyObservation, frameSliceMs } from './snapshot-evidence';
+import { classifyEmptyObservation, frameSliceMs, SnapshotBudget } from './snapshot-evidence';
 
 describe('classifyEmptyObservation', () => {
   afterEach(() => {

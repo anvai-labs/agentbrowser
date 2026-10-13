@@ -7,7 +7,230 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.17.1] — 2026-10-13
+
+### Changed — dependencies (#426)
+
+- **Playwright 1.62.1 → 1.64.0.** Engines pick up a newer Chromium build, which is downloaded
+  again on first use: the Homebrew bootstrap, the Windows launcher and `playwright install`. The
+  Docker base image moves with it, to `mcr.microsoft.com/playwright:v1.64.0-noble`.
+- **CLI: `commander` 12 → 15.** The CLI now **rejects surplus positional arguments** that it used to
+  ignore silently, e.g. `agentbrowser observe <s> <p> extra` fails with "too many arguments".
+  Building the workspace from source now needs Node 22.12 or newer (root `engines`). Compiled CLI
+  binaries are unaffected, and the server tarball still runs on Node 22 or newer.
+- `@fastify/cors` 10 → 11 (major; the API sets `methods` explicitly, so its CORS behaviour is
+  unchanged), `@fastify/websocket` 11.3.4, `ws` 8.22.0, `axe-core` 4.14.0, `jsdom` 30.1.2. Biome 2
+  replaces Biome 1.9 for lint (#424), with every 1.9 rule still enforced.
+- Dependabot holds back updates that need deliberate migration. It ignores puppeteer (the Firefox
+  egress qualification is pinned to an exact driver) and the Playwright Docker image (it moves only
+  with npm `playwright`) entirely, and ignores **major** versions of `@types/node`, `typescript`,
+  `pixelmatch` (its colour metric changes baseline semantics) and the Docker `node` image.
+
+### Docs — design records
+
+- ADR-022 and TD-BROWSER-14 (#430) propose compact session and page identifiers and explicit,
+  generated CLI contexts for 1.18.0. These are design records only; nothing changes in this release.
+
+### Docs — Windows install, ADR-023, environment-variable reference
+
+- **Windows install docs.** README, the docs home page and the operations guide gain a Windows
+  section: winget or the zip, first-start Chromium, `--install-browser`, `AGENTBROWSER_HOME`,
+  `AGENTBROWSER_SKIP_BROWSER_INSTALL`, no Windows-service registration, and unsigned executables.
+  The operations guide also gains Windows troubleshooting: proxies, partial upgrades,
+  `winget upgrade` with files in use, long paths, antivirus, and owner-only credential files
+  under Constrained Language Mode.
+- **ADR-023** records why the Windows server ships as a bundled-Node zip, not a single-file
+  executable.
+- **Environment-variable reference.** The configuration table now covers every operator-facing
+  `AGENTBROWSER_*` variable, including several that appeared only in code and others documented
+  only in package READMEs or prose. Test-harness and internal variables are listed as such.
+  `AGENTBROWSER_LOG`, which the SDK sets, is noted as unread by the service.
+- **Correction:** the stale "Windows server exe is Bun-compiled" paragraph is replaced.
+
+### Changed — extracted-package acceptance runs on Windows
+
+- **Graceful stop works on Windows.** `scripts/package-acceptance.mjs` stops managed children
+  with SIGTERM on POSIX, as service managers do. On Windows, SIGTERM is `TerminateProcess`, so
+  the harness instead uses the server's stdin lifeline (`AGENTBROWSER_SHUTDOWN_ON_STDIN_EOF`) or
+  closes the injected child's IPC channel.
+- **A child counts as finished** once it has exited and both its output streams have closed,
+  which still captures late output. Node never emits `close` after the parent disconnects IPC,
+  so waiting for `close` would hang on Windows.
+- **Running the server.** The server under test is the POSIX launcher in the tree, or on Windows
+  the server entry on Node. A new `--server-command` option runs a given executable instead,
+  such as the Windows bundle's launcher. With `AGENTBROWSER_SHUTDOWN_ON_STDIN_EOF=1`, the
+  launcher now also stops gracefully on EOF on its own stdin.
+- **Windows environment fixes.** The harness prepends to the platform's real `Path` key, using
+  `;` as the separator. It used to write a second `PATH` key that hid System32, so `openssl` and
+  `qpdf` were never found. A command that can't be spawned now fails at once with its spawn
+  error, instead of waiting out the shutdown deadline.
+
+### Security — owner-only credential files on Windows
+
+- **The problem:** the CLI's cookie export (`cookies export --output`) and private observation
+  capture (`observe --output`) created files with mode `0600`. Windows ignores POSIX modes, so the
+  files inherited their folder's ACL. In a shared folder such as `C:\Users\Public`, that grants
+  Modify to every interactive user, so exported session cookies were readable by other local
+  users.
+- **The fix:** on Windows the file is now created **atomically with its security descriptor**.
+  - A fixed Windows PowerShell script calls .NET `FileStream(CreateNew, FileShare.None,
+    FileSecurity)`. The DACL is protected and holds exactly one ACE: the current user,
+    FullControl. At no moment does the file exist with any other ACL.
+  - The secret goes over stdin, never in argv or the environment.
+  - An existing name, a link included, is refused.
+  - POSIX keeps `O_EXCL | O_NOFOLLOW`, mode `0600`, and a failed `close` now counts as a failed
+    write.
+- **Why atomic creation:** an earlier approach set the ACL after creating the file. Review showed
+  that leaves a race: another user can swap the file for a decoy, or keep an early read handle.
+  Re-running that attack against the new code, the rename fails (the file is held with
+  `FileShare.None`), and every file carries the owner-only DACL from birth.
+- **Acceptance:** the extracted-package acceptance requires the SDDL DACL to be exactly
+  `D:P(A;;FA;;;<current user SID>)`.
+
+### Fixed — Windows service: shipped as the bundled-Node zip
+
+- **The single-file `agentbrowser-server-windows-x64.exe` is retired.** v1.17.0's copy failed on
+  every machine but CI with `Cannot find module 'D:\a\agentbrowser\…'`, because Bun froze
+  playwright-core's `__dirname` lookups to the build checkout, and Playwright cannot be
+  single-file bundled.
+- **The release's new `windows-bundle` job** builds `agentbrowser-windows-x64.zip` on a hosted
+  Windows runner and clean-room smoke-tests it before anything publishes. It contains:
+  - the launcher;
+  - the same CLI and MCP executables as the standalone assets;
+  - Node 24.21.0;
+  - the lockfile-pinned server tree.
+
+  npm publishing and the GitHub release both wait for that job.
+- **winget** installs the zip as one package. Its nested `agentbrowser-server.exe`,
+  `agentbrowser-cli.exe` and `agentbrowser-mcp.exe` keep their command aliases. The package
+  description now says what is installed: a bundled Node.js runtime, with Chromium downloaded on
+  first start. It no longer claims "no Node.js runtime is required".
+- `scripts/release-workflow.test.mjs` guards that structure, so the single-file server exe
+  can't come back.
+
+### Added — Windows bundle assembly and clean-room smoke
+
+- `scripts/assemble-windows-bundle.mjs` builds `agentbrowser-windows-x64.zip`, a flat zip
+  containing:
+  - the launcher `agentbrowser-server.exe`, `agentbrowser-cli.exe` and `agentbrowser-mcp.exe`;
+  - `node\` (official Node 24.21.0);
+  - the `server\` tree.
+
+  It refuses a server tree of another version, any link, any shipped file embedding a
+  build-machine path, and any path over the MAX_PATH budget.
+- `scripts/windows-node.json` pins the bundled Node to nodejs.org's SHA-256 values for both the
+  archive and `node.exe`, matching `.tool-versions`. `scripts/fetch-windows-node.mjs` downloads
+  only from `https://nodejs.org`, verifies both hashes, and installs only `node.exe` and
+  `LICENSE`.
+- `scripts/check-shipped-paths.mjs` fails on runner paths and the checkout path in shipped files.
+  It matches raw and JS-escaped (`D:\\a\\`) forms, in UTF-8 and UTF-16LE. v1.17.0's server exe
+  held the escaped form, and the scan fails on it.
+- `scripts/windows-bundle-smoke.mjs` extracts the bundle into a clean room outside any checkout
+  and drives the shipped executables:
+  - `--help`/`--version`;
+  - the first-start Chromium bootstrap;
+  - a real session through the CLI;
+  - the MCP end-to-end test through the MCP executable;
+  - killing the launcher outright, which must leave no server or Chromium process;
+  - a no-op reinstall;
+  - invocation through a symlink, as winget's Links directory does.
+
+  Windows CI assembles and smokes the bundle on every PR. The previously non-blocking MCP
+  end-to-end step now runs, blocking, inside the smoke.
+
+### Added — Windows server launcher
+
+- New `packages/api/src/launcher/`, compiled by `packages/api/scripts/compile-launcher.mjs` into the
+  `agentbrowser-server.exe` of the Windows bundle. The bundle places it next to a bundled
+  `node\` runtime and the `server\` tree. The launcher imports only `node:` builtins and never
+  derives a location from `__dirname` or `import.meta`; a test enforces both. v1.17.0's single-file
+  server exe failed on every machine but CI because Bun froze Playwright's `__dirname` lookups to the
+  build checkout.
+- **Install root:** `AGENTBROWSER_HOME` when set, and then only it (an incomplete one fails
+  loudly); else the real executable's directory, following winget's Links symlink; else the
+  invoked path. An incomplete bundle is refused, and so is a server tree whose `VERSION.json`
+  doesn't match the launcher.
+- **Chromium:** downloaded on first start into `%LOCALAPPDATA%\agentbrowser\browsers`, unless
+  `PLAYWRIGHT_BROWSERS_PATH` is set. Missing builds are detected the way Playwright detects them
+  (`browsers.json` revision plus the `INSTALLATION_COMPLETE` marker). `--install-browser`
+  pre-provisions; `AGENTBROWSER_SKIP_BROWSER_INSTALL=1` opts out; a failed download fails closed with
+  next steps.
+- **Supervision:** the launcher runs the server with the stdin lifeline. If the launcher is killed
+  outright, the server and its Chromium still shut down (verified on Windows 11 with a live session).
+  The first stop signal closes the lifeline; a second kills the server.
+
+### Fixed — server artifacts ship only built output
+
+- The server's workspace packages (`api`, `core`, `engine`, `engine-playwright`, `engine-safari`,
+  `extraction`, `policy`, `protocol`) now declare `"files": ["dist"]`, as `control` already did.
+  `pnpm deploy` had been copying whole package directories into the server tarballs: `src/`,
+  `tsconfig*`, `vitest.config.ts`, and on a machine that had run tests, `coverage/` reports
+  embedding the build checkout's absolute paths. The Docker image already deleted `src/` and
+  coverage itself, but still carried the TypeScript and Vitest configs.
+- The Dockerfile no longer deletes every directory named `src` under the deploy. That pruning is
+  redundant now, and it also stripped third-party runtime code: `real-require`, which pino uses to
+  load log transports, has its entry point at `src/index.js`.
+- A new test walks the API's workspace dependency closure (dependencies, optional and peer) and
+  requires an exact `files` allowlist.
+
+### Added — Windows server tree (packaging)
+
+- `scripts/package-server.mjs` gains a `win32-x64` target. Windows `tar` cannot extract the POSIX
+  tarballs' pnpm symlinks without Developer Mode, so the Windows tree must contain no links. It starts
+  from the **same lockfile-faithful isolated deploy** as every other target. The new
+  `scripts/materialize-hoisted.mjs` then rewrites that deploy into a link-free hoisted layout.
+  - It reads the dependency graph with Node's own lookup.
+  - It places each package at the highest ancestor that doesn't shadow an existing resolution.
+  - It re-verifies every dependency edge against the written files.
+  - So Windows ships exactly the versions in `pnpm-lock.yaml`. pnpm 9's own hoisted `deploy` was
+    rejected: it ignores the lockfile and re-resolves from the registry.
+- The target removes `node_modules/.bin` and type/source-map files. It fails if any link remains, if
+  a package can't run on win32-x64, or if a path exceeds the MAX_PATH budget under winget's install
+  root (files and directories are gated separately). It produces `agentbrowser-server-win32-x64.zip`.
+- On Windows hosts the packager runs pnpm through `npm_execpath`, or else through `cmd.exe` with
+  checked arguments. It stages on the checkout's drive, because pnpm deploy fails across drive
+  letters. Build-tool failures now include the tool's output.
+- `scripts/check-win32-server-tree.mjs` extracts that zip outside the checkout and checks it:
+  - no links;
+  - the extracted-package dependency audit;
+  - the server reaches `/health`;
+  - with `--session`, a real Chromium session.
+
+  It runs in Windows CI.
+
+### Fixed — server command line
+
+- `agentbrowser-server --help` and `--version` now answer without starting the service or
+  loading the browser engine (previously every argument was ignored and the server started). The
+  entrypoint parses arguments first and loads the server lazily, so help works even when
+  Playwright cannot load. Unknown arguments exit 2; configuration stays environment-only.
+- The server also shuts down cleanly on `SIGHUP` and, on Windows, `SIGBREAK`. A second signal
+  force-exits a hung shutdown. A new opt-in `AGENTBROWSER_SHUTDOWN_ON_STDIN_EOF=1` stops it when stdin closes,
+  which gives the Windows launcher a lifeline: if the launcher dies, the server still exits and
+  closes Chromium.
+
+### Fixed — winget package
+
+- The winget manifests were not valid: three portable `x64` installers in one package are rejected
+  as duplicate installer entries, and the version manifest lacked `DefaultLocale`. Releases now
+  also publish `agentbrowser-windows-x64.zip` with the three Windows commands, and the manifest
+  declares it as one zip installer with nested portable files, so
+  `winget install AnvaiLabs.AgentBrowser` provides `agentbrowser-mcp`, `agentbrowser-cli` and
+  `agentbrowser-server`. Regression tests in `scripts/winget-manifests.test.mjs` run with
+  `pnpm test:release`.
+
 ## [1.17.0] — 2026-10-12
+
+> **Known issue (Windows, v1.15.2 through v1.17.0):** `agentbrowser-server-windows-x64.exe` fails
+> at startup on every machine except the build runner, with
+> `Cannot find module 'D:\a\agentbrowser\…'`. Bun froze playwright-core's `__dirname` lookups
+> to the CI checkout. An `agentbrowser-windows-x64.zip` attached to v1.17.0 after release wrapped
+> the same executable and has since been removed from that release; each affected release now
+> carries a known-issue banner. A winget submission for 1.17.0
+> (microsoft/winget-pkgs#451310) was closed unmerged for this reason. Fixed in 1.17.1,
+> which ships the Windows service as a bundled-Node `agentbrowser-windows-x64.zip`
+> ([ADR-023](docs/adr/023-windows-server-bundled-node.md)). The Windows CLI and MCP executables
+> are unaffected.
 
 ### Security — browser request guard, CORS off by default, dependency advisories
 
@@ -64,6 +287,10 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   (`agentbrowser-mcp`, `agentbrowser-cli`, `agentbrowser-server`) generated from the
   windows release exes; `winget install AnvaiLabs.AgentBrowser` provisions all three
   with no Node runtime. Manifests always upload as a workflow artifact.
+  *Correction (2026-10-12):* these manifests were invalid (three portable installers for one
+  architecture, and no `DefaultLocale`), so no winget package was published from 1.16.1. The
+  1.16.1 server executable they would have installed also did not start outside CI. See the
+  1.17.0 known issue above and the 1.17.1 Windows entries.
 - **App-based submission (no user credential)**: a GitHub App installed on
   `anvai-labs/winget-pkgs` pushes the manifests branch per release (per-run
   installation tokens via `WINGET_APP_ID`/`WINGET_APP_PRIVATE_KEY`); the PR into

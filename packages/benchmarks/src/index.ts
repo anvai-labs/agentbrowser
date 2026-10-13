@@ -5,5 +5,5 @@
  */
 
 export * from './harness.js';
-export * from './tasks.js';
 export * from './soak.js';
+export * from './tasks.js';

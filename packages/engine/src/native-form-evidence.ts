@@ -1,4 +1,4 @@
-import { VERIFICATION_SNAPSHOT_LIMITS, snapshotJsonData } from '@agentbrowser/protocol';
+import { snapshotJsonData, VERIFICATION_SNAPSHOT_LIMITS } from '@agentbrowser/protocol';
 import { EngineError } from './errors.js';
 import type { NativeFormEvidence } from './types.js';
 

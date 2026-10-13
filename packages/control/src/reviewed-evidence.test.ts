@@ -2,9 +2,9 @@ import { ApprovalGate, type ApprovalReviewBinding } from '@agentbrowser/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EvidencePermission } from './outcome-runner.js';
 import {
+  captureReviewDisclosure,
   type EvidenceReviewSource,
   NATIVE_FORM_REVIEW_TYPE,
-  captureReviewDisclosure,
   prepareEvidenceReview,
 } from './reviewed-evidence.js';
 import { prepareEvidencePermission } from './trusted-callback.js';

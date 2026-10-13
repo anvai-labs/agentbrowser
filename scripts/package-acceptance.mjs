@@ -220,7 +220,60 @@ async function within(promise, timeoutMs, label) {
   } finally { clearTimeout(timer); }
 }
 
+/**
+ * Stop a managed child gracefully. POSIX keeps SIGTERM (what service
+ * managers send). On Windows a signal is TerminateProcess: no handler runs and
+ * the browser is orphaned, so stop through the stdin lifeline (the server's
+ * AGENTBROWSER_SHUTDOWN_ON_STDIN_EOF) or by closing the IPC channel (the
+ * injected child shuts down on 'disconnect').
+ */
+export function gracefulStop(child, { platform = process.platform, stop = 'ipc' } = {}) {
+  if (platform !== 'win32') return child.kill('SIGTERM');
+  if (stop === 'stdin') return child.stdin?.end();
+  return child.connected === false ? undefined : child.disconnect?.();
+}
+
+/**
+ * How to run the packaged server: the POSIX launcher shipped in the tree, or
+ * on Windows (no shell launcher in that tree) the server entry on this Node.
+ * An override runs a given executable, e.g. the Windows bundle's launcher.
+ */
+export function serverCommand(root, { platform = process.platform, override } = {}) {
+  if (override) return [override];
+  return platform === 'win32' ? [process.execPath, join(root, 'dist', 'bin.js')] : [join(root, 'agentbrowser-server')];
+}
+
 /** Owns one process. A forced API kill is a failure: browser descendants are not proven drained. */
+/**
+ * A secret-bearing file must be readable by its owner only. POSIX: mode 0600.
+ * Windows ignores modes; the CLI creates the file with a protected DACL
+ * holding exactly one ACE for the current user. Checked in SDDL (language-
+ * independent, unlike icacls' localized principal names): the DACL must be
+ * exactly D:P(A;;FA;;;<current user SID>) — a count alone would pass
+ * Everyone:(F). (globalThis: workflow callbacks bind a parameter `process`.)
+ */
+export async function assertOwnerOnly(path, label, { platform = globalThis.process.platform, run = runExecutable, readText = readFile } = {}) {
+  if (platform !== 'win32') {
+    assert.equal((await stat(path)).mode & 0o777, 0o600, `${label} is not owner-only`);
+    return;
+  }
+  const system32 = join(globalThis.process.env.SystemRoot ?? 'C:\\Windows', 'System32');
+  const who = (await run([join(system32, 'whoami.exe'), '/user', '/fo', 'csv', '/nh'])).stdout;
+  const sid = who.match(/"(S-1-[0-9]+(?:-[0-9]+)+)"\s*$/m)?.[1];
+  assert.ok(sid, 'Could not determine the current user SID');
+  const saved = join(tmpdir(), `agentbrowser-acl-${randomBytes(6).toString('hex')}.txt`);
+  try {
+    await run([join(system32, 'icacls.exe'), path, '/save', saved]);
+    const sddl = (await readText(saved, 'utf16le')).replace(/^\uFEFF/, '').split(/\r?\n/)[1]?.trim() ?? '';
+    // The SACL starts at "S:" — a SID (S-1-…) never contains a colon.
+    const dacl = sddl.match(/D:.*?(?=S:|$)/)?.[0] ?? '';
+    assert.equal(dacl, `D:P(A;;FA;;;${sid})`, `${label} is not owner-only: ${sddl}`);
+  } finally {
+    await rm(saved, { force: true });
+  }
+}
+
+
 export async function withManagedChild(command, options, exercise) {
   const label = options.label ?? 'managed-child';
   const validLabel = (value) => typeof value === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(value);
@@ -244,9 +297,13 @@ export async function withManagedChild(command, options, exercise) {
     assert.ok(phases.length < 60, 'Acceptance phase count exceeded');
     if (acceptingPhases) mark(name);
   };
+  const platform = options.platform ?? process.platform;
+  const stop = options.stop ?? 'ipc';
   const child = spawn(command[0], command.slice(1), {
-    env: options.env ?? process.env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+    // A stdin pipe only when it is the stop channel (the server's lifeline).
+    env: options.env ?? process.env, stdio: [stop === 'stdin' ? 'pipe' : 'ignore', 'pipe', 'pipe', 'ipc'],
   });
+  child.stdin?.on('error', () => {});
   const controller = new AbortController();
   let rejectFailure;
   let failureError;
@@ -264,10 +321,19 @@ export async function withManagedChild(command, options, exercise) {
     controller.abort(error);
     rejectFailure(error);
   };
+  // Done = exited and both output streams closed (late output still counts).
+  // Not 'close': after the parent disconnects IPC — the Windows graceful
+  // stop — Node never emits 'close' for the child, though it exits cleanly.
   let ended = false;
-  const closed = new Promise((resolve) => child.once('close', (code, signal) => {
-    ended = true; resolve({ code, signal });
-  }));
+  const streamsClosed = Promise.all(
+    [child.stdout, child.stderr].map((stream) => new Promise((resolve) => stream.once('close', resolve)))
+  );
+  const exited = new Promise((resolve) => child.once('exit', (code, signal) => resolve({ code, signal })));
+  // A failed spawn emits 'close' but never 'exit': accept 'close' too, so a
+  // bad command fails at once with its spawn error.
+  const closeEvent = new Promise((resolve) => child.once('close', (code, signal) => resolve({ code, signal })));
+  const closed = Promise.race([Promise.all([exited, streamsClosed]).then(([result]) => result), closeEvent])
+    .then((result) => { ended = true; return result; });
   child.on('error', failed);
   let outputBytes = 0;
   for (const stream of [child.stdout, child.stderr]) {
@@ -321,7 +387,7 @@ export async function withManagedChild(command, options, exercise) {
   try {
     clearTimeout(timer);
     if (!ended) {
-      child.kill('SIGTERM');
+      gracefulStop(child, { platform, stop });
       try {
         const result = await within(closed, options.shutdownMs ?? 10_000, 'API shutdown');
         if (!bodyError) assert.equal(result.code, 0, `API cleanup exited unsuccessfully (${result.code ?? result.signal})`);
@@ -353,12 +419,23 @@ export async function withManagedChild(command, options, exercise) {
   return value;
 }
 
+/**
+ * Prepend `dir` to the search path under the key the platform actually uses.
+ * Windows names it `Path` (lookups are case-insensitive, object spread is
+ * not): writing `PATH` beside it produced a duplicate that hid System32.
+ */
+export function withPath(env, dir, platform = process.platform) {
+  const key = Object.keys(env).find((name) => name.toUpperCase() === 'PATH') ?? (platform === 'win32' ? 'Path' : 'PATH');
+  const separator = platform === 'win32' ? ';' : ':';
+  return { ...env, [key]: env[key] ? `${dir}${separator}${env[key]}` : dir };
+}
+
 function cleanEnv(key) {
   const env = { ...process.env };
   for (const name of Object.keys(env)) {
     if (name.startsWith('AGENTBROWSER_') || /^(?:http|https|all|no)_proxy$/i.test(name) || ['HOST', 'PORT', 'NODE_PATH', 'NODE_OPTIONS', 'NODE_EXTRA_CA_CERTS', 'NODE_TLS_REJECT_UNAUTHORIZED', 'NODE_USE_ENV_PROXY'].includes(name)) delete env[name];
   }
-  return { ...env, PATH: `${dirname(process.execPath)}:${env.PATH ?? ''}`, AGENTBROWSER_API_KEYS: `${key}:release-smoke` };
+  return { ...withPath(env, dirname(process.execPath)), AGENTBROWSER_API_KEYS: `${key}:release-smoke` };
 }
 
 async function listen(server) {
@@ -724,7 +801,7 @@ async function workflow(baseUrl, key, fixture, process, options, report) {
           const exported = JSON.parse(bytes.toString('utf8'));
           assert.equal(receipt.count, exported.length);
           assert.ok(exported.some((entry) => entry.name === cookie.name && entry.value === cookie.value && entry.domain === cookie.domain && entry.path === cookie.path && entry.httpOnly === true), 'Export did not preserve cookie identity and HttpOnly');
-          assert.equal((await stat(outputPath)).mode & 0o777, 0o600, 'Cookie export is not owner-only');
+          await assertOwnerOnly(outputPath, 'Cookie export');
           await cookieCli(['session', 'cookies', id, '--output', outputPath], 1);
           assert.ok(bytes.equals(await readFile(outputPath)), 'Refused export overwrote an existing credential file');
           const restored = await cookieSession(['--cookies-file', outputPath]);
@@ -798,7 +875,7 @@ export async function checkPackagedServer(options) {
       });
     }
     if (options.profile === 'candidate') {
-      const invalidCeiling = await runExecutable([join(modules.root, 'agentbrowser-server')], {
+      const invalidCeiling = await runExecutable(serverCommand(modules.root, { override: options.serverCommand }), {
         env: {
           ...env,
           HOST: '127.0.0.1',
@@ -818,16 +895,20 @@ export async function checkPackagedServer(options) {
     const reservation = createTcpServer();
     const port = await listen(reservation);
     await new Promise((resolve) => reservation.close(resolve));
+    const win32 = process.platform === 'win32';
     const stockEnv = {
       ...env,
       HOST: '127.0.0.1',
       PORT: String(port),
+      // Windows stops the server through its stdin lifeline (SIGTERM there is
+      // TerminateProcess and would orphan Chromium).
+      ...(win32 ? { AGENTBROWSER_SHUTDOWN_ON_STDIN_EOF: '1' } : {}),
       ...(options.profile === 'candidate'
         ? { AGENTBROWSER_EXTRACT_MAX_BYTES: '4096' }
         : {}),
     };
     const baseUrl = `http://127.0.0.1:${port}`;
-    await withManagedChild([join(modules.root, 'agentbrowser-server')], { env: stockEnv, label: 'stock-server', timings: managedChildren }, async (process) => {
+    await withManagedChild(serverCommand(modules.root, { override: options.serverCommand }), { env: stockEnv, label: 'stock-server', timings: managedChildren, stop: win32 ? 'stdin' : 'ipc' }, async (process) => {
       await waitFor(async () => {
         try { await apiRequest(baseUrl, '/health', { timeoutMs: 300 }); return true; } catch { return false; }
       }, process.guard, 'Stock API readiness');
@@ -872,7 +953,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
         args.set(process.argv[i], process.argv[++i]);
       }
     }
-    const allowed = ['--server-root', '--expected-version', '--expected-commit', '--cli', '--cli-entry', '--mcp', '--mcp-entry', '--profile', '--install-browser', '--allow-dirty', '--report'];
+    const allowed = ['--server-root', '--server-command', '--expected-version', '--expected-commit', '--cli', '--cli-entry', '--mcp', '--mcp-entry', '--profile', '--install-browser', '--allow-dirty', '--report'];
     assert.ok([...args.keys()].every((name) => allowed.includes(name)), 'Unknown acceptance option');
     for (const required of ['--server-root', '--expected-version', '--cli', '--mcp']) assert.ok(args.has(required), `Missing ${required}`);
     const command = (kind) => [resolve(args.get(`--${kind}`)), ...(args.has(`--${kind}-entry`) ? [resolve(args.get(`--${kind}-entry`))] : [])];
@@ -880,6 +961,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
       serverRoot: args.get('--server-root'), expectedVersion: args.get('--expected-version'),
       cli: command('cli'), mcp: command('mcp'), profile: args.get('--profile') ?? 'candidate',
       installBrowser: args.get('--install-browser') === true,
+      serverCommand: args.has('--server-command') ? resolve(args.get('--server-command')) : undefined,
       expectedCommit: args.get('--expected-commit'), allowDirty: args.get('--allow-dirty') === true,
     });
     const output = JSON.stringify({ acceptance: report.checks.some((check) => check.status !== 'pass') ? 'PARTIAL' : 'PASS', ...report });
