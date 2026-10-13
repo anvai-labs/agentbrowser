@@ -56,7 +56,7 @@ ADR-007 and the CDP-attach design guarantee unconditionally:
     - **Union:** an address's classes are its own IPv6 classes **plus** the classes of the IPv4 it
       embeds. `public` is dropped whenever another class is present, so "public" keeps meaning "no
       other class".
-    - **Examples:** `64:ff9b::a9fe:a9fe` → {metadata}; `64:ff9b::7f00:1` → {loopback}. Today both
+    - **Examples:** `64:ff9b::a9fe:a9fe` → {private, metadata}; `64:ff9b::7f00:1` → {loopback}. Today both
       classify as public. `::1` stays {loopback, private}.
     - **Why `::/127` is excluded:** decoded, `::1` would read as `0.0.0.1`, which is private only.
       A private grant would then reach IPv6 loopback, the AgentBrowser API included.
@@ -74,8 +74,9 @@ ADR-007 and the CDP-attach design guarantee unconditionally:
 - **Operator CDP attachment refusals:** hosted deployments, more than one authenticated tenant,
   missing bearer credentials, non-loopback listeners or peers, delegated sessions, and cookie
   export or seed on an attached profile. Policy may refuse attachment further; it can never
-  permit any of these. The only exception is the server-internal cookie handoff that ADR-025
-  proposes, which has its own floor. It reads cookies from the operator's browser into a
+  permit any of these. The only exception, which applies once ADR-025 is Accepted, is the
+  server-internal cookie handoff it proposes, which has its own floor. Until then there is no
+  exception. It reads cookies from the operator's browser into a
   contained session and never returns values to a caller; ordinary export stays refused.
 - **Delegated (controlled) sessions** require an authenticated operator principal.
 - **Approval-token mechanics:** single use, bound to page, revision, target fingerprint and

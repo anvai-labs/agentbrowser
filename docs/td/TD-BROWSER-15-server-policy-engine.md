@@ -28,7 +28,7 @@ hardens the floor.
 (`::/96` **excluding `::/127`**).
 - An address's classes are its own plus those of the embedded IPv4.
 - `public` is dropped when any other class is present.
-- **Examples:** `64:ff9b::a9fe:a9fe` → {metadata}; `64:ff9b::7f00:1` → {loopback}; `::1` stays
+- **Examples:** `64:ff9b::a9fe:a9fe` → {private, metadata}; `64:ff9b::7f00:1` → {loopback}; `::1` stays
   {loopback, private}.
 - Operator-chosen network-specific NAT64 prefixes are a known limit.
 - **Tests:** `::1` and `::` keep loopback under every option combination, including
