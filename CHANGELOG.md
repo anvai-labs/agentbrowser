@@ -31,10 +31,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 - The server's workspace packages (`api`, `core`, `engine`, `engine-playwright`, `engine-safari`,
   `extraction`, `policy`, `protocol`) now declare `"files": ["dist"]`, as `control` already did.
-  `pnpm deploy` had been copying whole package directories into every server artifact (the
-  tarballs, the Docker image and the Windows tree): `src/`, `tsconfig*`, `vitest.config.ts`, and on
-  a machine that had run tests, `coverage/` reports embedding the build checkout's absolute paths.
-  A new test walks the API's workspace dependency closure and requires the allowlist.
+  `pnpm deploy` had been copying whole package directories into the server tarballs: `src/`,
+  `tsconfig*`, `vitest.config.ts`, and on a machine that had run tests, `coverage/` reports
+  embedding the build checkout's absolute paths. The Docker image already deleted `src/` and
+  coverage itself, but still carried the TypeScript and Vitest configs.
+- The Dockerfile no longer deletes every directory named `src` under the deploy. That pruning is
+  redundant now, and it also stripped third-party runtime code: `real-require`, which pino uses to
+  load log transports, has its entry point at `src/index.js`.
+- A new test walks the API's workspace dependency closure (dependencies, optional and peer) and
+  requires an exact `files` allowlist.
 
 ### Fixed — server command line
 

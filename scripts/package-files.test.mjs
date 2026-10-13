@@ -11,22 +11,41 @@ const manifest = async (name) =>
   JSON.parse(await readFile(new URL(`../packages/${name}/package.json`, import.meta.url), 'utf8'));
 const dirOf = (pkg) => pkg.replace('@agentbrowser/', '');
 
-test('the server deploy closure ships only built output', async () => {
-  const seen = new Set();
+// Exact allowlists only: a glob such as "*" or "./src" would pass any
+// prefix-based check while shipping everything.
+const ALLOWED = [JSON.stringify(['dist']), JSON.stringify(['dist', 'README.md'])];
+
+export async function deployClosure() {
+  const seen = new Map();
   const queue = ['api'];
   while (queue.length > 0) {
     const dir = queue.shift();
     if (seen.has(dir)) continue;
-    seen.add(dir);
     const pkg = await manifest(dir);
-    assert.ok(Array.isArray(pkg.files), `${pkg.name} must declare "files" (it ships in the server tree)`);
-    assert.ok(pkg.files.includes('dist'), `${pkg.name} "files" must include dist`);
-    for (const entry of pkg.files) {
-      assert.ok(!/^(src|coverage|test)/.test(entry) && !/tsconfig|vitest/.test(entry), `${pkg.name} must not ship ${entry}`);
-    }
-    for (const dep of Object.keys(pkg.dependencies ?? {})) {
-      if (dep.startsWith('@agentbrowser/')) queue.push(dirOf(dep));
+    seen.set(dir, pkg);
+    // Same edges as the extracted-package audit: optional and peer
+    // workspace dependencies deploy too.
+    for (const deps of [pkg.dependencies, pkg.optionalDependencies, pkg.peerDependencies]) {
+      for (const dep of Object.keys(deps ?? {})) if (dep.startsWith('@agentbrowser/')) queue.push(dirOf(dep));
     }
   }
-  assert.ok(seen.size >= 5, `expected the API's workspace closure, saw ${[...seen].join(', ')}`);
+  return seen;
+}
+
+test('the server deploy closure ships only built output', async () => {
+  const closure = await deployClosure();
+  for (const pkg of closure.values()) {
+    assert.ok(
+      ALLOWED.includes(JSON.stringify(pkg.files)),
+      `${pkg.name} must declare "files": ["dist"] (or ["dist", "README.md"]); got ${JSON.stringify(pkg.files)}`
+    );
+  }
+  assert.ok(closure.has('engine-playwright') && closure.has('protocol') && closure.size >= 9,
+    `expected the API's full workspace closure, saw ${[...closure.keys()].join(', ')}`);
+});
+
+test('the allowlist check rejects widened or missing allowlists', () => {
+  for (const files of [undefined, ['dist', '*'], ['./src', 'dist'], ['dist', 'src'], ['lib']]) {
+    assert.ok(!ALLOWED.includes(JSON.stringify(files)), JSON.stringify(files));
+  }
 });

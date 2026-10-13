@@ -40,8 +40,7 @@ RUN pnpm -r build
 # dependencies inlined (real files, no workspace symlinks).
 RUN pnpm --filter @agentbrowser/api deploy --prod /deploy \
   && find /deploy -name "*.test.ts" -delete \
-  && find /deploy -name "*.tsbuildinfo" -delete \
-  && find /deploy -type d -name src -prune -exec rm -rf {} +
+  && find /deploy -name "*.tsbuildinfo" -delete
 
 # ---------------------------------------------------------------------------
 # Runtime stage: the Playwright base ships Node 24, Chromium and its system
