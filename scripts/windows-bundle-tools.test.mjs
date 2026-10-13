@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { scanShippedPaths } from './check-shipped-paths.mjs';
+import { canonical, canonicalBytes, scanShippedPaths } from './check-shipped-paths.mjs';
 import { fetchWindowsNode, readNodePin } from './fetch-windows-node.mjs';
 
 async function withDir(exercise) {
@@ -122,6 +122,28 @@ test('scanShippedPaths catches a path escaped inside a JS string literal (the v1
     // Bytes as found in v1.17.0's agentbrowser-server-windows-x64.exe.
     await writeFile(join(dir, 'server.exe'), Buffer.from('require("D:\\\\a\\\\agentbrowser\\\\agentbrowser\\\\node_modules")'));
     const findings = await scanShippedPaths(dir);
-    assert.deepEqual(findings.map((f) => f.needle), ['D:\\\\a\\\\']);
+    assert.deepEqual(findings.map((f) => f.needle), ['D:\\a\\']);
   });
+});
+
+test('scanShippedPaths catches other spellings of a build path (case, double escaping, JSON, mixed separators)', async () => {
+  await withDir(async (dir) => {
+    const forms = {
+      'lower.js': 'x = "d:\\\\a\\\\agentbrowser"', // lowercase drive, JS-escaped
+      'double.js': 'x = "D:\\\\\\\\a\\\\\\\\agentbrowser"', // JSON inside JS: four backslashes
+      'json.json': '{"p":"D:\\/a\\/agentbrowser"}', // JSON-escaped forward slashes
+      'mixed.js': 'x = "D:\\\\a/agentbrowser"', // backslash then slash
+      'lower-posix.js': 'x = "/HOME/RUNNER/WORK/agentbrowser"', // case-folded POSIX runner path
+    };
+    for (const [name, text] of Object.entries(forms)) await writeFile(join(dir, name), text);
+    const found = new Set((await scanShippedPaths(dir)).map((f) => f.file));
+    assert.deepEqual([...found].sort(), Object.keys(forms).sort());
+  });
+});
+
+test('byte canonicalization agrees with the string form on ASCII and UTF-16LE', () => {
+  const text = 'X D:\\\\A/agentBrowser\\/Node_Modules y';
+  assert.equal(canonicalBytes(Buffer.from(text, 'latin1')).toString('latin1'), canonical(text));
+  const utf16 = Buffer.concat([Buffer.from([0x41]), Buffer.from(text, 'utf16le')]);
+  assert.equal(canonicalBytes(utf16, 2, 1).toString('latin1'), canonical(text));
 });

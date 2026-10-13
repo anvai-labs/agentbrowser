@@ -18,20 +18,27 @@ import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 
 // GitHub-hosted runner workspaces (Windows, Linux, macOS).
-const RUNNER_PREFIXES = ['D:\\a\\', 'D:/a/', '/home/runner/work/', '/Users/runner/work/'];
+const RUNNER_PREFIXES = ['D:\\a\\', '/home/runner/work/', '/Users/runner/work/'];
+
+/**
+ * Canonical form for matching: lowercase, and every separator spelling — a
+ * backslash escaped to any depth (\\, \\\\, \\\\\\\\ …), JSON's
+ * \\/, or a slash — folded to a single "/". One needle then covers case,
+ * escaping depth and mixed separators (v1.17.0's exe held D:\\\\a\\\\…, which a
+ * raw-only scan passed).
+ */
+export function canonical(text) {
+  return text.toLowerCase().replace(/(?:\\+\/?|\/)+/g, '/');
+}
 
 function needlesFor(checkout) {
-  const needles = [...RUNNER_PREFIXES];
+  const labels = [...RUNNER_PREFIXES];
   if (checkout) {
     // A drive-letter path is already absolute, whatever host scans it.
     const absolute = /^[A-Za-z]:[\\/]/.test(checkout) ? checkout : resolve(checkout);
-    const forward = absolute.replace(/\\/g, '/').replace(/\/$/, '');
-    needles.push(forward, forward.replace(/\//g, '\\'));
+    labels.push(absolute.replace(/[\\/]+$/, ''));
   }
-  // Bundlers embed paths inside JS string literals, where each backslash is
-  // escaped: v1.17.0's exe holds `D:\\a\\agentbrowser`, not `D:\a\agentbrowser`.
-  const escaped = needles.filter((n) => n.includes('\\')).map((n) => n.replace(/\\/g, '\\\\'));
-  return [...new Set([...needles, ...escaped])];
+  return labels.map((label) => ({ label, key: canonical(label) }));
 }
 
 async function* files(dir, top, exclude) {
@@ -44,21 +51,53 @@ async function* files(dir, top, exclude) {
   }
 }
 
+const SLASH = 0x2f;
+const BACKSLASH = 0x5c;
+const BREAK = 0x00; // stands in for any non-ASCII unit: never part of a needle
+
+/**
+ * canonical(), applied to bytes in one pass without building strings (shipped
+ * executables are ~90 MB; giant intermediate strings crashed Node). `step`
+ * 1 reads ASCII/UTF-8 bytes; step 2 reads UTF-16LE code units starting at
+ * `offset` (ASCII when the high byte is 0).
+ */
+export function canonicalBytes(data, step = 1, offset = 0) {
+  const out = Buffer.allocUnsafe(Math.ceil((data.length - offset) / step));
+  let n = 0;
+  let separator = false;
+  for (let i = offset; i + step - 1 < data.length; i += step) {
+    let c = data[i];
+    if (step === 2 && data[i + 1] !== 0) c = BREAK;
+    if (c === SLASH || c === BACKSLASH) {
+      if (!separator) out[n++] = SLASH;
+      separator = true;
+      continue;
+    }
+    separator = false;
+    out[n++] = c >= 0x41 && c <= 0x5a ? c + 32 : c;
+  }
+  return out.subarray(0, n);
+}
+
 export async function scanShippedPaths(root, { checkout, exclude = [] } = {}) {
-  const needles = needlesFor(checkout).flatMap((needle) => [
-    { needle, encoding: 'utf8', bytes: Buffer.from(needle, 'utf8') },
-    { needle, encoding: 'utf16le', bytes: Buffer.from(needle, 'utf16le') },
-  ]);
+  const needles = needlesFor(checkout).map((needle) => ({ ...needle, bytes: Buffer.from(needle.key, 'latin1') }));
   const findings = [];
   for await (const { path, rel } of files(root, root, exclude)) {
     const data = await readFile(path);
-    for (const { needle, encoding, bytes } of needles) {
-      if (data.includes(bytes)) findings.push({ file: rel, encoding, needle });
+    const seen = new Set();
+    // UTF-8/ASCII, then UTF-16LE at both alignments (a string inside a
+    // binary can start at an odd offset).
+    for (const [encoding, step, offset] of [['utf8', 1, 0], ['utf16le', 2, 0], ['utf16le', 2, 1]]) {
+      const haystack = canonicalBytes(data, step, offset);
+      for (const { label, bytes } of needles) {
+        if (!seen.has(label) && haystack.includes(bytes)) {
+          seen.add(label);
+          findings.push({ file: rel, encoding, needle: label });
+        }
+      }
     }
   }
-  // One finding per file and needle text is enough to act on.
-  const seen = new Set();
-  return findings.filter((f) => !seen.has(`${f.file}\0${f.needle}`) && seen.add(`${f.file}\0${f.needle}`));
+  return findings;
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {

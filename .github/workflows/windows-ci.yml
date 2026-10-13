@@ -139,7 +139,3 @@ jobs:
       - name: Windows gotcha gates (W1-W6)
         run: node --test scripts/windows-gotchas.test.mjs
 
-      # Real end-to-end on win32: MCP server spawns a headless session and
-      # answers a browser observation through the full stack. This is the
-      # test that would have caught the UNC/.cmd class of failures before
-      # they reached WSL users.

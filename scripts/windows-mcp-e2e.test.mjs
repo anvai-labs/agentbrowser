@@ -93,6 +93,10 @@ test('MCP end-to-end: create -> observe -> close on win32', { skip: !IS_WIN && '
     clientInfo: { name: 'win-e2e', version: '0.0.0' },
   });
   assert.ok(init.serverInfo, 'initialize returns serverInfo');
+  // The bundle smoke pins the shipped MCP executable to the release version.
+  if (process.env.AGENTBROWSER_E2E_EXPECTED_VERSION) {
+    assert.equal(init.serverInfo.version, process.env.AGENTBROWSER_E2E_EXPECTED_VERSION, 'MCP executable version');
+  }
   c.child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
 
   const tools = await c.request('tools/list', {});

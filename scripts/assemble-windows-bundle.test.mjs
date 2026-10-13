@@ -84,10 +84,24 @@ test('refuses build-machine paths and links in the assembled bundle', async () =
   });
 });
 
-test('never overwrites an existing output directory', async () => {
+test('never overwrites an existing output directory, and leaves it intact', async () => {
   await withInputs(async (dir) => {
     await mkdir(join(dir, 'out'));
+    await writeFile(join(dir, 'out', 'keep.txt'), 'previous candidate');
     await assert.rejects(assembleWindowsBundle(base(dir, runner().run)), /EEXIST/);
+    assert.equal(await readFile(join(dir, 'out', 'keep.txt'), 'utf8'), 'previous candidate');
+  });
+});
+
+test('refuses a bundle whose paths exceed the Windows MAX_PATH budget', async () => {
+  await withInputs(async (dir) => {
+    const deep = runner({ extra: async (into) => {
+      const long = join(into, 'server', 'node_modules', 'x'.repeat(60), 'node_modules', 'y'.repeat(60));
+      await mkdir(long, { recursive: true });
+      await writeFile(join(long, 'index.js'), '');
+    } });
+    await assert.rejects(assembleWindowsBundle(base(dir, deep.run)), /MAX_PATH/);
+    await assert.rejects(stat(join(dir, 'out')), /ENOENT/);
   });
 });
 

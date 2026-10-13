@@ -25,7 +25,7 @@
  */
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { mkdtemp, rm, symlink } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -96,7 +96,11 @@ async function waitFor(check, label, ms) {
 
 export async function smokeWindowsBundle({ zip, expectedVersion, browsers: provisioned, requireSymlink = false }) {
   assert.equal(process.platform, 'win32', 'the Windows bundle smoke runs on Windows');
-  const work = await mkdtemp(join(tmpdir(), 'ab-bundle-smoke-'));
+  // The real long-form path: hosted runners set TEMP to an 8.3 short name
+  // (C:\Users\RUNNER~1\…) while the launcher runs the server from its
+  // resolved real path, so a short-form prefix never matched the server's
+  // node.exe and the kill check silently skipped it.
+  const work = realpathSync.native(await mkdtemp(join(tmpdir(), 'ab-bundle-smoke-')));
   const report = {};
   let launcher;
   try {
@@ -151,7 +155,10 @@ export async function smokeWindowsBundle({ zip, expectedVersion, browsers: provi
 
     // 4. MCP end-to-end through the shipped MCP executable.
     run(process.execPath, ['--test', join(SCRIPTS, 'windows-mcp-e2e.test.mjs')], {
-      env: { ...env, AGENTBROWSER_BASE_URL: base, AGENTBROWSER_E2E_MCP_COMMAND: exe('mcp'), AGENTBROWSER_TEST_HEADLESS: '1' },
+      env: {
+        ...env, AGENTBROWSER_BASE_URL: base, AGENTBROWSER_E2E_MCP_COMMAND: exe('mcp'),
+        AGENTBROWSER_E2E_EXPECTED_VERSION: expectedVersion, AGENTBROWSER_TEST_HEADLESS: '1',
+      },
       timeout: 300_000,
     });
     report.mcp = 'PASS';
@@ -160,7 +167,10 @@ export async function smokeWindowsBundle({ zip, expectedVersion, browsers: provi
     const live = cli('session', 'create', '--tenant', 'bundle-smoke');
     cli('page', 'create', live.sessionId);
     const before = survivors(dir, browsers);
-    assert.ok(before.length >= 2, `expected server and Chromium processes, saw: ${before.join(', ')}`);
+    // Name what must be there, not just how many: the bundled server's
+    // node.exe and at least one Chromium process.
+    assert.ok(before.some((p) => / node\.exe$/i.test(p)), `server node.exe not seen before the kill: ${before.join(', ')}`);
+    assert.ok(before.some((p) => /chrome(-headless-shell)?\.exe$/i.test(p)), `Chromium not seen before the kill: ${before.join(', ')}`);
     run(join(system32, 'taskkill.exe'), ['/F', '/PID', String(launcher.pid)]);
     const after = await waitFor(() => (survivors(dir, browsers).length === 0 ? [] : undefined), 'server and Chromium to exit after the launcher was killed', 30_000)
       .catch((error) => { throw new Error(`${error.message}: ${survivors(dir, browsers).join(', ')}`); });
