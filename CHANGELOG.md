@@ -15,8 +15,8 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   derives a location from `__dirname` or `import.meta`; a test enforces both. v1.17.0's single-file
   server exe failed on every machine but CI because Bun froze Playwright's `__dirname` lookups to the
   build checkout.
-- **Install root:** found from `AGENTBROWSER_HOME`, else the real executable's directory (following
-  winget's Links symlink), else the invoked path. It refuses an incomplete bundle, and a server tree
+- **Install root:** `AGENTBROWSER_HOME` when set (and then only it; an incomplete one fails loudly),
+  else the real executable's directory (following winget's Links symlink), else the invoked path. It refuses an incomplete bundle, and a server tree
   whose `VERSION.json` doesn't match the launcher.
 - **Chromium:** downloaded on first start into `%LOCALAPPDATA%\agentbrowser\browsers`, unless
   `PLAYWRIGHT_BROWSERS_PATH` is set. Missing builds are detected the way Playwright detects them
