@@ -33,7 +33,7 @@ provisioned Chromium (plus its platform libraries on Linux). See the
 # once the package is accepted into winget-pkgs (not yet published):
 winget install AnvaiLabs.AgentBrowser
 agentbrowser-server                     # first start downloads Chromium (~300 MB)
-# or extract agentbrowser-windows-x64.zip from the next release and run .\agentbrowser-server.exe
+# or extract agentbrowser-windows-x64.zip from v1.17.1 or later and run .\agentbrowser-server.exe
 ```
 
 The zip is self-contained: the service runs on its own bundled Node.js runtime, and

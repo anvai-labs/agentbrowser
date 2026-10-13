@@ -7,6 +7,8 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+## [1.17.1] — 2026-10-13
+
 ### Docs — Windows install, ADR-023, environment-variable reference
 
 - **Windows install docs.** README, the docs home page and the operations guide gain a Windows
@@ -203,7 +205,7 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 > to the CI checkout. An `agentbrowser-windows-x64.zip` attached to v1.17.0 after release wrapped
 > the same executable and has since been removed from that release; each affected release now
 > carries a known-issue banner. A winget submission for 1.17.0
-> (microsoft/winget-pkgs#451310) was closed unmerged for this reason. Fixed in the next release,
+> (microsoft/winget-pkgs#451310) was closed unmerged for this reason. Fixed in 1.17.1,
 > which ships the Windows service as a bundled-Node `agentbrowser-windows-x64.zip`
 > ([ADR-023](docs/adr/023-windows-server-bundled-node.md)). The Windows CLI and MCP executables
 > are unaffected.

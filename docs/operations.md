@@ -179,8 +179,8 @@ One install ships all three surfaces:
 ```powershell
 # Either, once the package is accepted into winget-pkgs (not yet published):
 winget install AnvaiLabs.AgentBrowser     # puts agentbrowser-server / -cli / -mcp on PATH
-# Or: extract agentbrowser-windows-x64.zip from a release that ships the bundle (the next
-# release; earlier Windows server assets are broken) and run from that folder:
+# Or: extract agentbrowser-windows-x64.zip from a release that ships the bundle (v1.17.1 or
+# later; earlier Windows server assets are broken) and run from that folder:
 .\agentbrowser-server.exe --install-browser   # optional: download Chromium now
 .\agentbrowser-server.exe                     # the service, on 127.0.0.1:5709
 ```
