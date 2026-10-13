@@ -147,3 +147,12 @@ test('byte canonicalization agrees with the string form on ASCII and UTF-16LE', 
   const utf16 = Buffer.concat([Buffer.from([0x41]), Buffer.from(text, 'utf16le')]);
   assert.equal(canonicalBytes(utf16, 2, 1).toString('latin1'), canonical(text));
 });
+
+test('a drive-letter needle needs a boundary: android://a/ or field:\\a\\ is not D:\\a\\', async () => {
+  await withDir(async (dir) => {
+    await writeFile(join(dir, 'benign.js'), 'x = "android://a/b"; y = "cid://a/b"; z = "field:\\\\a\\\\";');
+    assert.deepEqual(await scanShippedPaths(dir), []);
+    await writeFile(join(dir, 'real.js'), 'p = "(D:\\\\a\\\\agentbrowser)"');
+    assert.deepEqual((await scanShippedPaths(dir)).map((f) => f.file), ['real.js']);
+  });
+});

@@ -38,7 +38,12 @@ function needlesFor(checkout) {
     const absolute = /^[A-Za-z]:[\\/]/.test(checkout) ? checkout : resolve(checkout);
     labels.push(absolute.replace(/[\\/]+$/, ''));
   }
-  return labels.map((label) => ({ label, key: canonical(label) }));
+  return labels.map((label) => {
+    const key = canonical(label);
+    // A drive letter must start a token: "android://a/" or "field:\\a\\"
+    // canonicalize to "…d:/a/" too, and are not build paths.
+    return { label, key, boundary: /^[a-z]:\//.test(key) };
+  });
 }
 
 async function* files(dir, top, exclude) {
@@ -81,6 +86,13 @@ export function canonicalBytes(data, step = 1, offset = 0) {
 
 export async function scanShippedPaths(root, { checkout, exclude = [] } = {}) {
   const needles = needlesFor(checkout).map((needle) => ({ ...needle, bytes: Buffer.from(needle.key, 'latin1') }));
+  const isWordByte = (c) => (c >= 0x61 && c <= 0x7a) || (c >= 0x30 && c <= 0x39);
+  const occurs = (haystack, { bytes, boundary }) => {
+    for (let at = haystack.indexOf(bytes); at !== -1; at = haystack.indexOf(bytes, at + 1)) {
+      if (!boundary || at === 0 || !isWordByte(haystack[at - 1])) return true;
+    }
+    return false;
+  };
   const findings = [];
   for await (const { path, rel } of files(root, root, exclude)) {
     const data = await readFile(path);
@@ -89,10 +101,10 @@ export async function scanShippedPaths(root, { checkout, exclude = [] } = {}) {
     // binary can start at an odd offset).
     for (const [encoding, step, offset] of [['utf8', 1, 0], ['utf16le', 2, 0], ['utf16le', 2, 1]]) {
       const haystack = canonicalBytes(data, step, offset);
-      for (const { label, bytes } of needles) {
-        if (!seen.has(label) && haystack.includes(bytes)) {
-          seen.add(label);
-          findings.push({ file: rel, encoding, needle: label });
+      for (const needle of needles) {
+        if (!seen.has(needle.label) && occurs(haystack, needle)) {
+          seen.add(needle.label);
+          findings.push({ file: rel, encoding, needle: needle.label });
         }
       }
     }
