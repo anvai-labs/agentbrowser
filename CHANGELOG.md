@@ -7,6 +7,26 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — Windows server launcher
+
+- New `packages/api/src/launcher/`, compiled by `packages/api/scripts/compile-launcher.mjs` into the
+  `agentbrowser-server.exe` of the upcoming Windows bundle. The bundle places it next to a bundled
+  `node\` runtime and the `server\` tree. The launcher imports only `node:` builtins and never
+  derives a location from `__dirname` or `import.meta`; a test enforces both. v1.17.0's single-file
+  server exe failed on every machine but CI because Bun froze Playwright's `__dirname` lookups to the
+  build checkout.
+- **Install root:** `AGENTBROWSER_HOME` when set (and then only it; an incomplete one fails loudly),
+  else the real executable's directory (following winget's Links symlink), else the invoked path. It refuses an incomplete bundle, and a server tree
+  whose `VERSION.json` doesn't match the launcher.
+- **Chromium:** downloaded on first start into `%LOCALAPPDATA%\agentbrowser\browsers`, unless
+  `PLAYWRIGHT_BROWSERS_PATH` is set. Missing builds are detected the way Playwright detects them
+  (`browsers.json` revision plus the `INSTALLATION_COMPLETE` marker). `--install-browser`
+  pre-provisions; `AGENTBROWSER_SKIP_BROWSER_INSTALL=1` opts out; a failed download fails closed with
+  next steps.
+- **Supervision:** the launcher runs the server with the stdin lifeline. If the launcher is killed
+  outright, the server and its Chromium still shut down (verified on Windows 11 with a live session).
+  The first stop signal closes the lifeline; a second kills the server.
+
 ### Fixed — server command line
 
 - `agentbrowser-server --help` and `--version` now answer without starting the service or
