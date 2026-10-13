@@ -216,7 +216,7 @@ The following ADRs in `docs/adr/` are critical for understanding design choices:
 22. **ADR-022** (Proposed): compact identifiers and explicit CLI context
 23. **ADR-023**: Windows server ships as a bundled-Node zip, not a single-file executable
 24. **ADR-024** (Proposed): server policy engine — embedded Cedar, per-tenant, queryable by agents
-25. **ADR-025** (Proposed): policy-gated cookie handoff from the operator's browser into a contained session
+25. **ADR-025** (Proposed): operator login browser (pipe, no port) and operator-approved cookie handoff into a contained session
 
 ## Core Concepts
 

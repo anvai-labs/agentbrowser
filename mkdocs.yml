@@ -167,7 +167,7 @@ nav:
     - '022 Compact Identifiers And Cli Context': adr/022-compact-identifiers-and-cli-context.md
     - '023 Windows Server Bundled Node': adr/023-windows-server-bundled-node.md
     - '024 Server Policy Engine Cedar': adr/024-server-policy-engine-cedar.md
-    - '025 Operator Cookie Handoff': adr/025-operator-cookie-handoff.md
+    - '025 Operator Login Browser And Cookie Handoff': adr/025-operator-cookie-handoff.md
   - Technical designs:
     - 'Td Browser 10 Session Extension Loading': td/TD-BROWSER-10-session-extension-loading.md
     - 'Td Browser 11 Session Initial Page Race': td/TD-BROWSER-11-session-initial-page-race.md
@@ -175,7 +175,7 @@ nav:
     - 'Td Browser 13 Observation Secret Redaction': td/TD-BROWSER-13-observation-secret-redaction.md
     - 'Td Browser 14 Compact Identifiers': td/TD-BROWSER-14-compact-identifiers.md
     - 'Td Browser 15 Server Policy Engine': td/TD-BROWSER-15-server-policy-engine.md
-    - 'Td Browser 16 Operator Cookie Handoff': td/TD-BROWSER-16-operator-cookie-handoff.md
+    - 'Td Browser 16 Operator Login Browser And Cookie Handoff': td/TD-BROWSER-16-operator-cookie-handoff.md
     - 'Td Browser 5 Single Binary Mcp Distribution': td/TD-BROWSER-5-single-binary-mcp-distribution.md
     - 'Td Browser 6 Headed Sessions And Credential Handoff': td/TD-BROWSER-6-headed-sessions-and-credential-handoff.md
     - 'Td Browser 7 Safari Webdriver Engine': td/TD-BROWSER-7-safari-webdriver-engine.md

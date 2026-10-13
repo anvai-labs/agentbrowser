@@ -1,13 +1,17 @@
-# TD-BROWSER-16: Operator cookie handoff
+# TD-BROWSER-16: Operator login browser and cookie handoff
 
 **Status:** Planned (after TD-BROWSER-15 phase 4)
 **Decision:** [ADR-025](../adr/025-operator-cookie-handoff.md)
 
 ## Problem
 
-Today an agent uses the operator's login either by driving an uncontained profile (`cdpAttach`) or
-by receiving the cookie values itself (export, then seed). ADR-025 adds a server-internal,
-operator-approved transfer into a contained session. This TD is the plan.
+Today an agent can use an operator's login in only two ways:
+- **drive an uncontained profile** (`cdpAttach`) through a debugging port that any local process
+  can read;
+- **receive the cookie values itself** (export, then seed).
+
+ADR-025 adds an operator-only login browser with no port, and an operator-approved transfer into a
+contained session. This TD is the plan.
 
 ## Prerequisites
 
@@ -17,197 +21,227 @@ operator-approved transfer into a contained session. This TD is the plan.
 
 ## Phases
 
-Each phase is its own PR with its own adversarial review, test-first. Phases 1–3 add
-infrastructure with no user-visible capability; phase 5 enables the handoff.
+Each phase is its own PR with its own adversarial review, test-first. Phases 1–5 add
+infrastructure; phase 6 enables the handoff.
 
-### Phase 1: operator credential and non-act approvals
+### Phase 1: the operator credential and its decision path
 
-- **`AGENTBROWSER_OPERATOR_KEYS_FILE`:** a file of `key:tenant` entries, never an inline variable,
-  so it can sit where an agent's OS user cannot read it.
-  - Each tenant must equal the single API-key tenant. Ownership checks apply to these keys as to
-    API keys.
-  - These keys authenticate as `actor: "human-operator"`, and **only** on routes flagged
-    `decisionRoute: true` in fastify `routeOptions.config`. That is the same metadata mechanism the
-    `/v1` hook already reads for `config.capability`. Any other route refuses them with the
-    existing authentication error.
-  - `SessionPrincipal`'s actor union gains `human-operator`.
-  - A key present in both this file and `AGENTBROWSER_API_KEYS` aborts startup. Keys are never
-    logged.
-  - The CLI's decision command reads the operator key from `AGENTBROWSER_OPERATOR_KEY`.
-- **`ApprovalRequest` gains a `kind`.** The existing act requests become `kind: "act"`, unchanged.
-  Two new kinds are added:
-  - `act.reviewed`: act approvals in a marked session;
-  - a generic non-act kind with a typed payload and binding, which phase 5 instantiates as
-    `cookie.handoff`.
+- **`AGENTBROWSER_OPERATOR_KEYS_FILE`** holds `key:tenant` entries, read from a file, never an
+  inline variable.
+  - Each tenant must equal the single API-key tenant, and ownership checks apply.
+  - A key in both sets aborts startup.
+  - Keys are never logged.
+- **The `human-operator` actor.** `SessionPrincipal`'s actor union gains `human-operator`. These
+  keys authenticate as it **only** on routes flagged `operatorRoute: true` in fastify
+  `routeOptions.config`, the same mechanism the `/v1` hook already reads for `config.capability`.
+  On any other route they are refused.
+- **`ApprovalRequest` gains `kind`.** `act` is unchanged. Two new kinds are added:
+  - `act.reviewed`, using the ADR-007 act binding;
+  - a generic non-act kind, which phase 6 instantiates as `cookie.handoff`.
 
   **Protocol first (ADR-015):** the kinds, and the non-act `APPROVAL_REQUIRED.details` and view
   shapes.
-- **A separate resolve-and-decide path for the new kinds.** The existing decision routes resolve
-  through `reviewContext()`. It requires `approval.review: "operator"`, and so a delegated session
-  and its authority epochs (`prepareApprovalDisclosureInScope` has the same delegated-only guard).
-  Handoff destinations are never delegated, so the new kinds must not reuse that path. Existing
-  act approvals keep it, unchanged.
+- **A separate resolve-and-decide path for the new kinds.** The existing routes resolve through
+  `reviewContext()` (and `prepareApprovalDisclosureInScope`). It requires
+  `approval.review: "operator"`, and therefore a delegated session and its authority epochs, so it
+  is not reused. Existing act approvals keep their path.
+- **CLI operator commands** read the key from the OS keychain (macOS Keychain, Windows Credential
+  Manager, Linux Secret Service) or from a no-echo prompt, **never** from an environment variable.
 - **Tests:**
-  - an API key (`actor: "operator"`, which an agent may hold) is refused on **both** the GET view
-    and the POST decision for every new kind;
+  - an API key (`actor: "operator"`, which an agent may hold) is refused on both the view and the
+    decide route for each new kind;
   - an operator key can view and decide, but cannot create sessions or act;
-  - the non-act view shows kind, domains and counts, never cookie names;
   - overlapping keys are refused;
+  - the CLI ignores any operator key in the environment;
   - existing act approvals are unchanged.
 
 ### Phase 2: per-session secret registration
 
 - `SecretManager` gains per-session scopes. A value registered in a session's scope redacts only
   that session's observations, logs, traces and errors.
-- Values shorter than 8 characters, or with negligible entropy (a fixed threshold, documented),
-  are ignored.
+- Values under 8 characters, or with negligible entropy (a fixed, documented threshold), are
+  ignored.
 - Registration invalidates the memoized `redactString` cache for that scope.
 - **Tests:**
   - no cross-session redaction;
-  - the low-entropy floor (`1`, `en`, `true` never redact);
-  - cache invalidation (a string cached before registration is redacted after it);
-  - the existing global redaction is unchanged.
+  - the floor (`1`, `en`, `true` never redact);
+  - cache invalidation;
+  - the global redaction is unchanged.
 
-### Phase 3: domain matcher and cookie normalization in `core`
+### Phase 3: domain matcher and normalization in `core`
 
 - **Move** cookie normalization and the bounds from `packages/cli/src/cookie-file.ts` into
-  `packages/core`. The CLI then imports them from core, so the package graph keeps its direction.
-- **Fix the dedup key:** host-only `github.com` and `.github.com` are distinct cookies. Today the
-  key strips the leading dot and wrongly rejects a real jar that holds both.
-- **Add** `tldts`, pinned, using the Public Suffix List's private section, and the ADR-025 §3
-  matching relation:
-  - refuse public suffixes;
-  - match the cookie's domain equal to or under the requested domain, within its registrable
-    domain;
-  - a parent-domain cookie is not pulled in by requesting a subdomain.
+  `packages/core`, and have the CLI import them from there.
+- **Fix the dedup key:** host-only and `.domain` cookies with the same name and path are distinct.
+- **Add** `tldts`, pinned, using the private section, and implement the ADR-025 §3 relation.
 - **Tests:**
   - `github.com` matches `.github.com` and host-only `gist.github.com`;
   - `gist.github.com` does not match `.github.com`;
   - `github.io`, `vercel.app`, `co.uk` and `com` are refused;
-  - sibling suffixes (`notgithub.com`) do not match;
+  - `notgithub.com` does not match;
   - the dedup fix holds, and the CLI behaviour is otherwise unchanged.
 
-### Phase 4: the read side
+### Phase 4: the login browser
 
-- **`AGENTBROWSER_HANDOFF_CDP_ENDPOINT`:**
-  - It uses the same strict loopback parsing as `AGENTBROWSER_CDP_ENDPOINT`.
-  - It does not require the uncontained-egress acknowledgement, and it does not enable `cdpAttach`.
-  - Admission follows the floor: not hosted, a single authenticated tenant, a loopback listener and
-    peer, and operator keys configured.
-- **The read** discovers the browser target's WebSocket URL through `/json/version` on the
-  endpoint. It keeps only the URL's path and connects to the configured loopback host and port;
-  any other host or scheme is refused, with a test. Then it:
-  - opens a raw CDP WebSocket;
-  - sends `Storage.getCookies` with no `browserContextId`, which reads the default context only
-    (verified on Chrome 152);
-  - closes the socket.
-  - It makes no `Target.*` or `Runtime.*` call, and nothing else is sent. A test asserts the exact
-    method list sent.
-- **Normalization:**
-  - Partitioned cookies (`partitionKey` or `partitionKeyOpaque` present) are skipped and counted.
-    Expired ones are also skipped, defensively; Chrome does not return them here.
-  - Values are bounded by the ADR-025 §6 table before anything else happens.
-- **Tests:** run against the existing pre-commit CDP smoke (independent Chrome, disposable
-  profile, local fixture with seven cookies covering host-only, domain, subdomain host-only,
-  path-scoped, `HttpOnly`, partitioned and expired). Each test asserts that:
-  - **filtering:** the server-side filter returns exactly the expected set, including the
-    path-scoped and subdomain host-only cookies that a URL-filtered read drops;
-  - **operator browser untouched:** afterwards it has the same cookies, its tabs are not attached,
-    and its download behaviour is unchanged;
-  - **coexistence:** the read works while a `cdpAttach` session is connected;
+- **Engine.** The Playwright engine gains a pipe-connected persistent context:
+  `launchPersistentContext(dir, { headless })`. Playwright launches Chromium with
+  `--remote-debugging-pipe`, so no port is opened. A test asserts that the browser process listens
+  on no TCP port.
+- **Profile directory.** `AGENTBROWSER_LOGIN_PROFILE_DIR`, defaulting under the server's data
+  directory.
+  - It is created with mode `0700` (owner-only ACL on Windows, reusing the CLI's private-file
+    writer).
+  - Startup refuses a directory with wider permissions.
+- **Service.** With `AGENTBROWSER_LOGIN_BROWSER=1` and operator keys present, three operator
+  routes are added:
+  - `open` launches headed. It refuses without a display, and refuses when the deployment is
+    hosted or has more than one tenant.
+  - `close`.
+  - `reset` deletes the profile, after confirmation.
+
+  The login browser is not a session: it has no id, refs or pages on any agent surface.
+- **Read.** `readLoginCookies()` reads the persistent context's `cookies()` with no URL filter.
+  - When the browser is closed, it launches the profile briefly in headless mode, reads, and closes.
+  - Concurrent `open` and read calls are serialized on a profile lock.
+  - Partitioned cookies (`partitionKey` or `partitionKeyOpaque`) and expired ones are skipped and
+    counted.
+  - The bounds are checked first.
+- **Tests:**
+  - **filtering:** the server-side filter returns exactly the expected set from a fixture profile
+    with seven cookie kinds;
+  - **no port:** no TCP listener exists while the browser is open or during a read;
+  - **access:** the profile mode is enforced; agent credentials are refused on every login-browser
+    route; no agent surface can address the browser;
   - **no leakage:** a scan of all captured output finds no value.
 
-### Phase 5: the operation
+### Phase 5: action review in marked sessions, and the lease
 
-- **Route:** `POST /v1/sessions/{sessionId}/cookies/handoff` `{ domains, approvalToken? }`. It runs
-  under **one per-session lock** in this order:
-  1. **Check the floor**, with each refusal reported by its own `floor.handoff.*` id and protocol
-     error:
-     - the engine enforces egress;
-     - the session is isolated and not delegated;
-     - `allowServiceWorkers` is off and the WebSocket policy is the default deny;
-     - no committed non-`about:blank` navigation on any page or popup;
-     - no existing cookies for the requested domains;
-     - every `allowedHosts` entry, including the scope and per-request allowlists, is an exact
-       host within the requested domains;
-     - operator keys are configured.
-  2. **Check policy:** one Cedar `cookie.handoff` decision per domain. Any deny fails the whole
-     handoff.
-  3. **Check approval:**
-     - without a valid token, **read** the operator browser (phase 4) for the Cedar-granted
-       domains only, and return `APPROVAL_REQUIRED` with
-       `{ kind: "cookie.handoff", sessionId, domains, counts }`. The counts are informational;
-     - the token is bound to `(kind, sessionId, sorted domains, policy version)`, must have been
-       decided by a `human-operator` principal, and is single-use.
-  4. **Read again**, then **recheck** the "fresh" conditions. Fail only if a requested domain went
-     from some cookies to none; changed counts are expected.
-  5. **Mark** `credentialSource: "operator"`.
-  6. **Register** the values (phase 2), **switch** the session to operator-reviewed actions
-     (high-risk and `unknown` effects require `act.reviewed` approvals, with `unknownRisk` forced
-     to `required`), **inject** the all-frames init script that removes `RTCPeerConnection`, and
-     **write** through the same `addCookies` path session creation uses.
-  7. Write an `info` audit log: session, domains, counts, token id and rule ids, never values or
-     cookie names.
-- **The marked session refuses** cookie export, HTML export and download collection on every
-  surface with `HANDOFF_COOKIES_NOT_EXPORTABLE`. It shows `credentialSource` in the protocol
-  session view.
-- **Launch flag:** while `AGENTBROWSER_HANDOFF_CDP_ENDPOINT` is configured, the shared Chromium
-  launches with `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`. It is browser-wide,
-  because headless sessions share one browser. WebRTC over TCP remains a documented residual.
+- **Review.** In a session with `credentialSource: "operator"`:
+  - **High-risk effects** (`transaction`, `external-message`, `account-security`, `destructive`)
+    always return `APPROVAL_REQUIRED` with kind `act.reviewed`. A per-rule `decision: "allow"`
+    on them is overridden.
+  - **`unknown` effects** do the same, unless an active lease covers the page's host.
+  - Operator classification rules (`read`, `write-local`) are honoured unchanged.
+  - Stale tokens are refused like any stale act token.
+- **Lease.** `{ hosts, expiresInMs ≤ 4 h, maxActions }` is granted only on an operator route (with
+  the handoff decision, or later).
+  - The session view shows the remaining time and count, and every leased action decrements the
+    count.
+  - No agent-facing route or schema accepts lease fields.
+  - The audit log records each grant and when it is exhausted.
+- **Write paths outside `act`:**
+  - `autofill` in a marked session runs only within a lease covering the page's host, and each
+    field write uses one leased action. Without a lease it is refused.
+  - `application.execute` is refused in a marked session.
+  - A checklist test enumerates every route that can write to a page and asserts a declared
+    marked-session behaviour, so a future write path fails the test until it declares one.
 - **Tests:**
-  - every floor refusal, including `[".com"]` and a mixed `["github.com", "attacker.example"]`
-    allowlist;
+  - a `transaction` action and an `unknown`-effect action both need an operator decision, and the
+    agent retrying with the token id is refused;
+  - the lease admits `unknown` actions on its hosts only, never high-risk ones, and stops at its
+    expiry and at its count;
+  - an agent cannot set a lease;
+  - autofill is refused without a lease and counted under one;
+  - `application.execute` is refused;
+  - the write-path checklist passes.
+
+### Phase 6: the handoff operation
+
+**Route:** `POST /v1/sessions/{sessionId}/cookies/handoff` `{ domains, approvalToken? }`. It runs
+under **one per-session lock**:
+
+1. **Floor checks,** each refusal with its own `floor.handoff.*` id:
+   - the engine enforces egress;
+   - the session is isolated and not delegated;
+   - service workers are off, and the deployment's WebSocket policy is the default deny;
+   - no committed navigation other than `about:blank`;
+   - no existing cookies for the requested domains;
+   - every entry in `allowedHosts`, `scope.allowedHosts` and the per-request `allowedHosts` is an
+     exact host within the domains, and every `scope.pathRules[].hostSuffix` is too;
+   - the login browser is enabled, and operator keys are configured.
+2. **Policy:** one Cedar `cookie.handoff` decision per domain. Any deny fails the whole handoff.
+3. **Approval.** Without a valid token:
+   - read (phase 4) for the granted domains only;
+   - return `APPROVAL_REQUIRED` with `{ kind, sessionId, domains, counts }`;
+   - count the call toward the session's pending-approval quota.
+
+   A valid token is bound to `(kind, sessionId, sorted domains, policy version)`, was decided by a
+   `human-operator` principal, and is single-use. The decision may carry a lease (phase 5).
+4. **Read again** and recheck the "fresh" conditions. Fail only if a domain went from some cookies
+   to none.
+5. **Mark** `credentialSource: "operator"`.
+6. **Prepare the session:**
+   - register the values (phase 2);
+   - switch on reviewed actions (phase 5);
+   - inject the all-frames init script that removes `RTCPeerConnection` and
+     `webkitRTCPeerConnection`.
+7. **Write** through the session-creation `addCookies` path.
+8. **Audit** at `info`: session, domains, counts, token id, lease and rule ids. Never values or
+   cookie names.
+
+**Afterwards:**
+- The marked session refuses cookie export, HTML export and download collection with
+  `HANDOFF_COOKIES_NOT_EXPORTABLE`, and shows `credentialSource` in its view.
+- While the login browser is enabled, the shared Chromium launches with
+  `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`.
+
+**Tests:**
+- **Refusals:**
+  - every floor refusal, including `[".com"]`, `["github.com", "attacker.example"]`, a broad
+    `scope.pathRules.hostSuffix`, and a session that already holds cookies;
   - partial policy denial;
   - an agent key cannot approve;
-  - token invalidation;
-  - the export, HTML and download refusals;
-  - in a marked session, a `transaction` and an `unknown`-effect action both need an `act.reviewed`
-    decision by the operator key. The agent retrying with the token id is refused;
-  - `RTCPeerConnection` is absent in every frame of a marked session;
-  - the binding survives cookie-count changes, and fails only on some-to-none;
-  - `allowedHosts` checks through `scope.allowedHosts`, the per-request `allowedHosts` and
-    `scope.pathRules.hostSuffix`;
-  - **a concurrency test:** a racing `GET /cookies` during the handoff is refused, because the mark
-    precedes the write;
-  - **end to end** on the local fixture: the handed-off session receives the authenticated response,
-    and the agent-facing output contains no value.
+  - the pre-approval call is quota-limited;
+  - the export, HTML and download refusals.
+- **Binding and timing:**
+  - the token binding survives count changes and fails on some-to-none;
+  - **concurrency:** a racing `GET /cookies` is refused, because the mark precedes the write.
+- **WebRTC removal:** `RTCPeerConnection` is absent in a synchronous `about:blank` iframe and in a
+  `window.open('about:blank')` popup.
+- **End to end:** an operator signs in to a local fixture in the login browser, the handoff is
+  approved with a lease, the agent completes a leased flow, and no agent-facing output contains a
+  value.
 
-### Phase 6: surfaces and docs
+### Phase 7: surfaces and docs
 
-- **SDK and CLI:** `client.sessions.cookieHandoff()`; `agentbrowser session cookie-handoff`, which
-  prints the `APPROVAL_REQUIRED` details and the operator's decision command.
-- **MCP:** a `cookie_handoff` tool with an optional `approvalToken`. It is present only where the
-  mode profile carries the new `session.credential` capability. A protocol mode-profile change comes
-  first.
+- **SDK:** `client.sessions.cookieHandoff()`.
+- **CLI:** `agentbrowser session cookie-handoff`; `agentbrowser operator login-browser
+  open|close|reset`; `agentbrowser operator approve <token> [--lease hosts=…,minutes=…,actions=…]`.
+- **MCP:** a `cookie_handoff` tool with an optional `approvalToken`, only where the mode profile
+  carries the new `session.credential` capability (a protocol mode-profile change comes first).
+  There are no MCP tools for operator routes.
 - **`GET /v1/policy`** lists `cookie.handoff` grants per domain.
-- **Docs:**
-  - a guide, "Use your login safely": the dedicated debugging profile; operator keys and who holds
-    them; the exact `allowedHosts` rule; what is guaranteed and what is not (account authority, the
-    residual list); verifying the login after navigating; a one-time copy, with local storage not
-    carried;
-  - a threat-model entry for the handoff, including the account-authority threat;
-  - the operations docs gain the two new variables.
-- **ADR-025 status → Accepted** when phase 5 ships.
+- **Guide, "Use your login safely":**
+  - the threat boundary first: the agent must not run as the server's or the operator's OS user;
+  - the login browser and its profile;
+  - operator keys and the keychain;
+  - the exact `allowedHosts` rule;
+  - classification rules and leases, with examples;
+  - what is guaranteed and what is not (account authority, the residuals);
+  - a one-time copy, with no local storage.
+- **Threat model:** an entry for the handoff and the login browser. The operations docs gain the new
+  variables.
+- **ADR-025 status → Accepted** when phase 6 ships.
 
 ## Non-goals
 
-- Sync, write-back, or refresh.
+- Reusing logins from an operator-started Chrome.
+- Sync, write-back or refresh.
 - Local storage or IndexedDB.
 - Handoff into `cdpAttach` or remote-CDP sessions.
-- Reading browser cookie databases from disk.
-- Making the handoff unattended.
+- Agent access to the login browser.
+- Unattended handoffs.
 
 ## Risks
 
-- **A hostile agent with a seeded session.** It holds the operator's account authority on the
-  allowed hosts. Mitigations: the operator's decision, exact hosts, operator-reviewed high-risk and
-  unknown actions, and the docs stating this plainly.
-- **An agent with a shell as the same OS user** bypasses the tool-surface boundary: it can reach the
-  debugging port, or read the server's environment. The guide requires a separate OS user for the
-  server and the debugging Chrome, and operator keys in a file the agent's user cannot read.
-- **Residual egress paths:** POST redirect hops, worker WebSockets, missing DNS pinning, and
-  pixels or console output, and WebRTC over TCP. They are documented; WebRTC is reduced by the
-  launch flag and the `RTCPeerConnection` removal.
-- **Approval fatigue.** Grants are per domain, and decisions are per transfer, by design.
-- **Public Suffix List freshness.** `tldts` is pinned and updated by Dependabot. A stale list
-  errs toward treating new hosting suffixes as registrable. The docs say so.
+- **A hostile agent with a seeded session.** It holds the account's authority on the allowed hosts.
+  Mitigations: the operator's handoff decision, exact hosts, reviewed high-risk and unknown actions,
+  and leases the operator chose. The docs state this plainly.
+- **An agent running as the server's or the operator's OS user** bypasses the boundary. Documented
+  first; out of scope to prevent.
+- **Residual egress paths:** POST redirect hops, worker WebSockets, WebRTC over TCP from workers, DNS
+  prefetch, no DNS pinning, and pixels or console output. All documented.
+- **Approval fatigue.** Leases and classification rules are the operator's tools, by design.
+- **The persistent profile holds real credentials on disk.** Owner-only permissions, a documented
+  location, and `reset`.
+- **Public Suffix List freshness.** `tldts` is pinned and updated by Dependabot.

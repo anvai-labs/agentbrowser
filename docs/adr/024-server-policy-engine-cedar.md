@@ -74,9 +74,9 @@ ADR-007 and the CDP-attach design guarantee unconditionally:
 - **Operator CDP attachment refusals:** hosted deployments, more than one authenticated tenant,
   missing bearer credentials, non-loopback listeners or peers, delegated sessions, and cookie
   export or seed on an attached profile. Policy may refuse attachment further; it can never
-  permit any of these. The only exception, which applies once ADR-025 is Accepted, is the
-  server-internal cookie handoff it proposes, which has its own floor. Until then there is no
-  exception. It reads cookies from the operator's browser into a
+  permit any of these, and there is no exception. ADR-025's cookie handoff does not read from an
+  attached profile. It reads from an operator-only login browser, which has no debugging port and
+  its own floor. It reads cookies from the operator's browser into a
   contained session and never returns values to a caller; ordinary export stays refused.
 - **Delegated (controlled) sessions** require an authenticated operator principal.
 - **Approval-token mechanics:** single use, bound to page, revision, target fingerprint and
