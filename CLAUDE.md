@@ -214,6 +214,7 @@ The following ADRs in `docs/adr/` are critical for understanding design choices:
 20. **ADR-020**: inline HTML verification via MCP (disclosed not-secret-redacted trade-off)
 21. **ADR-021**: form-controls enrichment for ARIA-invisible widgets
 22. **ADR-022** (Proposed): compact identifiers and explicit CLI context
+23. **ADR-023**: Windows server ships as a bundled-Node zip, not a single-file executable
 
 ## Core Concepts
 

@@ -51,6 +51,13 @@ brew services start anvai-labs/tap/agentbrowser
 AGENTBROWSER_API_KEYS=key:tenant   # tenant keys (see brew caveats for MCP wiring)
 ```
 
+On Windows:
+
+```powershell
+winget install AnvaiLabs.AgentBrowser   # or extract agentbrowser-windows-x64.zip
+agentbrowser-server                     # bundled Node; first start downloads Chromium
+```
+
 ```bash
 agentbrowser --json health
 agentbrowser session create --tenant TENANT
