@@ -146,8 +146,10 @@ export class NetworkPolicy {
   /**
    * An operator exception must cover every source of privateness: the address
    * as written, and each private IPv4 it embeds. So an IPv4 CIDR admits that
-   * IPv4 behind NAT64/6to4/SIIT too, and an IPv6 wrapper CIDR (::/0,
-   * 64:ff9b::/96) never grants the private IPv4 inside it.
+   * IPv4 behind NAT64/6to4/SIIT too, and an IPv6 wrapper CIDR such as
+   * 64:ff9b::/96 never grants the private IPv4 inside it. CIDRs covering the
+   * IPv4-mapped space (::/0, ::ffff:0:0/96, ::ffff:a.b.c.d/n) DO cover IPv4:
+   * Node's BlockList checks an IPv4 address as ::ffff:a.b.c.d against IPv6 rules.
    */
   private defaultExceptions(): EgressExceptions {
     return {

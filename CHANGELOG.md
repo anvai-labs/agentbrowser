@@ -7,6 +7,20 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — differential oracle (TD-BROWSER-15 phase 2)
+
+- **A property-based harness checks any `Authorizer` against today's decisions.** It covers egress
+  (contexts from the real `NetworkPolicy` path), approvals (from `ActionRiskPolicy.classify()`) and
+  every capability, over generated configurations: loopback, CIDRs, `unknownRisk` and approval
+  rules.
+  - It holds for `LegacyAuthorizer` and runs a deterministic table of every approval combination.
+  - It probes the first, last and one-past addresses of every CIDR, and contexts with several
+    private sources.
+  - 27 plausible-but-wrong subjects from review must each be caught on every seed, and a correct
+    subject that resolves rules by id must pass.
+  - Phase 3 runs it against Cedar.
+  - It is test-only, with `fast-check` as a dev dependency, and it is not in the build.
+
 ### Changed — policy engine seam (TD-BROWSER-15 phase 1)
 
 - **The floor refusals live in one module** (`packages/api/src/floor.ts`). That covers CDP-attach
