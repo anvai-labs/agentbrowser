@@ -414,13 +414,13 @@ importers:
       '@agentbrowser/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@cedar-policy/cedar-wasm':
+        specifier: 4.13.0
+        version: 4.13.0
     devDependencies:
       '@biomejs/biome':
         specifier: ^2.5.15
         version: 2.5.15
-      '@cedar-policy/cedar-wasm':
-        specifier: 4.13.0
-        version: 4.13.0
       '@types/node':
         specifier: ^22.20.5
         version: 22.20.5

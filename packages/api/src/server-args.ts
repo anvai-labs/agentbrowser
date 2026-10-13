@@ -11,6 +11,7 @@ export type ServerArgs =
   | { kind: 'run' }
   | { kind: 'help' }
   | { kind: 'version' }
+  | { kind: 'policy-export' }
   | { kind: 'error'; message: string };
 
 export const SERVER_HELP = `agentbrowser-server ${PRODUCT_VERSION}
@@ -18,6 +19,9 @@ Agent-native browser service: REST + WebSocket API for AgentBrowser clients.
 
 Usage:
   agentbrowser-server            start the service
+  agentbrowser-server policy export
+                                write the policy document for today's
+                                environment configuration to stdout
   agentbrowser-server --help     show this help
   agentbrowser-server --version  print the version
 
@@ -39,6 +43,14 @@ All settings: https://anvai-labs.github.io/agentbrowser/operations/
 export function parseServerArgs(argv: readonly string[]): ServerArgs {
   if (argv.includes('--help') || argv.includes('-h')) return { kind: 'help' };
   if (argv.includes('--version') || argv.includes('-v')) return { kind: 'version' };
+  if (argv[0] === 'policy') {
+    if (argv[1] === 'export' && argv.length === 2) return { kind: 'policy-export' };
+    return {
+      kind: 'error',
+      message:
+        "agentbrowser-server: usage: agentbrowser-server policy export. Writes the policy document for today's environment configuration to stdout.",
+    };
+  }
   const unknown = argv[0];
   if (unknown !== undefined) {
     return {

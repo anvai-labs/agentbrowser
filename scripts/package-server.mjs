@@ -1,13 +1,35 @@
 #!/usr/bin/env node
 /** Same server packaging for untagged candidates and releases; never publishes. */
 import assert from 'node:assert/strict';
-import { copyFile, chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, dirname, isAbsolute, join, relative, resolve, win32 as windowsPath } from 'node:path';
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  win32 as windowsPath,
+} from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
-import { runExecutable } from './release-smoke.mjs';
 import { materializeHoisted } from './materialize-hoisted.mjs';
+import { pruneCedarWasm } from './prune-cedar-wasm.mjs';
+import { runExecutable } from './release-smoke.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const TARGETS = ['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64', 'win32-x64'];
@@ -80,7 +102,11 @@ async function prepareWin32Tree(staging, server) {
     if (rel.length > longest.length) longest = rel;
     if (entry.isDirectory() && rel.length > longestDir.length) longestDir = rel;
   });
-  assert.deepEqual(links, [], `Windows server tree must not contain links or junctions: ${links.slice(0, 5).join(', ')}`);
+  assert.deepEqual(
+    links,
+    [],
+    `Windows server tree must not contain links or junctions: ${links.slice(0, 5).join(', ')}`
+  );
   assert.ok(
     longest.length <= MAX_WIN32_RELATIVE_PATH,
     `Windows server path too long for MAX_PATH (${longest.length} > ${MAX_WIN32_RELATIVE_PATH}): ${longest}`
@@ -107,21 +133,44 @@ async function normalizeSelfLink(server, root) {
   // Repair only the verified self-link, inside our newly owned staging tree.
   const link = join(server, 'node_modules/.pnpm/node_modules/@agentbrowser/api');
   let entry;
-  try { entry = await lstat(link); }
-  catch (error) { if (error.code === 'ENOENT') return; throw error; }
+  try {
+    entry = await lstat(link);
+  } catch (error) {
+    if (error.code === 'ENOENT') return;
+    throw error;
+  }
   assert.ok(entry.isSymbolicLink(), 'Unexpected deployed API self-reference');
   const physicalServer = await realpath(server);
   const parent = await realpath(dirname(link));
   const suffix = relative(physicalServer, parent);
-  assert.ok(suffix !== '..' && !suffix.startsWith('../') && !isAbsolute(suffix), 'Deployed API self-link parent escapes staging');
+  assert.ok(
+    suffix !== '..' && !suffix.startsWith('../') && !isAbsolute(suffix),
+    'Deployed API self-link parent escapes staging'
+  );
   const actual = await realpath(link);
   if (actual === physicalServer) return;
-  assert.equal(actual, await realpath(join(root, 'packages/api')), 'Unexpected deployed API self-link target');
+  assert.equal(
+    actual,
+    await realpath(join(root, 'packages/api')),
+    'Unexpected deployed API self-link target'
+  );
   await unlink(link);
   await symlink(relative(parent, physicalServer), link);
 }
 
-export async function packageServer({ root = ROOT, outputDir, target, expectedVersion, commit, allowDirty = false, run = runExecutable, platform = process.platform, env = process.env, materialize = materializeHoisted, temp = tmpdir() }) {
+export async function packageServer({
+  root = ROOT,
+  outputDir,
+  target,
+  expectedVersion,
+  commit,
+  allowDirty = false,
+  run = runExecutable,
+  platform = process.platform,
+  env = process.env,
+  materialize = materializeHoisted,
+  temp = tmpdir(),
+}) {
   assert.ok(TARGETS.includes(target), 'Unsupported server target');
   assert.ok(outputDir, 'An unused output directory is required');
   const { version } = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
@@ -130,8 +179,14 @@ export async function packageServer({ root = ROOT, outputDir, target, expectedVe
   assert.match(head, /^[a-f0-9]{40}$/, 'Expected a full checkout commit SHA');
   assert.equal(commit ?? head, head, 'Supplied commit does not match checkout HEAD');
   commit = head;
-  const dirty = (await run(['git', '-C', root, 'status', '--porcelain', '--untracked-files=normal'])).stdout.trim().length > 0;
-  assert.ok(!dirty || allowDirty, 'Dirty checkout: use --allow-dirty only for explicitly unverified local testing');
+  const dirty =
+    (
+      await run(['git', '-C', root, 'status', '--porcelain', '--untracked-files=normal'])
+    ).stdout.trim().length > 0;
+  assert.ok(
+    !dirty || allowDirty,
+    'Dirty checkout: use --allow-dirty only for explicitly unverified local testing'
+  );
   const destination = resolve(outputDir);
   // Nonrecursive mkdir deliberately refuses any existing destination. Never
   // overwrite a previous candidate or remove a caller-owned directory on error.
@@ -149,7 +204,9 @@ export async function packageServer({ root = ROOT, outputDir, target, expectedVe
     const deployed = win32 ? join(staging, 'isolated') : server;
     const deploy = ['--dir', root, '--filter', '@agentbrowser/api', 'deploy', '--prod', deployed];
     await run(pnpmCommand(deploy, { platform, env }), {
-      timeoutMs: 120_000, maxOutputBytes: 2 * 1024 * 1024, diagnostics: true,
+      timeoutMs: 120_000,
+      maxOutputBytes: 2 * 1024 * 1024,
+      diagnostics: true,
     });
     const manifest = JSON.parse(await readFile(join(deployed, 'package.json'), 'utf8'));
     assert.equal(manifest.version, expectedVersion, 'Deployed server version mismatch');
@@ -157,12 +214,18 @@ export async function packageServer({ root = ROOT, outputDir, target, expectedVe
     // follows this self-link, which is no declared dependency, and deletes
     // the tree after); repairing it would need symlink privilege on Windows.
     if (!win32) await normalizeSelfLink(deployed, root);
+    // One wasm build ships (TD-BROWSER-15 6): the deploy carries all three;
+    // the pruner also re-verifies the version and hash pin.
+    await pruneCedarWasm(deployed);
     let packages;
     if (win32) {
       ({ packages } = await materialize(deployed, server));
       await rm(deployed, { recursive: true, force: true });
     }
-    await writeFile(join(server, 'VERSION.json'), `${JSON.stringify({ version, commit, dirty }, null, 2)}\n`);
+    await writeFile(
+      join(server, 'VERSION.json'),
+      `${JSON.stringify({ version, commit, dirty }, null, 2)}\n`
+    );
     let file;
     if (win32) {
       // The Windows bundle supplies its own launcher; no POSIX sh script here.
@@ -171,19 +234,36 @@ export async function packageServer({ root = ROOT, outputDir, target, expectedVe
       if (platform === 'win32') {
         // Explicit path: Git for Windows' GNU tar on PATH cannot write zip.
         const tarExe = join(env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe');
-        await run([tarExe, '-a', '-c', '-f', file, '-C', staging, 'server'], { timeoutMs: 300_000, diagnostics: true });
+        await run([tarExe, '-a', '-c', '-f', file, '-C', staging, 'server'], {
+          timeoutMs: 300_000,
+          diagnostics: true,
+        });
       } else {
         // Cross-build (e.g. WSL/Linux CI): the tree is pure JavaScript.
-        await run(['zip', '-q', '-r', '-X', file, 'server'], { cwd: staging, timeoutMs: 300_000, diagnostics: true });
+        await run(['zip', '-q', '-r', '-X', file, 'server'], {
+          cwd: staging,
+          timeoutMs: 300_000,
+          diagnostics: true,
+        });
       }
     } else {
-      await copyFile(join(root, 'scripts', 'agentbrowser-server'), join(server, 'agentbrowser-server'));
+      await copyFile(
+        join(root, 'scripts', 'agentbrowser-server'),
+        join(server, 'agentbrowser-server')
+      );
       await chmod(join(server, 'agentbrowser-server'), 0o755);
       file = join(destination, `agentbrowser-server-${target}.tar.gz`);
       await run(['tar', '-czf', file, '-C', staging, 'server'], { timeoutMs: 120_000 });
     }
     complete = true;
-    return { file, version, commit, dirty, target, ...(packages ? { packages: packages.length } : {}) };
+    return {
+      file,
+      version,
+      commit,
+      dirty,
+      target,
+      ...(packages ? { packages: packages.length } : {}),
+    };
   } finally {
     if (staging) await rm(staging, { recursive: true, force: true });
     if (!complete) await rm(destination, { recursive: true, force: true });
@@ -192,14 +272,20 @@ export async function packageServer({ root = ROOT, outputDir, target, expectedVe
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   try {
-    const { values } = parseArgs({ options: {
-      'output-dir': { type: 'string' }, target: { type: 'string' },
-      'expected-version': { type: 'string' }, commit: { type: 'string' },
-      'allow-dirty': { type: 'boolean', default: false },
-    } });
+    const { values } = parseArgs({
+      options: {
+        'output-dir': { type: 'string' },
+        target: { type: 'string' },
+        'expected-version': { type: 'string' },
+        commit: { type: 'string' },
+        'allow-dirty': { type: 'boolean', default: false },
+      },
+    });
     const report = await packageServer({
-      outputDir: values['output-dir'], target: values.target,
-      expectedVersion: values['expected-version'], commit: values.commit,
+      outputDir: values['output-dir'],
+      target: values.target,
+      expectedVersion: values['expected-version'],
+      commit: values.commit,
       allowDirty: values['allow-dirty'],
     });
     console.log(JSON.stringify({ packaging: 'PASS', ...report }));

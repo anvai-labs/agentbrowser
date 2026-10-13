@@ -189,6 +189,34 @@ export function cedarPolicySetFromLegacyConfig(
   return emitter.policies;
 }
 
+/**
+ * A document from today's environment variables, parsed exactly as the
+ * service parses them (`networkPolicyFromEnvironment` and the approval
+ * policy option): operators migrate to a policy file by generating it, not by
+ * hand-writing one. Invalid values throw with the same messages startup uses.
+ */
+export function policyDocumentFromEnvironment(
+  env: {
+    AGENTBROWSER_ALLOWED_CIDRS?: string | undefined;
+    AGENTBROWSER_ALLOW_LOOPBACK?: string | undefined;
+    AGENTBROWSER_APPROVAL_POLICY?: string | undefined;
+  } = process.env
+): PolicyDocument {
+  const raw = env.AGENTBROWSER_ALLOWED_CIDRS?.trim() ?? '';
+  const approval =
+    env.AGENTBROWSER_APPROVAL_POLICY !== undefined
+      ? (JSON.parse(env.AGENTBROWSER_APPROVAL_POLICY) as Record<string, unknown>)
+      : {};
+  return policyDocumentFromLegacyConfig({
+    allowLoopback: /^(1|true|yes)$/i.test(env.AGENTBROWSER_ALLOW_LOOPBACK?.trim() ?? ''),
+    allowedPrivateCIDRs: raw === '' ? [] : raw.split(',').map((cidr) => cidr.trim()),
+    ...(approval.unknownRisk !== undefined
+      ? { unknownRisk: approval.unknownRisk as 'allow' | 'required' }
+      : {}),
+    ...(Array.isArray(approval.rules) ? { rules: approval.rules as ActionRiskRule[] } : {}),
+  });
+}
+
 /** A document ready for `policy export`: the set plus the config it came from. */
 export function policyDocumentFromLegacyConfig(config: CedarGenerationConfig): PolicyDocument {
   const approvalRules: ExportedApprovalRule[] = (config.rules ?? []).map((rule) => ({

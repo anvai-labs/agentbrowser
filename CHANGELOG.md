@@ -7,6 +7,26 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — CedarAuthorizer, policy export, bundled engine (TD-BROWSER-15 phase 3b)
+
+- **`CedarAuthorizer`** decides through the real Cedar engine, gated by the phase-2 differential
+  oracle: it passes every generated configuration the oracle throws at it, `allowed` and
+  `ruleMatched` both. Loads are strict (zero validation errors, `@rule` annotations
+  cross-checked, reserved id namespaces refused), every decision runs against pre-parsed
+  artifacts with request validation, and any trap — a rejected request, a refused source, an
+  evaluation error — denies with `engine.error` and stays failed closed until restart. Strict
+  validation statically rejects policies that would error, so a bad document never runs at all.
+- **`agentbrowser-server policy export`** writes the policy document for today's environment
+  configuration (loopback, CIDRs, approval policy), parsed exactly as the service parses it —
+  operators migrate by generating, not hand-writing. Invalid configuration fails with the
+  startup messages.
+- **The engine ships bounded:** `@cedar-policy/cedar-wasm` 4.13 becomes a runtime dependency,
+  pruned to its Node build (~4.35 MB) in the server tarball, the Docker image and the Windows
+  bundle; the pruner enforces a version + SHA-256 pin (`scripts/cedar-wasm.json`), the
+  shipped-path gate accepts exactly that one pinned wasm and nothing else, the install-size
+  gates gain the measured delta, and the Windows bundle smoke loads a document and decides one
+  request through the bundled node.
+
 ### Added — Cedar schema, policy document, generator (TD-BROWSER-15 phase 3a)
 
 - **The Cedar contract lives in the protocol** (`CEDAR_SCHEMA`, `agentbrowser-cedar/v1`): the

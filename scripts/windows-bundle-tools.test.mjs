@@ -1,15 +1,23 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { test } from 'node:test';
 import { canonical, canonicalBytes, scanShippedPaths } from './check-shipped-paths.mjs';
 import { fetchWindowsNode, readNodePin } from './fetch-windows-node.mjs';
+import { pruneCedarWasm } from './prune-cedar-wasm.mjs';
+
+const rootDir = resolve(import.meta.dirname, '..');
 
 async function withDir(exercise) {
   const dir = await mkdtemp(join(tmpdir(), 'win-bundle-tools-'));
-  try { await exercise(dir); } finally { await rm(dir, { recursive: true, force: true }); }
+  try {
+    await exercise(dir);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 const sha256 = (data) => createHash('sha256').update(data).digest('hex');
 
@@ -18,14 +26,28 @@ const sha256 = (data) => createHash('sha256').update(data).digest('hex');
 test('the Windows Node pin tracks .tool-versions and nodejs.org naming', async () => {
   const pin = await readNodePin();
   const toolVersions = await readFile(new URL('../.tool-versions', import.meta.url), 'utf8');
-  assert.equal(pin.version, toolVersions.match(/^nodejs\s+(\S+)/m)[1], 'bundle the runtime the repo is built and tested on');
-  assert.equal(pin.zip.url, `https://nodejs.org/dist/v${pin.version}/node-v${pin.version}-win-x64.zip`);
+  assert.equal(
+    pin.version,
+    toolVersions.match(/^nodejs\s+(\S+)/m)[1],
+    'bundle the runtime the repo is built and tested on'
+  );
+  assert.equal(
+    pin.zip.url,
+    `https://nodejs.org/dist/v${pin.version}/node-v${pin.version}-win-x64.zip`
+  );
   assert.match(pin.zip.sha256, /^[a-f0-9]{64}$/);
   assert.match(pin.nodeExeSha256, /^[a-f0-9]{64}$/);
 });
 
 function fakePin(zipBytes, exeBytes) {
-  return { version: '9.9.9', zip: { url: 'https://nodejs.org/dist/v9.9.9/node-v9.9.9-win-x64.zip', sha256: sha256(zipBytes) }, nodeExeSha256: sha256(exeBytes) };
+  return {
+    version: '9.9.9',
+    zip: {
+      url: 'https://nodejs.org/dist/v9.9.9/node-v9.9.9-win-x64.zip',
+      sha256: sha256(zipBytes),
+    },
+    nodeExeSha256: sha256(exeBytes),
+  };
 }
 
 test('fetchWindowsNode verifies the archive and node.exe, and installs only node.exe and LICENSE', async () => {
@@ -42,8 +64,13 @@ test('fetchWindowsNode verifies the archive and node.exe, and installs only node
       await writeFile(join(top, 'npm.cmd'), 'not shipped');
     };
     const destination = join(dir, 'bundle', 'node');
-    const result = await fetchWindowsNode({ destination, pin, download: async () => zipBytes, extract });
-    assert.deepEqual((await readFile(join(destination, 'node.exe'))), exeBytes);
+    const result = await fetchWindowsNode({
+      destination,
+      pin,
+      download: async () => zipBytes,
+      extract,
+    });
+    assert.deepEqual(await readFile(join(destination, 'node.exe')), exeBytes);
     assert.equal(await readFile(join(destination, 'LICENSE'), 'utf8'), 'MIT');
     await assert.rejects(readFile(join(destination, 'npm.cmd')), /ENOENT/);
     assert.equal(result.version, '9.9.9');
@@ -56,7 +83,12 @@ test('fetchWindowsNode refuses a tampered archive or binary and leaves nothing b
     const pin = fakePin(Buffer.from('zip'), exeBytes);
     const destination = join(dir, 'node');
     await assert.rejects(
-      fetchWindowsNode({ destination, pin, download: async () => Buffer.from('evil'), extract: async () => {} }),
+      fetchWindowsNode({
+        destination,
+        pin,
+        download: async () => Buffer.from('evil'),
+        extract: async () => {},
+      }),
       /archive checksum mismatch/
     );
     const extract = async (_zip, into) => {
@@ -75,8 +107,19 @@ test('fetchWindowsNode refuses a tampered archive or binary and leaves nothing b
 
 test('fetchWindowsNode only downloads from nodejs.org over https', async () => {
   await withDir(async (dir) => {
-    const pin = { ...fakePin(Buffer.from('z'), Buffer.from('e')), zip: { url: 'http://example.com/node.zip', sha256: '0'.repeat(64) } };
-    await assert.rejects(fetchWindowsNode({ destination: join(dir, 'n'), pin, download: async () => Buffer.alloc(0), extract: async () => {} }), /nodejs\.org/);
+    const pin = {
+      ...fakePin(Buffer.from('z'), Buffer.from('e')),
+      zip: { url: 'http://example.com/node.zip', sha256: '0'.repeat(64) },
+    };
+    await assert.rejects(
+      fetchWindowsNode({
+        destination: join(dir, 'n'),
+        pin,
+        download: async () => Buffer.alloc(0),
+        extract: async () => {},
+      }),
+      /nodejs\.org/
+    );
   });
 });
 
@@ -86,18 +129,95 @@ test('scanShippedPaths finds runner and checkout paths in UTF-8 and UTF-16LE, in
   await withDir(async (dir) => {
     await mkdir(join(dir, 'server', 'dist'), { recursive: true });
     await writeFile(join(dir, 'server', 'dist', 'ok.js'), 'module.exports = 1;');
-    await writeFile(join(dir, 'a.exe'), Buffer.concat([Buffer.from([0, 1]), Buffer.from('D:\\a\\agentbrowser\\agentbrowser\\node_modules\\x', 'utf16le')]));
-    await writeFile(join(dir, 'server', 'dist', 'bad.js'), 'require("/home/runner/work/agentbrowser/agentbrowser/x")');
-    await writeFile(join(dir, 'server', 'dist', 'local.js'), 'const p = "/home/dev/src/agentbrowser/packages/api";');
-    const findings = await scanShippedPaths(dir, { checkout: '/home/dev/src/agentbrowser' });
-    assert.deepEqual(
-      findings.map((f) => `${f.file} ${f.encoding} ${f.needle}`).sort(),
-      [
-        'a.exe utf16le D:\\a\\',
-        'server/dist/bad.js utf8 /home/runner/work/',
-        'server/dist/local.js utf8 /home/dev/src/agentbrowser',
-      ]
+    await writeFile(
+      join(dir, 'a.exe'),
+      Buffer.concat([
+        Buffer.from([0, 1]),
+        Buffer.from('D:\\a\\agentbrowser\\agentbrowser\\node_modules\\x', 'utf16le'),
+      ])
     );
+    await writeFile(
+      join(dir, 'server', 'dist', 'bad.js'),
+      'require("/home/runner/work/agentbrowser/agentbrowser/x")'
+    );
+    await writeFile(
+      join(dir, 'server', 'dist', 'local.js'),
+      'const p = "/home/dev/src/agentbrowser/packages/api";'
+    );
+    const findings = await scanShippedPaths(dir, { checkout: '/home/dev/src/agentbrowser' });
+    assert.deepEqual(findings.map((f) => `${f.file} ${f.encoding} ${f.needle}`).sort(), [
+      'a.exe utf16le D:\\a\\',
+      'server/dist/bad.js utf8 /home/runner/work/',
+      'server/dist/local.js utf8 /home/dev/src/agentbrowser',
+    ]);
+  });
+});
+
+test('scanShippedPaths ships cedar-wasm only at the pinned hash (TD-BROWSER-15 6)', async () => {
+  await withDir(async (dir) => {
+    const wasmRel = join(
+      'node_modules',
+      '@cedar-policy',
+      'cedar-wasm',
+      'nodejs',
+      'cedar_wasm_bg.wasm'
+    );
+    await mkdir(dirname(join(dir, wasmRel)), { recursive: true });
+    // The real pinned build embeds runner paths and must be skipped by agreement.
+    const real = await readFile(
+      join(
+        rootDir,
+        'packages',
+        'policy-engine',
+        'node_modules',
+        '@cedar-policy',
+        'cedar-wasm',
+        'nodejs',
+        'cedar_wasm_bg.wasm'
+      )
+    );
+    await writeFile(join(dir, wasmRel), real);
+    assert.deepEqual(await scanShippedPaths(dir), []);
+    // Any other bytes at that path still fail.
+    await writeFile(join(dir, wasmRel), Buffer.concat([real.subarray(0, 64), Buffer.from([0xff])]));
+    const findings = await scanShippedPaths(dir);
+    assert.equal(findings.length, 1);
+    assert.match(findings[0].needle, /cedar-wasm sha256/);
+    // And a wasm elsewhere is never skipped.
+    await writeFile(join(dir, 'stray.wasm'), '/home/runner/work/cedar/cedar/x');
+    assert.equal((await scanShippedPaths(dir)).length, 2);
+  });
+});
+
+test('pruneCedarWasm keeps one wasm build and enforces the pin', async () => {
+  await withDir(async (dir) => {
+    const pkg = join(dir, 'node_modules', '@cedar-policy', 'cedar-wasm');
+    await mkdir(join(pkg, 'nodejs'), { recursive: true });
+    await mkdir(join(pkg, 'esm'), { recursive: true });
+    await mkdir(join(pkg, 'web'), { recursive: true });
+    const real = await readFile(
+      join(
+        rootDir,
+        'packages',
+        'policy-engine',
+        'node_modules',
+        '@cedar-policy',
+        'cedar-wasm',
+        'nodejs',
+        'cedar_wasm_bg.wasm'
+      )
+    );
+    await writeFile(join(pkg, 'nodejs', 'cedar_wasm_bg.wasm'), real);
+    await writeFile(join(pkg, 'esm', 'cedar_wasm.js'), 'export const x = 1;');
+    await writeFile(join(pkg, 'web', 'cedar_wasm.js'), 'export const x = 1;');
+    await writeFile(join(pkg, 'package.json'), JSON.stringify({ version: '4.13.0' }));
+    assert.equal(await pruneCedarWasm(dir), 1);
+    assert.equal(existsSync(join(pkg, 'nodejs', 'cedar_wasm_bg.wasm')), true);
+    assert.equal(existsSync(join(pkg, 'esm')), false);
+    assert.equal(existsSync(join(pkg, 'web')), false);
+    // A version bump without re-pinning is refused, not silently pruned.
+    await writeFile(join(pkg, 'package.json'), JSON.stringify({ version: '4.14.0' }));
+    await assert.rejects(() => pruneCedarWasm(dir), /pins 4.13.0/);
   });
 });
 
@@ -113,16 +233,25 @@ test('scanShippedPaths skips excluded directories (the pinned Node runtime is ve
 test('scanShippedPaths matches Windows checkout paths with either separator', async () => {
   await withDir(async (dir) => {
     await writeFile(join(dir, 'x.js'), 'C:/Users/dev/agentbrowser/packages');
-    assert.equal((await scanShippedPaths(dir, { checkout: 'C:\\Users\\dev\\agentbrowser' })).length, 1);
+    assert.equal(
+      (await scanShippedPaths(dir, { checkout: 'C:\\Users\\dev\\agentbrowser' })).length,
+      1
+    );
   });
 });
 
 test('scanShippedPaths catches a path escaped inside a JS string literal (the v1.17.0 exe)', async () => {
   await withDir(async (dir) => {
     // Bytes as found in v1.17.0's agentbrowser-server-windows-x64.exe.
-    await writeFile(join(dir, 'server.exe'), Buffer.from('require("D:\\\\a\\\\agentbrowser\\\\agentbrowser\\\\node_modules")'));
+    await writeFile(
+      join(dir, 'server.exe'),
+      Buffer.from('require("D:\\\\a\\\\agentbrowser\\\\agentbrowser\\\\node_modules")')
+    );
     const findings = await scanShippedPaths(dir);
-    assert.deepEqual(findings.map((f) => f.needle), ['D:\\a\\']);
+    assert.deepEqual(
+      findings.map((f) => f.needle),
+      ['D:\\a\\']
+    );
   });
 });
 
@@ -150,9 +279,15 @@ test('byte canonicalization agrees with the string form on ASCII and UTF-16LE', 
 
 test('a drive-letter needle needs a boundary: android://a/ or field:\\a\\ is not D:\\a\\', async () => {
   await withDir(async (dir) => {
-    await writeFile(join(dir, 'benign.js'), 'x = "android://a/b"; y = "cid://a/b"; z = "field:\\\\a\\\\";');
+    await writeFile(
+      join(dir, 'benign.js'),
+      'x = "android://a/b"; y = "cid://a/b"; z = "field:\\\\a\\\\";'
+    );
     assert.deepEqual(await scanShippedPaths(dir), []);
     await writeFile(join(dir, 'real.js'), 'p = "(D:\\\\a\\\\agentbrowser)"');
-    assert.deepEqual((await scanShippedPaths(dir)).map((f) => f.file), ['real.js']);
+    assert.deepEqual(
+      (await scanShippedPaths(dir)).map((f) => f.file),
+      ['real.js']
+    );
   });
 });

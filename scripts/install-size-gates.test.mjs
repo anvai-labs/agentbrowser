@@ -16,13 +16,24 @@
  */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
 /** Explicit named limits (bytes). */
-const LIMITS = { compressed: 12 * 1024 * 1024, extracted: 80 * 1024 * 1024 };
+// 2026-10-13: +2 MB compressed / +5 MB extracted for the bundled Cedar engine
+// (@cedar-policy/cedar-wasm 4.13, nodejs build only, measured 4.35 MB on disk;
+// TD-BROWSER-15 3b/6).
+const LIMITS = { compressed: 14 * 1024 * 1024, extracted: 85 * 1024 * 1024 };
 
 const outDir = process.env.PACKAGE_OUT_DIR ?? 'out-packages';
 const target = process.env.PACKAGE_TARGET ?? `${process.platform}-${process.arch}`;
@@ -34,7 +45,9 @@ test('the packaged candidate exists', () => {
 
 test('compressed candidate stays within the size gate', () => {
   const bytes = statSync(tarball).size;
-  console.log(`footprint: candidate compressed ${Math.round(bytes / 1024)} KB (gate ${LIMITS.compressed} bytes)`);
+  console.log(
+    `footprint: candidate compressed ${Math.round(bytes / 1024)} KB (gate ${LIMITS.compressed} bytes)`
+  );
   assert.ok(
     bytes <= LIMITS.compressed,
     `compressed candidate ${bytes} bytes exceeds the ${LIMITS.compressed}-byte gate`
@@ -49,7 +62,14 @@ test('extracted candidate stays within the size gate and ships the server entryp
     for (const required of [
       join(serverRoot, 'agentbrowser-server'),
       join(serverRoot, 'VERSION.json'),
-      join(serverRoot, 'node_modules', '@agentbrowser', 'control', 'dist', 'journal-sqlite-child.js'),
+      join(
+        serverRoot,
+        'node_modules',
+        '@agentbrowser',
+        'control',
+        'dist',
+        'journal-sqlite-child.js'
+      ),
     ]) {
       assert.ok(existsSync(required), `packaged candidate is missing ${required}`);
     }
@@ -64,7 +84,9 @@ test('extracted candidate stays within the size gate and ships the server entryp
       }
     };
     walk(serverRoot);
-    console.log(`footprint: extracted server tree ${Math.round(totalBytes / 1024)} KB (gate ${LIMITS.extracted} bytes)`);
+    console.log(
+      `footprint: extracted server tree ${Math.round(totalBytes / 1024)} KB (gate ${LIMITS.extracted} bytes)`
+    );
     assert.ok(
       totalBytes <= LIMITS.extracted,
       `extracted server tree ${totalBytes} bytes exceeds the ${LIMITS.extracted}-byte gate`

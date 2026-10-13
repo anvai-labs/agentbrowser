@@ -6,6 +6,7 @@ import {
   expandRangesForCedar,
   normalizeSourceForCedar,
   parseCidr,
+  policyDocumentFromEnvironment,
   policyDocumentFromLegacyConfig,
 } from './cedar-generator.js';
 
@@ -313,5 +314,53 @@ describe('policyDocumentFromLegacyConfig', () => {
     const document = policyDocumentFromLegacyConfig({ rules: [{ effect: 'read' }] });
     expect(document.approvalRules).toEqual([{ effect: 'read' }]);
     expect('id' in document.approvalRules[0]).toBe(false);
+  });
+});
+
+describe('policyDocumentFromEnvironment', () => {
+  const env = (over: Record<string, string>) =>
+    over as Parameters<typeof policyDocumentFromEnvironment>[0];
+  it('parses exactly as the service does', () => {
+    const document = policyDocumentFromEnvironment(
+      env({
+        AGENTBROWSER_ALLOWED_CIDRS: ' 10.0.0.0/8 , ::ffff:192.168.1.0/120 ',
+        AGENTBROWSER_ALLOW_LOOPBACK: 'TRUE',
+        AGENTBROWSER_APPROVAL_POLICY:
+          '{"unknownRisk":"required","rules":[{"id":"pay","effect":"transaction","decision":"deny"}]}',
+      })
+    );
+    expect(document.unknownRisk).toBe('required');
+    expect(document.approvalRules).toEqual([
+      { id: 'pay', effect: 'transaction', decision: 'deny' },
+    ]);
+    // The mapped-space CIDR stands for its IPv4 range in the cover.
+    const cover = document.policies.find((p) => p.ruleId === 'env.allowed-cidrs')?.cedar ?? '';
+    expect(cover).toContain('ip("10.0.0.0/8")');
+    expect(cover).toContain('ip("192.168.1.0/24")');
+    expect(document.policies.some((p) => p.ruleId === 'env.allow-loopback')).toBe(true);
+  });
+  it('treats unset, empty and non-affirmative values as off', () => {
+    for (const e of [
+      env({}),
+      env({ AGENTBROWSER_ALLOWED_CIDRS: '  ', AGENTBROWSER_ALLOW_LOOPBACK: 'no' }),
+      env({ AGENTBROWSER_ALLOW_LOOPBACK: '0' }),
+    ]) {
+      const document = policyDocumentFromEnvironment(e);
+      expect(document.policies.some((p) => p.ruleId === 'env.allowed-cidrs')).toBe(false);
+      expect(document.policies.some((p) => p.ruleId === 'env.block-loopback')).toBe(true);
+    }
+  });
+  it('surfaces startup errors: bad CIDRs, bad JSON, bad rules', () => {
+    expect(() =>
+      policyDocumentFromEnvironment(env({ AGENTBROWSER_ALLOWED_CIDRS: '10.0.0.0/99' }))
+    ).toThrow(/Invalid allowedPrivateCIDRs CIDR/);
+    expect(() => policyDocumentFromEnvironment(env({ AGENTBROWSER_APPROVAL_POLICY: '{' }))).toThrow(
+      SyntaxError
+    );
+    expect(() =>
+      policyDocumentFromEnvironment(
+        env({ AGENTBROWSER_APPROVAL_POLICY: '{"rules":[{"id":"BAD ID","effect":"read"}]}' })
+      )
+    ).toThrow(/Invalid operator approval rule/);
   });
 });
