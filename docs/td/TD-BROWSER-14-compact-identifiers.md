@@ -65,56 +65,65 @@ ordinal.
 **Measure:** bytes and tokens per call on the benchmark transcripts, before and after, as release
 evidence.
 
-### Phase 3: named CLI contexts
+### Phase 3: CLI contexts
 
 **Commands:**
-- `agentbrowser use <name> <sessionId> [pageId]`;
-- `agentbrowser which [-c <name>]`, which shows the resolved ids and where they came from;
-- `agentbrowser unuse <name>`.
+- `agentbrowser use <sessionId> <pageId> [--name <n>] [--force]` prints a generated name such as
+  `c_k3m9`. It refuses to rebind an existing name to different ids without `--force`.
+- `agentbrowser which [-c <name>]` shows the resolved ids and where they came from.
+- `agentbrowser unuse <name>` removes a context.
 
-**Storage:** a context records `{ baseUrl, instanceId, sessionId, pageId? }` in the user's state
-directory, written atomically, one file per name.
+**Storage:** `{ baseUrl, serviceGeneration, sessionId, pageId }`, one file per name in the user's
+state directory, written atomically. It checks that the session and page exist when the context
+is set, and again on every use.
 
-**Server:** `/health` reports a random per-process `instanceId`.
+**Protocol:** the session view gains `serviceGeneration`, the same per-process value that the
+control view's `RunCursor` already carries for controlled sessions (one source of truth,
+ADR-015). `use` reads it there.
+
+**Server:** the `/v1` request hook compares an optional `x-agentbrowser-generation` header with
+its own `serviceGeneration` and rejects a mismatch before the operation runs. `/health` is
+unchanged.
 
 **Selection and grammar:**
 - `-c <name>` or `AGENTBROWSER_CLI_CONTEXT=<name>` selects a context, and the `-s`/`-p` flags
   give ids explicitly.
 - With any of those flags, a command takes **no** positional ids. Without them, the positional
   grammar is unchanged.
-- There is no unnamed default context (ADR-022: it would be shared across concurrent agents).
+- There is no default context.
 - The CLI never reads `AGENTBROWSER_SESSION_ID` (the MCP delegated-session binding) or
   `AGENTBROWSER_BASE_URL`.
 
-**Errors, never fallback:** a context with another base URL, a different `instanceId` (the server
-restarted) or a closed session or page fails.
+**Errors, never fallback:**
+- A context used against another base URL fails.
+- A context used after a restart (the generation header mismatches) fails.
+- A context whose pinned session or page has closed fails as stale; the agent rebinds with
+  `use`.
+- The page is never inferred.
 
-**Page omission:** the request omits `pageId`, and the server resolves it atomically, under the
-session lock, to the single open page. Zero or several open pages fail as ambiguous. The response
-always returns the resolved `pageId`. MCP tools get the same rule for an optional `pageId`.
+**MCP:** unchanged. Tools keep requiring `sessionId` and `pageId`.
 
 **Tests:**
-- grammar selection by flag (`press -c a Enter` versus `press <s> <p> Enter`);
-- two concurrent CLI processes, each using a different context, never cross;
-- a stale context fails after a restart, a close, or a base-URL change;
-- an omitted page becomes ambiguous when a popup opens;
-- the server-side resolution is atomic.
+- grammar selection by flag (`press -c c_x Enter` versus `press <s> <p> Enter`);
+- generated names are unique, and rebinding an existing name without `--force` is refused;
+- two concurrent CLI processes, using generated contexts, never cross;
+- the generation header is rejected after a restart, before any side effect;
+- a pinned page that closed (a popup replaced it, or a takeover closed it) fails as stale instead
+  of moving to another page.
 
 ### Phase 4: response echo (measure first)
 
 `--json` results echo the `sessionId`/`pageId` the caller supplied. Drop the echo only if phase 2's
-measurements show it matters, and **never** when the server resolved an omitted page: that echo is
-how the agent learns which page it drove.
+measurements show it matters.
 
 ## Compatibility and release
 
 - Ids stay opaque strings, and the session schema pattern is unchanged.
-- Release notes call out the new formats, the public ids in `page.created`, and the CLI context
-  commands.
+- Release notes call out the new formats, the public ids in `page.created`, the CLI context
+  commands, and the `x-agentbrowser-generation` header.
 - Phases 1 to 3 ship in 1.18.0. Phase 1 alone has no visible change and could ship in a patch.
 
 ## Open questions
 
 - Should a context also be scoped to the API key or tenant, so that a key rotation invalidates it?
-- Should `use` check that the session exists when the context is set, as well as when it is used?
-  It must check at use time either way.
+- Should a context expire on its own (a TTL), beyond failing once its session ends?
