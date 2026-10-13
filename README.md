@@ -30,13 +30,16 @@ provisioned Chromium (plus its platform libraries on Linux). See the
 ## Install (Windows)
 
 ```powershell
-winget install AnvaiLabs.AgentBrowser   # or extract agentbrowser-windows-x64.zip from a release
+# once the package is accepted into winget-pkgs (not yet published):
+winget install AnvaiLabs.AgentBrowser
 agentbrowser-server                     # first start downloads Chromium (~300 MB)
+# or extract agentbrowser-windows-x64.zip from the next release and run .\agentbrowser-server.exe
 ```
 
 The zip is self-contained: the service runs on its own bundled Node.js runtime, and
 `agentbrowser-cli` and `agentbrowser-mcp` are standalone executables. Nothing is registered as a
-Windows service; see [Windows in the operations guide](docs/operations.md#windows-winget-zip).
+Windows service; see [Windows in the operations guide](docs/operations.md#windows-install). On
+Windows the CLI command is `agentbrowser-cli`.
 npm carries only the MCP adapter (`@anvailabs/agentbrowser-mcp`), not the service.
 
 ### Consuming directly from a shell

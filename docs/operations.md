@@ -174,13 +174,15 @@ One install ships all three surfaces:
 - the **CLI binary** (`agentbrowser`) — scriptable commands that also connect
   to the service; no Node runtime needed for the compiled client.
 
-### Windows (winget / zip)
+### Windows install
 
 ```powershell
-winget install AnvaiLabs.AgentBrowser     # once the winget-pkgs submission is merged
-# or: download agentbrowser-windows-x64.zip from the GitHub release and extract it anywhere
-agentbrowser-server --install-browser     # optional: download Chromium now
-agentbrowser-server                       # the service, on 127.0.0.1:5709
+# Either, once the package is accepted into winget-pkgs (not yet published):
+winget install AnvaiLabs.AgentBrowser     # puts agentbrowser-server / -cli / -mcp on PATH
+# Or: extract agentbrowser-windows-x64.zip from a release that ships the bundle (the next
+# release; earlier Windows server assets are broken) and run from that folder:
+.\agentbrowser-server.exe --install-browser   # optional: download Chromium now
+.\agentbrowser-server.exe                     # the service, on 127.0.0.1:5709
 ```
 
 `agentbrowser-windows-x64.zip` carries all three surfaces in one folder
@@ -197,6 +199,20 @@ Notes:
 - **Nothing is installed as a Windows service.** Run `agentbrowser-server` in a terminal, or
   register it with Task Scheduler. Stop it with Ctrl+C. Killing the launcher also stops the
   server and its Chromium.
+- **Settings persist like any Windows environment variable:** `setx AGENTBROWSER_API_KEYS
+  "key:tenant"` (new terminals only), the user environment variables dialog, or the environment
+  of a Task Scheduler action.
+- **Logs** are structured JSON on stdout. Under Task Scheduler, run through a wrapper that
+  redirects them, for example
+  `cmd /c "agentbrowser-server >> %LOCALAPPDATA%\agentbrowser\server.log 2>&1"`.
+- **MCP clients** run `agentbrowser-mcp` (winget) or the full path to `agentbrowser-mcp.exe`
+  (zip), with `AGENTBROWSER_BASE_URL=http://127.0.0.1:5709` and, when keys are configured,
+  `AGENTBROWSER_API_KEY`.
+- **Upgrade:** `winget upgrade AnvaiLabs.AgentBrowser`, or extract the new zip over a fresh
+  folder. Stop the service first. A new Playwright revision downloads its Chromium on the next
+  start.
+- **Uninstall:** `winget uninstall AnvaiLabs.AgentBrowser`, or delete the folder. Chromium lives
+  outside the package; remove `%LOCALAPPDATA%\agentbrowser\browsers` (about 700 MB) too.
 - **`AGENTBROWSER_HOME`** points the launcher at an extracted bundle somewhere else. If set, it
   must be a complete bundle; there is no fallback.
 - **`AGENTBROWSER_SKIP_BROWSER_INSTALL=1`** skips the first-start download, for example when
@@ -214,7 +230,7 @@ and Windows clients are published and need no Node runtime. The
 and Linux. It requires Node 22 or newer plus a compatible Chromium installed under
 `PLAYWRIGHT_BROWSERS_PATH`; Linux hosts must also provide Chromium's platform
 libraries. The archive launcher does not download them. Windows uses the
-self-contained `agentbrowser-windows-x64.zip` instead ([above](#windows-winget-zip)). The MCP
+self-contained `agentbrowser-windows-x64.zip` instead ([above](#windows-install)). The MCP
 server is also
 on npm as
 [`@anvailabs/agentbrowser-mcp`](https://www.npmjs.com/package/@anvailabs/agentbrowser-mcp)
@@ -255,20 +271,29 @@ and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 | `AGENTBROWSER_DEFAULT_TTL_MS` | service | Operator-level default session TTL (ms); per-session `ttlMs` still wins. Unset/garbage → the 4.375-hour default. |
 | `AGENTBROWSER_EXTRACT_MAX_BYTES` | service | Hard ceiling for complete compact JSON extraction responses, including evidence, in UTF-8 bytes. Default 1048576 (1 MiB). A positive decimal safe integer; invalid/empty values abort startup. Per-request `maxBytes` may only lower this ceiling. |
 | `AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS` | service | Operator-level default idle timeout (ms); per-session `idleTimeoutMs` still wins. Unset/garbage → the 10-min default. Useful for deployments that are mostly headed human-in-the-loop flows. |
+| `AGENTBROWSER_MODE` | MCP server | Fixed tool profile for this MCP connection: `qa` (default), `operations`, `audit`, `appsec`, `bounty`, `forms` or `application`. An invalid value aborts startup. See the [MCP server README](https://github.com/anvai-labs/agentbrowser/blob/main/packages/mcp-server/README.md). |
+| `AGENTBROWSER_SESSION_ID` | MCP server | Operator-configured delegated-session binding: the MCP server drives that one session with its current delegated credential ([delegated sessions](delegated-sessions.md)). Unrelated to the CLI. |
+| `AGENTBROWSER_HOSTED` | service entrypoint | `true`/`1` declares a hosted deployment (default `false`/`0`); hosted mode refuses operator CDP attachment. Any other value aborts startup. |
+| `AGENTBROWSER_APPROVAL_POLICY` | service entrypoint | Operator approval policy as a JSON object; see [operator approval policy](#operator-approval-policy). |
+| `AGENTBROWSER_CDP_ENDPOINT` / `AGENTBROWSER_CDP_ALLOW_UNENFORCED_EGRESS` | service entrypoint | Operator Chrome attachment: a loopback `http://127.0.0.1:<port>` endpoint plus an explicit `true` acknowledging that the attached profile is outside network containment. Both are required together; see [attach to a dedicated operator Chrome profile](#attach-to-a-dedicated-operator-chrome-profile). |
 | `AGENTBROWSER_INLINE_ARTIFACT_MAX_BYTES` | service | Largest artifact (screenshot, PDF) returned inline as base64 in a response, in bytes. Default 262144 (256 KiB); larger artifacts are returned by reference. Values clamp at the artifact store's 10 MiB ceiling; negative or invalid values keep the default. |
-| `AGENTBROWSER_EMPTY_DOM_MIN_TEXT` / `AGENTBROWSER_EMPTY_DOM_MIN_NODES` | service (Playwright engine) | Thresholds below which a page's DOM counts as *empty* for snapshot evidence: visible text characters (default 200) and element count (default 150). Positive integers; invalid values keep the defaults. |
+| `AGENTBROWSER_EMPTY_DOM_MIN_TEXT` / `AGENTBROWSER_EMPTY_DOM_MIN_NODES` | service (Playwright engine) | Apply only when the accessibility snapshot surfaced **zero** elements. If the live DOM still holds at least this much visible text (default 200 characters) **or** this many elements (default 150), the observation is flagged degraded (`empty-snapshot-nonempty-dom`) rather than reported as an empty page. Positive integers; invalid values keep the defaults. |
 | `AGENTBROWSER_ASSUME_DISPLAY` | process launching a browser | `1` asserts that a display is available for headed sessions; `0` asserts that none is. Unset: best-effort detection from the environment. A hint only; it cannot prove that a display server is reachable. |
 | `AGENTBROWSER_MCP_VERSION` | MCP server | Overrides the reported MCP server version (development only; release binaries embed their version). Release acceptance strips it so a mis-stamped artifact cannot pass. |
 | `AGENTBROWSER_HOME` | Windows launcher | Install root holding `node\` and `server\`; default: the folder of the real `agentbrowser-server.exe`. When set it must be a complete bundle; there is no fallback. |
 | `AGENTBROWSER_SKIP_BROWSER_INSTALL` | Windows launcher | `1` = never download Chromium on start. |
-| `PLAYWRIGHT_BROWSERS_PATH` | service, Windows launcher | Where Chromium is installed. The Windows launcher defaults it to `%LOCALAPPDATA%\agentbrowser\browsers` and resolves `0` and relative values the way Playwright does. |
+| `PLAYWRIGHT_BROWSERS_PATH` | service, Windows launcher | Where Chromium is installed. The Windows launcher defaults it to `%LOCALAPPDATA%\agentbrowser\browsers`. It resolves `0` and relative values the way Playwright does from the server's working directory, which is the bundle's `server\` folder, not the caller's current directory. |
 | `AGENTBROWSER_SNAPSHOT_TIMEOUT_MS` | service (Playwright engine) | Shared snapshot-wait budget per observation and timeout per action-time semantic check, in integer ms (1–30000; default 1000). Invalid environment values use the default; invalid explicit engine options throw. Timed-out element captures use a successful whole-document accessibility snapshot as fallback evidence, which must still match before acting. Unrelated document changes can therefore stale a fallback ref; observe again. Missing semantic evidence refuses actions, and non-timeout errors propagate. This bounds snapshot waiting, not all observation DOM work. |
 
-Test-harness variables, not operator settings: `AGENTBROWSER_VICTOR_ROOT`,
+Test-harness and internal variables, not operator settings: `AGENTBROWSER_VICTOR_ROOT`,
 `AGENTBROWSER_VICTOR_PYTHON`, `AGENTBROWSER_MCP_BINARY`, `AGENTBROWSER_NODE` (coexistence
-harness) and `AGENTBROWSER_FIREFOX_EXECUTABLE` (engine-firefox tests). The TypeScript SDK's
-subprocess helper sets `AGENTBROWSER_LOG=error`, but the service does not read that variable; use
-`AGENTBROWSER_LOG_LEVEL`.
+harness), `AGENTBROWSER_FIREFOX_EXECUTABLE` (engine-firefox tests),
+`AGENTBROWSER_E2E_MCP_COMMAND` and `AGENTBROWSER_E2E_EXPECTED_VERSION` (Windows MCP end-to-end),
+and `AGENTBROWSER_PRIVATE_PATH` (the CLI's owner-only file writer on Windows passes the path to
+its PowerShell helper this way). `AGENTBROWSER_TEST_HEADLESS` is set by Windows CI but read by
+nothing. The TypeScript SDK's
+subprocess helper sets `AGENTBROWSER_LOG=error`, but the service does not read that variable.
+`AGENTBROWSER_LOG_LEVEL` accepts only `info` and `debug`; there is no error-only level today.
 
 Port defaults to `5709`; the service binds loopback (`127.0.0.1`) by
 default because it reads local files on the operator's behalf
@@ -782,13 +807,14 @@ authority model and the acceptance fixture
 - **"Incomplete installation" or "does not match server".** Part of the bundle is missing, or an
   upgrade was only partly applied. Reinstall, or check `AGENTBROWSER_HOME`.
 - **`winget upgrade` fails with files in use.** Stop `agentbrowser-server` first: Windows cannot
-  replace a running `node.exe` or `chrome.exe`.
+  replace the running `agentbrowser-server.exe` or the bundled `node.exe`. (Chromium lives in
+  `%LOCALAPPDATA%\agentbrowser\browsers`, outside the package.)
 - **Path-too-long errors.** The bundle fits Windows' 260-character path limit under winget's
   install root for user names of up to 20 characters. For longer profile folders, extract the zip
   somewhere shorter (for example `C:\AgentBrowser`), or enable long paths.
 - **Antivirus.** A slow first start or locked files usually means real-time scanning of
   `node\node.exe` or Chromium. Allow the install folder, or wait for the first scan to finish.
-- **`cookies export --output` or `observe --output` fail on a locked-down machine.** On Windows
+- **`session cookies <sessionId> --output` or `observe --output` fail on a locked-down machine.** On Windows
   these files are created with an owner-only ACL through Windows PowerShell (.NET). If
   PowerShell is unavailable, or restricted to Constrained Language Mode by AppLocker/WDAC, the
   write fails closed and nothing is written. Use stdout, or a machine where the CLI may run

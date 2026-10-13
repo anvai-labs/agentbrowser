@@ -7,10 +7,11 @@
 
 ## Context
 
-The CLI and the MCP adapter ship as Bun single-file executables (TD-BROWSER-5). Their
-dependencies (commander, the fetch-only SDK) bundle cleanly. v1.17.0 shipped the **browser
-service** on Windows the same way, as `agentbrowser-server-windows-x64.exe`, and it failed on every
-machine except CI:
+The MCP adapter ships as a Bun single-file executable (TD-BROWSER-5), and the CLI later followed
+the same pipeline. Their dependencies (commander, the fetch-only SDK) bundle cleanly. From
+**v1.15.2 through v1.17.0**, the **browser service** shipped on Windows the same way, as
+`agentbrowser-server-windows-x64.exe`. Every one of those executables embeds the frozen build path
+and fails on every machine except CI:
 
 ```
 error: Cannot find module 'D:\a\agentbrowser\agentbrowser\node_modules\.pnpm\playwright-core@1.62.1\node_modules\playwright-core\package.json'
@@ -23,8 +24,11 @@ error: Cannot find module 'D:\a\agentbrowser\agentbrowser\node_modules\.pnpm\pla
   single-file binary.
 - **CI never noticed:** the release smoke ran the exe *inside* the build checkout, where those
   frozen paths happened to exist.
-- **The repository already had the rule** this broke. For macOS and Linux it states: "Playwright
-  is bundler-hostile — its package tree must ship intact."
+- **The project had already decided against this.** TD-BROWSER-5's scope boundary states that
+  "compiling the REST server + Playwright into the binary is explicitly rejected". ADR-014 §3 calls
+  Playwright "bundler-hostile", and the macOS/Linux server packaging says its package tree "must
+  ship intact". The Windows server executable contradicted those decisions; this ADR restores
+  them.
 
 Two further constraints shaped the fix:
 - **Symlinks:** the macOS/Linux server tarballs use pnpm's symlinked layout, which Windows `tar`
@@ -38,7 +42,7 @@ clean-room tested by the release pipeline:
 
 | Path | Contents |
 |---|---|
-| `agentbrowser-server.exe` | A small launcher (Bun-compiled, Node builtins only, never derives a location from `__dirname`) |
+| `agentbrowser-server.exe` | A launcher: a Bun runtime carrying a few hundred lines of builtins-only code, no server code, and no location derived from `__dirname` |
 | `agentbrowser-cli.exe`, `agentbrowser-mcp.exe` | The same bytes as the standalone release assets |
 | `node\node.exe`, `node\LICENSE` | Official Node.js, pinned to `.tool-versions` by SHA-256 |
 | `server\` | The lockfile-faithful isolated deploy, rewritten link-free (`scripts/materialize-hoisted.mjs`) |

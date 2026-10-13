@@ -54,8 +54,9 @@ AGENTBROWSER_API_KEYS=key:tenant   # tenant keys (see brew caveats for MCP wirin
 On Windows:
 
 ```powershell
-winget install AnvaiLabs.AgentBrowser   # or extract agentbrowser-windows-x64.zip
+winget install AnvaiLabs.AgentBrowser   # once accepted into winget-pkgs; or extract the zip
 agentbrowser-server                     # bundled Node; first start downloads Chromium
+agentbrowser-cli --json health          # on Windows the CLI command is agentbrowser-cli
 ```
 
 ```bash

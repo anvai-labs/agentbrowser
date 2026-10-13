@@ -62,6 +62,7 @@ ADRs capture significant architectural decisions, their context, and consequence
 | [ADR-019](adr/019-explicit-service-worker-opt-in.md) | Explicit Per-Session Service-Worker Opt-In | Accepted | Request policies block service workers by default (Playwright can't route their requests — a choke-point bypass hole); `allowServiceWorkers` is an explicit, off-by-default per-session opt-in for destinations whose anti-fraud tooling keys off service-worker presence |
 | [ADR-020](adr/020-inline-html-verification.md) | Inline HTML Verification via MCP | Accepted | `html` returns page HTML inline (maxBytes-bounded, untrusted-framed, not secret-redacted — a disclosed trade-off) because a11y output cannot show custom-widget state and MCP clients cannot resolve REST artifact URLs; CLI `page html` prints inline and `page observe --continue-from` resumes truncation |
 | [ADR-021](adr/021-form-controls-enrichment.md) | Form-Controls Enrichment for ARIA-Invisible Widgets | Accepted | `include:["formControls"]` mints refs for interactive controls the ARIA snapshot misses (div-based widget triggers); document-evidence gating; 200-control cap; remap reuses the last observation's include tokens |
+| [ADR-023](adr/023-windows-server-bundled-node.md) | Windows Server Ships as a Bundled-Node Zip | Accepted | The Windows service ships inside `agentbrowser-windows-x64.zip` (launcher, CLI/MCP exes, pinned Node, lockfile-faithful server tree), restoring TD-BROWSER-5's rejection of a single-file server binary; shipped-path and clean-room gates |
 
 ## Technical Design
 
