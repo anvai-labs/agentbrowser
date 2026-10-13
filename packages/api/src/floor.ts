@@ -5,7 +5,8 @@
  * second line of defence; the metadata classifier lives in @agentbrowser/policy.
  *
  * Refusals are exported as ServiceError argument tuples, not errors, so this
- * module does not import service.ts (which imports it).
+ * module does not import service.ts (which imports it). Their details objects
+ * are shared by every throw, so they are frozen.
  */
 
 import { EngineError } from '@agentbrowser/engine';
@@ -93,7 +94,7 @@ export const FLOOR_DELEGATED_REQUIRES_OPERATOR = [
   'FORBIDDEN',
   'Controlled sessions require authenticated operator credentials',
   false,
-  { rule: 'floor.delegated.operator' },
+  Object.freeze({ rule: 'floor.delegated.operator' }),
 ] as const;
 
 /** Operator-only control, approval and review routes. */
@@ -101,7 +102,7 @@ export const FLOOR_OPERATOR_REQUIRED = [
   'FORBIDDEN',
   'Operator authority is required',
   false,
-  { rule: 'floor.delegated.operator' },
+  Object.freeze({ rule: 'floor.delegated.operator' }),
 ] as const;
 
 /** Operator attachment cannot carry launch, cookie, delegated-control, download or policy options. */
@@ -109,7 +110,7 @@ export const FLOOR_ATTACH_OPTIONS = [
   'INVALID_REQUEST',
   'Operator attachment cannot apply launch, cookie, delegated-control, download, or per-session policy options. Use a normal isolated session for those options.',
   false,
-  { rule: 'floor.cdp.options' },
+  Object.freeze({ rule: 'floor.cdp.options' }),
 ] as const;
 
 /** True when an attach request asks for any option the floor refuses. */
