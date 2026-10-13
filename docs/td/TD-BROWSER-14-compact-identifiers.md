@@ -74,22 +74,26 @@ evidence.
 - `agentbrowser unuse <name>` removes a context.
 
 **Storage:** `{ baseUrl, serviceGeneration, sessionId, pageId }`, one file per name in the user's
-state directory, written atomically. It checks that the session and page exist when the context
+state directory, created **exclusively** (`O_EXCL`, or a link from a temporary file), never
+replaced in place. `--force` deletes and then creates exclusively. It checks that the session and page exist when the context
 is set, and again on every use.
 
 **Protocol:** the session view gains `serviceGeneration`, the same per-process value that the
 control view's `RunCursor` already carries for controlled sessions (one source of truth,
 ADR-015). `use` reads it there.
 
-**Server:** the `/v1` request hook compares an optional `x-agentbrowser-generation` header with
-its own `serviceGeneration` and rejects a mismatch before the operation runs. `/health` is
-unchanged.
+**Server:** the `/v1` request hook, **after authentication**, compares an optional
+`x-agentbrowser-generation` header with its own `serviceGeneration`. A mismatch returns the
+existing `SESSION_NOT_FOUND` before the operation runs, so no new error code is added. The
+header is compared only; it never feeds journal keys or run cursors. `/health` is unchanged.
 
 **Selection and grammar:**
 - `-c <name>` or `AGENTBROWSER_CLI_CONTEXT=<name>` selects a context, and the `-s`/`-p` flags
   give ids explicitly.
 - With any of those flags, a command takes **no** positional ids. Without them, the positional
   grammar is unchanged.
+- `-c` together with `-s`/`-p` is an error. A page-level command given `-s` without `-p` is an
+  error. Session-level commands take `-s` alone.
 - There is no default context.
 - The CLI never reads `AGENTBROWSER_SESSION_ID` (the MCP delegated-session binding) or
   `AGENTBROWSER_BASE_URL`.
@@ -106,6 +110,10 @@ unchanged.
 **Tests:**
 - grammar selection by flag (`press -c c_x Enter` versus `press <s> <p> Enter`);
 - generated names are unique, and rebinding an existing name without `--force` is refused;
+- **concurrent** `use --name x` calls: exactly one succeeds (exclusive creation);
+- the flag-combination errors (`-c` with `-s`, and `-s` without `-p` on a page command);
+- a generation mismatch returns `SESSION_NOT_FOUND`, and an unauthenticated request is rejected
+  before the generation is compared;
 - two concurrent CLI processes, using generated contexts, never cross;
 - the generation header is rejected after a restart, before any side effect;
 - a pinned page that closed (a popup replaced it, or a takeover closed it) fails as stale instead

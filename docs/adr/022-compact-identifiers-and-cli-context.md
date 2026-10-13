@@ -73,6 +73,9 @@ Ids are omitted only through an explicit **context** that pins both the session 
 **Names are generated, not chosen.** `use` prints a fresh unique name, e.g. `c_k3m9`, by default.
 - `--name <n>` picks one instead, but `use` refuses to rebind an existing name to different ids
   unless given `--force`.
+- A context file is created **exclusively** (`O_EXCL`), so two concurrent `use` calls can't both
+  win. That's what makes the refusal real rather than check-then-act, and it also covers a
+  collision of generated names, which then simply draws a new one.
 - Why: if two agents both picked `-c a`, they would collide exactly like a shared default. A
   generated name can't collide by accident, and the refusal stops a quiet overwrite.
 - What remains: two agents that deliberately share a name, or both pass `--force`, share a
@@ -94,6 +97,13 @@ session view so `use` can read it for any session. No second identifier is added
 - Every context-driven request carries it in an `x-agentbrowser-generation` header. The `/v1`
   request hook rejects a mismatch before the operation runs, so there is no window between a
   health check and the call, and no extra round trip.
+- **The check runs after authentication,** so unauthenticated callers see the same response
+  whatever the generation. A mismatch returns the existing `SESSION_NOT_FOUND` error, which is
+  what a context naming a session this process never created should get. No new error code or
+  status mapping is introduced.
+- **The header is compared, and nothing else.** It never feeds journal keys, run cursors or any
+  identifier, which keeps the journal contract's rule that operation keys take no
+  caller-supplied generation.
 - A context used against another base URL, after a restart (a different generation), or after
   its session or page has closed fails. None of these ever falls through to another source.
 - `/health` is not changed; `use` reads the generation from the session view.
@@ -102,6 +112,11 @@ session view so `use` can read it for any session. No second identifier is added
 `-s <session>` / `-p <page>`, a command takes **no** positional ids: `observe -c c_k3m9`,
 `press -c c_k3m9 Enter`. Without those flags, today's positional grammar is unchanged. So
 `press p1` is never ambiguous between a page id and a key.
+
+**The flags are exclusive, with no precedence rules:**
+- `-c` combined with `-s` or `-p` is an error (pick one source of ids).
+- A page-level command given `-s` without `-p` is an error, because the page is never inferred.
+- Session-level commands (`session get`, `session close`) take `-s` alone.
 
 **Environment names avoid existing meanings.** `AGENTBROWSER_SESSION_ID` stays the MCP adapter's
 operator-configured delegated-session binding, and the CLI does not read it. The CLI keeps
