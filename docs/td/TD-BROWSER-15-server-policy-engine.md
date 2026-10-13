@@ -132,7 +132,7 @@ the build by `tsconfig.build.json`.
   sources of an address but not all, loopback-and-private addresses, and every IPv4 boundary in
   mapped, NAT64 and 6to4 form, as hostname and as resolved address.
 - Generated explicit rule ids carry no position.
-- 26 plausible-but-wrong subjects from two review rounds must each be caught on every seed, and a
+- 27 plausible-but-wrong subjects from three review rounds must each be caught on every seed, and a
   correct subject that resolves rules by id from its configuration must pass
   (`differential-mutants.test.ts`).
 

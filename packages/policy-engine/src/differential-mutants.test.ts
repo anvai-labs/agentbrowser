@@ -244,6 +244,26 @@ const mutants: Record<string, M> = {
       return pick.every((x) => x && ranges.check(x.address, x.type)) ? ALLOW_P : DENY_P;
     };
   },
+  // Review round 3: Cedar-style family matching (isInRange is per family),
+  // with only ::/0 special-cased, misses IPv4-mapped operator CIDRs.
+  'family-separated CIDR matching with only ::/0 special-cased': (c) => {
+    const v4 = compilePrivateCIDRs(c.allowedPrivateCIDRs.filter((x) => !x.includes(':'))).ranges;
+    const v6 = compilePrivateCIDRs(c.allowedPrivateCIDRs.filter((x) => x.includes(':'))).ranges;
+    const everything = c.allowedPrivateCIDRs.includes('::/0');
+    const asIPv4 = (a: string) =>
+      a.startsWith('::ffff:') && a.includes('.') ? a.slice(7) : undefined;
+    return (r, l) => {
+      if (r.action !== 'request.private') return l.decide(r);
+      return r.context.privateSources.every((x) => {
+        if (everything) return true;
+        const mapped = x.type === 'ipv6' ? asIPv4(x.address) : undefined;
+        if (mapped !== undefined) return v4.check(mapped, 'ipv4');
+        return x.type === 'ipv4' ? v4.check(x.address, 'ipv4') : v6.check(x.address, 'ipv6');
+      })
+        ? ALLOW_P
+        : DENY_P;
+    };
+  },
 };
 
 describe('differential oracle catches every mutant', () => {

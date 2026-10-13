@@ -40,6 +40,11 @@ const CIDRS = [
   '127.0.0.0/8',
   '::1/128',
   'fe80::/10',
+  // IPv4-mapped CIDRs: BlockList checks IPv4 as ::ffff:a.b.c.d against IPv6
+  // rules, so these cover plain IPv4 (and the IPv4 behind wrappers) today.
+  '::ffff:0:0/96',
+  '::ffff:10.0.0.0/104',
+  '::ffff:192.168.1.0/120',
 ];
 const HOSTS = ['shop.example', 'mail.example', 'bank.example'];
 const ACTIONS = ['click', 'fill', 'hover', 'scroll', 'wait', 'press', 'select', 'typeText'];
@@ -313,7 +318,10 @@ export async function assertEquivalentToLegacy(
 
 /**
  * Egress cases random generation reaches too rarely to rely on, checked on
- * every call: CIDR sets whose members cover some private sources of an address
+ * every call. It is deliberately stricter than production in one place: it also
+ * compares `request.private` for loopback-classed addresses when loopback is not
+ * allowed, a question production never reaches (the loopback refusal comes
+ * first). A generated policy should agree there anyway. Covered: CIDR sets whose members cover some private sources of an address
  * but not all, and IPv4 boundaries in mapped and wrapped form.
  */
 const EGRESS_TABLE_CIDRS: string[][] = [
@@ -325,6 +333,9 @@ const EGRESS_TABLE_CIDRS: string[][] = [
   ['64:ff9b:1::/48', '10.0.0.0/8', '192.168.0.0/16'],
   ['::/0'],
   ['0.0.0.0/0'],
+  ['::ffff:0:0/96'],
+  ['::ffff:10.0.0.0/104', '192.168.0.0/16'],
+  ['::ffff:192.168.1.0/120'],
 ];
 const EGRESS_TABLE_ADDRESSES = [
   // Local-use NAT64: /48 = 10.172.16.5, /56 = 172.16.5.0, /96 = 192.168.1.5.
