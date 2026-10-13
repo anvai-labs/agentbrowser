@@ -153,7 +153,10 @@ export async function packageServer({ root = ROOT, outputDir, target, expectedVe
     });
     const manifest = JSON.parse(await readFile(join(deployed, 'package.json'), 'utf8'));
     assert.equal(manifest.version, expectedVersion, 'Deployed server version mismatch');
-    await normalizeSelfLink(deployed, root);
+    // The isolated tree is only the materializer's input on win32 (it never
+    // follows this self-link, which is no declared dependency, and deletes
+    // the tree after); repairing it would need symlink privilege on Windows.
+    if (!win32) await normalizeSelfLink(deployed, root);
     let packages;
     if (win32) {
       ({ packages } = await materialize(deployed, server));

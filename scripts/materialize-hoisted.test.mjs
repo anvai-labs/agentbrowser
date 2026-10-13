@@ -179,3 +179,31 @@ test('hoists a conflicting chain as high as is safe (keeps Windows paths short)'
     assert.equal(loads(out, 'node_modules/h/node_modules/s', 'e'), 'e@4.0.0');
   });
 });
+
+test('fails with a clear error, instead of growing without bound, on a conflicting-version cycle', async () => {
+  // a@1 -> b@2 -> a@2 -> b@1 -> a@1: no finite hoisted layout exists.
+  await withTrees(async (iso, out) => {
+    await isolated(iso, {
+      rootDeps: ['a@1.0.0', 'b@1.0.0'],
+      packages: {
+        'a@1.0.0': { deps: ['b@2.0.0'] }, 'b@2.0.0': { deps: ['a@2.0.0'] },
+        'a@2.0.0': { deps: ['b@1.0.0'] }, 'b@1.0.0': { deps: ['a@1.0.0'] },
+      },
+    });
+    await assert.rejects(materializeHoisted(iso, out), /no finite hoisted layout/);
+  });
+});
+
+test('ships bundled dependencies inside their package without placing them separately', async () => {
+  await withTrees(async (iso, out) => {
+    await isolated(iso, { rootDeps: ['a@1.0.0'], packages: { 'a@1.0.0': { manifest: { dependencies: { inner: '*' }, bundleDependencies: ['inner'] } } } });
+    const inner = join(iso, 'node_modules/.pnpm/a@1.0.0/node_modules/a/node_modules/inner');
+    await mkdir(inner, { recursive: true });
+    await writeFile(join(inner, 'package.json'), JSON.stringify({ name: 'inner', version: '9.0.0', main: 'index.js' }));
+    await writeFile(join(inner, 'index.js'), 'module.exports = "inner@9.0.0";');
+    const report = await materializeHoisted(iso, out);
+    assert.equal(loads(out, 'node_modules/a', 'inner'), 'inner@9.0.0');
+    assert.deepEqual(report.packages, ['a@1.0.0']);
+    await assert.rejects(lstat(join(out, 'node_modules/inner')), /ENOENT/);
+  });
+});

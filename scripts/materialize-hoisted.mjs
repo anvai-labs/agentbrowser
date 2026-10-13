@@ -58,6 +58,19 @@ function admits(list, value) {
 
 const runsOnTarget = (manifest) => admits(manifest.os, TARGET.os) && admits(manifest.cpu, TARGET.cpu);
 
+/** Names a package ships inside itself (npm bundleDependencies; `true` = all). */
+function bundledNames(manifest) {
+  const bundled = manifest.bundleDependencies ?? manifest.bundledDependencies;
+  if (bundled === true) return new Set(Object.keys(manifest.dependencies ?? {}));
+  return new Set(Array.isArray(bundled) ? bundled : []);
+}
+
+// A cycle of conflicting versions (a@1 -> b@2 -> a@2 -> b@1 -> a@1) has no
+// finite hoisted layout: each copy needs another nested copy. Real trees sit
+// far below both bounds (the server: depth 3, ~1 placement per package).
+const MAX_NESTING = 32;
+const MAX_PLACEMENTS_PER_PACKAGE = 20;
+
 async function readGraph(root) {
   const instances = new Map();
   const queue = [];
@@ -79,6 +92,9 @@ async function readGraph(root) {
   while (queue.length > 0) {
     const node = queue.shift();
     const { dependencies = {}, optionalDependencies = {}, peerDependencies = {} } = node.manifest;
+    // Bundled dependencies travel inside their package (copyPackage keeps
+    // them); they are not separate instances to place.
+    const bundled = bundledNames(node.manifest);
     const edges = [
       ...Object.keys(dependencies)
         .filter((name) => !(name in optionalDependencies))
@@ -87,7 +103,9 @@ async function readGraph(root) {
       ...Object.keys(peerDependencies)
         .filter((name) => !(name in dependencies) && !(name in optionalDependencies))
         .map((name) => [name, 'peer']),
-    ].sort(([a], [b]) => a.localeCompare(b));
+    ]
+      .filter(([name]) => !bundled.has(name))
+      .sort(([a], [b]) => a.localeCompare(b));
     for (const [name, kind] of edges) {
       const dir = await lookup(node.dir, name, root);
       if (dir === undefined) {
@@ -109,11 +127,11 @@ async function readGraph(root) {
       node.deps.set(name, target);
     }
   }
-  return rootNode;
+  return { rootNode, packageCount: instances.size };
 }
 
-function place(rootNode) {
-  const root = { path: '', node: rootNode, modules: new Map(), parent: undefined };
+function place(rootNode, packageCount) {
+  const root = { path: '', node: rootNode, modules: new Map(), parent: undefined, depth: 0 };
   const placements = [root];
   const queue = [root];
   // Every resolution made so far: (placement, name) -> the placement holding it.
@@ -153,7 +171,13 @@ function place(rootNode) {
         node: target,
         modules: new Map(),
         parent: into,
+        depth: into.depth + 1,
       };
+      if (placement.depth > MAX_NESTING || placements.length >= packageCount * MAX_PLACEMENTS_PER_PACKAGE) {
+        throw new Error(
+          `no finite hoisted layout: ${target.label} (needed by ${holder.node.label}) keeps requiring nested copies — a dependency cycle between conflicting versions`
+        );
+      }
       into.modules.set(name, placement);
       placements.push(placement);
       queue.push(placement);
@@ -184,12 +208,12 @@ async function copyPackage(from, to, node, keep, top = from) {
 
 export async function materializeHoisted(isolatedRoot, output) {
   const root = await realpath(isolatedRoot);
-  const rootNode = await readGraph(root);
-  const placements = place(rootNode);
+  const { rootNode, packageCount } = await readGraph(root);
+  const placements = place(rootNode, packageCount);
   await mkdir(output, { recursive: true });
   for (const { path, node } of placements) {
-    const bundled = node === rootNode ? [] : (node.manifest.bundleDependencies ?? node.manifest.bundledDependencies ?? []);
-    await copyPackage(node.dir, join(output, path), node, Array.isArray(bundled) ? bundled : []);
+    const bundled = node === rootNode ? [] : [...bundledNames(node.manifest)];
+    await copyPackage(node.dir, join(output, path), node, bundled);
   }
   // Independent check on the written files: every edge must load the same instance.
   const top = await realpath(output);

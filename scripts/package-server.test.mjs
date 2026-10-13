@@ -352,3 +352,31 @@ test('build-tool failures carry the tool output when diagnostics are requested',
     (error) => error.message.startsWith('Executable exited unsuccessfully (1)') && !error.message.includes('secret')
   );
 });
+
+test('win32 leaves the isolated deploy untouched: no self-link repair (it needs symlink privilege)', async () => {
+  await fixture(async (root) => {
+    await mkdir(join(root, 'packages/api'), { recursive: true });
+    let seenTarget;
+    const run = async (args) => {
+      const git = gitReply(args);
+      if (git) return git;
+      if (args.includes('deploy')) {
+        const deployed = args.at(-1);
+        await hoistedDeploy(deployed);
+        // pnpm's self-reference back into the checkout, as deployed on Windows.
+        const link = join(deployed, 'node_modules/.pnpm/node_modules/@agentbrowser/api');
+        await mkdir(dirname(link), { recursive: true });
+        await symlink(join(root, 'packages/api'), link);
+      } else if (args[0] === 'zip') await writeFile(args.at(-2), 'zip bytes');
+      return { stdout: '', stderr: '' };
+    };
+    const materialize = async (from, to) => {
+      seenTarget = await readlink(join(from, 'node_modules/.pnpm/node_modules/@agentbrowser/api'));
+      await mkdir(join(to, 'dist'), { recursive: true });
+      await writeFile(join(to, 'package.json'), JSON.stringify({ version: '1.2.3' }));
+      return { packages: [] };
+    };
+    await packageServer({ root, run, platform: 'linux', outputDir: join(root, 'out'), target: 'win32-x64', expectedVersion: '1.2.3', commit: 'a'.repeat(40), materialize });
+    assert.equal(seenTarget, join(root, 'packages/api'), 'win32 must not rewrite the self-link');
+  });
+});
