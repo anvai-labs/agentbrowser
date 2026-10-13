@@ -50,11 +50,17 @@ ADR-007 and the CDP-attach design guarantee unconditionally:
   at `::23`), Alibaba Cloud (`100.100.100.200`), and the Azure wire server (`168.63.129.16`). It
   also adds the whole of both link-local ranges, `169.254.0.0/16` (ECS task metadata
   `169.254.170.2`, EKS Pod Identity `169.254.170.23`) and `fe80::/10`.
-  - **Embedded IPv4 is decoded first:** IPv4-mapped (`::ffff:0:0/96`), NAT64 (`64:ff9b::/96`,
-    `64:ff9b:1::/48`) and 6to4 (`2002::/16`). So `64:ff9b::a9fe:a9fe` is metadata and
-    `64:ff9b::7f00:1` is loopback, where today both classify as public.
-  - **Known limits:** operator-chosen network-specific NAT64 `/96` prefixes cannot be recognized,
-    and the deprecated IPv4-compatible `::a.b.c.d` form (`::/96`) is decoded too, for safety.
+  - **Embedded IPv4 is decoded, and decoding only ever adds classes.** It covers IPv4-mapped
+    (`::ffff:0:0/96`), NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`), 6to4 (`2002::/16`) and the
+    deprecated IPv4-compatible form (`::/96`, **excluding `::/127`**, that is `::` and `::1`).
+    - **Union:** an address's classes are its own IPv6 classes **plus** the classes of the IPv4 it
+      embeds. `public` is dropped whenever another class is present, so "public" keeps meaning "no
+      other class".
+    - **Examples:** `64:ff9b::a9fe:a9fe` → {metadata}; `64:ff9b::7f00:1` → {loopback}. Today both
+      classify as public. `::1` stays {loopback, private}.
+    - **Why `::/127` is excluded:** decoded, `::1` would read as `0.0.0.1`, which is private only.
+      A private grant would then reach IPv6 loopback, the AgentBrowser API included.
+  - **Known limit:** operator-chosen network-specific NAT64 `/96` prefixes cannot be recognized.
   - **The trade-off:** link-local devices reached today through `ALLOWED_CIDRS` become unreachable.
     The release notes say so.
   - **Timing:** this lands before private ranges can be granted (TD phase 0).
@@ -342,7 +348,8 @@ tenant in no-keys mode.
   - It never acts and never resolves DNS.
   - An IP literal is classified exactly as at request time.
   - A hostname first goes through the name-level rules enforcement applies: `localhost` and
-    `localhost.localdomain` are loopback by name, and `metadata.google.internal` is floor by name.
+    `localhost.localdomain` are loopback by name, and `metadata.google.internal`, `metadata.goog` and
+    any subdomain of either are floor by name.
   - Otherwise the hostname is decided **once per address-class set the classifier can actually
     produce**: `{public}`, `{loopback}`, `{private}` and `{loopback, private}` (`public` means "no
     other class", and metadata is floor). That list is generated from the classifier's own table,

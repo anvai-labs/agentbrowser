@@ -23,10 +23,17 @@ hardens the floor.
 - `168.63.129.16` (Azure wire server);
 - both link-local ranges, `169.254.0.0/16` and `fe80::/10`.
 
-**Embedded IPv4 is decoded before classification:** IPv4-mapped (`::ffff:0:0/96`), NAT64
-(`64:ff9b::/96`, `64:ff9b:1::/48`), 6to4 (`2002::/16`) and the deprecated IPv4-compatible form
-(`::/96`). Operator-chosen network-specific NAT64 prefixes are a known limit. For example, `64:ff9b::a9fe:a9fe` is
-metadata and `64:ff9b::7f00:1` is loopback.
+**Embedded IPv4 is decoded, as a union that only adds classes.** It covers IPv4-mapped
+(`::ffff:0:0/96`), NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`), 6to4 (`2002::/16`) and IPv4-compatible
+(`::/96` **excluding `::/127`**).
+- An address's classes are its own plus those of the embedded IPv4.
+- `public` is dropped when any other class is present.
+- **Examples:** `64:ff9b::a9fe:a9fe` → {metadata}; `64:ff9b::7f00:1` → {loopback}; `::1` stays
+  {loopback, private}.
+- Operator-chosen network-specific NAT64 prefixes are a known limit.
+- **Tests:** `::1` and `::` keep loopback under every option combination, including
+  `ALLOWED_CIDRS=::/0`, as `private-cidr.test.ts` asserts today. A private grant never reaches
+  `::1`.
 
 **A floor module the service always applies.** The metadata and CDP-attach checks move out of the
 injectable `NetworkPolicy`, whose metadata block is off when constructed with `{}`, into a module

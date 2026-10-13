@@ -14,6 +14,7 @@ import { operatorCdpFromEnvironment } from './cdp-startup.js';
 import { extractMaxBytesFromEnvironment } from './extraction-config.js';
 import { networkPolicyFromEnvironment } from './network-policy-config.js';
 import { startServer } from './server.js';
+import { parseLogLevel } from './server-args.js';
 
 // Validate before engine/server startup; invalid operator policy aborts startup.
 const networkPolicy = networkPolicyFromEnvironment(process.env);
@@ -36,9 +37,9 @@ if (process.platform === 'darwin') {
   engines.safari = new SafaridriverEngine();
 }
 const metrics = new MetricsRegistry();
-const logger = new StructuredLogger({
-  level: process.env.AGENTBROWSER_LOG_LEVEL === 'debug' ? 'debug' : 'info',
-});
+const logLevel = parseLogLevel(process.env.AGENTBROWSER_LOG_LEVEL);
+if (logLevel.warning !== undefined) console.warn(logLevel.warning);
+const logger = new StructuredLogger({ level: logLevel.level });
 
 /** Parse a positive-int env var; undefined when unset or garbage (loud default). */
 const envMs = (name: string): number | undefined => {
