@@ -34,6 +34,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   `normalizeSourceForCedar` refuses family-mismatched (address, type) pairs, which `BlockList`
   answers false for.
 - `PolicyDecision` gains `rulesMatched` (every deciding id; `ruleMatched` stays the first).
+### Fixed — engagement scope
+
+- **The redirect-hop set is bounded (#447).** `EngagementScopePolicy` remembered every distinct
+  redirect-hop URL for a session's lifetime so a re-validated chain would spend each hop once.
+  It now keeps the newest 4096 (`CHAIN_SPENT_BOUND`); a hop evicted from memory is charged again
+  if re-submitted — over-charging only, so a budget can end sooner, never later, and a session
+  reaching the bound takes 41+ redirect-saturated navigations at the transport's 100-hop cap (~410 at the 10-hop default). Hops are no longer tracked at all
+  when no request budget is set.
+he engagement scope's redirect-hop set (#447))
 
 ### Added — differential oracle (TD-BROWSER-15 phase 2)
 
