@@ -181,8 +181,8 @@ export class CedarAuthorizer implements Authorizer {
       return this.trapped('policy evaluation error');
     }
     if (decision === 'allow') {
-      const rulesMatched = diagnostics.reason
-        .map((key) => this.rules.get(key))
+      // Paired policies share a rule id; each deciding id appears once.
+      const rulesMatched = [...new Set(diagnostics.reason.map((key) => this.rules.get(key)))]
         .filter((id): id is string => id !== undefined)
         .sort();
       if (rulesMatched.length === 0) return this.trapped('allow without a deciding policy');
@@ -194,9 +194,9 @@ export class CedarAuthorizer implements Authorizer {
         rulesMatched,
       };
     }
-    const forbidding = diagnostics.reason
-      .map((key) => this.rules.get(key))
-      .filter((id): id is string => id !== undefined && !id.startsWith('env.capability.'))
+    // Deny reasons carry only forbidding policies; report every deciding id.
+    const forbidding = [...new Set(diagnostics.reason.map((key) => this.rules.get(key)))]
+      .filter((id): id is string => id !== undefined)
       .sort();
     return forbidding[0] !== undefined
       ? {

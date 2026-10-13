@@ -350,6 +350,13 @@ describe('policyDocumentFromEnvironment', () => {
       expect(document.policies.some((p) => p.ruleId === 'env.block-loopback')).toBe(true);
     }
   });
+  it('refuses approval values the server would refuse at startup (review 3b F1)', () => {
+    for (const bad of ['5', 'null', 'true', '"x"', '[]', '{"rules":5}']) {
+      expect(() =>
+        policyDocumentFromEnvironment(env({ AGENTBROWSER_APPROVAL_POLICY: bad }))
+      ).toThrow(/Invalid operator approval policy/);
+    }
+  });
   it('surfaces startup errors: bad CIDRs, bad JSON, bad rules', () => {
     expect(() =>
       policyDocumentFromEnvironment(env({ AGENTBROWSER_ALLOWED_CIDRS: '10.0.0.0/99' }))

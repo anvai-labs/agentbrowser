@@ -118,6 +118,31 @@ describe('CedarAuthorizer fails closed on traps', () => {
     }
   });
 
+  it('reports a forbidding id the old capability filter erased (review 3b F2)', () => {
+    const document = policyDocumentFromLegacyConfig({});
+    document.baseline = 'agentbrowser:baseline/v1';
+    document.policies.push({
+      key: 'env.capability.no-downloads#99',
+      ruleId: 'env.capability.no-downloads',
+      cedar:
+        '@rule("env.capability.no-downloads") forbid(principal, action == AgentBrowser::Action::"downloads", resource);',
+    });
+    const decision = new CedarAuthorizer({ document }).decide({
+      action: 'downloads',
+      context: {},
+    });
+    expect(decision).toMatchObject({
+      allowed: false,
+      ruleMatched: 'env.capability.no-downloads',
+    });
+  });
+
+  it('lists each deciding id once (review 3b F3)', () => {
+    const authorizer = cedarFor({});
+    const decision = authorizer.decide({ action: 'act.unattended', context: { effect: 'read' } });
+    expect(decision.rulesMatched).toEqual(['env.approval.default']);
+  });
+
   it('the vacuous private ask matches legacy', () => {
     const authorizer = cedarFor({ allowedPrivateCIDRs: [] });
     expect(

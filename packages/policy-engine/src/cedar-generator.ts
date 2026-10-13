@@ -203,17 +203,26 @@ export function policyDocumentFromEnvironment(
   } = process.env
 ): PolicyDocument {
   const raw = env.AGENTBROWSER_ALLOWED_CIDRS?.trim() ?? '';
-  const approval =
+  const parsed =
     env.AGENTBROWSER_APPROVAL_POLICY !== undefined
-      ? (JSON.parse(env.AGENTBROWSER_APPROVAL_POLICY) as Record<string, unknown>)
+      ? JSON.parse(env.AGENTBROWSER_APPROVAL_POLICY)
       : {};
+  // The service passes this value to `new ActionRiskPolicy`, which refuses a
+  // non-object policy and non-array rules at startup; the document must not
+  // represent a configuration the server would refuse to boot (review 3b F1).
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))
+    throw new Error('Invalid operator approval policy');
+  const approval = parsed as Record<string, unknown>;
+  validateActionRiskRules(
+    approval.rules === undefined ? undefined : (approval.rules as ActionRiskRule[])
+  );
   return policyDocumentFromLegacyConfig({
     allowLoopback: /^(1|true|yes)$/i.test(env.AGENTBROWSER_ALLOW_LOOPBACK?.trim() ?? ''),
     allowedPrivateCIDRs: raw === '' ? [] : raw.split(',').map((cidr) => cidr.trim()),
     ...(approval.unknownRisk !== undefined
       ? { unknownRisk: approval.unknownRisk as 'allow' | 'required' }
       : {}),
-    ...(Array.isArray(approval.rules) ? { rules: approval.rules as ActionRiskRule[] } : {}),
+    ...(approval.rules !== undefined ? { rules: approval.rules as ActionRiskRule[] } : {}),
   });
 }
 

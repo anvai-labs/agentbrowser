@@ -264,6 +264,22 @@ request shape** — a mapped-form `ip()` literal and a missing optional attribut
 load — so the TD's "erroring forbid" case is enforced at load; the reachable trap surfaces are
 request rejection and refused sources, both fail-closed and sticky.
 
+Review of 3b (all claims held: the oracle at fresh seeds and 1000 runs, the packaging gates, a
+real pruned deploy) hardened three edges, all fixed:
+- `policyDocumentFromEnvironment` now refuses approval values the server refuses at startup
+  (non-object JSON, non-array rules) instead of emitting a document for an unbootable
+  configuration.
+- Deny reasons carry only forbidding policies, so every deciding id is reported — the
+  `env.capability.*` filter could erase a real deciding id from a hand-written document.
+- `rulesMatched` lists each deciding id once (paired policies share a rule id).
+
+Two scope notes for phase 4: the oracle's equivalence is over contexts the real seam can emit
+(`ActionRiskPolicy.classify` only produces configured ids and decisions; a hand-built context
+carrying an out-of-config `matchedRule` or a disagreeing `context.rule.decision` diverges, which
+is inherent to keying Cedar on the matched id). And Cedar decisions carry their own reason
+strings ("permitted by policy"), so phase 4 changes operator-visible reason text from today's;
+`ruleMatched` is the stable field.
+
 **Tests (3a, shipped):**
 - The generated set **validates in strict mode with zero errors** against `CEDAR_SCHEMA`, for
   representative configurations.

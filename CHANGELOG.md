@@ -20,6 +20,11 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   configuration (loopback, CIDRs, approval policy), parsed exactly as the service parses it —
   operators migrate by generating, not hand-writing. Invalid configuration fails with the
   startup messages.
+- **Hardened after review** (every claim held: the oracle at fresh seeds and 1000 runs, the
+  packaging gates, a real pruned deploy): `policy export` refuses approval values the server
+  refuses at startup instead of emitting a document for an unbootable configuration; every
+  deciding forbid id is reported (a filter could erase one from hand-written documents); and
+  `rulesMatched` lists each deciding id once.
 - **The engine ships bounded:** `@cedar-policy/cedar-wasm` 4.13 becomes a runtime dependency,
   pruned to its Node build (~4.35 MB) in the server tarball, the Docker image and the Windows
   bundle; the pruner enforces a version + SHA-256 pin (`scripts/cedar-wasm.json`), the
