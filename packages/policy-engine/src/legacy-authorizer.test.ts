@@ -74,6 +74,7 @@ describe('LegacyAuthorizer capability grants', () => {
   it('grants every capability a session requests, as today', () => {
     const authorizer = new LegacyAuthorizer({});
     for (const action of [
+      'cdp.attach',
       'downloads',
       'serviceWorkers',
       'cookie.seed',

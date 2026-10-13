@@ -10,8 +10,11 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 ### Changed — policy engine seam (TD-BROWSER-15 phase 1)
 
 - **Capability grants go through the `Authorizer`.**
-  - When a session requests downloads, service workers, cookie seeding or a headed browser, the
-    service asks its authorizer. Cookie export asks for `cookie.export`.
+  - When a session will get operator CDP attachment, downloads, service workers, cookie seeding or
+    a headed browser, the service asks its authorizer. An always-headed engine (Safari) counts as
+    headed unless headless is demanded. Cookie export asks for `cookie.export`.
+  - Existing refusals keep their precedence: shutdown, an unknown engine and an unknown session
+    still come first.
   - The default `LegacyAuthorizer` grants all of them (`env.capability.default`), so behaviour is
     unchanged.
   - A denial would be `POLICY_DENIED` with `details.rule` and `details.policyDecision`.

@@ -356,8 +356,10 @@ export interface ServiceDependencies {
   approvalPolicy?: ActionRiskPolicyOptions;
   /**
    * TD-BROWSER-15: decides approvals and capability grants. Default: the
-   * legacy authorizer (today's rules). Egress exceptions are answered by the
-   * network policy's own hook.
+   * legacy authorizer (today's rules). An injected authorizer replaces
+   * `approvalPolicy.unknownRisk` entirely (the rules still classify). Egress
+   * exceptions are answered by the network policy's own hook until phase 4
+   * wires one authorizer to both.
    */
   authorizer?: Authorizer;
   engine: BrowserEngine;
@@ -1277,15 +1279,6 @@ export class AgentBrowserService {
     }
     // Validate tenant ID format (lightweight security)
     this.validateTenantId(request.tenantId);
-    // TD-BROWSER-15: every capability this session asks for must be granted.
-    for (const [action, requested] of [
-      ['downloads', request.allowDownloads === true],
-      ['serviceWorkers', request.allowServiceWorkers === true],
-      ['cookie.seed', (request.cookies?.length ?? 0) > 0],
-      ['session.headed', request.headless === false],
-    ] as const) {
-      if (requested) this.requireCapability(action, request.tenantId);
-    }
 
     return this.traced('session.create', { tenantId: request.tenantId ?? '' }, async () => {
       if (this.shuttingDown)
@@ -1301,6 +1294,24 @@ export class AgentBrowserService {
         maxBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
       };
       const engine = this.resolveEngine(request.engine);
+      // TD-BROWSER-15: every capability this session asks for must be granted.
+      // After the shutdown check and engine resolution, so those refusals keep
+      // their precedence, and inside the trace, so denials are recorded.
+      // Headed is what the session gets, not only what it asks: an always-
+      // headed engine (Safari, ADR-011) is headed unless headless is demanded.
+      const alwaysHeaded = (await engine.capabilities()).alwaysHeaded === true;
+      for (const [action, requested] of [
+        ['cdp.attach', request.cdpAttach === true],
+        ['downloads', request.allowDownloads === true],
+        ['serviceWorkers', request.allowServiceWorkers === true],
+        ['cookie.seed', (request.cookies?.length ?? 0) > 0],
+        [
+          'session.headed',
+          request.headless === false || (alwaysHeaded && request.headless !== true),
+        ],
+      ] as const) {
+        if (requested) this.requireCapability(action, request.tenantId);
+      }
       if (request.viewport !== undefined) engineRequest.viewport = request.viewport;
       if (request.locale !== undefined) engineRequest.locale = request.locale;
       if (request.timezoneId !== undefined) engineRequest.timezoneId = request.timezoneId;
@@ -1531,7 +1542,10 @@ export class AgentBrowserService {
   async getSessionCookies(
     sessionId: string
   ): Promise<import('@agentbrowser/engine').NormalizedCookie[]> {
-    this.requireCapability('cookie.export', this.getSession(sessionId)?.tenantId);
+    // An unknown session keeps its existing refusal (from the export below,
+    // unchanged); only a session that exists is asked about.
+    const view = this.getSession(sessionId);
+    if (view) this.requireCapability('cookie.export', view.tenantId);
     try {
       return await this.coordinator.cookies(sessionId);
     } catch (error) {

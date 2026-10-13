@@ -22,6 +22,7 @@ export type EgressAuthorizationRequest = {
 
 /** ADR-024 §1: capabilities a session can ask for, which the operator grants. */
 export type CapabilityAction =
+  | 'cdp.attach'
   | 'downloads'
   | 'serviceWorkers'
   | 'cookie.seed'

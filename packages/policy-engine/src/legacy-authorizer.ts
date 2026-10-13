@@ -44,6 +44,7 @@ export class LegacyAuthorizer implements Authorizer {
           : { allowed: false, reason: 'loopback is blocked', ruleMatched: 'env.block-loopback' };
       case 'request.private':
         return this.decidePrivate(request);
+      case 'cdp.attach':
       case 'downloads':
       case 'serviceWorkers':
       case 'cookie.seed':

@@ -71,4 +71,41 @@ describe('capability grants through the Authorizer', () => {
     });
     await expect(service.getSessionCookies(sessionId)).resolves.toBeDefined();
   });
+
+  it('asks session.headed for an always-headed engine even when headless is unset', async () => {
+    const safariLike = new FakeEngine();
+    const caps = await safariLike.capabilities();
+    vi.spyOn(safariLike, 'capabilities').mockResolvedValue({ ...caps, alwaysHeaded: true });
+    Object.defineProperty(safariLike, 'name', { value: 'safari-like' });
+    const service = new AgentBrowserService({
+      engine: new FakeEngine(),
+      engines: { 'safari-like': safariLike },
+      authorizer: denying('session.headed'),
+    });
+    await expect(
+      service.createSession({ tenantId: 't1', engine: 'safari-like' })
+    ).rejects.toMatchObject({ code: 'POLICY_DENIED', details: { rule: 'test.session.headed' } });
+    // Explicitly headless on an always-headed engine is the engine's own refusal, not a grant.
+  });
+
+  it('keeps SESSION_NOT_FOUND ahead of a cookie.export denial', async () => {
+    const service = new AgentBrowserService({
+      engine: new FakeEngine(),
+      authorizer: denying('cookie.export'),
+    });
+    await expect(service.getSessionCookies('ses_missing')).rejects.toMatchObject({
+      code: 'SESSION_NOT_FOUND',
+    });
+  });
+
+  it('keeps the shutdown refusal ahead of a capability denial', async () => {
+    const service = new AgentBrowserService({
+      engine: new FakeEngine(),
+      authorizer: denying('downloads'),
+    });
+    await service.shutdown();
+    await expect(
+      service.createSession({ tenantId: 't1', allowDownloads: true })
+    ).rejects.toMatchObject({ code: 'SESSION_NOT_FOUND' });
+  });
 });
