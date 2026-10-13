@@ -23,10 +23,14 @@ hardens the floor.
 - **#446:** floor rule ids on every unconditional refusal (`floor.cdp.*`,
   `floor.delegated.operator`) and metadata-name normalisation.
 
-**Deferred:** moving the CDP-attach refusals and the delegated-operator check into a single `floor`
-module. They keep their current homes (`cdp-config.ts`, `server.ts`, `service.ts`, engine-playwright)
-and are identified by their rule ids. Consolidation happens with phase 1's `Authorizer` seam, which
-already touches each call site.
+**Floor module (delivered with phase 1).** `packages/api/src/floor.ts` holds:
+- the CDP-attach admission and its refusals;
+- the attach-options refusal;
+- the delegated-session and operator-route refusals;
+- the metadata wrap.
+
+The engine-level duplicates stay in engine-playwright as a second line of defence, and the
+metadata classifier stays in `@agentbrowser/policy`.
 
 **Wider metadata set.** The metadata set gains:
 - `fd00:ec2::/64` (AWS: IMDS at `::254`, EKS Pod Identity at `::23`);
@@ -66,7 +70,8 @@ change**, and the existing tests pass unchanged.
 
 ### Phase 1: the `Authorizer` seam (no behaviour change)
 
-**Progress:** approvals, egress exceptions and capability grants are delivered.
+**Progress:** phase 1 is delivered: approvals, egress exceptions, capability grants and the floor
+module.
 - **Capabilities:** session creation asks the service's injectable `authorizer` for `cdp.attach`,
   `downloads`, `serviceWorkers`, `cookie.seed` and `session.headed`, for each one the session will
   have.

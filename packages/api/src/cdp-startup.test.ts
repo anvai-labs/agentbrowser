@@ -42,7 +42,7 @@ it('parses an explicit deployment boundary without truthy-string fallback', () =
 });
 
 it('does not accept truthy strings as trusted embedding acknowledgements or modes', async () => {
-  const { cdpAttachAdmission } = await import('./cdp-config.js');
+  const { cdpAttachAdmission } = await import('./floor.js');
   expect(
     cdpAttachAdmission({ operatorCdp: { allowUnenforcedEgress: 'false' as unknown as boolean } }, [
       'one',

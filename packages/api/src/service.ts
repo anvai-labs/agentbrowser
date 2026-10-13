@@ -1,5 +1,12 @@
 import { isNavigationFailureReason, sessionLeaseRemainingMs } from '@agentbrowser/protocol';
-import { type CdpAttachAdmission, requireCdpAttachAdmission } from './cdp-config.js';
+import {
+  attachRequestHasOptions,
+  type CdpAttachAdmission,
+  FLOOR_ATTACH_OPTIONS,
+  FLOOR_OPERATOR_REQUIRED,
+  requireCdpAttachAdmission,
+  withMetadataFloor,
+} from './floor.js';
 import { SessionAuthority } from './session-authority.js';
 /**
  * AgentBrowserService - the composition root
@@ -100,12 +107,7 @@ import {
   RecordsSelectorError,
   SchemaExtractor,
 } from '@agentbrowser/extraction';
-import {
-  EngagementScopePolicy,
-  MetadataFloorPolicy,
-  type NetworkPolicy,
-  SessionHostPolicy,
-} from '@agentbrowser/policy';
+import { EngagementScopePolicy, type NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
 import {
   type Authorizer,
   approvalModeOf,
@@ -1241,29 +1243,8 @@ export class AgentBrowserService {
     )
       throw new ServiceError('INVALID_REQUEST', 'Operator review requires a controlled session');
     if (request.cdpAttach === true) {
-      if (
-        request.controlMode !== undefined ||
-        request.headless !== undefined ||
-        request.viewport !== undefined ||
-        request.locale !== undefined ||
-        request.timezoneId !== undefined ||
-        request.cookies !== undefined ||
-        request.allowDownloads === true ||
-        request.allowedHosts !== undefined ||
-        request.blockedHosts !== undefined ||
-        request.allowServiceWorkers !== undefined ||
-        request.maxDownloadBytes !== undefined ||
-        request.approval !== undefined ||
-        (request.engine !== undefined &&
-          request.engine !== 'auto' &&
-          request.engine !== this.engine.name)
-      )
-        throw new ServiceError(
-          'INVALID_REQUEST',
-          'Operator attachment cannot apply launch, cookie, delegated-control, download, or per-session policy options. Use a normal isolated session for those options.',
-          false,
-          { rule: 'floor.cdp.options' }
-        );
+      if (attachRequestHasOptions(request, this.engine.name))
+        throw new ServiceError(...FLOOR_ATTACH_OPTIONS);
       try {
         requireCdpAttachAdmission(this.cdpAttachAdmission);
       } catch (error) {
@@ -1339,7 +1320,7 @@ export class AgentBrowserService {
           : hostPolicy;
       // TD-BROWSER-15 phase 0: the metadata floor wraps the whole chain, so it
       // holds whatever policy was injected (ADR-024 §1).
-      const sessionPolicy = new MetadataFloorPolicy(scopedPolicy);
+      const sessionPolicy = withMetadataFloor(scopedPolicy);
 
       let allocation: Awaited<ReturnType<SessionCoordinator['createOwned']>>;
       try {
@@ -2325,10 +2306,7 @@ export class AgentBrowserService {
     const publication =
       publicationOptions === undefined ? undefined : snapshotPublication(publicationOptions);
     let disclosure: PreparedReviewDisclosure | undefined;
-    if (principal.actor !== 'operator')
-      throw new ServiceError('FORBIDDEN', 'Operator authority is required', false, {
-        rule: 'floor.delegated.operator',
-      });
+    if (principal.actor !== 'operator') throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
     const validated = validateApplicationReview(input);
     if (!validated.ok)
       throw new ServiceError('INVALID_REQUEST', 'Invalid application review request');
