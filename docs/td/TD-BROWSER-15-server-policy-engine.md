@@ -5,161 +5,232 @@
 
 ## Problem
 
-Server policy is spread across environment variables (`AGENTBROWSER_ALLOW_LOOPBACK`,
-`AGENTBROWSER_ALLOWED_CIDRS`, `AGENTBROWSER_APPROVAL_POLICY`, the CDP-attach acknowledgement and
-others), is global to the process rather than per tenant, and cannot be queried by agents. ADR-024
-has the analysis and the decision; this TD is the plan.
+Server policy is spread across environment variables, embedder options and code, applies to the
+whole process rather than per tenant, and cannot be queried by agents. ADR-024 has the analysis and
+the decision; this TD is the plan.
 
 ## Phases
 
-Each phase is its own PR with its own adversarial review, test-first. Each phase leaves the server
-behaving exactly as before unless a policy file is supplied.
+Each phase is its own PR with its own adversarial review, test-first. **No phase changes the
+behaviour of a server started without `AGENTBROWSER_POLICY_FILE`**, except phase 0, which only
+hardens the floor.
 
-### Phase 1: the `Authorizer` seam and the equivalence oracle (no behaviour change)
+### Phase 0: harden the floor (before anything becomes grantable)
 
-**Introduce the seam.** A new package `@agentbrowser/policy-engine` exports:
+**Wider metadata set.** `NetworkPolicy`'s metadata set gains:
+- `fd00:ec2::254` (AWS IMDS over IPv6);
+- `100.100.100.200` (Alibaba Cloud);
+- `168.63.129.16` (Azure wire server);
+- the IPv4 link-local range `169.254.0.0/16`.
+
+The classifier marks all of these `metadata`.
+- **Tests:** each address, IPv4-mapped IPv6 forms, and decimal, octal and hex literals are refused
+  under every option combination, including `AGENTBROWSER_ALLOWED_CIDRS=fd00::/8`, which today
+  reaches `fd00:ec2::254`.
+- **Release notes:** call this out as a tightening.
+
+**Unconditional refusals made explicit.** The CDP-attach refusals (hosted, multiple tenants,
+missing bearer, non-loopback listener or peer, delegated sessions, cookie export or seed on an
+attached profile) and the delegated-session operator requirement move into one `floor` module.
+Each refusal gets an id (`floor.cdp.hosted`, …) that error responses report. **No behaviour
+change**, and the existing tests pass unchanged.
+
+### Phase 1: the `Authorizer` seam (no behaviour change)
+
+`@agentbrowser/policy-engine` exports:
 
 ```ts
 interface Authorizer {
-  readonly version: string; // SHA-256 of the canonical policy document
-  decide(request: AuthorizationRequest): PolicyDecision; // synchronous: pre-parsed
+  readonly version: string;
+  decide(request: AuthorizationRequest): PolicyDecision; // synchronous
 }
 ```
 
-Its first implementation, `LegacyAuthorizer`, wraps **today's** logic: the loopback and CIDR
-exceptions, the approval-rule matcher and the capability gates, moved behind the interface
-unchanged and given rule ids such as `env.allow-loopback` and `env.approval.rule-<n>`.
+`LegacyAuthorizer` wraps today's operator-chosen decisions behind it, unchanged:
+- the loopback and private-CIDR exceptions;
+- the approval outcome per classified effect (`ActionRiskPolicy`'s classifier stays where it is
+  and feeds the effect in);
+- the capability grants (`allowServiceWorkers`, `allowDownloads`, cookie export and seed, headed).
 
-**Route every existing decision through it:**
+The floor (phase 0) is not routed through it.
 
-- the egress checks that consult the loopback and private-CIDR exceptions;
-- `checkApproval`'s operator-rule lookup;
-- capability gates: CDP attach (including the hosted and multi-tenant refusals), service workers,
-  downloads, cookie export and seed, headed and delegated creation.
+**Address classes become sets.** The classifier returns every class an address belongs to, for
+example `::1` → `{loopback, private}`. `LegacyAuthorizer` reproduces today's decisions exactly,
+including the quirk where `ALLOW_LOOPBACK` alone still denies `[::1]`, `::` and `0.0.0.0` because
+they are also private. A multi-address hostname is decided per address, and every address must be
+allowed.
 
-The floor (metadata, DNS pinning, cap enforcement, token binding, redaction) is **not** routed
-through it; it stays where it is.
+**Tests:** all existing suites pass unchanged; the set classifier has its own table.
 
-**Record the oracle.** A table-driven test enumerates the decision inputs the current test suites
-exercise and records today's outcome for each. This table is the equivalence oracle phases 2 and 3
-must match.
+### Phase 2: the differential oracle (before Cedar exists)
 
-**Tests:** the oracle passes against `LegacyAuthorizer`; all existing suites pass unchanged.
+A property-based harness generates the inputs below. It adds `fast-check` as a new dev-only
+dependency; none exists today.
+- **Addresses:** IPv4, IPv6, mapped, the edge literals, every class combination.
+- **Hostnames:** these resolve to address sets through a fake resolver.
+- **Approval rule lists and actions:** host, action, role, name, effect.
+- **Option combinations:** loopback, CIDRs, `unknownRisk`, session tightening.
 
-### Phase 2: the Cedar schema and the generated policy set
+Its oracle is `LegacyAuthorizer`, and any `Authorizer` can be plugged in as the subject. The
+harness is committed and green against `LegacyAuthorizer` itself (a tautology for now) before
+phase 3 adds its real subject.
 
-**Schema.** `packages/protocol/src/policy/agentbrowser.cedarschema`, with a TypeBox schema for the
-policy document (`version`, `policies`, `limits`).
+### Phase 3: Cedar schema, `CedarAuthorizer`, generator, baseline
 
-- **Entities:** `Tenant`; `Session in [Tenant]` (attributes: engine, cdpAttach, controlMode,
-  headless); `Host` (attribute: domain).
-- **Actions:** `request`, `navigate`, `act`, `cdp.attach`, `serviceWorkers`, `downloads`,
-  `cookie.export`, `cookie.seed`, `session.headed`, `session.delegated`.
-- **Context:** each action declares its own, for example `addressClass`, `scheme` and `port` for
-  `request`; `effect`, `role` and `name` for `act`.
-- **Docs and test fixtures are generated from the schema** (ADR-015), not hand-copied.
+**Schema** (`packages/protocol/src/policy/agentbrowser.cedarschema`), with TypeBox for the
+document (`version`, `baseline`, `policies`, `approvalRules`, `limits`):
+- **Entities:** `Tenant`; `Session in [Tenant]` (engine, cdpAttach, controlMode, headless); `Host`
+  (domain).
+- **Actions:**
+  - egress: `request`, `request.loopback`, `request.private`;
+  - acting: `act`, `act.unattended`;
+  - capabilities: `cdp.attach`, `serviceWorkers`, `downloads`, `cookie.export`, `cookie.seed`,
+    `session.headed`.
+- **Context:** declared per action. `addressClasses` is a `Set<String>`; `effect`, `hostname`,
+  `action`, `role` and `name` belong to the `act*` actions.
+- **Generated from the schema:** docs and fixtures.
 
-**`CedarAuthorizer`.** It loads `@cedar-policy/cedar-wasm/nodejs` once.
+**`CedarAuthorizer`.** It applies every Cedar API trap rule from ADR-024 §2:
+- **Validation:** valid only if `validate` reports `type: "success"` **and** `validationErrors` is
+  empty; strict mode.
+- **Request checking:** `preparseSchema` plus `validateRequest: true` on every call.
+- **Fail closed:** any `diagnostics.errors`, any `type: "failure"`, or any thrown exception means
+  deny with `engine.error`. A trap marks the authorizer unhealthy, `/health` reports it, and every
+  policy-gated decision denies until restart.
+- **Rule ids:** `ruleMatched` is the deciding ids, sorted. `@reason` and `@internal` come from an
+  id → annotation map built at load with `policyToJson`.
+- **Pre-parsed set ids:** namespaced by the policy version.
+- **Reserved prefixes:** ids starting `floor.`, `default.`, `engine.` or `env.` are rejected.
 
-- At construction it calls `preparseSchema` and `preparsePolicySet` (ids namespaced by policy
-  version, since the WASM cache is process-global) and runs `validate` in strict mode.
-- `decide` calls `statefulIsAuthorized`.
-- Results map onto `PolicyDecision` as follows: decision → `allowed`; the deciding policy id →
-  `ruleMatched`; `@reason` → `reason`.
-- Cedar evaluation errors in a policy are surfaced at load wherever validation can find them. At
-  request time they deny with `ruleMatched: "engine.error"`; they never allow.
-
-**Generated policies.** `policiesFromEnvironment()` translates today's variables into Cedar text
-with the same ids `LegacyAuthorizer` uses.
+**Generator and baseline.**
+- `policyDocumentFromEnvironment()` writes a complete document from today's variables. It is also
+  exposed as `agentbrowser-server policy export`, so operators migrate by generating, not by
+  hand-writing.
+- `agentbrowser:baseline/v1` is a versioned, built-in policy set equal to an unconfigured server.
 
 **Tests:**
-- The phase-1 oracle passes against `CedarAuthorizer` loaded with the generated policies. This is
-  the behaviour-equivalence gate.
-- Strict validation rejects unknown attributes, mismatched types and unknown actions, with an error
-  location and no document contents.
-- An engine error denies.
-- Decision reasons report the policy id, not Cedar's positional `policy<n>`.
+- **The differential oracle** (phase 2) passes with `CedarAuthorizer`, loaded with generated
+  documents, as its subject. This is the equivalence gate, and it uses generated inputs, not only
+  the existing test cases.
+- **The erroring-forbid case** from review: a `permit` plus a `forbid` whose condition overflows
+  must **deny** with `engine.error`, not allow.
+- **Validation:** `validate` success-with-errors is rejected, and a mistyped request context is
+  rejected.
+- **Annotations and ids:** `@reason` and `@internal` are mapped; reserved prefixes are rejected.
+- **Exception actions:** a plain `permit(principal, action == request, resource)` does **not**
+  reach loopback or private addresses.
 
-### Phase 3: the policy file
+### Phase 4: the policy file, opt-in, with shadow mode and the performance gate
 
-- `AGENTBROWSER_POLICY_FILE` loads, parses, validates and canonicalizes the document. Its version
-  is the SHA-256 of the canonical JSON.
-- An invalid file, a file combined with any policy-bearing variable, or an unknown `limits` key
-  aborts startup and names the problem.
-- The policy version is stamped on the session view at creation.
-- Limits from the file replace the corresponding variables (`maxResponseBytes`, `extractMaxBytes`,
-  …), with their existing bounds.
-- **Deprecation:** the policy-bearing variables log a one-line startup warning that names the
-  replacement; they keep working.
-- **Server switch:** with no file, the server uses `CedarAuthorizer` with generated policies.
-  `LegacyAuthorizer` stays only as the oracle's reference implementation in tests.
-
-**Tests:** startup refusals; the version is stable across key order and whitespace; per-tenant
-loopback (tenant A reaches a loopback fixture; tenant B is denied with `ruleMatched: "default.deny"`,
-because no policy permits it); deny-wins composition with session `allowedHosts` and engagement scope.
-
-### Phase 4: query surface
-
-- **`GET /v1/policy`:** version, limits, and a capability summary per tenant. Each capability is
-  evaluated with the caller's tenant principal and returns `{ allowed, ruleMatched, reason }`. No
-  raw policy text.
-- **`POST /v1/policy/check`:** `{ action, url?, context? }` → `PolicyDecision`.
-  - There is no DNS resolution. A hostname is checked as declared, an IP literal is classified, and
-    answers that depend on resolution say so.
-  - Request-size bounds come from the schema; the route is rate-limited per tenant.
-- **Errors:** `POLICY_DENIED` and `APPROVAL_REQUIRED` populate `policyDecision` from the deciding
-  rule. Floor denials report `floor.<rule>`.
-- **Surfaces:** SDK `client.policy.get()` and `client.policy.check()`; the CLI's `agentbrowser
-  policy` and `agentbrowser policy check <action> [url]`; a read-only MCP `policy` tool in every
-  mode.
+- **Loading.** `AGENTBROWSER_POLICY_FILE` loads, validates and canonicalizes the document; its
+  version is the SHA-256, including the baseline version. Cedar is loaded **only** in this case.
+- **Refusals at startup:**
+  - an invalid document;
+  - a file combined with any policy-bearing variable or embedder option (ADR-024 §4 table); all
+    conflicts are named;
+  - an unknown `limits` key;
+  - tenant constraints other than `local` while no API keys are configured.
+- **No-keys tenant.** Policy evaluation uses the implicit `Tenant::"local"` whatever `tenantId`
+  the caller sends.
+- **Warnings at startup:**
+  - any loaded policy can permit `request.loopback` or `request.private` (detected by partial
+    evaluation with an unknown principal);
+  - no public-egress permit exists (`"baseline": "none"` without one);
+  - deprecated variables are in use.
+- **Session stamping.** The session view carries the policy version.
+- **Shadow mode.** `AGENTBROWSER_POLICY_SHADOW=1`, without a file, evaluates the generated
+  document in Cedar alongside `LegacyAuthorizer`. Legacy decides, and divergences are logged at
+  `warn` with both rule ids. It runs for at least one release before deprecation warnings start.
+- **Per-session memo.** It is an LRU with a fixed entry bound (TD-BROWSER-9), keyed by
+  (action, host, sorted class set, declared context). Address classes come from the fresh
+  per-request classification, so a DNS change alters the key. It is cleared at close.
+- **Performance gate**, in this phase, before anyone opts in: a 300-subresource page, measured
+  uncached and memoized. The gate (the maximum share of load time spent in policy evaluation) is
+  set from the first measured run and recorded here. Review reproduced 43–78 µs per pre-parsed
+  decision.
 - **Tests:**
-  - A tenant cannot see another tenant's decisions or text.
-  - `check` never resolves DNS. The test uses a resolver spy that must not be called.
-  - `check` agrees with real enforcement on IP literals and on every oracle row.
-  - The MCP tool appears in all modes; `structuredContent` matches the REST shape.
+  - per-tenant loopback with keys: tenant A reaches the fixture, tenant B is denied with
+    `default.deny`;
+  - with no keys, a `tenantId: "qa"` request cannot obtain `qa`'s grants;
+  - deny-wins against session narrowing and engagement scope;
+  - a capability needs both the session request and the Cedar grant;
+  - the memo key changes with the class set;
+  - the version is stable across key order and whitespace.
 
-### Phase 5: per-session cache, logging and the performance gate
+### Phase 5: query surface
 
-- **Session-scoped decision memo**, keyed by action, host, address class and the action's declared
-  context fields. It is cleared at session close.
-- **Logging:** a deny logs at `warn` and an approval-required decision at `info`, through
-  `StructuredLogger`, carrying the policy version and rule id.
-- **Benchmark:** a page with 300 subresources, uncached and cached. The gate (the maximum share of
-  load time spent in policy evaluation) is set from the first measured run and recorded here.
-  - The spike measured about 78 µs per uncached pre-parsed decision.
-  - The cache should make repeated hosts nearly free.
-- **Packaging:** `@cedar-policy/cedar-wasm` enters the server tarball and Windows bundle via the
-  existing deploy.
-  - **Size:** the install-size gates gain the measured delta, about 4.3 MB for the Node build.
-  - **Shipped files:** only the `nodejs/` build is shipped; the web and ESM builds are pruned at
-    packaging time.
-  - **Shipped-path gate:** it still passes (the package contains no build-machine paths).
-  - **Windows smoke:** the bundle smoke checks evaluate a decision on Windows.
+- **`GET /v1/policy`:**
+  - It returns the version, the limits and a capability summary for a **default session** of the
+    caller's tenant, and says that it does.
+  - Attribute-dependent answers come back as `conditional`, through partial evaluation.
+  - There is no raw policy text.
+- **`POST /v1/policy/check`:** `{ action, url?, context? }` → `PolicyDecision`.
+  - No DNS. An IP literal is classified; a hostname is evaluated with unknown address classes
+    through partial evaluation, and reports "depends on resolved address" together with the
+    deciding classes.
+  - Request size is bounded.
+- **Rate limiter:** a new bounded per-tenant token-bucket limiter for the query routes. No HTTP
+  rate limiter exists today.
+- **Errors:** `POLICY_DENIED` and `APPROVAL_REQUIRED` populate `policyDecision`. `@internal` policies
+  are reported as `operator.policy`, without a reason.
+- **Surfaces:** SDK `client.policy.get()` and `client.policy.check()`; the CLI's `agentbrowser
+  policy [check …]`; a read-only MCP `policy` tool in every mode.
+- **Tests:**
+  - tenant isolation of every answer;
+  - a resolver spy proves `check` never resolves;
+  - `check` agrees with enforcement on IP literals and on every oracle row;
+  - `@internal` ids are not disclosed;
+  - the limiter is bounded;
+  - the MCP tool is present in all modes, with the same shape as REST.
 
-### Phase 6: documentation
+### Phase 6: packaging
 
-- **Policy guide** (`docs/policy.md`): the schema reference (generated), examples replacing each
-  deprecated variable, the per-tenant pattern, how to test a policy with `policy check`, and the
-  floor's fixed rules.
-- **`docs/operations.md`:** policy-bearing variables marked deprecated with their replacement.
-- **Threat model:** the policy file is trusted operator configuration. A tenant can query only its
-  own decisions, and `check` is not a DNS oracle.
+- **Prune the npm package:** only `nodejs/` ships in the server tarball and the Windows bundle; the
+  web and ESM builds are removed.
+- **Shipped-path gate:** it **fails** on cedar-wasm as published. The `.wasm` embeds Rust
+  panic-location paths from the CI machine that built it (`/home/runner/work/cedar/…`,
+  `/home/runner/.cargo/registry/…`).
+  - Add a file-scoped exception for exactly `@cedar-policy/cedar-wasm/nodejs/cedar_wasm_bg.wasm`
+    at the pinned version, guarded by its SHA-256, following the precedent of the bundled Node
+    runtime.
+  - Any other file, version or hash still fails.
+- **Install-size gates** gain the measured delta, about 4.3 MB.
+- **Windows bundle smoke:** load a policy file and evaluate one decision.
+
+### Phase 7: documentation
+
+- **Policy guide** (`docs/policy.md`):
+  - the generated schema reference;
+  - the baseline;
+  - set-valued address classes and the exception actions;
+  - examples replacing each deprecated variable, and `policy export`;
+  - the per-tenant pattern and its keys-only rule;
+  - `policy check`;
+  - the floor's fixed rules, including the statement that browser traffic is not DNS-pinned.
+- **`docs/operations.md`:**
+  - every variable classified as policy-bearing, floor input, bootstrap or trusted (ADR-024 §4);
+  - `CHROMIUM_ARGS` documented as security-relevant.
+- **Threat model:**
+  - the policy file is trusted operator configuration;
+  - only authenticated tenants are policy principals;
+  - `check` is not a DNS oracle;
+  - `@internal` exists for confidentiality.
 - **ADR-024 status → Accepted** when phase 5 ships.
 
 ## Non-goals
 
-- Reloading policy without restart (a later decision; a reload must never relax a live session).
-- Policy over page content, or Cedar in the CLI or MCP executables.
-- Replacing `SessionPolicySchema` or engagement scope.
-- Making the safety floor configurable.
+- Reloading policy without restart (a reload must never relax a live session).
+- Policy over page content; Cedar in the CLI or MCP executables.
+- Replacing session narrowing or engagement scope.
+- Making the floor configurable; DNS pinning for browser traffic.
 
 ## Risks
 
-- **Equivalence drift between generated policies and legacy code.** Mitigated by the phase-1
-  oracle gating phases 2 and 3.
-- **WASM cache is process-global.** Policy-set ids are namespaced by version so concurrent loads in
-  tests cannot collide.
-- **Hot-path cost on pages with many hosts.** Mitigated by the per-session memo and the phase-5
-  gate; decisions stay synchronous and in-process.
-- **Operators writing an over-broad permit.** The floor still holds, and `GET /v1/policy` makes the
-  effective capabilities visible. The guide includes a review checklist.
+- **Equivalence drift.** The differential oracle (generated inputs) plus a release of shadow mode
+  run before deprecation.
+- **Fail-open engine semantics.** The erroring-forbid test and the fail-closed rule.
+- **Over-broad operator permits.** Exception actions, startup warnings, the floor, and
+  `GET /v1/policy` showing effective grants.
+- **Hot-path cost.** A pre-parsed policy set, the bounded memo, and the phase-4 gate before opt-in.
+- **A WebAssembly trap.** The authorizer is marked unhealthy and fails closed until restart, and
+  `/health` reports it.

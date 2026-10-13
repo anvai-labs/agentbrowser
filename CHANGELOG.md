@@ -9,10 +9,13 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ### Docs — design records
 
-- **ADR-024 (Proposed): server policy engine.** Policy that is spread across environment variables
-  today moves into one versioned document evaluated by embedded Cedar. Policy becomes per tenant,
-  and agents can query it (`GET /v1/policy`, `POST /v1/policy/check`, an MCP `policy` tool). A
-  fixed safety floor stays outside policy. Implementation plan: TD-BROWSER-15.
+- **ADR-024 (Proposed): server policy engine.** An opt-in, versioned policy document evaluated by
+  embedded Cedar replaces policy that is spread across environment variables today. Policy becomes
+  per authenticated tenant, and agents can query it (`GET /v1/policy`, `POST /v1/policy/check`, an
+  MCP `policy` tool). A fixed safety floor stays outside policy: metadata endpoints (a wider set),
+  loopback and private addresses blocked by default, and the CDP-attach refusals. Engine errors
+  fail closed. Implementation plan: TD-BROWSER-15. Also adds ADR-022, which was missing, to the
+  docs index.
 
 ## [1.17.1] — 2026-10-13
 
