@@ -1240,7 +1240,9 @@ export class AgentBrowserService {
       )
         throw new ServiceError(
           'INVALID_REQUEST',
-          'Operator attachment cannot apply launch, cookie, delegated-control, download, or per-session policy options. Use a normal isolated session for those options.'
+          'Operator attachment cannot apply launch, cookie, delegated-control, download, or per-session policy options. Use a normal isolated session for those options.',
+          false,
+          { rule: 'floor.cdp.options' }
         );
       try {
         requireCdpAttachAdmission(this.cdpAttachAdmission);
@@ -2264,7 +2266,9 @@ export class AgentBrowserService {
       publicationOptions === undefined ? undefined : snapshotPublication(publicationOptions);
     let disclosure: PreparedReviewDisclosure | undefined;
     if (principal.actor !== 'operator')
-      throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+      throw new ServiceError('FORBIDDEN', 'Operator authority is required', false, {
+        rule: 'floor.delegated.operator',
+      });
     const validated = validateApplicationReview(input);
     if (!validated.ok)
       throw new ServiceError('INVALID_REQUEST', 'Invalid application review request');

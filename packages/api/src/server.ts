@@ -917,7 +917,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         if (body.controlMode === 'delegated' && principals.get(request)?.actor !== 'operator')
           throw new ServiceError(
             'FORBIDDEN',
-            'Controlled sessions require authenticated operator credentials'
+            'Controlled sessions require authenticated operator credentials',
+            false,
+            { rule: 'floor.delegated.operator' }
           );
         const authenticatedTenant = tenantOf(request);
         if (authenticatedTenant !== undefined) {
@@ -1029,7 +1031,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             const { sessionId } = params(request, 'sessionId');
             const principal = principals.get(request);
             if (principal?.actor !== 'operator')
-              throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+              throw new ServiceError('FORBIDDEN', 'Operator authority is required', false, {
+                rule: 'floor.delegated.operator',
+              });
             requireOwnership(sessionId, tenantOf(request));
             const control = service.authority.get(sessionId);
             if (!control) throw new ServiceError('NOT_FOUND', 'Session is not controlled');
@@ -1104,7 +1108,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       on('GET', '/sessions/:sessionId/approvals/:tokenId', async (request) => {
         const { sessionId, tokenId } = params(request, 'sessionId', 'tokenId');
         if (request.principal?.actor !== 'operator')
-          throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+          throw new ServiceError('FORBIDDEN', 'Operator authority is required', false, {
+            rule: 'floor.delegated.operator',
+          });
         requireOwnership(sessionId, tenantOf(request));
         const disclosure = await service.prepareApprovalDisclosureInScope(sessionId, tokenId);
         return responseDraft(disclosure.view, 200, { assertCurrent: disclosure.assertCurrent });
@@ -1112,7 +1118,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       on('POST', '/sessions/:sessionId/approvals/:tokenId', async (request) => {
         const { sessionId, tokenId } = params(request, 'sessionId', 'tokenId');
         if (request.principal?.actor !== 'operator')
-          throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+          throw new ServiceError('FORBIDDEN', 'Operator authority is required', false, {
+            rule: 'floor.delegated.operator',
+          });
         requireOwnership(sessionId, tenantOf(request));
         const checked = validateOperatorApprovalDecision(request.body);
         if (!checked.ok)
@@ -1137,7 +1145,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           const { sessionId } = params(request, 'sessionId');
           const principal = principals.get(request);
           if (principal?.actor !== 'operator')
-            throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+            throw new ServiceError('FORBIDDEN', 'Operator authority is required', false, {
+              rule: 'floor.delegated.operator',
+            });
           requireOwnership(sessionId, tenantOf(request));
           requireBody(request.body);
           return reply.send(service.applicationBind(sessionId, principal, request.body));
@@ -1151,7 +1161,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           const { sessionId } = params(request, 'sessionId');
           const principal = principals.get(request);
           if (principal?.actor !== 'operator')
-            throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+            throw new ServiceError('FORBIDDEN', 'Operator authority is required', false, {
+              rule: 'floor.delegated.operator',
+            });
           requireOwnership(sessionId, tenantOf(request));
           return reply.send(service.applicationUnbind(sessionId, principal));
         },
@@ -1177,7 +1189,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           const { sessionId } = params(request, 'sessionId');
           const principal = principals.get(request);
           if (principal?.actor !== 'operator')
-            throw new ServiceError('FORBIDDEN', 'Operator authority is required');
+            throw new ServiceError('FORBIDDEN', 'Operator authority is required', false, {
+              rule: 'floor.delegated.operator',
+            });
           requireOwnership(sessionId, tenantOf(request));
           if (request.headers['x-agentbrowser-operation-id'] !== undefined)
             throw new ServiceError(

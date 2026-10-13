@@ -6,6 +6,7 @@ export type CdpAttachAdmission =
   | 'disabled'
   | 'egress'
   | 'hosted'
+  | 'multi_tenant'
   | 'local_only'
   | 'auth_required';
 export interface OperatorCdpAdmissionOptions {
@@ -29,7 +30,8 @@ export function cdpAttachAdmission(
   )
     throw new Error('Invalid deployment mode');
   const tenantCount = new Set(tenants).size;
-  if (options.deploymentMode === 'hosted' || tenantCount > 1) return 'hosted';
+  if (options.deploymentMode === 'hosted') return 'hosted';
+  if (tenantCount > 1) return 'multi_tenant';
   if (!options.operatorCdp) return 'disabled';
   if (!isOperatorLoopback(options.host ?? '127.0.0.1')) return 'local_only';
   if (options.operatorCdp.allowUnenforcedEgress !== true) return 'egress';
@@ -56,13 +58,23 @@ export function requireCdpAttachAdmission(admission: CdpAttachAdmission): void {
       'HOSTED_UNSUPPORTED',
       'Operator attachment is unavailable in hosted or multi-tenant deployments (ADR-008). Use an isolated browser session.',
     ],
+    // Same client-facing reason as hosted; a distinct floor rule (ADR-024 §1).
+    multi_tenant: [
+      'HOSTED_UNSUPPORTED',
+      'Operator attachment is unavailable in hosted or multi-tenant deployments (ADR-008). Use an isolated browser session.',
+    ],
     local_only: [
       'CDP_ATTACH_LOCAL_ONLY',
       'Operator attachment requires a literal loopback API listener and local client. Use 127.0.0.1 or ::1.',
     ],
   } as const;
   const [reason, message] = refusals[admission];
-  throw new EngineError('ENGINE_UNSUPPORTED', message, false, { reason });
+  // `reason` stays stable for clients; `rule` names the unconditional floor
+  // refusal (ADR-024 §1), which no policy can grant.
+  throw new EngineError('ENGINE_UNSUPPORTED', message, false, {
+    reason,
+    rule: `floor.cdp.${admission}`,
+  });
 }
 
 /** No environment value or endpoint is ever included in a configuration error. */

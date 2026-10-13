@@ -117,4 +117,17 @@ describe('MetadataFloorPolicy', () => {
     ).rejects.toMatchObject({ details: { rule: 'floor.metadata' } });
     expect(new MetadataFloorPolicy(permissive()).preflightCheck).toBeUndefined();
   });
+
+  it('refuses trailing-dot and short metadata names, which the CDP lane cannot DNS-check', async () => {
+    const floor = new MetadataFloorPolicy(permissive());
+    for (const url of [
+      'http://metadata.google.internal./',
+      'http://metadata/',
+      'http://instance-data/',
+    ]) {
+      await expect(
+        floor.checkRequest({ hostname: new URL(url).hostname, url })
+      ).rejects.toMatchObject({ details: { rule: 'floor.metadata' } });
+    }
+  });
 });

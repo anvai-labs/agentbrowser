@@ -199,3 +199,50 @@ describe('review round 1: every RFC 6052 layout, SIIT, and CIDRs on the embedded
     await expect(v6.checkResolvedAddresses(['fd12::1'])).resolves.toBeUndefined();
   });
 });
+
+describe('metadata hostnames: trailing dot and short names', () => {
+  it.each([
+    'metadata.google.internal.',
+    'METADATA.GOOGLE.INTERNAL',
+    'x.metadata.goog.',
+    'metadata', // GCP search-domain short name
+    'metadata.', // and with the root dot
+    'instance-data', // AWS
+    'instance-data.ec2.internal',
+    'instance-data.ec2.internal.',
+    'metadata..', // repeated root dots
+    'metadata.google.internal..',
+  ])('refuses %s as a request hostname under blockMetadata', async (hostname) => {
+    await expect(
+      new NetworkPolicy({ blockMetadata: true }).checkRequest({ hostname })
+    ).rejects.toMatchObject({ details: { rule: 'blockMetadata' } });
+  });
+
+  it('does not refuse lookalikes', async () => {
+    const policy = new NetworkPolicy({ blockMetadata: true });
+    for (const hostname of ['metadata.example.com', 'notmetadata.goog', 'instance-database']) {
+      await expect(policy.checkRequest({ hostname })).resolves.toBeUndefined();
+    }
+  });
+});
+
+describe('hostile hostnames stay linear', () => {
+  // Review round 2: /\.+$/ backtracked quadratically on interior dot runs, and a
+  // page can make the engine check any such hostname (fetch('http://a....b/')).
+  it('classifies a 100k interior-dot hostname in linear time, twice per request', async () => {
+    const hostname = `a${'.'.repeat(100_000)}b`;
+    const policy = new NetworkPolicy({ blockMetadata: true });
+    const started = performance.now();
+    for (let i = 0; i < 5; i++) {
+      await expect(policy.checkRequest({ hostname })).resolves.toBeUndefined();
+    }
+    expect(performance.now() - started).toBeLessThan(250);
+  });
+
+  it('still strips any number of trailing dots', async () => {
+    const policy = new NetworkPolicy({ blockMetadata: true });
+    await expect(
+      policy.checkRequest({ hostname: `metadata${'.'.repeat(100_000)}` })
+    ).rejects.toMatchObject({ details: { rule: 'blockMetadata' } });
+  });
+});

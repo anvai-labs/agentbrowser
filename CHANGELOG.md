@@ -42,6 +42,24 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   blocking off (`new NetworkPolicy({})`). The refusal covers request hosts, DNS answers, redirect
   hops and navigation preflight. Optional gates pass through only where the underlying policy has
   them, so a weaker policy is never made to look strict to the download path.
+- **Metadata names are normalised.** Case and trailing dots are ignored
+  (`metadata.google.internal.`). This matters on the CDP-attach lane, which has no DNS answer to
+  check.
+- **Tightening: `metadata`, `instance-data` and `instance-data.ec2.internal` are now refused.**
+  These are the GCP and AWS search-domain names. An intranet host literally named one of them is
+  refused even under an `AGENTBROWSER_ALLOWED_CIDRS` exception.
+- **Floor refusals name their rule.** Each refusal that no policy can grant now carries
+  `details.rule`:
+  - CDP attachment: `floor.cdp.hosted`, `floor.cdp.multi_tenant`, `floor.cdp.local_only`,
+    `floor.cdp.egress`, `floor.cdp.disabled`, `floor.cdp.auth_required`, `floor.cdp.options`,
+    `floor.cdp.profile_options` and `floor.cdp.cookie_export`;
+  - `floor.delegated.operator` on controlled-session creation without operator credentials, and on
+    the operator-only control, approval and review checks. A caller without credentials on a
+    keyless local service sees this rule. Delegated agent credentials are always refused earlier on
+    these routes by their mode profile's capability gate, which is an operator choice and so carries
+    no floor rule.
+
+  Existing `details.reason` codes are unchanged.
 
 ### Fixed
 

@@ -106,12 +106,31 @@ function embeddedIPv4(address: string): string[] {
   return [];
 }
 
-// Cloud metadata services reached by name. Matched exactly or as a subdomain.
-const METADATA_HOSTNAMES = ['metadata.google.internal', 'metadata.goog'] as const;
+// Cloud metadata services reached by name. Domains match exactly or as a
+// subdomain; short (single-label search-domain) names match exactly.
+const METADATA_DOMAINS = [
+  'metadata.google.internal', // GCP
+  'metadata.goog', // GCP
+  'instance-data.ec2.internal', // AWS
+] as const;
+const METADATA_SHORT_NAMES = new Set(['metadata', 'instance-data']); // GCP, AWS
 
-/** True for a metadata service name (lowercased, as URL hostnames are). */
+/**
+ * True for a metadata service name. Case-insensitive, and a fully qualified
+ * trailing dot is ignored: `metadata.google.internal.` names the same host, and
+ * the CDP-attach lane, which checks only the name, has no DNS answer to fall back on.
+ * Repeated trailing dots are stripped too.
+ */
 export function isMetadataHostname(hostname: string): boolean {
-  return METADATA_HOSTNAMES.some((name) => hostname === name || hostname.endsWith(`.${name}`));
+  // Strip trailing dots with a linear scan. A /\.+$/ regex backtracks
+  // quadratically on interior dot runs, and page content controls hostnames.
+  let end = hostname.length;
+  while (end > 0 && hostname.charCodeAt(end - 1) === 0x2e) end--;
+  const name = hostname.slice(0, end).toLowerCase();
+  return (
+    METADATA_SHORT_NAMES.has(name) ||
+    METADATA_DOMAINS.some((domain) => name === domain || name.endsWith(`.${domain}`))
+  );
 }
 
 /** Internal classification only; undefined means not a valid, unscoped IP. */
