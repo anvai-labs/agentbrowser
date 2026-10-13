@@ -140,7 +140,12 @@ export async function smokeWindowsBundle({ zip, expectedVersion, browsers: provi
       }
     }, 'the bundled server to become healthy', 15 * 60_000);
     assert.equal(health.version, expectedVersion);
-    report.firstStart = provisioned ? 'PASS (provisioned browsers)' : `PASS (downloaded: ${/First start/.test(log)})`;
+    if (!provisioned) {
+      // No provisioned browsers: this run exists to prove the first-start
+      // download, so the launcher must have performed it.
+      assert.match(log, /First start: downloading Chromium/, 'first start did not download Chromium');
+    }
+    report.firstStart = provisioned ? 'PASS (provisioned browsers)' : 'PASS (downloaded Chromium)';
 
     // 3. A real Chromium session through the shipped CLI.
     const cli = (...args) => json(run(exe('cli'), ['--base-url', base, '--json', ...args], { env }), args[0]);
