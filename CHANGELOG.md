@@ -36,6 +36,12 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   `192.168.1.0/24` also admits that address behind NAT64, 6to4 or SIIT, as it already did for
   IPv4-mapped. An IPv6 wrapper exception such as `64:ff9b::/96` never grants the private IPv4
   inside it.
+- **The metadata floor holds over any injected policy.** Every session's request policy is now
+  wrapped in `MetadataFloorPolicy`, so cloud metadata endpoints stay refused (`rule:
+  "floor.metadata"`) even when an embedder passes `ServerOptions.networkPolicy` with metadata
+  blocking off (`new NetworkPolicy({})`). The refusal covers request hosts, DNS answers, redirect
+  hops and navigation preflight. Optional gates pass through only where the underlying policy has
+  them, so a weaker policy is never made to look strict to the download path.
 
 ### Fixed
 

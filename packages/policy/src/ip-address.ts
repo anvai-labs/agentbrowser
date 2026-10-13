@@ -106,6 +106,14 @@ function embeddedIPv4(address: string): string[] {
   return [];
 }
 
+// Cloud metadata services reached by name. Matched exactly or as a subdomain.
+const METADATA_HOSTNAMES = ['metadata.google.internal', 'metadata.goog'] as const;
+
+/** True for a metadata service name (lowercased, as URL hostnames are). */
+export function isMetadataHostname(hostname: string): boolean {
+  return METADATA_HOSTNAMES.some((name) => hostname === name || hostname.endsWith(`.${name}`));
+}
+
 /** Internal classification only; undefined means not a valid, unscoped IP. */
 export function classifyIPAddress(input: string) {
   if (typeof input !== 'string' || input.includes('%')) return undefined;

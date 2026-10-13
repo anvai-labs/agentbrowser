@@ -99,7 +99,12 @@ import {
   RecordsSelectorError,
   SchemaExtractor,
 } from '@agentbrowser/extraction';
-import { EngagementScopePolicy, type NetworkPolicy, SessionHostPolicy } from '@agentbrowser/policy';
+import {
+  EngagementScopePolicy,
+  MetadataFloorPolicy,
+  type NetworkPolicy,
+  SessionHostPolicy,
+} from '@agentbrowser/policy';
 import type {
   ObservationRequest,
   OperatorApprovalView,
@@ -1288,10 +1293,13 @@ export class AgentBrowserService {
       // T7 slice 2a: the engagement scope is the outermost restrict-only
       // layer — hosts/paths/methods/identities/time/budget over the whole
       // chain, per request and per redirect hop.
-      const sessionPolicy: SessionHostPolicy | NetworkPolicy | EngagementScopePolicy =
+      const scopedPolicy: SessionHostPolicy | NetworkPolicy | EngagementScopePolicy =
         request.scope !== undefined
           ? new EngagementScopePolicy(hostPolicy, request.scope)
           : hostPolicy;
+      // TD-BROWSER-15 phase 0: the metadata floor wraps the whole chain, so it
+      // holds whatever policy was injected (ADR-024 §1).
+      const sessionPolicy = new MetadataFloorPolicy(scopedPolicy);
 
       let allocation: Awaited<ReturnType<SessionCoordinator['createOwned']>>;
       try {
