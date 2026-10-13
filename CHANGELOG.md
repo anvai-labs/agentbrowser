@@ -27,6 +27,11 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   loopback and private addresses blocked by default, and the CDP-attach refusals. Engine errors
   fail closed. Implementation plan: TD-BROWSER-15. Also adds ADR-022, which was missing, to the
   docs index.
+- **ADR-025 (Proposed): cookie handoff from the operator's browser.** A one-time, server-internal
+  copy of selected domains' cookies from the CDP-attached operator browser into a contained
+  session restricted to those hosts. Cookie values never reach the agent, every handoff needs an
+  approval token, and cookie export is refused for that session afterwards. Implementation plan:
+  TD-BROWSER-16.
 
 ## [1.17.1] — 2026-10-13
 
