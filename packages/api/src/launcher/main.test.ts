@@ -107,14 +107,14 @@ describe.runIf(posix)('launcher process', () => {
     expect(result.status).toBe(2);
   });
 
-  it('fails with the searched locations when the bundle is incomplete', () => {
+  it('fails loudly when AGENTBROWSER_HOME is not a complete bundle', () => {
     const result = spawnSync(process.execPath, [LAUNCHER], {
       encoding: 'utf8',
       env: launcherEnv(),
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(root);
-    expect(result.stderr).toMatch(/incomplete installation/);
+    expect(result.stderr).toMatch(/AGENTBROWSER_HOME=.*is not a complete AgentBrowser bundle/);
   });
 
   it('refuses a server tree from another version', () => {

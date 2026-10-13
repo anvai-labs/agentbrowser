@@ -85,7 +85,7 @@ try {
 
 const node = nodeExecutable(root, process.platform);
 const server = join(root, 'server');
-const browsers = browsersPath(process.env, process.platform, homedir());
+const browsers = browsersPath(process.env, process.platform, homedir(), server);
 const env = serverEnvironment(process.env, browsers);
 
 if (args.kind === 'install-browser') process.exit(installChromium(node, server, env));

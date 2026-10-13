@@ -4,7 +4,7 @@
  *
  * The launcher is the `agentbrowser-server.exe` in the Windows bundle:
  *
- *   <root>/agentbrowser-server.exe   this launcher (Bun-compiled, tiny)
+ *   <root>/agentbrowser-server.exe   this launcher (Bun-compiled; no server code inside)
  *   <root>/node/node.exe             pinned official Node runtime
  *   <root>/server/                   the packaged server tree (hoisted, no links)
  *
@@ -14,7 +14,7 @@
  * launcher therefore never derives a location from __dirname or import.meta,
  * only from the running executable (core.test.ts enforces both rules).
  */
-import { dirname, join } from 'node:path';
+import { dirname, join, posix, resolve, win32 } from 'node:path';
 import { parseServerArgs, SERVER_HELP } from '../server-args.js';
 
 export type LauncherArgs =
@@ -62,10 +62,11 @@ export function serverEntry(root: string): string {
 }
 
 /**
- * The install root: AGENTBROWSER_HOME, else the directory of the real
- * executable (winget runs portable commands through a symlink in its Links
- * directory), else the directory of the path as invoked. A candidate counts
- * only when it holds both the server entry and the Node runtime.
+ * The install root: AGENTBROWSER_HOME when set (and then only it), else the
+ * directory of the real executable (winget runs portable commands through a
+ * symlink in its Links directory), else the directory of the path as
+ * invoked. A root counts only when it holds both the server entry and the
+ * Node runtime.
  */
 export function resolveInstallRoot(input: {
   env: NodeJS.ProcessEnv;
@@ -74,20 +75,36 @@ export function resolveInstallRoot(input: {
   fs: LauncherFs;
 }): string {
   const { env, execPath, platform, fs } = input;
+  // Absolute in the target's own path semantics: the server and installer run
+  // with cwd = server\, where a relative root would no longer resolve.
+  const paths = platform === 'win32' ? win32 : posix;
+  const absolute = (path: string) => (paths.isAbsolute(path) ? path : paths.resolve(path));
+  const complete = (root: string) =>
+    fs.exists(serverEntry(root)) && fs.exists(nodeExecutable(root, platform));
+  const layout = `${join('server', 'dist', 'bin.js')} and the bundled node runtime (${join('node', platform === 'win32' ? 'node.exe' : 'bin/node')})`;
+  if (env.AGENTBROWSER_HOME) {
+    // An explicit root is the only candidate: silently running the bundle
+    // next to the exe instead would hide a typo or a half-extracted upgrade.
+    const root = absolute(env.AGENTBROWSER_HOME);
+    if (complete(root)) return root;
+    throw new Error(
+      `agentbrowser-server: AGENTBROWSER_HOME=${root} is not a complete AgentBrowser bundle (needs ${layout}). Fix or unset AGENTBROWSER_HOME.`
+    );
+  }
   const candidates: string[] = [];
-  if (env.AGENTBROWSER_HOME) candidates.push(env.AGENTBROWSER_HOME);
   try {
     candidates.push(dirname(fs.realpath(execPath)));
   } catch {
     // An unresolvable link falls through to the path as invoked.
   }
   candidates.push(dirname(execPath));
-  for (const root of candidates) {
-    if (fs.exists(serverEntry(root)) && fs.exists(nodeExecutable(root, platform))) return root;
+  for (const candidate of candidates) {
+    const root = absolute(candidate);
+    if (complete(root)) return root;
   }
   const tried = [...new Set(candidates)].map((root) => `  ${root}`).join('\n');
   throw new Error(
-    `agentbrowser-server: incomplete installation. Searched:\n${tried}\nfor ${join('server', 'dist', 'bin.js')} and the bundled node runtime (${join('node', platform === 'win32' ? 'node.exe' : 'bin/node')}). Reinstall AgentBrowser, or set AGENTBROWSER_HOME to the extracted bundle.`
+    `agentbrowser-server: incomplete installation. Searched:\n${tried}\nfor ${layout}. Reinstall AgentBrowser, or set AGENTBROWSER_HOME to the extracted bundle.`
   );
 }
 
@@ -111,9 +128,17 @@ export function verifyServerVersion(root: string, expected: string, fs: Launcher
 export function browsersPath(
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform,
-  home: string
+  home: string,
+  serverRoot: string
 ): string {
-  if (env.PLAYWRIGHT_BROWSERS_PATH) return env.PLAYWRIGHT_BROWSERS_PATH;
+  const configured = env.PLAYWRIGHT_BROWSERS_PATH;
+  if (configured) {
+    // Mirror Playwright: '0' means inside the playwright-core package, and a
+    // relative value resolves against the server process's cwd (server\).
+    if (configured === '0')
+      return join(serverRoot, 'node_modules', 'playwright-core', '.local-browsers');
+    return resolve(serverRoot, configured);
+  }
   if (platform === 'win32') {
     return join(env.LOCALAPPDATA || join(home, 'AppData', 'Local'), 'agentbrowser', 'browsers');
   }

@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { PRODUCT_VERSION } from '../product-version.js';
 import {
@@ -97,12 +97,38 @@ describe('install root resolution (never __dirname: Bun bakes it at compile time
     const fs = fakeFs({ 'C:/pkg/server/dist/bin.js': '' }); // node.exe missing
     expect(() =>
       resolveInstallRoot({
-        env: { AGENTBROWSER_HOME: 'D:/nope' },
+        env: {},
         execPath: 'C:/pkg/agentbrowser-server.exe',
         platform: 'win32',
         fs,
       })
-    ).toThrow(/D:\/nope[\s\S]*C:\/pkg[\s\S]*node/);
+    ).toThrow(/C:\/pkg[\s\S]*node/);
+  });
+
+  it('uses only AGENTBROWSER_HOME when set, failing loudly when incomplete (no silent fallback)', () => {
+    const fs = fakeFs({ ...LAYOUT('C:/pkg'), 'D:/new/server/dist/bin.js': '' });
+    expect(() =>
+      resolveInstallRoot({
+        env: { AGENTBROWSER_HOME: 'D:/new' },
+        execPath: 'C:/pkg/agentbrowser-server.exe',
+        platform: 'win32',
+        fs,
+      })
+    ).toThrow(/AGENTBROWSER_HOME[\s\S]*D:\/new/);
+  });
+
+  it('resolves a relative AGENTBROWSER_HOME (the server runs with a different cwd)', () => {
+    const fs = fakeFs({
+      [resolve('rel-bundle', 'server/dist/bin.js')]: '',
+      [resolve('rel-bundle', 'node/bin/node')]: '',
+    });
+    const root = resolveInstallRoot({
+      env: { AGENTBROWSER_HOME: 'rel-bundle' },
+      execPath: '/opt/x/agentbrowser-server',
+      platform: 'linux',
+      fs,
+    });
+    expect(root).toBe(resolve('rel-bundle'));
   });
 });
 
@@ -122,22 +148,38 @@ describe('server version stamp', () => {
 });
 
 describe('browsers path', () => {
+  const server = resolve('srv');
+  const perUser = (home: string) => join(home, '.cache', 'agentbrowser', 'browsers');
+
   it('keeps an operator PLAYWRIGHT_BROWSERS_PATH, else uses a per-user directory', () => {
-    expect(browsersPath({ PLAYWRIGHT_BROWSERS_PATH: 'E:/b' }, 'win32', 'C:/Users/u')).toBe('E:/b');
-    expect(browsersPath({ LOCALAPPDATA: 'C:/Users/u/AppData/Local' }, 'win32', 'C:/Users/u')).toBe(
-      join('C:/Users/u/AppData/Local', 'agentbrowser', 'browsers')
+    const operator = resolve('operator-browsers');
+    expect(browsersPath({ PLAYWRIGHT_BROWSERS_PATH: operator }, 'linux', '/home/u', server)).toBe(
+      operator
     );
-    expect(browsersPath({}, 'win32', 'C:/Users/u')).toBe(
+    expect(
+      browsersPath({ LOCALAPPDATA: 'C:/Users/u/AppData/Local' }, 'win32', 'C:/Users/u', server)
+    ).toBe(join('C:/Users/u/AppData/Local', 'agentbrowser', 'browsers'));
+    expect(browsersPath({}, 'win32', 'C:/Users/u', server)).toBe(
       join('C:/Users/u', 'AppData', 'Local', 'agentbrowser', 'browsers')
     );
-    expect(browsersPath({}, 'linux', '/home/u')).toBe(
-      join('/home/u', '.cache', 'agentbrowser', 'browsers')
-    );
+    expect(browsersPath({}, 'linux', '/home/u', server)).toBe(perUser('/home/u'));
   });
 
   it('treats an empty PLAYWRIGHT_BROWSERS_PATH as unset', () => {
-    expect(browsersPath({ PLAYWRIGHT_BROWSERS_PATH: '' }, 'linux', '/home/u')).toBe(
-      join('/home/u', '.cache', 'agentbrowser', 'browsers')
+    expect(browsersPath({ PLAYWRIGHT_BROWSERS_PATH: '' }, 'linux', '/home/u', server)).toBe(
+      perUser('/home/u')
+    );
+  });
+
+  it("resolves Playwright's special values as Playwright does, from the server directory", () => {
+    // '0' means "inside the playwright-core package"; a relative value resolves
+    // against the server's cwd. Checked anywhere else, the launcher re-ran the
+    // installer on every start.
+    expect(browsersPath({ PLAYWRIGHT_BROWSERS_PATH: '0' }, 'linux', '/home/u', server)).toBe(
+      join(server, 'node_modules', 'playwright-core', '.local-browsers')
+    );
+    expect(browsersPath({ PLAYWRIGHT_BROWSERS_PATH: 'br' }, 'linux', '/home/u', server)).toBe(
+      join(server, 'br')
     );
   });
 });
