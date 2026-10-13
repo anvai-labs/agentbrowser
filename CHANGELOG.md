@@ -47,6 +47,36 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - **Acceptance:** the extracted-package acceptance requires the SDDL DACL to be exactly
   `D:P(A;;FA;;;<current user SID>)`.
 
+### Added — Windows bundle assembly and clean-room smoke
+
+- `scripts/assemble-windows-bundle.mjs` builds `agentbrowser-windows-x64.zip`, a flat zip
+  containing:
+  - the launcher `agentbrowser-server.exe`, `agentbrowser-cli.exe` and `agentbrowser-mcp.exe`;
+  - `node\` (official Node 24.21.0);
+  - the `server\` tree.
+
+  It refuses a server tree of another version, any link, any shipped file embedding a
+  build-machine path, and any path over the MAX_PATH budget.
+- `scripts/windows-node.json` pins the bundled Node to nodejs.org's SHA-256 values for both the
+  archive and `node.exe`, matching `.tool-versions`. `scripts/fetch-windows-node.mjs` downloads
+  only from `https://nodejs.org`, verifies both hashes, and installs only `node.exe` and
+  `LICENSE`.
+- `scripts/check-shipped-paths.mjs` fails on runner paths and the checkout path in shipped files.
+  It matches raw and JS-escaped (`D:\\a\\`) forms, in UTF-8 and UTF-16LE. v1.17.0's server exe
+  held the escaped form, and the scan fails on it.
+- `scripts/windows-bundle-smoke.mjs` extracts the bundle into a clean room outside any checkout
+  and drives the shipped executables:
+  - `--help`/`--version`;
+  - the first-start Chromium bootstrap;
+  - a real session through the CLI;
+  - the MCP end-to-end test through the MCP executable;
+  - killing the launcher outright, which must leave no server or Chromium process;
+  - a no-op reinstall;
+  - invocation through a symlink, as winget's Links directory does.
+
+  Windows CI assembles and smokes the bundle on every PR. The previously non-blocking MCP
+  end-to-end step now runs, blocking, inside the smoke.
+
 ### Added — Windows server launcher
 
 - New `packages/api/src/launcher/`, compiled by `packages/api/scripts/compile-launcher.mjs` into the
