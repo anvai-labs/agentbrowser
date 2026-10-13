@@ -254,7 +254,9 @@ Names match `metadata.google.internal`, `metadata.goog` and their subdomains.
 IPv4 embedded in IPv6 is decoded and classified as a union with the address's own classes. That
 covers:
 - NAT64 `64:ff9b::/96`;
-- the local-use `64:ff9b:1::/48` under every RFC 6052 layout, and private as a whole;
+- the local-use `64:ff9b:1::/48` under every RFC 6052 layout, and private as a whole. Because
+  every layout is read, almost any address here decodes to `0.0.0.0` and classifies as loopback,
+  so this prefix is effectively refused (fail-closed by design);
 - 6to4 `2002::/16`;
 - SIIT `::ffff:0:0:0/96`;
 - IPv4-compatible `::/96`, except `::` and `::1`.

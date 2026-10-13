@@ -23,7 +23,9 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   before, they classified as public:
   - NAT64 `64:ff9b::/96`;
   - the local-use `64:ff9b:1::/48`, under every RFC 6052 layout. It is also private as a whole,
-    since it is never globally routable;
+    since it is never globally routable. Decoding every layout reads almost any address in this
+    prefix as loopback (`0.0.0.0`), so local-use NAT64 is **effectively refused**, which fails
+    closed. Use the well-known `64:ff9b::/96` prefix with agentbrowser;
   - 6to4 `2002::/16`;
   - SIIT `::ffff:0:0:0/96`;
   - IPv4-compatible `::/96`.
