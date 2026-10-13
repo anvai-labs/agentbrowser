@@ -18,6 +18,11 @@ instructions accepted from the page or from an agent request. For example:
 {"unknownRisk":"required","rules":[{"hostname":"shop.example","action":"click","name":"Pay","effect":"transaction"}]}
 ```
 
+A rule may carry an optional `id`, which names it as the deciding rule
+(`env.approval.<id>`). An id is 1-64 lowercase letters, digits, `.`, `_` or `-`, is
+unique, and is not `none` or `rule-<n>`, which name unmatched and unnamed rules. An
+invalid id stops the service at startup, naming the rule.
+
 Unknown-risk actions default to `allow` for local automation; select `required`
 for conservative operation. Recognized high-risk effects require confirmation
 unless an operator rule explicitly allows or denies them. Session

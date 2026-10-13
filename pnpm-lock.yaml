@@ -47,6 +47,9 @@ importers:
       '@agentbrowser/policy':
         specifier: workspace:^
         version: link:../policy
+      '@agentbrowser/policy-engine':
+        specifier: workspace:^
+        version: link:../policy-engine
       '@agentbrowser/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -386,6 +389,28 @@ importers:
       '@agentbrowser/core':
         specifier: workspace:*
         version: link:../core
+    devDependencies:
+      '@biomejs/biome':
+        specifier: ^2.5.15
+        version: 2.5.15
+      '@types/node':
+        specifier: ^22.20.5
+        version: 22.20.5
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^5.0.4
+        version: 5.0.4(@types/node@22.20.5)(@vitest/coverage-v8@5.0.4)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2))
+
+  packages/policy-engine:
+    dependencies:
+      '@agentbrowser/core':
+        specifier: workspace:*
+        version: link:../core
+      '@agentbrowser/protocol':
+        specifier: workspace:*
+        version: link:../protocol
     devDependencies:
       '@biomejs/biome':
         specifier: ^2.5.15

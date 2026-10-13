@@ -27,6 +27,7 @@
     "@agentbrowser/engine-safari": "workspace:*",
     "@agentbrowser/extraction": "workspace:^",
     "@agentbrowser/policy": "workspace:^",
+    "@agentbrowser/policy-engine": "workspace:^",
     "@agentbrowser/protocol": "workspace:*",
     "@fastify/cors": "^11.3.1",
     "@fastify/websocket": "^11.3.4",

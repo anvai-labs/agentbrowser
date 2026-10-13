@@ -7,6 +7,20 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Changed — policy engine seam (TD-BROWSER-15 phase 1, approvals)
+
+- **Approval decisions go through an `Authorizer`.** A new internal package,
+  `@agentbrowser/policy-engine`, carries the `Authorizer` interface and `LegacyAuthorizer`, today's
+  rules unchanged. Each decision answers ADR-024 §5's two questions, `act` and `act.unattended`,
+  and names its rule (`env.approval.<rule id>`, `env.approval.unknown-risk`,
+  `env.approval.high-risk`, `env.approval.default`). Behaviour is unchanged, as the oracle tests
+  show.
+- **Approval rules accept an optional `id`** (`AGENTBROWSER_APPROVAL_POLICY` and
+  `ServerOptions.approvalPolicy`): lowercase letters, digits, `.`, `_` and `-`, up to 64
+  characters, unique, and not `none` or `rule-<n>`. A rule without one is identified as
+  `rule-<index>`. **Tightening:** an `id` key was previously ignored; an invalid one now stops
+  startup, with an error naming the rule and the reason.
+
 ### Changed — egress safety floor (TD-BROWSER-15 phase 0)
 
 - **More cloud metadata endpoints are refused.** In addition to `169.254.169.254` and the GCP

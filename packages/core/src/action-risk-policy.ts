@@ -2,6 +2,8 @@ import type { ActionEffectType, ApprovalPolicy, PageElement } from '@agentbrowse
 
 export type ApprovalMode = 'allow' | 'required' | 'deny';
 export interface ActionRiskRule {
+  /** Optional stable id, reported as the deciding rule; defaults to `rule-<index>`. */
+  id?: string;
   hostname?: string;
   action?: string;
   role?: string;
@@ -17,6 +19,46 @@ export interface ActionRiskPolicyOptions {
 const HIGH_RISK = new Set(['transaction', 'account-security', 'external-message', 'destructive']);
 const READ_ACTIONS = new Set(['hover', 'scroll', 'wait']);
 const rank = { allow: 0, required: 1, deny: 2 };
+const RULE_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const RESERVED_RULE_ID = /^(rule-\d+|none)$/;
+
+/** First-match classification of one action (TD-BROWSER-15 phase 1). */
+export interface ActionRiskClassification {
+  effect: ActionEffectType | 'unknown';
+  /** The first matching operator rule, if any: its id and its own decision. */
+  rule?: { id: string; decision?: ApprovalMode };
+}
+
+/**
+ * Today's operator outcome for a classified action: a matching rule's own
+ * decision wins; otherwise unknown effects follow `unknownRisk`, high-risk
+ * effects require approval, and everything else is allowed.
+ */
+export function legacyApprovalMode(
+  effect: ActionEffectType | 'unknown',
+  ruleDecision: ApprovalMode | undefined,
+  unknownRisk: 'allow' | 'required'
+): ApprovalMode {
+  return (
+    ruleDecision ??
+    (effect === 'unknown' ? unknownRisk : HIGH_RISK.has(effect) ? 'required' : 'allow')
+  );
+}
+
+/** Session approval policy can only tighten an outcome, never relax it. */
+export function tightenApprovalMode(
+  effect: ActionEffectType | 'unknown',
+  mode: ApprovalMode,
+  session: ApprovalPolicy = {}
+): ApprovalMode {
+  const restriction =
+    effect === 'transaction'
+      ? session.transactions
+      : effect === 'external-message'
+        ? session.externalMessages
+        : undefined;
+  return restriction !== undefined && rank[restriction] > rank[mode] ? restriction : mode;
+}
 
 /** Classification is deployment policy, never guessed from arbitrary page prose. */
 export class ActionRiskPolicy {
@@ -46,40 +88,77 @@ export class ActionRiskPolicy {
     }
     if ((options.rules?.length ?? 0) > 1000)
       throw new Error('At most 1000 approval rules are supported');
+    // Rule ids name the deciding rule in audit and, later, in generated policy
+    // (ADR-024 §5), so a bad one is refused at startup rather than ignored.
+    const seen = new Set<string>();
+    (options.rules ?? []).forEach((rule, index) => {
+      if (rule.id === undefined) return;
+      const why =
+        typeof rule.id !== 'string' || !RULE_ID.test(rule.id)
+          ? 'must be 1-64 lowercase letters, digits, ".", "_" or "-", starting with a letter or digit'
+          : RESERVED_RULE_ID.test(rule.id)
+            ? 'is reserved (rule-<n> names unnamed rules; "none" means no rule matched)'
+            : seen.has(rule.id)
+              ? 'duplicates an earlier rule id'
+              : undefined;
+      if (why !== undefined)
+        throw new Error(
+          `Invalid operator approval rule ${index}: id ${JSON.stringify(rule.id)} ${why}`
+        );
+      seen.add(rule.id);
+    });
     this.rules = (options.rules ?? []).map((rule) => Object.freeze({ ...rule }));
     this.unknownRisk = options.unknownRisk ?? 'allow';
   }
 
-  evaluate(
-    input: { action: string; url: string; element?: PageElement },
-    session: ApprovalPolicy = {}
-  ): { effect: ActionEffectType | 'unknown'; decision: ApprovalMode } {
+  /** The policy-wide outcome for actions no rule classifies. */
+  get unknownRiskMode(): 'allow' | 'required' {
+    return this.unknownRisk;
+  }
+
+  /** First-match classification: the effect and the matching rule, without an outcome. */
+  classify(input: {
+    action: string;
+    url: string;
+    element?: PageElement;
+  }): ActionRiskClassification {
     let hostname = '';
     try {
       hostname = new URL(input.url).hostname;
     } catch {
       /* Blank pages have no host. */
     }
-    const rule = this.rules.find(
+    const index = this.rules.findIndex(
       (candidate) =>
         (candidate.hostname === undefined || candidate.hostname.toLowerCase() === hostname) &&
         (candidate.action === undefined || candidate.action === input.action) &&
         (candidate.role === undefined || candidate.role === input.element?.role) &&
         (candidate.name === undefined || candidate.name === input.element?.name)
     );
+    const rule = index >= 0 ? this.rules[index] : undefined;
     const effect =
       rule?.effect ??
       (READ_ACTIONS.has(input.action) ? 'read' : (input.element?.risk ?? 'unknown'));
-    let decision: ApprovalMode =
-      rule?.decision ??
-      (effect === 'unknown' ? this.unknownRisk : HIGH_RISK.has(effect) ? 'required' : 'allow');
-    const restriction =
-      effect === 'transaction'
-        ? session.transactions
-        : effect === 'external-message'
-          ? session.externalMessages
-          : undefined;
-    if (restriction !== undefined && rank[restriction] > rank[decision]) decision = restriction;
+    if (!rule) return { effect };
+    return {
+      effect,
+      rule: {
+        id: rule.id ?? `rule-${index}`,
+        ...(rule.decision !== undefined ? { decision: rule.decision } : {}),
+      },
+    };
+  }
+
+  evaluate(
+    input: { action: string; url: string; element?: PageElement },
+    session: ApprovalPolicy = {}
+  ): { effect: ActionEffectType | 'unknown'; decision: ApprovalMode } {
+    const { effect, rule } = this.classify(input);
+    const decision = tightenApprovalMode(
+      effect,
+      legacyApprovalMode(effect, rule?.decision, this.unknownRisk),
+      session
+    );
     return { effect, decision };
   }
 }
