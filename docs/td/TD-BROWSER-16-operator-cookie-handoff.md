@@ -87,11 +87,18 @@ infrastructure; phase 6 enables the handoff.
   `launchPersistentContext(dir, { headless })`. Playwright launches Chromium with
   `--remote-debugging-pipe`, so no port is opened. A test asserts that the browser process listens
   on no TCP port.
-- **Profile directory.** `AGENTBROWSER_LOGIN_PROFILE_DIR`, defaulting under the server's data
-  directory.
-  - It is created with mode `0700` (owner-only ACL on Windows, reusing the CLI's private-file
-    writer).
-  - Startup refuses a directory with wider permissions.
+- **Profile directory.** `AGENTBROWSER_LOGIN_PROFILE_DIR` defaults under the server's data
+  directory, outside synced and backed-up paths.
+  - **POSIX:** created with mode `0700`; startup refuses a directory with wider permissions.
+  - **Windows, which is new code:** the directory is created atomically with a `DirectorySecurity`
+    whose DACL is protected and holds only the owner's ACE, with
+    `ContainerInherit | ObjectInherit`, so every file Chrome creates inherits owner-only access.
+    The CLI's writer creates one file and cannot be reused. Startup parses the DACL and refuses any
+    ACE beyond the owner; SYSTEM and Administrators are reported, not refused. Tested on the
+    Windows CI job.
+- **Pinned binary.** The `executablePath` is resolved once at enablement. Launch refuses if that
+  binary's version has moved backwards since it last wrote the profile; the version is recorded in
+  the profile directory.
 - **Service.** With `AGENTBROWSER_LOGIN_BROWSER=1` and operator keys present, three operator
   routes are added:
   - `open` launches headed. It refuses without a display, and refuses when the deployment is
@@ -100,9 +107,11 @@ infrastructure; phase 6 enables the handoff.
   - `reset` deletes the profile, after confirmation.
 
   The login browser is not a session: it has no id, refs or pages on any agent surface.
-- **Read.** `readLoginCookies()` reads the persistent context's `cookies()` with no URL filter.
-  - When the browser is closed, it launches the profile briefly in headless mode, reads, and closes.
-  - Concurrent `open` and read calls are serialized on a profile lock.
+- **Read.** `readLoginCookies()` reads the **open** login browser's context with `cookies()` and
+  no URL filter. A closed browser refuses with `LOGIN_BROWSER_CLOSED`; there is no headless read.
+  - `open`, `close` and read are serialized on a profile lock.
+  - A profile locked by a hand-started Chrome is refused with `LOGIN_PROFILE_IN_USE`.
+  - When the operator closes the last window, the context's close event marks the browser closed.
   - Partitioned cookies (`partitionKey` or `partitionKeyOpaque`) and expired ones are skipped and
     counted.
   - The bounds are checked first.
@@ -110,6 +119,8 @@ infrastructure; phase 6 enables the handoff.
   - **filtering:** the server-side filter returns exactly the expected set from a fixture profile
     with seven cookie kinds;
   - **no port:** no TCP listener exists while the browser is open or during a read;
+  - **lifecycle:** a closed browser refuses; a hand-locked profile refuses; closing the window
+    reconciles the state; a binary downgrade refuses;
   - **access:** the profile mode is enforced; agent credentials are refused on every login-browser
     route; no agent surface can address the browser;
   - **no leakage:** a scan of all captured output finds no value.
@@ -123,8 +134,8 @@ infrastructure; phase 6 enables the handoff.
   - **`unknown` effects** do the same, unless an active lease covers the page's host.
   - Operator classification rules (`read`, `write-local`) are honoured unchanged.
   - Stale tokens are refused like any stale act token.
-- **Lease.** `{ hosts, expiresInMs ≤ 4 h, maxActions }` is granted only on an operator route (with
-  the handoff decision, or later).
+- **Lease.** `{ hosts, expiresInMs ≤ 4 h, maxActions ≤ 500 }` is granted only on an operator route
+  (with the handoff decision, or later). Its `hosts` must lie within the session's exact allowlist.
   - The session view shows the remaining time and count, and every leased action decrements the
     count.
   - No agent-facing route or schema accepts lease fields.
@@ -158,7 +169,7 @@ under **one per-session lock**:
    - no existing cookies for the requested domains;
    - every entry in `allowedHosts`, `scope.allowedHosts` and the per-request `allowedHosts` is an
      exact host within the domains, and every `scope.pathRules[].hostSuffix` is too;
-   - the login browser is enabled, and operator keys are configured.
+   - the login browser is enabled **and open**, and operator keys are configured.
 2. **Policy:** one Cedar `cookie.handoff` decision per domain. Any deny fails the whole handoff.
 3. **Approval.** Without a valid token:
    - read (phase 4) for the granted domains only;
@@ -213,6 +224,11 @@ under **one per-session lock**:
 - **`GET /v1/policy`** lists `cookie.handoff` grants per domain.
 - **Guide, "Use your login safely":**
   - the threat boundary first: the agent must not run as the server's or the operator's OS user;
+  - the supported layout: server and operator as one OS user, the agent as another, with no access
+    to the operator's display;
+  - on disk the profile is protected only by file permissions, and must stay out of synced and
+    backed-up paths;
+  - session cookies are dropped when the login browser closes;
   - the login browser and its profile;
   - operator keys and the keychain;
   - the exact `allowedHosts` rule;

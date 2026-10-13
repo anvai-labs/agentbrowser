@@ -41,9 +41,29 @@ The server gains an **operator login browser**:
   from the server process (Playwright's persistent-context launch uses it). **No port is opened.**
 - **Only the operator opens it.** The open and close operations are accepted only from the operator
   credential (§4). The operator signs in to sites in that window, once, and the logins persist in
-  the profile across server restarts. This is explicit, operator-owned persistence (ADR-005).
+  the profile across server restarts, except session cookies, which Chrome drops when it closes. This
+  is explicit, operator-owned persistence (ADR-005).
 - **It is not a session.** It has no session id, refs or pages exposed to any agent surface, and no
   agent operation can navigate, observe or act in it.
+- **One pinned binary.** The login browser always launches the same `executablePath`, resolved
+  once at enablement (ADR-016's branded-Chrome selection, or `AGENTBROWSER_CHROME_PATH`), and
+  refuses if that binary's version has moved backwards. A profile is never opened by an older binary
+  than the one that last wrote it. Chrome's downgrade handling can move a profile aside and lose the
+  logins, and on Windows, App-Bound Encryption ties cookie decryption to one binary.
+- **The handoff reads only while the login browser is open.** There is no headless read of a
+  closed profile. That would mean a second binary or mode, a profile-lock race, and lost session
+  cookies, which Chrome drops when it closes. Since the operator must be present to approve a
+  handoff anyway, "open it" is part of that step. A closed browser returns `LOGIN_BROWSER_CLOSED`.
+- **Lifecycle.**
+  - Closing the last login window exits Chrome. The server notices the context closing and marks
+    the browser closed; it never relaunches by itself.
+  - A second `open` while one is running is a no-op.
+  - A profile directory locked by a Chrome started by hand (Chrome's `ProcessSingleton`) is refused
+    with `LOGIN_PROFILE_IN_USE`.
+  - A stale `SingletonLock` after a crash is taken over by Chrome on the same host. The guide
+    documents the manual recovery for a changed hostname.
+- **Its own browsing is not contained.** The login browser is the operator's own browsing, like any
+  browser: its egress does not go through the choke point.
 - **Enablement:** `AGENTBROWSER_LOGIN_BROWSER=1`, plus the operator credential.
 - **Floor conditions:** not a hosted deployment, a single authenticated tenant, and a display on
   the server host.
@@ -68,6 +88,20 @@ or else must not run as either of these OS users:
 An agent running as either one can read the profile's cookie store or the key directly. The guide
 says this first.
 
+**The supported layout is server and operator as the same OS user, with the agent as a different
+one.** A headed window launched by another OS user cannot realistically appear on the operator's
+macOS or Windows desktop. The agent's user must also have no access to the operator's display
+(`DISPLAY`, `xhost`, X11 or Wayland sockets), because a process on that display can screenshot the
+login window or inject input into it.
+
+**On disk, the profile is protected only by file permissions.** Playwright launches Chrome with
+`--password-store=basic` (Linux) and `--use-mock-keychain` (macOS), so the cookie database is
+encrypted with a fixed, publicly known key, which is equivalent to plaintext. So:
+- the profile is owner-only, as described in §1;
+- the default directory is outside synced and backed-up paths, and the guide says to keep it there;
+- using the OS keychain instead, by dropping those two switches with `ignoreDefaultArgs`, is a
+  later option. It needs qualification in service contexts.
+
 **Not guaranteed, and stated so:**
 - **Account authority is the real asset.** A seeded session can do anything the account can do on
   the allowed hosts, such as minting an API token in the site's UI and reading it from the page.
@@ -89,12 +123,10 @@ POST /v1/sessions/{sessionId}/cookies/handoff
 → { "transferred": 7, "skipped": { "partitioned": 1, "expired": 0 }, "domains": ["github.com"] }
 ```
 
-**Reading.** The server reads the login profile's default context with Playwright `cookies()`, with
-no URL filter, then filters server-side.
-- If the login browser is open, it reads through the existing pipe connection.
-- If it is closed, it launches the profile briefly, headless, over a pipe, reads, and closes it.
-- A URL-filtered `cookies(urls)` read is never used: it drops host-only cookies on subdomains, and
-  path-scoped cookies.
+**Reading.** The server reads the open login browser's context through its pipe connection, with
+Playwright `cookies()` and no URL filter, and then filters server-side. A URL-filtered
+`cookies(urls)` read is never used: it drops host-only cookies on subdomains, and path-scoped
+cookies.
 
 **Domains and matching** use the Public Suffix List, private section included (a pinned `tldts`):
 - **Registrable domains only.** Each requested domain must be a registrable domain, or a host under
@@ -209,7 +241,8 @@ With no operator classification rules, almost every click, fill, type, press and
   - **Classification rules.** Per-host `approvalRules` that classify routine controls as `read` or
     `write-local` are honoured as they are today. The guide ships examples.
   - **A lease.** When deciding a handoff (or later, on the operator route), the operator may grant
-    `{ hosts, expiresInMs ≤ 4 h, maxActions }`.
+    `{ hosts, expiresInMs ≤ 4 h, maxActions ≤ 500 }`. Its `hosts` must lie within the session's
+    exact allowlist.
     - Within it, `unknown`-effect actions on those hosts run without review. High-risk effects
       never do.
     - The lease is recorded in the audit log, and the session view shows its remaining time and
@@ -245,6 +278,10 @@ With no operator classification rules, almost every click, fill, type, press and
 - **New surface:**
   - the login browser, which is engine work: the Playwright engine gains a pipe-connected
     persistent context, and today it has none;
+  - an owner-only profile directory on Windows. This is a new
+    `DirectorySecurity` with inheritance, created atomically; the CLI's single-file writer does
+    not cover a directory tree;
+  - `LOGIN_BROWSER_CLOSED` and `LOGIN_PROFILE_IN_USE`;
   - `AGENTBROWSER_LOGIN_BROWSER`, `AGENTBROWSER_LOGIN_PROFILE_DIR` and
     `AGENTBROWSER_OPERATOR_KEYS_FILE`;
   - the `human-operator` principal and its operator routes;
@@ -272,7 +309,10 @@ With no operator classification rules, almost every click, fill, type, press and
 - **Reviewing only high-risk effects.** Without operator rules nothing is classified high-risk, so
   the gate would be empty. Rejected for fail-closed `unknown` plus an operator lease.
 - **An opt-out the agent can request.** The agent would ask for it. Rejected.
-- **Reading Chrome's cookie database from disk.** It is encrypted with OS-keychain keys, locked
-  while Chrome runs, and its format changes between releases. Rejected.
+- **Reading Chrome's cookie database from disk.** It is locked while Chrome runs, and its format
+  and encryption change between releases and platforms. Rejected; the server reads through the
+  browser it controls.
+- **Reading a closed profile headlessly.** That needs a second binary or mode, races the profile
+  lock, and loses session cookies. Rejected; the login browser must be open.
 - **Continuous sync or write-back.** Logouts and token refreshes would race in both directions.
   Rejected; this is a one-time copy.
