@@ -21,10 +21,10 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - `@fastify/cors` 10 → 11 (major; the API sets `methods` explicitly, so its CORS behaviour is
   unchanged), `@fastify/websocket` 11.3.4, `ws` 8.22.0, `axe-core` 4.14.0, `jsdom` 30.1.2. Biome 2
   replaces Biome 1.9 for lint (#424), with every 1.9 rule still enforced.
-- Dependabot ignores majors that need deliberate migration: puppeteer (the Firefox egress
-  qualification is pinned), `@types/node`, `typescript`, `pixelmatch` (its colour metric changes
-  baseline semantics), the Docker `node` image, and the Playwright image, which moves only with npm
-  `playwright`.
+- Dependabot holds back updates that need deliberate migration. It ignores puppeteer (the Firefox
+  egress qualification is pinned to an exact driver) and the Playwright Docker image (it moves only
+  with npm `playwright`) entirely, and ignores **major** versions of `@types/node`, `typescript`,
+  `pixelmatch` (its colour metric changes baseline semantics) and the Docker `node` image.
 
 ### Docs — design records
 
