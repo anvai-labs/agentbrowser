@@ -138,10 +138,10 @@ the build by `tsconfig.build.json`.
 
 **Prerequisites this sets for phase 3:**
 - **Private sources, not one address.** A `request.private` context can carry **several private
-  sources**: the wrapper and each embedded IPv4. An exception must cover every one. A single
-  `context.ip` cannot express that, so the schema models the sources as a set, and the generated
-  CIDR policies require every source to be in range. The mutant suite catches `some`, first-only
-  and wrapper-only variants.
+  sources**: the wrapper and each embedded IPv4. An exception must cover every one. The pinned
+  wasm has no set quantifiers, so the schema carries one optional `ip` and the ask happens once
+  per source, conjoined by the authorizer — every source in range, still. The mutant suite catches
+  `some`, first-only and wrapper-only variants.
 - **A wider act context.** Once Cedar matches on the act context, it needs the `hostname`, `action`,
   `role` and `name` the TD lists, and the generators must widen with it: uppercase hosts, IPv6 and
   invalid URLs. Today first-match and hostname case are decided by `ActionRiskPolicy`, outside the
@@ -163,8 +163,38 @@ phase 3 adds its real subject.
 
 ### Phase 3: Cedar schema, `CedarAuthorizer`, generator, baseline
 
-**Schema** (`packages/protocol/src/policy/agentbrowser.cedarschema`), with TypeBox for the
-document (`version`, `baseline`, `policies`, `approvalRules`, `unknownRisk`, `limits`):
+Phase 3 splits in two, so releases stay green between them. `api` depends on `policy-engine`, so
+a runtime `@cedar-policy/cedar-wasm` dependency would ship in the server tarball and Windows
+bundle from the moment it lands — and its `.wasm` embeds builder-machine paths that the
+shipped-path gate rejects (phase 6). So:
+
+- **3a (no runtime dependency):** the schema, the policy document, the generator, and tests.
+  `cedar-wasm` 4.13 is a **dev** dependency of `policy-engine` only — dev dependencies never
+  enter the `pnpm deploy --prod` trees the tarball, image and bundle are built from, so no gate
+  sees it.
+- **3b:** `CedarAuthorizer` behind the opt-in, the differential oracle as its gate, the
+  `rulesMatched` population, trap/health wiring, and the phase-6 packaging pieces (nodejs-only
+  ship, the hash-pinned wasm exception, size gates) in the same PR.
+
+**Verified against the pinned wasm (4.13), shaping the design:**
+- `isInRange` never matches across families, and `ip()` rejects IPv4-mapped literals
+  (`::ffff:a.b.c.d`) but accepts NAT64 wrappers (`64:ff9b::a01:203`). Mapped-space sources are
+  normalized to IPv4 before a request is built.
+- Node's `BlockList` — what enforcement does today — checks an IPv4 address as its `::ffff:`
+  form against IPv6 rules: pure prefix math, no un-mapping of rule addresses. So mapped-space
+  operator CIDRs expand to their IPv4 equivalents (`::ffff:0:0/96` → `0.0.0.0/0`,
+  `::ffff:10.0.0.0/104` → `10.0.0.0/8`), and a prefix up to 96 grants either all of IPv4 or
+  nothing. A property test referees the expansion against `BlockList` itself.
+- The wasm grammar has no set quantifiers (`.all`/`.any` do not parse) — hence per-source asks.
+- The policy scope takes one constraint per variable: `action in [...]`, never `== … || == …`.
+- Empty set literals are forbidden; the default branches' exclusion clause is omitted when no
+  rule carries a decision.
+- Denials report the ids of forbidding policies, so each deny branch is an explicit `forbid`
+  carrying its `env.*` id, and a `required` outcome is a permit/forbid pair.
+
+**Schema** (`packages/protocol/src/policy-document.ts`, exported as `CEDAR_SCHEMA`), with TypeBox
+for the document (`version`, `baseline`, `policies`, `approvalRules`, `unknownRisk`; `limits`
+arrives with phase 4):
 - **Entities:** `Tenant`; `Session in [Tenant]` (engine, cdpAttach, controlMode, headless); `Host`
   (domain).
 - **Actions:**
@@ -173,11 +203,13 @@ document (`version`, `baseline`, `policies`, `approvalRules`, `unknownRisk`, `li
   - capabilities: `cdp.attach`, `serviceWorkers`, `downloads`, `cookie.export`, `cookie.seed`,
     `session.headed`.
 - **Context:** declared per action.
-  - The `request*` actions carry `addressClasses` (a `Set<String>`) and an **optional** `ip`
-    (`ip?: ipaddr`): one normalized host address, never a prefix. Generated policies test it as
+  - The `request*` actions carry `phase`, `target` and `addressClasses` (`Set<String>`);
+    `request.private` adds an **optional** `ip` (`ip?: ipaddr`): one normalized source address,
+    never a prefix, asked once per private source. Generated policies test it as
     `context has ip && context.ip.isInRange(…)`.
-  - The `act*` actions carry `effect`, `matchedRule` (the first matching approval rule's optional `id`,
-    otherwise `rule-<index>`, or `"none"`), `hostname`, `action`, `role` and `name`.
+  - The `act*` actions carry `effect` and `matchedRule` (the first matching approval rule's
+    optional `id`, otherwise `rule-<index>`, or `"none"`), plus optional `hostname`, `action`,
+    `role` and `name` for operator-written policies.
 - **Protocol first (ADR-015):** `PolicyDecisionSchema` gains `rulesMatched: string[]`. The existing
   `ruleMatched` keeps the first id.
 - **Generated from the schema:** docs and fixtures.
@@ -195,20 +227,30 @@ document (`version`, `baseline`, `policies`, `approvalRules`, `unknownRisk`, `li
 - **Reserved prefixes:** ids starting `floor.`, `default.`, `engine.` or `env.` are rejected.
 
 **Generator and baseline.**
-- `policyDocumentFromEnvironment()` writes a complete document from today's variables:
-  - one `request.private` permit per `ALLOWED_CIDRS` entry, using `context.ip.isInRange`;
-  - the approval rules and `unknownRisk` copied as they are;
-  - one generated policy per rule `decision`, keyed on `context.matchedRule`.
-
-  It is also exposed as `agentbrowser-server policy export`, so operators migrate by generating,
-  not by hand-writing.
+- `policyDocumentFromLegacyConfig()` (3a, shipped) writes a complete document from a
+  configuration, deterministic in text: loopback as one permit or forbid; `request.private` as a
+  permit over the **expanded** ranges plus a paired `unless` forbid (an unconditional forbid with
+  no CIDRs); one branch per rule `decision` keyed on `context.matchedRule` (allow covers both
+  asks, required splits them into a permit/forbid pair, deny forbids both); the three default
+  branches (`unknown-risk`, `high-risk`, `default`) gated on "the matched rule has no decision of
+  its own"; and one capability permit. Every policy carries its `env.*` id as a `@rule`
+  annotation; keys are `<ruleId>#<n>` so pairs share an id.
+- `policyDocumentFromEnvironment()` and `agentbrowser-server policy export` arrive with 3b's
+  wiring, so operators migrate by generating, not hand-writing.
 - `agentbrowser:baseline/v1` is a versioned, built-in policy **template** equal to an unconfigured
   server. `unknownRisk` is its only parameter.
 
-**Tests:**
+**Tests (3a, shipped):**
+- The generated set **validates in strict mode with zero errors** against `CEDAR_SCHEMA`, for
+  representative configurations.
+- A fixed decision matrix — egress (per-source asks), every approval branch, capabilities —
+  matches `LegacyAuthorizer` exactly under the real wasm build, `allowed` and `ruleMatched` both.
+- `expandRangesForCedar` is refereed by Node's `BlockList` in a property test (3000 single-rule
+  runs, 1500 unions, and the verified cross-family matrix), covering prefixes the oracle's fixed
+  CIDR list never reaches.
 - **The differential oracle** (phase 2) passes with `CedarAuthorizer`, loaded with generated
-  documents, as its subject. This is the equivalence gate, and it uses generated inputs, not only
-  the existing test cases.
+  documents, as its subject — in 3b. This is the equivalence gate, and it uses generated inputs,
+  not only the existing test cases.
 - **The erroring-forbid case** from review: a `permit` plus a `forbid` whose condition overflows
   must **deny** with `engine.error`, not allow.
 - **Validation:** `validate` success-with-errors is rejected, and a mistyped request context is

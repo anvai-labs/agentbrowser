@@ -7,6 +7,28 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — Cedar schema, policy document, generator (TD-BROWSER-15 phase 3a)
+
+- **The Cedar contract lives in the protocol** (`CEDAR_SCHEMA`, `agentbrowser-cedar/v1`): the
+  `Authorizer` actions as Cedar actions, one optional normalized `ip` on `request.private`, and
+  the act matchers (`effect`, `matchedRule`, `hostname`, `action`, `role`, `name`).
+- **A policy document type** (`agentbrowser-policy/v1`): the policy set plus the configuration it
+  was derived from, with structural parsing that rejects duplicate keys. This is what
+  `policy export` will write and phase 4 will load.
+- **A generator** turns today's environment configuration into a Cedar policy set that decides
+  exactly as `LegacyAuthorizer` does, deterministically in text:
+  - mapped-space operator CIDRs expand to their IPv4 equivalents, and a prefix up to 96 grants
+    either all of IPv4 or nothing — Node `BlockList`'s cross-family behaviour, which a property
+    test referees directly against `BlockList` (3000 single-rule runs, 1500 unions, the verified
+    matrix);
+  - every deny branch is an explicit `forbid` carrying its `env.*` id as a `@rule` annotation,
+    so a denial still reports which rule decided it; a `required` outcome is a permit/forbid pair;
+  - the generated set validates against the schema in strict mode with zero errors, and a fixed
+    decision matrix matches `LegacyAuthorizer` under the real wasm build.
+- `cedar-wasm` 4.13 is a dev-only dependency of `policy-engine`; it never enters the prod
+  deploy trees the tarball, image and Windows bundle are built from.
+- `PolicyDecision` gains `rulesMatched` (every deciding id; `ruleMatched` stays the first).
+
 ### Added — differential oracle (TD-BROWSER-15 phase 2)
 
 - **A property-based harness checks any `Authorizer` against today's decisions.** It covers egress
