@@ -11,6 +11,9 @@ import {
   validateCompleteExtraction,
   validatePackagedSessionParity,
   withManagedChild,
+  gracefulStop,
+  serverCommand,
+  withPath,
 } from './package-acceptance.mjs';
 
 const diagnostics = Object.freeze({
@@ -786,4 +789,55 @@ test('managed child rejects every falsy or non-Error callback failure after clea
       }
     }
   }
+});
+
+// --- Windows parity: SIGTERM is TerminateProcess there (no handler runs, the
+// browser is orphaned), so graceful stop uses the stdin lifeline or IPC. ---
+
+test('gracefulStop: SIGTERM on POSIX; stdin EOF or IPC disconnect on Windows', () => {
+  const calls = [];
+  const child = { kill: (s) => calls.push(`kill:${s}`), stdin: { end: () => calls.push('stdin-end') }, disconnect: () => calls.push('disconnect') };
+  gracefulStop(child, { platform: 'linux', stop: 'stdin' });
+  gracefulStop(child, { platform: 'win32', stop: 'stdin' });
+  gracefulStop(child, { platform: 'win32', stop: 'ipc' });
+  assert.deepEqual(calls, ['kill:SIGTERM', 'stdin-end', 'disconnect']);
+});
+
+test('managed child stops gracefully through the stdin lifeline in Windows mode (never a signal)', async () => {
+  const command = [process.execPath, '-e', "process.on('SIGTERM',()=>{});process.stdin.on('end',()=>process.exit(0));process.stdin.resume();process.send({ready:true});"];
+  const result = await withManagedChild(command, { platform: 'win32', stop: 'stdin', shutdownMs: 5000 }, async ({ child, message }) => {
+    await message();
+    // Still running until the harness closes the lifeline: the stop, not an
+    // early EOF, ended it.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(child.exitCode, null, 'child exited before the graceful stop');
+    return 'done';
+  });
+  assert.equal(result, 'done');
+});
+
+test('a child that cannot be spawned fails fast with its spawn error', async () => {
+  const started = Date.now();
+  await assert.rejects(withManagedChild([join(tmpdir(), 'agentbrowser-missing-binary-xyz')], {}, async ({ guard }) => guard(new Promise(() => {}))), /ENOENT/);
+  assert.ok(Date.now() - started < 3000, `took ${Date.now() - started}ms`);
+});
+
+test('withPath prepends into the platform PATH key without duplicating it', () => {
+  const win = withPath({ Path: 'C:\\Windows\\System32', OTHER: '1' }, 'C:\\node', 'win32');
+  assert.deepEqual(Object.keys(win).filter((k) => /^path$/i.test(k)), ['Path']);
+  assert.equal(win.Path, 'C:\\node;C:\\Windows\\System32');
+  assert.equal(withPath({ PATH: '/usr/bin' }, '/opt/node/bin', 'linux').PATH, '/opt/node/bin:/usr/bin');
+  assert.equal(withPath({}, '/opt/node/bin', 'linux').PATH, '/opt/node/bin');
+});
+
+test('managed child stops gracefully through IPC disconnect in Windows mode (never a signal)', async () => {
+  const command = [process.execPath, '-e', "process.on('SIGTERM',()=>{});process.on('disconnect',()=>process.exit(0));process.send({ready:true});setInterval(()=>{},1000)"];
+  const result = await withManagedChild(command, { platform: 'win32', stop: 'ipc', shutdownMs: 5000 }, async ({ message }) => { await message(); return 'done'; });
+  assert.equal(result, 'done');
+});
+
+test('serverCommand runs the POSIX launcher, or the server entry on Node on Windows, unless overridden', () => {
+  assert.deepEqual(serverCommand('/srv', { platform: 'linux' }), [join('/srv', 'agentbrowser-server')]);
+  assert.deepEqual(serverCommand('C:/srv', { platform: 'win32' }), [process.execPath, join('C:/srv', 'dist', 'bin.js')]);
+  assert.deepEqual(serverCommand('/srv', { platform: 'win32', override: 'C:/b/agentbrowser-server.exe' }), ['C:/b/agentbrowser-server.exe']);
 });
