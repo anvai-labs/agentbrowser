@@ -238,6 +238,19 @@ async validateMetadataAccess(hostname) {
 }
 ```
 
+**Implementation note (TD-BROWSER-15 phase 0, ADR-024 §1).** The implemented address set
+(`packages/policy/src/ip-address.ts`) is:
+- `169.254.0.0/16`, the whole IPv4 link-local range: IMDS, ECS task metadata `169.254.170.2`, EKS
+  Pod Identity `169.254.170.23`;
+- `100.100.100.200`, Alibaba Cloud (labelled "GCP V2" above, which is a mistake);
+- `168.63.129.16`, the Azure wire server;
+- `fd00:ec2::/64`, AWS IMDS and Pod Identity over IPv6;
+- `fe80::/10`, IPv6 link-local.
+
+Names match `metadata.google.internal`, `metadata.goog` and their subdomains. IPv4 embedded in
+NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`), 6to4 (`2002::/16`) and IPv4-compatible (`::/96`, except
+`::` and `::1`) addresses is decoded and classified as a union with the address's own classes.
+
 ### Credential injection
 
 ```typescript

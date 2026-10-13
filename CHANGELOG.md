@@ -7,6 +7,22 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Changed — egress safety floor (TD-BROWSER-15 phase 0)
+
+- **More cloud metadata endpoints are refused.** In addition to `169.254.169.254` and the GCP
+  metadata names, these are now blocked:
+  - the whole IPv4 link-local range `169.254.0.0/16`, which includes ECS task metadata and EKS Pod
+    Identity;
+  - `100.100.100.200` (Alibaba Cloud) and `168.63.129.16` (Azure wire server);
+  - `fd00:ec2::/64` (AWS over IPv6) and `fe80::/10` (IPv6 link-local).
+
+  Like all metadata, they are refused even under an `AGENTBROWSER_ALLOWED_CIDRS` exception.
+  **Tightening:** link-local devices previously reached through a CIDR exception are now refused.
+- **IPv4 embedded in IPv6 is decoded.** NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`), 6to4
+  (`2002::/16`) and IPv4-compatible (`::/96`) addresses now carry the classes of the IPv4 they
+  embed, so `64:ff9b::7f00:1` is loopback and `64:ff9b::a9fe:a9fe` is metadata. Before, these
+  forms classified as public. Decoding only adds classes, and `::1` stays loopback.
+
 ### Fixed
 
 - **`AGENTBROWSER_LOG_LEVEL` accepts `warn` and `error`**, the structured logger's other two
