@@ -66,7 +66,10 @@ change**, and the existing tests pass unchanged.
 
 ### Phase 1: the `Authorizer` seam (no behaviour change)
 
-**Progress:** approvals and egress exceptions are delivered.
+**Progress:** approvals, egress exceptions and capability grants are delivered.
+- **Capabilities:** session creation asks the service's injectable `authorizer` for `downloads`,
+  `serviceWorkers`, `cookie.seed` and `session.headed` when requested, and cookie export asks for
+  `cookie.export`. `LegacyAuthorizer` grants all of them (`env.capability.default`).
 - **Egress:** `NetworkPolicy` asks an `EgressExceptions` hook, and the API answers it through
   `LegacyAuthorizer`'s `request.loopback` and `request.private` (`env.allow-loopback`,
   `env.block-loopback`, `env.allowed-cidrs`, `env.block-private`).

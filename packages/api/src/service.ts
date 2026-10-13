@@ -106,7 +106,12 @@ import {
   type NetworkPolicy,
   SessionHostPolicy,
 } from '@agentbrowser/policy';
-import { type Authorizer, approvalModeOf, LegacyAuthorizer } from '@agentbrowser/policy-engine';
+import {
+  type Authorizer,
+  approvalModeOf,
+  type CapabilityAction,
+  LegacyAuthorizer,
+} from '@agentbrowser/policy-engine';
 import type {
   ObservationRequest,
   OperatorApprovalView,
@@ -349,6 +354,12 @@ export interface ServiceDependencies {
   /** Operator-owned maximum complete extraction response bytes. */
   extractMaxBytes?: number;
   approvalPolicy?: ActionRiskPolicyOptions;
+  /**
+   * TD-BROWSER-15: decides approvals and capability grants. Default: the
+   * legacy authorizer (today's rules). Egress exceptions are answered by the
+   * network policy's own hook.
+   */
+  authorizer?: Authorizer;
   engine: BrowserEngine;
   /**
    * TD-BROWSER-7 Phase 1: named auxiliary engines. createSession routes by
@@ -611,7 +622,9 @@ export class AgentBrowserService {
       this.evidenceSourceRegistry = evidenceSourceRegistry;
     }
     this.actionRiskPolicy = new ActionRiskPolicy(deps.approvalPolicy);
-    this.authorizer = new LegacyAuthorizer({ unknownRisk: this.actionRiskPolicy.unknownRiskMode });
+    this.authorizer =
+      deps.authorizer ??
+      new LegacyAuthorizer({ unknownRisk: this.actionRiskPolicy.unknownRiskMode });
     this.engine = deps.engine;
     for (const [name, engine] of Object.entries(deps.engines ?? {})) {
       this.engines.set(name, engine);
@@ -1264,6 +1277,15 @@ export class AgentBrowserService {
     }
     // Validate tenant ID format (lightweight security)
     this.validateTenantId(request.tenantId);
+    // TD-BROWSER-15: every capability this session asks for must be granted.
+    for (const [action, requested] of [
+      ['downloads', request.allowDownloads === true],
+      ['serviceWorkers', request.allowServiceWorkers === true],
+      ['cookie.seed', (request.cookies?.length ?? 0) > 0],
+      ['session.headed', request.headless === false],
+    ] as const) {
+      if (requested) this.requireCapability(action, request.tenantId);
+    }
 
     return this.traced('session.create', { tenantId: request.tenantId ?? '' }, async () => {
       if (this.shuttingDown)
@@ -1487,10 +1509,29 @@ export class AgentBrowserService {
     this.metrics?.setGauge('sessions_active', this.coordinator.getSessionCount());
   }
 
+  /** Refuse, naming the deciding rule, unless the authorizer grants the capability. */
+  private requireCapability(action: CapabilityAction, tenantId: string | undefined): void {
+    const decision = this.authorizer.decide({
+      action,
+      context: tenantId !== undefined ? { tenantId } : {},
+    });
+    if (decision.allowed === true) return;
+    throw new ServiceError(
+      'POLICY_DENIED',
+      `Capability ${action} is not granted: ${decision.reason}`,
+      false,
+      {
+        ...(decision.ruleMatched !== undefined ? { rule: decision.ruleMatched } : {}),
+        policyDecision: decision,
+      }
+    );
+  }
+
   /** TD-BROWSER-6: scoped cookie export (ADR-005) for the credential handoff loop. */
   async getSessionCookies(
     sessionId: string
   ): Promise<import('@agentbrowser/engine').NormalizedCookie[]> {
+    this.requireCapability('cookie.export', this.getSession(sessionId)?.tenantId);
     try {
       return await this.coordinator.cookies(sessionId);
     } catch (error) {
