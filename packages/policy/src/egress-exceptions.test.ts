@@ -77,4 +77,40 @@ describe('NetworkPolicy egress exceptions hook', () => {
     });
     expect(() => snapshot.updateConfig({ allowedPrivateCIDRs: [] })).toThrow();
   });
+
+  it('fails closed when a hook returns anything but true', async () => {
+    const policy = new NetworkPolicy({
+      blockLoopback: true,
+      blockPrivateIPs: true,
+      exceptions: {
+        allowLoopback: (async () => false) as unknown as () => boolean,
+        allowPrivate: (() => 'yes') as unknown as () => boolean,
+      },
+    });
+    await expect(policy.checkRequest({ hostname: 'localhost' })).rejects.toMatchObject({
+      details: { rule: 'blockLoopback' },
+    });
+    await expect(policy.checkResolvedAddresses(['10.0.0.1'])).rejects.toMatchObject({
+      details: { rule: 'resolvedPrivate' },
+    });
+  });
+
+  it('refuses to change exception settings that an injected hook owns', () => {
+    const policy = new NetworkPolicy({
+      blockLoopback: false,
+      blockPrivateIPs: true,
+      exceptions: { allowLoopback: () => true, allowPrivate: () => true },
+    });
+    for (const update of [
+      { blockLoopback: true },
+      { blockPrivateIPs: false },
+      { allowedPrivateCIDRs: [] },
+    ]) {
+      expect(() => policy.updateConfig(update)).toThrow(
+        'exceptions are owned by the injected hook'
+      );
+    }
+    // Unrelated settings still update.
+    expect(() => policy.updateConfig({ maxRedirects: 3 })).not.toThrow();
+  });
 });

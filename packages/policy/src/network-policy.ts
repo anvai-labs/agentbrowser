@@ -191,9 +191,9 @@ export class NetworkPolicy {
     if (
       this.options.blockLoopback &&
       (address?.loopback || loopbackByName) &&
-      !this.exceptions.allowLoopback(
+      this.exceptions.allowLoopback(
         this.exceptionContext('hostname', hostname, address, loopbackByName)
-      )
+      ) !== true
     ) {
       throw new NetworkPolicyError(
         'POLICY_DENIED',
@@ -206,7 +206,7 @@ export class NetworkPolicy {
     if (
       this.options.blockPrivateIPs &&
       address?.privateIP &&
-      !this.exceptions.allowPrivate(this.exceptionContext('hostname', hostname, address))
+      this.exceptions.allowPrivate(this.exceptionContext('hostname', hostname, address)) !== true
     ) {
       throw new NetworkPolicyError(
         'POLICY_DENIED',
@@ -274,7 +274,9 @@ export class NetworkPolicy {
       if (
         this.options.blockLoopback &&
         classification.loopback &&
-        !this.exceptions.allowLoopback(this.exceptionContext('resolved', address, classification))
+        this.exceptions.allowLoopback(
+          this.exceptionContext('resolved', address, classification)
+        ) !== true
       ) {
         throw new NetworkPolicyError(
           'POLICY_DENIED',
@@ -286,7 +288,8 @@ export class NetworkPolicy {
       if (
         this.options.blockPrivateIPs &&
         classification.privateIP &&
-        !this.exceptions.allowPrivate(this.exceptionContext('resolved', address, classification))
+        this.exceptions.allowPrivate(this.exceptionContext('resolved', address, classification)) !==
+          true
       ) {
         throw new NetworkPolicyError(
           'POLICY_DENIED',
@@ -451,6 +454,19 @@ export class NetworkPolicy {
         ? compilePrivateCIDRs(options.allowedPrivateCIDRs)
         : undefined;
     const { exceptions, ...rest } = options;
+    // An injected hook owns the exception decisions. Changing the flags or CIDRs
+    // underneath it would split what getConfig() reports from what is enforced.
+    if (
+      this.customExceptions !== undefined &&
+      exceptions === undefined &&
+      (rest.blockLoopback !== undefined ||
+        rest.blockPrivateIPs !== undefined ||
+        rest.allowedPrivateCIDRs !== undefined)
+    ) {
+      throw new Error(
+        'Loopback and private exceptions are owned by the injected hook; replace the hook instead'
+      );
+    }
     Object.assign(this.options, rest, {
       allowedPrivateCIDRs: allowed?.cidrs ?? this.options.allowedPrivateCIDRs,
     });
