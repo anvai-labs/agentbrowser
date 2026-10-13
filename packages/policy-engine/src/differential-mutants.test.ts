@@ -83,12 +83,12 @@ const mutants: Record<string, M> = {
     r.context.addressClasses.includes('loopback')
       ? ALLOW_P
       : l.decide(r),
-  'private: always denies loopback-classed (::1 under ::/0)': (c) => (r, l) =>
+  'private: always denies loopback-classed (::1 under ::/0)': (_c) => (r, l) =>
     r.action === 'request.private' && r.context.addressClasses.includes('loopback')
       ? DENY_P
       : l.decide(r),
   'private: decided on phase=hostname only, resolved always allowed if allowLoopback':
-    (c) => (r, l) =>
+    (_c) => (r, l) =>
       r.action === 'request.private' &&
       r.context.phase === 'resolved' &&
       r.context.privateSources.length > 1
@@ -151,7 +151,7 @@ const mutants: Record<string, M> = {
     }
     return l.decide(r);
   },
-  'unknownRisk applied to write-local': (c) => (r, l) =>
+  'unknownRisk applied to write-local': (_c) => (r, l) =>
     (r.action === 'act' || r.action === 'act.unattended') &&
     r.context.effect === 'write-local' &&
     !r.context.rule?.decision
@@ -186,6 +186,64 @@ const mutants: Record<string, M> = {
       ? { ...d, ruleMatched: 'env.x' }
       : d;
   },
+  // Review round 2 (F1-F4).
+  'rule decision looked up by digits in the id': (c) => (r, l) => {
+    if ((r.action === 'act' || r.action === 'act.unattended') && r.context.rule) {
+      const n = Number((r.context.rule.id.match(/\d+/) ?? ['0'])[0]);
+      const decision = c.rules[n]?.decision;
+      return l.decide({
+        ...r,
+        context: {
+          ...r.context,
+          rule: { id: r.context.rule.id, ...(decision ? { decision } : {}) },
+        },
+      });
+    }
+    return l.decide(r);
+  },
+  'mapped addresses normalised to IPv4, then checked against CIDRs widened to /16': (c) => {
+    const widened = compilePrivateCIDRs(
+      c.allowedPrivateCIDRs.map((x) =>
+        /^\d+\.\d+\.\d+\.\d+\/(1[7-9]|2\d|3[0-2])$/.test(x)
+          ? `${x.split('.').slice(0, 2).join('.')}.0.0/16`
+          : x
+      )
+    ).ranges;
+    const exact = compilePrivateCIDRs(c.allowedPrivateCIDRs).ranges;
+    // The normalisation Cedar must add (TD: mapped -> IPv4), done wrong.
+    const asIPv4 = (a: string) =>
+      a.startsWith('::ffff:') && a.includes('.') ? a.slice(7) : undefined;
+    return (r, l) => {
+      if (r.action !== 'request.private') return l.decide(r);
+      return r.context.privateSources.every((x) => {
+        const v4 = x.type === 'ipv6' ? asIPv4(x.address) : undefined;
+        return v4 !== undefined ? widened.check(v4, 'ipv4') : exact.check(x.address, x.type);
+      })
+        ? ALLOW_P
+        : DENY_P;
+    };
+  },
+  '192.168.1.0/24 treated as /16 in the hostname phase only': (c) => {
+    const l2 = legacyOf(
+      c,
+      c.allowedPrivateCIDRs.map((x) => (x === '192.168.1.0/24' ? '192.168.0.0/16' : x))
+    );
+    return (r, l) =>
+      r.action === 'request.private' && r.context.phase === 'hostname' ? l2.decide(r) : l.decide(r);
+  },
+  'only the IPv6 wrapper and the first and last IPv4 sources checked': (c) => {
+    const { ranges } = compilePrivateCIDRs(c.allowedPrivateCIDRs);
+    return (r, l) => {
+      if (r.action !== 'request.private') return l.decide(r);
+      const s = r.context.privateSources;
+      const v4 = s.filter((x) => x.type === 'ipv4');
+      const pick = [
+        ...s.filter((x) => x.type === 'ipv6'),
+        ...(v4.length ? [v4[0], v4[v4.length - 1]] : []),
+      ];
+      return pick.every((x) => x && ranges.check(x.address, x.type)) ? ALLOW_P : DENY_P;
+    };
+  },
 };
 
 describe('differential oracle catches every mutant', () => {
@@ -206,4 +264,37 @@ describe('differential oracle catches every mutant', () => {
       }
     }, 120_000);
   }
+});
+
+describe('differential oracle accepts a correct subject', () => {
+  // Review round 2, F1: the approval table once rejected this. A subject that
+  // looks a rule up by id in its own configuration is correct and must pass.
+  it('passes a subject that resolves matched rules by id from its configuration', async () => {
+    for (const seed of [1, 42, 7]) {
+      await assertEquivalentToLegacy(
+        (c) => {
+          const legacy = legacyOf(c);
+          const byId = new Map(c.rules.map((rule, k) => [rule.id ?? `rule-${k}`, rule]));
+          return {
+            version: 'by-id',
+            decide: (r) => {
+              if ((r.action === 'act' || r.action === 'act.unattended') && r.context.rule) {
+                const rule = byId.get(r.context.rule.id);
+                const decision = rule?.decision;
+                return legacy.decide({
+                  ...r,
+                  context: {
+                    ...r.context,
+                    rule: { id: r.context.rule.id, ...(decision ? { decision } : {}) },
+                  },
+                });
+              }
+              return legacy.decide(r);
+            },
+          } satisfies Authorizer;
+        },
+        { numRuns: 300, seed }
+      );
+    }
+  }, 120_000);
 });

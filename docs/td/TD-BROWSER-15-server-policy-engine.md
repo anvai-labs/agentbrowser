@@ -128,7 +128,12 @@ the build by `tsconfig.build.json`.
   - local-use NAT64 addresses with several private sources;
   - explicit rule ids;
   - absent and varied tenants.
-- 22 plausible-but-wrong subjects from its adversarial review must each be caught on every seed
+- A deterministic egress table runs on every call. It covers CIDR sets that cover some private
+  sources of an address but not all, loopback-and-private addresses, and every IPv4 boundary in
+  mapped, NAT64 and 6to4 form, as hostname and as resolved address.
+- Generated explicit rule ids carry no position.
+- 26 plausible-but-wrong subjects from two review rounds must each be caught on every seed, and a
+  correct subject that resolves rules by id from its configuration must pass
   (`differential-mutants.test.ts`).
 
 **Prerequisites this sets for phase 3:**
