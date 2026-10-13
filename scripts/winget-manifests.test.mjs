@@ -61,4 +61,13 @@ test('the locale manifest describes what the bundle actually installs', () => {
   assert.match(locale, /first start/);
   assert.doesNotMatch(locale, /no Node\.js runtime is required/i);
   assert.doesNotMatch(locale, /System Chrome is auto-detected/i);
+  // Backslashes inside the generator's template literals are escapes: `\b`
+  // once became a backspace. The literal Windows path must survive.
+  assert.ok(locale.includes('%LOCALAPPDATA%\\agentbrowser\\browsers'), 'literal browsers path');
+});
+
+test('generated manifests contain no control characters (winget YAML rejects them)', () => {
+  for (const [name, text] of Object.entries(generate())) {
+    assert.doesNotMatch(text, /[\u0000-\u0008\u000B-\u001F\u007F]/, `${name} manifest has a control character`);
+  }
 });

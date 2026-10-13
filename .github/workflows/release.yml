@@ -205,6 +205,18 @@ jobs:
             --expected-version $version --browsers $env:PLAYWRIGHT_BROWSERS_PATH --require-symlink
           exit $LASTEXITCODE
 
+      # Once per release, the path users actually take: no provisioned
+      # browsers, so the launcher's first start downloads Chromium itself.
+      - name: Clean-room smoke with a first-start Chromium download
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          Set-Location (Join-Path $env:RUNNER_TEMP 'clean-room')
+          Remove-Item Env:PLAYWRIGHT_BROWSERS_PATH
+          node windows-bundle-smoke.mjs --zip (Join-Path $env:RUNNER_TEMP 'win-bundle\agentbrowser-windows-x64.zip') `
+            --expected-version $version --require-symlink
+          exit $LASTEXITCODE
+
       - uses: actions/upload-artifact@v7
         with:
           name: agentbrowser-windows-x64.zip
@@ -413,7 +425,10 @@ jobs:
       # winget's single installer for all three Windows commands
       # (scripts/winget-manifests.mjs lists them as nested portable files).
       - name: Show the Windows bundle
-        run: unzip -l release-assets/agentbrowser-windows-x64.zip | tail -n 3
+        run: |
+          # No pipe: a missing or corrupt zip must fail this step itself.
+          unzip -l release-assets/agentbrowser-windows-x64.zip > bundle-listing.txt
+          tail -n 3 bundle-listing.txt
 
       - name: Compute checksums
         run: |
@@ -462,7 +477,7 @@ jobs:
 
           ```powershell
           agentbrowser-server --version
-          agentbrowser-server            # first start downloads Chromium (~150 MB)
+          agentbrowser-server            # first start downloads Chromium (~300 MB)
           ```
 
           ### Smoke coverage
@@ -488,8 +503,9 @@ jobs:
           this is not native Intel server-runtime proof. The Windows bundle was
           assembled and smoke-tested on a hosted Windows runner from a clean room
           outside the build checkout: first start, a real Chromium session through
-          the CLI and MCP executables, launcher-kill cleanup and invocation
-          through a symlink (winget's Links directory).
+          the CLI and MCP executables, launcher-kill cleanup, invocation through
+          a symlink (winget's Links directory), and a first start that downloads
+          Chromium itself.
 
           ### Install
 

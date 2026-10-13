@@ -29,6 +29,8 @@ test('a windows-bundle job assembles and clean-room smokes the zip on Windows', 
   assert.match(bundle, /compile-launcher\.mjs/);
   assert.match(bundle, /scripts\/assemble-windows-bundle\.mjs/);
   assert.match(bundle, /windows-bundle-smoke\.mjs[\s\S]*--require-symlink/);
+  // One smoke run without provisioned browsers: the first-start download users take.
+  assert.match(bundle, /Remove-Item Env:PLAYWRIGHT_BROWSERS_PATH[\s\S]*windows-bundle-smoke\.mjs/);
   // The bundle carries the exact standalone CLI/MCP bytes built by `binaries`.
   assert.match(bundle, /agentbrowser-cli-windows-x64\.exe/);
   assert.match(bundle, /agentbrowser-mcp-windows-x64\.exe/);

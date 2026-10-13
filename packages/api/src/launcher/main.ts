@@ -96,7 +96,7 @@ if (process.env.AGENTBROWSER_SKIP_BROWSER_INSTALL !== '1') {
   const missing = missingBrowsers(server, browsers, fs);
   if (missing.length > 0) {
     process.stderr.write(
-      `[agentbrowser] First start: downloading Chromium into ${browsers} (one time, about 150 MB)...\n`
+      `[agentbrowser] First start: downloading Chromium into ${browsers} (one time, roughly 300 MB)...\n`
     );
     const code = installChromium(node, server, env);
     if (code !== 0) {

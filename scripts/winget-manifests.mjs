@@ -119,7 +119,7 @@ Description: |-
   (agentbrowser-mcp), the command-line client (agentbrowser-cli) and the
   browser service (agentbrowser-server). The service runs on its own
   bundled Node.js runtime; on first start it downloads the Chromium build it
-  needs (about 150 MB) into %LOCALAPPDATA%\agentbrowser\browsers.
+  needs (roughly 300 MB) into %LOCALAPPDATA%\\agentbrowser\\browsers.
 Moniker: agentbrowser
 Tags:
 - mcp
