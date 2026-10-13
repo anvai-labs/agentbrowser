@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { NetworkPolicy, NetworkPolicyError } from './network-policy.js';
-import { EngagementScopePolicy } from './scope-policy.js';
+import { CHAIN_SPENT_BOUND, EngagementScopePolicy } from './scope-policy.js';
 
 const permissiveBase = () => new NetworkPolicy({ blockLoopback: false });
 
@@ -324,6 +324,27 @@ describe('EngagementScopePolicy (T7 slice 2)', () => {
     // Two distinct hops spent, not three (1 + 2).
     await expect(
       scope.checkRequest({ hostname: 'a.testhost.example', url: 'https://a.testhost.example/x' })
+    ).rejects.toMatchObject({ code: 'POLICY_DENIED' });
+  });
+
+  it('bounds hop memory: an evicted hop is re-charged, never under-charged (#447)', async () => {
+    const budget = CHAIN_SPENT_BOUND + 3;
+    const scope = new EngagementScopePolicy(permissiveBase(), {
+      allowedHosts: ['a.testhost.example'],
+      requestBudget: budget,
+    });
+    const hops = Array.from({ length: CHAIN_SPENT_BOUND + 1 }, (_, i) => ({
+      url: `https://a.testhost.example/h${i}`,
+    }));
+    await scope.checkRedirectChain(hops); // the last hop evicts h0: bound + 1 spent
+    // h0 has been evicted by newer hops, so re-submitting it charges again —
+    // over-charging only: the budget can end sooner, never later.
+    await scope.checkRedirectChain([{ url: 'https://a.testhost.example/h0' }]);
+    // One fresh hop still fits (spending the budget exactly)...
+    await scope.checkRedirectChain([{ url: 'https://a.testhost.example/fresh1' }]);
+    // ...and the next is denied: the re-charge above consumed one unit.
+    await expect(
+      scope.checkRedirectChain([{ url: 'https://a.testhost.example/fresh2' }])
     ).rejects.toMatchObject({ code: 'POLICY_DENIED' });
   });
 

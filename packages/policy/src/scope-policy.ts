@@ -64,6 +64,15 @@ const hostMatches = (hostname: string, pattern: string): boolean => {
 const scopeDenial = (subCode: string, detail: string): NetworkPolicyError =>
   new NetworkPolicyError(DENIED, `${subCode}: ${detail}`, false, { scope: subCode });
 
+/**
+ * Distinct hop URLs remembered so a re-validated chain spends each hop once.
+ * FIFO-bounded (#447): past the bound the oldest hop is forgotten, and a
+ * forgotten hop that is re-submitted is charged again — over-charging only,
+ * so the budget can end sooner, never later. A session reaches the bound only
+ * after ~200 redirect-heavy navigations.
+ */
+export const CHAIN_SPENT_BOUND = 4096;
+
 export class EngagementScopePolicy {
   private readonly allowed: string[];
   private readonly paths: ScopePathRule[];
@@ -77,6 +86,17 @@ export class EngagementScopePolicy {
    * accumulated chain per redirect (the download transport does), and the
    * budget must charge a hop once, not once per resubmission. */
   private readonly chainSpent = new Set<string>();
+
+  /** Remembers a hop unless already remembered; evicts the oldest past the bound. */
+  private rememberHop(url: string): boolean {
+    if (this.chainSpent.has(url)) return false;
+    if (this.chainSpent.size >= CHAIN_SPENT_BOUND) {
+      const oldest = this.chainSpent.values().next().value;
+      if (oldest !== undefined) this.chainSpent.delete(oldest);
+    }
+    this.chainSpent.add(url);
+    return true;
+  }
 
   constructor(
     private readonly base: {
@@ -209,8 +229,7 @@ export class EngagementScopePolicy {
     // re-validated. Denial checks still run on every call.
     for (const hop of requests) {
       const hostname = hop.hostname ?? new URL(hop.url).hostname;
-      const firstSpend = !this.chainSpent.has(hop.url);
-      this.chainSpent.add(hop.url);
+      const firstSpend = this.budget !== undefined && this.rememberHop(hop.url);
       if (this.budget !== undefined && !firstSpend) {
         // Full denial checks, no second spend for this hop.
         this.denyIf({
