@@ -115,6 +115,14 @@ allowed.
 
 ### Phase 2: the differential oracle (before Cedar exists)
 
+**Delivered:** `packages/policy-engine/src/differential.harness.ts`, a test-only module excluded from
+the build by `tsconfig.build.json`.
+- `assertEquivalentToLegacy(subjectFor)` checks any `Authorizer` built from a generated
+  `LegacyConfig` against `LegacyAuthorizer`, comparing `allowed` and `ruleMatched`.
+- Egress contexts come from the real `NetworkPolicy` path, and approval contexts from
+  `ActionRiskPolicy.classify()`.
+- It holds for `LegacyAuthorizer` itself, and five deliberately broken subjects are caught.
+
 A property-based harness generates the inputs below. It adds `fast-check` as a new dev-only
 dependency; none exists today.
 - **Addresses:** IPv4, IPv6, mapped, the edge literals, every class combination.
