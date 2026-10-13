@@ -62,7 +62,12 @@ export function requireCdpAttachAdmission(admission: CdpAttachAdmission): void {
     ],
   } as const;
   const [reason, message] = refusals[admission];
-  throw new EngineError('ENGINE_UNSUPPORTED', message, false, { reason });
+  // `reason` stays stable for clients; `rule` names the unconditional floor
+  // refusal (ADR-024 §1), which no policy can grant.
+  throw new EngineError('ENGINE_UNSUPPORTED', message, false, {
+    reason,
+    rule: `floor.cdp.${admission}`,
+  });
 }
 
 /** No environment value or endpoint is ever included in a configuration error. */

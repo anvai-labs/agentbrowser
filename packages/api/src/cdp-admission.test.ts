@@ -6,16 +6,18 @@ import { buildServer, type ServerOptions } from './server.js';
 const key = (value: string) => createHash('sha256').update(value).digest('hex');
 
 it.each([
-  ['disabled', {}, 'CDP_ATTACH_DISABLED'],
+  ['disabled', {}, 'CDP_ATTACH_DISABLED', 'floor.cdp.disabled'],
   [
     'unacknowledged egress',
     { operatorCdp: { allowUnenforcedEgress: false } },
     'EGRESS_UNSUPPORTED',
+    'floor.cdp.egress',
   ],
   [
     'hosted',
     { operatorCdp: { allowUnenforcedEgress: true }, deploymentMode: 'hosted' },
     'HOSTED_UNSUPPORTED',
+    'floor.cdp.hosted',
   ],
   [
     'multiple tenants',
@@ -27,13 +29,15 @@ it.each([
       ]),
     },
     'HOSTED_UNSUPPORTED',
+    'floor.cdp.hosted',
   ],
   [
     'remote listener',
     { operatorCdp: { allowUnenforcedEgress: true }, host: '0.0.0.0' },
     'CDP_ATTACH_LOCAL_ONLY',
+    'floor.cdp.local_only',
   ],
-] as const)('refuses %s before engine allocation', async (_name, options, reason) => {
+] as const)('refuses %s before engine allocation', async (_name, options, reason, rule) => {
   const engine = new FakeEngine();
   const create = vi.spyOn(engine, 'createSession');
   const app = await buildServer({ engine, ...options } as ServerOptions);
@@ -46,7 +50,8 @@ it.each([
     });
     expect(response.statusCode).toBe(422);
     expect(response.json()).toMatchObject({
-      error: { code: 'ENGINE_UNSUPPORTED', details: { reason } },
+      // `reason` stays stable for clients; `rule` names the ADR-024 floor refusal.
+      error: { code: 'ENGINE_UNSUPPORTED', details: { reason, rule } },
     });
     expect(create).not.toHaveBeenCalled();
   } finally {
@@ -254,6 +259,37 @@ it.each([undefined, new Map<string, string>()])(
       });
       expect(response.statusCode).toBe(422);
       expect(response.json().error.details.reason).toBe('CDP_ATTACH_AUTH_REQUIRED');
+      expect(create).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  }
+);
+
+it.each([
+  // Without operator credentials the delegated-session floor refuses first.
+  ['delegated control', { controlMode: 'delegated' }, 'FORBIDDEN', 'floor.delegated.operator'],
+  [
+    'cookie seeding',
+    { cookies: [{ name: 'a', value: 'b', domain: 'example.com', path: '/' }] },
+    'INVALID_REQUEST',
+    'floor.cdp.options',
+  ],
+] as const)(
+  'refuses %s on an attached session as a floor rule',
+  async (_name, extra, code, rule) => {
+    const engine = new FakeEngine();
+    const create = vi.spyOn(engine, 'createSession');
+    const app = await buildServer({ engine });
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/sessions',
+        payload: { tenantId: 'one', cdpAttach: true, ...extra },
+      });
+      expect(response.json()).toMatchObject({
+        error: { code, details: { rule } },
+      });
       expect(create).not.toHaveBeenCalled();
     } finally {
       await app.close();

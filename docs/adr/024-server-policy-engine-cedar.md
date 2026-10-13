@@ -68,6 +68,15 @@ ADR-007 and the CDP-attach design guarantee unconditionally:
   the `NetworkPolicy` instance passed in as `ServerOptions.networkPolicy`, and
   `new NetworkPolicy({})` leaves it off. The floor checks (metadata and the CDP refusals) move into
   a module the service always applies, whatever policy object it was given.
+  - **One dependency remains.** The floor checks DNS answers only when the injected policy has a
+    DNS gate (`checkResolvedAddresses`). It never adds one, because the download path would then
+    treat a weaker policy as strict. Every built-in policy has a DNS gate. An embedder's
+    duck-typed policy without one gets name and address checks on requests, but no check on
+    resolution.
+  - **The CDP-attach lane checks names only.** It has no DNS gate, so the metadata name check
+    normalises case and a trailing dot, and includes the short search-domain names `metadata` and
+    `instance-data`. A name that merely *resolves* to a metadata address (for example
+    `169.254.169.254.nip.io`) is not caught there; that lane is documented as navigation-only.
 - **Loopback and private addresses are blocked by default.** Policy may grant only **exceptions**,
   through the dedicated actions `request.loopback` and `request.private` (§3). An ordinary
   `request` permit never reaches them, however broadly it is written.

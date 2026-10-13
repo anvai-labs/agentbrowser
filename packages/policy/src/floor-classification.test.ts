@@ -199,3 +199,27 @@ describe('review round 1: every RFC 6052 layout, SIIT, and CIDRs on the embedded
     await expect(v6.checkResolvedAddresses(['fd12::1'])).resolves.toBeUndefined();
   });
 });
+
+describe('metadata hostnames: trailing dot and short names', () => {
+  it.each([
+    'metadata.google.internal.',
+    'METADATA.GOOGLE.INTERNAL',
+    'x.metadata.goog.',
+    'metadata', // GCP search-domain short name
+    'metadata.', // and with the root dot
+    'instance-data', // AWS
+    'instance-data.ec2.internal',
+    'instance-data.ec2.internal.',
+  ])('refuses %s as a request hostname under blockMetadata', async (hostname) => {
+    await expect(
+      new NetworkPolicy({ blockMetadata: true }).checkRequest({ hostname })
+    ).rejects.toMatchObject({ details: { rule: 'blockMetadata' } });
+  });
+
+  it('does not refuse lookalikes', async () => {
+    const policy = new NetworkPolicy({ blockMetadata: true });
+    for (const hostname of ['metadata.example.com', 'notmetadata.goog', 'instance-database']) {
+      await expect(policy.checkRequest({ hostname })).resolves.toBeUndefined();
+    }
+  });
+});

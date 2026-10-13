@@ -17,6 +17,9 @@ hardens the floor.
 
 ### Phase 0: harden the floor (before anything becomes grantable)
 
+**Delivered:** #444 (classifier), #445 (`MetadataFloorPolicy` wraps every session chain), and the
+floor rule ids plus metadata-name normalisation PR.
+
 **Wider metadata set.** The metadata set gains:
 - `fd00:ec2::/64` (AWS: IMDS at `::254`, EKS Pod Identity at `::23`);
 - `100.100.100.200` (Alibaba Cloud);

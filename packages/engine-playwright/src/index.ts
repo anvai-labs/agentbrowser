@@ -1311,7 +1311,7 @@ export class PlaywrightChromiumEngine implements BrowserEngine {
         'ENGINE_UNSUPPORTED',
         'Operator CDP attachment cannot apply isolated-context options.',
         false,
-        { reason: 'PROFILE_OPTIONS_UNSUPPORTED' }
+        { reason: 'PROFILE_OPTIONS_UNSUPPORTED', rule: 'floor.cdp.profile_options' }
       );
     }
     const navigationPreflight = options.requestPolicy ?? this.rootEgress;
@@ -2175,6 +2175,7 @@ class PlaywrightSession implements EngineSession {
         false,
         {
           reason: 'PROFILE_COOKIE_EXPORT_UNSUPPORTED',
+          rule: 'floor.cdp.cookie_export',
         }
       );
     }

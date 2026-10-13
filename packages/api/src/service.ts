@@ -1240,7 +1240,9 @@ export class AgentBrowserService {
       )
         throw new ServiceError(
           'INVALID_REQUEST',
-          'Operator attachment cannot apply launch, cookie, delegated-control, download, or per-session policy options. Use a normal isolated session for those options.'
+          'Operator attachment cannot apply launch, cookie, delegated-control, download, or per-session policy options. Use a normal isolated session for those options.',
+          false,
+          { rule: 'floor.cdp.options' }
         );
       try {
         requireCdpAttachAdmission(this.cdpAttachAdmission);

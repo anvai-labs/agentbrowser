@@ -42,6 +42,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   blocking off (`new NetworkPolicy({})`). The refusal covers request hosts, DNS answers, redirect
   hops and navigation preflight. Optional gates pass through only where the underlying policy has
   them, so a weaker policy is never made to look strict to the download path.
+- **Metadata names are normalised.** Case and a trailing dot are ignored
+  (`metadata.google.internal.`), and the short names `metadata` and `instance-data`, and
+  `instance-data.ec2.internal`, are refused. This matters on the CDP-attach lane, which has no DNS
+  answer to check.
+- **Floor refusals name their rule.** Each refusal that no policy can grant now carries
+  `details.rule`: `floor.cdp.hosted`, `floor.cdp.local_only`, `floor.cdp.egress`,
+  `floor.cdp.disabled`, `floor.cdp.auth_required`, `floor.cdp.options`,
+  `floor.cdp.profile_options`, `floor.cdp.cookie_export` and `floor.delegated.operator`. Existing
+  `details.reason` codes are unchanged.
 
 ### Fixed
 

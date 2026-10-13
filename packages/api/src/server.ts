@@ -917,7 +917,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         if (body.controlMode === 'delegated' && principals.get(request)?.actor !== 'operator')
           throw new ServiceError(
             'FORBIDDEN',
-            'Controlled sessions require authenticated operator credentials'
+            'Controlled sessions require authenticated operator credentials',
+            false,
+            { rule: 'floor.delegated.operator' }
           );
         const authenticatedTenant = tenantOf(request);
         if (authenticatedTenant !== undefined) {
