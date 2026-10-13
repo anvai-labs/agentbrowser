@@ -7,7 +7,7 @@
 
 import { BlockList, isIP } from 'node:net';
 import { RingBuffer } from '@agentbrowser/core';
-import { classifyIPAddress } from './ip-address.js';
+import { classifyIPAddress, isMetadataHostname } from './ip-address.js';
 
 export interface NetworkPolicyOptions {
   blockLoopback?: boolean;
@@ -87,13 +87,6 @@ export class NetworkPolicy {
   private allowedPrivate: BlockList;
   private readonly logs: RingBuffer<LogEntry>;
 
-  // Cloud metadata service endpoints
-  private readonly METADATA_ENDPOINTS = [
-    '169.254.169.254', // AWS, Azure
-    'metadata.google.internal', // GCP
-    'metadata.goog', // GCP alternate
-  ];
-
   constructor(options: NetworkPolicyOptions = {}) {
     const allowed = compilePrivateCIDRs(
       options.allowedPrivateCIDRs === undefined ? [] : options.allowedPrivateCIDRs
@@ -159,7 +152,7 @@ export class NetworkPolicy {
       );
     }
 
-    if (this.options.blockMetadata && (address?.metadata || this.isMetadataEndpoint(hostname))) {
+    if (this.options.blockMetadata && (address?.metadata || isMetadataHostname(hostname))) {
       throw new NetworkPolicyError(
         'POLICY_DENIED',
         `Cloud metadata endpoints are blocked: ${hostname}`,
@@ -319,15 +312,6 @@ export class NetworkPolicy {
    */
   clearLogs(): void {
     this.logs.clear();
-  }
-
-  /**
-   * Check if hostname is a cloud metadata endpoint
-   */
-  private isMetadataEndpoint(hostname: string): boolean {
-    return this.METADATA_ENDPOINTS.some(
-      (endpoint) => hostname === endpoint || hostname.endsWith(`.${endpoint}`)
-    );
   }
 
   /**
