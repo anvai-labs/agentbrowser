@@ -245,11 +245,22 @@ async validateMetadataAccess(hostname) {
 - `100.100.100.200`, Alibaba Cloud (labelled "GCP V2" above, which is a mistake);
 - `168.63.129.16`, the Azure wire server;
 - `fd00:ec2::/64`, AWS IMDS and Pod Identity over IPv6;
+- `fd20:ce::254`, GCP, for IPv6-only instances;
+- `fd00:c1::a9fe:a9fe`, OCI over IPv6 (used by cloud-init; Oracle does not document it);
 - `fe80::/10`, IPv6 link-local.
 
-Names match `metadata.google.internal`, `metadata.goog` and their subdomains. IPv4 embedded in
-NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`), 6to4 (`2002::/16`) and IPv4-compatible (`::/96`, except
-`::` and `::1`) addresses is decoded and classified as a union with the address's own classes.
+Names match `metadata.google.internal`, `metadata.goog` and their subdomains.
+
+IPv4 embedded in IPv6 is decoded and classified as a union with the address's own classes. That
+covers:
+- NAT64 `64:ff9b::/96`;
+- the local-use `64:ff9b:1::/48` under every RFC 6052 layout, and private as a whole;
+- 6to4 `2002::/16`;
+- SIIT `::ffff:0:0:0/96`;
+- IPv4-compatible `::/96`, except `::` and `::1`.
+
+Operator CIDR exceptions must cover every source of privateness: the address as written, and each
+private IPv4 it embeds.
 
 ### Credential injection
 

@@ -24,6 +24,8 @@ describe('widened metadata floor', () => {
     'fd00:ec2:0:0:ffff::1', // anywhere in fd00:ec2::/64
     'fe80::1', // IPv6 link-local
     'febf:ffff::1',
+    'fd20:ce::254', // GCP metadata server, IPv6-only instances
+    'fd00:c1::a9fe:a9fe', // OCI IMDS over IPv6
   ])('classifies %s as metadata', (address) => {
     expect(classes(address).metadata).toBe(true);
   });
@@ -134,5 +136,66 @@ describe('embedded IPv4 decoding (union, only adds classes)', () => {
     for (const address of ['64:ff9b::5db8:d822', '2002:5db8:d822::', '::5db8:d822']) {
       expect(classes(address)).toEqual({ loopback: false, privateIP: false, metadata: false });
     }
+  });
+});
+
+describe('review round 1: every RFC 6052 layout, SIIT, and CIDRs on the embedded IPv4', () => {
+  // RFC 8215 64:ff9b:1::/48 may be used with any RFC 6052 prefix length; the IPv4
+  // then sits at different offsets (skipping the reserved u-octet, byte 8).
+  it.each([
+    ['64:ff9b:1:7f00:0:100:808:808', 'loopback'], // /48 layout: 127.0.0.1
+    ['64:ff9b:1:a00:0:100:808:808', 'privateIP'], // /48 layout: 10.0.0.1
+    ['64:ff9b:1:a9fe:a9:fe00:808:808', 'metadata'], // /48 layout: 169.254.169.254
+    ['64:ff9b:1:7f:0:1::', 'loopback'], // /56 layout: 127.0.0.1
+    ['64:ff9b:1:0:7f:0:1:0', 'loopback'], // /64 layout: 127.0.0.1
+  ] as const)('%s carries the embedded %s class', (address, cls) => {
+    expect(classes(address)[cls]).toBe(true);
+  });
+
+  it('treats the never-global local-use NAT64 prefix as private', () => {
+    expect(classes('64:ff9b:1:ffff:ffff:ffff:ffff:ffff').privateIP).toBe(true);
+  });
+
+  it.each([
+    ['::ffff:0:7f00:1', 'loopback'], // SIIT IPv4-translated: 127.0.0.1
+    ['::ffff:0:a9fe:a9fe', 'metadata'], // SIIT: 169.254.169.254
+  ] as const)('decodes SIIT %s as %s', (address, cls) => {
+    expect(classes(address)[cls]).toBe(true);
+  });
+
+  it('matches an IPv4 CIDR exception on the embedded IPv4 of every wrapper form', async () => {
+    const policy = new NetworkPolicy({
+      blockPrivateIPs: true,
+      allowedPrivateCIDRs: ['192.168.1.0/24'],
+    });
+    for (const address of [
+      '192.168.1.5',
+      '::ffff:192.168.1.5',
+      '64:ff9b::c0a8:105',
+      '2002:c0a8:105::',
+      '::c0a8:105',
+    ]) {
+      await expect(policy.checkResolvedAddresses([address])).resolves.toBeUndefined();
+    }
+    await expect(policy.checkResolvedAddresses(['64:ff9b::c0a8:205'])).rejects.toMatchObject({
+      details: { rule: 'resolvedPrivate' },
+    });
+  });
+
+  it('never lets an IPv6 wrapper exception grant the private IPv4 inside it', async () => {
+    // ::/0 is not a wrapper exception: Node's BlockList matches every IPv4 against
+    // it through the mapped form, so it already grants 10.0.0.1 directly and,
+    // consistently, behind any wrapper. Only narrower wrapper CIDRs are tested.
+    for (const cidr of ['64:ff9b::/96', '2002::/16']) {
+      const policy = new NetworkPolicy({ blockPrivateIPs: true, allowedPrivateCIDRs: [cidr] });
+      for (const address of ['64:ff9b::a00:1', '2002:a00:1::', '::a00:1']) {
+        await expect(policy.checkResolvedAddresses([address])).rejects.toMatchObject({
+          details: { rule: 'resolvedPrivate' },
+        });
+      }
+    }
+    // A genuinely private IPv6 address is still granted by an IPv6 exception.
+    const v6 = new NetworkPolicy({ blockPrivateIPs: true, allowedPrivateCIDRs: ['fd12::/64'] });
+    await expect(v6.checkResolvedAddresses(['fd12::1'])).resolves.toBeUndefined();
   });
 });

@@ -14,14 +14,26 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   - the whole IPv4 link-local range `169.254.0.0/16`, which includes ECS task metadata and EKS Pod
     Identity;
   - `100.100.100.200` (Alibaba Cloud) and `168.63.129.16` (Azure wire server);
-  - `fd00:ec2::/64` (AWS over IPv6) and `fe80::/10` (IPv6 link-local).
+  - `fd00:ec2::/64` (AWS over IPv6) and `fe80::/10` (IPv6 link-local);
+  - `fd20:ce::254` (GCP, IPv6-only instances) and `fd00:c1::a9fe:a9fe` (OCI over IPv6).
 
   Like all metadata, they are refused even under an `AGENTBROWSER_ALLOWED_CIDRS` exception.
   **Tightening:** link-local devices previously reached through a CIDR exception are now refused.
-- **IPv4 embedded in IPv6 is decoded.** NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`), 6to4
-  (`2002::/16`) and IPv4-compatible (`::/96`) addresses now carry the classes of the IPv4 they
-  embed, so `64:ff9b::7f00:1` is loopback and `64:ff9b::a9fe:a9fe` is metadata. Before, these
-  forms classified as public. Decoding only adds classes, and `::1` stays loopback.
+- **IPv4 embedded in IPv6 is decoded.** These forms now carry the classes of the IPv4 they embed;
+  before, they classified as public:
+  - NAT64 `64:ff9b::/96`;
+  - the local-use `64:ff9b:1::/48`, under every RFC 6052 layout. It is also private as a whole,
+    since it is never globally routable;
+  - 6to4 `2002::/16`;
+  - SIIT `::ffff:0:0:0/96`;
+  - IPv4-compatible `::/96`.
+
+  So `64:ff9b::7f00:1` is loopback and `64:ff9b::a9fe:a9fe` is metadata. Decoding only adds
+  classes, and `::1` stays loopback. Teredo and ISATAP are not decoded.
+- **`AGENTBROWSER_ALLOWED_CIDRS` matches the IPv4 inside these forms.** An IPv4 exception such as
+  `192.168.1.0/24` also admits that address behind NAT64, 6to4 or SIIT, as it already did for
+  IPv4-mapped. An IPv6 wrapper exception such as `64:ff9b::/96` never grants the private IPv4
+  inside it.
 
 ### Fixed
 

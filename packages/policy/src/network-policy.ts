@@ -245,8 +245,16 @@ export class NetworkPolicy {
     }
   }
 
+  /**
+   * An operator exception must cover every source of privateness: the address
+   * as written, and each private IPv4 it embeds. So an IPv4 CIDR admits that
+   * IPv4 behind NAT64/6to4/SIIT too, and an IPv6 wrapper CIDR (::/0,
+   * 64:ff9b::/96) never grants the private IPv4 inside it.
+   */
   private isAllowedPrivate(address: NonNullable<ReturnType<typeof classifyIPAddress>>): boolean {
-    return this.allowedPrivate.check(address.address, address.type);
+    return address.privateSources.every((source) =>
+      this.allowedPrivate.check(source.address, source.type)
+    );
   }
 
   /**
