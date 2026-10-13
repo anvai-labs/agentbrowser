@@ -30,7 +30,7 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - **ADR-025 (Proposed): cookie handoff from the operator's browser.** A one-time, read-only,
   server-internal copy of selected domains' cookies from the operator's debugging profile into a
   contained session whose exact-host allowlist lies within those domains. Each transfer is approved
-  with a separate operator credential (`AGENTBROWSER_OPERATOR_KEYS`) that the agent never holds.
+  with a separate operator credential (`AGENTBROWSER_OPERATOR_KEYS_FILE`) that the agent never holds.
   Cookie values stay out of AgentBrowser's surfaces, and export, HTML and downloads are refused
   for that session afterwards. Implementation plan: TD-BROWSER-16.
 
