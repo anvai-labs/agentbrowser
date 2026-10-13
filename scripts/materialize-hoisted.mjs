@@ -56,6 +56,24 @@ function admits(list, value) {
   return positives.length === 0 || positives.includes(value);
 }
 
+/** Top-level package names in a directory's node_modules (scoped included). */
+async function shippedNames(dir) {
+  const names = [];
+  let entries;
+  try {
+    entries = await readdir(join(dir, 'node_modules'), { withFileTypes: true });
+  } catch {
+    return names;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    if (entry.name.startsWith('@')) {
+      for (const scoped of await readdir(join(dir, 'node_modules', entry.name))) names.push(`${entry.name}/${scoped}`);
+    } else names.push(entry.name);
+  }
+  return names;
+}
+
 const runsOnTarget = (manifest) => admits(manifest.os, TARGET.os) && admits(manifest.cpu, TARGET.cpu);
 
 /** Names a package ships inside itself (npm bundleDependencies; `true` = all). */
@@ -95,6 +113,9 @@ async function readGraph(root) {
     // Bundled dependencies travel inside their package (copyPackage keeps
     // them); they are not separate instances to place.
     const bundled = bundledNames(node.manifest);
+    // Everything the package ships in its own node_modules (the bundles and
+    // their flattened dependencies): placement must keep those names free.
+    node.shipped = bundled.size > 0 ? await shippedNames(node.dir) : [];
     const edges = [
       ...Object.keys(dependencies)
         .filter((name) => !(name in optionalDependencies))
@@ -179,6 +200,16 @@ function place(rootNode, packageCount) {
         );
       }
       into.modules.set(name, placement);
+      // Reserve what a bundling package ships, so nothing is hoisted over it.
+      for (const shipped of target.shipped ?? []) {
+        placement.modules.set(shipped, {
+          path: join(placement.path, 'node_modules', shipped),
+          node: { label: `${target.label} (bundled ${shipped})` },
+          modules: new Map(),
+          parent: placement,
+          depth: placement.depth + 1,
+        });
+      }
       placements.push(placement);
       queue.push(placement);
       resolved.push({ from: holder, name, to: placement });

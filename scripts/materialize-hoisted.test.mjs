@@ -229,3 +229,30 @@ test("keeps a bundle's flattened dependencies, and fails closed on a missing bun
     await assert.rejects(materializeHoisted(iso, out), /a@1\.0\.0.*bundles x/s);
   });
 });
+
+test('never hoists another package into a bundling package (its bundled copy must survive)', async () => {
+  // a@1 bundles x@1 and depends on c@2; c@2 needs x@2; the root has c@1 and x@3.
+  await withTrees(async (iso, out) => {
+    await isolated(iso, {
+      rootDeps: ['a@1.0.0', 'c@1.0.0', 'x@3.0.0'],
+      packages: {
+        'a@1.0.0': { deps: ['c@2.0.0'], manifest: { bundleDependencies: ['x'] } },
+        'c@1.0.0': {}, 'c@2.0.0': { deps: ['x@2.0.0'] }, 'x@2.0.0': {}, 'x@3.0.0': {},
+      },
+    });
+    const bundled = join(iso, 'node_modules/.pnpm/a@1.0.0/node_modules/a/node_modules/x');
+    await mkdir(bundled, { recursive: true });
+    await writeFile(join(bundled, 'package.json'), JSON.stringify({ name: 'x', version: '1.0.0', main: 'index.js' }));
+    await writeFile(join(bundled, 'index.js'), 'module.exports = "x@1.0.0 (bundled)";');
+    // a declares x too (bundled deps are also dependencies).
+    const aManifest = join(iso, 'node_modules/.pnpm/a@1.0.0/node_modules/a/package.json');
+    const m = JSON.parse(await readFile(aManifest, 'utf8'));
+    m.dependencies.x = '*';
+    await writeFile(aManifest, JSON.stringify(m));
+    await materializeHoisted(iso, out);
+    assert.equal(loads(out, 'node_modules/a', 'x'), 'x@1.0.0 (bundled)');
+    const cFromA = createRequire(join(out, 'node_modules/a/package.json')).resolve('c/package.json');
+    assert.equal(createRequire(cFromA)('x'), 'x@2.0.0');
+    assert.equal(loads(out, '', 'x'), 'x@3.0.0');
+  });
+});
