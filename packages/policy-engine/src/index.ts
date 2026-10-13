@@ -3,4 +3,5 @@
  */
 
 export * from './authorizer.js';
+export * from './cedar-generator.js';
 export * from './legacy-authorizer.js';

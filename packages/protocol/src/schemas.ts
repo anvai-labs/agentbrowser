@@ -790,6 +790,8 @@ export const PolicyDecisionSchema = Type.Object({
   allowed: Type.Boolean(),
   reason: Type.String(),
   ruleMatched: Type.Optional(Type.String()),
+  /** Every deciding rule id (ADR-024); `ruleMatched` stays the first. */
+  rulesMatched: Type.Optional(Type.Array(Type.String())),
 });
 
 export const ApprovalDecisionSchema = Type.Object({

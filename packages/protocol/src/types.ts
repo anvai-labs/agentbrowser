@@ -932,6 +932,8 @@ export interface PolicyDecision {
   allowed: boolean;
   reason: string;
   ruleMatched?: string;
+  /** Every deciding rule id (ADR-024); `ruleMatched` stays the first. */
+  rulesMatched?: string[];
 }
 
 /**

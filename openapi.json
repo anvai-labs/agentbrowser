@@ -9591,6 +9591,12 @@
               },
               "ruleMatched": {
                 "type": "string"
+              },
+              "rulesMatched": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               }
             }
           },
