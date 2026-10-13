@@ -25,6 +25,28 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   `qpdf` were never found. A command that can't be spawned now fails at once with its spawn
   error, instead of waiting out the shutdown deadline.
 
+### Security — owner-only credential files on Windows
+
+- **The problem:** the CLI's cookie export (`cookies export --output`) and private observation
+  capture (`observe --output`) created files with mode `0600`. Windows ignores POSIX modes, so the
+  files inherited their folder's ACL. In a shared folder such as `C:\Users\Public`, that grants
+  Modify to every interactive user, so exported session cookies were readable by other local
+  users.
+- **The fix:** on Windows the file is now created **atomically with its security descriptor**.
+  - A fixed Windows PowerShell script calls .NET `FileStream(CreateNew, FileShare.None,
+    FileSecurity)`. The DACL is protected and holds exactly one ACE: the current user,
+    FullControl. At no moment does the file exist with any other ACL.
+  - The secret goes over stdin, never in argv or the environment.
+  - An existing name, a link included, is refused.
+  - POSIX keeps `O_EXCL | O_NOFOLLOW`, mode `0600`, and a failed `close` now counts as a failed
+    write.
+- **Why atomic creation:** an earlier approach set the ACL after creating the file. Review showed
+  that leaves a race: another user can swap the file for a decoy, or keep an early read handle.
+  Re-running that attack against the new code, the rename fails (the file is held with
+  `FileShare.None`), and every file carries the owner-only DACL from birth.
+- **Acceptance:** the extracted-package acceptance requires the SDDL DACL to be exactly
+  `D:P(A;;FA;;;<current user SID>)`.
+
 ### Added — Windows server launcher
 
 - New `packages/api/src/launcher/`, compiled by `packages/api/scripts/compile-launcher.mjs` into the
