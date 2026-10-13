@@ -244,6 +244,36 @@ export function serverCommand(root, { platform = process.platform, override } = 
 }
 
 /** Owns one process. A forced API kill is a failure: browser descendants are not proven drained. */
+/**
+ * A secret-bearing file must be readable by its owner only. POSIX: mode 0600.
+ * Windows ignores modes; the CLI creates the file with a protected DACL
+ * holding exactly one ACE for the current user. Checked in SDDL (language-
+ * independent, unlike icacls' localized principal names): the DACL must be
+ * exactly D:P(A;;FA;;;<current user SID>) — a count alone would pass
+ * Everyone:(F). (globalThis: workflow callbacks bind a parameter `process`.)
+ */
+export async function assertOwnerOnly(path, label, { platform = globalThis.process.platform, run = runExecutable, readText = readFile } = {}) {
+  if (platform !== 'win32') {
+    assert.equal((await stat(path)).mode & 0o777, 0o600, `${label} is not owner-only`);
+    return;
+  }
+  const system32 = join(globalThis.process.env.SystemRoot ?? 'C:\\Windows', 'System32');
+  const who = (await run([join(system32, 'whoami.exe'), '/user', '/fo', 'csv', '/nh'])).stdout;
+  const sid = who.match(/"(S-1-[0-9]+(?:-[0-9]+)+)"\s*$/m)?.[1];
+  assert.ok(sid, 'Could not determine the current user SID');
+  const saved = join(tmpdir(), `agentbrowser-acl-${randomBytes(6).toString('hex')}.txt`);
+  try {
+    await run([join(system32, 'icacls.exe'), path, '/save', saved]);
+    const sddl = (await readText(saved, 'utf16le')).replace(/^\uFEFF/, '').split(/\r?\n/)[1]?.trim() ?? '';
+    // The SACL starts at "S:" — a SID (S-1-…) never contains a colon.
+    const dacl = sddl.match(/D:.*?(?=S:|$)/)?.[0] ?? '';
+    assert.equal(dacl, `D:P(A;;FA;;;${sid})`, `${label} is not owner-only: ${sddl}`);
+  } finally {
+    await rm(saved, { force: true });
+  }
+}
+
+
 export async function withManagedChild(command, options, exercise) {
   const label = options.label ?? 'managed-child';
   const validLabel = (value) => typeof value === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(value);
@@ -771,7 +801,7 @@ async function workflow(baseUrl, key, fixture, process, options, report) {
           const exported = JSON.parse(bytes.toString('utf8'));
           assert.equal(receipt.count, exported.length);
           assert.ok(exported.some((entry) => entry.name === cookie.name && entry.value === cookie.value && entry.domain === cookie.domain && entry.path === cookie.path && entry.httpOnly === true), 'Export did not preserve cookie identity and HttpOnly');
-          assert.equal((await stat(outputPath)).mode & 0o777, 0o600, 'Cookie export is not owner-only');
+          await assertOwnerOnly(outputPath, 'Cookie export');
           await cookieCli(['session', 'cookies', id, '--output', outputPath], 1);
           assert.ok(bytes.equals(await readFile(outputPath)), 'Refused export overwrote an existing credential file');
           const restored = await cookieSession(['--cookies-file', outputPath]);

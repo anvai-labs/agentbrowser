@@ -14,6 +14,7 @@ import {
   gracefulStop,
   serverCommand,
   withPath,
+  assertOwnerOnly,
 } from './package-acceptance.mjs';
 
 const diagnostics = Object.freeze({
@@ -840,4 +841,23 @@ test('serverCommand runs the POSIX launcher, or the server entry on Node on Wind
   assert.deepEqual(serverCommand('/srv', { platform: 'linux' }), [join('/srv', 'agentbrowser-server')]);
   assert.deepEqual(serverCommand('C:/srv', { platform: 'win32' }), [process.execPath, join('C:/srv', 'dist', 'bin.js')]);
   assert.deepEqual(serverCommand('/srv', { platform: 'win32', override: 'C:/b/agentbrowser-server.exe' }), ['C:/b/agentbrowser-server.exe']);
+});
+
+test('assertOwnerOnly: exactly a protected single-ACE DACL for the current user on Windows', async () => {
+  const sid = 'S-1-5-21-1-2-3-1001';
+  const fake = (dacl) => ({
+    run: async (args) => ({ stdout: args[0].endsWith('whoami.exe') ? `"pc\\u","${sid}"\r\n` : '' }),
+    readText: async () => `\uFEFFc.json\r\n${dacl}\r\n`,
+  });
+  const check = (dacl) => assertOwnerOnly('C:\\x\\c.json', 'Cookie export', { platform: 'win32', ...fake(dacl) });
+  await check(`D:P(A;;FA;;;${sid})`);
+  await check(`D:P(A;;FA;;;${sid})S:(ML;;NW;;;ME)`); // an integrity label is not access
+  for (const bad of [
+    'D:P(A;;FA;;;WD)', // Everyone:(F) — one ACE, wrong principal
+    `D:AI(A;ID;FA;;;${sid})`, // inherited, not protected
+    `D:P(A;;FA;;;${sid})(A;;FA;;;SY)`, // a second principal
+    `D:P(A;;0x1200a9;;;${sid})`, // not FullControl
+  ]) {
+    await assert.rejects(check(bad), /not owner-only/, bad);
+  }
 });
