@@ -257,7 +257,7 @@ and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 | `AGENTBROWSER_API_KEYS` | service | Bearer auth for `/v1`, format `key:tenant[,key:tenant...]`. **Without it, `/v1` is unauthenticated** — the service logs a loud warning at startup. Each key maps to one tenant; sessions are isolated per tenant. An explicitly empty, malformed or conflicting key list aborts startup; unset the variable for intentional trusted-local mode. |
 | `AGENTBROWSER_API_KEY` | MCP server, CLI | The bearer key sent to the service; CLI `--api-key` takes precedence. |
 | `AGENTBROWSER_BASE_URL` | MCP server | Service location; default `http://localhost:5709`. The CLI uses `--base-url`, not this variable. |
-| `AGENTBROWSER_LOG_LEVEL` | service | `debug` or `info` (default). Logs are structured JSON, scrubbed of registered secrets. |
+| `AGENTBROWSER_LOG_LEVEL` | service | `debug`, `info` (default), `warn` or `error`, case-insensitive. Unknown values print a warning and use `info`. Logs are structured JSON, scrubbed of registered secrets. |
 | `AGENTBROWSER_SHUTDOWN_ON_STDIN_EOF` | service entrypoint | `1` = shut down cleanly (closing all sessions and browsers) when stdin closes. Opt-in lifeline for a supervising launcher: if the launcher is killed, the OS closes the pipe and the server still exits instead of orphaning Chromium. Leave unset under service managers that give the server an empty stdin (it would stop immediately). |
 | `AGENTBROWSER_ALLOW_LOOPBACK` | service entrypoint | Set `1`/`true` to disable the loopback/unspecified-address block (127/8, `0.0.0.0`, `::1`, `::`, `localhost` hostnames) for **all** sessions on this server — local-machine testing against `127.0.0.1` dev servers. Startup-only; session/request input can never set it. **With this set, visited pages can reach every loopback service, including this server's own API: in no-keys local mode that is full unauthenticated control of all sessions; in keyed mode the service is auth-gated but other loopback services are exposed.** Cloud-metadata blocking and session host restrictions still apply. Loud warning at startup. |
 | `AGENTBROWSER_ALLOWED_CIDRS` | service entrypoint | Comma-separated operator private-IP exceptions, e.g. `192.168.1.89/32,fd12::/64`. Unset/blank: none. Invalid CIDRs or empty list entries abort startup; `/0` warns. Loopback, metadata and session host restrictions still apply. See [LAN CIDR policy](HANDOFF-LAN-CIDR-ALLOWLIST.md). |
@@ -292,8 +292,8 @@ harness), `AGENTBROWSER_FIREFOX_EXECUTABLE` (engine-firefox tests),
 and `AGENTBROWSER_PRIVATE_PATH` (the CLI's owner-only file writer on Windows passes the path to
 its PowerShell helper this way). `AGENTBROWSER_TEST_HEADLESS` is set by Windows CI but read by
 nothing. The TypeScript SDK's
-subprocess helper sets `AGENTBROWSER_LOG=error`, but the service does not read that variable.
-`AGENTBROWSER_LOG_LEVEL` accepts only `info` and `debug`; there is no error-only level today.
+subprocess helper starts the service with `AGENTBROWSER_LOG_LEVEL=error` unless the caller's
+environment already sets it.
 
 Port defaults to `5709`; the service binds loopback (`127.0.0.1`) by
 default because it reads local files on the operator's behalf

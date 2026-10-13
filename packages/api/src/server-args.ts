@@ -27,7 +27,7 @@ Configuration is read from the environment:
   AGENTBROWSER_API_KEYS                 key:tenant[,key:tenant] bearer keys; unset = local no-keys mode
   AGENTBROWSER_ALLOWED_HOSTS            extra trusted Host names (default: loopback only without keys)
   AGENTBROWSER_CORS_ORIGINS             exact browser origins allowed to call the API
-  AGENTBROWSER_LOG_LEVEL                info (default) or debug
+  AGENTBROWSER_LOG_LEVEL                debug, info (default), warn or error
   AGENTBROWSER_DEFAULT_TTL_MS           default session lifetime in ms
   AGENTBROWSER_DEFAULT_IDLE_TIMEOUT_MS  default session idle timeout in ms
   AGENTBROWSER_SHUTDOWN_ON_STDIN_EOF    1 = stop when stdin closes (launcher lifeline)
@@ -47,4 +47,26 @@ export function parseServerArgs(argv: readonly string[]): ServerArgs {
     };
   }
   return { kind: 'run' };
+}
+
+/** The structured logger's levels (packages/core/src/logger.ts), lowest first. */
+export const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
+export type ServerLogLevel = (typeof LOG_LEVELS)[number];
+
+/**
+ * Parse AGENTBROWSER_LOG_LEVEL. Unset or blank means info; an unknown value
+ * also means info, with a warning the caller prints, never a silent guess.
+ */
+export function parseLogLevel(raw: string | undefined): {
+  level: ServerLogLevel;
+  warning?: string;
+} {
+  const value = raw?.trim().toLowerCase() ?? '';
+  if (value === '') return { level: 'info' };
+  const known = LOG_LEVELS.find((level) => level === value);
+  if (known !== undefined) return { level: known };
+  return {
+    level: 'info',
+    warning: `[agentbrowser] Ignoring AGENTBROWSER_LOG_LEVEL="${raw}" - expected one of ${LOG_LEVELS.join(', ')}; using info.`,
+  };
 }

@@ -90,9 +90,13 @@ export async function createManagedServer(
   const healthIntervalMs = options.healthIntervalMs ?? DEFAULT_HEALTH_INTERVAL_MS;
   const baseUrl = `http://127.0.0.1:${port}`;
 
+  // The child's stdout (its JSON log) is discarded below, so default it to
+  // errors only; an operator's own AGENTBROWSER_LOG_LEVEL passes through.
   const child = launcher.spawn('node', options.serverArgs ?? ['dist/server.js'], {
     PORT: String(port),
-    AGENTBROWSER_LOG: 'error',
+    ...(process.env.AGENTBROWSER_LOG_LEVEL === undefined
+      ? { AGENTBROWSER_LOG_LEVEL: 'error' }
+      : {}),
   });
 
   let running = true;

@@ -6,7 +6,7 @@
  * owns its lifecycle (ADR-008 keeps the browser in a separate process).
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SubprocessLauncher } from './subprocess';
 import { createManagedServer } from './subprocess';
 
@@ -289,5 +289,29 @@ describe('managed subprocess server', () => {
       }
       expect(server.isRunning()).toBe(false);
     }, 20_000);
+  });
+
+  describe('child log level', () => {
+    const spawnedEnv = () =>
+      (launcher.spawn as ReturnType<typeof vi.fn>).mock.calls[0]?.[2] as Record<string, string>;
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('quiets the child through the variable the server reads', async () => {
+      vi.stubEnv('AGENTBROWSER_LOG_LEVEL', undefined as unknown as string);
+      const server = await startServer();
+      expect(spawnedEnv().AGENTBROWSER_LOG_LEVEL).toBe('error');
+      expect(spawnedEnv()).not.toHaveProperty('AGENTBROWSER_LOG');
+      await server.stop();
+    });
+
+    it('leaves an operator-set AGENTBROWSER_LOG_LEVEL to pass through', async () => {
+      vi.stubEnv('AGENTBROWSER_LOG_LEVEL', 'debug');
+      const server = await startServer();
+      expect(spawnedEnv()).not.toHaveProperty('AGENTBROWSER_LOG_LEVEL');
+      await server.stop();
+    });
   });
 });

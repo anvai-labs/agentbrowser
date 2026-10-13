@@ -7,6 +7,16 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed
+
+- **`AGENTBROWSER_LOG_LEVEL` accepts `warn` and `error`**, the structured logger's other two
+  levels, as well as `debug` and `info`. Matching is case-insensitive. Before, any value other
+  than `debug` silently meant `info`; an unknown value now prints a warning and uses `info`.
+- **The TypeScript SDK's managed subprocess sets the variable the service reads.** It used to set
+  `AGENTBROWSER_LOG=error`, which nothing read. It now sets `AGENTBROWSER_LOG_LEVEL=error`, unless
+  the caller's environment already sets `AGENTBROWSER_LOG_LEVEL`, in which case that value passes
+  through.
+
 ## [1.17.1] — 2026-10-13
 
 ### Changed — dependencies (#426)
