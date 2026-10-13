@@ -7,6 +7,13 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Docs — design records
+
+- **ADR-024 (Proposed): server policy engine.** Policy that is spread across environment variables
+  today moves into one versioned document evaluated by embedded Cedar. Policy becomes per tenant,
+  and agents can query it (`GET /v1/policy`, `POST /v1/policy/check`, an MCP `policy` tool). A
+  fixed safety floor stays outside policy. Implementation plan: TD-BROWSER-15.
+
 ## [1.17.1] — 2026-10-13
 
 ### Changed — dependencies (#426)
