@@ -187,21 +187,42 @@ function place(rootNode, packageCount) {
   return placements;
 }
 
-/** Copy a package's own files; its node_modules come from the placement. */
-async function copyPackage(from, to, node, keep, top = from) {
+/** Copy a directory as is, refusing links (a Windows tree cannot carry them). */
+async function copyTree(from, to, node, top) {
   await mkdir(to, { recursive: true });
   for (const entry of await readdir(from, { withFileTypes: true })) {
     const source = join(from, entry.name);
-    const rel = relative(top, source);
-    if (entry.isSymbolicLink()) throw new Error(`${node.label} contains a link (${rel}); a Windows tree cannot carry links`);
-    if (entry.isDirectory()) {
-      if (from === top && entry.name === 'node_modules') {
-        for (const bundled of keep) await copyPackage(join(source, bundled), join(to, 'node_modules', bundled), node, [], top);
-        continue;
-      }
-      await copyPackage(source, join(to, entry.name), node, keep, top);
-    } else if (entry.isFile()) {
-      await copyFile(source, join(to, entry.name));
+    if (entry.isSymbolicLink()) {
+      throw new Error(`${node.label} contains a link (${relative(top, source)}); a Windows tree cannot carry links`);
+    }
+    if (entry.isDirectory()) await copyTree(source, join(to, entry.name), node, top);
+    else if (entry.isFile()) await copyFile(source, join(to, entry.name));
+  }
+}
+
+/**
+ * Copy a package's own files; its dependencies come from the placement. A
+ * package that bundles dependencies ships its whole real node_modules: npm
+ * and pnpm keep the bundled packages there together with their own
+ * (flattened) dependencies, so copying only the named ones would drop those.
+ */
+async function copyPackage(from, to, node, bundled) {
+  await mkdir(to, { recursive: true });
+  for (const entry of await readdir(from, { withFileTypes: true })) {
+    const source = join(from, entry.name);
+    if (entry.isDirectory() && entry.name === 'node_modules' && !entry.isSymbolicLink()) {
+      if (bundled.length > 0) await copyTree(source, join(to, 'node_modules'), node, from);
+      continue;
+    }
+    if (entry.isSymbolicLink()) {
+      throw new Error(`${node.label} contains a link (${entry.name}); a Windows tree cannot carry links`);
+    }
+    if (entry.isDirectory()) await copyTree(source, join(to, entry.name), node, from);
+    else if (entry.isFile()) await copyFile(source, join(to, entry.name));
+  }
+  for (const name of bundled) {
+    if (!(await isPackageDir(join(from, 'node_modules', name)))) {
+      throw new Error(`${node.label} bundles ${name}, but the deployed package does not contain it`);
     }
   }
 }

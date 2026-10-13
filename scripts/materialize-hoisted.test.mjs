@@ -207,3 +207,25 @@ test('ships bundled dependencies inside their package without placing them separ
     await assert.rejects(lstat(join(out, 'node_modules/inner')), /ENOENT/);
   });
 });
+
+test("keeps a bundle's flattened dependencies, and fails closed on a missing bundled name", async () => {
+  // npm-style bundle: a bundles x; x requires y; y sits flat in a/node_modules.
+  const bundle = async (iso, names) => {
+    const nm = join(iso, 'node_modules/.pnpm/a@1.0.0/node_modules/a/node_modules');
+    for (const [name, deps] of names) {
+      await mkdir(join(nm, name), { recursive: true });
+      await writeFile(join(nm, name, 'package.json'), JSON.stringify({ name, version: '1.0.0', main: 'index.js', dependencies: Object.fromEntries(deps.map((d) => [d, '*'])) }));
+      await writeFile(join(nm, name, 'index.js'), `module.exports = ${JSON.stringify(name)}${deps.map((d) => ` + require(${JSON.stringify(d)})`).join('')};`);
+    }
+  };
+  await withTrees(async (iso, out) => {
+    await isolated(iso, { rootDeps: ['a@1.0.0'], packages: { 'a@1.0.0': { manifest: { dependencies: { x: '*' }, bundleDependencies: ['x'] } } } });
+    await bundle(iso, [['x', ['y']], ['y', []]]);
+    await materializeHoisted(iso, out);
+    assert.equal(loads(out, 'node_modules/a', 'x'), 'xy');
+  });
+  await withTrees(async (iso, out) => {
+    await isolated(iso, { rootDeps: ['a@1.0.0'], packages: { 'a@1.0.0': { manifest: { dependencies: { x: '*' }, bundleDependencies: ['x'] } } } });
+    await assert.rejects(materializeHoisted(iso, out), /a@1\.0\.0.*bundles x/s);
+  });
+});
