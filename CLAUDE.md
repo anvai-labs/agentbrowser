@@ -48,7 +48,7 @@ agentbrowser/
 │   └── benchmarks/        # Release-gate benchmark and soak suites
 ├── docs/
 │   ├── adr/               # Architecture Decision Records
-│   ├── td/                # Post-MVP technical designs (TD-BROWSER-5..13)
+│   ├── td/                # Post-MVP technical designs (TD-BROWSER-5..14)
 │   ├── technical-design.md # MVP implementation plan (historical record)
 │   └── operations.md      # Operator guide
 └── agentbrowser-mvp-spec.md # Complete MVP specification
@@ -213,6 +213,7 @@ The following ADRs in `docs/adr/` are critical for understanding design choices:
 19. **ADR-019**: explicit per-session service-worker opt-in
 20. **ADR-020**: inline HTML verification via MCP (disclosed not-secret-redacted trade-off)
 21. **ADR-021**: form-controls enrichment for ARIA-invisible widgets
+22. **ADR-022** (Proposed): compact identifiers and explicit CLI context
 
 ## Core Concepts
 
@@ -323,7 +324,7 @@ Before making changes that affect security boundaries:
 
 The MVP (TD-001..TD-026, `docs/technical-design.md`) is complete and shipped
 (2026-08); releases are cut from `main` (v1.x). Post-MVP work is tracked in
-`docs/td/` (TD-BROWSER-5..13) and summarized in `CHANGELOG.md`.
+`docs/td/` (TD-BROWSER-5..14) and summarized in `CHANGELOG.md`.
 
 ## Debugging Tips
 
