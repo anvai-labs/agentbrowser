@@ -7,8 +7,20 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
-### Changed — policy engine seam (TD-BROWSER-15 phase 1, approvals)
+### Changed — policy engine seam (TD-BROWSER-15 phase 1, approvals and egress)
 
+- **The loopback and private-network exceptions go through the `Authorizer` too.**
+  - `NetworkPolicy` asks an `EgressExceptions` hook at its four existing decision points (hostname
+    and resolved address, loopback and private). The default hook is today's rules.
+  - The server answers it through `LegacyAuthorizer`'s `request.loopback` and `request.private`,
+    built from `AGENTBROWSER_ALLOW_LOOPBACK` and `AGENTBROWSER_ALLOWED_CIDRS`.
+  - Behaviour is unchanged: a differential test compares both hooks across mapped, NAT64, 6to4,
+    SIIT and link-local addresses, hostnames and CIDR sets.
+  - Snapshots keep their own copy of the default rules, so they stay immutable.
+  - The hook fails closed: anything but `true` (a Promise, a string) counts as "not allowed".
+  - Once a hook owns the exceptions, `updateConfig` refuses changes to `blockLoopback`,
+    `blockPrivateIPs` and `allowedPrivateCIDRs`, so the reported flags and the enforced decisions
+    cannot drift apart. No production code calls `updateConfig`.
 - **Approval decisions go through an `Authorizer`.** A new internal package,
   `@agentbrowser/policy-engine`, carries the `Authorizer` interface and `LegacyAuthorizer`, today's
   rules unchanged. Each decision answers ADR-024 §5's two questions, `act` and `act.unattended`,

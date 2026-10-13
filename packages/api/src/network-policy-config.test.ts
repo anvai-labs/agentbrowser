@@ -118,3 +118,22 @@ describe('operator loopback opt-in (local-machine sessions)', () => {
     ).rejects.toThrow();
   });
 });
+
+describe('authorizer-backed exceptions (TD-BROWSER-15 phase 1)', () => {
+  it('refuses updateConfig that would split the flags from the hook, instead of staying open', async () => {
+    const policy = networkPolicyFromEnvironment(
+      { AGENTBROWSER_ALLOW_LOOPBACK: '1', AGENTBROWSER_ALLOWED_CIDRS: '10.0.0.0/8' },
+      () => {}
+    );
+    expect(() => policy.updateConfig({ blockLoopback: true, allowedPrivateCIDRs: [] })).toThrow(
+      'owned by the injected hook'
+    );
+    const fallback = createDefaultNetworkPolicy(['10.0.0.0/8']);
+    expect(() => fallback.updateConfig({ allowedPrivateCIDRs: [] })).toThrow(
+      'owned by the injected hook'
+    );
+    // Nothing was half-applied.
+    expect(policy.getConfig().allowedPrivateCIDRs).toEqual(['10.0.0.0/8']);
+    await expect(policy.checkResolvedAddresses(['10.0.0.1'])).resolves.toBeUndefined();
+  });
+});
