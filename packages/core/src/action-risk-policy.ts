@@ -20,6 +20,7 @@ const HIGH_RISK = new Set(['transaction', 'account-security', 'external-message'
 const READ_ACTIONS = new Set(['hover', 'scroll', 'wait']);
 const rank = { allow: 0, required: 1, deny: 2 };
 const RULE_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const RESERVED_RULE_ID = /^(rule-\d+|none)$/;
 
 /** First-match classification of one action (TD-BROWSER-15 phase 1). */
 export interface ActionRiskClassification {
@@ -78,7 +79,6 @@ export class ActionRiskPolicy {
         typeof rule !== 'object' ||
         !['read', 'write-local', ...HIGH_RISK].includes(rule.effect) ||
         (rule.decision !== undefined && !['allow', 'required', 'deny'].includes(rule.decision)) ||
-        (rule.id !== undefined && (typeof rule.id !== 'string' || !RULE_ID.test(rule.id))) ||
         [rule.hostname, rule.action, rule.role, rule.name].some(
           (value) => value !== undefined && (typeof value !== 'string' || value.length > 200)
         )
@@ -88,8 +88,25 @@ export class ActionRiskPolicy {
     }
     if ((options.rules?.length ?? 0) > 1000)
       throw new Error('At most 1000 approval rules are supported');
-    const ids = (options.rules ?? []).map((rule) => rule.id).filter((id) => id !== undefined);
-    if (new Set(ids).size !== ids.length) throw new Error('Invalid operator approval rule');
+    // Rule ids name the deciding rule in audit and, later, in generated policy
+    // (ADR-024 §5), so a bad one is refused at startup rather than ignored.
+    const seen = new Set<string>();
+    (options.rules ?? []).forEach((rule, index) => {
+      if (rule.id === undefined) return;
+      const why =
+        typeof rule.id !== 'string' || !RULE_ID.test(rule.id)
+          ? 'must be 1-64 lowercase letters, digits, ".", "_" or "-", starting with a letter or digit'
+          : RESERVED_RULE_ID.test(rule.id)
+            ? 'is reserved (rule-<n> names unnamed rules; "none" means no rule matched)'
+            : seen.has(rule.id)
+              ? 'duplicates an earlier rule id'
+              : undefined;
+      if (why !== undefined)
+        throw new Error(
+          `Invalid operator approval rule ${index}: id ${JSON.stringify(rule.id)} ${why}`
+        );
+      seen.add(rule.id);
+    });
     this.rules = (options.rules ?? []).map((rule) => Object.freeze({ ...rule }));
     this.unknownRisk = options.unknownRisk ?? 'allow';
   }

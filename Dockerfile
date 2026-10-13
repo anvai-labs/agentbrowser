@@ -21,6 +21,7 @@ COPY packages/engine-firefox/package.json packages/engine-firefox/
 COPY packages/engine-obscura/package.json packages/engine-obscura/
 COPY packages/engine-safari/package.json packages/engine-safari/
 COPY packages/policy/package.json packages/policy/
+COPY packages/policy-engine/package.json packages/policy-engine/
 COPY packages/api/package.json packages/api/
 COPY packages/sdk-typescript/package.json packages/sdk-typescript/
 COPY packages/cli/package.json packages/cli/

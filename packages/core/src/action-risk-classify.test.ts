@@ -69,17 +69,25 @@ describe('ActionRiskPolicy.classify', () => {
     expect(policy.classify({ action: 'hover', url: 'about:blank' })).toEqual({ effect: 'read' });
   });
 
-  it('rejects a duplicate or invalid rule id', () => {
+  it.each([
+    [[{ id: 'a' }, { id: 'a' }], 'rule 1: id "a" duplicates an earlier rule id'],
+    [[{ id: '' }], 'rule 0: id "" must be'],
+    [[{ id: 'Pay Button' }], 'rule 0: id "Pay Button" must be'],
+    [[{ id: 7 }], 'rule 0: id 7 must be'],
+    [[{ id: 'x'.repeat(65) }], `rule 0: id "${'x'.repeat(65)}" must be 1-64`],
+    [[{ id: 'rule-3' }], 'rule 0: id "rule-3" is reserved'],
+    [[{ id: 'none' }], 'rule 0: id "none" is reserved'],
+  ])('refuses rule ids %j, naming the rule and the reason', (ids, message) => {
+    const rules = (ids as Array<{ id: unknown }>).map(
+      (x) => ({ ...x, effect: 'read' }) as unknown as ActionRiskRule
+    );
+    expect(() => new ActionRiskPolicy({ rules })).toThrow(`Invalid operator approval ${message}`);
+  });
+
+  it('still loads every rule without an id, as before', () => {
     expect(
-      () =>
-        new ActionRiskPolicy({
-          rules: [
-            { id: 'a', effect: 'read' },
-            { id: 'a', effect: 'read' },
-          ],
-        })
-    ).toThrow('Invalid operator approval rule');
-    expect(() => new ActionRiskPolicy({ rules: [{ id: '', effect: 'read' }] })).toThrow();
+      () => new ActionRiskPolicy({ rules: [{ effect: 'read' }, { effect: 'transaction' }] })
+    ).not.toThrow();
   });
 
   it('recomposes to evaluate() exactly over generated policies and inputs', () => {
