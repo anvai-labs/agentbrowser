@@ -9,6 +9,28 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [1.17.1] — 2026-10-13
 
+### Changed — dependencies (#426)
+
+- **Playwright 1.62.1 → 1.64.0.** Engines pick up a newer Chromium build, which is downloaded
+  again on first use: the Homebrew bootstrap, the Windows launcher and `playwright install`. The
+  Docker base image moves with it, to `mcr.microsoft.com/playwright:v1.64.0-noble`.
+- **CLI: `commander` 12 → 15.** The CLI now **rejects surplus positional arguments** that it used to
+  ignore silently, e.g. `agentbrowser observe <s> <p> extra` fails with "too many arguments".
+  Building the workspace from source now needs Node 22.12 or newer (root `engines`). Compiled CLI
+  binaries are unaffected, and the server tarball still runs on Node 22 or newer.
+- `@fastify/cors` 10 → 11 (major; the API sets `methods` explicitly, so its CORS behaviour is
+  unchanged), `@fastify/websocket` 11.3.4, `ws` 8.22.0, `axe-core` 4.14.0, `jsdom` 30.1.2. Biome 2
+  replaces Biome 1.9 for lint (#424), with every 1.9 rule still enforced.
+- Dependabot ignores majors that need deliberate migration: puppeteer (the Firefox egress
+  qualification is pinned), `@types/node`, `typescript`, `pixelmatch` (its colour metric changes
+  baseline semantics), the Docker `node` image, and the Playwright image, which moves only with npm
+  `playwright`.
+
+### Docs — design records
+
+- ADR-022 and TD-BROWSER-14 (#430) propose compact session and page identifiers and explicit,
+  generated CLI contexts for 1.18.0. These are design records only; nothing changes in this release.
+
 ### Docs — Windows install, ADR-023, environment-variable reference
 
 - **Windows install docs.** README, the docs home page and the operations guide gain a Windows
@@ -119,7 +141,7 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 ### Added — Windows server launcher
 
 - New `packages/api/src/launcher/`, compiled by `packages/api/scripts/compile-launcher.mjs` into the
-  `agentbrowser-server.exe` of the upcoming Windows bundle. The bundle places it next to a bundled
+  `agentbrowser-server.exe` of the Windows bundle. The bundle places it next to a bundled
   `node\` runtime and the `server\` tree. The launcher imports only `node:` builtins and never
   derives a location from `__dirname` or `import.meta`; a test enforces both. v1.17.0's single-file
   server exe failed on every machine but CI because Bun froze Playwright's `__dirname` lookups to the
@@ -268,7 +290,7 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   *Correction (2026-10-12):* these manifests were invalid (three portable installers for one
   architecture, and no `DefaultLocale`), so no winget package was published from 1.16.1. The
   1.16.1 server executable they would have installed also did not start outside CI. See the
-  1.17.0 known issue above and the Unreleased Windows entries.
+  1.17.0 known issue above and the 1.17.1 Windows entries.
 - **App-based submission (no user credential)**: a GitHub App installed on
   `anvai-labs/winget-pkgs` pushes the manifests branch per release (per-run
   installation tokens via `WINGET_APP_ID`/`WINGET_APP_PRIVATE_KEY`); the PR into

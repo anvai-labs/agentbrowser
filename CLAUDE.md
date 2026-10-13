@@ -17,7 +17,7 @@ AgentBrowser is an agent-native browser service designed for AI agents to safely
 ### Technology Stack
 
 - **Language**: TypeScript 5.7+ (strict mode)
-- **Runtime**: Node.js 24.21.0 LTS (pinned in `.tool-versions`; Node 22 minimum)
+- **Runtime**: Node.js 24.21.0 LTS (pinned in `.tool-versions`; Node 22.12 minimum for development; the server tarball runs on Node 22+)
 - **Package Manager**: pnpm 9.15.0 (monorepo workspace)
 - **Browser Engine (MVP)**: Playwright + Chromium
 - **Testing**: Vitest (unit/contract), Biome (format/lint)
