@@ -17,17 +17,27 @@ hardens the floor.
 
 ### Phase 0: harden the floor (before anything becomes grantable)
 
-**Wider metadata set.** `NetworkPolicy`'s metadata set gains:
-- `fd00:ec2::254` (AWS IMDS over IPv6);
+**Wider metadata set.** The metadata set gains:
+- `fd00:ec2::/64` (AWS: IMDS at `::254`, EKS Pod Identity at `::23`);
 - `100.100.100.200` (Alibaba Cloud);
 - `168.63.129.16` (Azure wire server);
-- the IPv4 link-local range `169.254.0.0/16`.
+- both link-local ranges, `169.254.0.0/16` and `fe80::/10`.
 
-The classifier marks all of these `metadata`.
-- **Tests:** each address, IPv4-mapped IPv6 forms, and decimal, octal and hex literals are refused
-  under every option combination, including `AGENTBROWSER_ALLOWED_CIDRS=fd00::/8`, which today
-  reaches `fd00:ec2::254`.
-- **Release notes:** call this out as a tightening.
+**Embedded IPv4 is decoded before classification:** IPv4-mapped (`::ffff:0:0/96`), NAT64
+(`64:ff9b::/96`, `64:ff9b:1::/48`) and 6to4 (`2002::/16`). For example, `64:ff9b::a9fe:a9fe` is
+metadata and `64:ff9b::7f00:1` is loopback.
+
+**A floor module the service always applies.** The metadata and CDP-attach checks move out of the
+injectable `NetworkPolicy`, whose metadata block is off when constructed with `{}`, into a module
+the service applies whatever `ServerOptions.networkPolicy` it receives.
+
+- **Tests:**
+  - each address and range, in IPv4-mapped, NAT64, 6to4, decimal, octal and hex forms, is refused
+    under every option combination;
+  - this includes `AGENTBROWSER_ALLOWED_CIDRS=fd00::/8`, which reaches `fd00:ec2::254` today;
+  - it also includes an embedder-injected `new NetworkPolicy({})`.
+- **Release notes:** call this out as a tightening. Link-local devices reached through
+  `ALLOWED_CIDRS` become unreachable.
 
 **Unconditional refusals made explicit.** The CDP-attach refusals (hosted, multiple tenants,
 missing bearer, non-loopback listener or peer, delegated sessions, cookie export or seed on an
@@ -55,7 +65,8 @@ interface Authorizer {
 The floor (phase 0) is not routed through it.
 
 **Address classes become sets.** The classifier returns every class an address belongs to, for
-example `::1` → `{loopback, private}`. `LegacyAuthorizer` reproduces today's decisions exactly,
+example `::1` → `{loopback, private}`. It also returns the **normalized address**, with
+IPv4-mapped IPv6 rewritten to IPv4, which the CIDR exceptions and the context's `ip` use. `LegacyAuthorizer` reproduces today's decisions exactly,
 including the quirk where `ALLOW_LOOPBACK` alone still denies `[::1]`, `::` and `0.0.0.0` because
 they are also private. A multi-address hostname is decided per address, and every address must be
 allowed.
@@ -68,7 +79,10 @@ A property-based harness generates the inputs below. It adds `fast-check` as a n
 dependency; none exists today.
 - **Addresses:** IPv4, IPv6, mapped, the edge literals, every class combination.
 - **Hostnames:** these resolve to address sets through a fake resolver.
-- **Approval rule lists and actions:** host, action, role, name, effect.
+- **Approval rule lists and actions:** host, action, role, name, effect, and the optional per-rule
+  `decision`, combined with every `unknownRisk`.
+- **CIDR exception lists:** including addresses in IPv4-mapped form, which must match their IPv4
+  CIDR exactly as `BlockList` does today.
 - **Option combinations:** loopback, CIDRs, `unknownRisk`, session tightening.
 
 Its oracle is `LegacyAuthorizer`, and any `Authorizer` can be plugged in as the subject. The
@@ -86,8 +100,13 @@ document (`version`, `baseline`, `policies`, `approvalRules`, `limits`):
   - acting: `act`, `act.unattended`;
   - capabilities: `cdp.attach`, `serviceWorkers`, `downloads`, `cookie.export`, `cookie.seed`,
     `session.headed`.
-- **Context:** declared per action. `addressClasses` is a `Set<String>`; `effect`, `hostname`,
-  `action`, `role` and `name` belong to the `act*` actions.
+- **Context:** declared per action.
+  - The `request*` actions carry `addressClasses` (a `Set<String>`) and `ip` (an `ipaddr`, already
+    normalized).
+  - The `act*` actions carry `effect`, `matchedRule` (the id of the first matching approval rule, or
+    `"none"`), `hostname`, `action`, `role` and `name`.
+- **Protocol first (ADR-015):** `PolicyDecisionSchema` gains `rulesMatched: string[]`. The existing
+  `ruleMatched` keeps the first id.
 - **Generated from the schema:** docs and fixtures.
 
 **`CedarAuthorizer`.** It applies every Cedar API trap rule from ADR-024 §2:
@@ -103,10 +122,15 @@ document (`version`, `baseline`, `policies`, `approvalRules`, `limits`):
 - **Reserved prefixes:** ids starting `floor.`, `default.`, `engine.` or `env.` are rejected.
 
 **Generator and baseline.**
-- `policyDocumentFromEnvironment()` writes a complete document from today's variables. It is also
-  exposed as `agentbrowser-server policy export`, so operators migrate by generating, not by
-  hand-writing.
-- `agentbrowser:baseline/v1` is a versioned, built-in policy set equal to an unconfigured server.
+- `policyDocumentFromEnvironment()` writes a complete document from today's variables:
+  - one `request.private` permit per `ALLOWED_CIDRS` entry, using `context.ip.isInRange`;
+  - the approval rules and `unknownRisk` copied as they are;
+  - one generated policy per rule `decision`, keyed on `context.matchedRule`.
+
+  It is also exposed as `agentbrowser-server policy export`, so operators migrate by generating,
+  not by hand-writing.
+- `agentbrowser:baseline/v1` is a versioned, built-in policy **template** equal to an unconfigured
+  server. `unknownRisk` is its only parameter.
 
 **Tests:**
 - **The differential oracle** (phase 2) passes with `CedarAuthorizer`, loaded with generated
@@ -129,7 +153,11 @@ document (`version`, `baseline`, `policies`, `approvalRules`, `limits`):
   - a file combined with any policy-bearing variable or embedder option (ADR-024 §4 table); all
     conflicts are named;
   - an unknown `limits` key;
-  - tenant constraints other than `local` while no API keys are configured.
+  - while no API keys are configured, any `Tenant` literal other than `local` anywhere in a policy,
+    conditions included, found by walking `policyToJson`;
+  - a key tenant named `local` (the name is reserved).
+- **Stock entrypoint:** `main.ts` stops passing `networkPolicy` and `extractMaxBytes` when a policy
+  file is set, so the conflict rule fires only on genuine double configuration.
 - **No-keys tenant.** Policy evaluation uses the implicit `Tenant::"local"` whatever `tenantId`
   the caller sends.
 - **Warnings at startup:**
@@ -141,12 +169,14 @@ document (`version`, `baseline`, `policies`, `approvalRules`, `limits`):
 - **Shadow mode.** `AGENTBROWSER_POLICY_SHADOW=1`, without a file, evaluates the generated
   document in Cedar alongside `LegacyAuthorizer`. Legacy decides, and divergences are logged at
   `warn` with both rule ids. It runs for at least one release before deprecation warnings start.
+  - A trap in the shadow authorizer marks only the shadow unhealthy, never the legacy decisions.
+  - `/health` exposes the authorizer's health as a boolean only.
 - **Per-session memo.** It is an LRU with a fixed entry bound (TD-BROWSER-9), keyed by
-  (action, host, sorted class set, declared context). Address classes come from the fresh
+  (action, host, normalized address, sorted class set, declared context). Address classes come from the fresh
   per-request classification, so a DNS change alters the key. It is cleared at close.
 - **Performance gate**, in this phase, before anyone opts in: a 300-subresource page, measured
-  uncached and memoized. The gate (the maximum share of load time spent in policy evaluation) is
-  set from the first measured run and recorded here. Review reproduced 43–78 µs per pre-parsed
+  uncached, memoized, and in shadow mode, which doubles evaluation. The gate (the maximum share of
+  load time spent in policy evaluation) is set from the first measured run and recorded here. Review reproduced 43–78 µs per pre-parsed
   decision.
 - **Tests:**
   - per-tenant loopback with keys: tenant A reaches the fixture, tenant B is denied with
@@ -162,17 +192,25 @@ document (`version`, `baseline`, `policies`, `approvalRules`, `limits`):
 - **`GET /v1/policy`:**
   - It returns the version, the limits and a capability summary for a **default session** of the
     caller's tenant, and says that it does.
-  - Attribute-dependent answers come back as `conditional`, through partial evaluation.
+  - Attribute-dependent answers come back as `conditional`, through partial evaluation. That
+    evaluation runs schema-less, because cedar-wasm 4.13 rejects unknowns in a validated context;
+    every policy was already strictly validated at load. It is only available when Cedar is
+    loaded.
   - There is no raw policy text.
 - **`POST /v1/policy/check`:** `{ action, url?, context? }` → `PolicyDecision`.
-  - No DNS. An IP literal is classified; a hostname is evaluated with unknown address classes
-    through partial evaluation, and reports "depends on resolved address" together with the
-    deciding classes.
+  - No DNS. An IP literal is classified. A hostname gets one normal, validated decision per
+    possible address-class combination (`public`, `loopback`, `private`, and their unions), and
+    reports `depends on resolved address` together with the deciding combinations. There is no
+    partial evaluation.
+  - **Without a policy file**, both routes answer through `LegacyAuthorizer` by the same
+    enumeration, and the summary reports `unconditional for a default session`.
   - Request size is bounded.
 - **Rate limiter:** a new bounded per-tenant token-bucket limiter for the query routes. No HTTP
   rate limiter exists today.
-- **Errors:** `POLICY_DENIED` and `APPROVAL_REQUIRED` populate `policyDecision`. `@internal` policies
-  are reported as `operator.policy`, without a reason.
+- **Errors:** `POLICY_DENIED` and `APPROVAL_REQUIRED` populate `policyDecision`, including
+  `rulesMatched`. `@internal` policies are reported as `operator.policy`, without a reason.
+- **Names:** the capability summary uses the action names (`cdp.attach`, `session.headed`, …).
+  `session.delegated` is listed as floor-only.
 - **Surfaces:** SDK `client.policy.get()` and `client.policy.check()`; the CLI's `agentbrowser
   policy [check …]`; a read-only MCP `policy` tool in every mode.
 - **Tests:**

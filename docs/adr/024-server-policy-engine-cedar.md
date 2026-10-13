@@ -46,9 +46,20 @@ ADR-007 and the CDP-attach design guarantee unconditionally:
 
 - **Metadata endpoints are always refused.** This ADR also **widens** the set, because today it
   covers only `169.254.169.254`, `metadata.google.internal` and `metadata.goog`. It adds the AWS
-  IPv6 IMDS (`fd00:ec2::254`), Alibaba Cloud (`100.100.100.200`), the Azure wire server
-  (`168.63.129.16`), and the whole IPv4 link-local range `169.254.0.0/16`. This lands before
-  private ranges can be granted (TD phase 0).
+  IPv6 range `fd00:ec2::/64` (its instance metadata at `::254`, plus EKS Pod Identity credentials
+  at `::23`), Alibaba Cloud (`100.100.100.200`), and the Azure wire server (`168.63.129.16`). It
+  also adds the whole of both link-local ranges, `169.254.0.0/16` (ECS task metadata
+  `169.254.170.2`, EKS Pod Identity `169.254.170.23`) and `fe80::/10`.
+  - **Embedded IPv4 is decoded first:** IPv4-mapped (`::ffff:0:0/96`), NAT64 (`64:ff9b::/96`,
+    `64:ff9b:1::/48`) and 6to4 (`2002::/16`). So `64:ff9b::a9fe:a9fe` is metadata and
+    `64:ff9b::7f00:1` is loopback, where today both classify as public.
+  - **The trade-off:** link-local devices reached today through `ALLOWED_CIDRS` become unreachable.
+    The release notes say so.
+  - **Timing:** this lands before private ranges can be granted (TD phase 0).
+- **The floor does not depend on what an embedder injects.** Today the metadata block lives inside
+  the `NetworkPolicy` instance passed in as `ServerOptions.networkPolicy`, and
+  `new NetworkPolicy({})` leaves it off. The floor checks (metadata and the CDP refusals) move into
+  a module the service always applies, whatever policy object it was given.
 - **Loopback and private addresses are blocked by default.** Policy may grant only **exceptions**,
   through the dedicated actions `request.loopback` and `request.private` (§3). An ordinary
   `request` permit never reaches them, however broadly it is written.
@@ -106,7 +117,15 @@ Policies are therefore parsed once at load and never per request.
 - `validate` reports `type: "success"` **even when validation errors are present**. Validity means
   `validationErrors` is empty.
 - A request is checked against the schema only with `validateRequest: true` and a pre-parsed
-  schema. Without them, a mistyped context (`port: "443"`) is evaluated silently.
+  schema. Without them, a mistyped context (`port: "443"`) is evaluated silently. Every
+  **decision** therefore validates its request.
+- **Partial evaluation cannot take a schema in 4.13.** `isAuthorizedPartial` rejects an unknown
+  value inside a validated context, and it has no pre-parsed variant (about 460 µs per call).
+  - It is therefore used only where unknowns sit in entity attributes or the principal: the
+    capability summary's `conditional` answers and the startup warning about grantable exceptions.
+  - It runs **schema-less** there, which is safe because every policy was strictly validated at
+    load.
+  - It is never used on the request path or for `check`.
 - **A policy that errors at runtime is skipped, not applied.** A `forbid` whose condition errors
   (for example, integer overflow) leaves a matching `permit` in force: the answer is **`allow`**,
   with the error listed in `diagnostics.errors`. **Fail-closed rule:**
@@ -150,6 +169,12 @@ needs every one of them allowed.
 - If its classes include `loopback`, it is also checked with `request.loopback`; if they include
   `private`, also with `request.private`. All the applicable checks must allow it.
 - The floor refuses `metadata` before Cedar is consulted.
+- **The address itself is in the context** (`context.ip`, a Cedar `ipaddr`), so exceptions can
+  name ranges. For example, `context.ip.isInRange(ip("192.168.1.89/32"))` reproduces
+  `ALLOWED_CIDRS=192.168.1.89/32`, and the generator emits one such permit per configured CIDR.
+  - **IPv4-mapped IPv6 is normalized to IPv4 before the context is built.** Cedar refuses
+    `ip("::ffff:192.168.1.65")` as an evaluation error. The hex form `::ffff:c0a8:141` does not
+    match `192.168.1.0/24`. Today's `BlockList` treats both as their IPv4 identity.
 
 So `permit (principal, action == AgentBrowser::Action::"request", resource);` grants only public
 egress. Opening loopback takes a deliberately named permit, and the server prints a loud startup
@@ -172,8 +197,9 @@ The operator supplies one file, named by `AGENTBROWSER_POLICY_FILE`:
     "fixtures.loopback": "@reason(\"local test fixtures\") permit (principal in AgentBrowser::Tenant::\"qa\", action == AgentBrowser::Action::\"request.loopback\", resource);"
   },
   "approvalRules": [
-    { "hostname": "shop.example", "action": "click", "name": "Pay", "effect": "transaction" }
+    { "hostname": "shop.example", "action": "click", "name": "Pay", "effect": "transaction", "decision": "required" }
   ],
+  "unknownRisk": "allow",
   "limits": { "maxResponseBytes": 10485760, "extractMaxBytes": 1048576 }
 }
 ```
@@ -186,8 +212,8 @@ The operator supplies one file, named by `AGENTBROWSER_POLICY_FILE`:
   - Without the baseline, a file carrying only one loopback exception would deny all public
     browsing.
 - **`policies`:** Cedar text keyed by id.
-- **`approvalRules`:** effect **classification** (§5). Typed and first-match, exactly like today's
-  rules, and validated by TypeBox.
+- **`approvalRules`** and **`unknownRisk`:** today's operator approval policy, unchanged in shape
+  (first-match, optional per-rule `decision`), validated by TypeBox (§5).
 - **`limits`:** numeric configuration, validated by TypeBox. Limits are not authorization, so they
   are not forced into Cedar.
 - **The document's version** is the SHA-256 of its canonical JSON, including the resolved baseline
@@ -213,10 +239,15 @@ combined with any policy-bearing variable or embedder option. Startup fails and 
 
 | Classification | Settings |
 |---|---|
-| **Policy-bearing** (moves into the document; conflicts with the file) | `ALLOW_LOOPBACK`, `ALLOWED_CIDRS`, `APPROVAL_POLICY`, `ServerOptions.approvalPolicy`, `ServerOptions.networkPolicy`, `MAX_RESPONSE_BYTES`, `EXTRACT_MAX_BYTES`, `INLINE_ARTIFACT_MAX_BYTES`, `DEFAULT_TTL_MS`, `DEFAULT_IDLE_TIMEOUT_MS` |
-| **Floor inputs** (stay variables; they describe the deployment, not grants) | `HOSTED`, `CDP_ENDPOINT` and `CDP_ALLOW_UNENFORCED_EGRESS`, which still enables attachment and its floor refusals; Cedar can only refuse further |
-| **Bootstrap** (stay variables) | `HOST`, `PORT`, `API_KEYS`, `ARTIFACT_KEY` (a secret), `CORS_ORIGINS` and `ALLOWED_HOSTS` (API-surface admission), file paths, `SNAPSHOT_TIMEOUT_MS` and other engine tuning |
+| **Policy-bearing** (moves into the document; conflicts with the file) | `ALLOW_LOOPBACK`, `ALLOWED_CIDRS`, `APPROVAL_POLICY`, `MAX_RESPONSE_BYTES`, `EXTRACT_MAX_BYTES`, `INLINE_ARTIFACT_MAX_BYTES`, `DEFAULT_TTL_MS` and `DEFAULT_IDLE_TIMEOUT_MS` (defaults that a session may still override within the protocol's bounds), and their embedder twins `ServerOptions.approvalPolicy`, `networkPolicy`, `extractMaxBytes`, `defaultTtlMs` and `defaultIdleTimeoutMs` |
+| **Floor inputs** (stay variables; they describe the deployment, not grants) | `HOSTED` and `ServerOptions.deploymentMode`; `CDP_ENDPOINT` and `CDP_ALLOW_UNENFORCED_EGRESS`, and `ServerOptions.operatorCdp`, which still enable attachment and its floor refusals; Cedar can only refuse further |
+| **Bootstrap** (stay variables) | `HOST`, `PORT`, `API_KEYS` and `ServerOptions.apiKeys`, `ARTIFACT_KEY` (a secret), `CORS_ORIGINS` / `corsOrigin` and `ALLOWED_HOSTS` (API-surface admission), `POLICY_FILE` and `POLICY_SHADOW`, file paths, logging (`LOG_LEVEL`), lifecycle (`SHUTDOWN_ON_STDIN_EOF`), and engine tuning (`SNAPSHOT_TIMEOUT_MS`, `EMPTY_DOM_*`, `ASSUME_DISPLAY`, `CHROME_PATH`, `PREFER_BUNDLED`) |
 | **Trusted operator configuration** (stays a variable; documented as security-relevant) | `CHROMIUM_ARGS`. Flags such as `--proxy-server` or `--host-resolver-rules` can undermine egress, so it is treated like the binary path: trusted, never caller-supplied |
+
+The table lists every setting at the time of writing; the policy guide keeps it current. The stock
+entrypoint (`packages/api/src/main.ts`) builds `networkPolicy` and `extractMaxBytes` from the
+environment and passes them on every start. With a policy file it stops doing so, so the conflict
+rule fires only on genuine double configuration.
 
 The policy-bearing variables are deprecated, with a startup warning, once the file ships. They are
 removed no earlier than 2.0.
@@ -227,8 +258,14 @@ Cedar returns permit or deny, ignores rule order, and cannot return data. Today'
 is first-match, classifies effects, and has three outcomes, so the work is split:
 
 - **Classification stays in TypeScript.** `approvalRules` in the document, or today's variable,
-  feed `ActionRiskPolicy`'s first-match classifier unchanged. It yields the action's effect, or
-  `unknown`.
+  feed `ActionRiskPolicy`'s first-match matcher unchanged, including each rule's optional
+  `decision` and the policy-wide `unknownRisk`. Both become fields of the document. The matcher
+  yields the action's effect (or `unknown`) and the id of the first matching rule (or none).
+- **Both reach Cedar in the context:** `context.effect` and `context.matchedRule`. A rule's own
+  `decision` is a generated policy keyed on its id: `deny` becomes a `forbid` on `act`, and
+  `allow` or `required` becomes a `permit` or `forbid` on `act.unattended`.
+- **`unknownRisk` is a parameter of the baseline**, written into the generated baseline policy for
+  `effect == "unknown"`. The baseline therefore stays a fixed, versioned template.
 - **Cedar decides from the effect,** which arrives in the context together with hostname, action,
   role and name. Two questions are asked:
   - `act`: may this action run at all? A deny means `POLICY_DENIED`.
@@ -254,7 +291,9 @@ caller supplies `tenantId` itself, both in `POST /v1/sessions` and through MCP `
 - policy evaluation uses one fixed implicit tenant, `AgentBrowser::Tenant::"local"`, whatever
   `tenantId` the caller sends;
 - a policy file that constrains any other tenant is **refused at startup** when no API keys are
-  configured.
+  configured. A "tenant constraint" is **any** `Tenant` entity literal anywhere in a policy,
+  conditions included, found by walking each policy's JSON form (`policyToJson`).
+- the name `local` is reserved, and a key tenant named `local` is refused at startup.
 
 Without these two rules, any unauthenticated caller could claim another tenant's grants by naming
 it.
@@ -266,8 +305,10 @@ tenant in no-keys mode.
 
 - **`GET /v1/policy`** returns:
   - the policy version and effective limits;
-  - a **capability summary**: for each capability (`cdpAttach`, `cookie.export`, `cookie.seed`,
-    `downloads`, `serviceWorkers`, `headed`, `delegated`), whether it is granted;
+  - a **capability summary**, keyed by the same names as the Cedar actions (`cdp.attach`,
+    `cookie.export`, `cookie.seed`, `downloads`, `serviceWorkers`, `session.headed`), saying
+    whether each is granted. `session.delegated` is listed as floor-only: it depends on
+    authentication, not on policy;
     - each answer is evaluated for a **default session** of this tenant, and the response says so,
       because session attributes (engine, headless, control mode) can change an answer;
     - where the answer depends on those attributes, it is reported as `conditional`, using Cedar
@@ -276,16 +317,23 @@ tenant in no-keys mode.
 - **`POST /v1/policy/check`** is a dry run that takes `{ action, url?, context? }`.
   - It never acts and never resolves DNS.
   - An IP literal is classified exactly as at request time.
-  - A hostname is evaluated with its address classes **unknown**, through partial evaluation. The
-    answer is `allowed`, `denied`, or `depends on resolved address` with the classes that would
-    change it. So it cannot be used as a DNS oracle for internal names.
+  - A hostname is decided **once per possible address-class combination**. The domain is finite
+    (`public`, `loopback`, `private`; metadata is floor), so each combination is a normal,
+    validated decision. The answer is `allowed`, `denied`, or `depends on resolved address`,
+    listing the class combinations that decide it. So it cannot be used as a DNS oracle for
+    internal names.
+  - **Without a policy file**, both routes answer through `LegacyAuthorizer` by the same
+    enumeration. Answers that would need partial evaluation are reported as `unconditional for a
+    default session`.
   - It is bounded in request size. A per-tenant rate limiter is **new** with this route: no HTTP
     rate limiter exists today, only session, connection and approval quotas.
 - **The MCP server gains a read-only `policy` tool** (get and check) in every mode.
 
 **Denials name their rule, without leaking.**
-- `POLICY_DENIED` and `APPROVAL_REQUIRED` populate `policyDecision`: `ruleMatched` gets the sorted
-  deciding policy ids and `reason` the `@reason` annotation.
+- `POLICY_DENIED` and `APPROVAL_REQUIRED` populate `policyDecision`. The protocol gains
+  `rulesMatched: string[]`: all deciding ids, sorted. It changes first, as ADR-015 requires. The
+  existing `ruleMatched` keeps the first of them, for compatibility, and `reason` carries its
+  `@reason` annotation.
 - A policy marked `@internal` is reported as `operator.policy`, with no `@reason`, so global
   `forbid` rules naming internal hosts are not disclosed.
 - Fixed refusals report `floor.<rule>`, engine errors `engine.error`, and Cedar's default deny
@@ -297,11 +345,15 @@ The egress choke point validates every request afresh. Host memoization was remo
 because it hid DNS changes and grew without bound. The design keeps both properties:
 
 - Address classes always come from the **fresh** classification of the current request.
-- Only the Cedar evaluation is cached, keyed by (session, action, host, the sorted class set, and
-  the action's declared context fields).
+- Only the Cedar evaluation is cached, keyed by (session, action, host, normalized address, the
+  sorted class set, and the action's declared context fields).
 - The cache is a per-session **LRU with a fixed entry bound**, as TD-BROWSER-9 requires for every
   collection. It is cleared at session close.
 - **A DNS change therefore changes the key, never the answer for the old key.**
+
+**`/health` reports only a boolean** for the authorizer's health, never policy details. In shadow
+mode a trap marks only the shadow unhealthy and never affects legacy decisions, and the
+performance gate measures shadow mode too, because it doubles evaluation.
 
 Every deny is logged at `warn` and every approval-required decision at `info`, through
 `StructuredLogger`. Each log line carries the policy version and rule ids.
