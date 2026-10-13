@@ -70,6 +70,7 @@ import {
   SecretManager,
   SessionCoordinator,
   SessionState,
+  tightenApprovalMode,
 } from '@agentbrowser/core';
 import type {
   EngineSession,
@@ -105,6 +106,7 @@ import {
   type NetworkPolicy,
   SessionHostPolicy,
 } from '@agentbrowser/policy';
+import { type Authorizer, approvalModeOf, LegacyAuthorizer } from '@agentbrowser/policy-engine';
 import type {
   ObservationRequest,
   OperatorApprovalView,
@@ -546,6 +548,8 @@ export class AgentBrowserService {
     import('@agentbrowser/protocol').ApprovalPolicy
   >();
   private readonly actionRiskPolicy: ActionRiskPolicy;
+  /** TD-BROWSER-15: operator decisions go through one seam; legacy until a policy file. */
+  private readonly authorizer: Authorizer;
   private readonly pages = new Map<string, PageContext>();
   private pageCounter = 0;
   /** Audit log of sessions terminated by engine crashes (TD-024). */
@@ -607,6 +611,7 @@ export class AgentBrowserService {
       this.evidenceSourceRegistry = evidenceSourceRegistry;
     }
     this.actionRiskPolicy = new ActionRiskPolicy(deps.approvalPolicy);
+    this.authorizer = new LegacyAuthorizer({ unknownRisk: this.actionRiskPolicy.unknownRiskMode });
     this.engine = deps.engine;
     for (const [name, engine] of Object.entries(deps.engines ?? {})) {
       this.engines.set(name, engine);
@@ -4611,12 +4616,17 @@ export class AgentBrowserService {
     const currentUrl = page.enginePage.getUrl
       ? await page.enginePage.getUrl()
       : (await page.enginePage.observe({})).url;
-    const { effect: risk, decision } = this.actionRiskPolicy.evaluate(
-      {
-        action: request.action,
-        url: currentUrl,
-        ...(element ? { element } : {}),
-      },
+    // Classify (first-match operator rule), decide through the Authorizer seam,
+    // then let the session's own approval policy tighten (never relax) it.
+    const classification = this.actionRiskPolicy.classify({
+      action: request.action,
+      url: currentUrl,
+      ...(element ? { element } : {}),
+    });
+    const risk = classification.effect;
+    const decision = tightenApprovalMode(
+      risk,
+      approvalModeOf(this.authorizer, classification),
       this.sessionApprovalPolicies.get(sessionId)
     );
     if (decision === 'allow') return;

@@ -39,6 +39,7 @@ agentbrowser/
 │   ├── engine-obscura/    # Obscura adapter — experimental, benchmark-only, unregistered
 │   ├── core/              # Session coordination, observation normalization, action execution
 │   ├── policy/            # Network egress policy (SSRF defense)
+│   ├── policy-engine/     # Authorizer seam for operator decisions (ADR-024; Cedar later)
 │   ├── extraction/        # Deterministic + model-adapter page extraction
 │   ├── testkit/           # FakeEngine for contract testing, test utilities
 │   ├── sdk-typescript/    # TypeScript client SDK
