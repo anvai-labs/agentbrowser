@@ -14,6 +14,7 @@ import {
   gracefulStop,
   serverCommand,
   withPath,
+  assertOwnerOnly,
 } from './package-acceptance.mjs';
 
 const diagnostics = Object.freeze({
@@ -840,4 +841,13 @@ test('serverCommand runs the POSIX launcher, or the server entry on Node on Wind
   assert.deepEqual(serverCommand('/srv', { platform: 'linux' }), [join('/srv', 'agentbrowser-server')]);
   assert.deepEqual(serverCommand('C:/srv', { platform: 'win32' }), [process.execPath, join('C:/srv', 'dist', 'bin.js')]);
   assert.deepEqual(serverCommand('/srv', { platform: 'win32', override: 'C:/b/agentbrowser-server.exe' }), ['C:/b/agentbrowser-server.exe']);
+});
+
+test('assertOwnerOnly: one non-inherited ACL entry on Windows', async () => {
+  const icacls = (stdout) => async () => ({ stdout });
+  const one = 'C:\\x\\c.json DESKTOP\\u:(F)\r\n\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n';
+  await assertOwnerOnly('C:\\x\\c.json', 'Cookie export', { platform: 'win32', run: icacls(one) });
+  const inherited = 'C:\\x\\c.json BUILTIN\\Administrators:(I)(F)\r\n            DESKTOP\\u:(I)(F)\r\n            NT AUTHORITY\\INTERACTIVE:(I)(M,DC)\r\n';
+  await assert.rejects(assertOwnerOnly('C:\\x\\c.json', 'Cookie export', { platform: 'win32', run: icacls(inherited) }), /not owner-only/);
+  await assert.rejects(assertOwnerOnly('C:\\x\\c.json', 'Cookie export', { platform: 'win32', run: icacls('C:\\x\\c.json DESKTOP\\u:(I)(F)\r\n') }), /inherited/);
 });

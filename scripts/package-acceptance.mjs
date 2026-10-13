@@ -244,6 +244,24 @@ export function serverCommand(root, { platform = process.platform, override } = 
 }
 
 /** Owns one process. A forced API kill is a failure: browser descendants are not proven drained. */
+/**
+ * A secret-bearing file must be readable by its owner only. POSIX: mode 0600.
+ * Windows ignores modes, so the CLI sets an ACL instead: exactly one,
+ * non-inherited access entry (the current user) — checked with icacls.
+ * (globalThis: workflow callbacks bind a parameter named `process`.)
+ */
+export async function assertOwnerOnly(path, label, { platform = globalThis.process.platform, run = runExecutable } = {}) {
+  if (platform !== 'win32') {
+    assert.equal((await stat(path)).mode & 0o777, 0o600, `${label} is not owner-only`);
+    return;
+  }
+  const icacls = join(globalThis.process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'icacls.exe');
+  const { stdout } = await run([icacls, path]);
+  const entries = stdout.split(/\r?\n/).filter((line) => /:\([A-Z]/.test(line));
+  assert.equal(entries.length, 1, `${label} is not owner-only: ${entries.map((e) => e.trim()).join('; ')}`);
+  assert.ok(!entries[0].includes('(I)'), `${label} keeps an inherited ACL entry: ${entries[0].trim()}`);
+}
+
 export async function withManagedChild(command, options, exercise) {
   const label = options.label ?? 'managed-child';
   const validLabel = (value) => typeof value === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(value);
@@ -771,7 +789,7 @@ async function workflow(baseUrl, key, fixture, process, options, report) {
           const exported = JSON.parse(bytes.toString('utf8'));
           assert.equal(receipt.count, exported.length);
           assert.ok(exported.some((entry) => entry.name === cookie.name && entry.value === cookie.value && entry.domain === cookie.domain && entry.path === cookie.path && entry.httpOnly === true), 'Export did not preserve cookie identity and HttpOnly');
-          assert.equal((await stat(outputPath)).mode & 0o777, 0o600, 'Cookie export is not owner-only');
+          await assertOwnerOnly(outputPath, 'Cookie export');
           await cookieCli(['session', 'cookies', id, '--output', outputPath], 1);
           assert.ok(bytes.equals(await readFile(outputPath)), 'Refused export overwrote an existing credential file');
           const restored = await cookieSession(['--cookies-file', outputPath]);

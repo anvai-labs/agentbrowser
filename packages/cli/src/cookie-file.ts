@@ -1,5 +1,3 @@
-import { constants } from 'node:fs';
-import { type FileHandle, open } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import {
   type SessionRequest,
@@ -7,6 +5,7 @@ import {
   validateSessionRequest,
 } from '@agentbrowser/sdk-typescript';
 import { createTextArgumentReader, MAX_JSON_INPUT_BYTES } from './json-input.js';
+import { PrivateFileError, writePrivateFile } from './private-file.js';
 
 type Cookie = NonNullable<SessionRequest['cookies']>[number];
 export const MAX_COOKIE_COUNT = 1000;
@@ -253,24 +252,16 @@ export async function writeCookieFile(path: string, value: unknown) {
   const text = `${JSON.stringify(cookies, null, 2)}\n`;
   if (Buffer.byteLength(text, 'utf8') > MAX_JSON_INPUT_BYTES)
     throw new UsageError('Cookie export exceeds 1048576 bytes.');
-  let file: FileHandle;
   try {
-    file = await open(
-      path,
-      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-      0o600
+    await writePrivateFile(path, text);
+  } catch (error) {
+    // A failed write retains the incomplete private file: removing it could
+    // delete a concurrent replacement at this pathname.
+    throw new UsageError(
+      error instanceof PrivateFileError && error.stage === 'write'
+        ? 'Could not write cookie output file.'
+        : 'Could not exclusively create cookie output file.'
     );
-  } catch {
-    throw new UsageError('Could not exclusively create cookie output file.');
-  }
-  try {
-    await file.writeFile(text, 'utf8');
-    await file.close();
-  } catch {
-    await file.close().catch(() => {});
-    // Retain incomplete private output: this pathname may now identify another file.
-    // Removing it after a failed write could delete a concurrent replacement.
-    throw new UsageError('Could not write cookie output file.');
   }
   return { count: cookies.length, path };
 }

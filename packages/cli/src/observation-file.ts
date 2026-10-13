@@ -1,37 +1,27 @@
 /**
  * Private observation capture: write the full observation JSON to a new
- * 0600 file (the cookie-export discipline — exclusive creation, no symlink
- * follow, never overwrite) and hand back a compact receipt so the bulk of
+ * owner-only file (private-file.ts: exclusive creation, no symlink follow,
+ * never overwrite; an owner-only ACL on Windows) and hand back a compact receipt so the bulk of
  * the bytes lands on disk instead of in the caller's context.
  */
-import { constants } from 'node:fs';
-import { type FileHandle, open } from 'node:fs/promises';
 import { UsageError } from '@agentbrowser/sdk-typescript';
+import { PrivateFileError, writePrivateFile } from './private-file.js';
 
 export async function writeObservationFile(path: string, observation: unknown) {
   // Minified: the file is machine-facing (jq, diff, archival evidence).
   const text = `${JSON.stringify(observation)}\n`;
-  let file: FileHandle;
   try {
-    file = await open(
-      path,
-      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-      0o600
-    );
+    await writePrivateFile(path, text);
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code ?? 'unknown';
+    if (error instanceof PrivateFileError && error.stage === 'write') {
+      // Retain incomplete private output: this pathname may now identify
+      // another file; removing it could delete a concurrent replacement.
+      throw new UsageError('Could not write observation output file.');
+    }
+    const code = error instanceof PrivateFileError ? error.code : 'unknown';
     throw new UsageError(
-      `Could not exclusively create observation output file (${code}: path exists, parent missing, is a symlink, or is not writable).`
+      `Could not exclusively create observation output file (${code}: path exists, parent missing, is a symlink, is not writable, or could not be made owner-only).`
     );
-  }
-  try {
-    await file.writeFile(text, 'utf8');
-    await file.close();
-  } catch {
-    await file.close().catch(() => {});
-    // Retain incomplete private output: this pathname may now identify
-    // another file; removing it could delete a concurrent replacement.
-    throw new UsageError('Could not write observation output file.');
   }
   return { path, bytes: Buffer.byteLength(text, 'utf8') };
 }
