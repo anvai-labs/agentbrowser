@@ -105,6 +105,7 @@ describe('NetworkPolicy egress exceptions hook', () => {
       { blockLoopback: true },
       { blockPrivateIPs: false },
       { allowedPrivateCIDRs: [] },
+      { blockLoopback: undefined }, // key present with no value
     ]) {
       expect(() => policy.updateConfig(update)).toThrow(
         'exceptions are owned by the injected hook'

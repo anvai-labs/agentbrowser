@@ -26,6 +26,8 @@ export interface NetworkPolicyOptions {
   maxLogEntries?: number;
   /**
    * Who decides the loopback and private exceptions (TD-BROWSER-15 phase 1).
+   * An injected hook is authoritative: `getConfig()` still reports the flags and
+   * CIDRs it was constructed with, which a caller must keep consistent with it.
    * Consulted only when the corresponding block is on. Default: never allow
    * loopback; allow private only when `allowedPrivateCIDRs` covers every source.
    * Metadata is never an exception.
@@ -459,9 +461,9 @@ export class NetworkPolicy {
     if (
       this.customExceptions !== undefined &&
       exceptions === undefined &&
-      (rest.blockLoopback !== undefined ||
-        rest.blockPrivateIPs !== undefined ||
-        rest.allowedPrivateCIDRs !== undefined)
+      // Key presence, not value: `{ blockLoopback: undefined }` would otherwise
+      // slip past and switch the block off.
+      ('blockLoopback' in rest || 'blockPrivateIPs' in rest || 'allowedPrivateCIDRs' in rest)
     ) {
       throw new Error(
         'Loopback and private exceptions are owned by the injected hook; replace the hook instead'
