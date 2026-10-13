@@ -69,7 +69,7 @@ const scopeDenial = (subCode: string, detail: string): NetworkPolicyError =>
  * FIFO-bounded (#447): past the bound the oldest hop is forgotten, and a
  * forgotten hop that is re-submitted is charged again — over-charging only,
  * so the budget can end sooner, never later. A session reaches the bound only
- * after ~200 redirect-heavy navigations.
+ * 41+ redirect-saturated navigations at the transport's 100-hop cap (~410 at the default).
  */
 export const CHAIN_SPENT_BOUND = 4096;
 
