@@ -54,9 +54,10 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
     `floor.cdp.egress`, `floor.cdp.disabled`, `floor.cdp.auth_required`, `floor.cdp.options`,
     `floor.cdp.profile_options` and `floor.cdp.cookie_export`;
   - `floor.delegated.operator` on controlled-session creation without operator credentials, and on
-    the operator-only control, approval and review checks. Delegated agent credentials are usually
-    refused earlier by their mode profile's capability gate, which is an operator choice and so
-    carries no floor rule.
+    the operator-only control, approval and review checks. A caller without credentials on a
+    keyless local service sees this rule. Delegated agent credentials are always refused earlier on
+    these routes by their mode profile's capability gate, which is an operator choice and so carries
+    no floor rule.
 
   Existing `details.reason` codes are unchanged.
 

@@ -296,3 +296,22 @@ it.each([
     }
   }
 );
+
+it('names the operator floor on operator-only routes of a keyless local service', async () => {
+  // Without API keys there is no principal, so the operator check itself refuses.
+  const app = await buildServer({ engine: new FakeEngine() });
+  try {
+    for (const [method, url] of [
+      ['POST', '/v1/sessions/s1/control/takeover'],
+      ['POST', '/v1/sessions/s1/control/delegate'],
+    ] as const) {
+      const response = await app.inject({ method, url, payload: {} });
+      expect(response.statusCode).toBe(403);
+      expect(response.json()).toMatchObject({
+        error: { code: 'FORBIDDEN', details: { rule: 'floor.delegated.operator' } },
+      });
+    }
+  } finally {
+    await app.close();
+  }
+});

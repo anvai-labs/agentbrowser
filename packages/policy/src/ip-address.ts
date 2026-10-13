@@ -122,7 +122,11 @@ const METADATA_SHORT_NAMES = new Set(['metadata', 'instance-data']); // GCP, AWS
  * Repeated trailing dots are stripped too.
  */
 export function isMetadataHostname(hostname: string): boolean {
-  const name = hostname.toLowerCase().replace(/\.+$/, '');
+  // Strip trailing dots with a linear scan. A /\.+$/ regex backtracks
+  // quadratically on interior dot runs, and page content controls hostnames.
+  let end = hostname.length;
+  while (end > 0 && hostname.charCodeAt(end - 1) === 0x2e) end--;
+  const name = hostname.slice(0, end).toLowerCase();
   return (
     METADATA_SHORT_NAMES.has(name) ||
     METADATA_DOMAINS.some((domain) => name === domain || name.endsWith(`.${domain}`))

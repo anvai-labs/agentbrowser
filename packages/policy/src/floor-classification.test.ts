@@ -225,3 +225,24 @@ describe('metadata hostnames: trailing dot and short names', () => {
     }
   });
 });
+
+describe('hostile hostnames stay linear', () => {
+  // Review round 2: /\.+$/ backtracked quadratically on interior dot runs, and a
+  // page can make the engine check any such hostname (fetch('http://a....b/')).
+  it('classifies a 100k interior-dot hostname in linear time, twice per request', async () => {
+    const hostname = `a${'.'.repeat(100_000)}b`;
+    const policy = new NetworkPolicy({ blockMetadata: true });
+    const started = performance.now();
+    for (let i = 0; i < 5; i++) {
+      await expect(policy.checkRequest({ hostname })).resolves.toBeUndefined();
+    }
+    expect(performance.now() - started).toBeLessThan(250);
+  });
+
+  it('still strips any number of trailing dots', async () => {
+    const policy = new NetworkPolicy({ blockMetadata: true });
+    await expect(
+      policy.checkRequest({ hostname: `metadata${'.'.repeat(100_000)}` })
+    ).rejects.toMatchObject({ details: { rule: 'blockMetadata' } });
+  });
+});
