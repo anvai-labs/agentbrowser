@@ -47,6 +47,27 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - **Acceptance:** the extracted-package acceptance requires the SDDL DACL to be exactly
   `D:P(A;;FA;;;<current user SID>)`.
 
+### Fixed — Windows service: shipped as the bundled-Node zip
+
+- **The single-file `agentbrowser-server-windows-x64.exe` is retired.** v1.17.0's copy failed on
+  every machine but CI with `Cannot find module 'D:\a\agentbrowser\…'`, because Bun froze
+  playwright-core's `__dirname` lookups to the build checkout, and Playwright cannot be
+  single-file bundled.
+- **The release's new `windows-bundle` job** builds `agentbrowser-windows-x64.zip` on a hosted
+  Windows runner and clean-room smoke-tests it before anything publishes. It contains:
+  - the launcher;
+  - the same CLI and MCP executables as the standalone assets;
+  - Node 24.21.0;
+  - the lockfile-pinned server tree.
+
+  npm publishing and the GitHub release both wait for that job.
+- **winget** installs the zip as one package. Its nested `agentbrowser-server.exe`,
+  `agentbrowser-cli.exe` and `agentbrowser-mcp.exe` keep their command aliases. The package
+  description now says what is installed: a bundled Node.js runtime, with Chromium downloaded on
+  first start. It no longer claims "no Node.js runtime is required".
+- `scripts/release-workflow.test.mjs` guards that structure, so the single-file server exe
+  can't come back.
+
 ### Added — Windows bundle assembly and clean-room smoke
 
 - `scripts/assemble-windows-bundle.mjs` builds `agentbrowser-windows-x64.zip`, a flat zip

@@ -5,7 +5,8 @@
 // Why one zip: winget allows a single installer per architecture/type/scope
 // combination, so three bare portable exes in one package fail validation
 // as duplicate installer entries. The release publishes
-// agentbrowser-windows-x64.zip (built in release.yml from the three exes);
+// agentbrowser-windows-x64.zip (scripts/assemble-windows-bundle.mjs: the three
+// exes plus the bundled node\ runtime and server\ tree);
 // the manifest declares it as `InstallerType: zip` with
 // `NestedInstallerType: portable` and one NestedInstallerFiles entry per
 // command, so a single `winget install AnvaiLabs.AgentBrowser` provisions
@@ -50,12 +51,14 @@ const version = arg('version');
 const outDir = arg('out', 'winget');
 const base = arg('base-url', DEFAULT_BASE).replace(/\/+$/, '');
 const zipName = 'agentbrowser-windows-x64.zip';
-// RelativeFilePath -> PortableCommandAlias; names match the release exes
-// that release.yml zips with `zip -j` (bare names, no directories).
+// RelativeFilePath -> PortableCommandAlias: the file names inside the bundle
+// built by scripts/assemble-windows-bundle.mjs (flat zip). winget extracts the
+// whole zip into the package directory, so the server launcher finds its
+// bundled node\ and server\ beside it.
 const COMMANDS = [
-  ['agentbrowser-mcp-windows-x64.exe', 'agentbrowser-mcp'],
-  ['agentbrowser-cli-windows-x64.exe', 'agentbrowser-cli'],
-  ['agentbrowser-server-windows-x64.exe', 'agentbrowser-server'],
+  ['agentbrowser-mcp.exe', 'agentbrowser-mcp'],
+  ['agentbrowser-cli.exe', 'agentbrowser-cli'],
+  ['agentbrowser-server.exe', 'agentbrowser-server'],
 ];
 const zipFile = arg('zip-file');
 let zipSha = arg('zip-sha256');
@@ -111,11 +114,12 @@ License: Apache-2.0
 LicenseUrl: https://github.com/anvai-labs/agentbrowser/blob/main/LICENSE
 ShortDescription: Browser automation for AI agents - MCP server, CLI and browser service
 Description: |-
-  AgentBrowser drives a real Chromium/Chrome browser for AI agents and test
+  AgentBrowser drives a real Chromium browser for AI agents and test
   automation. This package installs the Model Context Protocol server
   (agentbrowser-mcp), the command-line client (agentbrowser-cli) and the
-  browser service (agentbrowser-server) as standalone executables. System
-  Chrome is auto-detected; no Node.js runtime is required.
+  browser service (agentbrowser-server). The service runs on its own
+  bundled Node.js runtime; on first start it downloads the Chromium build it
+  needs (roughly 300 MB) into %LOCALAPPDATA%\\agentbrowser\\browsers.
 Moniker: agentbrowser
 Tags:
 - mcp
