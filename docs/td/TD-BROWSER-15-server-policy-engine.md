@@ -121,7 +121,26 @@ the build by `tsconfig.build.json`.
   `LegacyConfig` against `LegacyAuthorizer`, comparing `allowed` and `ruleMatched`.
 - Egress contexts come from the real `NetworkPolicy` path, and approval contexts from
   `ActionRiskPolicy.classify()`.
-- It holds for `LegacyAuthorizer` itself, and five deliberately broken subjects are caught.
+- It holds for `LegacyAuthorizer` itself.
+- A table of every effect × rule decision × `unknownRisk` runs on every call, deterministically.
+- Generated inputs include:
+  - first, last and one-past addresses of every configured CIDR;
+  - local-use NAT64 addresses with several private sources;
+  - explicit rule ids;
+  - absent and varied tenants.
+- 22 plausible-but-wrong subjects from its adversarial review must each be caught on every seed
+  (`differential-mutants.test.ts`).
+
+**Prerequisites this sets for phase 3:**
+- **Private sources, not one address.** A `request.private` context can carry **several private
+  sources**: the wrapper and each embedded IPv4. An exception must cover every one. A single
+  `context.ip` cannot express that, so the schema models the sources as a set, and the generated
+  CIDR policies require every source to be in range. The mutant suite catches `some`, first-only
+  and wrapper-only variants.
+- **A wider act context.** Once Cedar matches on the act context, it needs the `hostname`, `action`,
+  `role` and `name` the TD lists, and the generators must widen with it: uppercase hosts, IPv6 and
+  invalid URLs. Today first-match and hostname case are decided by `ActionRiskPolicy`, outside the
+  subject.
 
 A property-based harness generates the inputs below. It adds `fast-check` as a new dev-only
 dependency; none exists today.

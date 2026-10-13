@@ -81,6 +81,7 @@ describe('differential oracle', () => {
     expect(asked.map((r) => r.action)).toEqual([
       'request.loopback', // localhost by name
       'request.loopback', // [::1] is loopback...
+      'request.private', // ...and private: both are asked, as in production
       'request.private', // 10.0.0.1
       'request.loopback', // NAT64 of 127.0.0.1
     ]);

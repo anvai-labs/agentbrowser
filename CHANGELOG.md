@@ -13,7 +13,10 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   (contexts from the real `NetworkPolicy` path), approvals (from `ActionRiskPolicy.classify()`) and
   every capability, over generated configurations: loopback, CIDRs, `unknownRisk` and approval
   rules.
-  - It holds for `LegacyAuthorizer`, and catches deliberately broken subjects.
+  - It holds for `LegacyAuthorizer` and runs a deterministic table of every approval combination.
+  - It probes the first, last and one-past addresses of every CIDR, and contexts with several
+    private sources.
+  - 22 plausible-but-wrong subjects from review must each be caught on every seed.
   - Phase 3 runs it against Cedar.
   - It is test-only, with `fast-check` as a dev dependency, and it is not in the build.
 

@@ -8,7 +8,7 @@
  * ActionRiskPolicy.classify), never re-derived here, so the oracle cannot
  * drift from what enforcement actually asks.
  *
- * Test-only: excluded from the build (tsconfig `**\/*.harness.ts`).
+ * Test-only: excluded from the build by tsconfig.build.json.
  */
 import { ActionRiskPolicy, type ActionRiskRule } from '@agentbrowser/core';
 import { type EgressExceptionContext, NetworkPolicy } from '@agentbrowser/policy';
@@ -27,13 +27,16 @@ export interface LegacyConfig {
 
 const CIDRS = [
   '10.0.0.0/8',
+  '10.10.10.0/24',
   '192.168.1.0/24',
+  '192.168.0.0/16',
   '172.16.0.0/12',
   '100.64.0.0/10',
   'fd12::/32',
   '0.0.0.0/0',
   '::/0',
   '64:ff9b::/96',
+  '64:ff9b:1::/48',
   '127.0.0.0/8',
   '::1/128',
   'fe80::/10',
@@ -42,7 +45,7 @@ const HOSTS = ['shop.example', 'mail.example', 'bank.example'];
 const ACTIONS = ['click', 'fill', 'hover', 'scroll', 'wait', 'press', 'select', 'typeText'];
 const ROLES = ['button', 'link', 'textbox', 'checkbox'];
 const NAMES = ['Pay', 'Send', 'Search', 'Delete'];
-const EFFECTS = [
+export const EFFECTS = [
   'read',
   'write-local',
   'transaction',
@@ -50,8 +53,8 @@ const EFFECTS = [
   'external-message',
   'destructive',
 ] as const;
-const MODES = ['allow', 'required', 'deny'] as const;
-const CAPABILITIES: CapabilityAction[] = [
+export const MODES = ['allow', 'required', 'deny'] as const;
+export const CAPABILITIES: CapabilityAction[] = [
   'cdp.attach',
   'downloads',
   'serviceWorkers',
@@ -59,10 +62,12 @@ const CAPABILITIES: CapabilityAction[] = [
   'cookie.export',
   'session.headed',
 ];
+/** Absent tenant (keyless), and several tenants. */
+const TENANTS = [undefined, 't1', 't2', 'tenant-with-a-longer-name'];
 
 const optional = <T>(arb: fc.Arbitrary<T>) => fc.option(arb, { nil: undefined });
 
-export const ruleArb: fc.Arbitrary<ActionRiskRule> = fc
+const ruleArb: fc.Arbitrary<ActionRiskRule> = fc
   .record({
     hostname: optional(fc.constantFrom(...HOSTS)),
     action: optional(fc.constantFrom(...ACTIONS)),
@@ -82,14 +87,22 @@ export const ruleArb: fc.Arbitrary<ActionRiskRule> = fc
     return rule;
   });
 
+/** Rules, some carrying a unique explicit id (else they are `rule-<index>`). */
+const rulesArb: fc.Arbitrary<ActionRiskRule[]> = fc
+  .array(fc.tuple(ruleArb, fc.boolean()), { maxLength: 6 })
+  .map((pairs) => pairs.map(([rule, named], i) => (named ? { ...rule, id: `op-${i}.x` } : rule)));
+
 export const configArb: fc.Arbitrary<LegacyConfig> = fc.record({
   allowLoopback: fc.boolean(),
   allowedPrivateCIDRs: fc.uniqueArray(fc.constantFrom(...CIDRS), { maxLength: 3 }),
   unknownRisk: fc.constantFrom('allow' as const, 'required' as const),
-  rules: fc.array(ruleArb, { maxLength: 6 }),
+  rules: rulesArb,
 });
 
-const v4 = fc.tuple(fc.nat(255), fc.nat(255), fc.nat(255), fc.nat(255)).map((o) => o.join('.'));
+// --- addresses -------------------------------------------------------------
+
+const octet = fc.nat(255);
+const v4 = fc.tuple(octet, octet, octet, octet).map((o) => o.join('.'));
 const special4 = fc.constantFrom(
   '127.0.0.1',
   '10.1.2.3',
@@ -100,11 +113,24 @@ const special4 = fc.constantFrom(
   '198.18.0.1',
   '0.0.0.0'
 );
-const hex = (n: number) => n.toString(16);
+const hex16 = (a: number, b: number) => ((a << 8) | b).toString(16);
 const asV6 = (a: string) => {
   const [p, q, r, s] = a.split('.').map(Number) as [number, number, number, number];
-  return `${hex((p << 8) | q)}:${hex((r << 8) | s)}`;
+  return `${hex16(p, q)}:${hex16(r, s)}`;
 };
+const privateOrSpecial4 = fc.oneof(special4, v4);
+
+/**
+ * RFC 8215 local-use NAT64 carrying two IPv4s in different RFC 6052 layouts
+ * (A in the /48 slot, B in the /96 slot). The wrapper and both IPv4s can be
+ * private, so the context has several private sources: the case where every
+ * source must be covered, not one.
+ */
+const localUseNat64 = fc.tuple(privateOrSpecial4, privateOrSpecial4).map(([a, b]) => {
+  const [a0, a1, a2, a3] = a.split('.').map(Number) as [number, number, number, number];
+  return `64:ff9b:1:${hex16(a0, a1)}:${hex16(0, a2)}:${hex16(a3, 0)}:${asV6(b)}`;
+});
+
 /** IPv4, IPv6 and the embedded forms #444 decodes. */
 export const addressArb: fc.Arbitrary<string> = fc.oneof(
   v4,
@@ -114,6 +140,7 @@ export const addressArb: fc.Arbitrary<string> = fc.oneof(
   special4.map((a) => `2002:${asV6(a)}::1`),
   special4.map((a) => `::${asV6(a)}`),
   special4.map((a) => `::ffff:0:${asV6(a)}`),
+  localUseNat64,
   fc.constantFrom(
     '::1',
     '::',
@@ -129,6 +156,40 @@ export const hostnameArb: fc.Arbitrary<string> = fc.oneof(
   addressArb.map((a) => (a.includes(':') ? `[${a}]` : a))
 );
 
+/** First, last and one-past-either-end of a CIDR, so prefix off-by-ones are hit. */
+export function cidrBoundaries(cidr: string): string[] {
+  const [base = '', bits = '0'] = cidr.split('/');
+  const prefix = Number(bits);
+  if (base.includes(':')) {
+    const words = expandV6(base);
+    const value = words.reduce((acc, w) => (acc << 16n) | BigInt(w), 0n);
+    const host = 128n - BigInt(prefix);
+    const first = (value >> host) << host;
+    const last = first | ((1n << host) - 1n);
+    const max = (1n << 128n) - 1n;
+    return [first, last, first - 1n, last + 1n].filter((x) => x >= 0n && x <= max).map(fromV6);
+  }
+  const value = base.split('.').reduce((acc, o) => acc * 256 + Number(o), 0);
+  const size = 2 ** (32 - prefix);
+  const first = Math.floor(value / size) * size;
+  const last = first + size - 1;
+  return [first, last, first - 1, last + 1]
+    .filter((x) => x >= 0 && x <= 0xffffffff)
+    .map((x) => [x >>> 24, (x >>> 16) & 255, (x >>> 8) & 255, x & 255].join('.'));
+}
+function expandV6(address: string): number[] {
+  const [head = '', tail] = address.split('::') as [string, string | undefined];
+  const left = head === '' ? [] : head.split(':');
+  const right = tail === undefined || tail === '' ? [] : tail.split(':');
+  const fill = tail === undefined ? [] : Array<string>(8 - left.length - right.length).fill('0');
+  return [...left, ...fill, ...right].map((w) => Number.parseInt(w, 16));
+}
+function fromV6(value: bigint): string {
+  const words: string[] = [];
+  for (let i = 7; i >= 0; i--) words.push(((value >> BigInt(i * 16)) & 0xffffn).toString(16));
+  return words.join(':');
+}
+
 export const actInputArb = fc.record({
   action: fc.constantFrom(...ACTIONS),
   url: fc.constantFrom('about:blank', ...HOSTS.map((h) => `https://${h}/`)),
@@ -142,7 +203,12 @@ export const actInputArb = fc.record({
   ),
 });
 
-/** Every egress question enforcement asks for these targets, from the real path. */
+/**
+ * Every egress question enforcement asks for these targets, from the real path.
+ * The capture ALLOWS, so each check continues past it: an address that is both
+ * loopback and private (`::1`) is asked both questions, as production asks
+ * `request.private` after a loopback exception.
+ */
 export async function egressRequests(
   hosts: string[],
   addresses: string[]
@@ -151,7 +217,7 @@ export async function egressRequests(
   const capture =
     (action: 'request.loopback' | 'request.private') => (context: EgressExceptionContext) => {
       asked.push({ action, context });
-      return false; // keep asking: deny so every decision point runs
+      return true;
     };
   const policy = new NetworkPolicy({
     blockLoopback: true,
@@ -170,23 +236,80 @@ function same(a: PolicyDecision, b: PolicyDecision): boolean {
   return a.allowed === b.allowed && a.ruleMatched === b.ruleMatched;
 }
 
+function compare(oracle: Authorizer, subject: Authorizer, requests: AuthorizationRequest[]): void {
+  for (const request of requests) {
+    const expected = oracle.decide(request);
+    let actual: PolicyDecision;
+    try {
+      actual = subject.decide(request);
+    } catch (error) {
+      throw new Error(
+        `Divergence on ${request.action}: the subject threw (${(error as Error).message}); expected ${JSON.stringify(expected)}; context ${JSON.stringify(request.context)}`
+      );
+    }
+    if (!same(expected, actual)) {
+      throw new Error(
+        `Divergence on ${request.action}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}; context ${JSON.stringify(request.context)}`
+      );
+    }
+  }
+}
+
+const legacyFor = (config: LegacyConfig) =>
+  new LegacyAuthorizer({
+    allowLoopback: config.allowLoopback,
+    allowedPrivateCIDRs: config.allowedPrivateCIDRs,
+    unknownRisk: config.unknownRisk,
+  });
+
 /**
- * Assert `subjectFor(config)` decides exactly like LegacyAuthorizer(config).
- * Throws (fast-check counterexample) on the first difference.
+ * Assert `subjectFor(config)` decides exactly like LegacyAuthorizer(config):
+ * a deterministic table of every approval combination, then generated runs.
  */
 export async function assertEquivalentToLegacy(
   subjectFor: (config: LegacyConfig) => Authorizer,
   options: { numRuns?: number; seed?: number } = {}
 ): Promise<void> {
+  assertApprovalTable(subjectFor);
   try {
     await runProperty(subjectFor, options);
   } catch (error) {
-    // fast-check 4 keeps the failing check's error in `cause`; surface it, so a
-    // divergence names the request, both decisions and the context.
+    // fast-check 4 keeps the failing check's error in `cause`; surface it.
     const cause = (error as Error).cause;
     throw new Error(`${(error as Error).message}\n${cause instanceof Error ? cause.message : ''}`, {
       cause: error,
     });
+  }
+}
+
+/** Every effect x rule decision x unknownRisk, deterministically (rare combinations included). */
+export function assertApprovalTable(subjectFor: (config: LegacyConfig) => Authorizer): void {
+  for (const unknownRisk of ['allow', 'required'] as const) {
+    const config: LegacyConfig = {
+      allowLoopback: false,
+      allowedPrivateCIDRs: [],
+      unknownRisk,
+      rules: [],
+    };
+    const oracle = legacyFor(config);
+    const subject = subjectFor(config);
+    const requests: AuthorizationRequest[] = [];
+    for (const effect of [...EFFECTS, 'unknown'] as const) {
+      for (const decision of [undefined, ...MODES]) {
+        for (const id of ['rule-0', 'op-1.x']) {
+          const rule = decision === undefined ? { id } : { id, decision };
+          for (const context of [{ effect }, { effect, rule }]) {
+            requests.push({ action: 'act', context }, { action: 'act.unattended', context });
+          }
+        }
+      }
+    }
+    for (const tenantId of TENANTS) {
+      for (const action of CAPABILITIES) {
+        requests.push({ action, context: tenantId === undefined ? {} : { tenantId } });
+      }
+    }
+    compare(oracle, subject, requests);
   }
 }
 
@@ -200,19 +323,18 @@ async function runProperty(
       fc.array(hostnameArb, { maxLength: 6 }),
       fc.array(addressArb, { maxLength: 6 }),
       fc.array(actInputArb, { maxLength: 6 }),
-      async (config, hosts, addresses, inputs) => {
-        const oracle = new LegacyAuthorizer({
-          allowLoopback: config.allowLoopback,
-          allowedPrivateCIDRs: config.allowedPrivateCIDRs,
-          unknownRisk: config.unknownRisk,
-        });
+      fc.constantFrom(...TENANTS),
+      async (config, hosts, addresses, inputs, tenantId) => {
+        const oracle = legacyFor(config);
         const subject = subjectFor(config);
         const classify = new ActionRiskPolicy({
           rules: config.rules,
           unknownRisk: config.unknownRisk,
         });
+        // Boundaries of every configured CIDR, so prefix errors are always probed.
+        const boundaries = config.allowedPrivateCIDRs.flatMap(cidrBoundaries);
         const requests: AuthorizationRequest[] = [
-          ...(await egressRequests(hosts, addresses)),
+          ...(await egressRequests(hosts, [...addresses, ...boundaries])),
           ...inputs.flatMap((input) => {
             const context = classify.classify(input as Parameters<ActionRiskPolicy['classify']>[0]);
             return [
@@ -220,17 +342,12 @@ async function runProperty(
               { action: 'act.unattended', context } as const,
             ];
           }),
-          ...CAPABILITIES.map((action) => ({ action, context: { tenantId: 't1' } })),
+          ...CAPABILITIES.map((action) => ({
+            action,
+            context: tenantId === undefined ? {} : { tenantId },
+          })),
         ];
-        for (const request of requests) {
-          const expected = oracle.decide(request);
-          const actual = subject.decide(request);
-          if (!same(expected, actual)) {
-            throw new Error(
-              `Divergence on ${request.action}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}; context ${JSON.stringify(request.context)}`
-            );
-          }
-        }
+        compare(oracle, subject, requests);
       }
     ),
     {
