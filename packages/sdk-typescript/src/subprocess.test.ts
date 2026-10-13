@@ -300,17 +300,24 @@ describe('managed subprocess server', () => {
     });
 
     it('quiets the child through the variable the server reads', async () => {
-      vi.stubEnv('AGENTBROWSER_LOG_LEVEL', undefined as unknown as string);
+      vi.stubEnv('AGENTBROWSER_LOG_LEVEL', undefined);
       const server = await startServer();
       expect(spawnedEnv().AGENTBROWSER_LOG_LEVEL).toBe('error');
       expect(spawnedEnv()).not.toHaveProperty('AGENTBROWSER_LOG');
       await server.stop();
     });
 
-    it('leaves an operator-set AGENTBROWSER_LOG_LEVEL to pass through', async () => {
+    it('sends an operator-set AGENTBROWSER_LOG_LEVEL explicitly, for any launcher', async () => {
       vi.stubEnv('AGENTBROWSER_LOG_LEVEL', 'debug');
       const server = await startServer();
-      expect(spawnedEnv()).not.toHaveProperty('AGENTBROWSER_LOG_LEVEL');
+      expect(spawnedEnv().AGENTBROWSER_LOG_LEVEL).toBe('debug');
+      await server.stop();
+    });
+
+    it('treats a blank AGENTBROWSER_LOG_LEVEL as unset', async () => {
+      vi.stubEnv('AGENTBROWSER_LOG_LEVEL', '  ');
+      const server = await startServer();
+      expect(spawnedEnv().AGENTBROWSER_LOG_LEVEL).toBe('error');
       await server.stop();
     });
   });

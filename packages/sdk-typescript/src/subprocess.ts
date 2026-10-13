@@ -91,12 +91,12 @@ export async function createManagedServer(
   const baseUrl = `http://127.0.0.1:${port}`;
 
   // The child's stdout (its JSON log) is discarded below, so default it to
-  // errors only; an operator's own AGENTBROWSER_LOG_LEVEL passes through.
+  // errors only. An operator's own non-blank AGENTBROWSER_LOG_LEVEL wins; it is
+  // sent explicitly so custom launchers, which get only this env, see it too.
+  const callerLogLevel = process.env.AGENTBROWSER_LOG_LEVEL?.trim();
   const child = launcher.spawn('node', options.serverArgs ?? ['dist/server.js'], {
     PORT: String(port),
-    ...(process.env.AGENTBROWSER_LOG_LEVEL === undefined
-      ? { AGENTBROWSER_LOG_LEVEL: 'error' }
-      : {}),
+    AGENTBROWSER_LOG_LEVEL: callerLogLevel || 'error',
   });
 
   let running = true;
