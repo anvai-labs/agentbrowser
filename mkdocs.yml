@@ -165,6 +165,7 @@ nav:
     - '020 Inline Html Verification': adr/020-inline-html-verification.md
     - '021 Form Controls Enrichment': adr/021-form-controls-enrichment.md
     - '022 Compact Identifiers And Cli Context': adr/022-compact-identifiers-and-cli-context.md
+    - '023 Windows Server Bundled Node': adr/023-windows-server-bundled-node.md
   - Technical designs:
     - 'Td Browser 10 Session Extension Loading': td/TD-BROWSER-10-session-extension-loading.md
     - 'Td Browser 11 Session Initial Page Race': td/TD-BROWSER-11-session-initial-page-race.md

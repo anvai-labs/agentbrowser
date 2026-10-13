@@ -7,6 +7,22 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Docs — Windows install, ADR-023, environment-variable reference
+
+- **Windows install docs.** README, the docs home page and the operations guide gain a Windows
+  section: winget or the zip, first-start Chromium, `--install-browser`, `AGENTBROWSER_HOME`,
+  `AGENTBROWSER_SKIP_BROWSER_INSTALL`, no Windows-service registration, and unsigned executables.
+  The operations guide also gains Windows troubleshooting: proxies, partial upgrades,
+  `winget upgrade` with files in use, long paths, antivirus, and owner-only credential files
+  under Constrained Language Mode.
+- **ADR-023** records why the Windows server ships as a bundled-Node zip, not a single-file
+  executable.
+- **Environment-variable reference.** The configuration table now covers every operator-facing
+  `AGENTBROWSER_*` variable, including several that appeared only in code and others documented
+  only in package READMEs or prose. Test-harness and internal variables are listed as such.
+  `AGENTBROWSER_LOG`, which the SDK sets, is noted as unread by the service.
+- **Correction:** the stale "Windows server exe is Bun-compiled" paragraph is replaced.
+
 ### Changed — extracted-package acceptance runs on Windows
 
 - **Graceful stop works on Windows.** `scripts/package-acceptance.mjs` stops managed children
@@ -106,9 +122,10 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   derives a location from `__dirname` or `import.meta`; a test enforces both. v1.17.0's single-file
   server exe failed on every machine but CI because Bun froze Playwright's `__dirname` lookups to the
   build checkout.
-- **Install root:** `AGENTBROWSER_HOME` when set (and then only it; an incomplete one fails loudly),
-  else the real executable's directory (following winget's Links symlink), else the invoked path. It refuses an incomplete bundle, and a server tree
-  whose `VERSION.json` doesn't match the launcher.
+- **Install root:** `AGENTBROWSER_HOME` when set, and then only it (an incomplete one fails
+  loudly); else the real executable's directory, following winget's Links symlink; else the
+  invoked path. An incomplete bundle is refused, and so is a server tree whose `VERSION.json`
+  doesn't match the launcher.
 - **Chromium:** downloaded on first start into `%LOCALAPPDATA%\agentbrowser\browsers`, unless
   `PLAYWRIGHT_BROWSERS_PATH` is set. Missing builds are detected the way Playwright detects them
   (`browsers.json` revision plus the `INSTALLATION_COMPLETE` marker). `--install-browser`
@@ -180,6 +197,17 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [1.17.0] — 2026-10-12
 
+> **Known issue (Windows, v1.15.2 through v1.17.0):** `agentbrowser-server-windows-x64.exe` fails
+> at startup on every machine except the build runner, with
+> `Cannot find module 'D:\a\agentbrowser\…'`. Bun froze playwright-core's `__dirname` lookups
+> to the CI checkout. An `agentbrowser-windows-x64.zip` attached to v1.17.0 after release wrapped
+> the same executable and has since been removed from that release; each affected release now
+> carries a known-issue banner. A winget submission for 1.17.0
+> (microsoft/winget-pkgs#451310) was closed unmerged for this reason. Fixed in the next release,
+> which ships the Windows service as a bundled-Node `agentbrowser-windows-x64.zip`
+> ([ADR-023](docs/adr/023-windows-server-bundled-node.md)). The Windows CLI and MCP executables
+> are unaffected.
+
 ### Security — browser request guard, CORS off by default, dependency advisories
 
 - **Drive-by control of the local service closed.** The no-keys local service sent
@@ -235,6 +263,10 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   (`agentbrowser-mcp`, `agentbrowser-cli`, `agentbrowser-server`) generated from the
   windows release exes; `winget install AnvaiLabs.AgentBrowser` provisions all three
   with no Node runtime. Manifests always upload as a workflow artifact.
+  *Correction (2026-10-12):* these manifests were invalid (three portable installers for one
+  architecture, and no `DefaultLocale`), so no winget package was published from 1.16.1. The
+  1.16.1 server executable they would have installed also did not start outside CI. See the
+  1.17.0 known issue above and the Unreleased Windows entries.
 - **App-based submission (no user credential)**: a GitHub App installed on
   `anvai-labs/winget-pkgs` pushes the manifests branch per release (per-run
   installation tokens via `WINGET_APP_ID`/`WINGET_APP_PRIVATE_KEY`); the PR into
