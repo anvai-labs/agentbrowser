@@ -7,6 +7,19 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Changed — extracted-package acceptance runs on Windows
+
+- **Graceful stop works on Windows.** `scripts/package-acceptance.mjs` stops managed children
+  with SIGTERM on POSIX, as service managers do. On Windows, SIGTERM is `TerminateProcess`, so
+  the harness instead uses the server's stdin lifeline (`AGENTBROWSER_SHUTDOWN_ON_STDIN_EOF`) or
+  closes the injected child's IPC channel.
+- **A child counts as finished** once it has exited and both its output streams have closed,
+  which still captures late output. Node never emits `close` after the parent disconnects IPC,
+  so waiting for `close` would hang on Windows.
+- **Running the server.** The server under test is the POSIX launcher in the tree, or on Windows
+  the server entry on Node. A new `--server-command` option runs a given executable instead,
+  such as the Windows bundle's launcher.
+
 ### Added — Windows server launcher
 
 - New `packages/api/src/launcher/`, compiled by `packages/api/scripts/compile-launcher.mjs` into the
