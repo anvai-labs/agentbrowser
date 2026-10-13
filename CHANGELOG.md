@@ -41,14 +41,39 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - A new test walks the API's workspace dependency closure (dependencies, optional and peer) and
   requires an exact `files` allowlist.
 
+### Added — Windows server tree (packaging)
+
+- `scripts/package-server.mjs` gains a `win32-x64` target. Windows `tar` cannot extract the POSIX
+  tarballs' pnpm symlinks without Developer Mode, so the Windows tree must contain no links. It starts
+  from the **same lockfile-faithful isolated deploy** as every other target. The new
+  `scripts/materialize-hoisted.mjs` then rewrites that deploy into a link-free hoisted layout.
+  - It reads the dependency graph with Node's own lookup.
+  - It places each package at the highest ancestor that doesn't shadow an existing resolution.
+  - It re-verifies every dependency edge against the written files.
+  - So Windows ships exactly the versions in `pnpm-lock.yaml`. pnpm 9's own hoisted `deploy` was
+    rejected: it ignores the lockfile and re-resolves from the registry.
+- The target removes `node_modules/.bin` and type/source-map files. It fails if any link remains, if
+  a package can't run on win32-x64, or if a path exceeds the MAX_PATH budget under winget's install
+  root (files and directories are gated separately). It produces `agentbrowser-server-win32-x64.zip`.
+- On Windows hosts the packager runs pnpm through `npm_execpath`, or else through `cmd.exe` with
+  checked arguments. It stages on the checkout's drive, because pnpm deploy fails across drive
+  letters. Build-tool failures now include the tool's output.
+- `scripts/check-win32-server-tree.mjs` extracts that zip outside the checkout and checks it:
+  - no links;
+  - the extracted-package dependency audit;
+  - the server reaches `/health`;
+  - with `--session`, a real Chromium session.
+
+  It runs in Windows CI.
+
 ### Fixed — server command line
 
 - `agentbrowser-server --help` and `--version` now answer without starting the service or
   loading the browser engine (previously every argument was ignored and the server started). The
   entrypoint parses arguments first and loads the server lazily, so help works even when
   Playwright cannot load. Unknown arguments exit 2; configuration stays environment-only.
-- The server also shuts down cleanly on `SIGHUP` and, on Windows, `SIGBREAK`. Shutdown is
-  idempotent. A new opt-in `AGENTBROWSER_SHUTDOWN_ON_STDIN_EOF=1` stops it when stdin closes,
+- The server also shuts down cleanly on `SIGHUP` and, on Windows, `SIGBREAK`. A second signal
+  force-exits a hung shutdown. A new opt-in `AGENTBROWSER_SHUTDOWN_ON_STDIN_EOF=1` stops it when stdin closes,
   which gives the Windows launcher a lifeline: if the launcher dies, the server still exits and
   closes Chromium.
 
