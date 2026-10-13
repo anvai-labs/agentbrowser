@@ -18,7 +18,12 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   so waiting for `close` would hang on Windows.
 - **Running the server.** The server under test is the POSIX launcher in the tree, or on Windows
   the server entry on Node. A new `--server-command` option runs a given executable instead,
-  such as the Windows bundle's launcher.
+  such as the Windows bundle's launcher. With `AGENTBROWSER_SHUTDOWN_ON_STDIN_EOF=1`, the
+  launcher now also stops gracefully on EOF on its own stdin.
+- **Windows environment fixes.** The harness prepends to the platform's real `Path` key, using
+  `;` as the separator. It used to write a second `PATH` key that hid System32, so `openssl` and
+  `qpdf` were never found. A command that can't be spawned now fails at once with its spawn
+  error, instead of waiting out the shutdown deadline.
 
 ### Added — Windows server launcher
 

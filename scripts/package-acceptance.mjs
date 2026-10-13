@@ -220,7 +220,6 @@ async function within(promise, timeoutMs, label) {
   } finally { clearTimeout(timer); }
 }
 
-/** Owns one process. A forced API kill is a failure: browser descendants are not proven drained. */
 /**
  * Stop a managed child gracefully. POSIX keeps SIGTERM (what service
  * managers send). On Windows a signal is TerminateProcess: no handler runs and
@@ -244,6 +243,7 @@ export function serverCommand(root, { platform = process.platform, override } = 
   return platform === 'win32' ? [process.execPath, join(root, 'dist', 'bin.js')] : [join(root, 'agentbrowser-server')];
 }
 
+/** Owns one process. A forced API kill is a failure: browser descendants are not proven drained. */
 export async function withManagedChild(command, options, exercise) {
   const label = options.label ?? 'managed-child';
   const validLabel = (value) => typeof value === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(value);
@@ -299,7 +299,11 @@ export async function withManagedChild(command, options, exercise) {
     [child.stdout, child.stderr].map((stream) => new Promise((resolve) => stream.once('close', resolve)))
   );
   const exited = new Promise((resolve) => child.once('exit', (code, signal) => resolve({ code, signal })));
-  const closed = Promise.all([exited, streamsClosed]).then(([result]) => { ended = true; return result; });
+  // A failed spawn emits 'close' but never 'exit': accept 'close' too, so a
+  // bad command fails at once with its spawn error.
+  const closeEvent = new Promise((resolve) => child.once('close', (code, signal) => resolve({ code, signal })));
+  const closed = Promise.race([Promise.all([exited, streamsClosed]).then(([result]) => result), closeEvent])
+    .then((result) => { ended = true; return result; });
   child.on('error', failed);
   let outputBytes = 0;
   for (const stream of [child.stdout, child.stderr]) {
@@ -385,12 +389,23 @@ export async function withManagedChild(command, options, exercise) {
   return value;
 }
 
+/**
+ * Prepend `dir` to the search path under the key the platform actually uses.
+ * Windows names it `Path` (lookups are case-insensitive, object spread is
+ * not): writing `PATH` beside it produced a duplicate that hid System32.
+ */
+export function withPath(env, dir, platform = process.platform) {
+  const key = Object.keys(env).find((name) => name.toUpperCase() === 'PATH') ?? (platform === 'win32' ? 'Path' : 'PATH');
+  const separator = platform === 'win32' ? ';' : ':';
+  return { ...env, [key]: env[key] ? `${dir}${separator}${env[key]}` : dir };
+}
+
 function cleanEnv(key) {
   const env = { ...process.env };
   for (const name of Object.keys(env)) {
     if (name.startsWith('AGENTBROWSER_') || /^(?:http|https|all|no)_proxy$/i.test(name) || ['HOST', 'PORT', 'NODE_PATH', 'NODE_OPTIONS', 'NODE_EXTRA_CA_CERTS', 'NODE_TLS_REJECT_UNAUTHORIZED', 'NODE_USE_ENV_PROXY'].includes(name)) delete env[name];
   }
-  return { ...env, PATH: `${dirname(process.execPath)}:${env.PATH ?? ''}`, AGENTBROWSER_API_KEYS: `${key}:release-smoke` };
+  return { ...withPath(env, dirname(process.execPath)), AGENTBROWSER_API_KEYS: `${key}:release-smoke` };
 }
 
 async function listen(server) {
@@ -916,7 +931,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
       serverRoot: args.get('--server-root'), expectedVersion: args.get('--expected-version'),
       cli: command('cli'), mcp: command('mcp'), profile: args.get('--profile') ?? 'candidate',
       installBrowser: args.get('--install-browser') === true,
-      serverCommand: args.get('--server-command'),
+      serverCommand: args.has('--server-command') ? resolve(args.get('--server-command')) : undefined,
       expectedCommit: args.get('--expected-commit'), allowDirty: args.get('--allow-dirty') === true,
     });
     const output = JSON.stringify({ acceptance: report.checks.some((check) => check.status !== 'pass') ? 'PARTIAL' : 'PASS', ...report });

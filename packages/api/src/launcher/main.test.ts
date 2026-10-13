@@ -206,6 +206,45 @@ describe.runIf(posix)('launcher process', () => {
     expect(existsSync(join(root, 'server-env.json'))).toBe(false);
   });
 
+  it('stops gracefully on its own stdin EOF when the lifeline is enabled (Windows supervisors)', async () => {
+    layout();
+    const child = spawn(process.execPath, [LAUNCHER], {
+      env: launcherEnv({
+        AGENTBROWSER_SKIP_BROWSER_INSTALL: '1',
+        AGENTBROWSER_SHUTDOWN_ON_STDIN_EOF: '1',
+      }),
+      stdio: ['pipe', 'ignore', 'ignore'],
+    });
+    const exited = exitOf(child);
+    try {
+      await waitFor(() => existsSync(join(root, 'server-env.json')), 'server start');
+      child.stdin?.end();
+      expect(await exited).toBe(0);
+      expect(existsSync(join(root, 'server-eof'))).toBe(true);
+    } finally {
+      if (child.exitCode === null) child.kill('SIGKILL');
+    }
+  }, 30_000);
+
+  it('ignores its own stdin unless the lifeline is enabled (services start with empty stdin)', async () => {
+    layout();
+    const child = spawn(process.execPath, [LAUNCHER], {
+      env: launcherEnv({ AGENTBROWSER_SKIP_BROWSER_INSTALL: '1' }),
+      stdio: ['pipe', 'ignore', 'ignore'],
+    });
+    const exited = exitOf(child);
+    try {
+      await waitFor(() => existsSync(join(root, 'server-env.json')), 'server start');
+      child.stdin?.end();
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(child.exitCode).toBe(null);
+      child.kill('SIGTERM');
+      expect(await exited).toBe(0);
+    } finally {
+      if (child.exitCode === null) child.kill('SIGKILL');
+    }
+  }, 30_000);
+
   it('a killed launcher still stops the server: the OS closes the lifeline', async () => {
     layout();
     const child = spawn(process.execPath, [LAUNCHER], {
