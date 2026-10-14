@@ -270,11 +270,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   // TD-BROWSER-16 phase 1: operator keys from a file, never a variable. They
   // authenticate a human operator for the one configured tenant and are
   // refused everywhere except operator-flagged routes.
-  const operatorKeys = await operatorKeysFromEnvironment(process.env);
-  if (operatorKeys !== undefined && apiKeys !== undefined) {
-    // The overlap refusal lives with the parser; apiKeys here are hashed.
-    await operatorKeysFromFile(process.env.AGENTBROWSER_OPERATOR_KEYS_FILE ?? '', { apiKeys });
-  }
+  // The parser enforces the whole contract (overlap, single tenant, and
+  // that API keys are configured at all) against the hashed map.
+  const operatorKeys = await operatorKeysFromEnvironment(process.env, {
+    ...(apiKeys !== undefined ? { apiKeys } : {}),
+  });
   const bindHost = options.host ?? process.env.HOST ?? '127.0.0.1';
   const originGuard = requestOriginGuardFromEnvironment(
     process.env,

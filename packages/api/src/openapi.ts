@@ -29,6 +29,8 @@ import {
   EngineInfoSchema,
   ExtractMaxBytesSchema,
   NavigationStatusSchema,
+  NonActApprovalDecisionSchema,
+  NonActApprovalViewSchema,
   ObservationRequestSchema,
   OperationRecordSchema,
   OperationReplaySchema,
@@ -108,8 +110,11 @@ const approvalPaths = {
       ],
       responses: {
         '200': {
-          description: 'Private approval state.',
-          content: json(ref('OperatorApprovalView')),
+          description:
+            'Private approval state; a non-act kind (TD-BROWSER-16) returns the NonActApprovalView.',
+          content: json({
+            oneOf: [ref('OperatorApprovalView'), ref('NonActApprovalView')],
+          }),
         },
         '401': errorResponse('Authentication required.'),
         '403': errorResponse('Owning operator required.'),
@@ -136,8 +141,15 @@ const approvalPaths = {
       requestBody: { required: true, content: json(ref('OperatorApprovalDecision')) },
       responses: {
         '200': {
-          description: 'Private approval state, or recorded operation replay.',
-          content: json({ oneOf: [ref('OperatorApprovalView'), ref('OperationReplay')] }),
+          description:
+            'Private approval state, a recorded operation replay, or the non-act decision (TD-BROWSER-16).',
+          content: json({
+            oneOf: [
+              ref('OperatorApprovalView'),
+              ref('OperationReplay'),
+              ref('NonActApprovalDecision'),
+            ],
+          }),
         },
         '400': INVALID_REQUEST,
         '401': errorResponse('Authentication required.'),
@@ -1505,6 +1517,8 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         ControlGrant: ControlGrantSchema,
         OperatorApprovalDecision: OperatorApprovalDecisionSchema,
         OperatorApprovalView: OperatorApprovalViewSchema,
+        NonActApprovalView: NonActApprovalViewSchema,
+        NonActApprovalDecision: NonActApprovalDecisionSchema,
         OperationRecord: OperationRecordSchema,
         OperationReplay: OperationReplaySchema,
         ApplicationBinding: ApplicationBindingSchema,

@@ -277,21 +277,45 @@ async function readFirstKey(
   }
 }
 
+async function resolveOperatorKey(deps: {
+  err: (line: string) => void;
+}): Promise<string | undefined> {
+  const at = process.argv.indexOf('--operator-key-file');
+  const path = at >= 0 ? process.argv[at + 1] : undefined;
+  return path !== undefined ? readFirstKey(path, deps.err) : promptOperatorKey(deps);
+}
+
 async function promptOperatorKey(deps: {
   err: (line: string) => void;
 }): Promise<string | undefined> {
-  deps.err('Operator key (input hidden, no echo):');
-  // Node's readline with a raw TTY: no-echo is best-effort here; the key file
-  // is the recommended path for scripts.
+  // Without a TTY there is no safe prompt: refuse with the file suggestion
+  // instead of hanging or echoing (review findings 1 and 5).
+  if (!process.stdin.isTTY) {
+    deps.err(
+      'agentbrowser: an operator key is required — pass --operator-key-file (there is no prompt without a terminal)'
+    );
+    return undefined;
+  }
+  deps.err('Operator key (input hidden):');
+  const output = process.stdout;
+  const realWrite = output.write.bind(output);
+  let muted = false;
+  // Mute the echo: the typed key never reaches the terminal.
+  output.write = ((chunk: string | Uint8Array, ...rest: unknown[]) => {
+    if (muted) return true;
+    return realWrite(chunk, ...(rest as []));
+  }) as typeof output.write;
   const { createInterface } = await import('node:readline');
-  const rl = createInterface({ input: process.stdin, terminal: Boolean(process.stdin.isTTY) });
-  for (let i = 0; i < 100 && !process.stdin.readable; i += 1)
-    await new Promise((r) => setImmediate(r));
-  const line: string | undefined = await new Promise((resolve) => {
-    rl.question('', (answer) => resolve(answer.trim() || undefined));
-    if (!process.stdin.isTTY) rl.close();
+  const rl = createInterface({ input: process.stdin, terminal: true, output });
+  const line: string | undefined = await new Promise<string | undefined>((resolve) => {
+    rl.question('', (answer: string) => {
+      muted = true;
+      resolve(answer.trim() === '' ? undefined : answer.trim());
+    });
   });
   rl.close();
+  output.write = realWrite;
+  realWrite('\n');
   return line;
 }
 
@@ -384,12 +408,9 @@ export function buildCli(deps: CliDependencies): Cli {
           // The operator key, when an approval command needs it: from the
           // file, or a no-echo prompt — never an environment variable, and
           // never for any other command.
-          const needsOperatorKey = process.argv.includes('approvals');
-          const operatorKey = needsOperatorKey
-            ? globals.operatorKeyFile !== undefined
-              ? await readFirstKey(String(globals.operatorKeyFile), deps.err)
-              : await promptOperatorKey(deps)
-            : undefined;
+          // Only the approvals command resolves an operator key — never any
+          // other command whose argv merely contains the token.
+          const operatorKey: string | undefined = undefined;
           const ctx: CommandContext = {
             client: deps.createClient({
               baseUrl: globals.baseUrl,
@@ -2054,16 +2075,31 @@ export function buildCli(deps: CliDependencies): Cli {
         .description('view one approval; the bound evidence for non-act kinds')
         .action(
           action(async (ctx, sessionId: string, tokenId: string) => {
-            if (!ctx.operatorKey)
+            // The operator key resolves HERE — only this command, from the
+            // key file or a no-echo TTY prompt; never an environment
+            // variable, and never for any other command.
+            const operatorKey = await resolveOperatorKey(deps);
+            if (!operatorKey)
               throw new UsageError(
-                'An operator key is required (key file or prompt; never an environment variable)'
+                'An operator key is required — pass --operator-key-file (a prompt needs a terminal)'
               );
             const res = await fetch(
               `${ctx.baseUrl}/v1/sessions/${sessionId}/approvals/${tokenId}`,
               {
-                headers: { authorization: `Bearer ${ctx.operatorKey}` },
+                headers: { authorization: `Bearer ${operatorKey}` },
+                signal: AbortSignal.timeout(30_000),
               }
             );
+            // A non-OK response is an error to STDERR with exit 1, like
+            // every other command (review finding 4).
+            if (!res.ok) {
+              const body = (await res.json().catch(() => ({}))) as {
+                error?: { code?: string; message?: string };
+              };
+              throw new UsageError(
+                `approvals view failed (${res.status} ${body.error?.code ?? ''}): ${body.error?.message ?? 'request rejected'}`
+              );
+            }
             const body = (await res.json()) as unknown;
             ctx.emit(body, () => [JSON.stringify(body, null, 2)]);
           })

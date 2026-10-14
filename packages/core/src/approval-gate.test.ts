@@ -719,3 +719,82 @@ describe('Approval Gates', () => {
     });
   });
 });
+
+describe('ApprovalRequest.kind (TD-BROWSER-16 phase 1, review round 1)', () => {
+  it('act tokens are byte-identical with and without kind: "act"', async () => {
+    const gate = new ApprovalGate({ key: 'k'.repeat(32) });
+    const plain = await gate.generateApprovalToken({
+      sessionId: 'ses_1',
+      action: { type: 'click', ref: 'e1_1' },
+    });
+    const explicit = await gate.generateApprovalToken({
+      sessionId: 'ses_1',
+      action: { type: 'click', ref: 'e1_1' },
+      kind: 'act',
+    });
+    expect(explicit.actionFingerprint).toBe(plain.actionFingerprint);
+    expect(explicit.kind).toBeUndefined();
+    expect(plain.kind).toBeUndefined();
+  });
+
+  it('non-act tokens carry kind, domains and counts; domains bind the fingerprint', async () => {
+    const gate = new ApprovalGate({ key: 'k'.repeat(32) });
+    const token = await gate.generateApprovalToken({
+      sessionId: 'ses_1',
+      action: { type: 'cookie.handoff' },
+      kind: 'cookie.handoff',
+      domains: ['example.com'],
+      counts: { 'example.com': 3 },
+    });
+    expect(token.kind).toBe('cookie.handoff');
+    expect(token.domains).toEqual(['example.com']);
+    expect(token.counts).toEqual({ 'example.com': 3 });
+    const other = await gate.generateApprovalToken({
+      sessionId: 'ses_1',
+      action: { type: 'cookie.handoff' },
+      kind: 'cookie.handoff',
+      domains: ['other.example'],
+    });
+    expect(other.actionFingerprint).not.toBe(token.actionFingerprint);
+    // Counts are informational per ADR-025: swapping them does not change the
+    // binding (documented, deliberate).
+    const swappedCounts = await gate.generateApprovalToken({
+      sessionId: 'ses_1',
+      action: { type: 'cookie.handoff' },
+      kind: 'cookie.handoff',
+      domains: ['example.com'],
+      counts: { 'example.com': 99 },
+    });
+    expect(swappedCounts.actionFingerprint).toBe(token.actionFingerprint);
+  });
+
+  it('a non-act token cannot be consumed as a plain act request', async () => {
+    const gate = new ApprovalGate({ key: 'k'.repeat(32) });
+    const token = await gate.generateApprovalToken({
+      sessionId: 'ses_1',
+      action: { type: 'cookie.handoff' },
+      kind: 'cookie.handoff',
+      domains: ['example.com'],
+    });
+    const consumed = await gate.consumeApprovalToken(token.tokenId, {
+      sessionId: 'ses_1',
+      action: { type: 'cookie.handoff' },
+    });
+    expect(consumed).toBe(false);
+    expect((await gate.getToken(token.tokenId))?.status).toBe('pending');
+  });
+
+  it('useApprovalTokenWithOutcome records which way it went', async () => {
+    const gate = new ApprovalGate({ key: 'k'.repeat(32) });
+    const token = await gate.generateApprovalToken({
+      sessionId: 'ses_1',
+      action: { type: 'cookie.handoff' },
+      kind: 'cookie.handoff',
+      domains: ['example.com'],
+    });
+    await gate.useApprovalTokenWithOutcome(token.tokenId, 'deny');
+    const after = await gate.getToken(token.tokenId);
+    expect(after?.status).toBe('used');
+    expect(after?.decidedOutcome).toBe('deny');
+  });
+});

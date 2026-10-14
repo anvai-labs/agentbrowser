@@ -1568,9 +1568,17 @@ export class AgentBrowserService {
     sessionId: string,
     tokenId: string
   ): Promise<{ kind: 'act.reviewed' | 'cookie.handoff'; status: string } | undefined> {
-    const tokens = await this.approvalGate.getSessionTokens(sessionId);
-    const token = tokens.find((candidate) => candidate.tokenId === tokenId);
-    if (token === undefined || token.kind === undefined || token.kind === 'act') return undefined;
+    // getToken (unlike the session list) still returns expired tokens, so an
+    // expired non-act token reports its kind instead of falling through to
+    // the act path's misleading error.
+    const token = await this.approvalGate.getToken(tokenId);
+    if (
+      token === undefined ||
+      token.sessionId !== sessionId ||
+      token.kind === undefined ||
+      token.kind === 'act'
+    )
+      return undefined;
     return { kind: token.kind, status: token.status };
   }
 
@@ -1591,6 +1599,7 @@ export class AgentBrowserService {
       sessionId,
       ...(token.domains !== undefined ? { domains: [...token.domains] } : {}),
       ...(token.counts !== undefined ? { counts: { ...token.counts } } : {}),
+      ...(token.decidedOutcome !== undefined ? { decidedOutcome: token.decidedOutcome } : {}),
       status: token.status,
     };
   }
@@ -1604,14 +1613,21 @@ export class AgentBrowserService {
     const token = await this.findNonActToken(sessionId, tokenId);
     if (token.status !== 'pending')
       throw new ServiceError('INVALID_REQUEST', 'Approval token is not pending');
-    await this.approvalGate.useApprovalToken(tokenId);
+    await this.approvalGate.useApprovalTokenWithOutcome(tokenId, decision);
     return { kind: token.kind as string, status: decision === 'approve' ? 'approved' : 'denied' };
   }
 
   private async findNonActToken(sessionId: string, tokenId: string): Promise<ApprovalToken> {
-    const tokens = await this.approvalGate.getSessionTokens(sessionId);
-    const token = tokens.find((candidate) => candidate.tokenId === tokenId);
-    if (token === undefined || token.kind === undefined || token.kind === 'act')
+    // getToken (unlike the session list) still returns expired tokens, so an
+    // expired non-act token reports its kind instead of falling through to
+    // the act path's misleading error.
+    const token = await this.approvalGate.getToken(tokenId);
+    if (
+      token === undefined ||
+      token.sessionId !== sessionId ||
+      token.kind === undefined ||
+      token.kind === 'act'
+    )
       throw new ServiceError('NOT_FOUND', 'Approval does not exist');
     return token;
   }

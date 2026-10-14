@@ -788,6 +788,34 @@ export const ExtractOutcomeSchema = Type.Object(
   { $id: 'urn:agentbrowser:extract-outcome:v1' }
 );
 
+export const ApprovalKindSchema = Type.Union([
+  Type.Literal('act'),
+  Type.Literal('act.reviewed'),
+  Type.Literal('cookie.handoff'),
+]);
+
+/** TD-BROWSER-16 phase 1: the non-act approval view (ADR-025). */
+export const NonActApprovalViewSchema = Type.Object(
+  {
+    kind: ApprovalKindSchema,
+    sessionId: Type.String(),
+    domains: Type.Optional(Type.Array(Type.String())),
+    counts: Type.Optional(Type.Record(Type.String(), Type.Integer())),
+    status: Type.String(),
+    decidedOutcome: Type.Optional(Type.Union([Type.Literal('approve'), Type.Literal('deny')])),
+  },
+  { additionalProperties: false }
+);
+
+/** TD-BROWSER-16 phase 1: the non-act approval decide result. */
+export const NonActApprovalDecisionSchema = Type.Object(
+  {
+    kind: ApprovalKindSchema,
+    status: Type.Union([Type.Literal('approved'), Type.Literal('denied')]),
+  },
+  { additionalProperties: false }
+);
+
 export const PolicyDecisionSchema = Type.Object({
   allowed: Type.Boolean(),
   reason: Type.String(),

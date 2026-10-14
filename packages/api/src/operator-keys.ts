@@ -30,11 +30,12 @@ export interface OperatorKeys {
 const KEY_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{15,127}$/;
 
 export async function operatorKeysFromEnvironment(
-  env: { AGENTBROWSER_OPERATOR_KEYS_FILE?: string | undefined } = process.env
+  env: { AGENTBROWSER_OPERATOR_KEYS_FILE?: string | undefined } = process.env,
+  options: { apiKeys?: ReadonlyMap<string, string> } = {}
 ): Promise<OperatorKeys | undefined> {
   const path = env.AGENTBROWSER_OPERATOR_KEYS_FILE?.trim();
   if (path === undefined || path === '') return undefined;
-  return operatorKeysFromFile(path);
+  return operatorKeysFromFile(path, options);
 }
 
 export async function operatorKeysFromFile(
@@ -77,20 +78,32 @@ export async function operatorKeysFromFile(
   if (count === 0) {
     throw new OperatorKeysError('Invalid operator keys file: no key:tenant entries');
   }
-  if (options.apiKeys !== undefined) {
-    for (const hash of byHash.keys()) {
-      if (options.apiKeys.has(hash)) {
-        throw new OperatorKeysError(
-          'Invalid configuration: a key appears in both AGENTBROWSER_API_KEYS and the operator keys file; one credential, one identity'
-        );
-      }
-    }
-    const apiTenants = new Set(options.apiKeys.values());
-    if (apiTenants.size > 0 && !apiTenants.has(tenant as string)) {
+  if (options.apiKeys === undefined) {
+    // F10: without API keys there is no configured tenant for an operator
+    // key to serve — and open mode would leave an operator credential
+    // granting nothing but inviting confusion. Refuse.
+    throw new OperatorKeysError(
+      'Invalid configuration: AGENTBROWSER_OPERATOR_KEYS_FILE requires AGENTBROWSER_API_KEYS; operator keys serve the one configured tenant'
+    );
+  }
+  for (const hash of byHash.keys()) {
+    if (options.apiKeys.has(hash)) {
       throw new OperatorKeysError(
-        `Invalid operator keys file: tenant ${JSON.stringify(tenant)} is not the API-key tenant; operator keys serve the one configured tenant`
+        'Invalid configuration: a key appears in both AGENTBROWSER_API_KEYS and the operator keys file; one credential, one identity'
       );
     }
+  }
+  const apiTenants = new Set(options.apiKeys.values());
+  if (apiTenants.size > 1) {
+    // F9: "the single API-key tenant" is singleness, not membership.
+    throw new OperatorKeysError(
+      `Invalid configuration: operator keys require exactly one API-key tenant; this deployment has ${apiTenants.size}`
+    );
+  }
+  if (apiTenants.size > 0 && !apiTenants.has(tenant as string)) {
+    throw new OperatorKeysError(
+      `Invalid operator keys file: tenant ${JSON.stringify(tenant)} is not the API-key tenant; operator keys serve the one configured tenant`
+    );
   }
   return { byHash, tenant: tenant as string };
 }

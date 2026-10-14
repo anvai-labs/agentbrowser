@@ -25,7 +25,9 @@ const sha = (key: string) => createHash('sha256').update(key).digest('hex');
 describe('operator keys file', () => {
   it('parses key:tenant lines, skipping blanks and comments', async () => {
     const path = await write('# operators\nop-key-one-aaaaaaaa:acme\n\nop-key-two-aaaaaaaa:acme\n');
-    const keys = await operatorKeysFromFile(path);
+    const keys = await operatorKeysFromFile(path, {
+      apiKeys: new Map([[sha('api-key-aaaaaaaaaaaa'), 'acme']]),
+    });
     expect(keys.tenant).toBe('acme');
     expect([...keys.byHash.values()]).toEqual(['acme', 'acme']);
     expect(keys.byHash.has(sha('op-key-one-aaaaaaaa'))).toBe(true);
@@ -79,7 +81,30 @@ describe('operator keys file', () => {
   it('reads from the environment; unset means none', async () => {
     expect(await operatorKeysFromEnvironment({})).toBeUndefined();
     const path = await write('op-key-one-aaaaaaaa:acme');
-    const keys = await operatorKeysFromEnvironment({ AGENTBROWSER_OPERATOR_KEYS_FILE: path });
+    const keys = await operatorKeysFromEnvironment(
+      { AGENTBROWSER_OPERATOR_KEYS_FILE: path },
+      { apiKeys: new Map([[sha('api-key-aaaaaaaaaaaa'), 'acme']]) }
+    );
     expect(keys?.tenant).toBe('acme');
+  });
+});
+
+describe('operator keys review round 1 (F9, F10)', () => {
+  it('refuses an operator file when no API keys are configured', async () => {
+    const path = await write('op-key-one-aaaaaaaa:acme');
+    await expect(operatorKeysFromFile(path)).rejects.toThrow(/requires AGENTBROWSER_API_KEYS/);
+  });
+
+  it('refuses a multi-tenant API-key deployment', async () => {
+    const sha2 = (k: string) => createHash('sha256').update(k).digest('hex');
+    const path = await write('op-key-one-aaaaaaaa:acme');
+    await expect(
+      operatorKeysFromFile(path, {
+        apiKeys: new Map([
+          [sha('api-key-aaaaaaaaaaaa'), 'acme'],
+          [sha2('api-key-bbbbbbbbbbbb'), 'other'],
+        ]),
+      })
+    ).rejects.toThrow(/exactly one API-key tenant/);
   });
 });

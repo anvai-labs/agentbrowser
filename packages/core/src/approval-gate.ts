@@ -42,7 +42,9 @@ export interface ApprovalActionRequest {
  * is decided by a human operator. `cookie.handoff` is the non-act kind
  * phase 6 instantiates; its evidence is `{ domains, counts }`, not an act.
  */
-export type ApprovalKind = 'act' | 'act.reviewed' | 'cookie.handoff';
+import type { ApprovalKind } from '@agentbrowser/protocol';
+
+export type { ApprovalKind };
 
 export interface ApprovalRequest {
   sessionId: string;
@@ -63,6 +65,8 @@ export interface ApprovalToken {
   /** Non-act evidence, returned verbatim to the deciding human operator. */
   domains?: string[];
   counts?: Record<string, number>;
+  /** Set by the non-act decide path: which way the human operator decided. */
+  decidedOutcome?: 'approve' | 'deny';
   status: 'pending' | 'used' | 'expired';
   createdAt: number;
   expiresAt: number;
@@ -364,6 +368,16 @@ export class ApprovalGate {
     token.status = 'used';
     token.usedAt = now;
     return true;
+  }
+
+  /**
+   * TD-BROWSER-16 phase 1: burn with the outcome recorded, so the view after
+   * a decide tells the human operator which way it went.
+   */
+  async useApprovalTokenWithOutcome(tokenId: string, outcome: 'approve' | 'deny'): Promise<void> {
+    await this.useApprovalToken(tokenId);
+    const record = this.tokens.get(tokenId);
+    if (record?.kind === 'confirmation') record.token.decidedOutcome = outcome;
   }
 
   /**
