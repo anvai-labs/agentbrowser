@@ -70,4 +70,12 @@ describe('parseLogLevel', () => {
     expect(parsed.warning).toContain('AGENTBROWSER_LOG_LEVEL="verbose"');
     expect(parsed.warning).toContain('debug, info, warn, error');
   });
+
+  it('parses the policy export subcommand', () => {
+    expect(parseServerArgs(['policy', 'export'])).toEqual({ kind: 'policy-export' });
+    expect(parseServerArgs(['policy'])).toMatchObject({ kind: 'error' });
+    expect(parseServerArgs(['policy', 'export', 'extra'])).toMatchObject({ kind: 'error' });
+    expect(parseServerArgs(['policy', 'import'])).toMatchObject({ kind: 'error' });
+    expect(SERVER_HELP).toMatch(/policy export/);
+  });
 });

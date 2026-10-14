@@ -18,7 +18,10 @@
  *   5. killing the launcher outright (TerminateProcess) leaves no server or
  *      Chromium process behind (the stdin lifeline);
  *   6. a second --install-browser is a no-op;
- *   7. invoked through a symlink (as winget's Links directory does), the
+ *   7. the bundled policy stack: `policy export` writes a document with no
+ *      engine loaded, and the bundled node decides one request through
+ *      CedarAuthorizer against it;
+ *   8. invoked through a symlink (as winget's Links directory does), the
  *      launcher still finds its bundle. Creating the link needs Developer
  *      Mode or elevation: --require-symlink (CI) makes that mandatory,
  *      otherwise it is reported as skipped.
@@ -75,12 +78,16 @@ async function freePort() {
 function survivors(dir, browsers) {
   const quote = (value) => value.replace(/'/g, "''");
   const script = [
-    `Get-CimInstance Win32_Process | Where-Object {`,
+    'Get-CimInstance Win32_Process | Where-Object {',
     `  ($_.ExecutablePath -and $_.ExecutablePath.StartsWith('${quote(dir)}', 'OrdinalIgnoreCase')) -or`,
     `  (@('chrome.exe', 'chrome-headless-shell.exe') -contains $_.Name -and $_.CommandLine -and $_.CommandLine.Contains('${quote(browsers)}'))`,
     `} | ForEach-Object { "$($_.ProcessId) $($_.Name)" }`,
   ].join(' ');
-  const out = run(join(system32, 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-Command', script]);
+  const out = run(join(system32, 'WindowsPowerShell', 'v1.0', 'powershell.exe'), [
+    '-NoProfile',
+    '-Command',
+    script,
+  ]);
   return out.split(/\r?\n/).filter(Boolean);
 }
 
@@ -94,7 +101,12 @@ async function waitFor(check, label, ms) {
   }
 }
 
-export async function smokeWindowsBundle({ zip, expectedVersion, browsers: provisioned, requireSymlink = false }) {
+export async function smokeWindowsBundle({
+  zip,
+  expectedVersion,
+  browsers: provisioned,
+  requireSymlink = false,
+}) {
   assert.equal(process.platform, 'win32', 'the Windows bundle smoke runs on Windows');
   // The real long-form path: hosted runners set TEMP to an 8.3 short name
   // (C:\Users\RUNNER~1\…) while the launcher runs the server from its
@@ -116,8 +128,40 @@ export async function smokeWindowsBundle({ zip, expectedVersion, browsers: provi
     assert.equal(run(exe('server'), ['--version'], { env }).trim(), expectedVersion);
     assert.match(run(exe('server'), ['--help'], { env }), /--install-browser/);
     run(exe('server'), ['--port', '1'], { env, expect: 2 });
-    assert.match(run(exe('cli'), ['--version'], { env }), new RegExp(expectedVersion.replace(/\./g, '\\.')));
+    assert.match(
+      run(exe('cli'), ['--version'], { env }),
+      new RegExp(expectedVersion.replace(/\./g, '\\.'))
+    );
     report.fastPaths = 'PASS';
+
+    // 1b. TD-BROWSER-15 3b: the bundled policy stack. `policy export` writes
+    // a document from the environment without loading the engine, and the
+    // bundled node decides one request through CedarAuthorizer against it.
+    const policyEnv = { ...env, AGENTBROWSER_ALLOWED_CIDRS: '10.0.0.0/8' };
+    const document = json(
+      run(exe('server'), ['policy', 'export'], { env: policyEnv }),
+      'policy export'
+    );
+    assert.equal(document.version, 'agentbrowser-policy/v1');
+    assert.ok(document.policies.some((p) => p.ruleId === 'env.allowed-cidrs'));
+    const engine = join(
+      dir,
+      'server',
+      'node_modules',
+      '@agentbrowser',
+      'policy-engine',
+      'dist',
+      'index.js'
+    );
+    const nodeExe = join(dir, 'node', 'node.exe');
+    const probe = `
+      import { CedarAuthorizer } from ${JSON.stringify(pathToFileURL(engine).href)};
+      const a = new CedarAuthorizer({ document: ${JSON.stringify(document)} });
+      const d = a.decide({ action: 'act', context: { effect: 'read' } });
+      if (!d.allowed || d.ruleMatched !== 'env.approval.default') throw new Error(JSON.stringify(d));
+    `;
+    run(nodeExe, ['--input-type=module', '-e', probe], { env });
+    report.policy = 'PASS';
 
     // 2. Start through the launcher; first start provisions Chromium.
     const port = await freePort();
@@ -128,27 +172,41 @@ export async function smokeWindowsBundle({ zip, expectedVersion, browsers: provi
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });
-    launcher.stdout.on('data', (chunk) => { log += chunk; });
-    launcher.stderr.on('data', (chunk) => { log += chunk; });
-    const health = await waitFor(async () => {
-      if (launcher.exitCode !== null) throw new Error(`launcher exited ${launcher.exitCode}:\n${log.slice(-2000)}`);
-      try {
-        const response = await fetch(`${base}/health`, { signal: AbortSignal.timeout(2_000) });
-        return response.ok ? response.json() : undefined;
-      } catch {
-        return undefined;
-      }
-    }, 'the bundled server to become healthy', 15 * 60_000);
+    launcher.stdout.on('data', (chunk) => {
+      log += chunk;
+    });
+    launcher.stderr.on('data', (chunk) => {
+      log += chunk;
+    });
+    const health = await waitFor(
+      async () => {
+        if (launcher.exitCode !== null)
+          throw new Error(`launcher exited ${launcher.exitCode}:\n${log.slice(-2000)}`);
+        try {
+          const response = await fetch(`${base}/health`, { signal: AbortSignal.timeout(2_000) });
+          return response.ok ? response.json() : undefined;
+        } catch {
+          return undefined;
+        }
+      },
+      'the bundled server to become healthy',
+      15 * 60_000
+    );
     assert.equal(health.version, expectedVersion);
     if (!provisioned) {
       // No provisioned browsers: this run exists to prove the first-start
       // download, so the launcher must have performed it.
-      assert.match(log, /First start: downloading Chromium/, 'first start did not download Chromium');
+      assert.match(
+        log,
+        /First start: downloading Chromium/,
+        'first start did not download Chromium'
+      );
     }
     report.firstStart = provisioned ? 'PASS (provisioned browsers)' : 'PASS (downloaded Chromium)';
 
     // 3. A real Chromium session through the shipped CLI.
-    const cli = (...args) => json(run(exe('cli'), ['--base-url', base, '--json', ...args], { env }), args[0]);
+    const cli = (...args) =>
+      json(run(exe('cli'), ['--base-url', base, '--json', ...args], { env }), args[0]);
     const session = cli('session', 'create', '--tenant', 'bundle-smoke');
     assert.ok(session.sessionId, 'CLI session create returned no sessionId');
     const page = cli('page', 'create', session.sessionId);
@@ -161,8 +219,11 @@ export async function smokeWindowsBundle({ zip, expectedVersion, browsers: provi
     // 4. MCP end-to-end through the shipped MCP executable.
     run(process.execPath, ['--test', join(SCRIPTS, 'windows-mcp-e2e.test.mjs')], {
       env: {
-        ...env, AGENTBROWSER_BASE_URL: base, AGENTBROWSER_E2E_MCP_COMMAND: exe('mcp'),
-        AGENTBROWSER_E2E_EXPECTED_VERSION: expectedVersion, AGENTBROWSER_TEST_HEADLESS: '1',
+        ...env,
+        AGENTBROWSER_BASE_URL: base,
+        AGENTBROWSER_E2E_MCP_COMMAND: exe('mcp'),
+        AGENTBROWSER_E2E_EXPECTED_VERSION: expectedVersion,
+        AGENTBROWSER_TEST_HEADLESS: '1',
       },
       timeout: 300_000,
     });
@@ -174,11 +235,22 @@ export async function smokeWindowsBundle({ zip, expectedVersion, browsers: provi
     const before = survivors(dir, browsers);
     // Name what must be there, not just how many: the bundled server's
     // node.exe and at least one Chromium process.
-    assert.ok(before.some((p) => / node\.exe$/i.test(p)), `server node.exe not seen before the kill: ${before.join(', ')}`);
-    assert.ok(before.some((p) => /chrome(-headless-shell)?\.exe$/i.test(p)), `Chromium not seen before the kill: ${before.join(', ')}`);
+    assert.ok(
+      before.some((p) => / node\.exe$/i.test(p)),
+      `server node.exe not seen before the kill: ${before.join(', ')}`
+    );
+    assert.ok(
+      before.some((p) => /chrome(-headless-shell)?\.exe$/i.test(p)),
+      `Chromium not seen before the kill: ${before.join(', ')}`
+    );
     run(join(system32, 'taskkill.exe'), ['/F', '/PID', String(launcher.pid)]);
-    const after = await waitFor(() => (survivors(dir, browsers).length === 0 ? [] : undefined), 'server and Chromium to exit after the launcher was killed', 30_000)
-      .catch((error) => { throw new Error(`${error.message}: ${survivors(dir, browsers).join(', ')}`); });
+    const after = await waitFor(
+      () => (survivors(dir, browsers).length === 0 ? [] : undefined),
+      'server and Chromium to exit after the launcher was killed',
+      30_000
+    ).catch((error) => {
+      throw new Error(`${error.message}: ${survivors(dir, browsers).join(', ')}`);
+    });
     report.killCleanup = `PASS (${before.length} processes before, ${after.length} after)`;
 
     // 6. Provisioning again is a no-op.
@@ -209,15 +281,28 @@ export async function smokeWindowsBundle({ zip, expectedVersion, browsers: provi
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   try {
-    const { values } = parseArgs({ options: {
-      zip: { type: 'string' }, 'expected-version': { type: 'string' }, browsers: { type: 'string' },
-      'require-symlink': { type: 'boolean', default: false },
-    } });
-    assert.ok(values.zip && values['expected-version'], '--zip and --expected-version are required');
-    console.log(JSON.stringify(await smokeWindowsBundle({
-      zip: values.zip, expectedVersion: values['expected-version'], browsers: values.browsers,
-      requireSymlink: values['require-symlink'],
-    })));
+    const { values } = parseArgs({
+      options: {
+        zip: { type: 'string' },
+        'expected-version': { type: 'string' },
+        browsers: { type: 'string' },
+        'require-symlink': { type: 'boolean', default: false },
+      },
+    });
+    assert.ok(
+      values.zip && values['expected-version'],
+      '--zip and --expected-version are required'
+    );
+    console.log(
+      JSON.stringify(
+        await smokeWindowsBundle({
+          zip: values.zip,
+          expectedVersion: values['expected-version'],
+          browsers: values.browsers,
+          requireSymlink: values['require-symlink'],
+        })
+      )
+    );
   } catch (error) {
     console.error(`windows bundle smoke: FAIL - ${error.message}`);
     process.exitCode = 1;

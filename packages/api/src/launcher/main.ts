@@ -92,6 +92,25 @@ const env = serverEnvironment(process.env, browsers);
 
 if (args.kind === 'install-browser') process.exit(installChromium(node, server, env));
 
+// `policy export` is a pure pass-through: no engine, no browser bootstrap, no
+// lifeline — the bundled node writes the document and exits.
+if (args.kind === 'policy-export') {
+  await new Promise<void>((resolve) => {
+    const child = spawn(node, [serverEntry(root), 'policy', 'export'], {
+      cwd: server,
+      env,
+      stdio: 'inherit',
+      windowsHide: true,
+    });
+    child.on('exit', (code) => {
+      process.exitCode = code ?? 1;
+      resolve();
+    });
+    child.on('error', (error) => fail(`agentbrowser-server: ${error.message}`));
+  });
+  process.exit();
+}
+
 if (process.env.AGENTBROWSER_SKIP_BROWSER_INSTALL !== '1') {
   const missing = missingBrowsers(server, browsers, fs);
   if (missing.length > 0) {

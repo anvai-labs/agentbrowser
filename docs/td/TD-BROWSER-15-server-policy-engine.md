@@ -222,7 +222,7 @@ arrives with phase 4):
   `ruleMatched` keeps the first id.
 - **Generated from the schema:** docs and fixtures.
 
-**`CedarAuthorizer`.** It applies every Cedar API trap rule from ADR-024 §2:
+**`CedarAuthorizer` (3b, shipped).** It applies every Cedar API trap rule from ADR-024 §2:
 - **Validation:** valid only if `validate` reports `type: "success"` **and** `validationErrors` is
   empty; strict mode.
 - **Request checking:** `preparseSchema` plus `validateRequest: true` on every call.
@@ -247,6 +247,38 @@ arrives with phase 4):
   wiring, so operators migrate by generating, not hand-writing.
 - `agentbrowser:baseline/v1` is a versioned, built-in policy **template** equal to an unconfigured
   server. `unknownRisk` is its only parameter.
+
+**3b, delivered:** `CedarAuthorizer` passes the phase-2 differential oracle on generated
+configurations (two seeds × 300 runs, plus the deterministic tables), loads documents strictly
+(strict `validate` with zero validation errors; `@rule` annotations cross-checked against the
+document's own `ruleId`; `floor.`/`default.`/`engine.` ids refused; `env.` requires a baseline),
+fails closed and sticky on traps (`engine.error` until restart), fills `rulesMatched`, and asks
+`request.private` once per normalized source. `policyDocumentFromEnvironment()` +
+`agentbrowser-server policy export` migrate operators by generating. The runtime wasm dependency
+ships with the phase-6 packaging pieces in the same PR: the pruner keeps only the Node build and
+enforces the version+hash pin (`scripts/cedar-wasm.json`), the shipped-path gate accepts exactly
+that one pinned file, the size gates gain the measured delta, the Docker image prunes inline, and
+the Windows bundle smoke loads a document and decides one request. One finding from building it,
+now recorded here: **strict validation statically flags any policy that would error for a declared
+request shape** — a mapped-form `ip()` literal and a missing optional attribute both refuse at
+load — so the TD's "erroring forbid" case is enforced at load; the reachable trap surfaces are
+request rejection and refused sources, both fail-closed and sticky.
+
+Review of 3b (all claims held: the oracle at fresh seeds and 1000 runs, the packaging gates, a
+real pruned deploy) hardened three edges, all fixed:
+- `policyDocumentFromEnvironment` now refuses approval values the server refuses at startup
+  (non-object JSON, non-array rules) instead of emitting a document for an unbootable
+  configuration.
+- Deny reasons carry only forbidding policies, so every deciding id is reported — the
+  `env.capability.*` filter could erase a real deciding id from a hand-written document.
+- `rulesMatched` lists each deciding id once (paired policies share a rule id).
+
+Two scope notes for phase 4: the oracle's equivalence is over contexts the real seam can emit
+(`ActionRiskPolicy.classify` only produces configured ids and decisions; a hand-built context
+carrying an out-of-config `matchedRule` or a disagreeing `context.rule.decision` diverges, which
+is inherent to keying Cedar on the matched id). And Cedar decisions carry their own reason
+strings ("permitted by policy"), so phase 4 changes operator-visible reason text from today's;
+`ruleMatched` is the stable field.
 
 **Tests (3a, shipped):**
 - The generated set **validates in strict mode with zero errors** against `CEDAR_SCHEMA`, for

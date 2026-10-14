@@ -40,6 +40,7 @@ RUN pnpm -r build
 # Self-contained production deployment: the API package with its workspace
 # dependencies inlined (real files, no workspace symlinks).
 RUN pnpm --filter @agentbrowser/api deploy --prod /deploy \
+  && find /deploy -type d -name cedar-wasm -path '*@cedar-policy*' -exec rm -rf '{}/esm' '{}/web' \; \
   && find /deploy -name "*.test.ts" -delete \
   && find /deploy -name "*.tsbuildinfo" -delete
 

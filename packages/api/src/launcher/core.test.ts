@@ -44,6 +44,7 @@ const LAYOUT = (root: string) => ({
 describe('launcher arguments', () => {
   it('answers help/version, accepts --install-browser, and rejects anything else with exit 2', () => {
     expect(parseLauncherArgs([])).toEqual({ kind: 'run' });
+    expect(parseLauncherArgs(['policy', 'export'])).toEqual({ kind: 'policy-export' });
     expect(parseLauncherArgs(['--help']).kind).toBe('help');
     expect(parseLauncherArgs(['-h']).kind).toBe('help');
     expect(parseLauncherArgs(['--version']).kind).toBe('version');

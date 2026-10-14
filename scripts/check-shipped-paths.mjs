@@ -12,6 +12,7 @@
  *
  *   node scripts/check-shipped-paths.mjs <dir> [--checkout <path>] [--exclude <top-level dir>]...
  */
+import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -84,8 +85,20 @@ export function canonicalBytes(data, step = 1, offset = 0) {
   return out.subarray(0, n);
 }
 
+/**
+ * TD-BROWSER-15 6: cedar-wasm's .wasm embeds Rust panic-location paths from
+ * the machine that built it (/home/runner/work/cedar/…). Exactly one file may
+ * ship regardless — the Node build, pinned by version and SHA-256 in
+ * scripts/cedar-wasm.json (the pruner drops the esm/ and web/ builds). Any
+ * other wasm file, version or hash still fails.
+ */
+const CEDAR_WASM_SUFFIX = '@cedar-policy/cedar-wasm/nodejs/cedar_wasm_bg.wasm';
+
 export async function scanShippedPaths(root, { checkout, exclude = [] } = {}) {
-  const needles = needlesFor(checkout).map((needle) => ({ ...needle, bytes: Buffer.from(needle.key, 'latin1') }));
+  const needles = needlesFor(checkout).map((needle) => ({
+    ...needle,
+    bytes: Buffer.from(needle.key, 'latin1'),
+  }));
   const isWordByte = (c) => (c >= 0x61 && c <= 0x7a) || (c >= 0x30 && c <= 0x39);
   const occurs = (haystack, { bytes, boundary }) => {
     for (let at = haystack.indexOf(bytes); at !== -1; at = haystack.indexOf(bytes, at + 1)) {
@@ -94,12 +107,29 @@ export async function scanShippedPaths(root, { checkout, exclude = [] } = {}) {
     return false;
   };
   const findings = [];
+  let cedarPin;
   for await (const { path, rel } of files(root, root, exclude)) {
     const data = await readFile(path);
+    if (rel.endsWith(CEDAR_WASM_SUFFIX)) {
+      cedarPin ??= JSON.parse(
+        await readFile(new URL('./cedar-wasm.json', import.meta.url), 'utf8')
+      );
+      const sha = createHash('sha256').update(data).digest('hex');
+      if (sha !== cedarPin.nodejsWasmSha256) {
+        findings.push({ file: rel, encoding: 'pin', needle: `cedar-wasm sha256 ${sha} != pinned` });
+        continue;
+      }
+      // The pinned build: skip the runner-path scan by agreement, not oversight.
+      continue;
+    }
     const seen = new Set();
     // UTF-8/ASCII, then UTF-16LE at both alignments (a string inside a
     // binary can start at an odd offset).
-    for (const [encoding, step, offset] of [['utf8', 1, 0], ['utf16le', 2, 0], ['utf16le', 2, 1]]) {
+    for (const [encoding, step, offset] of [
+      ['utf8', 1, 0],
+      ['utf16le', 2, 0],
+      ['utf16le', 2, 1],
+    ]) {
       const haystack = canonicalBytes(data, step, offset);
       for (const needle of needles) {
         if (!seen.has(needle.label) && occurs(haystack, needle)) {
@@ -115,17 +145,26 @@ export async function scanShippedPaths(root, { checkout, exclude = [] } = {}) {
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
-    options: { checkout: { type: 'string' }, exclude: { type: 'string', multiple: true, default: [] } },
+    options: {
+      checkout: { type: 'string' },
+      exclude: { type: 'string', multiple: true, default: [] },
+    },
   });
   const [root] = positionals;
   if (!root) {
     console.error('usage: check-shipped-paths.mjs <dir> [--checkout <path>] [--exclude <dir>]...');
     process.exit(2);
   }
-  const findings = await scanShippedPaths(resolve(root), { checkout: values.checkout, exclude: values.exclude });
+  const findings = await scanShippedPaths(resolve(root), {
+    checkout: values.checkout,
+    exclude: values.exclude,
+  });
   if (findings.length > 0) {
-    for (const f of findings) console.error(`shipped path: ${f.file} embeds ${JSON.stringify(f.needle)} (${f.encoding})`);
-    console.error('shipped paths: FAIL - build-machine paths would break the artifact anywhere but the build host');
+    for (const f of findings)
+      console.error(`shipped path: ${f.file} embeds ${JSON.stringify(f.needle)} (${f.encoding})`);
+    console.error(
+      'shipped paths: FAIL - build-machine paths would break the artifact anywhere but the build host'
+    );
     process.exitCode = 1;
   } else {
     console.log(JSON.stringify({ shippedPaths: 'PASS', root: resolve(root) }));
