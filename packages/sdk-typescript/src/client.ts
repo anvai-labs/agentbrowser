@@ -853,6 +853,45 @@ export class AgentBrowserClient {
   }
 
   /**
+   * TD-BROWSER-15 phase 5: the loaded policy summary (GET /v1/policy). The
+   * capability summary is decided for a default session of the caller's
+   * tenant; the response says so.
+   */
+  async policy(): Promise<{
+    policyVersion: string;
+    limits?: Record<string, number>;
+    summaryFor: string;
+    capabilities: Record<string, { allowed: boolean; reason?: string; ruleMatched?: string }>;
+    unconditional?: string;
+  }> {
+    return this.http.requestJson('/v1/policy');
+  }
+
+  /**
+   * TD-BROWSER-15 phase 5: ask what the loaded policy would decide
+   * (POST /v1/policy/check). Answers come by enumeration, never by DNS
+   * resolution; a hostname gets one answer per class set.
+   */
+  async policyCheck(request: {
+    action: string;
+    target?: string;
+    url?: string;
+    context?: { effect?: string; matchedRule?: string };
+  }): Promise<{
+    action: string;
+    target?: string;
+    answers: Array<{
+      classSet: string;
+      answer: {
+        kind: string;
+        decision?: { allowed: boolean; reason?: string; ruleMatched?: string };
+      };
+    }>;
+  }> {
+    return this.http.requestJson('/v1/policy/check', { method: 'POST', body: request });
+  }
+
+  /**
    * Service health summary (GET /health). Never requires authentication.
    */
   async health(): Promise<{

@@ -1,6 +1,6 @@
 # ADR-024: Server Policy Engine — Embedded Cedar, Queryable by Agents
 
-**Status:** Proposed (2026-10-13)
+**Status:** Accepted (2026-10-14) — phases 0–5 delivered (#444–#456, #457); proposed 2026-10-13
 **Related:** [ADR-006](006-network-egress-policy-ssrf.md) (egress policy and SSRF defense),
 [ADR-007](007-approval-tokens-side-effects.md) (approval tokens),
 [ADR-008](008-process-container-isolation.md) (isolation),

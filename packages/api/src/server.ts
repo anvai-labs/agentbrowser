@@ -51,6 +51,7 @@ import {
   responseDraft,
 } from './http-publication.js';
 import { buildOpenApiDocument } from './openapi.js';
+import { TokenBucketLimiter } from './policy-query-limiter.js';
 import { POLICY_BEARING_ENV, sessionPolicyFactoryFor } from './policy-session.js';
 import { PRODUCT_VERSION } from './product-version.js';
 import { requestOriginGuardFromEnvironment } from './request-origin-guard.js';
@@ -853,6 +854,117 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
       const tenantOf = (request: FastifyRequest | RequestData): string | undefined =>
         (request as FastifyRequest & { tenant?: string }).tenant;
+
+      // ------------------------------------------------------------------
+      // TD-BROWSER-15 phase 5: the policy query surface. Answers by
+      // enumeration, never by resolution; bounded per tenant.
+      // ------------------------------------------------------------------
+      const CHECK_ACTIONS = new Set([
+        'request',
+        'request.loopback',
+        'request.private',
+        'act',
+        'act.unattended',
+        'cdp.attach',
+        'downloads',
+        'serviceWorkers',
+        'cookie.seed',
+        'cookie.export',
+        'session.headed',
+      ]);
+      const queryLimiter = new TokenBucketLimiter({
+        capacity: 30,
+        refillPerInterval: 30,
+        intervalMs: 60_000,
+        maxTenants: 4096,
+      });
+      const rateLimited = (request: FastifyRequest, reply: FastifyReply): boolean => {
+        if (queryLimiter.take(tenantOf(request))) return false;
+        reply.status(429).send({
+          error: {
+            code: 'RATE_LIMITED',
+            message: 'Policy query rate limit exceeded',
+            retryable: true,
+          },
+        });
+        return true;
+      };
+
+      v1.get('/policy', { config: { publication: 'lifecycle' } }, async (request, reply) => {
+        if (rateLimited(request, reply)) return reply;
+        return {
+          policyVersion: policyLimiter?.version ?? 'legacy',
+          limits: policyLimiter?.limits ?? {},
+          summaryFor: "a default session of the caller's tenant",
+          capabilities: service.policyCapabilitySummary(tenantOf(request)),
+          ...(policyIsFile
+            ? {}
+            : {
+                unconditional:
+                  'no policy file is loaded; these answers are unconditional for a default session',
+              }),
+        };
+      });
+
+      v1.post('/policy/check', { config: { publication: 'lifecycle' } }, async (request, reply) => {
+        if (rateLimited(request, reply)) return reply;
+        const body = request.body as
+          | {
+              action?: unknown;
+              target?: unknown;
+              url?: unknown;
+              context?: unknown;
+              tenantId?: unknown;
+            }
+          | undefined;
+        const action = typeof body?.action === 'string' ? body.action : undefined;
+        if (action === undefined || !CHECK_ACTIONS.has(action)) {
+          return reply.status(400).send({
+            error: {
+              code: 'INVALID_REQUEST',
+              message: 'action must be a known action name',
+              retryable: false,
+            },
+          });
+        }
+        let target = typeof body?.target === 'string' ? body.target : undefined;
+        if (target === undefined && typeof body?.url === 'string') {
+          try {
+            target = new URL(body.url).hostname;
+          } catch {
+            return reply.status(400).send({
+              error: {
+                code: 'INVALID_REQUEST',
+                message: 'url must be a valid URL',
+                retryable: false,
+              },
+            });
+          }
+        }
+        // A caller cannot smuggle a tenant: the authenticated tenant decides.
+        const context =
+          body?.context !== null && typeof body?.context === 'object'
+            ? (body.context as { effect?: unknown; matchedRule?: unknown })
+            : {};
+        return {
+          action,
+          ...(target !== undefined ? { target } : {}),
+          answers: service.policyCheck({
+            action: action as never,
+            ...(target !== undefined ? { target } : {}),
+            context: {
+              ...(typeof context.effect === 'string' ? { effect: context.effect } : {}),
+              ...(typeof context.matchedRule === 'string'
+                ? { matchedRule: context.matchedRule }
+                : {}),
+            },
+            ...(() => {
+              const tenant = tenantOf(request);
+              return tenant !== undefined ? { tenantId: tenant } : {};
+            })(),
+          }),
+        };
+      });
 
       /** 403 unless the session belongs to the caller's tenant. */
       const requireOwnership = (sessionId: string, tenant: string | undefined): void => {

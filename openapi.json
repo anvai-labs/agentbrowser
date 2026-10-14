@@ -4735,6 +4735,166 @@
           }
         }
       }
+    },
+    "/v1/policy": {
+      "get": {
+        "operationId": "getPolicy",
+        "summary": "The loaded policy: version, limits, capability summary",
+        "description": "TD-BROWSER-15 phase 5. The capability summary is decided for a default session of the caller's tenant (the response says so). Without a policy file the answers come from the legacy environment decisions and are unconditional for a default session. Rate limited per tenant.",
+        "tags": [
+          "policy"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The loaded policy summary.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "policyVersion": {
+                      "type": "string",
+                      "description": "The document SHA-256, or \"legacy\"."
+                    },
+                    "limits": {
+                      "type": "object",
+                      "description": "The loaded limits (extractMaxBytes, maxResponseBytes)."
+                    },
+                    "summaryFor": {
+                      "type": "string",
+                      "description": "a default session of the caller's tenant"
+                    },
+                    "capabilities": {
+                      "type": "object",
+                      "description": "One PolicyDecision per capability action, for a default session."
+                    },
+                    "unconditional": {
+                      "type": "string",
+                      "description": "Present only when no policy file is loaded."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Policy query rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/policy/check": {
+      "post": {
+        "operationId": "checkPolicy",
+        "summary": "Ask what the loaded policy would decide",
+        "description": "Answers by enumeration, never by DNS resolution: an IP literal is classified directly; a hostname passes the name-level rules and then gets one answer per class set the classifier can produce (the non-public sets depend on the resolved address and say so). A caller cannot smuggle a tenant: the authenticated tenant decides. Rate limited per tenant.",
+        "tags": [
+          "policy"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "action"
+                ],
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "description": "One of the seam actions: request, request.loopback, request.private, act, act.unattended, cdp.attach, downloads, serviceWorkers, cookie.seed, cookie.export, session.headed."
+                  },
+                  "target": {
+                    "type": "string",
+                    "description": "An IP literal or a hostname; never resolved."
+                  },
+                  "url": {
+                    "type": "string",
+                    "description": "Alternative to target; its hostname is classified."
+                  },
+                  "context": {
+                    "type": "object",
+                    "description": "Declared act context.",
+                    "properties": {
+                      "effect": {
+                        "type": "string"
+                      },
+                      "matchedRule": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "One answer per class set the classifier can produce.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "action": {
+                      "type": "string"
+                    },
+                    "target": {
+                      "type": "string"
+                    },
+                    "answers": {
+                      "type": "array",
+                      "description": "Each entry is a decision or depends-on-resolution.",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was malformed or failed validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Policy query rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

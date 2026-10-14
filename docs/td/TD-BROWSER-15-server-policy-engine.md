@@ -383,6 +383,22 @@ absorbs; the gate exists to catch order-of-magnitude regressions, not constant f
 
 ### Phase 5: query surface
 
+**Delivered:** `GET /v1/policy` (version, limits, the capability summary for a default session of
+the caller's tenant — the response says so — and, without a file, the note that answers are
+unconditional); `POST /v1/policy/check` answering through `policyCheck` — one engine, any
+authorizer, so the no-file route answers through `LegacyAuthorizer` by the same enumeration.
+Check semantics: an IP literal is classified by the real classifier and answered exactly as
+enforcement would (a committed test agrees with `NetworkPolicy` on every literal, against both
+authorizers); a hostname passes the name-level rules (metadata names floor-denied, loopback names
+answered at the name level) and then enumerates the class sets, the non-public sets answering
+`depends-on-resolution`; no DNS — a resolver spy proves it. A caller cannot smuggle a tenant.
+A new bounded per-tenant token bucket (30/minute, 4096 tenants, lazy refill) rate-limits both
+routes. `@internal` policies report as `operator.policy` with no reason. OpenAPI regenerated.
+Surfaces: SDK `client.policy()`/`client.policyCheck()`, CLI `agentbrowser policy` and
+`policy-check`, and a read-only `policy` MCP tool in every browser mode (the application plane
+keeps its deliberately minimal contract, so the tool is fenced out of it like every other
+browser tool). ADR-024 → Accepted.
+
 - **`GET /v1/policy`:**
   - It returns the version, the limits and a capability summary for a **default session** of the
     caller's tenant, and says that it does.

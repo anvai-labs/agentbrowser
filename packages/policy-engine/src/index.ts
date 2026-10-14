@@ -5,6 +5,7 @@
 export * from './authorizer.js';
 export * from './cedar-authorizer.js';
 export * from './cedar-generator.js';
+export * from './check.js';
 export * from './legacy-authorizer.js';
 export * from './memoized-authorizer.js';
 export * from './policy-file.js';

@@ -7,6 +7,25 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — policy query surface (TD-BROWSER-15 phase 5)
+
+- **`GET /v1/policy`** — the loaded policy: version (the document SHA-256, or `legacy`), limits,
+  and one `PolicyDecision` per capability for a default session of the caller's tenant (the
+  response says so). Without a policy file the answers come from the legacy environment
+  decisions and are marked unconditional.
+- **`POST /v1/policy/check`** — ask what the policy would decide for one action and target.
+  Answers come by enumeration, never by DNS resolution: an IP literal is classified by the real
+  classifier and answered exactly as enforcement would answer it; a hostname passes the
+  name-level rules (metadata names are floor-denied, loopback names answered by name) and then
+  gets one answer per class set — the non-public sets say `depends on the resolved address`
+  instead of guessing. A caller-supplied tenantId never overrides the authenticated tenant.
+- **Rate limiting:** a bounded per-tenant token bucket (30/minute, lazy refill, LRU eviction at
+  4096 tenants) gates both routes with `RATE_LIMITED`.
+- **`@internal`** policies decide but report as `operator.policy`, with no reason.
+- **Surfaces:** SDK `client.policy()` / `client.policyCheck()`; CLI `agentbrowser policy` and
+  `agentbrowser policy-check`; a read-only `policy` MCP tool. OpenAPI regenerated.
+- ADR-024's status moves to **Accepted**.
+
 ### Added — the policy file, opt-in, shadow mode (TD-BROWSER-15 phase 4a)
 
 - **`AGENTBROWSER_POLICY_FILE`** loads a policy document and turns it into the server's every

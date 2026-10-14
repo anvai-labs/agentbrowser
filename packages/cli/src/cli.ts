@@ -152,7 +152,9 @@ function waitFromOptions(
 
 /** SDK-owned signatures; optional families still permit partial test stand-ins. */
 export interface CliClient
-  extends Partial<Pick<AgentBrowserClient, 'health' | 'healthLive' | 'healthReady'>> {
+  extends Partial<
+    Pick<AgentBrowserClient, 'health' | 'healthLive' | 'healthReady' | 'policy' | 'policyCheck'>
+  > {
   sessions: Pick<
     AgentBrowserClient['sessions'],
     | 'create'
@@ -1977,6 +1979,73 @@ export function buildCli(deps: CliDependencies): Cli {
                   `Saved ${artifact.artifactId} to ${saved.path} (${saved.sizeBytes} bytes)`,
                 ]);
               }
+            }
+          )
+        );
+
+      program
+        .command('policy')
+        .description(
+          'show the loaded policy: version, limits and the capability summary for a default session of the caller tenant (TD-BROWSER-15)'
+        )
+        .action(
+          action(async (ctx) => {
+            if (!ctx.client.policy) throw new UsageError('Client does not support policy queries');
+            const result = await ctx.client.policy();
+            ctx.emit(result, () => {
+              const lines = [result.policyVersion];
+              lines.push(`summary for ${result.summaryFor}`);
+              for (const [name, decision] of Object.entries(result.capabilities)) {
+                lines.push(
+                  `${name}: ${decision.allowed ? 'allowed' : 'denied'} (${decision.ruleMatched ?? 'none'})`
+                );
+              }
+              return lines;
+            });
+          })
+        );
+
+      program
+        .command('policy-check')
+        .description(
+          'ask what the loaded policy would decide for one action and target; answers never resolve DNS (TD-BROWSER-15)'
+        )
+        .argument(
+          '<action>',
+          'request | request.loopback | request.private | act | act.unattended | a capability'
+        )
+        .argument('[target]', 'an IP literal or hostname')
+        .option('--effect <effect>', 'declared effect for act questions')
+        .option('--matched-rule <id>', 'declared matched rule id for act questions')
+        .action(
+          action(
+            async (
+              ctx,
+              action_: string,
+              target: string | undefined,
+              options: { effect?: string; matchedRule?: string }
+            ) => {
+              if (!ctx.client.policyCheck)
+                throw new UsageError('Client does not support policy queries');
+              const result = await ctx.client.policyCheck({
+                action: action_,
+                ...(target !== undefined ? { target } : {}),
+                context: {
+                  ...(options.effect !== undefined ? { effect: options.effect } : {}),
+                  ...(options.matchedRule !== undefined
+                    ? { matchedRule: options.matchedRule }
+                    : {}),
+                },
+              });
+              ctx.emit(result, () =>
+                result.answers.map((a) => {
+                  if (a.answer.kind === 'decision') {
+                    const d = a.answer.decision;
+                    return `${a.classSet}: ${d?.allowed ? 'allowed' : 'denied'} (${d?.ruleMatched ?? 'none'})`;
+                  }
+                  return `${a.classSet}: depends on the resolved address`;
+                })
+              );
             }
           )
         );
