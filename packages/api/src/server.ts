@@ -438,7 +438,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       }
       try {
         done(null, JSON.parse(body));
-      } catch (error) {
+      } catch {
         const parseError: Error & { statusCode?: number } = new Error('Invalid JSON body');
         parseError.statusCode = 400;
         done(parseError, undefined);

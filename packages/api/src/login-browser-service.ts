@@ -43,29 +43,35 @@ export class LoginBrowserService {
 
   async open(): Promise<{ open: true }> {
     this.assertEnabled();
-    await this.browser!.open();
+    await this.requireBrowser().open();
     return { open: true };
   }
 
   async close(): Promise<{ open: false }> {
     this.assertEnabled();
-    await this.browser!.close();
+    await this.requireBrowser().close();
     return { open: false };
   }
 
   async reset(): Promise<{ reset: true }> {
     this.assertEnabled();
-    await this.browser!.reset();
+    await this.requireBrowser().reset();
     return { reset: true };
   }
 
   async read(): Promise<ReturnType<LoginBrowser['readCookies']>> {
     this.assertEnabled();
-    return this.browser!.readCookies();
+    return this.requireBrowser().readCookies();
   }
 
   async closeForShutdown(): Promise<void> {
     if (this.browser?.isOpen === true) await this.browser.close().catch(() => undefined);
+  }
+
+  private requireBrowser(): LoginBrowser {
+    const browser = this.browser;
+    if (browser === undefined) throw new Error('the login browser is disabled');
+    return browser;
   }
 
   private assertEnabled(): void {
