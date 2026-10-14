@@ -254,12 +254,25 @@ node packages/mcp-server/dist/bin.js  # the MCP server (stdio)
 ## Configuration
 
 The service and MCP process use environment variables; there is no config file.
+ADR-024 §4 classifies the **service** settings (the table there stops at the service; MCP, CLI
+and launcher variables below are out of its scope): **policy-bearing** — they decide operator
+policy, and the four deprecated ones (`ALLOW_LOOPBACK`, `ALLOWED_CIDRS`, `APPROVAL_POLICY`,
+`EXTRACT_MAX_BYTES`) cannot be combined with `AGENTBROWSER_POLICY_FILE`; note that
+`AGENTBROWSER_POLICY_SHADOW` deliberately combines with the deprecated four, since it evaluates
+the document they generate, and a shadow flag alongside a policy file is simply ignored;
+**bootstrap** — where things are and how the host is configured (`HOSTED`, the CDP pair,
+timeouts, log level, keys, paths, ports, hosts); and **trusted operator configuration** —
+`AGENTBROWSER_CHROMIUM_ARGS` alone, security-relevant input that changes what the browser may
+do. Entries below name their class where it matters; the two policy-file rows are marked
+policy-bearing by role (the ADR's table predates them and files them under bootstrap).
 The CLI also has explicit flags. SDK embedders provide `ClientOptions.baseUrl`
 and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 
 | Variable | Who reads it | Meaning |
 | --- | --- | --- |
 | `AGENTBROWSER_API_KEYS` | service | Bearer auth for `/v1`, format `key:tenant[,key:tenant...]`. **Without it, `/v1` is unauthenticated** — the service logs a loud warning at startup. Each key maps to one tenant; sessions are isolated per tenant. An explicitly empty, malformed or conflicting key list aborts startup; unset the variable for intentional trusted-local mode. |
+| `AGENTBROWSER_POLICY_FILE` | service entrypoint | **Policy-bearing**: load a Cedar policy document and make it every operator decision (approvals, egress exceptions, capabilities, limits). Combining it with any policy-bearing variable (`ALLOW_LOOPBACK`, `ALLOWED_CIDRS`, `APPROVAL_POLICY`, `MAX_RESPONSE_BYTES`) or embedder option is a startup refusal naming every conflict. See [policy](policy.md). |
+| `AGENTBROWSER_POLICY_SHADOW` | service entrypoint | **Policy-bearing**: `1` evaluates the document this environment would generate alongside the legacy decisions — legacy decides, divergences warn with both rule ids. Preview a migration without changing behavior. See [policy — shadow mode](policy.md#shadow-mode). |
 | `AGENTBROWSER_API_KEY` | MCP server, CLI | The bearer key sent to the service; CLI `--api-key` takes precedence. |
 | `AGENTBROWSER_BASE_URL` | MCP server | Service location; default `http://localhost:5709`. The CLI uses `--base-url`, not this variable. |
 | `AGENTBROWSER_LOG_LEVEL` | service | `debug`, `info` (default), `warn` or `error`, case-insensitive. Unknown values print a warning and use `info`. `warn` drops successful-operation lines; `error` also drops failed operations, including policy and approval denials, so alert on the `errors_total` metric rather than on logs at that level. Logs are structured JSON, scrubbed of registered secrets. |
@@ -271,7 +284,7 @@ and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 | `AGENTBROWSER_MAX_RESPONSE_BYTES` | service entrypoint | Per-response network byte cap, default 10485760 (10 MiB). Startup-only decimal integer from 1 to 67108864 (64 MiB); unset/blank keeps the default, invalid input aborts startup. Example: 33554432 for large LinkedIn JavaScript bundles. Applies to all sessions on that server; session input cannot raise it. Host/SSRF rules remain intact. Distinct from extraction and download budgets. Playwright buffers before its actual-byte check, so this does not bound peak transport memory. |
 | `AGENTBROWSER_CHROME_PATH` | service (Playwright engine) | Explicit Chrome binary for headed sessions; wrapper scripts included ([ADR-013](adr/013-headed-sessions-and-walled-logins.md)). When set, branded-Chrome auto-detection is skipped — an existing path launches that exact binary, a missing path falls back to bundled Chromium ([ADR-016](adr/016-branded-chrome-first-headed-launches.md)). |
 | `AGENTBROWSER_PREFER_BUNDLED` | service (Playwright engine) | `1`/`true` skips branded-Chrome auto-detection for headed sessions — always launches bundled Chromium, for deterministic CI and test farms ([ADR-016](adr/016-branded-chrome-first-headed-launches.md)). An explicit `AGENTBROWSER_CHROME_PATH` still wins. |
-| `AGENTBROWSER_CHROMIUM_ARGS` | service (Playwright engine) | Extra Chromium launch flags, space-separated, appended to **headed chromium launches only** — an engine-level escape hatch for Chromium policies the page stack cannot override (e.g. Local Network Access enforcement against a LAN-hosted console). The headless pool keeps stock launch defaults by design, firefox/webkit launches never receive the flags, and CDP attachment (operator attach or `cdpEndpoint`) cannot apply launch flags at all — the service logs a warning at engine construction if the variable is set in those cases. |
+| `AGENTBROWSER_CHROMIUM_ARGS` | service (Playwright engine) | **Security-relevant** (ADR-024 §4: trusted operator input that changes what the browser may do). Extra Chromium launch flags, space-separated, appended to **headed chromium launches only** — an engine-level escape hatch for Chromium policies the page stack cannot override (e.g. Local Network Access enforcement against a LAN-hosted console). The headless pool keeps stock launch defaults by design, firefox/webkit launches never receive the flags, and CDP attachment (operator attach or `cdpEndpoint`) cannot apply launch flags at all — the service logs a warning at engine construction if the variable is set in those cases. |
 | `AGENTBROWSER_ARTIFACT_KEY` | service | Bearer key guarding artifact download URLs, when set. |
 | `AGENTBROWSER_DEFAULT_TTL_MS` | service | Operator-level default session TTL (ms); per-session `ttlMs` still wins. Unset/garbage → the 4.375-hour default. |
 | `AGENTBROWSER_EXTRACT_MAX_BYTES` | service | Hard ceiling for complete compact JSON extraction responses, including evidence, in UTF-8 bytes. Default 1048576 (1 MiB). A positive decimal safe integer; invalid/empty values abort startup. Per-request `maxBytes` may only lower this ceiling. |
