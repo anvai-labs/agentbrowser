@@ -18,7 +18,12 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   `registrableParents` lists the registrable parents (subdomains are not registrable).
 - **The dedup fix:** the CLI's cookie identity is now `cookieKey` — host-only and `.domain`
   cookies with the same name and path are distinct, because the leading dot is scope, not
-  formatting. The CLI otherwise behaves unchanged; the matcher is in `core` for phase 6.
+  formatting (the duplicate error now names scope; otherwise unchanged). The cookie bounds moved
+  into `core` (`MAX_COOKIE_COUNT`, `assertCookieRequestSize`), imported by the CLI.
+- **Hardened after review:** `covers` refuses suffix/IP/`localhost` matchers outright (never even
+  self); a dotted entry matches subdomains only; a usable parent — registrable, or a host under
+  one — covers its subtree; ports and trailing dots are refused (they would fork the identity).
+  Known gap recorded for phase 6: no IDNA canonicalization.
 
 
 ### Added — per-session secret registration (TD-BROWSER-16 phase 2, ADR-025)

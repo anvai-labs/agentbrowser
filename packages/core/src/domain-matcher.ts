@@ -15,10 +15,9 @@ import { parse } from 'tldts';
  *   suffixes. A suffix entry (`.example.com`) covers SUBDOMAINS ONLY, like
  *   SessionHostPolicy — list the apex explicitly alongside it when both are
  *   in scope.
- * - `cookieDomain(domain, host)` — what a handoff may bind for `host`:
- *   `host` itself (host-only) or a registrable parent the operator asked
- *   for. `null` refuses: public suffixes, suffix-only hosts, IPs,
- *   non-registrable labels.
+ * - `cookieDomain(host, requested?)` — what a handoff may bind for `host`:
+ *   `host` itself (host-only) or a usable parent the operator asked for. `null`
+ *   refuses: public suffixes, suffix-only hosts, IPs, ports, trailing dots.
  */
 
 /** The private section of the public suffix list is in force (ADR-025 §3). */
@@ -54,6 +53,12 @@ function isSubdomainOf(host: string, domain: string): boolean {
   return host.endsWith(`.${domain}`) && host.length > domain.length + 1;
 }
 
+/** A matcher usable as a parent: registrable, OR a host under one (ADR-025
+ * section 3 lets an operator request a deep host, whose subtree it covers). */
+function coversSubtrees(m: string): boolean {
+  return isRegistrable(m) || usableHost(m).ok;
+}
+
 /** A host string is usable at all: not empty, not an IP, not a public suffix. */
 export function usableHost(host: string): DomainVerdict {
   const bare = normalize(host.toLowerCase());
@@ -69,6 +74,10 @@ export function usableHost(host: string): DomainVerdict {
     return { ok: false, reason: 'not a registrable domain (public suffix or unlisted TLD)' };
   if (!parsed.isIcann && !parsed.isPrivate)
     return { ok: false, reason: 'not on the public suffix list' };
+  // Ports and trailing dots are silently stripped by hostname extraction —
+  // a cookie domain carrying either can never be matched again, so refuse.
+  if (parsed.hostname !== undefined && parsed.hostname !== bare)
+    return { ok: false, reason: 'host carries a port or trailing dot' };
   return { ok: true };
 }
 
@@ -77,14 +86,18 @@ export function usableHost(host: string): DomainVerdict {
  * Exact match always; a parent covers its subdomains only when registrable.
  */
 export function covers(matcher: string, host: string): DomainVerdict {
+  const dotted = matcher.startsWith('.');
   const m = normalize(matcher.toLowerCase());
   const h = normalize(host.toLowerCase());
-  if (m === h) return { ok: true };
-  if (!isSubdomainOf(h, m)) return { ok: false, reason: 'not equal and not a subdomain' };
-  // The matcher must itself be registrable: ".github.io" must not cover
-  // "x.github.io", and ".com" must not cover anything.
-  if (!isRegistrable(m))
-    return { ok: false, reason: 'matcher is a public suffix, not a registrable domain' };
+  // A suffix entry (.example.com) matches SUBDOMAINS ONLY, exactly like
+  // SessionHostPolicy's hostMatches — list the apex alongside it when both
+  // are in scope. The matcher must always be usable: a public suffix or IP
+  // never covers anything, not even itself.
+  if (!coversSubtrees(m))
+    return { ok: false, reason: 'matcher is a public suffix, not a usable domain' };
+  if (m === h)
+    return dotted ? { ok: false, reason: 'suffix entries match subdomains only' } : { ok: true };
+  if (!isSubdomainOf(h, m)) return { ok: false, reason: 'not a subdomain of the matcher' };
   return { ok: true };
 }
 
@@ -97,10 +110,31 @@ export function cookieDomain(host: string, requested?: string): string | null {
   if (!usableHost(h).ok) return null;
   if (requested === undefined) return h;
   const r = normalize(requested.toLowerCase());
-  // The request must be the host itself or a registrable parent.
+  // The request must be the host itself or a usable parent (a registrable
+  // domain, or a deeper host under one — ADR-025 section 3 allows both).
   if (r !== h && !isSubdomainOf(h, r)) return null;
-  if (!isRegistrable(r)) return null;
+  if (!coversSubtrees(r) || !usableHost(r).ok) return null;
   return r;
+}
+
+/** TD-BROWSER-16 phase 3: the cookie bounds, moved from the CLI so phase 6
+ * can enforce them server-side. */
+export const MAX_COOKIE_COUNT = 1000;
+/** The whole cookie request (the array itself) is bounded to 1 MiB. */
+export const MAX_COOKIE_REQUEST_BYTES = 1024 * 1024;
+
+export function assertCookieRequestSize(
+  request: unknown,
+  maxBytes = MAX_COOKIE_REQUEST_BYTES
+): void {
+  let json: string;
+  try {
+    json = JSON.stringify(request);
+  } catch {
+    throw new Error('Cookie request is not serializable.');
+  }
+  if (!json || Buffer.byteLength(json, 'utf8') > maxBytes)
+    throw new Error(`Cookie request exceeds ${maxBytes} bytes.`);
 }
 
 /** Host-only and `.domain` cookies with the same name and path are distinct (the dedup fix). */

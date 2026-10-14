@@ -93,12 +93,20 @@ An unknown session id allocates nothing. Core-only: the service wiring is phase 
 
 **Delivered (phase 3, #463):** `packages/core/src/domain-matcher.ts` on pinned `tldts` with the
 **private section in force** (`allowPrivateDomains` — without it `github.io` parses as a normal
-`.io` domain): `covers` is the cookie-scope relation minus public suffixes; `usableHost`/
-`cookieDomain` refuse IPs, bare suffixes, `localhost` and unlisted TLDs (keys-only) and allow a
-registrable parent on request; `registrableParents` lists only registrable parents (subdomains are
-not registrable). The CLI's cookie identity is now `cookieKey` — host-only and `.domain` with the
-same name/path are distinct (the leading dot is scope); same-scope duplicates still refuse; the
-CLI is otherwise unchanged. 9 matcher tests + 2 CLI tests.
+`.io` domain). Review round 1 hardened the exported relation to its documented invariants:
+`covers` refuses suffix/IP/`localhost` matchers outright (never even self), a dotted entry matches
+**subdomains only** (like `SessionHostPolicy` — the apex must be listed alongside), and a usable
+parent — a registrable domain OR a host under one, which §3 allows operators to request — covers
+its subtree. `usableHost`/`cookieDomain` refuse IPs, bare suffixes, `localhost`, unlisted TLDs
+(keys-only), **ports and trailing dots** (tldts's hostname extraction strips them, which would
+fork the identity), and allow the host itself or any usable parent on request. `registrableParents`
+lists only registrable parents. The cookie bounds moved into core (`MAX_COOKIE_COUNT`,
+`assertCookieRequestSize`/`MAX_COOKIE_REQUEST_BYTES`) with the CLI importing them; the CLI's cookie
+identity is `cookieKey` (host-only and `.domain` distinct — the leading dot is scope; same-scope
+duplicates refuse; the only observable change is the duplicate error naming scope). **Known gap for
+phase 6 (recorded, deliberate):** no IDNA canonicalization — unicode and punycode forms of the
+same domain are distinct; phase 6 canonicalizes operator input first. 14 matcher tests + 2 CLI
+tests.
 
 ### Phase 4: the login browser
 

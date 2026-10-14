@@ -1,5 +1,5 @@
 import { isIP } from 'node:net';
-import { cookieKey } from '@agentbrowser/core';
+import { assertCookieRequestSize, cookieKey, MAX_COOKIE_COUNT } from '@agentbrowser/core';
 import {
   type SessionRequest,
   UsageError,
@@ -9,7 +9,6 @@ import { createTextArgumentReader, MAX_JSON_INPUT_BYTES } from './json-input.js'
 import { PrivateFileError, writePrivateFile } from './private-file.js';
 
 type Cookie = NonNullable<SessionRequest['cookies']>[number];
-export const MAX_COOKIE_COUNT = 1000;
 const keys = new Set([
   'name',
   'value',
@@ -24,17 +23,6 @@ const partitionKeys = new Set(['partitionKey', 'partitionKeyOpaque', 'hasCrossSi
 const fail = (row: number, reason: string): never => {
   throw new UsageError(`Cookie row ${row}: ${reason}.`);
 };
-
-export function assertCookieRequestSize(request: unknown): void {
-  let json: string;
-  try {
-    json = JSON.stringify(request);
-  } catch {
-    throw new UsageError('Cookie request is not serializable.');
-  }
-  if (!json || Buffer.byteLength(json, 'utf8') > MAX_JSON_INPUT_BYTES)
-    throw new UsageError('Cookie request exceeds 1048576 bytes.');
-}
 
 /** Strict file normalization. Canonical wire shape stays owned by the protocol validator. */
 function validateCookies(
