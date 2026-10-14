@@ -108,6 +108,10 @@ describe('route contract metadata', () => {
       ['PUT /v1/sessions/:sessionId/application', 'lifecycle'],
       ['DELETE /v1/sessions/:sessionId/application', 'lifecycle'],
       ['GET /v1/sessions/:sessionId/events', 'stream'],
+      // TD-15 phase 5: server-level query routes, not session-scoped; the
+      // sessions-collection kind (lifecycle) is the closest transport class.
+      ['GET /v1/policy', 'lifecycle'],
+      ['POST /v1/policy/check', 'lifecycle'],
     ]);
     for (const route of server.registeredRoutes.filter((r) => r.url.startsWith('/v1/'))) {
       const key = `${route.method} ${route.url}`;

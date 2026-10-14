@@ -56,6 +56,8 @@ export type { ClientOptions, ExportedCookie };
 
 /** SDK-owned signatures; optional families still permit partial test stand-ins. */
 export interface McpClient {
+  policy?: AgentBrowserClient['policy'];
+  policyCheck?: AgentBrowserClient['policyCheck'];
   sessions: Pick<
     AgentBrowserClient['sessions'],
     | 'create'
@@ -355,6 +357,41 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         const sessionId = requireSessionId(args);
         const request = args.url === undefined ? undefined : { url: requireHttpUrl(args.url) };
         return client.sessions.createPage(sessionId, request, ...operationOptions(args));
+      },
+    },
+
+    {
+      name: 'policy',
+      // page.observe fences this out of the application plane, which keeps
+      // its deliberately minimal contract (TD-15 phase 5 records the scope:
+      // every browser mode).
+      requiredCapabilities: ['session.control', 'page.observe'],
+      description:
+        'Read-only policy surface (TD-BROWSER-15): with no arguments, the loaded policy summary (version, limits, capabilities for a default session of the caller tenant); with an action and optional target, what the policy would decide — answers never resolve DNS.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            description:
+              'Optional: request, request.loopback, request.private, act, act.unattended, or a capability name. Absent returns the summary.',
+          },
+          target: { type: 'string', description: 'An IP literal or hostname; never resolved.' },
+        },
+      },
+      handler: async (args) => {
+        const action = args.action;
+        if (typeof action !== 'string') {
+          if (!client.policy) throw new UsageError('Client does not support policy queries');
+          return await client.policy();
+        }
+        if (!client.policyCheck) throw new UsageError('Client does not support policy queries');
+        if (args.target !== undefined && typeof args.target !== 'string')
+          throw new UsageError('target must be a string');
+        return await client.policyCheck({
+          action,
+          ...(typeof args.target === 'string' ? { target: args.target } : {}),
+        });
       },
     },
 

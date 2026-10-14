@@ -113,6 +113,7 @@ import {
   approvalModeOf,
   type CapabilityAction,
   LegacyAuthorizer,
+  policyCheck,
 } from '@agentbrowser/policy-engine';
 import type {
   ObservationRequest,
@@ -123,6 +124,7 @@ import type {
   PageState,
   PdfRequest,
   PlanReport,
+  PolicyDecision,
   ScreenshotRequest,
 } from '@agentbrowser/protocol';
 import {
@@ -1541,6 +1543,38 @@ export class AgentBrowserService {
     }
     this.metrics?.incrementCounter('sessions_closed_total');
     this.metrics?.setGauge('sessions_active', this.coordinator.getSessionCount());
+  }
+
+  /**
+   * TD-BROWSER-15 phase 5: answers a policy check by enumeration, never by
+   * resolution, against the service's own authorizer.
+   */
+  policyCheck(
+    request: import('@agentbrowser/policy-engine').PolicyCheckRequest
+  ): import('@agentbrowser/policy-engine').PolicyCheckAnswer {
+    return policyCheck(this.authorizer, request);
+  }
+
+  /**
+   * TD-BROWSER-15 phase 5: the capability decisions for a default session of
+   * one tenant — the GET /v1/policy summary.
+   */
+  policyCapabilitySummary(tenantId: string | undefined): Record<string, PolicyDecision> {
+    const summary: Record<string, PolicyDecision> = {};
+    for (const action of [
+      'cdp.attach',
+      'downloads',
+      'serviceWorkers',
+      'cookie.seed',
+      'cookie.export',
+      'session.headed',
+    ] as const) {
+      summary[action] = this.authorizer.decide({
+        action,
+        context: tenantId === undefined ? {} : { tenantId },
+      });
+    }
+    return summary;
   }
 
   /** Refuse, naming the deciding rule, unless the authorizer grants the capability. */

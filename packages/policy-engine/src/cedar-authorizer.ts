@@ -63,6 +63,8 @@ export class CedarAuthorizer implements Authorizer {
   private readonly defaultTenant: string;
   private readonly policySetId: string;
   private readonly rules: Map<string, string>;
+  /** Policies annotated @internal: reported as operator.policy, no reason. */
+  private readonly internalIds = new Set<string>();
   private readonly staticPolicies: Record<string, string>;
   private trapReason: string | undefined;
 
@@ -96,7 +98,8 @@ export class CedarAuthorizer implements Authorizer {
     if (validated.type !== 'success' || validated.validationErrors.length > 0) {
       throw new Error('Invalid policy document: Cedar validation failed');
     }
-    // Every policy's @rule annotation must match the document's ruleId.
+    // Every policy's @rule annotation must match the document's ruleId;
+    // @internal annotations are collected for confidential reporting.
     for (const [key, text] of Object.entries(this.staticPolicies)) {
       const json = cedar.policyToJson(text);
       const annotation =
@@ -105,6 +108,10 @@ export class CedarAuthorizer implements Authorizer {
         throw new Error(
           `Invalid policy document: policy ${JSON.stringify(key)} @rule annotation does not match its ruleId`
         );
+      }
+      if (json.type === 'success' && json.json.annotations?.internal !== undefined) {
+        const id = this.rules.get(key);
+        if (id !== undefined) this.internalIds.add(id);
       }
     }
     const schema = cedar.preparseSchema(CEDAR_SCHEMA_VERSION, CEDAR_SCHEMA);
@@ -201,11 +208,28 @@ export class CedarAuthorizer implements Authorizer {
     if (diagnostics.errors.length > 0) {
       return this.trapped('policy evaluation error');
     }
+    const decidingIds = [...new Set(diagnostics.reason.map((key) => this.rules.get(key)))]
+      .filter((id): id is string => id !== undefined)
+      .sort();
+    if (decidingIds.some((id) => this.internalIds.has(id))) {
+      // @internal exists for confidentiality (ADR-024): the decision stands,
+      // the reason and the deciding rule do not.
+      return decision === 'allow'
+        ? {
+            allowed: true,
+            reason: 'operator policy',
+            ruleMatched: 'operator.policy',
+            rulesMatched: ['operator.policy'],
+          }
+        : {
+            allowed: false,
+            reason: 'operator policy',
+            ruleMatched: 'operator.policy',
+            rulesMatched: ['operator.policy'],
+          };
+    }
     if (decision === 'allow') {
-      // Paired policies share a rule id; each deciding id appears once.
-      const rulesMatched = [...new Set(diagnostics.reason.map((key) => this.rules.get(key)))]
-        .filter((id): id is string => id !== undefined)
-        .sort();
+      const rulesMatched = decidingIds;
       if (rulesMatched.length === 0) return this.trapped('allow without a deciding policy');
       if (rulesMatched[0] === undefined) return this.trapped('allow without a deciding policy');
       return {

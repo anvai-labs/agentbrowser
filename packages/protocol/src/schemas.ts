@@ -30,6 +30,7 @@ export * from './types.js';
 // ============================================================================
 
 export const ErrorCodeEnum = Type.Union([
+  Type.Literal('RATE_LIMITED'),
   Type.Literal('SESSION_BUSY'),
   Type.Literal('CONTROL_REVOKED'),
   Type.Literal('CONTROL_REQUIRED'),
