@@ -9,12 +9,14 @@ import { parse } from 'tldts';
  * vercel.app) and a suffix of a registrable domain never covers its siblings.
  *
  * Semantics (host strings as `Cookie.domain` carries them, leading dot or not):
- * - `covers(matcher, host)` — a cookie's domain (or an allowlist entry)
- *   matches `host` when they are equal, or `matcher` is a parent domain of
- *   `host` AND registrable: exactly the cookie-scope rule minus public
- *   suffixes. A suffix entry (`.example.com`) covers SUBDOMAINS ONLY, like
- *   SessionHostPolicy — list the apex explicitly alongside it when both are
- *   in scope.
+ * - `covers(matcher, host)` — an allowlist entry (or an operator-requested
+ *   domain) matches `host` when they are equal, or `matcher` is a usable
+ *   parent of `host`: SessionHostPolicy's semantics minus public suffixes — a
+ *   suffix entry (`.example.com`) matches SUBDOMAINS ONLY, list the apex
+ *   explicitly alongside it. NOTE for phase 6: when asking "would this COOKIE
+ *   be sent to this host", the COOKIE's domain goes in the HOST position with
+ *   its leading dot stripped (section 3's direction); this function's matcher
+ *   position is for operator entries, where dotted means subdomains-only.
  * - `cookieDomain(host, requested?)` — what a handoff may bind for `host`:
  *   `host` itself (host-only) or a usable parent the operator asked for. `null`
  *   refuses: public suffixes, suffix-only hosts, IPs, ports, trailing dots.
