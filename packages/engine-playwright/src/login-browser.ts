@@ -430,7 +430,6 @@ async function assertWindowsDaclOwnerOnly(dir: string): Promise<void> {
     [
       me.sid,
       me.name,
-      me.bare,
       'NT AUTHORITY\\SYSTEM',
       'BUILTIN\\ADMINISTRATORS',
       'S-1-5-18',
@@ -438,7 +437,13 @@ async function assertWindowsDaclOwnerOnly(dir: string): Promise<void> {
     ].map((form) => form.toLowerCase())
   );
   const foreign: string[] = [];
-  for (const line of output.split(/\r?\n/)) {
+  for (const raw of output.split(/\r?\n/)) {
+    // When icacls writes to a pipe, the filename header and the FIRST ACE
+    // land on one space-separated line: `<dir> NT AUTHORITY\SYSTEM:(OI)(CI)(F)`.
+    // Strip the echoed directory prefix first, or the first ACE is always foreign.
+    let line = raw;
+    const prefix = dir.toLowerCase();
+    if (line.toLowerCase().startsWith(prefix)) line = line.slice(dir.length).trimStart();
     // ACE lines look like `S-1-5-21-...:(OI)(CI)F` or `NT AUTHORITY\SYSTEM:(OI)(CI)F`;
     // summary lines ("Successfully processed 1 files") have no parenthesized rights.
     const ace = /^(.+?):(?:\([^)]*\))+(?:[FRODWS]+)?\s*$/.exec(line);
@@ -475,11 +480,12 @@ async function currentUserIdentity(): Promise<{ sid: string; name: string; bare:
       'could not determine the current user identity'
     );
   }
-  // whoami reports MACHINE\user; also accept the bare user for odd display forms.
+  // whoami reports MACHINE\user. (No bare-user exemption: it would
+  // false-exempt OTHERDOMAIN\sameuser.)
   return { sid, name, bare: name.split('\\')[1] ?? name };
 }
 
-async function runIcacls(dir: string, args: string[]): Promise<string> {
+export async function runIcacls(dir: string, args: string[]): Promise<string> {
   const { spawn } = await import('node:child_process');
   const system32 = process.env.SystemRoot
     ? join(process.env.SystemRoot, 'System32', 'icacls.exe')

@@ -66,12 +66,18 @@ suite('the login browser', () => {
     await import('node:fs/promises').then((fs) =>
       fs.mkdir(profile, { recursive: true, mode: 0o700 })
     );
-    chmodSync(profile, 0o755);
+    if (process.platform === 'win32') {
+      // chmod is a no-op on Windows: widen with a real foreign ACE (Everyone).
+      const { runIcacls } = await import('./login-browser.js');
+      await runIcacls(profile, ['/grant', '*S-1-1-0:R']);
+    } else {
+      chmodSync(profile, 0o755);
+    }
     const browser = mk({ profileDir: profile });
     await expect(browser.open()).rejects.toMatchObject({
       code: 'LOGIN_PROFILE_MODE',
     });
-    chmodSync(profile, 0o700); // restore for cleanup
+    if (process.platform !== 'win32') chmodSync(profile, 0o700); // restore for cleanup
   });
 
   it('a closed browser refuses reads; close is idempotent-per-operation', async () => {

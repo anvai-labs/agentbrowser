@@ -15,10 +15,12 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   a human needs (Safe Browsing phishing detection, component and background updates) are
   RE-ENABLED by REMOVING Playwright's disabling flags through `ignoreDefaultArgs`.
 - **Profile security:** POSIX `0700`, created and verified at every launch (a wider mode refuses
-  with `LOGIN_PROFILE_MODE`); Windows strips inheritance and grants the owner's SID alone
-  `(OI)(CI)F` via `icacls`, and startup parses the `icacls` ACE lines, refusing any beyond the
-  owner — where "the owner" and the exempted SYSTEM/Administrators match every icacls spelling
-  (SID, `MACHINE\user`, translated well-known names). The Windows CI job runs this suite, where
+  with `LOGIN_PROFILE_MODE`); Windows grants the owner's SID `(OI)(CI)F` via `icacls` with
+  inheritance stripping intended (the runner's observed result is the ADR-tolerated owner +
+  SYSTEM + Administrators posture), and startup parses the `icacls` ACE lines — with the
+  pipe-glued filename header stripped — refusing any identity beyond the owner, where "the
+  owner" and the exempted SYSTEM/Administrators match every icacls spelling (SID,
+  `MACHINE\user`, translated well-known names). The Windows CI job runs this suite, where
   the win32 branches execute. (icacls, not PowerShell's Get-Acl, after the runner could not load
   PowerShell 5.1's Security module — caught by review executing the gate; the name-vs-SID
   comparison likewise.)
