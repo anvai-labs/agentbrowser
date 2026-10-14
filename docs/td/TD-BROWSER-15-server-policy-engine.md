@@ -399,6 +399,20 @@ Surfaces: SDK `client.policy()`/`client.policyCheck()`, CLI `agentbrowser policy
 keeps its deliberately minimal contract, so the tool is fenced out of it like every other
 browser tool). ADR-024 → Accepted.
 
+Review of phase 5 hardened the parity and closed the gaps: check's literal asks now mirror
+enforcement exactly (phase `hostname`, the full computed class set, every source at once —
+policies conditioning on `phase` or `addressClasses` are committed regression tests);
+IP-literal-shaped targets that enforcement refuses (ports, leading zeroes, zone indices,
+trailing junk) and prefix-length targets answer `floor.invalid-ip`; `RATE_LIMITED` joined the
+protocol error enum so the 429 body matches the published ApiError envelope; keyed per-tenant
+answers are tested through the real route in both directions (a claimed body tenant changes
+nothing); `@internal` redaction is tested through both routes. Recorded deviations from the
+phase-5 bullets: `conditional` partial-evaluation answers are NOT implemented (attribute-
+dependent capability answers come back as plain decisions for the default session; the honest
+enumeration lives in `check`), the capability summary does not list `session.delegated` as
+floor-only, and no-keys deployments share one 30/minute bucket for the whole query surface —
+keyed deployments are per tenant.
+
 - **`GET /v1/policy`:**
   - It returns the version, the limits and a capability summary for a **default session** of the
     caller's tenant, and says that it does.

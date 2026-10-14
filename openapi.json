@@ -6041,6 +6041,10 @@
               "code": {
                 "anyOf": [
                   {
+                    "const": "RATE_LIMITED",
+                    "type": "string"
+                  },
+                  {
                     "const": "SESSION_BUSY",
                     "type": "string"
                   },
@@ -6190,6 +6194,10 @@
         "properties": {
           "code": {
             "anyOf": [
+              {
+                "const": "RATE_LIMITED",
+                "type": "string"
+              },
               {
                 "const": "SESSION_BUSY",
                 "type": "string"
@@ -10240,6 +10248,10 @@
             "properties": {
               "code": {
                 "anyOf": [
+                  {
+                    "const": "RATE_LIMITED",
+                    "type": "string"
+                  },
                   {
                     "const": "SESSION_BUSY",
                     "type": "string"

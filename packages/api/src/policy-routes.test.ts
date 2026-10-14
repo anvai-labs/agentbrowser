@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -169,5 +170,127 @@ describe('POST /v1/policy/check', () => {
       if (response.statusCode === 429) limited += 1;
     }
     expect(limited).toBeGreaterThan(0);
+  });
+});
+
+describe('review of phase 5: keyed tenants and @internal', () => {
+  it('answers per the AUTHENTICATED tenant, both directions (review 5)', async () => {
+    const path = join(dir, 'per-tenant-cap.json');
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 'agentbrowser-policy/v1',
+        unknownRisk: 'allow',
+        approvalRules: [],
+        policies: [
+          {
+            key: 'operator.alpha#1',
+            ruleId: 'operator.alpha',
+            cedar:
+              '@rule("operator.alpha") permit(principal, action == AgentBrowser::Action::"downloads", resource) when { principal in AgentBrowser::Tenant::"alpha" };',
+          },
+        ],
+      })
+    );
+    const loaded = await loadPolicyFile(path, { apiKeysConfigured: true });
+    const keyed = await startServer({
+      engine: new FakeEngine(),
+      apiKeys: new Map([
+        [createHash('sha256').update('k-alpha').digest('hex'), 'alpha'],
+        [createHash('sha256').update('k-beta').digest('hex'), 'beta'],
+      ]),
+      policy: { authorizer: loaded.authorizer, version: loaded.authorizer.version, limits: {} },
+      port: 0,
+    });
+    try {
+      const alpha = await keyed.inject({
+        method: 'POST',
+        url: '/v1/policy/check',
+        headers: { authorization: 'Bearer k-alpha' },
+        payload: { action: 'downloads', tenantId: 'beta' },
+      });
+      const alphaBody = alpha.json() as {
+        answers: Array<{ answer: { decision?: { allowed: boolean } } }>;
+      };
+      expect(alphaBody.answers[0]?.answer.decision?.allowed).toBe(true);
+      const beta = await keyed.inject({
+        method: 'POST',
+        url: '/v1/policy/check',
+        headers: { authorization: 'Bearer k-beta' },
+        payload: { action: 'downloads', tenantId: 'alpha' },
+      });
+      const betaBody = beta.json() as {
+        answers: Array<{ answer: { decision?: { allowed: boolean } } }>;
+      };
+      expect(betaBody.answers[0]?.answer.decision?.allowed).toBe(false);
+    } finally {
+      await keyed.close();
+    }
+  });
+
+  it('@internal policies decide but report nothing (review 6)', async () => {
+    const path = join(dir, 'internal.json');
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 'agentbrowser-policy/v1',
+        unknownRisk: 'allow',
+        approvalRules: [],
+        policies: [
+          {
+            key: 'operator.secret-grant#1',
+            ruleId: 'operator.secret-grant',
+            cedar:
+              '@rule("operator.secret-grant") @internal permit(principal, action == AgentBrowser::Action::"downloads", resource);',
+          },
+          {
+            key: 'operator.secret-deny#2',
+            ruleId: 'operator.secret-deny',
+            cedar:
+              '@rule("operator.secret-deny") @internal forbid(principal, action == AgentBrowser::Action::"session.headed", resource);',
+          },
+        ],
+      })
+    );
+    const loaded = await loadPolicyFile(path, { apiKeysConfigured: false });
+    const internalApp = await startServer({
+      engine: new FakeEngine(),
+      policy: { authorizer: loaded.authorizer, version: loaded.authorizer.version, limits: {} },
+      port: 0,
+    });
+    try {
+      const granted = await internalApp.inject({
+        method: 'POST',
+        url: '/v1/policy/check',
+        payload: { action: 'downloads' },
+      });
+      const grantBody = granted.json() as {
+        answers: Array<{
+          answer: { decision?: { reason?: string; ruleMatched?: string; rulesMatched?: string[] } };
+        }>;
+      };
+      const grant = grantBody.answers[0]?.answer.decision;
+      expect(grant).toMatchObject({
+        allowed: true,
+        reason: 'operator policy',
+        ruleMatched: 'operator.policy',
+      });
+      expect(JSON.stringify(grantBody)).not.toContain('secret');
+      const denied = await internalApp.inject({
+        method: 'POST',
+        url: '/v1/policy/check',
+        payload: { action: 'session.headed' },
+      });
+      const denyBody = denied.json() as {
+        answers: Array<{ answer: { decision?: { allowed: boolean; ruleMatched?: string } } }>;
+      };
+      expect(denyBody.answers[0]?.answer.decision).toMatchObject({
+        allowed: false,
+        ruleMatched: 'operator.policy',
+      });
+      expect(JSON.stringify(denyBody)).not.toContain('secret');
+    } finally {
+      await internalApp.close();
+    }
   });
 });

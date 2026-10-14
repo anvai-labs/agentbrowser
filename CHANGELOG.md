@@ -25,6 +25,12 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - **Surfaces:** SDK `client.policy()` / `client.policyCheck()`; CLI `agentbrowser policy` and
   `agentbrowser policy-check`; a read-only `policy` MCP tool. OpenAPI regenerated.
 - ADR-024's status moves to **Accepted**.
+- **Hardened after review:** check's literal asks mirror enforcement exactly (phase and the full
+  class set — committed regression tests against policies conditioning on them); invalid
+  IP-literal shapes and prefix-length targets answer `floor.invalid-ip` as enforcement refuses
+  them; `RATE_LIMITED` joined the protocol error enum so the 429 matches the published envelope;
+  keyed per-tenant answers and `@internal` redaction are tested through the real routes. Without
+  API keys the query surface shares one 30/minute bucket (keyed deployments are per tenant).
 
 ### Added — the policy file, opt-in, shadow mode (TD-BROWSER-15 phase 4a)
 

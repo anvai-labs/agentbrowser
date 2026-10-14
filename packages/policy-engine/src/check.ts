@@ -47,6 +47,11 @@ const FLOOR_PUBLIC: PolicyDecision = Object.freeze({
   reason: 'public addresses are not blocked by the floor',
   ruleMatched: 'floor.public',
 });
+const FLOOR_INVALID_IP: PolicyDecision = Object.freeze({
+  allowed: false,
+  reason: 'not a valid IP literal or hostname',
+  ruleMatched: 'floor.invalid-ip',
+});
 const FLOOR_METADATA: PolicyDecision = Object.freeze({
   allowed: false,
   reason: 'cloud metadata endpoints are blocked by the floor',
@@ -96,7 +101,18 @@ export function policyCheck(
 
   const target = request.target ?? '';
   const bare = target.replace(/^\[|\]$/g, '');
+  // Refuse what enforcement refuses (review finding 4): a caller-supplied
+  // prefix length, and IP-literal-SHAPED text that does not classify — the
+  // dotted-quad and bracket/percent guards mirror NetworkPolicy.checkHostname.
+  if (target.includes('/')) {
+    return [{ classSet: 'invalid', answer: { kind: 'decision', decision: FLOOR_INVALID_IP } }];
+  }
   const classification = classifyIPAddress(bare);
+  // Colon/bracket/percent forms that do not classify, and dotted-quad shapes
+  // that do not (leading zeroes are ambiguous; URL callers normalize).
+  if (classification === undefined && (/[:[\]%]/.test(target) || /^\d+(\.\d+){2,}$/.test(target))) {
+    return [{ classSet: 'invalid', answer: { kind: 'decision', decision: FLOOR_INVALID_IP } }];
+  }
 
   if (classification === undefined) {
     // A hostname (or empty): name-level rules first.
@@ -139,45 +155,33 @@ export function policyCheck(
 
 type Classification = NonNullable<ReturnType<typeof classifyIPAddress>>;
 
-/** The enforcement order for a classified literal: loopback, then private per source. */
+/**
+ * The enforcement ask for a classified literal, mirrored exactly: phase
+ * `hostname` (the literal IS the hostname), the FULL computed class set, and
+ * every private source at once — the authorizer performs the per-source
+ * split. Policies conditioning on phase or addressClasses therefore see the
+ * same context from check as from enforcement (review finding 3).
+ */
 function literalDecision(
   authorizer: Authorizer,
-  request: PolicyCheckRequest,
+  _request: PolicyCheckRequest,
   classification: Classification,
   classes: Array<'loopback' | 'private'>,
   tenant: { tenantId: string } | undefined
 ): PolicyDecision {
-  const base = {
-    phase: 'resolved' as const,
+  const context = {
+    phase: 'hostname' as const,
     target: classification.address,
+    addressClasses: classes,
+    privateSources: classification.privateSources,
     ...(tenant ?? {}),
   };
   if (classes.includes('loopback')) {
-    const loopback = authorizer.decide({
-      action: 'request.loopback',
-      context: { ...base, addressClasses: ['loopback'], privateSources: [] },
-    });
+    const loopback = authorizer.decide({ action: 'request.loopback', context });
     if (!loopback.allowed) return loopback;
   }
   if (classes.includes('private')) {
-    const sources = classification.privateSources;
-    for (const source of sources) {
-      const ask = authorizer.decide({
-        action: 'request.private',
-        context: {
-          ...base,
-          addressClasses: classes,
-          privateSources: [source],
-          // One ask per source, as the per-source design performs.
-        },
-      });
-      if (!ask.allowed) return ask;
-    }
-    return {
-      allowed: true,
-      reason: 'every private source is inside an operator exception',
-      ruleMatched: 'env.allowed-cidrs',
-    };
+    return authorizer.decide({ action: 'request.private', context });
   }
   return FLOOR_PUBLIC;
 }
