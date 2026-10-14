@@ -38,13 +38,13 @@ export const CEDAR_SCHEMA = `namespace AgentBrowser {
   action "request", "request.loopback" appliesTo {
     principal: [Session],
     resource: [Host],
-    context: { phase: String, target: String, addressClasses: Set<String> },
+    context: { phase: String, target: String, addressClasses: Set<String>, tenantId?: String },
   };
 
   action "request.private" appliesTo {
     principal: [Session],
     resource: [Host],
-    context: { phase: String, target: String, addressClasses: Set<String>, ip?: ipaddr },
+    context: { phase: String, target: String, addressClasses: Set<String>, ip?: ipaddr, tenantId?: String },
   };
 
   action "act", "act.unattended" appliesTo {
@@ -53,6 +53,7 @@ export const CEDAR_SCHEMA = `namespace AgentBrowser {
     context: {
       effect: String,
       matchedRule: String,
+      tenantId?: String,
       hostname?: String,
       action?: String,
       role?: String,

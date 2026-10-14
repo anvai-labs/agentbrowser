@@ -8,7 +8,8 @@ import type { PolicyDecision } from '@agentbrowser/protocol';
  */
 export type ActAuthorizationRequest = {
   action: 'act' | 'act.unattended';
-  context: ActionRiskClassification;
+  /** `tenantId` is bound by the service (TD-15 phase 4), never by a caller. */
+  context: ActionRiskClassification & { tenantId?: string };
 };
 
 /**

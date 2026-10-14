@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AuthorizationRequest, Authorizer } from './authorizer.js';
+import { CedarAuthorizer } from './cedar-authorizer.js';
+import { policyDocumentFromLegacyConfig } from './cedar-generator.js';
 import { MemoizedAuthorizer } from './memoized-authorizer.js';
 import { ShadowAuthorizer } from './shadow-authorizer.js';
+import { TenantBindingAuthorizer } from './tenant-binding.js';
 
 const req = (action: AuthorizationRequest['action']): AuthorizationRequest =>
   action === 'downloads' || action === 'cdp.attach'
@@ -105,5 +108,62 @@ describe('MemoizedAuthorizer', () => {
     memo.decide(req('downloads'));
     memo.clear();
     expect(memo.size).toBe(0);
+  });
+});
+
+describe('TenantBindingAuthorizer with CedarAuthorizer (TD-15 phase 4)', () => {
+  // A pure operator document: no baseline, no generated defaults — an
+  // operator policy file replaces the environment-derived decisions.
+  const perTenantDocument = () => ({
+    version: 'agentbrowser-policy/v1' as const,
+    unknownRisk: 'allow' as const,
+    approvalRules: [],
+    policies: [
+      {
+        key: 'operator.loopback#1',
+        ruleId: 'operator.loopback',
+        cedar:
+          '@rule("operator.loopback") permit(principal, action == AgentBrowser::Action::"request.loopback", resource) when { principal in AgentBrowser::Tenant::"a" };',
+      },
+    ],
+  });
+
+  it('tenant A reaches the fixture; tenant B is denied with default.deny', () => {
+    const cedar = new CedarAuthorizer({ document: perTenantDocument() });
+    const loopback = {
+      action: 'request.loopback' as const,
+      context: {
+        phase: 'hostname' as const,
+        target: 'localhost',
+        addressClasses: ['loopback' as const],
+        privateSources: [],
+      },
+    };
+    expect(new TenantBindingAuthorizer(cedar, 'a').decide(loopback)).toMatchObject({
+      allowed: true,
+      ruleMatched: 'operator.loopback',
+    });
+    expect(new TenantBindingAuthorizer(cedar, 'b').decide(loopback)).toMatchObject({
+      allowed: false,
+      ruleMatched: 'default.deny',
+    });
+    // Unbound: the implicit tenant decides, and it is not "a".
+    expect(cedar.decide(loopback)).toMatchObject({ allowed: false, ruleMatched: 'default.deny' });
+  });
+
+  it('a caller-supplied tenantId is never trusted over the binding', () => {
+    const cedar = new CedarAuthorizer({ document: perTenantDocument() });
+    const bound = new TenantBindingAuthorizer(cedar, 'b');
+    const loopback = {
+      action: 'request.loopback' as const,
+      context: {
+        phase: 'hostname' as const,
+        target: 'localhost',
+        addressClasses: ['loopback' as const],
+        privateSources: [],
+        tenantId: 'a',
+      },
+    };
+    expect(bound.decide(loopback)).toMatchObject({ allowed: false, ruleMatched: 'default.deny' });
   });
 });
