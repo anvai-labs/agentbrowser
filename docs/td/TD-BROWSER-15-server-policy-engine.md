@@ -316,8 +316,19 @@ runs `ShadowAuthorizer` (legacy decides, divergences warn with both rule ids, sh
 touch legacy health); deprecated variables warn when used without a file. Two recorded deviations:
 the loopback/private startup warning uses the action scope rather than partial evaluation —
 strictly more conservative for a warning; and the per-source private ask means a Cedar memo entry
-exists per source set, covered by the bound. **Phase 4b (its own PR, before phase 5): the
-300-subresource performance gate, uncached/memoized/shadow, with the number recorded here.**
+exists per source set, covered by the bound. **Phase 4b, delivered with the opt-in: the
+300-subresource performance gate, uncached/memoized/shadow, with the number recorded below.**
+
+**Delivered (4b):** `packages/benchmarks/src/policy-gate.ts`. A worst-case page — 300 subresource
+requests, every one to a private address (so each asks `request.private`), 30 hosts × 10 requests —
+measured through the service's own chain (floor blocks + tenant-bound, memoized authorizer
+exceptions). **First measured run (2026-10-13):** uncached 68.7 ms total / p50 193 µs per
+decision (6.9% of the 1.0 s reference page load); memoized 9.6 ms / p50 2.9 µs (0.96%); shadow
+49.9 ms / p50 153 µs (5.0%). **The gate is 25%** of the reference load, applied to the modes
+production runs — memoized (always) and shadow (opt-in); the uncached figure is the measurement
+floor, reported and never gated, because the service never runs without the per-session memo.
+The first CI run measured shared runners at roughly 2–3× the local numbers, which the ceiling
+absorbs; the gate exists to catch order-of-magnitude regressions, not constant factors.
 
 - **Loading.** `AGENTBROWSER_POLICY_FILE` loads, validates and canonicalizes the document; its
   version is the SHA-256, including the baseline version. Cedar is loaded **only** in this case.

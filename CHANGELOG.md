@@ -25,8 +25,11 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   the shadow never touches the legacy decisions.
 - The deprecated policy variables warn at startup when used without a file; the
   loopback/private-permitting and no-public-egress startup warnings are in.
-- The performance gate (300-subresource page, uncached/memoized/shadow) follows as its own PR
-  (4b) before the query surface.
+- **Phase 4b — the performance gate** (`packages/benchmarks`): a worst-case 300-subresource page
+  (every request private, 30 hosts × 10) measured through the service's own chain. First run:
+  uncached p50 193 µs per decision (6.9% of the 1.0 s reference load), memoized 2.9 µs (0.96%),
+  shadow 153 µs (5.0%). The gate is 10%, applied to the production modes (memoized, shadow);
+  uncached is the reported floor.
 
 ### Added — CedarAuthorizer, policy export, bundled engine (TD-BROWSER-15 phase 3b)
 
