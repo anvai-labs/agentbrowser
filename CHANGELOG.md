@@ -7,6 +7,32 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — the login browser (TD-BROWSER-16 phase 4, ADR-025 §5)
+
+- **`LoginBrowser` (`engine-playwright`)**: a pipe-connected **persistent** Chromium context over a
+  dedicated profile directory. Playwright drives `--remote-debugging-pipe`, so **no TCP port is
+  ever opened** — asserted by test against the process's own listening sockets. The launch args
+  reuse the headed policy (ADR-013) and re-enable the login walls a human needs
+  (phishing detection, component and background updates).
+- **Profile security:** POSIX `0700`, created and verified at every launch (a wider mode refuses
+  with `LOGIN_PROFILE_MODE`); Windows creates the directory with a protected owner-only DACL and
+  startup parses the DACL, refusing any ACE beyond the owner (SYSTEM and Administrators are
+  reported, not refused) — exercised by the Windows CI job. The profile sits under
+  `AGENTBROWSER_LOGIN_PROFILE_DIR` (or the install root), outside synced paths.
+- **Binary pinning:** the resolved executable is pinned in the profile; a changed binary refuses
+  with `LOGIN_BINARY_CHANGED` (reset adopts the new one).
+- **Lifecycle:** `open`/`close`/`reset`/`readCookies` serialized on a profile lock — a live second
+  owner refuses with `LOGIN_PROFILE_IN_USE`, a stale lock (dead owner) is adopted, the operator
+  closing the last window reconciles the state, and reads refuse with `LOGIN_BROWSER_CLOSED`.
+  Partitioned and expired cookies are skipped and counted (the filter is asserted with a clock
+  frozen ahead: Chromium culls expired cookies at write).
+- **`LoginBrowserService` + `AGENTBROWSER_LOGIN_BROWSER=1`**: enabled only with operator keys
+  present (boot refuses otherwise); `POST /v1/operator/login/{open,close,reset,read}` are
+  human-operator-only operator routes — agent credentials and API-key operators are refused; a
+  multi-tenant deployment refuses to open (single-tenant by design); server shutdown closes an
+  open browser. The login browser is not a session: no id, no refs, no pages on any agent surface.
+
+
 ### Added — the cookie-domain matcher (TD-BROWSER-16 phase 3, ADR-025 §3)
 
 - **`packages/core/src/domain-matcher.ts`**, on pinned `tldts` with **the private section in

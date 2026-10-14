@@ -32,6 +32,10 @@ import { parseLogLevel } from './server-args.js';
 // (legacy decides; divergences warn). Invalid policy aborts startup.
 const policyFilePath = process.env.AGENTBROWSER_POLICY_FILE?.trim() || undefined;
 const policyShadow = /^(1|true|yes)$/i.test(process.env.AGENTBROWSER_POLICY_SHADOW?.trim() ?? '');
+// TD-BROWSER-16 phase 4: the login browser is enabled only with operator
+// keys present; main wires the flag and the server enforces the rest
+// (hosted and multi-tenant deployments refuse to open it).
+const loginBrowserEnabled = /^1$/i.test(process.env.AGENTBROWSER_LOGIN_BROWSER?.trim() ?? '');
 const policyBearing = [
   'AGENTBROWSER_ALLOW_LOOPBACK',
   'AGENTBROWSER_ALLOWED_CIDRS',
@@ -164,6 +168,7 @@ const server = await startServer({
   deploymentMode,
   ...(extractMaxBytes !== undefined ? { extractMaxBytes } : {}),
   ...(networkPolicy !== undefined ? { networkPolicy } : {}),
+  ...(loginBrowserEnabled ? { loginBrowser: true } : {}),
   ...(policy !== undefined
     ? {
         policy: {

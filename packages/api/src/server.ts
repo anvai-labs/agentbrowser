@@ -50,6 +50,7 @@ import {
   type HttpResponseDraft,
   responseDraft,
 } from './http-publication.js';
+import { LoginBrowserService } from './login-browser-service.js';
 import { buildOpenApiDocument } from './openapi.js';
 import { operatorKeysFromEnvironment, operatorKeysFromFile } from './operator-keys.js';
 import { TokenBucketLimiter } from './policy-query-limiter.js';
@@ -93,6 +94,12 @@ declare module 'fastify' {
 export interface ServerOptions extends OperatorCdpAdmissionOptions {
   /** Maximum compact JSON extraction response bytes; defaults to 1 MiB. */
   extractMaxBytes?: number;
+  /**
+   * TD-BROWSER-16 phase 4: enable the operator login browser
+   * (AGENTBROWSER_LOGIN_BROWSER=1). Requires operator keys; hosted and
+   * multi-tenant deployments refuse to open it.
+   */
+  loginBrowser?: boolean;
   /**
    * TD-BROWSER-15 phase 4: a loaded policy file. Its authorizer decides every
    * operator-chosen question, its limits replace the embedder options, and
@@ -507,6 +514,17 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     }
   }
   if (policyIsFile) extractMaxBytes = policyLimiter.limits.extractMaxBytes ?? extractMaxBytes;
+  // TD-BROWSER-16 phase 4: the login browser. Not a session: no id, no refs,
+  // no pages on any agent surface — only the operator routes below touch it.
+  const loginBrowser = new LoginBrowserService({
+    enabled: options.loginBrowser === true && operatorKeys !== undefined,
+  });
+  if (options.loginBrowser === true && operatorKeys === undefined) {
+    throw new Error(
+      'AGENTBROWSER_LOGIN_BROWSER=1 requires AGENTBROWSER_OPERATOR_KEYS_FILE; the login browser is operator-only'
+    );
+  }
+
   // TD-15 phase 4: with a policy file, every session's network policy is the
   // floor plus the tenant-bound, per-session-memoized authorizer exceptions.
   // No keys: nothing is bound and the authorizer's implicit Tenant::"local"
@@ -934,6 +952,73 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               }),
         };
       });
+
+      // TD-BROWSER-16 phase 4: the login browser's operator routes. Human
+      // operators only (operatorRoute); agent credentials and API-key
+      // operators are refused by the checks inside each handler.
+      const requireHumanOperator = (request: FastifyRequest): void => {
+        if (principals.get(request)?.actor !== 'human-operator')
+          throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+      };
+      const requireLoginBrowser = (): LoginBrowserService => {
+        if (!loginBrowser.isEnabled)
+          throw new ServiceError(
+            'INVALID_REQUEST',
+            'the login browser is disabled; set AGENTBROWSER_LOGIN_BROWSER=1 with operator keys configured',
+            false
+          );
+        return loginBrowser;
+      };
+
+      v1.post(
+        '/operator/login/open',
+        { config: { publication: 'lifecycle', operatorRoute: true } },
+        async (request) => {
+          requireHumanOperator(request);
+          requireLoginBrowser();
+          // ADR-025 §5: headed, single-tenant, local deployments only.
+          if ((apiKeys?.size ?? 0) > 1)
+            throw new ServiceError(
+              'INVALID_REQUEST',
+              'the login browser is single-tenant; this deployment has multiple API-key tenants',
+              false
+            );
+          return { open: await loginBrowser.open() };
+        }
+      );
+
+      v1.post(
+        '/operator/login/close',
+        { config: { publication: 'lifecycle', operatorRoute: true } },
+        async (request) => {
+          requireHumanOperator(request);
+          requireLoginBrowser();
+          return { open: await loginBrowser.close() };
+        }
+      );
+
+      v1.post(
+        '/operator/login/reset',
+        { config: { publication: 'lifecycle', operatorRoute: true } },
+        async (request) => {
+          requireHumanOperator(request);
+          requireLoginBrowser();
+          return { reset: await loginBrowser.reset() };
+        }
+      );
+
+      v1.post(
+        '/operator/login/read',
+        { config: { publication: 'lifecycle', operatorRoute: true } },
+        async (request) => {
+          requireHumanOperator(request);
+          requireLoginBrowser();
+          const result = await loginBrowser.read();
+          // Counts only at the route surface; values are returned to the
+          // deciding human operator (they already own them).
+          return result;
+        }
+      );
 
       v1.post('/policy/check', { config: { publication: 'lifecycle' } }, async (request, reply) => {
         if (rateLimited(request, reply)) return reply;
@@ -2003,6 +2088,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
   // Read-only handle for operator-surface tests; not part of the public API.
   fastify.decorate('service', service);
+  fastify.addHook('onClose', async () => {
+    await loginBrowser.closeForShutdown();
+  });
   return fastify;
 }
 

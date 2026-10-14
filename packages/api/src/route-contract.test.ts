@@ -112,6 +112,12 @@ describe('route contract metadata', () => {
       // sessions-collection kind (lifecycle) is the closest transport class.
       ['GET /v1/policy', 'lifecycle'],
       ['POST /v1/policy/check', 'lifecycle'],
+      // TD-16 phase 4: the login browser's operator routes — server-level,
+      // human-operator-only, not session-scoped.
+      ['POST /v1/operator/login/open', 'lifecycle'],
+      ['POST /v1/operator/login/close', 'lifecycle'],
+      ['POST /v1/operator/login/reset', 'lifecycle'],
+      ['POST /v1/operator/login/read', 'lifecycle'],
     ]);
     for (const route of server.registeredRoutes.filter((r) => r.url.startsWith('/v1/'))) {
       const key = `${route.method} ${route.url}`;
