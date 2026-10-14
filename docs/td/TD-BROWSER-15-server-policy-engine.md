@@ -301,6 +301,24 @@ strings ("permitted by policy"), so phase 4 changes operator-visible reason text
 
 ### Phase 4: the policy file, opt-in, with shadow mode and the performance gate
 
+**Delivered (phase 4a, the opt-in):** `PolicyLimits` in the document (`extractMaxBytes`,
+`maxResponseBytes`; unknown keys refuse); `loadPolicyFile` with every startup refusal —
+policy-bearing variables combined with a file (all conflicts named, `MAX_RESPONSE_BYTES`
+included), unparsable files, non-`local` tenant literals while no keys are configured (found by
+walking `policyToJson`'s ASTs, scopes and conditions), a key tenant named `local`, and everything
+the authorizer refuses at load. The stock entrypoint stops deriving `networkPolicy` and
+`extractMaxBytes` from the environment when a file is set; `startServer` refuses embedder options
+combined with a file, naming them; `Tenant::"local"` is the implicit principal parent for unbound
+decisions; each session's network policy is the floor plus the tenant-bound, per-session-memoized
+(LRU 512, TD-BROWSER-9) authorizer exceptions, cleared at close; sessions stamp the policy
+version; `/health` exposes `authorizerHealthy` as a boolean only; `AGENTBROWSER_POLICY_SHADOW=1`
+runs `ShadowAuthorizer` (legacy decides, divergences warn with both rule ids, shadow traps never
+touch legacy health); deprecated variables warn when used without a file. Two recorded deviations:
+the loopback/private startup warning uses the action scope rather than partial evaluation —
+strictly more conservative for a warning; and the per-source private ask means a Cedar memo entry
+exists per source set, covered by the bound. **Phase 4b (its own PR, before phase 5): the
+300-subresource performance gate, uncached/memoized/shadow, with the number recorded here.**
+
 - **Loading.** `AGENTBROWSER_POLICY_FILE` loads, validates and canonicalizes the document; its
   version is the SHA-256, including the baseline version. Cedar is loaded **only** in this case.
 - **Refusals at startup:**

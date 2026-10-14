@@ -246,6 +246,7 @@ export const EngineInfoSchema = Type.Object({
 // ============================================================================
 
 export const SessionResponseSchema = Type.Object({
+  policyVersion: Type.Optional(Type.String()),
   warnings: Type.Optional(Type.Array(Type.String())),
   sessionId: Type.String({ pattern: '^ses_[a-zA-Z0-9_]+$' }),
   engine: EngineInfoSchema,

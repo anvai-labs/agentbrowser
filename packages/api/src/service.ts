@@ -364,6 +364,21 @@ export interface ServiceDependencies {
    * wires one authorizer to both.
    */
   authorizer?: Authorizer;
+  /**
+   * TD-BROWSER-15 phase 4: the loaded policy's version, stamped on every
+   * session created under it. Absent for the legacy (environment) authorizer.
+   */
+  policyVersion?: string;
+  /**
+   * TD-BROWSER-15 phase 4: when a policy file is loaded, each session's
+   * network policy is built per tenant — floor blocks plus the policy
+   * authorizer's exceptions, memoized per session. Returning a clear()
+   * disposer that closeSession calls.
+   */
+  sessionPolicyFactory?: (tenantId: string | undefined) => {
+    networkPolicy: NetworkPolicy;
+    clear: () => void;
+  };
   engine: BrowserEngine;
   /**
    * TD-BROWSER-7 Phase 1: named auxiliary engines. createSession routes by
@@ -535,6 +550,10 @@ export class AgentBrowserService {
   private readonly normalizer: ObservationNormalizer;
   private readonly executor: ActionExecutor;
   private readonly networkPolicy: NetworkPolicy;
+  private readonly sessionPolicyFactory:
+    | ((tenantId: string | undefined) => { networkPolicy: NetworkPolicy; clear: () => void })
+    | undefined;
+  private readonly policyVersion: string | undefined;
   private readonly approvalGate: ApprovalGate;
   private readonly secretManager: SecretManager;
   private readonly artifacts: ArtifactStore;
@@ -558,6 +577,8 @@ export class AgentBrowserService {
   >();
   /** Per-session egress chain (fast-fail + engine choke point, one verdict). */
   private readonly sessionPolicies = new Map<string, RequestPolicy>();
+  /** TD-15 phase 4: per-session memo disposers, cleared at close. */
+  private readonly sessionPolicyDisposers = new Map<string, () => void>();
   private readonly sessionApprovalPolicies = new Map<
     string,
     import('@agentbrowser/protocol').ApprovalPolicy
@@ -646,6 +667,8 @@ export class AgentBrowserService {
         // console.error, invisible in a production log pipeline.
         ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
       });
+    this.sessionPolicyFactory = deps.sessionPolicyFactory;
+    this.policyVersion = deps.policyVersion;
     this.normalizer = deps.normalizer ?? new ObservationNormalizer();
     this.executor = deps.executor ?? new ActionExecutor(this.normalizer);
     // SSRF defenses are on by default (ADR-006): loopback, private ranges and
@@ -746,6 +769,8 @@ export class AgentBrowserService {
         this.churn.delete(this.churnKey(sessionId, pageId));
       }
     }
+    this.sessionPolicyDisposers.get(sessionId)?.();
+    this.sessionPolicyDisposers.delete(sessionId);
     this.eventListeners.delete(sessionId);
     this.eventHistory.delete(sessionId);
     this.requestHistory.delete(sessionId);
@@ -1265,9 +1290,15 @@ export class AgentBrowserService {
       if (this.shuttingDown)
         throw new ServiceError('SESSION_NOT_FOUND', 'Service is shutting down');
       // Snapshot before awaiting engine creation; all session consumers share it.
-      const basePolicy = request.allowDownloads
-        ? this.networkPolicy.snapshot()
-        : this.networkPolicy;
+      // With a policy file loaded (TD-15 phase 4), each session's policy is
+      // the floor plus the tenant-bound authorizer's exceptions, memoized.
+      const policyBuild = this.sessionPolicyFactory?.(request.tenantId);
+      const sessionDisposer = policyBuild?.clear;
+      const basePolicy = policyBuild
+        ? policyBuild.networkPolicy
+        : request.allowDownloads
+          ? this.networkPolicy.snapshot()
+          : this.networkPolicy;
       const engineRequest: EngineSessionOptions & { engine: 'auto' } = { engine: 'auto' };
       if (request.cdpAttach === true) engineRequest.cdpAttach = true;
       engineRequest.downloadPolicy = {
@@ -1388,6 +1419,8 @@ export class AgentBrowserService {
           maxDownloadBytes: request.maxDownloadBytes ?? 10 * 1024 * 1024,
         });
         this.sessionPolicies.set(session.sessionId, sessionPolicy);
+        if (sessionDisposer !== undefined)
+          this.sessionPolicyDisposers.set(session.sessionId, sessionDisposer);
         this.sessionApprovalPolicies.set(session.sessionId, { ...request.approval });
 
         const finalInspection = this.coordinator.inspect(session.sessionId);
@@ -1479,6 +1512,7 @@ export class AgentBrowserService {
       ...(includeTenant && context.metadata.tenantId !== undefined
         ? { tenantId: context.metadata.tenantId }
         : {}),
+      ...(this.policyVersion !== undefined ? { policyVersion: this.policyVersion } : {}),
     };
   }
 

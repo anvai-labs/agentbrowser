@@ -7,6 +7,27 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — the policy file, opt-in, shadow mode (TD-BROWSER-15 phase 4a)
+
+- **`AGENTBROWSER_POLICY_FILE`** loads a policy document and turns it into the server's every
+  operator decision. Every startup refusal from the TD: files combined with policy-bearing
+  variables or embedder options (all conflicts named), unparsable documents, tenant literals
+  other than `local` while no API keys exist (found in Cedar's parsed policies, conditions
+  included), a key tenant named `local`, and anything strict validation refuses. `limits`
+  (`extractMaxBytes`, `maxResponseBytes`) replace the embedder options; unknown limit keys
+  refuse.
+- **Per-session, per-tenant decisions:** each session's network policy is the floor blocks plus
+  the tenant-bound authorizer's exceptions, memoized in a bounded LRU and cleared at close. No
+  keys: the implicit `Tenant::"local"` decides whatever tenantId a caller claims. Sessions stamp
+  the policy version; `/health` exposes the authorizer's health as a boolean only.
+- **`AGENTBROWSER_POLICY_SHADOW=1`** evaluates, alongside the legacy decisions, the document this
+  environment would generate: legacy decides, divergences warn with both rule ids, and a trap in
+  the shadow never touches the legacy decisions.
+- The deprecated policy variables warn at startup when used without a file; the
+  loopback/private-permitting and no-public-egress startup warnings are in.
+- The performance gate (300-subresource page, uncached/memoized/shadow) follows as its own PR
+  (4b) before the query surface.
+
 ### Added — CedarAuthorizer, policy export, bundled engine (TD-BROWSER-15 phase 3b)
 
 - **`CedarAuthorizer`** decides through the real Cedar engine, gated by the phase-2 differential
