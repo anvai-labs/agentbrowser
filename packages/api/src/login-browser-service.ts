@@ -36,10 +36,13 @@ export class LoginBrowserService {
     enabled: boolean;
     /** Overrides the profile directory (tests). */
     profileDir?: string;
+    /** Test-only: CI drives the lifecycle headless; production is headed. */
+    headless?: boolean;
   }) {
     this.enabled = options.enabled;
     if (options.enabled) {
       this.browser = new LoginBrowser({
+        ...(options.headless !== undefined ? { headless: options.headless } : {}),
         // AGENTBROWSER_LOGIN_PROFILE_DIR overrides; the default sits under
         // the OS private per-user state root (never the server's working
         // directory, which can be synced or backed up), with the install

@@ -22,8 +22,6 @@ afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-const display = typeof process.env.DISPLAY === 'string' && process.env.DISPLAY !== '';
-
 describe('LoginBrowserService', () => {
   it('is disabled without the flag, and every operation names why', async () => {
     const service = new LoginBrowserService({ enabled: false });
@@ -38,26 +36,23 @@ describe('LoginBrowserService', () => {
     }
   });
 
-  (display ? it : it.skip)(
-    'the full lifecycle: open, read is a closed-shape result, close, reset',
-    async () => {
-      const service = new LoginBrowserService({
-        enabled: true,
-        profileDir: join(dir, 'profile-lifecycle'),
-      });
-      try {
-        expect((await service.open()).open).toBe(true);
-        const read = await service.read();
-        expect(Array.isArray(read.cookies)).toBe(true);
-        expect(typeof read.skipped.partitioned).toBe('number');
-        await service.close();
-        await service.reset();
-      } finally {
-        await service.closeForShutdown();
-      }
-    },
-    240_000
-  );
+  it('the full lifecycle: open, read is a closed-shape result, close, reset', async () => {
+    const service = new LoginBrowserService({
+      enabled: true,
+      profileDir: join(dir, 'profile-lifecycle'),
+      headless: process.env.AGENTBROWSER_LOGIN_HEADLESS === '1',
+    });
+    try {
+      expect((await service.open()).open).toBe(true);
+      const read = await service.read();
+      expect(Array.isArray(read.cookies)).toBe(true);
+      expect(typeof read.skipped.partitioned).toBe('number');
+      await service.close();
+      await service.reset();
+    } finally {
+      await service.closeForShutdown();
+    }
+  }, 240_000);
 });
 
 describe('LoginBrowserService startup refusals', () => {

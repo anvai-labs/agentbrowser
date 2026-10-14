@@ -19,7 +19,8 @@ import { type BrowserContext, chromium } from 'playwright';
  * - Windows: created with a protected DACL holding only the owner's ACE
  *   (ContainerInherit | ObjectInherit); startup parses the DACL and refuses
  *   any ACE beyond the owner — SYSTEM and Administrators are reported, not
- *   refused. Exercised by the Windows CI job.
+ *   refused. The Windows CI job runs this suite (headless env), which is
+ *   where the win32 branches execute.
  *
  * Binary pinning: the resolved executable's identity is recorded at first
  * launch; a later launch refuses if the binary changed, and a recorded
@@ -51,8 +52,8 @@ export class LoginBrowserError extends Error {
  * ADR-025 §1: Playwright's Chromium defaults DISABLE these three, which
  * breaks login walls (Safe Browsing, component and background updates).
  * They are REMOVED from the launch via ignoreDefaultArgs — adding them back
- * as args would only duplicate the disable. A committed test asserts the
- * live process argv carries none of them.
+ * as args would only duplicate the disable. The committed argv test asserts
+ * the live process carries none of them and DOES carry the pipe flag.
  */
 const LOGIN_BROWSER_DISABLE_FLAGS = [
   '--disable-client-side-phishing-detection',
@@ -83,11 +84,6 @@ export interface LoginBrowserOptions {
   headless?: boolean;
   now?: () => number;
 }
-
-/** CI runs the suite without a display: AGENTBROWSER_LOGIN_HEADLESS=1 forces
- * headless launches so the login tests always execute (the pipe launch, the
- * profile security and the filtering do not depend on a display). */
-const FORCE_HEADLESS = process.env.AGENTBROWSER_LOGIN_HEADLESS === '1';
 
 interface ProfilePin {
   /** The exact executable that last wrote the profile (pinned). */
@@ -129,8 +125,7 @@ export class LoginBrowser {
     if (this.closing !== undefined) await this.closing;
     await this.assertProfileSecure();
     const pin = await this.readPin();
-    await this.acquireProfileLock();
-    const headless = FORCE_HEADLESS || (this.options.headless ?? false);
+    const headless = this.options.headless ?? false;
     if (!headless && !displayAvailable()) {
       throw new LoginBrowserError(
         'LOGIN_BROWSER_DISPLAY',
@@ -138,6 +133,10 @@ export class LoginBrowser {
       );
     }
     const executablePath = await this.resolvePinnedExecutable(pin);
+    // The lock is acquired LAST: every refusal above must leave the profile
+    // unlocked, or a transient mistake (a wider mode, a moved binary, no
+    // display) wedges it for the process lifetime.
+    await this.acquireProfileLock();
     try {
       this.context = await chromium.launchPersistentContext(this.options.profileDir, {
         headless,
@@ -297,13 +296,41 @@ export class LoginBrowser {
     const resolved = chromium.executablePath();
     if (resolved === undefined) return undefined;
     // First launch pins the binary; later launches must match it exactly.
-    // A same-path downgrade shows as a recorded version that changed.
     if (pin.executable === undefined) return resolved;
-    if (pin.executable === resolved) return resolved;
-    throw new LoginBrowserError(
-      'LOGIN_BINARY_CHANGED',
-      'the pinned browser binary changed since this profile was created; reset the profile to adopt the new binary'
-    );
+    if (pin.executable !== resolved) {
+      throw new LoginBrowserError(
+        'LOGIN_BINARY_CHANGED',
+        'the pinned browser binary changed since this profile was created; reset the profile to adopt the new binary'
+      );
+    }
+    // Same path, different recorded version: the binary was replaced in
+    // place (ADR-016 system-Chrome updates land this way). Versions are not
+    // ordered — the point is the profile no longer matches the binary.
+    if (pin.chromiumVersion !== undefined) {
+      const live = await this.liveChromiumVersion(resolved);
+      if (live !== undefined && live !== pin.chromiumVersion) {
+        throw new LoginBrowserError(
+          'LOGIN_BINARY_DOWNGRADED',
+          `the browser binary at the pinned path changed version (profile recorded ${pin.chromiumVersion}, now ${live}); reset the profile to adopt it`
+        );
+      }
+    }
+    return resolved;
+  }
+
+  /** The binary's own version string, via `--version` (never launches). */
+  private async liveChromiumVersion(executable: string): Promise<string | undefined> {
+    try {
+      const { execFile } = await import('node:child_process');
+      const { promisify } = await import('node:util');
+      const { stdout } = await promisify(execFile)(executable, ['--version'], {
+        timeout: 10_000,
+      });
+      const match = /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/.exec(stdout);
+      return match?.[0];
+    } catch {
+      return undefined; // never block a launch on a version probe
+    }
   }
 
   // --- profile lock --------------------------------------------------------
@@ -371,7 +398,7 @@ function displayAvailable(): boolean {
   return typeof process.env.DISPLAY === 'string' && process.env.DISPLAY !== '';
 }
 
-// --- Windows DACL (exercised by the Windows CI job) ------------------------
+// --- Windows DACL (executed by the Windows CI job, which runs this suite) -
 
 async function createOwnerOnlyDirectory(dir: string): Promise<void> {
   // Create first (inheriting), then immediately replace the DACL with a
@@ -473,15 +500,4 @@ export async function tcpListenersOf(pid: number): Promise<number[]> {
     }
   }
   return [...ports];
-}
-
-/** Stable profile default under the OS temp dir (server data dir wiring is phase 6). */
-export function defaultProfileDir(): string {
-  return join(
-    tmpdir(),
-    `agentbrowser-login-${createHash('sha256')
-      .update(process.env.USER ?? '')
-      .digest('hex')
-      .slice(0, 12)}`
-  );
 }

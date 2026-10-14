@@ -8,11 +8,16 @@ import { LoginBrowser, LoginBrowserError, tcpListenersOf } from './login-browser
 /**
  * TD-BROWSER-16 phase 4: the login browser. The heavy security properties
  * (profile mode, pipe launch with no TCP port, lifecycle) are tested for
- * real; the Windows DACL path runs on the Windows CI job.
+ * real; the Windows CI job runs this suite, executing the win32 branches.
  */
 
 // AGENTBROWSER_LOGIN_HEADLESS=1 lets CI execute the suite without a display
 // (the pipe launch, profile security and filtering are display-independent).
+// The knob is TEST-side: the engine has no env-driven headless mode, so a
+// stray env var can never make a production login browser invisible.
+const HEADLESS = process.env.AGENTBROWSER_LOGIN_HEADLESS === '1';
+const mk = (options: { profileDir: string; now?: () => number }) =>
+  new LoginBrowser({ ...options, ...(HEADLESS ? { headless: true } : {}) });
 const suite = describe;
 
 let dir: string;
@@ -26,7 +31,7 @@ afterAll(async () => {
 suite('the login browser', () => {
   it('launches a persistent context over a pipe — no TCP listener while open or reading', async () => {
     const profile = join(dir, 'profile-pipe');
-    const browser = new LoginBrowser({ profileDir: profile });
+    const browser = mk({ profileDir: profile });
     await browser.open();
     try {
       expect(browser.isOpen).toBe(true);
@@ -43,7 +48,7 @@ suite('the login browser', () => {
 
   it('the profile directory is created 0700 (owner-only) on POSIX', () => {
     const profile = join(dir, 'profile-mode');
-    const browser = new LoginBrowser({ profileDir: profile });
+    const browser = mk({ profileDir: profile });
     return browser
       .open()
       .then(() => browser.close())
@@ -58,7 +63,7 @@ suite('the login browser', () => {
       fs.mkdir(profile, { recursive: true, mode: 0o700 })
     );
     chmodSync(profile, 0o755);
-    const browser = new LoginBrowser({ profileDir: profile });
+    const browser = mk({ profileDir: profile });
     await expect(browser.open()).rejects.toMatchObject({
       code: 'LOGIN_PROFILE_MODE',
     });
@@ -67,7 +72,7 @@ suite('the login browser', () => {
 
   it('a closed browser refuses reads; close is idempotent-per-operation', async () => {
     const profile = join(dir, 'profile-lifecycle');
-    const browser = new LoginBrowser({ profileDir: profile });
+    const browser = mk({ profileDir: profile });
     await browser.open();
     await browser.close();
     expect(browser.isOpen).toBe(false);
@@ -77,10 +82,10 @@ suite('the login browser', () => {
 
   it('a second login browser on the same profile refuses LOGIN_PROFILE_IN_USE', async () => {
     const profile = join(dir, 'profile-lock');
-    const first = new LoginBrowser({ profileDir: profile });
+    const first = mk({ profileDir: profile });
     await first.open();
     try {
-      const second = new LoginBrowser({ profileDir: profile });
+      const second = mk({ profileDir: profile });
       await expect(second.open()).rejects.toMatchObject({ code: 'LOGIN_PROFILE_IN_USE' });
     } finally {
       await first.close();
@@ -89,7 +94,7 @@ suite('the login browser', () => {
 
   it('a stale lock (dead owner) is adopted', async () => {
     const profile = join(dir, 'profile-stale');
-    const prep = new LoginBrowser({ profileDir: profile });
+    const prep = mk({ profileDir: profile });
     await prep.open();
     await prep.close();
     // Write a stale lock pointing at a dead pid (pid 0x7fffffff never exists
@@ -100,7 +105,7 @@ suite('the login browser', () => {
       child.on('exit', () => resolve(child.pid ?? 0));
     });
     await writeFile(join(profile, 'agentbrowser-lock'), String(dead));
-    const browser = new LoginBrowser({ profileDir: profile });
+    const browser = mk({ profileDir: profile });
     await browser.open(); // adopts the stale lock
     await browser.close();
   }, 120_000);
@@ -111,7 +116,7 @@ suite('the login browser', () => {
     // already expired at read time (Chromium culls expired cookies at write,
     // so freezing first is the only way to observe the filter).
     const now = Date.now() + 7200_000;
-    const browser = new LoginBrowser({ profileDir: profile, now: () => now });
+    const browser = mk({ profileDir: profile, now: () => now });
     await browser.open();
     try {
       const context = (
@@ -153,7 +158,7 @@ suite('the login browser', () => {
     // exact cookie shapes Playwright can produce; addCookies cannot create
     // partitioned cookies, hence the stub.
     const profile = join(dir, 'profile-opaque');
-    const browser = new LoginBrowser({ profileDir: profile });
+    const browser = mk({ profileDir: profile });
     await browser.open();
     try {
       const self = browser as unknown as { context: unknown };
@@ -206,9 +211,31 @@ suite('the login browser', () => {
     }
   }, 240_000);
 
+  it('the live argv carries NONE of the disabling flags (review F4)', async () => {
+    const profile = join(dir, 'profile-argv');
+    const browser = mk({ profileDir: profile });
+    await browser.open();
+    try {
+      const pid = await chromiumPid();
+      if (pid <= 0) throw new Error('chromium pid not found for the argv test');
+      const { readFile } = await import('node:fs/promises');
+      const argv = (await readFile(`/proc/${pid}/cmdline`, 'utf8')).split('\0');
+      for (const flag of [
+        '--disable-client-side-phishing-detection',
+        '--disable-component-update',
+        '--disable-background-networking',
+      ]) {
+        expect({ flag, present: argv.includes(flag) }).toEqual({ flag, present: false });
+      }
+      expect(argv.some((token) => token.includes('remote-debugging-pipe'))).toBe(true);
+    } finally {
+      await browser.close();
+    }
+  }, 240_000);
+
   it('the pin records the real executable; a changed binary refuses and reset adopts', async () => {
     const profile = join(dir, 'profile-reset');
-    const browser = new LoginBrowser({ profileDir: profile });
+    const browser = mk({ profileDir: profile });
     await browser.open();
     await browser.close();
     // The pin carries the REAL executable and Chromium's version (review
@@ -227,8 +254,17 @@ suite('the login browser', () => {
     const pin2 = JSON.parse(await readFile(pinPath, 'utf8')) as typeof pin;
     expect(pin2.launches).toBe(2);
     await writeFile(pinPath, JSON.stringify({ ...pin2, executable: '/moved/chromium' }));
-    const refused = new LoginBrowser({ profileDir: profile });
+    const refused = mk({ profileDir: profile });
     await expect(refused.open()).rejects.toMatchObject({ code: 'LOGIN_BINARY_CHANGED' });
+    // A same-path version change (in-place update) refuses DOWNGRADE — and
+    // leaves the profile UNLOCKED (the lock is acquired last).
+    const lockPath = join(profile, 'agentbrowser-lock');
+    await writeFile(pinPath, JSON.stringify({ ...pin2, chromiumVersion: '0.0.0.0' }));
+    const versionRefused = mk({ profileDir: profile });
+    await expect(versionRefused.open()).rejects.toMatchObject({
+      code: 'LOGIN_BINARY_DOWNGRADED',
+    });
+    expect(existsSync(lockPath)).toBe(false);
     await refused.reset();
     expect(existsSync(profile)).toBe(false);
   }, 240_000);

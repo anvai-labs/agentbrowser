@@ -1006,7 +1006,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               'the login browser is not available on hosted deployments',
               false
             );
-          return await loginBrowser.open();
+          try {
+            return await loginBrowser.open();
+          } catch (error) {
+            throw error instanceof ServiceError ? error : loginBrowserServiceError(error);
+          }
         }
       );
 
