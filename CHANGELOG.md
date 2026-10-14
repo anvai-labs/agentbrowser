@@ -7,6 +7,23 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — per-session secret registration (TD-BROWSER-16 phase 2, ADR-025)
+
+- **`SecretManager` gains session scopes**: a value registered in a session's scope redacts only
+  that session's observations, logs, traces and errors — never another session's, never the global
+  surface; the scoped redaction sees the global values too, longest-first.
+- **The entropy floor**: values under 8 characters, or with fewer than 3 distinct characters, are
+  ignored — redacting "1", "en" or "true" would corrupt unrelated output while protecting nothing.
+- **Registration invalidates that scope's memoized cache**; clearing a session drops its values,
+  patterns and caches. **Bounded per TD-BROWSER-9 (A9), in both directions:**
+  `sessionScopesMaxSessions` (default 512, `0` disables) keeps redaction memos for at most that
+  many scopes, least-recently-**used** (memo eviction costs speed, never protection), and makes
+  registration **fail closed** (`SCOPE_LIMIT`) once that many live scopes exist — a live session
+  is never silently un-protected. `redactionCacheMaxEntries` governs every memo as it does the
+  global one; unknown session ids allocate nothing. `redactUntrustedScoped` is the untrusted-key
+  variant for phase 6's wiring. Core-only: no surface calls these yet. 11 tests.
+
+
 ### Added — the operator credential (TD-BROWSER-16 phase 1, ADR-025)
 
 - **`AGENTBROWSER_OPERATOR_KEYS_FILE`** holds `key:tenant` lines authenticating a **human
