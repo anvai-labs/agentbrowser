@@ -7,6 +7,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed — approval decisions are tenant-bound (TD-15 phase-7 review)
+
+With API keys configured, approval questions (`act`/`act.unattended`) now decide as the session's
+authenticated tenant, through a tenant-bound authorizer — matching egress, capabilities and the
+policy query routes, which already did. Before, every approval question decided as the implicit
+`Tenant::"local"`: a per-tenant act rule (deny transactions for tenant `ci`) never matched
+enforcement, and `POST /v1/policy/check` could disagree with the enforcement decision for the
+same action. Found by the phase-7 documentation review asserting the documented behavior.
+
 ### Added — policy query surface (TD-BROWSER-15 phase 5)
 
 - **`GET /v1/policy`** — the loaded policy: version (the document SHA-256, or `legacy`), limits,
