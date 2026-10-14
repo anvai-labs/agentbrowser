@@ -304,3 +304,55 @@ describe('per-session secret registration (TD-BROWSER-16 phase 2)', () => {
     );
   });
 });
+
+describe('session scope bounds (review of phase 2)', () => {
+  it('evicts the least-recently-used scope past the bound', () => {
+    const manager = new SecretManager({}, { sessionScopesMaxSessions: 2 });
+    manager.registerSessionSecret('ses_1', 'first-scoped-value-aaaa');
+    manager.registerSessionSecret('ses_2', 'second-scoped-value-bbb');
+    manager.registerSessionSecret('ses_3', 'third-scoped-value-cccc'); // evicts ses_1
+    expect(manager.redactScoped('x first-scoped-value-aaaa', 'ses_1')).toBe(
+      'x first-scoped-value-aaaa'
+    );
+    expect(manager.redactScoped('y second-scoped-value-bbb', 'ses_2')).toBe('y ***');
+    // Re-registering ses_1 evicts ses_2 (LRU by registration order).
+    manager.registerSessionSecret('ses_1', 'first-scoped-value-aaaa');
+    expect(manager.redactScoped('y second-scoped-value-bbb', 'ses_2')).toBe(
+      'y second-scoped-value-bbb'
+    );
+  });
+
+  it('sessionScopesMaxSessions: 0 disables session scopes entirely', () => {
+    const manager = new SecretManager({}, { sessionScopesMaxSessions: 0 });
+    manager.registerSessionSecret('ses_1', 'scoped-value-long-aaaaaa');
+    expect(manager.redactScoped('x scoped-value-long-aaaaaa', 'ses_1')).toBe(
+      'x scoped-value-long-aaaaaa'
+    );
+  });
+
+  it('redactionCacheMaxEntries governs the session memo (0 disables it)', () => {
+    const manager = new SecretManager({}, { redactionCacheMaxEntries: 0 });
+    manager.registerSessionSecret('ses_1', 'scoped-value-long-aaaaaa');
+    // Redaction still works uncached, repeatedly.
+    for (let i = 0; i < 3; i += 1) {
+      expect(manager.redactScoped('x scoped-value-long-aaaaaa', 'ses_1')).toBe('x ***');
+    }
+  });
+
+  it('an unknown session id allocates nothing', () => {
+    const manager = new SecretManager();
+    expect(manager.redactScoped('x whatever', 'ses_never_registered')).toBe('x whatever');
+    expect(manager.redactUntrustedScoped({ k: 'v' }, 'ses_never_registered')).toEqual({ k: 'v' });
+  });
+
+  it('redactUntrustedScoped redacts keys and values in scope', () => {
+    const manager = new SecretManager();
+    manager.registerSessionSecret('ses_1', 'scoped-value-long-aaaaaa');
+    const out = manager.redactUntrustedScoped(
+      { 'scoped-value-long-aaaaaa': 'x scoped-value-long-aaaaaa' },
+      'ses_1'
+    );
+    expect(JSON.stringify(out)).not.toContain('scoped-value');
+    expect(out).toEqual({ '***': 'x ***' });
+  });
+});

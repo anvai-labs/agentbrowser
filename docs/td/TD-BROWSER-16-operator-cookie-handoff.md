@@ -68,6 +68,16 @@ infrastructure; phase 6 enables the handoff.
   - cache invalidation;
   - the global redaction is unchanged.
 
+**Delivered (phase 2, #462):** `SecretManager` session scopes — `registerSessionSecret`,
+`redactScoped`, `redactUntrustedScoped` (the untrusted-key variant, so cookie values appearing as
+dictionary keys redact in the receiving session), `clearSessionSecrets`. The entropy floor (8
+characters / 3 distinct). Bounds per TD-BROWSER-9: `redactionCacheMaxEntries` governs the global
+memo AND every per-session memo; `sessionScopesMaxSessions` (default 512, `0` disables) bounds the
+number of live scopes with LRU eviction — evicting a scope loses only its memo; **phase 6 must
+call `clearSessionSecrets` at session close** (the release valve; re-registration at handoff
+restores a scope). An unknown session id allocates nothing. Core-only: the service wiring is
+phase 6's.
+
 ### Phase 3: domain matcher and normalization in `core`
 
 - **Move** cookie normalization and the bounds from `packages/cli/src/cookie-file.ts` into
