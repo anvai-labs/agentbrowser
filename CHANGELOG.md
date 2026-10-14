@@ -22,6 +22,7 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   for confidentiality.
 
 TD-BROWSER-15 is complete.
+
 ### Added — policy query surface (TD-BROWSER-15 phase 5)
 
 - **`GET /v1/policy`** — the loaded policy: version (the document SHA-256, or `legacy`), limits,
@@ -46,7 +47,8 @@ TD-BROWSER-15 is complete.
   them; `RATE_LIMITED` joined the protocol error enum so the 429 matches the published envelope;
   keyed per-tenant answers and `@internal` redaction are tested through the real routes. Without
   API keys the query surface shares one 30/minute bucket (keyed deployments are per tenant).
-ed — the policy file, opt-in, shadow mode (TD-BROWSER-15 phase 4a)
+
+### Added — the policy file, opt-in, shadow mode (TD-BROWSER-15 phase 4a)
 
 - **`AGENTBROWSER_POLICY_FILE`** loads a policy document and turns it into the server's every
   operator decision. Every startup refusal from the TD: files combined with policy-bearing

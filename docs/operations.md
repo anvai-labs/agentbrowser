@@ -255,13 +255,15 @@ node packages/mcp-server/dist/bin.js  # the MCP server (stdio)
 
 The service and MCP process use environment variables; there is no config file.
 ADR-024 §4 classifies the **service** settings (the table there stops at the service; MCP, CLI
-and launcher variables below are out of its scope): **policy-bearing** — they decide operator
-policy, and the four deprecated ones (`ALLOW_LOOPBACK`, `ALLOWED_CIDRS`, `APPROVAL_POLICY`,
-`EXTRACT_MAX_BYTES`) cannot be combined with `AGENTBROWSER_POLICY_FILE`; note that
-`AGENTBROWSER_POLICY_SHADOW` deliberately combines with the deprecated four, since it evaluates
-the document they generate, and a shadow flag alongside a policy file is simply ignored;
-**bootstrap** — where things are and how the host is configured (`HOSTED`, the CDP pair,
-timeouts, log level, keys, paths, ports, hosts); and **trusted operator configuration** —
+and launcher variables below are out of its scope) into four classes:
+**policy-bearing** — they decide operator policy: the four deprecated ones (`ALLOW_LOOPBACK`,
+`ALLOWED_CIDRS`, `APPROVAL_POLICY`, `MAX_RESPONSE_BYTES`), which cannot be combined with
+`AGENTBROWSER_POLICY_FILE`, and the budgets (`EXTRACT_MAX_BYTES`, `INLINE_ARTIFACT_MAX_BYTES`,
+`DEFAULT_TTL_MS`, `DEFAULT_IDLE_TIMEOUT_MS`). Note that `AGENTBROWSER_POLICY_SHADOW`
+deliberately combines with the deprecated four, since it evaluates the document they generate,
+and a shadow flag alongside a policy file is simply ignored. **Floor inputs** — they change what
+the floor itself enforces: `HOSTED` and the CDP attachment pair. **Bootstrap** — where things
+are: keys, paths, ports, hosts, timeouts, log level. **Trusted operator configuration** —
 `AGENTBROWSER_CHROMIUM_ARGS` alone, security-relevant input that changes what the browser may
 do. Entries below name their class where it matters; the two policy-file rows are marked
 policy-bearing by role (the ADR's table predates them and files them under bootstrap).
