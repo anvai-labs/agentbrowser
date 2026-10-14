@@ -46,16 +46,20 @@ suite('the login browser', () => {
     }
   }, 120_000);
 
-  it('the profile directory is created 0700 (owner-only) on POSIX', () => {
-    const profile = join(dir, 'profile-mode');
-    const browser = mk({ profileDir: profile });
-    return browser
-      .open()
-      .then(() => browser.close())
-      .finally(() => {
-        expect(statSync(profile).mode & 0o777).toBe(0o700);
-      });
-  }, 120_000);
+  (process.platform === 'linux' || process.platform === 'darwin' ? it : it.skip)(
+    'the profile directory is created 0700 (owner-only) on POSIX',
+    () => {
+      const profile = join(dir, 'profile-mode');
+      const browser = mk({ profileDir: profile });
+      return browser
+        .open()
+        .then(() => browser.close())
+        .finally(() => {
+          expect(statSync(profile).mode & 0o777).toBe(0o700);
+        });
+    },
+    120_000
+  );
 
   it('refuses a profile directory with wider permissions', async () => {
     const profile = join(dir, 'profile-wide');
@@ -211,27 +215,31 @@ suite('the login browser', () => {
     }
   }, 240_000);
 
-  it('the live argv carries NONE of the disabling flags (review F4)', async () => {
-    const profile = join(dir, 'profile-argv');
-    const browser = mk({ profileDir: profile });
-    await browser.open();
-    try {
-      const pid = await chromiumPid();
-      if (pid <= 0) throw new Error('chromium pid not found for the argv test');
-      const { readFile } = await import('node:fs/promises');
-      const argv = (await readFile(`/proc/${pid}/cmdline`, 'utf8')).split('\0');
-      for (const flag of [
-        '--disable-client-side-phishing-detection',
-        '--disable-component-update',
-        '--disable-background-networking',
-      ]) {
-        expect({ flag, present: argv.includes(flag) }).toEqual({ flag, present: false });
+  (process.platform === 'linux' ? it : it.skip)(
+    'the live argv carries NONE of the disabling flags (review F4)',
+    async () => {
+      const profile = join(dir, 'profile-argv');
+      const browser = mk({ profileDir: profile });
+      await browser.open();
+      try {
+        const pid = await chromiumPid();
+        if (pid <= 0) throw new Error('chromium pid not found for the argv test');
+        const { readFile } = await import('node:fs/promises');
+        const argv = (await readFile(`/proc/${pid}/cmdline`, 'utf8')).split('\0');
+        for (const flag of [
+          '--disable-client-side-phishing-detection',
+          '--disable-component-update',
+          '--disable-background-networking',
+        ]) {
+          expect({ flag, present: argv.includes(flag) }).toEqual({ flag, present: false });
+        }
+        expect(argv.some((token) => token.includes('remote-debugging-pipe'))).toBe(true);
+      } finally {
+        await browser.close();
       }
-      expect(argv.some((token) => token.includes('remote-debugging-pipe'))).toBe(true);
-    } finally {
-      await browser.close();
-    }
-  }, 240_000);
+    },
+    240_000
+  );
 
   it('the pin records the real executable; a changed binary refuses and reset adopts', async () => {
     const profile = join(dir, 'profile-reset');

@@ -457,8 +457,14 @@ function runPowerShell(script: string): Promise<string> {
     const powershell = process.env.SystemRoot
       ? join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
       : 'powershell';
+    // Windows PowerShell 5.1 breaks when PSModulePath points at PS7 modules
+    // (the GitHub runner exports pwsh's path); strip it so 5.1 loads its own.
+    const { PSModulePath: _stripped, ...cleanEnv } = process.env;
+    void _stripped;
+    const env = cleanEnv;
     const child = spawn(powershell, ['-NoProfile', '-NonInteractive', '-Command', script], {
       windowsHide: true,
+      env,
     });
     let out = '';
     let err = '';

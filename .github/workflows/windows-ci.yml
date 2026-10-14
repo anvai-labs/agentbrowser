@@ -72,8 +72,10 @@ jobs:
           pnpm --filter @agentbrowser/engine-playwright exec playwright install chromium
           "PLAYWRIGHT_BROWSERS_PATH=$env:PLAYWRIGHT_BROWSERS_PATH" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Run the engine test suites (headless)
-        run: pnpm --filter @agentbrowser/engine-playwright test
+      - name: Run the login-browser suite (headless)
+        run: >
+          pnpm --filter @agentbrowser/engine-playwright exec vitest run
+          src/login-browser.test.ts
         env:
           # The login-browser suite runs headless (TD-BROWSER-16 phase 4);
           # this is the job that exercises the win32 code paths.

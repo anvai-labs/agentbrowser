@@ -17,10 +17,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - **Profile security:** POSIX `0700`, created and verified at every launch (a wider mode refuses
   with `LOGIN_PROFILE_MODE`); Windows creates the directory with a protected owner-only DACL and
   startup parses the DACL, refusing any ACE beyond the owner (SYSTEM and Administrators are
-  reported, not refused) — exercised by the Windows CI job. The profile sits under
-  `AGENTBROWSER_LOGIN_PROFILE_DIR` (or the install root), outside synced paths.
+  reported, not refused) — the Windows CI job runs this suite, where the win32 branches execute.
+  The profile sits under `AGENTBROWSER_LOGIN_PROFILE_DIR` or, by default, the OS private
+  per-user state root (`XDG_STATE_HOME`/`~/.local/state`, `LOCALAPPDATA` on Windows); whether
+  that root is synced or backed up is the operator's environment, not a property claimed here.
 - **Binary pinning:** the resolved executable AND Chromium's own version are recorded in the
-  profile on first launch; any later change refuses with `LOGIN_BINARY_CHANGED` (reset adopts).
+  profile on first launch. A different path refuses `LOGIN_BINARY_CHANGED`; the same path with a
+  changed version (an in-place update) refuses `LOGIN_BINARY_DOWNGRADED`; either way reset adopts.
+  Launch-time refusals leave the profile unlocked — the lock is acquired after every pre-launch
+  check, so a transient refusal never wedges the profile.
 - **Lifecycle:** `open`/`close`/`reset`/`readCookies` serialized on a profile lock — a live second
   owner (or a hand-started Chrome, via its ProcessSingleton failure) refuses with
   `LOGIN_PROFILE_IN_USE`, a stale lock (dead owner) is adopted, the operator closing the last
