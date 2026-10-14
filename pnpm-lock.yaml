@@ -158,6 +158,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@agentbrowser/core':
+        specifier: workspace:^
+        version: link:../core
       '@agentbrowser/sdk-typescript':
         specifier: workspace:*
         version: link:../sdk-typescript
@@ -205,6 +208,9 @@ importers:
       '@agentbrowser/protocol':
         specifier: workspace:*
         version: link:../protocol
+      tldts:
+        specifier: 6.1.76
+        version: 6.1.76
     devDependencies:
       vitest:
         specifier: ^5.0.4
@@ -1531,8 +1537,15 @@ packages:
     resolution: {integrity: sha512-LgO3D9yZJjApUiuUfl9iFAwrtaX4+lok3wJIqttGoKCHlWUqHqbQpnxCf82L8FjgKsh4iGo78hqJwgL8F6To2A==}
     engines: {node: '>=14.0.0'}
 
+  tldts-core@6.1.86:
+    resolution: {integrity: sha512-Je6p7pkk+KMzMv2XXKmAE3McmolOQFdxkKw0R8EYNr7sELW46JqnNeTX8ybPiQgvg1ymCoF8LXs5fzFaZvJPTA==}
+
   tldts-core@7.4.16:
     resolution: {integrity: sha512-MDolfaSJtlSK5Y0A1xl3277ekubZwobpBjugknDizI9O5Rm60a1m8k4ICK+MRsCDzPygT81mp3BBf5RKDlFRfA==}
+
+  tldts@6.1.76:
+    resolution: {integrity: sha512-6U2ti64/nppsDxQs9hw8ephA3nO6nSQvVVfxwRw8wLQPFtLI1cFI1a1eP22g+LUP+1TA2pKKjUTwWB+K2coqmQ==}
+    hasBin: true
 
   tldts@7.4.16:
     resolution: {integrity: sha512-QwBER5KMR86IIjpIiO7H/Z3IMJPsZ1A6RKPAqzTTgOyUQUSt9FdnKcqhTaJmkY6HVrgouZHZR0ncK5QxvmnQeg==}
@@ -2643,7 +2656,13 @@ snapshots:
 
   tinyrainbow@3.2.0: {}
 
+  tldts-core@6.1.86: {}
+
   tldts-core@7.4.16: {}
+
+  tldts@6.1.76:
+    dependencies:
+      tldts-core: 6.1.86
 
   tldts@7.4.16:
     dependencies:

@@ -8,6 +8,7 @@
 
 import { writeFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
+import { assertCookieRequestSize } from '@agentbrowser/core';
 import type {
   AgentBrowserClient,
   ArtifactRef,
@@ -70,7 +71,7 @@ import {
   validateWireAction,
 } from '@agentbrowser/sdk-typescript';
 import { Command, type Option } from 'commander';
-import { assertCookieRequestSize, readCookieFile, writeCookieFile } from './cookie-file.js';
+import { readCookieFile, writeCookieFile } from './cookie-file.js';
 import {
   createJsonArgumentReader,
   createTextArgumentReader,
