@@ -722,7 +722,7 @@ describe('Approval Gates', () => {
 
 describe('ApprovalRequest.kind (TD-BROWSER-16 phase 1, review round 1)', () => {
   it('act tokens are byte-identical with and without kind: "act"', async () => {
-    const gate = new ApprovalGate({ key: 'k'.repeat(32) });
+    const gate = new ApprovalGate();
     const plain = await gate.generateApprovalToken({
       sessionId: 'ses_1',
       action: { type: 'click', ref: 'e1_1' },
@@ -738,7 +738,7 @@ describe('ApprovalRequest.kind (TD-BROWSER-16 phase 1, review round 1)', () => {
   });
 
   it('non-act tokens carry kind, domains and counts; domains bind the fingerprint', async () => {
-    const gate = new ApprovalGate({ key: 'k'.repeat(32) });
+    const gate = new ApprovalGate();
     const token = await gate.generateApprovalToken({
       sessionId: 'ses_1',
       action: { type: 'cookie.handoff' },
@@ -769,7 +769,7 @@ describe('ApprovalRequest.kind (TD-BROWSER-16 phase 1, review round 1)', () => {
   });
 
   it('a non-act token cannot be consumed as a plain act request', async () => {
-    const gate = new ApprovalGate({ key: 'k'.repeat(32) });
+    const gate = new ApprovalGate();
     const token = await gate.generateApprovalToken({
       sessionId: 'ses_1',
       action: { type: 'cookie.handoff' },
@@ -785,7 +785,7 @@ describe('ApprovalRequest.kind (TD-BROWSER-16 phase 1, review round 1)', () => {
   });
 
   it('useApprovalTokenWithOutcome records which way it went', async () => {
-    const gate = new ApprovalGate({ key: 'k'.repeat(32) });
+    const gate = new ApprovalGate();
     const token = await gate.generateApprovalToken({
       sessionId: 'ses_1',
       action: { type: 'cookie.handoff' },

@@ -277,11 +277,10 @@ async function readFirstKey(
   }
 }
 
-async function resolveOperatorKey(deps: {
-  err: (line: string) => void;
-}): Promise<string | undefined> {
-  const at = process.argv.indexOf('--operator-key-file');
-  const path = at >= 0 ? process.argv[at + 1] : undefined;
+async function resolveOperatorKey(
+  path: string | undefined,
+  deps: { err: (line: string) => void }
+): Promise<string | undefined> {
   return path !== undefined ? readFirstKey(path, deps.err) : promptOperatorKey(deps);
 }
 
@@ -307,11 +306,12 @@ async function promptOperatorKey(deps: {
   }) as typeof output.write;
   const { createInterface } = await import('node:readline');
   const rl = createInterface({ input: process.stdin, terminal: true, output });
+  // Mute BEFORE the question: readline echoes each keystroke through
+  // output while the user types, so muting only in the callback leaves the
+  // whole key on screen (review round 2).
+  muted = true;
   const line: string | undefined = await new Promise<string | undefined>((resolve) => {
-    rl.question('', (answer: string) => {
-      muted = true;
-      resolve(answer.trim() === '' ? undefined : answer.trim());
-    });
+    rl.question('', (answer: string) => resolve(answer.trim() === '' ? undefined : answer.trim()));
   });
   rl.close();
   output.write = realWrite;
@@ -2078,7 +2078,7 @@ export function buildCli(deps: CliDependencies): Cli {
             // The operator key resolves HERE — only this command, from the
             // key file or a no-echo TTY prompt; never an environment
             // variable, and never for any other command.
-            const operatorKey = await resolveOperatorKey(deps);
+            const operatorKey = await resolveOperatorKey(program.opts().operatorKeyFile, deps);
             if (!operatorKey)
               throw new UsageError(
                 'An operator key is required — pass --operator-key-file (a prompt needs a terminal)'
