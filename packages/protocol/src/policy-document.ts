@@ -38,13 +38,13 @@ export const CEDAR_SCHEMA = `namespace AgentBrowser {
   action "request", "request.loopback" appliesTo {
     principal: [Session],
     resource: [Host],
-    context: { phase: String, target: String, addressClasses: Set<String> },
+    context: { phase: String, target: String, addressClasses: Set<String>, tenantId?: String },
   };
 
   action "request.private" appliesTo {
     principal: [Session],
     resource: [Host],
-    context: { phase: String, target: String, addressClasses: Set<String>, ip?: ipaddr },
+    context: { phase: String, target: String, addressClasses: Set<String>, ip?: ipaddr, tenantId?: String },
   };
 
   action "act", "act.unattended" appliesTo {
@@ -53,6 +53,7 @@ export const CEDAR_SCHEMA = `namespace AgentBrowser {
     context: {
       effect: String,
       matchedRule: String,
+      tenantId?: String,
       hostname?: String,
       action?: String,
       role?: String,
@@ -104,6 +105,20 @@ export const CedarPolicySchema = Type.Object(
 );
 export type CedarPolicy = Static<typeof CedarPolicySchema>;
 
+/**
+ * Operator limits a policy file may carry (TD-BROWSER-15 phase 4). These are
+ * the embedder options the stock entrypoint stops passing when a file is set;
+ * an unknown key is a startup refusal, not a silent ignore.
+ */
+export const PolicyLimitsSchema = Type.Object(
+  {
+    extractMaxBytes: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 * 1024 * 1024 })),
+    maxResponseBytes: Type.Optional(Type.Integer({ minimum: 1, maximum: 1024 * 1024 * 1024 })),
+  },
+  { additionalProperties: false }
+);
+export type PolicyLimits = Static<typeof PolicyLimitsSchema>;
+
 /** A complete policy document: the unit `policy export` writes and phase 4 loads. */
 export const PolicyDocumentSchema = Type.Object(
   {
@@ -113,6 +128,7 @@ export const PolicyDocumentSchema = Type.Object(
     unknownRisk: Type.Union([Type.Literal('allow'), Type.Literal('required')]),
     approvalRules: Type.Array(ExportedApprovalRuleSchema, { maxItems: 1000 }),
     policies: Type.Array(CedarPolicySchema, { maxItems: 4096 }),
+    limits: Type.Optional(PolicyLimitsSchema),
   },
   { additionalProperties: false }
 );

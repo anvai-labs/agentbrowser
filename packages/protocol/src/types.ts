@@ -178,6 +178,8 @@ export interface ApprovalPolicy {
 export interface SessionResponse {
   /** Diagnostics reported by the browser host. */
   warnings?: string[];
+  /** TD-BROWSER-15 phase 4: the policy version the session decides under. */
+  policyVersion?: string;
   sessionId: string;
   engine: EngineInfo;
   createdAt: string;

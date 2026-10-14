@@ -44,6 +44,13 @@ export interface EgressExceptionContext {
   addressClasses: Array<'loopback' | 'private'>;
   /** What makes it private: the address as written and each private embedded IPv4. */
   privateSources: Array<{ address: string; type: 'ipv4' | 'ipv6' }>;
+  /**
+   * TD-BROWSER-15 phase 4: the session's tenant, injected by the service when
+   * it binds an authorizer to a session. NetworkPolicy never sets it; the
+   * oracle's contexts carry none, so both sides of the equivalence stay
+   * identical.
+   */
+  tenantId?: string;
 }
 
 /** The operator-chosen egress exceptions, answerable by an Authorizer. */

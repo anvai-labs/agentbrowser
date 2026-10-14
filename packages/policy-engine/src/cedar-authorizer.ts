@@ -50,10 +50,17 @@ const DENY_DEFAULT: PolicyDecision = Object.freeze({
 export interface CedarAuthorizerOptions {
   /** The parsed, structurally valid document to load. */
   document: PolicyDocument;
+  /**
+   * The tenant for requests whose context carries none (TD-15 phase 4).
+   * No-keys deployments pass `local`; keyed deployments bind per session and
+   * never rely on this default.
+   */
+  defaultTenant?: string;
 }
 
 export class CedarAuthorizer implements Authorizer {
   readonly version: string;
+  private readonly defaultTenant: string;
   private readonly policySetId: string;
   private readonly rules: Map<string, string>;
   private readonly staticPolicies: Record<string, string>;
@@ -61,6 +68,7 @@ export class CedarAuthorizer implements Authorizer {
 
   constructor(options: CedarAuthorizerOptions) {
     const { document } = options;
+    this.defaultTenant = options.defaultTenant ?? 'local';
     this.version = documentVersion(document);
     this.policySetId = `set:${this.version}`;
     this.rules = new Map(document.policies.map((policy) => [policy.key, policy.ruleId]));
@@ -163,6 +171,10 @@ export class CedarAuthorizer implements Authorizer {
   }
 
   private ask(action: string, context: cedar.Context): PolicyDecision {
+    // The principal's parent carries the deciding tenant: the session's
+    // tenant when the service bound one, else the constructor's default
+    // (no-keys deployments use the implicit Tenant::"local").
+    const tenant = tenantOf(context) ?? this.defaultTenant;
     const result = cedar.statefulIsAuthorized({
       principal: { type: 'AgentBrowser::Session', id: 'default' },
       action: { type: 'AgentBrowser::Action', id: action },
@@ -171,7 +183,16 @@ export class CedarAuthorizer implements Authorizer {
       preparsedSchemaName: CEDAR_SCHEMA_VERSION,
       preparsedPolicySetId: this.policySetId,
       validateRequest: true,
-      entities: ENTITIES,
+      entities: [
+        {
+          uid: { type: 'AgentBrowser::Session', id: 'default' },
+          attrs: {},
+          parents: [{ type: 'AgentBrowser::Tenant', id: tenant }],
+        },
+        // The tenant entity must exist for `principal in Tenant::"…"`.
+        { uid: { type: 'AgentBrowser::Tenant', id: tenant }, attrs: {}, parents: [] },
+        { uid: { type: 'AgentBrowser::Host', id: 'default' }, attrs: {}, parents: [] },
+      ],
     });
     if (result.type !== 'success') {
       return this.trapped('request rejected');
@@ -226,8 +247,13 @@ function contextFor(request: AuthorizationRequest): cedar.Context {
       return actContext(request.context);
     case 'request.loopback':
     case 'request.private': {
-      const { phase, target, addressClasses } = request.context;
-      return { phase, target, addressClasses: [...addressClasses] };
+      const { phase, target, addressClasses, tenantId } = request.context;
+      return {
+        phase,
+        target,
+        addressClasses: [...addressClasses],
+        ...(tenantId !== undefined ? { tenantId } : {}),
+      };
     }
     default: {
       const { tenantId } = request.context;
@@ -236,10 +262,19 @@ function contextFor(request: AuthorizationRequest): cedar.Context {
   }
 }
 
-function actContext(classification: ActionRiskClassification): cedar.Context {
+/** The tenant a context carries, if any (capability and bound-egress contexts). */
+function tenantOf(context: Record<string, unknown>): string | undefined {
+  const tenantId = context.tenantId;
+  return typeof tenantId === 'string' && tenantId !== '' ? tenantId : undefined;
+}
+
+function actContext(
+  classification: ActionRiskClassification & { tenantId?: string }
+): cedar.Context {
   return {
     effect: classification.effect,
     matchedRule: classification.rule?.id ?? 'none',
+    ...(classification.tenantId !== undefined ? { tenantId: classification.tenantId } : {}),
   };
 }
 

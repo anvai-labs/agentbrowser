@@ -24,6 +24,7 @@ import type { TrustedEvidenceSourceRegistry, TrustedVerifierRegistry } from '@ag
 import type { StructuredLogger } from '@agentbrowser/core';
 import { InMemoryTracer, MetricsRegistry, type SecretManager } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
+import { NetworkPolicy } from '@agentbrowser/policy';
 import type { AgentCapability, SessionPolicy } from '@agentbrowser/protocol';
 import {
   agentModeAllows,
@@ -50,6 +51,7 @@ import {
   responseDraft,
 } from './http-publication.js';
 import { buildOpenApiDocument } from './openapi.js';
+import { POLICY_BEARING_ENV, sessionPolicyFactoryFor } from './policy-session.js';
 import { PRODUCT_VERSION } from './product-version.js';
 import { requestOriginGuardFromEnvironment } from './request-origin-guard.js';
 import {
@@ -87,6 +89,30 @@ declare module 'fastify' {
 export interface ServerOptions extends OperatorCdpAdmissionOptions {
   /** Maximum compact JSON extraction response bytes; defaults to 1 MiB. */
   extractMaxBytes?: number;
+  /**
+   * TD-BROWSER-15 phase 4: a loaded policy file. Its authorizer decides every
+   * operator-chosen question, its limits replace the embedder options, and
+   * combining it with any of them is a startup refusal that names every
+   * conflict.
+   */
+  policy?: {
+    /**
+     * `'file'` (default): AGENTBROWSER_POLICY_FILE — limits replace the
+     * embedder options, and combining them is a refusal. `'shadow'`:
+     * AGENTBROWSER_POLICY_SHADOW — the environment configuration still
+     * applies, the wrapper only observes alongside the deciding authorizer.
+     */
+    kind?: 'file' | 'shadow';
+    /** The loaded authorizer (CedarAuthorizer, or a shadow wrapper). */
+    authorizer: import('@agentbrowser/policy-engine').Authorizer & {
+      healthy?: boolean;
+      shadowHealthy?: boolean;
+    };
+    /** The document's SHA-256; sessions stamp it. */
+    version: string;
+    /** Limits replacing extractMaxBytes / maxResponseBytes (files only). */
+    limits: import('@agentbrowser/protocol').PolicyLimits;
+  };
   /** Trusted embedding source selection for private evidence-backed approval records. */
   evidenceReviewProvider?: import('./service.js').ServiceDependencies['evidenceReviewProvider'];
   /** Operator-owned rules. Client-supplied session policy can only restrict these. */
@@ -152,7 +178,7 @@ function sha256Hex(value: string): string {
  * Parse AGENTBROWSER_API_KEYS ("key:tenant,key:tenant,...") into a
  * hash-keyed map; undefined when the variable is unset.
  */
-function apiKeysFromEnv(): Map<string, string> | undefined {
+export function apiKeysFromEnv(): Map<string, string> | undefined {
   const raw = process.env.AGENTBROWSER_API_KEYS;
   if (raw === undefined) {
     return undefined;
@@ -232,9 +258,7 @@ function statusFor(code: string): number {
 }
 
 export async function buildServer(options: ServerOptions = {}): Promise<FastifyInstance> {
-  const extractMaxBytes = parseExtractMaxBytes(
-    options.extractMaxBytes ?? DEFAULT_EXTRACT_MAX_BYTES
-  );
+  let extractMaxBytes = parseExtractMaxBytes(options.extractMaxBytes ?? DEFAULT_EXTRACT_MAX_BYTES);
   // Validate before allocating service resources. Own the credential map so a
   // caller clearing it later cannot switch a running service into local mode.
   const configuredKeys = options.apiKeys ?? apiKeysFromEnv();
@@ -453,6 +477,32 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     new InMemoryTracer({
       ...(options.secretManager ? { secretManager: options.secretManager } : {}),
     });
+  const policyLimiter = options.policy;
+  const policyIsFile = policyLimiter !== undefined && (policyLimiter.kind ?? 'file') === 'file';
+  if (policyIsFile) {
+    const conflicts = [
+      ...(options.networkPolicy !== undefined ? ['networkPolicy'] : []),
+      ...(options.approvalPolicy !== undefined ? ['approvalPolicy'] : []),
+      ...(options.extractMaxBytes !== undefined ? ['extractMaxBytes'] : []),
+    ];
+    const envConflicts = POLICY_BEARING_ENV.filter((name) => process.env[name] !== undefined);
+    if (conflicts.length > 0 || envConflicts.length > 0) {
+      throw new Error(
+        `AGENTBROWSER_POLICY_FILE cannot be combined with ${[...conflicts, ...envConflicts].join(
+          ', '
+        )}`
+      );
+    }
+  }
+  if (policyIsFile) extractMaxBytes = policyLimiter.limits.extractMaxBytes ?? extractMaxBytes;
+  // TD-15 phase 4: with a policy file, every session's network policy is the
+  // floor plus the tenant-bound, per-session-memoized authorizer exceptions.
+  // No keys: nothing is bound and the authorizer's implicit Tenant::"local"
+  // decides, whatever tenantId a caller claims.
+  const sessionPolicyFactory =
+    policyLimiter === undefined
+      ? undefined
+      : sessionPolicyFactoryFor(policyLimiter, apiKeys === undefined, process.env);
   const service = new AgentBrowserService({
     cdpAttachAdmission: attachAdmission,
     extractMaxBytes,
@@ -462,15 +512,24 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       : {}),
     ...(options.networkPolicy
       ? { networkPolicy: options.networkPolicy }
-      : process.env.AGENTBROWSER_ALLOW_LOOPBACK !== undefined ||
-          process.env.AGENTBROWSER_ALLOWED_CIDRS !== undefined ||
-          process.env.AGENTBROWSER_MAX_RESPONSE_BYTES !== undefined
+      : policyLimiter === undefined &&
+          (process.env.AGENTBROWSER_ALLOW_LOOPBACK !== undefined ||
+            process.env.AGENTBROWSER_ALLOWED_CIDRS !== undefined ||
+            process.env.AGENTBROWSER_MAX_RESPONSE_BYTES !== undefined)
         ? {
             allowLoopback: process.env.AGENTBROWSER_ALLOW_LOOPBACK,
             allowedPrivateCIDRs: process.env.AGENTBROWSER_ALLOWED_CIDRS,
             maxResponseBytes: process.env.AGENTBROWSER_MAX_RESPONSE_BYTES,
           }
         : {}),
+    ...(policyLimiter !== undefined
+      ? {
+          authorizer: policyLimiter.authorizer,
+          policyVersion: policyLimiter.version,
+          ...(sessionPolicyFactory !== undefined ? { sessionPolicyFactory } : {}),
+          ...(apiKeys !== undefined ? { tenantsConfigured: true } : {}),
+        }
+      : {}),
     ...((options.approvalPolicy ?? process.env.AGENTBROWSER_APPROVAL_POLICY) !== undefined
       ? {
           approvalPolicy:
@@ -724,6 +783,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       version: PRODUCT_VERSION,
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
+      // TD-15 phase 4: the authorizer's health as a boolean only — no ids,
+      // no reasons, no policy content.
+      ...(policyLimiter !== undefined
+        ? {
+            authorizerHealthy:
+              policyLimiter.authorizer.shadowHealthy ?? policyLimiter.authorizer.healthy ?? true,
+          }
+        : {}),
     };
   });
 

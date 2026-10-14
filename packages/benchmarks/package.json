@@ -27,6 +27,7 @@
     "@agentbrowser/engine-obscura": "workspace:^",
     "@agentbrowser/engine-playwright": "workspace:^",
     "@agentbrowser/policy": "workspace:^",
+    "@agentbrowser/policy-engine": "workspace:^",
     "@agentbrowser/protocol": "workspace:*",
     "@agentbrowser/testkit": "workspace:*"
   },
