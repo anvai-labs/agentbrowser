@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { type BrowserContext, chromium } from 'playwright';
 
 /**
- * TD-BROWSER-16 phase 4 (ADR-025 §5): the operator's login browser.
+ * TD-BROWSER-16 phase 4 (ADR-025 §1): the operator's login browser.
  *
  * A pipe-connected PERSISTENT Chromium context over a dedicated profile
  * directory — Playwright drives `--remote-debugging-pipe`, so NO debugging
@@ -47,9 +47,14 @@ export class LoginBrowserError extends Error {
   }
 }
 
-/** The launch flags ADR-025 §5 RE-ENABLES for a login browser (they make
- * login walls work: phishing detection, component and background updates). */
-const LOGIN_BROWSER_REMOVE_FROM_DEFAULT = [
+/**
+ * ADR-025 §1: Playwright's Chromium defaults DISABLE these three, which
+ * breaks login walls (Safe Browsing, component and background updates).
+ * They are REMOVED from the launch via ignoreDefaultArgs — adding them back
+ * as args would only duplicate the disable. A committed test asserts the
+ * live process argv carries none of them.
+ */
+const LOGIN_BROWSER_DISABLE_FLAGS = [
   '--disable-client-side-phishing-detection',
   '--disable-component-update',
   '--disable-background-networking',
@@ -79,9 +84,18 @@ export interface LoginBrowserOptions {
   now?: () => number;
 }
 
+/** CI runs the suite without a display: AGENTBROWSER_LOGIN_HEADLESS=1 forces
+ * headless launches so the login tests always execute (the pipe launch, the
+ * profile security and the filtering do not depend on a display). */
+const FORCE_HEADLESS = process.env.AGENTBROWSER_LOGIN_HEADLESS === '1';
+
 interface ProfilePin {
+  /** The exact executable that last wrote the profile (pinned). */
   executable?: string;
-  /** Monotonic launch counter at pin time; a smaller value later is a downgrade. */
+  /** Chromium's own version string at pin time, for the record. */
+  chromiumVersion?: string;
+  /** Monotonic launch counter; a later pin with a SMALLER count for the
+   * same executable means the profile was restored from an older backup. */
   launches: number;
 }
 
@@ -116,24 +130,19 @@ export class LoginBrowser {
     await this.assertProfileSecure();
     const pin = await this.readPin();
     await this.acquireProfileLock();
-    const headless = this.options.headless ?? false;
+    const headless = FORCE_HEADLESS || (this.options.headless ?? false);
     if (!headless && !displayAvailable()) {
       throw new LoginBrowserError(
         'LOGIN_BROWSER_DISPLAY',
         'the login browser needs a display; run headed on a machine with one'
       );
     }
-    // The launch args reuse the headed policy (ADR-013) and re-enable the
-    // walls a login needs, per ADR-025 section 5.
-    const args = [
-      '--disable-blink-features=AutomationControlled',
-      ...LOGIN_BROWSER_REMOVE_FROM_DEFAULT,
-    ];
     const executablePath = await this.resolvePinnedExecutable(pin);
     try {
       this.context = await chromium.launchPersistentContext(this.options.profileDir, {
         headless,
-        args,
+        args: ['--disable-blink-features=AutomationControlled'],
+        ignoreDefaultArgs: [...LOGIN_BROWSER_DISABLE_FLAGS],
         ...(executablePath !== undefined ? { executablePath } : {}),
       });
     } catch (error) {
@@ -145,7 +154,12 @@ export class LoginBrowser {
       this.context = undefined;
       void this.releaseProfileLock();
     });
-    await this.writePin({ ...pin, launches: (pin.launches ?? 0) + 1 });
+    const chromiumVersion = this.context.browser()?.version();
+    await this.writePin({
+      ...(executablePath !== undefined ? { executable: executablePath } : {}),
+      ...(chromiumVersion !== undefined ? { chromiumVersion } : {}),
+      launches: (pin.launches ?? 0) + 1,
+    });
   }
 
   async close(): Promise<void> {
@@ -189,7 +203,9 @@ export class LoginBrowser {
     let partitioned = 0;
     let expired = 0;
     for (const cookie of all) {
-      if ((cookie as { partitionKey?: unknown }).partitionKey !== undefined) {
+      const keyed = (cookie as { partitionKey?: unknown }).partitionKey !== undefined;
+      const opaque = (cookie as { partitionKeyOpaque?: unknown }).partitionKeyOpaque !== undefined;
+      if (keyed || opaque) {
         partitioned += 1;
         continue;
       }
@@ -280,16 +296,10 @@ export class LoginBrowser {
   private async resolvePinnedExecutable(pin: ProfilePin): Promise<string | undefined> {
     const resolved = chromium.executablePath();
     if (resolved === undefined) return undefined;
+    // First launch pins the binary; later launches must match it exactly.
+    // A same-path downgrade shows as a recorded version that changed.
     if (pin.executable === undefined) return resolved;
     if (pin.executable === resolved) return resolved;
-    // A different binary at the same path is a change; a smaller recorded
-    // launch counter on the pin file (restored from backup) is a downgrade.
-    if (pin.launches < 0) {
-      throw new LoginBrowserError(
-        'LOGIN_BINARY_DOWNGRADED',
-        'the pinned browser binary moved backwards'
-      );
-    }
     throw new LoginBrowserError(
       'LOGIN_BINARY_CHANGED',
       'the pinned browser binary changed since this profile was created; reset the profile to adopt the new binary'
@@ -364,34 +374,43 @@ function displayAvailable(): boolean {
 // --- Windows DACL (exercised by the Windows CI job) ------------------------
 
 async function createOwnerOnlyDirectory(dir: string): Promise<void> {
-  // Atomic-ish: create with a protected, owner-only DACL via icacls fallback
-  // semantics — PowerShell is available on every supported Windows host.
+  // Create first (inheriting), then immediately replace the DACL with a
+  // protected owner-only one. The create-then-protect window is inherent to
+  // PowerShell-based creation; the profile holds no data at that point, and
+  // assertWindowsDaclOwnerOnly refuses anything left wider.
   await mkdir(dir, { recursive: true });
   await runPowerShell(
-    `$d = Get-Item -LiteralPath ${psQuote(dir)}; $acl = New-Object System.Security.AccessControl.DirectorySecurity; ` +
+    `$d = Get-Item -LiteralPath ${psQuote(dir)}; ` +
+      '$acl = New-Object System.Security.AccessControl.DirectorySecurity; ' +
       '$acl.SetAccessRuleProtection($true, $false); ' +
       '$me = [System.Security.Principal.WindowsIdentity]::GetCurrent().User; ' +
-      `$rule = New-Object System.Security.AccessControl.FileSystemAccessRule($me, 'FullControl', 'Container_INHERIT,OBJECT_INHERIT', 'NONE', 'ALLOW'); ` +
+      '$rule = New-Object System.Security.AccessControl.FileSystemAccessRule(' +
+      `$me, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'); ` +
       '$acl.AddAccessRule($rule); $d.SetAccessControl($acl)'
   );
 }
 
 async function assertWindowsDaclOwnerOnly(dir: string): Promise<void> {
+  // Compare by SID (each ACE's identity translated), not display strings:
+  // Get-Acl reports NTAccount names that never equal the SID text.
   const output = await runPowerShell(
-    `(Get-Acl -LiteralPath ${psQuote(dir)}).Access | ForEach-Object { "$($_.IdentityReference)|$($_.FileSystemRights)|$($_.AccessControlType)" }`
+    `(Get-Acl -LiteralPath ${psQuote(dir)}).Access | ForEach-Object { ` +
+      '$sid = try { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { $_.IdentityReference.ToString() }; ' +
+      '"$sid|$($_.AccessControlType)" }'
   );
-  const me = await runPowerShell(
-    '[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value'
-  );
-  const lines = output.split(/\r?\n/).filter((l) => l.trim() !== '');
+  const me = (
+    await runPowerShell('[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value')
+  ).trim();
+  const found = output.split(/\r?\n/).filter((l) => l.trim() !== '');
   const foreign: string[] = [];
-  for (const line of lines) {
-    const [identity, , type] = line.split('|');
+  for (const line of found) {
+    const [identity, type] = line.split('|');
     if (type !== 'Allow') continue;
     if (identity === undefined) continue;
-    if (identity === me.trim()) continue;
-    // SYSTEM and Administrators are reported, not refused.
-    if (/NT AUTHORITY\\SYSTEM|BUILTIN\\Administrators/i.test(identity)) continue;
+    if (identity === me) continue;
+    // Well-known SIDs: SYSTEM (S-1-5-18) and Administrators (S-1-5-32-544)
+    // are reported, not refused.
+    if (identity === 'S-1-5-18' || identity === 'S-1-5-32-544') continue;
     foreign.push(identity);
   }
   if (foreign.length > 0) {

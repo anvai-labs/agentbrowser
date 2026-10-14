@@ -182,6 +182,9 @@ jobs:
           node scripts/probe-journal-sqlite.mjs
           pnpm test:job-eligibility
           pnpm -r --workspace-concurrency=1 run test --maxWorkers=2
+        env:
+          # The login-browser suite runs headless in CI (TD-BROWSER-16 phase 4).
+          AGENTBROWSER_LOGIN_HEADLESS: '1'
 
       - name: Qualify Firefox production dependency independence
         run: |

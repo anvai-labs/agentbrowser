@@ -11,8 +11,9 @@ import { LoginBrowser, LoginBrowserError, tcpListenersOf } from './login-browser
  * real; the Windows DACL path runs on the Windows CI job.
  */
 
-const display = typeof process.env.DISPLAY === 'string' && process.env.DISPLAY !== '';
-const suite = display ? describe : describe.skip;
+// AGENTBROWSER_LOGIN_HEADLESS=1 lets CI execute the suite without a display
+// (the pipe launch, profile security and filtering are display-independent).
+const suite = describe;
 
 let dir: string;
 beforeAll(async () => {
@@ -147,28 +148,90 @@ suite('the login browser', () => {
     }
   }, 120_000);
 
-  it('reset deletes the profile; a pinned binary change refuses', async () => {
+  it('partitionKeyOpaque-only cookies are filtered too (review F5)', async () => {
+    // Drive readCookiesLocked's filter with a stubbed context carrying the
+    // exact cookie shapes Playwright can produce; addCookies cannot create
+    // partitioned cookies, hence the stub.
+    const profile = join(dir, 'profile-opaque');
+    const browser = new LoginBrowser({ profileDir: profile });
+    await browser.open();
+    try {
+      const self = browser as unknown as { context: unknown };
+      const realContext = self.context as { cookies(): Promise<unknown[]> };
+      self.context = {
+        cookies: async () => [
+          {
+            name: 'plain',
+            value: 'v',
+            domain: 'example.com',
+            path: '/',
+            expires: -1,
+            httpOnly: false,
+            secure: false,
+            sameSite: 'Lax',
+          },
+          {
+            name: 'opaque',
+            value: 'v',
+            domain: 'example.com',
+            path: '/',
+            expires: -1,
+            httpOnly: false,
+            secure: false,
+            sameSite: 'Lax',
+            partitionKeyOpaque: true,
+          },
+          {
+            name: 'keyed',
+            value: 'v',
+            domain: 'example.com',
+            path: '/',
+            expires: -1,
+            httpOnly: false,
+            secure: false,
+            sameSite: 'Lax',
+            partitionKey: 'https://example.com',
+          },
+        ],
+      };
+      try {
+        const result = await browser.readCookies();
+        expect(result.cookies.map((c) => c.name)).toEqual(['plain']);
+        expect(result.skipped.partitioned).toBe(2);
+      } finally {
+        self.context = realContext;
+      }
+    } finally {
+      await browser.close();
+    }
+  }, 240_000);
+
+  it('the pin records the real executable; a changed binary refuses and reset adopts', async () => {
     const profile = join(dir, 'profile-reset');
     const browser = new LoginBrowser({ profileDir: profile });
     await browser.open();
     await browser.close();
-    await browser.reset();
-    expect(existsSync(profile)).toBe(false);
-    // Binary-change refusal: simulate by writing a pin with a different
-    // executable, then opening — the resolved path differs from the pin.
-    const second = new LoginBrowser({ profileDir: profile });
-    await second.open();
-    await second.close();
-    // Manually craft a changed pin.
+    // The pin carries the REAL executable and Chromium's version (review
+    // F2: the code never recorded one, making pinning a no-op).
     const pinPath = join(profile, 'agentbrowser-pin.json');
-    const pin = JSON.parse(await readFile(pinPath, 'utf8')) as { launches: number };
-    await writeFile(
-      pinPath,
-      JSON.stringify({ executable: '/moved/chromium', launches: pin.launches })
-    );
-    const third = new LoginBrowser({ profileDir: profile });
-    await expect(third.open()).rejects.toMatchObject({ code: 'LOGIN_BINARY_CHANGED' });
-  }, 180_000);
+    const pin = JSON.parse(await readFile(pinPath, 'utf8')) as {
+      executable?: string;
+      chromiumVersion?: string;
+      launches: number;
+    };
+    expect(pin.executable).toBeTruthy();
+    expect(pin.chromiumVersion).toBeTruthy();
+    expect(pin.launches).toBe(1);
+    await browser.open();
+    await browser.close();
+    const pin2 = JSON.parse(await readFile(pinPath, 'utf8')) as typeof pin;
+    expect(pin2.launches).toBe(2);
+    await writeFile(pinPath, JSON.stringify({ ...pin2, executable: '/moved/chromium' }));
+    const refused = new LoginBrowser({ profileDir: profile });
+    await expect(refused.open()).rejects.toMatchObject({ code: 'LOGIN_BINARY_CHANGED' });
+    await refused.reset();
+    expect(existsSync(profile)).toBe(false);
+  }, 240_000);
 });
 
 async function chromiumPid(): Promise<number> {

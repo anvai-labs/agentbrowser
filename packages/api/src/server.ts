@@ -1,4 +1,4 @@
-import { ControlError } from '@agentbrowser/core';
+import { ControlError, MAX_COOKIE_COUNT } from '@agentbrowser/core';
 import { deploymentModeFromEnvironment } from './cdp-config.js';
 import {
   cdpAttachAdmission,
@@ -24,6 +24,7 @@ import type { TrustedEvidenceSourceRegistry, TrustedVerifierRegistry } from '@ag
 import type { StructuredLogger } from '@agentbrowser/core';
 import { InMemoryTracer, MetricsRegistry, type SecretManager } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
+import { LoginBrowserError } from '@agentbrowser/engine-playwright';
 import { NetworkPolicy } from '@agentbrowser/policy';
 import type { AgentCapability, SessionPolicy } from '@agentbrowser/protocol';
 import {
@@ -261,6 +262,15 @@ const STATUS_FOR = {
   // Server-side failures.
   [ErrorCode.ENGINE_CRASHED]: 500,
   [ErrorCode.INTERNAL]: 500,
+  // Login browser refusals (TD-BROWSER-16): operator mistakes, not server
+  // faults — every one is a 4xx so clients can distinguish them from 500s.
+  [ErrorCode.LOGIN_BROWSER_CLOSED]: 409,
+  [ErrorCode.LOGIN_PROFILE_IN_USE]: 409,
+  [ErrorCode.LOGIN_PROFILE_MODE]: 403,
+  [ErrorCode.LOGIN_BROWSER_DISPLAY]: 400,
+  [ErrorCode.LOGIN_BINARY_CHANGED]: 409,
+  [ErrorCode.LOGIN_BINARY_DOWNGRADED]: 409,
+  [ErrorCode.LOGIN_HOSTED_OR_MULTI_TENANT]: 403,
 } satisfies Record<ErrorCode, number>;
 
 /** Map protocol error codes onto HTTP statuses. */
@@ -290,15 +300,12 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     console.warn,
     (apiKeys?.size ?? 0) > 0
   );
+  const deploymentMode =
+    deploymentModeFromEnvironment(process.env) === 'hosted'
+      ? 'hosted'
+      : (options.deploymentMode ?? 'local');
   const attachAdmission = cdpAttachAdmission(
-    {
-      ...options,
-      host: bindHost,
-      deploymentMode:
-        deploymentModeFromEnvironment(process.env) === 'hosted'
-          ? 'hosted'
-          : (options.deploymentMode ?? 'local'),
-    },
+    { ...options, host: bindHost, deploymentMode },
     apiKeys?.values() ?? []
   );
   const fastify = Fastify({
@@ -969,6 +976,21 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           );
         return loginBrowser;
       };
+      /**
+       * Engine refusals must stay typed at the client, not become 500s. A
+       * non-LoginBrowserError (e.g. Playwright's ProcessSingleton failure on
+       * a hand-started Chrome) is the in-use refusal the ADR names.
+       */
+      const loginBrowserServiceError = (error: unknown): ServiceError =>
+        error instanceof LoginBrowserError
+          ? new ServiceError(error.code, error.message, false, {
+              loginBrowser: error.code,
+            })
+          : new ServiceError(
+              'LOGIN_PROFILE_IN_USE',
+              'the login profile is in use or the browser did not start',
+              false
+            );
 
       v1.post(
         '/operator/login/open',
@@ -976,14 +998,15 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         async (request) => {
           requireHumanOperator(request);
           requireLoginBrowser();
-          // ADR-025 §5: headed, single-tenant, local deployments only.
-          if ((apiKeys?.size ?? 0) > 1)
+          // ADR-025 §1: headed, single-tenant, non-hosted deployments only.
+          // (True multi-tenant deployments never boot with operator keys.)
+          if (deploymentMode === 'hosted')
             throw new ServiceError(
               'INVALID_REQUEST',
-              'the login browser is single-tenant; this deployment has multiple API-key tenants',
+              'the login browser is not available on hosted deployments',
               false
             );
-          return { open: await loginBrowser.open() };
+          return await loginBrowser.open();
         }
       );
 
@@ -993,7 +1016,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         async (request) => {
           requireHumanOperator(request);
           requireLoginBrowser();
-          return { open: await loginBrowser.close() };
+          try {
+            return await loginBrowser.close();
+          } catch (error) {
+            throw loginBrowserServiceError(error);
+          }
         }
       );
 
@@ -1003,7 +1030,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         async (request) => {
           requireHumanOperator(request);
           requireLoginBrowser();
-          return { reset: await loginBrowser.reset() };
+          try {
+            return await loginBrowser.reset();
+          } catch (error) {
+            throw loginBrowserServiceError(error);
+          }
         }
       );
 
@@ -1013,10 +1044,20 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         async (request) => {
           requireHumanOperator(request);
           requireLoginBrowser();
-          const result = await loginBrowser.read();
-          // Counts only at the route surface; values are returned to the
-          // deciding human operator (they already own them).
-          return result;
+          try {
+            const result = await loginBrowser.read();
+            // The bounds are checked first (TD phase 4): an over-count read
+            // refuses rather than truncating silently.
+            if (result.cookies.length > MAX_COOKIE_COUNT)
+              throw new ServiceError(
+                'INVALID_REQUEST',
+                `the login browser holds more than ${MAX_COOKIE_COUNT} cookies; reset the profile`,
+                false
+              );
+            return result;
+          } catch (error) {
+            throw error instanceof ServiceError ? error : loginBrowserServiceError(error);
+          }
         }
       );
 

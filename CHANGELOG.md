@@ -7,25 +7,32 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
-### Added — the login browser (TD-BROWSER-16 phase 4, ADR-025 §5)
+### Added — the login browser (TD-BROWSER-16 phase 4, ADR-025 §1)
 
 - **`LoginBrowser` (`engine-playwright`)**: a pipe-connected **persistent** Chromium context over a
   dedicated profile directory. Playwright drives `--remote-debugging-pipe`, so **no TCP port is
-  ever opened** — asserted by test against the process's own listening sockets. The launch args
-  reuse the headed policy (ADR-013) and re-enable the login walls a human needs
-  (phishing detection, component and background updates).
+  ever opened** — asserted by test against the process's own listening sockets. The login walls
+  a human needs (Safe Browsing phishing detection, component and background updates) are
+  RE-ENABLED by REMOVING Playwright's disabling flags through `ignoreDefaultArgs`.
 - **Profile security:** POSIX `0700`, created and verified at every launch (a wider mode refuses
   with `LOGIN_PROFILE_MODE`); Windows creates the directory with a protected owner-only DACL and
   startup parses the DACL, refusing any ACE beyond the owner (SYSTEM and Administrators are
   reported, not refused) — exercised by the Windows CI job. The profile sits under
   `AGENTBROWSER_LOGIN_PROFILE_DIR` (or the install root), outside synced paths.
-- **Binary pinning:** the resolved executable is pinned in the profile; a changed binary refuses
-  with `LOGIN_BINARY_CHANGED` (reset adopts the new one).
+- **Binary pinning:** the resolved executable AND Chromium's own version are recorded in the
+  profile on first launch; any later change refuses with `LOGIN_BINARY_CHANGED` (reset adopts).
 - **Lifecycle:** `open`/`close`/`reset`/`readCookies` serialized on a profile lock — a live second
-  owner refuses with `LOGIN_PROFILE_IN_USE`, a stale lock (dead owner) is adopted, the operator
-  closing the last window reconciles the state, and reads refuse with `LOGIN_BROWSER_CLOSED`.
-  Partitioned and expired cookies are skipped and counted (the filter is asserted with a clock
-  frozen ahead: Chromium culls expired cookies at write).
+  owner (or a hand-started Chrome, via its ProcessSingleton failure) refuses with
+  `LOGIN_PROFILE_IN_USE`, a stale lock (dead owner) is adopted, the operator closing the last
+  window reconciles the state, and reads refuse with `LOGIN_BROWSER_CLOSED`. Partitioned cookies
+  (`partitionKey` OR `partitionKeyOpaque`) and expired ones are skipped and counted; the expired
+  filter is asserted with a clock frozen ahead (Chromium culls expired cookies at write) and the
+  opaque one with a stubbed cookie set.
+- **Typed refusals at the client:** the seven `LOGIN_*` codes joined the protocol error enum
+  (409/403/400, never 500) — every engine refusal maps to its code at the routes, and a
+  non-typed launch failure (a hand-started Chrome) maps to `LOGIN_PROFILE_IN_USE`.
+- **Headless CI:** `AGENTBROWSER_LOGIN_HEADLESS=1` lets the whole suite run without a display;
+  CI runs the engine suites with it.
 - **`LoginBrowserService` + `AGENTBROWSER_LOGIN_BROWSER=1`**: enabled only with operator keys
   present (boot refuses otherwise); `POST /v1/operator/login/{open,close,reset,read}` are
   human-operator-only operator routes — agent credentials and API-key operators are refused; a

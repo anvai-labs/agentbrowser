@@ -1,8 +1,9 @@
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { LoginBrowser } from '@agentbrowser/engine-playwright';
 
 /**
- * TD-BROWSER-16 phase 4 (ADR-025 §5): the login browser as a service-level
+ * TD-BROWSER-16 phase 4 (ADR-025 §1): the login browser as a service-level
  * singleton — enabled only by AGENTBROWSER_LOGIN_BROWSER=1 with operator keys
  * present. It is not a session: no id, no refs, no pages on any agent
  * surface; only the operator routes touch it.
@@ -14,6 +15,18 @@ export const LOGIN_BROWSER_ROUTES = Object.freeze([
   'login.reset',
   'login.read',
 ] as const);
+
+/**
+ * The OS private per-user state root: XDG_STATE_HOME (or its default under
+ * ~/.local/state) on POSIX, LOCALAPPDATA on Windows — outside synced and
+ * backed-up paths, per the TD.
+ */
+function defaultLoginProfileRoot(): string {
+  if (process.platform === 'win32') {
+    return process.env.LOCALAPPDATA ?? process.env.TEMP ?? process.cwd();
+  }
+  return process.env.XDG_STATE_HOME ?? join(process.env.HOME ?? tmpdir(), '.local', 'state');
+}
 
 export class LoginBrowserService {
   private browser: LoginBrowser | undefined;
@@ -28,11 +41,13 @@ export class LoginBrowserService {
     if (options.enabled) {
       this.browser = new LoginBrowser({
         // AGENTBROWSER_LOGIN_PROFILE_DIR overrides; the default sits under
-        // the OS private temp root, outside synced and backed-up paths.
+        // the OS private per-user state root (never the server's working
+        // directory, which can be synced or backed up), with the install
+        // root winning when the launcher provides one.
         profileDir:
           options.profileDir ??
           process.env.AGENTBROWSER_LOGIN_PROFILE_DIR ??
-          join(process.env.AGENTBROWSER_HOME ?? process.cwd(), 'login-profile'),
+          join(process.env.AGENTBROWSER_HOME ?? defaultLoginProfileRoot(), 'login-profile'),
       });
     }
   }

@@ -6330,6 +6330,34 @@
               "code": {
                 "anyOf": [
                   {
+                    "const": "LOGIN_BROWSER_CLOSED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "LOGIN_PROFILE_IN_USE",
+                    "type": "string"
+                  },
+                  {
+                    "const": "LOGIN_PROFILE_MODE",
+                    "type": "string"
+                  },
+                  {
+                    "const": "LOGIN_BROWSER_DISPLAY",
+                    "type": "string"
+                  },
+                  {
+                    "const": "LOGIN_BINARY_CHANGED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "LOGIN_BINARY_DOWNGRADED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "LOGIN_HOSTED_OR_MULTI_TENANT",
+                    "type": "string"
+                  },
+                  {
                     "const": "RATE_LIMITED",
                     "type": "string"
                   },
@@ -6483,6 +6511,34 @@
         "properties": {
           "code": {
             "anyOf": [
+              {
+                "const": "LOGIN_BROWSER_CLOSED",
+                "type": "string"
+              },
+              {
+                "const": "LOGIN_PROFILE_IN_USE",
+                "type": "string"
+              },
+              {
+                "const": "LOGIN_PROFILE_MODE",
+                "type": "string"
+              },
+              {
+                "const": "LOGIN_BROWSER_DISPLAY",
+                "type": "string"
+              },
+              {
+                "const": "LOGIN_BINARY_CHANGED",
+                "type": "string"
+              },
+              {
+                "const": "LOGIN_BINARY_DOWNGRADED",
+                "type": "string"
+              },
+              {
+                "const": "LOGIN_HOSTED_OR_MULTI_TENANT",
+                "type": "string"
+              },
               {
                 "const": "RATE_LIMITED",
                 "type": "string"
@@ -10537,6 +10593,34 @@
             "properties": {
               "code": {
                 "anyOf": [
+                  {
+                    "const": "LOGIN_BROWSER_CLOSED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "LOGIN_PROFILE_IN_USE",
+                    "type": "string"
+                  },
+                  {
+                    "const": "LOGIN_PROFILE_MODE",
+                    "type": "string"
+                  },
+                  {
+                    "const": "LOGIN_BROWSER_DISPLAY",
+                    "type": "string"
+                  },
+                  {
+                    "const": "LOGIN_BINARY_CHANGED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "LOGIN_BINARY_DOWNGRADED",
+                    "type": "string"
+                  },
+                  {
+                    "const": "LOGIN_HOSTED_OR_MULTI_TENANT",
+                    "type": "string"
+                  },
                   {
                     "const": "RATE_LIMITED",
                     "type": "string"

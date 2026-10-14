@@ -13,9 +13,11 @@ try {
   let button;
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
-    button = (await page.observe({ mode: 'interactive' })).elements.find(e => e.name === 'Add' && e.enabled);
+    button = (await page.observe({ mode: 'interactive' })).elements.find(
+      (e) => e.name === 'Add' && e.enabled
+    );
     if (button) break;
-    await new Promise(resolve => setTimeout(resolve, 25));
+    await new Promise((resolve) => setTimeout(resolve, 25));
   }
   assert.ok(button?.ref, 'Real fixture button must be observable');
   await page.act({ type: 'click', target: { ref: button.ref } });
@@ -24,9 +26,14 @@ try {
   while (Date.now() < deadline) {
     state = await (await fetch(`${fixtureUrl}/state`)).json();
     if (state.version === 1) break;
-    await new Promise(resolve => setTimeout(resolve, 25));
+    await new Promise((resolve) => setTimeout(resolve, 25));
   }
   assert.deepEqual(state, { version: 1, total: 1 });
   const capture = await page.screenshot({ maskSensitive: false });
-  assert.equal(Buffer.from(capture.bytesBase64, 'base64').subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
-} finally { await engine.close(); }
+  assert.equal(
+    Buffer.from(capture.bytesBase64, 'base64').subarray(0, 8).toString('hex'),
+    '89504e470d0a1a0a'
+  );
+} finally {
+  await engine.close();
+}
