@@ -7,6 +7,30 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — the operator credential (TD-BROWSER-16 phase 1, ADR-025)
+
+- **`AGENTBROWSER_OPERATOR_KEYS_FILE`** holds `key:tenant` lines authenticating a **human
+  operator** (`human-operator` joins the principal actors). API keys must be configured and map to
+  exactly ONE tenant, which every operator entry must match; a key appearing in both credential
+  sets aborts startup (one credential, one identity); keys are SHA-256-hashed and never logged.
+- **Operator keys are valid only on operator-flagged routes** — today, the approval view and
+  decide routes — and refused with `403 FORBIDDEN` everywhere else: a leaked operator key cannot
+  create sessions, act, or read anything else.
+- **`ApprovalKind`, `NonActApprovalView` and `NonActApprovalDecision` live in the protocol**
+  (ADR-015), re-exported from core; the approval routes' published OpenAPI 200s are oneOf the
+  operator view and the non-act shapes. `ApprovalRequest` gains `kind` (`act` unchanged and
+  byte-stable; `act.reviewed`; the non-act `cookie.handoff` carrying `{domains, counts}` evidence
+  that phase 6 instantiates): non-act tokens carry their kind and evidence, with **domains**
+  inside the fingerprint — a token cannot be replayed against different domains; **counts are
+  informational** per ADR-025 (committed gate tests pin all of this).
+- **The separate resolve-and-decide path**: the approval view/decide routes branch on kind —
+  non-act tokens are decided by a **human operator only** (an API-key operator, which an agent may
+  hold, is refused for them), and the view returns the bound evidence verbatim. Single-use.
+- **CLI**: `agentbrowser approvals view <sessionId> <tokenId>` reads the operator key from
+  `--operator-key-file` or a no-echo prompt — **never an environment variable** (tested: env
+  operator keys are ignored).
+
+
 ### Fixed — approval decisions are tenant-bound (TD-15 phase-7 review)
 
 With API keys configured, approval questions (`act`/`act.unattended`) now decide as the session's

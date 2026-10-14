@@ -964,3 +964,29 @@ export interface ArtifactRef {
   tenantId?: string;
   warnings?: string[];
 }
+
+/**
+ * TD-BROWSER-16 phase 1 (ADR-025): what an approval is FOR. `act` is the
+ * original kind; `act.reviewed` binds the same act evidence but is decided by
+ * a human operator; `cookie.handoff` is the non-act kind phase 6 instantiates,
+ * carrying `{domains, counts}` evidence (domains are fingerprinted; counts
+ * are informational).
+ */
+export type ApprovalKind = 'act' | 'act.reviewed' | 'cookie.handoff';
+
+/** The non-act approval view: the kind and the bound evidence, verbatim. */
+export interface NonActApprovalView {
+  kind: ApprovalKind;
+  sessionId: string;
+  domains?: string[];
+  counts?: Record<string, number>;
+  status: string;
+  /** Set once decided: which way the human operator decided. */
+  decidedOutcome?: 'approve' | 'deny';
+}
+
+/** The non-act approval decide result. */
+export interface NonActApprovalDecision {
+  kind: ApprovalKind;
+  status: 'approved' | 'denied';
+}

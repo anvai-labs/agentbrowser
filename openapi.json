@@ -497,11 +497,18 @@
         ],
         "responses": {
           "200": {
-            "description": "Private approval state.",
+            "description": "Private approval state; a non-act kind (TD-BROWSER-16) returns the NonActApprovalView.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OperatorApprovalView"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/OperatorApprovalView"
+                    },
+                    {
+                      "$ref": "#/components/schemas/NonActApprovalView"
+                    }
+                  ]
                 }
               }
             }
@@ -594,7 +601,7 @@
         },
         "responses": {
           "200": {
-            "description": "Private approval state, or recorded operation replay.",
+            "description": "Private approval state, a recorded operation replay, or the non-act decision (TD-BROWSER-16).",
             "content": {
               "application/json": {
                 "schema": {
@@ -604,6 +611,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/OperationReplay"
+                    },
+                    {
+                      "$ref": "#/components/schemas/NonActApprovalDecision"
                     }
                   ]
                 }
@@ -5612,6 +5622,103 @@
             "patternProperties": {
               "^(.*)$": {}
             }
+          }
+        }
+      },
+      "NonActApprovalView": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "sessionId",
+          "status"
+        ],
+        "properties": {
+          "kind": {
+            "anyOf": [
+              {
+                "const": "act",
+                "type": "string"
+              },
+              {
+                "const": "act.reviewed",
+                "type": "string"
+              },
+              {
+                "const": "cookie.handoff",
+                "type": "string"
+              }
+            ]
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "counts": {
+            "type": "object",
+            "patternProperties": {
+              "^(.*)$": {
+                "type": "integer"
+              }
+            }
+          },
+          "status": {
+            "type": "string"
+          },
+          "decidedOutcome": {
+            "anyOf": [
+              {
+                "const": "approve",
+                "type": "string"
+              },
+              {
+                "const": "deny",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      },
+      "NonActApprovalDecision": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "status"
+        ],
+        "properties": {
+          "kind": {
+            "anyOf": [
+              {
+                "const": "act",
+                "type": "string"
+              },
+              {
+                "const": "act.reviewed",
+                "type": "string"
+              },
+              {
+                "const": "cookie.handoff",
+                "type": "string"
+              }
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "approved",
+                "type": "string"
+              },
+              {
+                "const": "denied",
+                "type": "string"
+              }
+            ]
           }
         }
       },

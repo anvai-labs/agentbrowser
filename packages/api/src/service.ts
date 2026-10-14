@@ -67,6 +67,7 @@ import {
   ActionRiskPolicy,
   type ActionRiskPolicyOptions,
   ApprovalGate,
+  type ApprovalToken,
   ArtifactStore,
   budgetObservation,
   canonicalJson,
@@ -1554,6 +1555,81 @@ export class AgentBrowserService {
     request: import('@agentbrowser/policy-engine').PolicyCheckRequest
   ): import('@agentbrowser/policy-engine').PolicyCheckAnswer {
     return policyCheck(this.authorizer, request);
+  }
+
+  /**
+   * TD-BROWSER-16 phase 1 (ADR-025): the separate resolve-and-decide path for
+   * the non-act approval kinds. It deliberately does NOT reuse the delegated-
+   * review machinery (reviewContext, authority epochs): a human operator
+   * decides on their own credential. Returns undefined for act-kind tokens,
+   * which keep their existing path.
+   */
+  async getApprovalKind(
+    sessionId: string,
+    tokenId: string
+  ): Promise<{ kind: 'act.reviewed' | 'cookie.handoff'; status: string } | undefined> {
+    // getToken (unlike the session list) still returns expired tokens, so an
+    // expired non-act token reports its kind instead of falling through to
+    // the act path's misleading error.
+    const token = await this.approvalGate.getToken(tokenId);
+    if (
+      token === undefined ||
+      token.sessionId !== sessionId ||
+      token.kind === undefined ||
+      token.kind === 'act'
+    )
+      return undefined;
+    return { kind: token.kind, status: token.status };
+  }
+
+  /** The view for a non-act approval: the kind and the bound evidence, verbatim. */
+  async viewNonActApproval(
+    sessionId: string,
+    tokenId: string
+  ): Promise<{
+    kind: string;
+    sessionId: string;
+    domains?: string[];
+    counts?: Record<string, number>;
+    status: string;
+  }> {
+    const token = await this.findNonActToken(sessionId, tokenId);
+    return {
+      kind: token.kind as string,
+      sessionId,
+      ...(token.domains !== undefined ? { domains: [...token.domains] } : {}),
+      ...(token.counts !== undefined ? { counts: { ...token.counts } } : {}),
+      ...(token.decidedOutcome !== undefined ? { decidedOutcome: token.decidedOutcome } : {}),
+      status: token.status,
+    };
+  }
+
+  /** The decide for a non-act approval: single-use, human-operator decided. */
+  async decideNonActApproval(
+    sessionId: string,
+    tokenId: string,
+    decision: 'approve' | 'deny'
+  ): Promise<{ kind: string; status: string }> {
+    const token = await this.findNonActToken(sessionId, tokenId);
+    if (token.status !== 'pending')
+      throw new ServiceError('INVALID_REQUEST', 'Approval token is not pending');
+    await this.approvalGate.useApprovalTokenWithOutcome(tokenId, decision);
+    return { kind: token.kind as string, status: decision === 'approve' ? 'approved' : 'denied' };
+  }
+
+  private async findNonActToken(sessionId: string, tokenId: string): Promise<ApprovalToken> {
+    // getToken (unlike the session list) still returns expired tokens, so an
+    // expired non-act token reports its kind instead of falling through to
+    // the act path's misleading error.
+    const token = await this.approvalGate.getToken(tokenId);
+    if (
+      token === undefined ||
+      token.sessionId !== sessionId ||
+      token.kind === undefined ||
+      token.kind === 'act'
+    )
+      throw new ServiceError('NOT_FOUND', 'Approval does not exist');
+    return token;
   }
 
   /**

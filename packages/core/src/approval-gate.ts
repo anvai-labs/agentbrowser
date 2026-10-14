@@ -36,15 +36,37 @@ export interface ApprovalActionRequest {
   parameters?: Record<string, unknown>;
 }
 
+/**
+ * TD-BROWSER-16 phase 1 (ADR-025): what an approval is FOR. `act` is the
+ * existing kind, unchanged. `act.reviewed` binds the same act evidence but
+ * is decided by a human operator. `cookie.handoff` is the non-act kind
+ * phase 6 instantiates; its evidence is `{ domains, counts }`, not an act.
+ */
+import type { ApprovalKind } from '@agentbrowser/protocol';
+
+export type { ApprovalKind };
+
 export interface ApprovalRequest {
   sessionId: string;
+  /** Defaults to `act`; the non-act kinds carry their own evidence. */
+  kind?: ApprovalKind;
   action: ApprovalActionRequest;
+  /** cookie.handoff evidence: the granted domains and their cookie counts. */
+  domains?: string[];
+  counts?: Record<string, number>;
 }
 
 export interface ApprovalToken {
   tokenId: string;
   sessionId: string;
   actionFingerprint: string;
+  /** TD-BROWSER-16 phase 1: undefined means `act` (the original kind). */
+  kind?: ApprovalKind;
+  /** Non-act evidence, returned verbatim to the deciding human operator. */
+  domains?: string[];
+  counts?: Record<string, number>;
+  /** Set by the non-act decide path: which way the human operator decided. */
+  decidedOutcome?: 'approve' | 'deny';
   status: 'pending' | 'used' | 'expired';
   createdAt: number;
   expiresAt: number;
@@ -165,9 +187,12 @@ export class ApprovalGate {
    * Generate an approval token
    */
   async generateApprovalToken(request: ApprovalRequest): Promise<ApprovalToken> {
-    const record = await this.allocate(this.snapshotBinding(request));
+    const binding = this.snapshotBinding(request);
+    const record = await this.allocate(binding);
     if (record.kind !== 'confirmation') throw new Error('Invalid token kind');
-    return { ...record.token };
+    // Non-act evidence rides on the token: the deciding human operator sees
+    // exactly what was bound (TD-BROWSER-16 phase 1).
+    return { ...record.token, ...binding };
   }
 
   private async allocate(
@@ -346,6 +371,16 @@ export class ApprovalGate {
   }
 
   /**
+   * TD-BROWSER-16 phase 1: burn with the outcome recorded, so the view after
+   * a decide tells the human operator which way it went.
+   */
+  async useApprovalTokenWithOutcome(tokenId: string, outcome: 'approve' | 'deny'): Promise<void> {
+    await this.useApprovalToken(tokenId);
+    const record = this.tokens.get(tokenId);
+    if (record?.kind === 'confirmation') record.token.decidedOutcome = outcome;
+  }
+
+  /**
    * Legacy trusted-owner burn. Authorization paths must use consumeApprovalToken.
    */
   async useApprovalToken(tokenId: string): Promise<void> {
@@ -471,7 +506,7 @@ export class ApprovalGate {
    */
   private snapshotBinding(
     request: ApprovalRequest
-  ): Pick<ApprovalToken, 'sessionId' | 'actionFingerprint'> {
+  ): Pick<ApprovalToken, 'sessionId' | 'actionFingerprint' | 'kind' | 'domains' | 'counts'> {
     try {
       const detached = JSON.parse(canonicalJson(request)) as ApprovalRequest;
       if (
@@ -485,9 +520,30 @@ export class ApprovalGate {
         detached.action.type.length > 128
       )
         throw new Error('Invalid binding');
+      // Act fingerprints stay byte-stable. Non-act kinds bind their own
+      // evidence: the fingerprint covers kind and (for cookie.handoff) the
+      // domains, so a token cannot be replayed against different evidence.
+      const kind = detached.kind ?? 'act';
+      const fingerprintInput =
+        kind === 'act'
+          ? canonicalJson(detached.action)
+          : canonicalJson({
+              kind,
+              action: detached.action,
+              ...(Array.isArray(detached.domains) ? { domains: detached.domains } : {}),
+            });
       return {
         sessionId: detached.sessionId,
-        actionFingerprint: `${detached.action.type}:${createHmac('sha256', this.fingerprintKey).update(canonicalJson(detached.action)).digest('hex')}`,
+        actionFingerprint: `${detached.action.type}:${createHmac('sha256', this.fingerprintKey).update(fingerprintInput).digest('hex')}`,
+        ...(kind !== 'act'
+          ? {
+              kind,
+              ...(Array.isArray(detached.domains) ? { domains: [...detached.domains] } : {}),
+              ...(detached.counts !== undefined && typeof detached.counts === 'object'
+                ? { counts: { ...detached.counts } }
+                : {}),
+            }
+          : {}),
       };
     } catch {
       throw new ApprovalError(
