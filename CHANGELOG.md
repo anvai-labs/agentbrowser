@@ -17,9 +17,11 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - **Profile security:** POSIX `0700`, created and verified at every launch (a wider mode refuses
   with `LOGIN_PROFILE_MODE`); Windows strips inheritance and grants the owner's SID alone
   `(OI)(CI)F` via `icacls`, and startup parses the `icacls` ACE lines, refusing any beyond the
-  owner (SYSTEM and Administrators are reported, not refused) — the Windows CI job runs this
-  suite, where the win32 branches execute. (icacls, not PowerShell's Get-Acl, after the runner
-  could not load PowerShell 5.1's Security module — caught by review executing the gate.)
+  owner — where "the owner" and the exempted SYSTEM/Administrators match every icacls spelling
+  (SID, `MACHINE\user`, translated well-known names). The Windows CI job runs this suite, where
+  the win32 branches execute. (icacls, not PowerShell's Get-Acl, after the runner could not load
+  PowerShell 5.1's Security module — caught by review executing the gate; the name-vs-SID
+  comparison likewise.)
   The profile sits under `AGENTBROWSER_LOGIN_PROFILE_DIR` or, by default, the OS private
   per-user state root (`XDG_STATE_HOME`/`~/.local/state`, `LOCALAPPDATA` on Windows); whether
   that root is synced or backed up is the operator's environment, not a property claimed here.

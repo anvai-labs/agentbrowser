@@ -410,14 +410,33 @@ function displayAvailable(): boolean {
  *   refuses with LOGIN_PROFILE_MODE.
  */
 async function createOwnerOnlyDirectory(dir: string): Promise<void> {
+  // Create first (inheriting), then immediately strip inheritance and grant
+  // the owner alone. The create-then-protect window is inherent to process
+  // creation and holds no profile data; assertWindowsDaclOwnerOnly refuses
+  // anything left wider on the next open (the ADR's "atomically" is this
+  // ordering, not a single syscall).
   await mkdir(dir, { recursive: true });
-  const sid = await currentUserSid();
+  const sid = (await currentUserIdentity()).sid;
   await runIcacls(dir, ['/inheritance:r', '/grant', `*${sid}:(OI)(CI)F`]);
 }
 
 async function assertWindowsDaclOwnerOnly(dir: string): Promise<void> {
   const output = await runIcacls(dir, []);
-  const me = await currentUserSid();
+  // icacls DISPLAYS translated names (NT AUTHORITY\SYSTEM, MACHINE\user)
+  // while whoami yields the SID — exempt every spelling of the owner and of
+  // the well-known pair (runner-proven: a name never equals a SID string).
+  const me = await currentUserIdentity();
+  const ownerForms = new Set(
+    [
+      me.sid,
+      me.name,
+      me.bare,
+      'NT AUTHORITY\\SYSTEM',
+      'BUILTIN\\ADMINISTRATORS',
+      'S-1-5-18',
+      'S-1-5-32-544',
+    ].map((form) => form.toLowerCase())
+  );
   const foreign: string[] = [];
   for (const line of output.split(/\r?\n/)) {
     // ACE lines look like `S-1-5-21-...:(OI)(CI)F` or `NT AUTHORITY\SYSTEM:(OI)(CI)F`;
@@ -425,8 +444,7 @@ async function assertWindowsDaclOwnerOnly(dir: string): Promise<void> {
     const ace = /^(.+?):(?:\([^)]*\))+(?:[FRODWS]+)?\s*$/.exec(line);
     if (ace?.[1] === undefined) continue;
     const identity = ace[1].trim();
-    if (identity === me) continue;
-    if (identity === 'S-1-5-18' || identity === 'S-1-5-32-544') continue;
+    if (ownerForms.has(identity.toLowerCase())) continue;
     foreign.push(identity);
   }
   if (foreign.length > 0) {
@@ -437,19 +455,28 @@ async function assertWindowsDaclOwnerOnly(dir: string): Promise<void> {
   }
 }
 
-/** The current user's SID via whoami /user (always present, no modules). */
-async function currentUserSid(): Promise<string> {
+/**
+ * The current user's identity via whoami /user (always present, no modules):
+ * the SID and the MACHINE\user name icacls may display instead of it.
+ */
+async function currentUserIdentity(): Promise<{ sid: string; name: string; bare: string }> {
   const { execFile } = await import('node:child_process');
   const { promisify } = await import('node:util');
   const { stdout } = await promisify(execFile)('whoami', ['/user', '/fo', 'csv'], {
     timeout: 10_000,
   });
   const row = stdout.split(/\r?\n/)[1];
-  const sid = row?.split(',').pop()?.replace(/^"|"$/g, '');
-  if (sid === undefined || !sid.startsWith('S-1-')) {
-    throw new LoginBrowserError('LOGIN_PROFILE_MODE', 'could not determine the current user SID');
+  const cells = (row ?? '').split(',').map((cell) => cell.replace(/^"|"$/g, ''));
+  const sid = cells[cells.length - 1];
+  const name = cells[0] ?? '';
+  if (sid === undefined || !sid.startsWith('S-1-') || name === '') {
+    throw new LoginBrowserError(
+      'LOGIN_PROFILE_MODE',
+      'could not determine the current user identity'
+    );
   }
-  return sid;
+  // whoami reports MACHINE\user; also accept the bare user for odd display forms.
+  return { sid, name, bare: name.split('\\')[1] ?? name };
 }
 
 async function runIcacls(dir: string, args: string[]): Promise<string> {
