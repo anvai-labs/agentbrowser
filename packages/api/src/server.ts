@@ -25,11 +25,6 @@ import type { StructuredLogger } from '@agentbrowser/core';
 import { InMemoryTracer, MetricsRegistry, type SecretManager } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
 import { NetworkPolicy } from '@agentbrowser/policy';
-import {
-  egressExceptionsOf,
-  MemoizedAuthorizer,
-  TenantBindingAuthorizer,
-} from '@agentbrowser/policy-engine';
 import type { AgentCapability, SessionPolicy } from '@agentbrowser/protocol';
 import {
   agentModeAllows,
@@ -56,6 +51,7 @@ import {
   responseDraft,
 } from './http-publication.js';
 import { buildOpenApiDocument } from './openapi.js';
+import { POLICY_BEARING_ENV, sessionPolicyFactoryFor } from './policy-session.js';
 import { PRODUCT_VERSION } from './product-version.js';
 import { requestOriginGuardFromEnvironment } from './request-origin-guard.js';
 import {
@@ -489,9 +485,12 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       ...(options.approvalPolicy !== undefined ? ['approvalPolicy'] : []),
       ...(options.extractMaxBytes !== undefined ? ['extractMaxBytes'] : []),
     ];
-    if (conflicts.length > 0) {
+    const envConflicts = POLICY_BEARING_ENV.filter((name) => process.env[name] !== undefined);
+    if (conflicts.length > 0 || envConflicts.length > 0) {
       throw new Error(
-        `AGENTBROWSER_POLICY_FILE cannot be combined with embedder options: ${conflicts.join(', ')}`
+        `AGENTBROWSER_POLICY_FILE cannot be combined with ${[...conflicts, ...envConflicts].join(
+          ', '
+        )}`
       );
     }
   }
@@ -503,26 +502,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   const sessionPolicyFactory =
     policyLimiter === undefined
       ? undefined
-      : (tenantId: string | undefined) => {
-          const memo = new MemoizedAuthorizer(
-            new TenantBindingAuthorizer(
-              policyLimiter.authorizer,
-              apiKeys === undefined ? undefined : tenantId
-            )
-          );
-          return {
-            networkPolicy: new NetworkPolicy({
-              blockLoopback: true,
-              blockPrivateIPs: true,
-              blockMetadata: true,
-              ...(policyIsFile && policyLimiter.limits.maxResponseBytes !== undefined
-                ? { maxResponseSize: policyLimiter.limits.maxResponseBytes }
-                : {}),
-              exceptions: egressExceptionsOf(memo),
-            }),
-            clear: () => memo.clear(),
-          };
-        };
+      : sessionPolicyFactoryFor(policyLimiter, apiKeys === undefined, process.env);
   const service = new AgentBrowserService({
     cdpAttachAdmission: attachAdmission,
     extractMaxBytes,

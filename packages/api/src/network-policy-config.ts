@@ -4,7 +4,7 @@ import { type Authorizer, egressExceptionsOf, LegacyAuthorizer } from '@agentbro
 const MAX_OPERATOR_RESPONSE_BYTES = 64 * 1024 * 1024;
 
 /** Startup-only, finite byte budget; malformed configuration must not disable the gate. */
-function responseBytesFromEnvironment(raw: string | undefined): number | undefined {
+export function responseBytesFromEnvironment(raw: string | undefined): number | undefined {
   const value = raw?.trim();
   if (!value) return undefined;
   const bytes = Number(value);
@@ -49,6 +49,17 @@ export function legacyAuthorizerFromEnvironment(
     allowedPrivateCIDRs: raw === '' ? [] : raw.split(',').map((cidr) => cidr.trim()),
     unknownRisk,
   });
+}
+
+/**
+ * TD-BROWSER-15 phase 4: the approval policy's unknownRisk from the
+ * environment, for the shadow's deciding side — the same value the service's
+ * default authorizer would use. Invalid JSON throws exactly as startup does.
+ */
+export function unknownRiskFromEnvironment(raw: string | undefined): 'allow' | 'required' {
+  if (raw === undefined) return 'allow';
+  const parsed = JSON.parse(raw) as { unknownRisk?: unknown };
+  return parsed.unknownRisk === 'required' ? 'required' : 'allow';
 }
 
 /** Operator startup configuration only; never read from session/request input. */

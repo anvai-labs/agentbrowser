@@ -21,6 +21,7 @@ import { extractMaxBytesFromEnvironment } from './extraction-config.js';
 import {
   legacyAuthorizerFromEnvironment,
   networkPolicyFromEnvironment,
+  unknownRiskFromEnvironment,
 } from './network-policy-config.js';
 import { apiKeysFromEnv, startServer } from './server.js';
 import { parseLogLevel } from './server-args.js';
@@ -90,7 +91,10 @@ if (policyFilePath !== undefined) {
     // Legacy decides — with exactly the decisions the environment would make
     // without a shadow, so shadow mode observes, never changes, behavior.
     const document = policyDocumentFromEnvironment(process.env);
-    const legacy = legacyAuthorizerFromEnvironment(process.env);
+    const legacy = legacyAuthorizerFromEnvironment(
+      process.env,
+      unknownRiskFromEnvironment(process.env.AGENTBROWSER_APPROVAL_POLICY)
+    );
     policy = {
       kind: 'shadow',
       authorizer: new ShadowAuthorizer(

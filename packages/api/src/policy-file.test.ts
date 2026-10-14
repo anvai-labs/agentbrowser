@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { NetworkPolicy } from '@agentbrowser/policy';
 import {
+  approvalModeOf,
   CedarAuthorizer,
   egressExceptionsOf,
   loadPolicyFile,
@@ -12,7 +13,11 @@ import {
 } from '@agentbrowser/policy-engine';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { legacyAuthorizerFromEnvironment } from './network-policy-config.js';
+import {
+  legacyAuthorizerFromEnvironment,
+  unknownRiskFromEnvironment,
+} from './network-policy-config.js';
+import { sessionPolicyFactoryFor } from './policy-session.js';
 import { startServer } from './server.js';
 import { AgentBrowserService } from './service.js';
 
@@ -181,7 +186,7 @@ describe('startServer with a policy file', () => {
         policy,
         networkPolicy: new NetworkPolicy({ blockLoopback: true }),
       })
-    ).rejects.toThrow(/cannot be combined with embedder options: networkPolicy/);
+    ).rejects.toThrow(/cannot be combined with networkPolicy/);
     await expect(
       startServer({ engine: new FakeEngine(), policy, extractMaxBytes: 2048, approvalPolicy: {} })
     ).rejects.toThrow(/approvalPolicy, extractMaxBytes/);
@@ -295,5 +300,90 @@ describe('review of phase 4: shadow startup and untrusted tenant claims', () => 
     expect(legacyAuthorizerFromEnvironment({}).decide(loopback)).toMatchObject({
       allowed: false,
     });
+  });
+});
+
+describe('review of phase 4, round 2: shadow parity', () => {
+  it('R1: shadow sessions keep the environment response-size cap', async () => {
+    // The exact repro: AGENTBROWSER_MAX_RESPONSE_BYTES=1024 must reject a
+    // 5000-byte body in shadow mode exactly as it does without one.
+    const policy = sessionPolicyFactoryFor(
+      { kind: 'shadow', authorizer: new CedarAuthorizer({ document: localDocument }), limits: {} },
+      true,
+      { AGENTBROWSER_MAX_RESPONSE_BYTES: '1024' }
+    )('t1');
+    await expect(policy.networkPolicy.checkBodySize(5000)).rejects.toMatchObject({
+      code: 'POLICY_DENIED',
+    });
+    await expect(policy.networkPolicy.checkBodySize(500)).resolves.toBeUndefined();
+    // Without the env var the default applies (10 MB): 5000 passes.
+    const unshackled = sessionPolicyFactoryFor(
+      { kind: 'shadow', authorizer: new CedarAuthorizer({ document: localDocument }), limits: {} },
+      true,
+      {}
+    )('t1');
+    await expect(unshackled.networkPolicy.checkBodySize(5000)).resolves.toBeUndefined();
+  });
+
+  it('R1: file limits still set the cap, and only for files', async () => {
+    const file = sessionPolicyFactoryFor(
+      {
+        kind: 'file',
+        authorizer: new CedarAuthorizer({ document: localDocument }),
+        limits: { maxResponseBytes: 2048 },
+      },
+      true
+    )('t1');
+    await expect(file.networkPolicy.checkBodySize(5000)).rejects.toMatchObject({
+      code: 'POLICY_DENIED',
+    });
+    // A file with no limit: the default applies.
+    const unbounded = sessionPolicyFactoryFor(
+      { kind: 'file', authorizer: new CedarAuthorizer({ document: localDocument }), limits: {} },
+      true
+    )('t1');
+    await expect(unbounded.networkPolicy.checkBodySize(5000)).resolves.toBeUndefined();
+  });
+
+  it('R2: the shadow deciding side honors the approval policy unknownRisk', () => {
+    // With AGENTBROWSER_APPROVAL_POLICY={"unknownRisk":"required"}, unknown
+    // effects require approval — in shadow mode exactly as without it.
+    const legacy = legacyAuthorizerFromEnvironment(
+      {},
+      unknownRiskFromEnvironment('{"unknownRisk":"required"}')
+    );
+    expect(approvalModeOf(legacy, { effect: 'unknown' })).toBe('required');
+    // And the default env keeps 'allow'.
+    expect(
+      approvalModeOf(legacyAuthorizerFromEnvironment({}, unknownRiskFromEnvironment(undefined)), {
+        effect: 'unknown',
+      })
+    ).toBe('allow');
+  });
+
+  it('the embedder gap: a file plus policy-bearing env vars refuses at startServer too', async () => {
+    const path = join(dir, 'embedder-env.json');
+    await writeFile(path, JSON.stringify(localDocument));
+    const loaded = await loadPolicyFile(path, { apiKeysConfigured: false });
+    const previous = process.env.AGENTBROWSER_ALLOW_LOOPBACK;
+    process.env.AGENTBROWSER_ALLOW_LOOPBACK = '1';
+    try {
+      await expect(
+        startServer({
+          engine: new FakeEngine(),
+          policy: {
+            authorizer: loaded.authorizer,
+            version: loaded.authorizer.version,
+            limits: loaded.limits,
+          },
+          port: 0,
+        })
+      ).rejects.toThrow(
+        /AGENTBROWSER_POLICY_FILE cannot be combined with AGENTBROWSER_ALLOW_LOOPBACK/
+      );
+    } finally {
+      if (previous === undefined) delete process.env.AGENTBROWSER_ALLOW_LOOPBACK;
+      else process.env.AGENTBROWSER_ALLOW_LOOPBACK = previous;
+    }
   });
 });

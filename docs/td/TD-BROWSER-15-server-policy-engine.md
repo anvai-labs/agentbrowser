@@ -313,7 +313,14 @@ decisions; each session's network policy is the floor plus the tenant-bound, per
 (LRU 512, TD-BROWSER-9) authorizer exceptions, cleared at close; sessions stamp the policy
 version; `/health` exposes `authorizerHealthy` as a boolean only; `AGENTBROWSER_POLICY_SHADOW=1`
 runs `ShadowAuthorizer` (legacy decides, divergences warn with both rule ids, shadow traps never
-touch legacy health); deprecated variables warn when used without a file. Two recorded deviations:
+touch legacy health); deprecated variables warn when used without a file. Review round 2 hardened shadow parity: shadow sessions keep exactly the
+environment's `AGENTBROWSER_MAX_RESPONSE_BYTES` (the per-session factory reads it for shadows, a
+file's `limits.maxResponseBytes` for files — `sessionPolicyFactoryFor`, exported and tested), the
+shadow's deciding side honors the approval policy's `unknownRisk`
+(`unknownRiskFromEnvironment`), and `startServer` also refuses a file combined with
+policy-bearing environment variables for direct embedders, not only through the stock entrypoint.
+
+Two recorded deviations:
 the loopback/private startup warning uses the action scope rather than partial evaluation —
 strictly more conservative for a warning; and the per-source private ask means a Cedar memo entry
 exists per source set, covered by the bound. **Phase 4b, delivered with the opt-in: the
