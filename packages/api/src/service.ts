@@ -114,6 +114,7 @@ import {
   type CapabilityAction,
   LegacyAuthorizer,
   policyCheck,
+  TenantBindingAuthorizer,
 } from '@agentbrowser/policy-engine';
 import type {
   ObservationRequest,
@@ -1575,6 +1576,20 @@ export class AgentBrowserService {
       });
     }
     return summary;
+  }
+
+  /**
+   * The authorizer for one session's approval questions, tenant-bound when
+   * keys configure tenants (TD-15 review of the phase-7 docs): per-tenant act
+   * rules must match, and enforcement must agree with `policy check`, which
+   * already answers as the authenticated tenant. Without keys nothing binds —
+   * the implicit local tenant decides, whatever a caller claims.
+   */
+  private approvalAuthorizerFor(sessionId: string): Authorizer {
+    if (!this.tenantsConfigured) return this.authorizer;
+    const tenantId = this.coordinator.inspect(sessionId)?.context.metadata.tenantId;
+    if (tenantId === undefined) return this.authorizer;
+    return new TenantBindingAuthorizer(this.authorizer, tenantId);
   }
 
   /** Refuse, naming the deciding rule, unless the authorizer grants the capability. */
@@ -4736,7 +4751,7 @@ export class AgentBrowserService {
     const risk = classification.effect;
     const decision = tightenApprovalMode(
       risk,
-      approvalModeOf(this.authorizer, classification),
+      approvalModeOf(this.approvalAuthorizerFor(sessionId), classification),
       this.sessionApprovalPolicies.get(sessionId)
     );
     if (decision === 'allow') return;
