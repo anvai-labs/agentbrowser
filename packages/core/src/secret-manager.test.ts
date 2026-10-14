@@ -306,20 +306,37 @@ describe('per-session secret registration (TD-BROWSER-16 phase 2)', () => {
 });
 
 describe('session scope bounds (review of phase 2)', () => {
-  it('evicts the least-recently-used scope past the bound', () => {
+  it('a live session is never silently un-protected: registration fails closed at the bound', () => {
     const manager = new SecretManager({}, { sessionScopesMaxSessions: 2 });
     manager.registerSessionSecret('ses_1', 'first-scoped-value-aaaa');
     manager.registerSessionSecret('ses_2', 'second-scoped-value-bbb');
-    manager.registerSessionSecret('ses_3', 'third-scoped-value-cccc'); // evicts ses_1
-    expect(manager.redactScoped('x first-scoped-value-aaaa', 'ses_1')).toBe(
-      'x first-scoped-value-aaaa'
+    expect(() => manager.registerSessionSecret('ses_3', 'third-scoped-value-cccc')).toThrow(
+      /scope limit reached/
     );
+    // Every live scope still redacts — including the oldest.
+    expect(manager.redactScoped('x first-scoped-value-aaaa', 'ses_1')).toBe('x ***');
     expect(manager.redactScoped('y second-scoped-value-bbb', 'ses_2')).toBe('y ***');
-    // Re-registering ses_1 evicts ses_2 (LRU by registration order).
+    // Closing a scope frees the slot.
+    manager.clearSessionSecrets('ses_1');
+    manager.registerSessionSecret('ses_3', 'third-scoped-value-cccc');
+    expect(manager.redactScoped('z third-scoped-value-cccc', 'ses_3')).toBe('z ***');
+  });
+
+  it('a hot scope keeps its memo; memo eviction never un-protects', () => {
+    const manager = new SecretManager({}, { sessionScopesMaxSessions: 2 });
     manager.registerSessionSecret('ses_1', 'first-scoped-value-aaaa');
-    expect(manager.redactScoped('y second-scoped-value-bbb', 'ses_2')).toBe(
-      'y second-scoped-value-bbb'
-    );
+    manager.registerSessionSecret('ses_2', 'second-scoped-value-bbb');
+    // Heat ses_1: its memo becomes most-recently-used.
+    for (let i = 0; i < 5; i += 1) {
+      expect(manager.redactScoped(`t${i} first-scoped-value-aaaa`, 'ses_1')).toBe(`t${i} ***`);
+    }
+    // Turnover below the value ceiling: clearing ses_2 frees a slot for ses_3,
+    // whose registration re-binds ses_1's memo out only if truly least-used.
+    manager.clearSessionSecrets('ses_2');
+    manager.registerSessionSecret('ses_3', 'third-scoped-value-cccc');
+    // ses_1 (hot) kept its memo; every scope still redacts.
+    expect(manager.redactScoped('t0 first-scoped-value-aaaa', 'ses_1')).toBe('t0 ***');
+    expect(manager.redactScoped('z third-scoped-value-cccc', 'ses_3')).toBe('z ***');
   });
 
   it('sessionScopesMaxSessions: 0 disables session scopes entirely', () => {

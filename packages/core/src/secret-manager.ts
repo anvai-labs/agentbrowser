@@ -32,10 +32,12 @@ export interface SecretManagerOptions {
    */
   redactionCacheMaxEntries?: number;
   /**
-   * Bound on tracked session scopes (TD-BROWSER-9, A9): each scope holds its
-   * values, pattern and memo; without a cross-scope bound, closed sessions
-   * would retain memory for process uptime. Least-recently-used scopes are
-   * evicted; `0` disables session scopes entirely.
+   * Bound on session scopes (TD-BROWSER-9, A9), enforced in two directions:
+   * per-session redaction MEMOS are kept for at most this many scopes
+   * (least-recently-USED, so a hot scope keeps its memo); and registration
+   * FAILS CLOSED once this many live (registered, uncleared) scopes exist —
+   * a live session's secret values are never silently un-protected.
+   * `0` disables session scopes entirely.
    */
   sessionScopesMaxSessions?: number;
 }
@@ -165,29 +167,38 @@ export class SecretManager {
    */
   registerSessionSecret(sessionId: string, value: string): void {
     if (this.sessionScopesBound === 0 || negligibleEntropy(value)) return;
+    if (
+      !this.sessionSecrets.has(sessionId) &&
+      this.sessionSecrets.size >= this.sessionScopesBound
+    ) {
+      // Fail closed: the alternative — silently dropping the oldest scope's
+      // values — would un-protect a live session (ADR-025's guarantee).
+      throw new SecretError(
+        'SCOPE_LIMIT',
+        `Session secret scope limit reached (${this.sessionScopesBound}); close sessions or raise sessionScopesMaxSessions`
+      );
+    }
     const values = this.sessionSecrets.get(sessionId) ?? [];
     if (!values.includes(value)) values.push(value);
     // Longest-first, so overlapping values redact fully.
     values.sort((a, b) => b.length - a.length);
     this.sessionSecrets.set(sessionId, values);
-    this.evictStaleScopes();
     this.buildSessionPattern(sessionId, values);
     // The cached results no longer reflect the new value.
     this.sessionCaches.delete(sessionId);
   }
 
   /**
-   * TD-BROWSER-9, A9: bound the number of live scopes, evicting the least
-   * recently used (Map insertion order; a scope touches its own entry on
-   * registration). Evicting a scope only loses its redaction memo — values
-   * are re-registered by the caller that owns them (phase 6 re-registers at
-   * handoff), and correctness never depended on the cache.
+   * TD-BROWSER-9, A9: bound the number of live MEMOS, evicting the
+   * least-recently-used (access re-inserts the key; registration drops the
+   * entry outright). Evicting a memo never un-protects anything — the values
+   * and pattern stay, and redaction stays correct uncached.
    */
-  private evictStaleScopes(): void {
-    while (this.sessionScopesBound > 0 && this.sessionSecrets.size > this.sessionScopesBound) {
-      const oldest = this.sessionSecrets.keys().next().value;
+  private evictStaleMemos(): void {
+    while (this.sessionCaches.size > this.sessionScopesBound) {
+      const oldest = this.sessionCaches.keys().next().value;
       if (oldest === undefined) break;
-      this.clearSessionSecrets(oldest);
+      this.sessionCaches.delete(oldest);
     }
   }
 
@@ -278,7 +289,14 @@ export class SecretManager {
     if (!pattern) return text;
     const redacted = text.replace(pattern, REDACTED);
     if (cache !== undefined) {
-      if (!this.sessionCaches.has(scope)) this.sessionCaches.set(scope, cache);
+      if (!this.sessionCaches.has(scope)) {
+        this.sessionCaches.set(scope, cache);
+        this.evictStaleMemos();
+      } else {
+        // Touch: least-recently-USED, not least-recently-registered.
+        this.sessionCaches.delete(scope);
+        this.sessionCaches.set(scope, cache);
+      }
       cache.set(text, redacted);
     }
     return redacted;
