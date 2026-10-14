@@ -109,8 +109,10 @@ export function policyCheck(
   }
   const classification = classifyIPAddress(bare);
   // Colon/bracket/percent forms that do not classify, and dotted-quad shapes
-  // that do not (leading zeroes are ambiguous; URL callers normalize).
-  if (classification === undefined && (/[:[\]%]/.test(target) || /^\d+(\.\d+){2,}$/.test(target))) {
+  // that do not (leading zeroes are ambiguous; URL callers normalize). The
+  // quad guard is exactly four groups, mirroring NetworkPolicy's regex —
+  // 1.2.3 and 1.2.3.4.5 remain hostnames (review round 2, B).
+  if (classification === undefined && (/[:[\]%]/.test(target) || /^\d+(\.\d+){3}$/.test(target))) {
     return [{ classSet: 'invalid', answer: { kind: 'decision', decision: FLOOR_INVALID_IP } }];
   }
 
@@ -164,14 +166,16 @@ type Classification = NonNullable<ReturnType<typeof classifyIPAddress>>;
  */
 function literalDecision(
   authorizer: Authorizer,
-  _request: PolicyCheckRequest,
+  request: PolicyCheckRequest,
   classification: Classification,
   classes: Array<'loopback' | 'private'>,
   tenant: { tenantId: string } | undefined
 ): PolicyDecision {
   const context = {
     phase: 'hostname' as const,
-    target: classification.address,
+    // The target exactly as the caller gave it — brackets included — matching
+    // what NetworkPolicy.checkHostname passes through (review round 2, A).
+    target: request.target ?? classification.address,
     addressClasses: classes,
     privateSources: classification.privateSources,
     ...(tenant ?? {}),

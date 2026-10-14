@@ -212,3 +212,48 @@ describe('policyCheck: invalid literals and prefixes (review 4)', () => {
     }
   });
 });
+
+describe('policyCheck: round-2 residues', () => {
+  const docWith = (...cedarTexts: string[]) => ({
+    version: 'agentbrowser-policy/v1' as const,
+    unknownRisk: 'allow' as const,
+    approvalRules: [],
+    policies: cedarTexts.map((cedar, i) => ({
+      key: `operator.x#${i + 1}`,
+      ruleId: /@rule\("([^"]+)"\)/.exec(cedar)?.[1] ?? 'operator.x',
+      cedar,
+    })),
+  });
+  const policy = (...cedarTexts: string[]) =>
+    new NetworkPolicy({
+      blockLoopback: true,
+      blockPrivateIPs: true,
+      blockMetadata: true,
+      exceptions: egressExceptionsOf(new CedarAuthorizer({ document: docWith(...cedarTexts) })),
+    });
+  const checkFor = (cedarTexts: string[], target: string) => {
+    const answer = policyCheck(new CedarAuthorizer({ document: docWith(...cedarTexts) }), {
+      action: 'request',
+      target,
+    });
+    const first = answer[0];
+    expect(first?.answer.kind).toBe('decision');
+    return first?.answer.kind === 'decision' ? first.answer.decision.allowed : undefined;
+  };
+
+  it('a target-equality policy sees the raw bracketed form (review A)', async () => {
+    const cedar =
+      '@rule("operator.p") permit(principal, action == AgentBrowser::Action::"request.private", resource) when { context.target == "[::ffff:10.1.2.3]" };';
+    await expect(
+      policy(cedar).checkRequest({ hostname: '[::ffff:10.1.2.3]' })
+    ).resolves.toBeUndefined();
+    expect(checkFor([cedar], '[::ffff:10.1.2.3]')).toBe(true);
+  });
+
+  it('1.2.3 and 1.2.3.4.5 are hostnames on both surfaces (review B)', () => {
+    for (const host of ['1.2.3', '1.2.3.4.5']) {
+      const answers = policyCheck(legacy(), { action: 'request', target: host });
+      expect(answers[0]?.classSet).toBe('public');
+    }
+  });
+});
