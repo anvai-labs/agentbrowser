@@ -400,43 +400,32 @@ function displayAvailable(): boolean {
 
 // --- Windows DACL (executed by the Windows CI job, which runs this suite) -
 
+/**
+ * Profile security on Windows (ADR-025 section 1), via icacls — always
+ * present, no PowerShell module system to fail on a runner:
+ * - Creation: mkdir, then strip inheritance and grant the owner's SID alone
+ *   (OI)(CI)F, so every file Chrome creates inherits owner-only access.
+ * - Verification: parse `icacls <dir>` ACE lines by SID; any ACE beyond the
+ *   owner (minus SYSTEM and Administrators, which are reported, not refused)
+ *   refuses with LOGIN_PROFILE_MODE.
+ */
 async function createOwnerOnlyDirectory(dir: string): Promise<void> {
-  // Create first (inheriting), then immediately replace the DACL with a
-  // protected owner-only one. The create-then-protect window is inherent to
-  // PowerShell-based creation; the profile holds no data at that point, and
-  // assertWindowsDaclOwnerOnly refuses anything left wider.
   await mkdir(dir, { recursive: true });
-  await runPowerShell(
-    `$d = Get-Item -LiteralPath ${psQuote(dir)}; ` +
-      '$acl = New-Object System.Security.AccessControl.DirectorySecurity; ' +
-      '$acl.SetAccessRuleProtection($true, $false); ' +
-      '$me = [System.Security.Principal.WindowsIdentity]::GetCurrent().User; ' +
-      '$rule = New-Object System.Security.AccessControl.FileSystemAccessRule(' +
-      `$me, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'); ` +
-      '$acl.AddAccessRule($rule); $d.SetAccessControl($acl)'
-  );
+  const sid = await currentUserSid();
+  await runIcacls(dir, ['/inheritance:r', '/grant', `*${sid}:(OI)(CI)F`]);
 }
 
 async function assertWindowsDaclOwnerOnly(dir: string): Promise<void> {
-  // Compare by SID (each ACE's identity translated), not display strings:
-  // Get-Acl reports NTAccount names that never equal the SID text.
-  const output = await runPowerShell(
-    `(Get-Acl -LiteralPath ${psQuote(dir)}).Access | ForEach-Object { ` +
-      '$sid = try { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { $_.IdentityReference.ToString() }; ' +
-      '"$sid|$($_.AccessControlType)" }'
-  );
-  const me = (
-    await runPowerShell('[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value')
-  ).trim();
-  const found = output.split(/\r?\n/).filter((l) => l.trim() !== '');
+  const output = await runIcacls(dir, []);
+  const me = await currentUserSid();
   const foreign: string[] = [];
-  for (const line of found) {
-    const [identity, type] = line.split('|');
-    if (type !== 'Allow') continue;
-    if (identity === undefined) continue;
+  for (const line of output.split(/\r?\n/)) {
+    // ACE lines look like `S-1-5-21-...:(OI)(CI)F` or `NT AUTHORITY\SYSTEM:(OI)(CI)F`;
+    // summary lines ("Successfully processed 1 files") have no parenthesized rights.
+    const ace = /^(.+?):(?:\([^)]*\))+(?:[FRODWS]+)?\s*$/.exec(line);
+    if (ace?.[1] === undefined) continue;
+    const identity = ace[1].trim();
     if (identity === me) continue;
-    // Well-known SIDs: SYSTEM (S-1-5-18) and Administrators (S-1-5-32-544)
-    // are reported, not refused.
     if (identity === 'S-1-5-18' || identity === 'S-1-5-32-544') continue;
     foreign.push(identity);
   }
@@ -448,24 +437,28 @@ async function assertWindowsDaclOwnerOnly(dir: string): Promise<void> {
   }
 }
 
-function psQuote(text: string): string {
-  return `'${text.replace(/'/g, "''")}'`;
+/** The current user's SID via whoami /user (always present, no modules). */
+async function currentUserSid(): Promise<string> {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const { stdout } = await promisify(execFile)('whoami', ['/user', '/fo', 'csv'], {
+    timeout: 10_000,
+  });
+  const row = stdout.split(/\r?\n/)[1];
+  const sid = row?.split(',').pop()?.replace(/^"|"$/g, '');
+  if (sid === undefined || !sid.startsWith('S-1-')) {
+    throw new LoginBrowserError('LOGIN_PROFILE_MODE', 'could not determine the current user SID');
+  }
+  return sid;
 }
 
-function runPowerShell(script: string): Promise<string> {
+async function runIcacls(dir: string, args: string[]): Promise<string> {
+  const { spawn } = await import('node:child_process');
+  const system32 = process.env.SystemRoot
+    ? join(process.env.SystemRoot, 'System32', 'icacls.exe')
+    : 'icacls';
   return new Promise((resolve, reject) => {
-    const powershell = process.env.SystemRoot
-      ? join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
-      : 'powershell';
-    // Windows PowerShell 5.1 breaks when PSModulePath points at PS7 modules
-    // (the GitHub runner exports pwsh's path); strip it so 5.1 loads its own.
-    const { PSModulePath: _stripped, ...cleanEnv } = process.env;
-    void _stripped;
-    const env = cleanEnv;
-    const child = spawn(powershell, ['-NoProfile', '-NonInteractive', '-Command', script], {
-      windowsHide: true,
-      env,
-    });
+    const child = spawn(system32, [dir, ...args], { windowsHide: true });
     let out = '';
     let err = '';
     child.stdout.on('data', (chunk) => {
@@ -477,7 +470,9 @@ function runPowerShell(script: string): Promise<string> {
     child.on('error', reject);
     child.on('close', (code) => {
       if (code === 0) resolve(out);
-      else reject(new Error(`PowerShell failed (${code}): ${err.slice(0, 200)}`));
+      // The full stderr: icacls diagnostics are fixed text and the only
+      // variable is the path, which the operator chose.
+      else reject(new Error(`icacls failed (${code}): ${err}`));
     });
   });
 }
