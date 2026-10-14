@@ -7,6 +7,22 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — policy documentation (TD-BROWSER-15 phase 7)
+
+- **`docs/policy.md`**: the operator's guide — the policy file and its startup refusals,
+  `policy export` migration, the Cedar schema reference (the exception actions, set-valued
+  address classes, per-source private asks, the per-tenant keys-only pattern, `@rule`/
+  `@internal`, with `@reason` reserved), `policy check` semantics (enumeration, never DNS), shadow mode, and the floor's
+  fixed rules including the statement that browser traffic is not DNS-pinned.
+- **`docs/operations.md`**: the ADR-024 §4 classification of every variable (policy-bearing /
+  floor input / bootstrap / trusted), the policy-file and shadow variables, and
+  `AGENTBROWSER_CHROMIUM_ARGS` marked security-relevant.
+- **`docs/threat-model.md`**: the policy file is trusted operator configuration; only
+  authenticated tenants are policy principals; `check` is not a DNS oracle; `@internal` exists
+  for confidentiality.
+
+TD-BROWSER-15 is complete.
+
 ### Added — policy query surface (TD-BROWSER-15 phase 5)
 
 - **`GET /v1/policy`** — the loaded policy: version (the document SHA-256, or `legacy`), limits,

@@ -1,6 +1,6 @@
 # TD-BROWSER-15: Server policy engine (embedded Cedar)
 
-**Status:** Planned
+**Status:** Delivered — phases 0–7 shipped as #444–#458; ADR-024 Accepted.
 **Decision:** [ADR-024](../adr/024-server-policy-engine-cedar.md)
 
 ## Problem

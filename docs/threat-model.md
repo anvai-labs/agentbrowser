@@ -4,6 +4,21 @@ Written working backwards from the MVP spec's threat inventory (§17-§18):
 every threat below maps to the control that addresses it and the test that
 proves the control works. Residual risks are named, not hidden.
 
+## Policy file and query surface (TD-BROWSER-15)
+
+- **The policy file is trusted operator configuration.** Like the environment variables it
+  replaces, it is written by the operator at the machine; nothing unauthenticated can reach it,
+  and its decisions are not guesses from page content.
+- **Only authenticated tenants are policy principals.** With API keys, the caller's key-derived
+  tenant decides — on egress, capabilities, approvals and policy queries alike; without keys, the
+  implicit `Tenant::"local"` decides whatever `tenantId` a caller claims, and the loader refuses
+  a document naming any other tenant.
+- **`check` is not a DNS oracle.** The query routes answer by enumeration and never resolve a
+  hostname; an answer cannot be used to learn what the deployment's resolver would return.
+- **`@internal` exists for confidentiality.** A policy so annotated decides normally but reports
+  as `operator.policy` with no reason, so an agent cannot read the operator's rule structure
+  from decision output.
+
 ## Trust boundaries
 
 1. **Caller -> service**: the HTTP surface. Untrusted by default; bearer

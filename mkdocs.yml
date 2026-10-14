@@ -136,6 +136,7 @@ nav:
     - 'Firefox egress gate': firefox-egress-gate.md
   - Security & trust:
     - 'Threat model': threat-model.md
+    - 'Policy': policy.md
     - 'Egress transport design': egress-transport-design.md
     - 'Egress transport feasibility': egress-transport-feasibility.md
     - 'Egress transport reassessment': egress-transport-reassessment.md
