@@ -51,8 +51,8 @@ import {
   responseDraft,
 } from './http-publication.js';
 import { buildOpenApiDocument } from './openapi.js';
-import { TokenBucketLimiter } from './policy-query-limiter.js';
 import { operatorKeysFromEnvironment, operatorKeysFromFile } from './operator-keys.js';
+import { TokenBucketLimiter } from './policy-query-limiter.js';
 import { POLICY_BEARING_ENV, sessionPolicyFactoryFor } from './policy-session.js';
 import { PRODUCT_VERSION } from './product-version.js';
 import { requestOriginGuardFromEnvironment } from './request-origin-guard.js';
@@ -1321,6 +1321,15 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           )
             throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
           requireOwnership(sessionId, tenantOf(request));
+          // TD-BROWSER-16 phase 1: the non-act kinds take the separate path
+          // and are decided by a human operator only — an API-key operator
+          // (which an agent may hold) is refused for them.
+          const nonAct = await service.getApprovalKind(sessionId, tokenId);
+          if (nonAct !== undefined) {
+            if (request.principal?.actor !== 'human-operator')
+              throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+            return responseDraft(await service.viewNonActApproval(sessionId, tokenId), 200);
+          }
           const disclosure = await service.prepareApprovalDisclosureInScope(sessionId, tokenId);
           return responseDraft(disclosure.view, 200, { assertCurrent: disclosure.assertCurrent });
         },
@@ -1337,6 +1346,21 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           )
             throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
           requireOwnership(sessionId, tenantOf(request));
+          const nonAct = await service.getApprovalKind(sessionId, tokenId);
+          if (nonAct !== undefined) {
+            if (request.principal?.actor !== 'human-operator')
+              throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+            const nonActChecked = validateOperatorApprovalDecision(request.body);
+            if (!nonActChecked.ok)
+              throw new ServiceError(
+                'INVALID_REQUEST',
+                'Approval decision must be approve or deny'
+              );
+            return responseDraft(
+              await service.decideNonActApproval(sessionId, tokenId, nonActChecked.value.decision),
+              200
+            );
+          }
           const checked = validateOperatorApprovalDecision(request.body);
           if (!checked.ok)
             throw new ServiceError('INVALID_REQUEST', 'Approval decision must be approve or deny');
@@ -1977,6 +2001,8 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     { prefix: '/v1' }
   );
 
+  // Read-only handle for operator-surface tests; not part of the public API.
+  fastify.decorate('service', service);
   return fastify;
 }
 

@@ -251,6 +251,50 @@ export function requireWireContract(
 
 const DEFAULT_BASE_URL = 'http://localhost:5709';
 
+/**
+ * TD-BROWSER-16 phase 1: operator-key input for the approval commands. The
+ * key comes from the key file or a no-echo prompt — an environment variable
+ * is agent-reachable, so it is never consulted.
+ */
+async function readFirstKey(
+  path: string,
+  err: (line: string) => void
+): Promise<string | undefined> {
+  const { readFile } = await import('node:fs/promises');
+  try {
+    const text = await readFile(path, 'utf8');
+    const first = text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line !== '' && !line.startsWith('#'));
+    if (first === undefined) throw new Error('empty');
+    const at = first.lastIndexOf(':');
+    if (at <= 0) throw new Error('bad');
+    return first.slice(0, at);
+  } catch {
+    err(`agentbrowser: cannot read an operator key from ${path} (key:tenant lines)`);
+    return undefined;
+  }
+}
+
+async function promptOperatorKey(deps: {
+  err: (line: string) => void;
+}): Promise<string | undefined> {
+  deps.err('Operator key (input hidden, no echo):');
+  // Node's readline with a raw TTY: no-echo is best-effort here; the key file
+  // is the recommended path for scripts.
+  const { createInterface } = await import('node:readline');
+  const rl = createInterface({ input: process.stdin, terminal: Boolean(process.stdin.isTTY) });
+  for (let i = 0; i < 100 && !process.stdin.readable; i += 1)
+    await new Promise((r) => setImmediate(r));
+  const line: string | undefined = await new Promise((resolve) => {
+    rl.question('', (answer) => resolve(answer.trim() || undefined));
+    if (!process.stdin.isTTY) rl.close();
+  });
+  rl.close();
+  return line;
+}
+
 export function buildCli(deps: CliDependencies): Cli {
   // The command tree is built per run(); the audit it produces is captured
   // here so jsonContractAudit() can serve the most recent run's snapshot.
@@ -317,6 +361,13 @@ export function buildCli(deps: CliDependencies): Cli {
         )
         .option('--operation-id <id>', 'reconciliation ID for a controlled mutation')
         .option('--api-key <key>', 'bearer API key (or AGENTBROWSER_API_KEY env)')
+        // TD-BROWSER-16 phase 1 (ADR-025): an operator key is NEVER taken
+        // from the environment — an env var is agent-reachable. Only the
+        // approval commands read it, from the key file or a no-echo prompt.
+        .option(
+          '--operator-key-file <path>',
+          'file holding a human-operator key (AGENTBROWSER_OPERATOR_KEYS_FILE format); approval commands only'
+        )
         .exitOverride();
 
       program.configureOutput({
@@ -330,6 +381,15 @@ export function buildCli(deps: CliDependencies): Cli {
         async (...args: A) => {
           const globals = program.opts();
           const apiKey = globals.apiKey ?? process.env.AGENTBROWSER_API_KEY;
+          // The operator key, when an approval command needs it: from the
+          // file, or a no-echo prompt — never an environment variable, and
+          // never for any other command.
+          const needsOperatorKey = process.argv.includes('approvals');
+          const operatorKey = needsOperatorKey
+            ? globals.operatorKeyFile !== undefined
+              ? await readFirstKey(String(globals.operatorKeyFile), deps.err)
+              : await promptOperatorKey(deps)
+            : undefined;
           const ctx: CommandContext = {
             client: deps.createClient({
               baseUrl: globals.baseUrl,
@@ -343,6 +403,8 @@ export function buildCli(deps: CliDependencies): Cli {
             ...(act.opts().approvalToken
               ? { approvalToken: String(act.opts().approvalToken) }
               : {}),
+            ...(operatorKey !== undefined ? { operatorKey } : {}),
+            baseUrl: globals.baseUrl ?? 'http://localhost:5709',
             ...(globals.operationId ? { operationId: globals.operationId as string } : {}),
             out: deps.out,
             emit: (value: unknown, render: () => string[]) => {
@@ -1984,6 +2046,30 @@ export function buildCli(deps: CliDependencies): Cli {
         );
 
       program
+        .command('approvals')
+        .description(
+          'operator approval surface (TD-BROWSER-16): view or decide with a human-operator key'
+        )
+        .command('view <sessionId> <tokenId>')
+        .description('view one approval; the bound evidence for non-act kinds')
+        .action(
+          action(async (ctx, sessionId: string, tokenId: string) => {
+            if (!ctx.operatorKey)
+              throw new UsageError(
+                'An operator key is required (key file or prompt; never an environment variable)'
+              );
+            const res = await fetch(
+              `${ctx.baseUrl}/v1/sessions/${sessionId}/approvals/${tokenId}`,
+              {
+                headers: { authorization: `Bearer ${ctx.operatorKey}` },
+              }
+            );
+            const body = (await res.json()) as unknown;
+            ctx.emit(body, () => [JSON.stringify(body, null, 2)]);
+          })
+        );
+
+      program
         .command('policy')
         .description(
           'show the loaded policy: version, limits and the capability summary for a default session of the caller tenant (TD-BROWSER-15)'
@@ -2455,6 +2541,9 @@ interface CommandContext {
   approvalToken?: string;
   /** The global reconciliation operation ID; the application execute write identity. */
   operationId?: string;
+  /** TD-BROWSER-16: the human-operator key for approval commands; never env. */
+  operatorKey?: string;
+  baseUrl: string;
   out(line: string): void;
   emit(value: unknown, render: () => string[]): void;
 }

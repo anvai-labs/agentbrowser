@@ -18,7 +18,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   create sessions, act, or read anything else.
 - **`ApprovalRequest` gains `kind`** (`act` unchanged, `act.reviewed` with the ADR-007 act
   binding, and the non-act `cookie.handoff` carrying `{domains, counts}` evidence that phase 6
-  instantiates) — protocol-first per ADR-015.
+  instantiates) — protocol-first per ADR-015. Non-act tokens carry their kind and bound evidence,
+  and the evidence is in the fingerprint, so a token cannot be replayed against different
+  evidence.
+- **The separate resolve-and-decide path**: the approval view/decide routes branch on kind —
+  non-act tokens are decided by a **human operator only** (an API-key operator, which an agent may
+  hold, is refused for them), and the view returns the bound evidence verbatim. Single-use.
+- **CLI**: `agentbrowser approvals view <sessionId> <tokenId>` reads the operator key from
+  `--operator-key-file` or a no-echo prompt — **never an environment variable** (tested: env
+  operator keys are ignored).
 
 
 ### Fixed — approval decisions are tenant-bound (TD-15 phase-7 review)

@@ -109,3 +109,76 @@ describe('operator keys', () => {
     ).rejects.toThrow(/one credential, one identity/);
   });
 });
+
+describe('non-act approval kinds: the separate path (TD-BROWSER-16 phase 1)', () => {
+  it('an API key is refused on view and decide; an operator key can view and decide', async () => {
+    const app = await start();
+    try {
+      // Mint a cookie.handoff approval through the app's own service.
+      const own = (app as unknown as { service: import('./service.js').AgentBrowserService })
+        .service;
+      const session = await own.createSession({ tenantId: 'acme' });
+      const token = await own.approvalGate.generateApprovalToken({
+        sessionId: session.sessionId,
+        action: { type: 'cookie.handoff' },
+        kind: 'cookie.handoff',
+        domains: ['example.com'],
+        counts: { 'example.com': 3 },
+      });
+      const view = async (key: string) =>
+        (
+          await app.inject({
+            method: 'GET',
+            url: `/v1/sessions/${session.sessionId}/approvals/${token.tokenId}`,
+            headers: { authorization: `Bearer ${key}` },
+          })
+        ).json() as {
+          kind?: string;
+          domains?: string[];
+          counts?: Record<string, number>;
+          error?: { code: string };
+        };
+      // An API key (plain operator) is refused for the non-act kind.
+      const asApiKey = await view('api-key-aaaaaaaaaaaa');
+      expect(asApiKey).toMatchObject({ error: { code: 'FORBIDDEN' } });
+      // The human operator views the bound evidence verbatim.
+      const asOperator = await view(OPERATOR_KEY);
+      expect(asOperator).toMatchObject({
+        kind: 'cookie.handoff',
+        domains: ['example.com'],
+        counts: { 'example.com': 3 },
+      });
+      // And decides: single-use.
+      const decided = await app.inject({
+        method: 'POST',
+        url: `/v1/sessions/${session.sessionId}/approvals/${token.tokenId}`,
+        headers: { authorization: `Bearer ${OPERATOR_KEY}` },
+        payload: { decision: 'approve' },
+      });
+      expect(decided.json()).toMatchObject({ kind: 'cookie.handoff', status: 'approved' });
+      const again = await app.inject({
+        method: 'POST',
+        url: `/v1/sessions/${session.sessionId}/approvals/${token.tokenId}`,
+        headers: { authorization: `Bearer ${OPERATOR_KEY}` },
+        payload: { decision: 'approve' },
+      });
+      expect(again.statusCode).toBeGreaterThanOrEqual(400);
+      await own.closeSession(session.sessionId);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('an act-kind token keeps its existing path (no kind on the token)', async () => {
+    const { AgentBrowserService } = await import('./service.js');
+    const own = new AgentBrowserService({ engine: new FakeEngine() });
+    const session = await own.createSession({ tenantId: 'acme' });
+    const token = await own.approvalGate.generateApprovalToken({
+      sessionId: session.sessionId,
+      action: { type: 'click', ref: 'e1_1' },
+    });
+    expect(token.kind).toBeUndefined();
+    expect(await own.getApprovalKind(session.sessionId, token.tokenId)).toBeUndefined();
+    await own.shutdown();
+  });
+});
