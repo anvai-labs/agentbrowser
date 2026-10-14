@@ -7,6 +7,20 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — the cookie-domain matcher (TD-BROWSER-16 phase 3, ADR-025 §3)
+
+- **`packages/core/src/domain-matcher.ts`**, on pinned `tldts` with **the private section in
+  force** (`allowPrivateDomains`): `github.io` and `vercel.app` are suffixes — refused — while
+  `x.github.io` is registrable. `covers(matcher, host)` is the cookie-scope relation minus public
+  suffixes (exact match, or a registrable parent covers subdomains; a suffix entry never covers;
+  a child never covers its parent). `usableHost`/`cookieDomain` refuse IPs, suffixes, `localhost`
+  and unlisted TLDs (keys-only), and allow a registrable parent when the operator asks.
+  `registrableParents` lists the registrable parents (subdomains are not registrable).
+- **The dedup fix:** the CLI's cookie identity is now `cookieKey` — host-only and `.domain`
+  cookies with the same name and path are distinct, because the leading dot is scope, not
+  formatting. The CLI otherwise behaves unchanged; the matcher is in `core` for phase 6.
+
+
 ### Added — per-session secret registration (TD-BROWSER-16 phase 2, ADR-025)
 
 - **`SecretManager` gains session scopes**: a value registered in a session's scope redacts only

@@ -18,7 +18,8 @@
   },
   "dependencies": {
     "@agentbrowser/engine": "workspace:*",
-    "@agentbrowser/protocol": "workspace:*"
+    "@agentbrowser/protocol": "workspace:*",
+    "tldts": "6.1.76"
   },
   "devDependencies": {
     "vitest": "^5.0.4"

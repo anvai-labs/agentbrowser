@@ -1,4 +1,5 @@
 import { isIP } from 'node:net';
+import { cookieKey } from '@agentbrowser/core';
 import {
   type SessionRequest,
   UsageError,
@@ -99,8 +100,10 @@ function validateCookies(
       (c.secure !== true || c.domain.startsWith('.') || c.path !== '/')
     )
       fail(i + 1, 'Host prefix requires Secure, host-only domain and root path');
-    const identity = JSON.stringify([c.name, domain.toLowerCase(), c.path]);
-    if (seen.has(identity)) fail(i + 1, 'duplicate name/domain/path');
+    // TD-BROWSER-16 phase 3: host-only and .domain cookies with the same
+    // name/path are DISTINCT — the leading dot is scope, not formatting.
+    const identity = cookieKey(c);
+    if (seen.has(identity)) fail(i + 1, 'duplicate name/scope/domain/path');
     seen.add(identity);
   }
   assertCookieRequestSize({ cookies });

@@ -91,6 +91,15 @@ An unknown session id allocates nothing. Core-only: the service wiring is phase 
   - `notgithub.com` does not match;
   - the dedup fix holds, and the CLI behaviour is otherwise unchanged.
 
+**Delivered (phase 3, #463):** `packages/core/src/domain-matcher.ts` on pinned `tldts` with the
+**private section in force** (`allowPrivateDomains` — without it `github.io` parses as a normal
+`.io` domain): `covers` is the cookie-scope relation minus public suffixes; `usableHost`/
+`cookieDomain` refuse IPs, bare suffixes, `localhost` and unlisted TLDs (keys-only) and allow a
+registrable parent on request; `registrableParents` lists only registrable parents (subdomains are
+not registrable). The CLI's cookie identity is now `cookieKey` — host-only and `.domain` with the
+same name/path are distinct (the leading dot is scope); same-scope duplicates still refuse; the
+CLI is otherwise unchanged. 9 matcher tests + 2 CLI tests.
+
 ### Phase 4: the login browser
 
 - **Engine.** The Playwright engine gains a pipe-connected persistent context:
