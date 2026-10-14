@@ -22,7 +22,10 @@ describe('policy performance gate', () => {
       expect(result.p50Us).toBeGreaterThan(0);
       expect(result.totalMs).toBeGreaterThan(0);
       expect(result.gatePercent).toBe(POLICY_SHARE_GATE_PERCENT);
-      expect(result.pass).toBe(true);
+      expect(
+        result.pass,
+        `${result.mode}: total ${result.totalMs.toFixed(1)} ms, p50 ${result.p50Us.toFixed(1)} µs, share ${result.sharePercent.toFixed(2)}% (gate ${result.gatePercent}%)`
+      ).toBe(true);
     }
   }, 120_000);
 

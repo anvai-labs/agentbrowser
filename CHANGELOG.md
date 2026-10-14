@@ -28,8 +28,9 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - **Phase 4b — the performance gate** (`packages/benchmarks`): a worst-case 300-subresource page
   (every request private, 30 hosts × 10) measured through the service's own chain. First run:
   uncached p50 193 µs per decision (6.9% of the 1.0 s reference load), memoized 2.9 µs (0.96%),
-  shadow 153 µs (5.0%). The gate is 10%, applied to the production modes (memoized, shadow);
-  uncached is the reported floor.
+  shadow 153 µs (5.0%); shared CI runners measure 2–3× that. The gate is 25%, applied to the
+  production modes (memoized, shadow); uncached is the reported floor. Its job is catching
+  order-of-magnitude regressions, not constant factors.
 
 ### Added — CedarAuthorizer, policy export, bundled engine (TD-BROWSER-15 phase 3b)
 

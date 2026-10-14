@@ -1,5 +1,5 @@
 import { NetworkPolicy } from '@agentbrowser/policy';
-import { egressExceptionsOf, LegacyAuthorizer } from '@agentbrowser/policy-engine';
+import { type Authorizer, egressExceptionsOf, LegacyAuthorizer } from '@agentbrowser/policy-engine';
 
 const MAX_OPERATOR_RESPONSE_BYTES = 64 * 1024 * 1024;
 
@@ -31,6 +31,26 @@ export function createDefaultNetworkPolicy(allowedPrivateCIDRs: string[] = []): 
   });
 }
 
+/**
+ * TD-BROWSER-15 phase 4: the legacy authorizer for exactly the environment's
+ * decisions — the shadow's deciding side, so shadow mode observes and never
+ * changes behavior. Parsed identically to networkPolicyFromEnvironment.
+ */
+export function legacyAuthorizerFromEnvironment(
+  env: {
+    AGENTBROWSER_ALLOWED_CIDRS?: string | undefined;
+    AGENTBROWSER_ALLOW_LOOPBACK?: string | undefined;
+  },
+  unknownRisk: 'allow' | 'required' = 'allow'
+): LegacyAuthorizer {
+  const raw = env.AGENTBROWSER_ALLOWED_CIDRS?.trim() ?? '';
+  return new LegacyAuthorizer({
+    allowLoopback: /^(1|true|yes)$/i.test(env.AGENTBROWSER_ALLOW_LOOPBACK?.trim() ?? ''),
+    allowedPrivateCIDRs: raw === '' ? [] : raw.split(',').map((cidr) => cidr.trim()),
+    unknownRisk,
+  });
+}
+
 /** Operator startup configuration only; never read from session/request input. */
 export function networkPolicyFromEnvironment(
   env: {
@@ -38,7 +58,14 @@ export function networkPolicyFromEnvironment(
     AGENTBROWSER_ALLOW_LOOPBACK?: string | undefined;
     AGENTBROWSER_MAX_RESPONSE_BYTES?: string | undefined;
   },
-  warn: (message: string) => void = console.warn
+  warn: (message: string) => void = console.warn,
+  /**
+   * TD-BROWSER-15 phase 4: the authorizer answering the exception hooks.
+   * Default: the legacy authorizer (today's decisions). Shadow mode passes
+   * its wrapper so the Cedar side observes egress questions too, while the
+   * legacy side still decides.
+   */
+  exceptionsAuthorizer?: Authorizer
 ): NetworkPolicy {
   const raw = env.AGENTBROWSER_ALLOWED_CIDRS?.trim() ?? '';
   // Empty/unset disables exceptions. Empty entries in a nonempty list are errors,
@@ -58,7 +85,7 @@ export function networkPolicyFromEnvironment(
     ...(maxResponseSize !== undefined ? { maxResponseSize } : {}),
     // TD-BROWSER-15 phase 1: the exceptions are answered through the Authorizer seam.
     exceptions: egressExceptionsOf(
-      new LegacyAuthorizer({ allowLoopback, allowedPrivateCIDRs: cidrs })
+      exceptionsAuthorizer ?? new LegacyAuthorizer({ allowLoopback, allowedPrivateCIDRs: cidrs })
     ),
   });
   if (allowLoopback) {

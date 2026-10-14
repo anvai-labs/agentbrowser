@@ -7,10 +7,12 @@ import {
   egressExceptionsOf,
   loadPolicyFile,
   MemoizedAuthorizer,
+  ShadowAuthorizer,
   TenantBindingAuthorizer,
 } from '@agentbrowser/policy-engine';
 import { FakeEngine } from '@agentbrowser/testkit';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { legacyAuthorizerFromEnvironment } from './network-policy-config.js';
 import { startServer } from './server.js';
 import { AgentBrowserService } from './service.js';
 
@@ -206,5 +208,92 @@ describe('startServer with a policy file', () => {
     } finally {
       await app.close();
     }
+  });
+});
+
+describe('review of phase 4: shadow startup and untrusted tenant claims', () => {
+  it('shadow mode starts alongside the environment network policy (kind: shadow)', async () => {
+    // The previously fatal combination: a policy wrapper plus the
+    // environment-derived networkPolicy. Only a FILE refuses the combination.
+    const path = join(dir, 'shadow-start.json');
+    await writeFile(path, JSON.stringify(localDocument));
+    const loaded = await loadPolicyFile(path, { apiKeysConfigured: false });
+    const shadow = new ShadowAuthorizer(legacyAuthorizerFromEnvironment({}), loaded.authorizer);
+    const app = await startServer({
+      engine: new FakeEngine(),
+      policy: { kind: 'shadow', authorizer: shadow, version: 'shadow', limits: {} },
+      networkPolicy: new NetworkPolicy({ blockLoopback: true }),
+      port: 0,
+    });
+    try {
+      const response = await app.inject({ method: 'GET', url: '/health' });
+      expect((response.json() as { authorizerHealthy?: boolean }).authorizerHealthy).toBe(true);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('a claimed tenant gates no capability without keys', async () => {
+    // A policy granting downloads only to a context claiming tenantId "qa"
+    // loads without keys (no entity literal); the claim must not work.
+    const document = {
+      version: 'agentbrowser-policy/v1' as const,
+      unknownRisk: 'allow' as const,
+      approvalRules: [],
+      policies: [
+        {
+          key: 'operator.downloads#1',
+          ruleId: 'operator.downloads',
+          cedar:
+            '@rule("operator.downloads") permit(principal, action == AgentBrowser::Action::"downloads", resource) when { context has tenantId && context.tenantId == "qa" };',
+        },
+      ],
+    };
+    const authorizer = new CedarAuthorizer({ document, defaultTenant: 'local' });
+    const service = serviceWith({
+      authorizer,
+      tenantsConfigured: false,
+    });
+    await expect(
+      service.createSession({ allowDownloads: true, tenantId: 'qa' })
+    ).rejects.toMatchObject({ code: 'POLICY_DENIED' });
+    // With keys configured, the (authenticated) tenant decides and the
+    // capability is granted: creation succeeds.
+    const keyed = serviceWith({ authorizer, tenantsConfigured: true });
+    const session = await keyed.createSession({ allowDownloads: true, tenantId: 'qa' });
+    await keyed.closeSession(session.sessionId);
+    await keyed.shutdown();
+    await service.shutdown();
+  });
+
+  it('the shadow legacy side mirrors the environment decisions', () => {
+    const env = {
+      AGENTBROWSER_ALLOWED_CIDRS: ' 10.0.0.0/8 , 192.168.0.0/16 ',
+      AGENTBROWSER_ALLOW_LOOPBACK: 'YES',
+    };
+    const legacy = legacyAuthorizerFromEnvironment(env);
+    const egress = {
+      action: 'request.private' as const,
+      context: {
+        phase: 'resolved' as const,
+        target: '10.1.2.3',
+        addressClasses: ['private' as const],
+        privateSources: [{ address: '10.1.2.3', type: 'ipv4' as const }],
+      },
+    };
+    expect(legacy.decide(egress)).toMatchObject({ allowed: true });
+    const loopback = {
+      action: 'request.loopback' as const,
+      context: {
+        phase: 'hostname' as const,
+        target: 'localhost',
+        addressClasses: ['loopback' as const],
+        privateSources: [],
+      },
+    };
+    expect(legacy.decide(loopback)).toMatchObject({ allowed: true });
+    expect(legacyAuthorizerFromEnvironment({}).decide(loopback)).toMatchObject({
+      allowed: false,
+    });
   });
 });

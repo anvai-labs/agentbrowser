@@ -100,6 +100,13 @@ export interface ServerOptions extends OperatorCdpAdmissionOptions {
    * conflict.
    */
   policy?: {
+    /**
+     * `'file'` (default): AGENTBROWSER_POLICY_FILE — limits replace the
+     * embedder options, and combining them is a refusal. `'shadow'`:
+     * AGENTBROWSER_POLICY_SHADOW — the environment configuration still
+     * applies, the wrapper only observes alongside the deciding authorizer.
+     */
+    kind?: 'file' | 'shadow';
     /** The loaded authorizer (CedarAuthorizer, or a shadow wrapper). */
     authorizer: import('@agentbrowser/policy-engine').Authorizer & {
       healthy?: boolean;
@@ -107,7 +114,7 @@ export interface ServerOptions extends OperatorCdpAdmissionOptions {
     };
     /** The document's SHA-256; sessions stamp it. */
     version: string;
-    /** Limits replacing extractMaxBytes / maxResponseBytes. */
+    /** Limits replacing extractMaxBytes / maxResponseBytes (files only). */
     limits: import('@agentbrowser/protocol').PolicyLimits;
   };
   /** Trusted embedding source selection for private evidence-backed approval records. */
@@ -474,7 +481,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     new InMemoryTracer({
       ...(options.secretManager ? { secretManager: options.secretManager } : {}),
     });
-  if (options.policy) {
+  const policyLimiter = options.policy;
+  const policyIsFile = policyLimiter !== undefined && (policyLimiter.kind ?? 'file') === 'file';
+  if (policyIsFile) {
     const conflicts = [
       ...(options.networkPolicy !== undefined ? ['networkPolicy'] : []),
       ...(options.approvalPolicy !== undefined ? ['approvalPolicy'] : []),
@@ -486,9 +495,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       );
     }
   }
-  const policyLimiter = options.policy;
-  if (policyLimiter !== undefined)
-    extractMaxBytes = policyLimiter.limits.extractMaxBytes ?? extractMaxBytes;
+  if (policyIsFile) extractMaxBytes = policyLimiter.limits.extractMaxBytes ?? extractMaxBytes;
   // TD-15 phase 4: with a policy file, every session's network policy is the
   // floor plus the tenant-bound, per-session-memoized authorizer exceptions.
   // No keys: nothing is bound and the authorizer's implicit Tenant::"local"
@@ -508,7 +515,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               blockLoopback: true,
               blockPrivateIPs: true,
               blockMetadata: true,
-              ...(policyLimiter.limits.maxResponseBytes !== undefined
+              ...(policyIsFile && policyLimiter.limits.maxResponseBytes !== undefined
                 ? { maxResponseSize: policyLimiter.limits.maxResponseBytes }
                 : {}),
               exceptions: egressExceptionsOf(memo),
@@ -540,6 +547,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           authorizer: policyLimiter.authorizer,
           policyVersion: policyLimiter.version,
           ...(sessionPolicyFactory !== undefined ? { sessionPolicyFactory } : {}),
+          ...(apiKeys !== undefined ? { tenantsConfigured: true } : {}),
         }
       : {}),
     ...((options.approvalPolicy ?? process.env.AGENTBROWSER_APPROVAL_POLICY) !== undefined

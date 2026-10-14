@@ -118,7 +118,11 @@ export async function measurePolicyGate(mode: PolicyGateResult['mode']): Promise
   };
 }
 
-/** All three modes; the gate fails if any mode exceeds its share ceiling. */
+/**
+ * All three modes, measured. The gate assertion itself lives in the test and
+ * binds only the gated modes (see GATED_MODES); `pass` is computed for every
+ * mode for reporting, so an ungated row must not be read as gated.
+ */
 export async function policyGateReport(): Promise<PolicyGateResult[]> {
   const modes: PolicyGateResult['mode'][] = ['uncached', 'memoized', 'shadow'];
   const results: PolicyGateResult[] = [];

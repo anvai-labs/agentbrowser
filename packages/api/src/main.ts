@@ -11,7 +11,6 @@ import type { BrowserEngine } from '@agentbrowser/engine';
 import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
 import {
   CedarAuthorizer,
-  LegacyAuthorizer,
   loadPolicyFile,
   policyDocumentFromEnvironment,
   ShadowAuthorizer,
@@ -19,7 +18,10 @@ import {
 import { deploymentModeFromEnvironment } from './cdp-config.js';
 import { operatorCdpFromEnvironment } from './cdp-startup.js';
 import { extractMaxBytesFromEnvironment } from './extraction-config.js';
-import { networkPolicyFromEnvironment } from './network-policy-config.js';
+import {
+  legacyAuthorizerFromEnvironment,
+  networkPolicyFromEnvironment,
+} from './network-policy-config.js';
 import { apiKeysFromEnv, startServer } from './server.js';
 import { parseLogLevel } from './server-args.js';
 
@@ -36,15 +38,23 @@ const policyBearing = [
   'AGENTBROWSER_MAX_RESPONSE_BYTES',
 ];
 let policy:
-  | Awaited<ReturnType<typeof loadPolicyFile>>
-  | { authorizer: ShadowAuthorizer; version: string; limits: Record<string, never> }
+  | ({ kind: 'file' } & Awaited<ReturnType<typeof loadPolicyFile>>)
+  | {
+      kind: 'shadow';
+      authorizer: ShadowAuthorizer;
+      version: string;
+      limits: Record<string, never>;
+    }
   | undefined;
 if (policyFilePath !== undefined) {
   const keys = apiKeysFromEnv();
-  policy = await loadPolicyFile(policyFilePath, {
-    apiKeysConfigured: keys !== undefined,
-    ...(keys !== undefined ? { keyTenants: [...new Set(keys.values())] } : {}),
-  });
+  policy = {
+    kind: 'file',
+    ...(await loadPolicyFile(policyFilePath, {
+      apiKeysConfigured: keys !== undefined,
+      ...(keys !== undefined ? { keyTenants: [...new Set(keys.values())] } : {}),
+    })),
+  };
   // Conservative by design: warn when any loaded permit can grant the
   // loopback or private exception actions at all.
   for (const action of ['request.loopback', 'request.private']) {
@@ -77,10 +87,14 @@ if (policyFilePath !== undefined) {
     }
   }
   if (policyShadow) {
+    // Legacy decides — with exactly the decisions the environment would make
+    // without a shadow, so shadow mode observes, never changes, behavior.
     const document = policyDocumentFromEnvironment(process.env);
+    const legacy = legacyAuthorizerFromEnvironment(process.env);
     policy = {
+      kind: 'shadow',
       authorizer: new ShadowAuthorizer(
-        new LegacyAuthorizer({}),
+        legacy,
         new CedarAuthorizer({ document, defaultTenant: 'local' })
       ),
       version: 'shadow',
@@ -91,7 +105,13 @@ if (policyFilePath !== undefined) {
 
 // Validate before engine/server startup; invalid operator policy aborts startup.
 const networkPolicy =
-  policyFilePath === undefined ? networkPolicyFromEnvironment(process.env) : undefined;
+  policyFilePath === undefined
+    ? networkPolicyFromEnvironment(
+        process.env,
+        console.warn,
+        policy?.kind === 'shadow' ? policy.authorizer : undefined
+      )
+    : undefined;
 const extractMaxBytes =
   policyFilePath === undefined ? extractMaxBytesFromEnvironment(process.env) : undefined;
 const operatorCdp = operatorCdpFromEnvironment(process.env);
@@ -143,6 +163,7 @@ const server = await startServer({
   ...(policy !== undefined
     ? {
         policy: {
+          kind: policy.kind,
           authorizer: policy.authorizer,
           version: policy.authorizer.version,
           limits: policy.limits,

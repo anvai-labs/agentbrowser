@@ -370,6 +370,12 @@ export interface ServiceDependencies {
    */
   policyVersion?: string;
   /**
+   * TD-BROWSER-15 phase 4: true when API keys configure tenants. Without
+   * keys, a caller's tenantId is a claim, not an identity, so capability
+   * questions carry no tenant: the implicit `Tenant::"local"` decides.
+   */
+  tenantsConfigured?: boolean;
+  /**
    * TD-BROWSER-15 phase 4: when a policy file is loaded, each session's
    * network policy is built per tenant — floor blocks plus the policy
    * authorizer's exceptions, memoized per session. Returning a clear()
@@ -554,6 +560,7 @@ export class AgentBrowserService {
     | ((tenantId: string | undefined) => { networkPolicy: NetworkPolicy; clear: () => void })
     | undefined;
   private readonly policyVersion: string | undefined;
+  private readonly tenantsConfigured: boolean;
   private readonly approvalGate: ApprovalGate;
   private readonly secretManager: SecretManager;
   private readonly artifacts: ArtifactStore;
@@ -669,6 +676,7 @@ export class AgentBrowserService {
       });
     this.sessionPolicyFactory = deps.sessionPolicyFactory;
     this.policyVersion = deps.policyVersion;
+    this.tenantsConfigured = deps.tenantsConfigured ?? false;
     this.normalizer = deps.normalizer ?? new ObservationNormalizer();
     this.executor = deps.executor ?? new ActionExecutor(this.normalizer);
     // SSRF defenses are on by default (ADR-006): loopback, private ranges and
@@ -1537,10 +1545,11 @@ export class AgentBrowserService {
 
   /** Refuse, naming the deciding rule, unless the authorizer grants the capability. */
   private requireCapability(action: CapabilityAction, tenantId: string | undefined): void {
-    const decision = this.authorizer.decide({
-      action,
-      context: tenantId !== undefined ? { tenantId } : {},
-    });
+    // Without API keys a tenantId is a claim, not an identity (TD-15 phase 4
+    // review): no tenant reaches the policy, and the implicit local tenant
+    // decides.
+    const context = this.tenantsConfigured && tenantId !== undefined ? { tenantId } : {};
+    const decision = this.authorizer.decide({ action, context });
     if (decision.allowed === true) return;
     throw new ServiceError(
       'POLICY_DENIED',
