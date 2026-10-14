@@ -50,6 +50,12 @@ export interface ApplicationJournalOperation {
 
 export type SessionPrincipal =
   | { actor: 'operator'; tenant?: string }
+  /**
+   * TD-BROWSER-16 phase 1 (ADR-025): a human operator authenticating with an
+   * operator key (AGENTBROWSER_OPERATOR_KEYS_FILE). Such keys authorize ONLY
+   * routes flagged operatorRoute; on any other route they are refused.
+   */
+  | { actor: 'human-operator'; tenant: string }
   | {
       actor: 'agent';
       tenant: string;

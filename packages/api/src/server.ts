@@ -52,6 +52,7 @@ import {
 } from './http-publication.js';
 import { buildOpenApiDocument } from './openapi.js';
 import { TokenBucketLimiter } from './policy-query-limiter.js';
+import { operatorKeysFromEnvironment, operatorKeysFromFile } from './operator-keys.js';
 import { POLICY_BEARING_ENV, sessionPolicyFactoryFor } from './policy-session.js';
 import { PRODUCT_VERSION } from './product-version.js';
 import { requestOriginGuardFromEnvironment } from './request-origin-guard.js';
@@ -77,6 +78,8 @@ declare module 'fastify' {
     /** Delegated-grant capability this route requires (see the `on` helper). */
     capability?: AgentCapability;
     publication?: 'guarded' | 'when-controlled' | 'lifecycle' | 'stream';
+    /** TD-BROWSER-16 phase 1: human-operator keys are valid here and only here. */
+    operatorRoute?: boolean;
   }
   interface FastifyInstance {
     /**
@@ -264,6 +267,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   // caller clearing it later cannot switch a running service into local mode.
   const configuredKeys = options.apiKeys ?? apiKeysFromEnv();
   const apiKeys = configuredKeys === undefined ? undefined : new Map(configuredKeys);
+  // TD-BROWSER-16 phase 1: operator keys from a file, never a variable. They
+  // authenticate a human operator for the one configured tenant and are
+  // refused everywhere except operator-flagged routes.
+  const operatorKeys = await operatorKeysFromEnvironment(process.env);
+  if (operatorKeys !== undefined && apiKeys !== undefined) {
+    // The overlap refusal lives with the parser; apiKeys here are hashed.
+    await operatorKeysFromFile(process.env.AGENTBROWSER_OPERATOR_KEYS_FILE ?? '', { apiKeys });
+  }
   const bindHost = options.host ?? process.env.HOST ?? '127.0.0.1';
   const originGuard = requestOriginGuardFromEnvironment(
     process.env,
@@ -820,6 +831,24 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           (request as FastifyRequest & { tenant?: string }).tenant = tenant;
           return;
         }
+        // TD-BROWSER-16 phase 1: an operator key authenticates a human
+        // operator — and only on operator-flagged routes; anywhere else it is
+        // refused, so a leaked operator key cannot drive sessions.
+        const operatorTenant = token ? operatorKeys?.byHash.get(sha256Hex(token)) : undefined;
+        if (operatorTenant !== undefined) {
+          if (request.routeOptions.config?.operatorRoute !== true) {
+            return reply.code(403).send({
+              error: {
+                code: 'FORBIDDEN',
+                message: 'Operator keys are not valid on this route',
+                retryable: false,
+              },
+            });
+          }
+          principals.set(request, { actor: 'human-operator', tenant: operatorTenant });
+          (request as FastifyRequest & { tenant?: string }).tenant = operatorTenant;
+          return;
+        }
         const agent = token ? service.authority.authenticate(token) : undefined;
         if (agent) {
           // Expiry is checked against the coordinator before trusting the grant.
@@ -1011,6 +1040,8 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         capability?: AgentCapability;
         safe?: boolean;
         terminal?: 'retained-resource';
+        /** TD-BROWSER-16 phase 1: human-operator keys are valid here and only here. */
+        operatorRoute?: boolean;
       };
       const onTransport = (
         method: 'GET' | 'POST' | 'PUT' | 'DELETE',
@@ -1023,6 +1054,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           url,
           config: {
             ...(meta.capability ? { capability: meta.capability } : {}),
+            ...(meta.operatorRoute ? { operatorRoute: true } : {}),
             publication: meta.publication ?? 'lifecycle',
           },
           ...(meta.publication
@@ -1278,29 +1310,45 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         { capability: 'session.control', publication: 'guarded' }
       );
 
-      on('GET', '/sessions/:sessionId/approvals/:tokenId', async (request) => {
-        const { sessionId, tokenId } = params(request, 'sessionId', 'tokenId');
-        if (request.principal?.actor !== 'operator')
-          throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
-        requireOwnership(sessionId, tenantOf(request));
-        const disclosure = await service.prepareApprovalDisclosureInScope(sessionId, tokenId);
-        return responseDraft(disclosure.view, 200, { assertCurrent: disclosure.assertCurrent });
-      });
-      on('POST', '/sessions/:sessionId/approvals/:tokenId', async (request) => {
-        const { sessionId, tokenId } = params(request, 'sessionId', 'tokenId');
-        if (request.principal?.actor !== 'operator')
-          throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
-        requireOwnership(sessionId, tenantOf(request));
-        const checked = validateOperatorApprovalDecision(request.body);
-        if (!checked.ok)
-          throw new ServiceError('INVALID_REQUEST', 'Approval decision must be approve or deny');
-        const disclosure = await service.prepareApprovalDisclosureInScope(
-          sessionId,
-          tokenId,
-          checked.value.decision
-        );
-        return responseDraft(disclosure.view, 200, { assertCurrent: disclosure.assertCurrent });
-      });
+      on(
+        'GET',
+        '/sessions/:sessionId/approvals/:tokenId',
+        async (request) => {
+          const { sessionId, tokenId } = params(request, 'sessionId', 'tokenId');
+          if (
+            request.principal?.actor !== 'operator' &&
+            request.principal?.actor !== 'human-operator'
+          )
+            throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+          requireOwnership(sessionId, tenantOf(request));
+          const disclosure = await service.prepareApprovalDisclosureInScope(sessionId, tokenId);
+          return responseDraft(disclosure.view, 200, { assertCurrent: disclosure.assertCurrent });
+        },
+        { operatorRoute: true }
+      );
+      on(
+        'POST',
+        '/sessions/:sessionId/approvals/:tokenId',
+        async (request) => {
+          const { sessionId, tokenId } = params(request, 'sessionId', 'tokenId');
+          if (
+            request.principal?.actor !== 'operator' &&
+            request.principal?.actor !== 'human-operator'
+          )
+            throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+          requireOwnership(sessionId, tenantOf(request));
+          const checked = validateOperatorApprovalDecision(request.body);
+          if (!checked.ok)
+            throw new ServiceError('INVALID_REQUEST', 'Approval decision must be approve or deny');
+          const disclosure = await service.prepareApprovalDisclosureInScope(
+            sessionId,
+            tokenId,
+            checked.value.decision
+          );
+          return responseDraft(disclosure.view, 200, { assertCurrent: disclosure.assertCurrent });
+        },
+        { operatorRoute: true }
+      );
 
       // Application surface (shared-infra slice 2). Binding is operator-only
       // while the human owns the session; discovery/execution/receipts are

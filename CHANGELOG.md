@@ -7,6 +7,20 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — the operator credential (TD-BROWSER-16 phase 1, ADR-025)
+
+- **`AGENTBROWSER_OPERATOR_KEYS_FILE`** holds `key:tenant` lines authenticating a **human
+  operator** (`human-operator` joins the principal actors). Every entry must map to the single
+  API-key tenant; a key appearing in both credential sets aborts startup (one credential, one
+  identity); keys are SHA-256-hashed and never logged.
+- **Operator keys are valid only on operator-flagged routes** — today, the approval view and
+  decide routes — and refused with `403 FORBIDDEN` everywhere else: a leaked operator key cannot
+  create sessions, act, or read anything else.
+- **`ApprovalRequest` gains `kind`** (`act` unchanged, `act.reviewed` with the ADR-007 act
+  binding, and the non-act `cookie.handoff` carrying `{domains, counts}` evidence that phase 6
+  instantiates) — protocol-first per ADR-015.
+
+
 ### Fixed — approval decisions are tenant-bound (TD-15 phase-7 review)
 
 With API keys configured, approval questions (`act`/`act.unattended`) now decide as the session's
