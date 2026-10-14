@@ -32,6 +32,15 @@ export interface SecretManagerOptions {
   redactionCacheMaxEntries?: number;
 }
 
+/** Values too weak to be worth redacting: under 8 characters, or fewer than
+ * 3 distinct characters (repeats like "aaaaaaaa"). A fixed, documented
+ * threshold (TD-BROWSER-16 phase 2, ADR-025 §6). */
+const MIN_SECRET_LENGTH = 8;
+const MIN_DISTINCT_CHARACTERS = 3;
+function negligibleEntropy(value: string): boolean {
+  return value.length < MIN_SECRET_LENGTH || new Set(value).size < MIN_DISTINCT_CHARACTERS;
+}
+
 export class SecretManager {
   private readonly secrets: Map<string, string>;
   /** Values sorted longest-first so overlapping secrets redact fully. */
@@ -40,6 +49,14 @@ export class SecretManager {
   private redactionPattern: RegExp | null = null;
   /** Cache of already-redacted strings to avoid repeated work. */
   private readonly redactionCache: BoundedCache<string, string>;
+  /**
+   * TD-BROWSER-16 phase 2: per-session scopes. A value registered in a
+   * session's scope redacts only that session's observations, logs, traces
+   * and errors — never another session's, and never the global surface.
+   */
+  private readonly sessionSecrets = new Map<string, string[]>();
+  private readonly sessionPatterns = new Map<string, RegExp | null>();
+  private readonly sessionCaches = new Map<string, BoundedCache<string, string>>();
 
   constructor(secrets: Record<string, string> = {}, options: SecretManagerOptions = {}) {
     this.redactionCache = new BoundedCache({
@@ -107,6 +124,52 @@ export class SecretManager {
     return this.redactValue(input) as T;
   }
 
+  /**
+   * TD-BROWSER-16 phase 2: redact with a session's scope — the global values
+   * plus exactly that session's registered values.
+   */
+  redactScoped<T>(input: T, sessionId: string): T {
+    if (this.sessionSecrets.get(sessionId) === undefined && this.sortedValues.length === 0) {
+      return input;
+    }
+    return this.redactValue(input, false, sessionId) as T;
+  }
+
+  /**
+   * Register a value in one session's scope (TD-BROWSER-16 phase 2). Values
+   * under the entropy floor are ignored: redacting "1", "en" or "true" would
+   * corrupt unrelated output while protecting nothing. Registration
+   * invalidates that scope's memoized redaction cache.
+   */
+  registerSessionSecret(sessionId: string, value: string): void {
+    if (negligibleEntropy(value)) return;
+    const values = this.sessionSecrets.get(sessionId) ?? [];
+    if (!values.includes(value)) values.push(value);
+    // Longest-first, so overlapping values redact fully.
+    values.sort((a, b) => b.length - a.length);
+    this.sessionSecrets.set(sessionId, values);
+    this.buildSessionPattern(sessionId, values);
+    // The cached results no longer reflect the new value.
+    this.sessionCaches.delete(sessionId);
+  }
+
+  /** A session's registered values leave with it. */
+  clearSessionSecrets(sessionId: string): void {
+    this.sessionSecrets.delete(sessionId);
+    this.sessionPatterns.delete(sessionId);
+    this.sessionCaches.delete(sessionId);
+  }
+
+  private buildSessionPattern(sessionId: string, values: string[]): void {
+    const all = [...values, ...this.sortedValues].sort((a, b) => b.length - a.length);
+    this.sessionPatterns.set(
+      sessionId,
+      all.length === 0
+        ? null
+        : new RegExp(all.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g')
+    );
+  }
+
   /** Registered references, for inventory. Values never leave this class. */
   references(): string[] {
     return [...this.secrets.keys()];
@@ -127,46 +190,53 @@ export class SecretManager {
     return { redacted: true, references: this.references() };
   }
 
-  private redactValue(value: unknown, redactKeys = false): unknown {
+  private redactValue(value: unknown, redactKeys = false, scope?: string): unknown {
     if (typeof value === 'string') {
-      return this.redactString(value);
+      return this.redactString(value, scope);
     }
     if (Array.isArray(value)) {
-      return value.map((item) => this.redactValue(item, redactKeys));
+      return value.map((item) => this.redactValue(item, redactKeys, scope));
     }
     if (value !== null && typeof value === 'object') {
       const seen = new Set<string>();
       return Object.fromEntries(
         Object.entries(value).map(([key, item]) => {
-          const base = redactKeys ? this.redactString(key) : key;
+          const base = redactKeys ? this.redactString(key, scope) : key;
           let safeKey = base;
           let suffix = 1;
           // Preserve both values if redacted names collide, without exposing
           // original keys. fromEntries also treats __proto__ as an own key.
           while (seen.has(safeKey)) safeKey = `${base}#${suffix++}`;
           seen.add(safeKey);
-          return [safeKey, this.redactValue(item, redactKeys)];
+          return [safeKey, this.redactValue(item, redactKeys, scope)];
         })
       );
     }
     return value;
   }
 
-  private redactString(text: string): string {
-    // Return cached result if available
-    const cached = this.redactionCache.get(text);
-    if (cached !== undefined) {
-      return cached;
+  private redactString(text: string, scope?: string): string {
+    if (scope === undefined) {
+      const cached = this.redactionCache.get(text);
+      if (cached !== undefined) return cached;
+      if (!this.redactionPattern) return text;
+      const redacted = text.replace(this.redactionPattern, REDACTED);
+      this.redactionCache.set(text, redacted);
+      return redacted;
     }
-
-    // If no pattern, return as-is
-    if (!this.redactionPattern) {
-      return text;
+    // Session scope: its own pattern and its own cache (invalidated on
+    // registration).
+    let cache = this.sessionCaches.get(scope);
+    if (cache === undefined) {
+      cache = new BoundedCache<string, string>({ maxEntries: 10_000 });
+      this.sessionCaches.set(scope, cache);
     }
-
-    // Apply regex replacement
-    const redacted = text.replace(this.redactionPattern, REDACTED);
-    this.redactionCache.set(text, redacted);
+    const cached = cache.get(text);
+    if (cached !== undefined) return cached;
+    const pattern = this.sessionPatterns.get(scope) ?? this.redactionPattern;
+    if (!pattern) return text;
+    const redacted = text.replace(pattern, REDACTED);
+    cache.set(text, redacted);
     return redacted;
   }
 }

@@ -245,3 +245,62 @@ describe('SecretManager', () => {
     });
   });
 });
+
+describe('per-session secret registration (TD-BROWSER-16 phase 2)', () => {
+  it('a session-scoped value redacts only that session', () => {
+    const manager = new SecretManager();
+    manager.registerSessionSecret('ses_a', 'session-a-secret-value-xyz');
+    expect(manager.redactScoped('token session-a-secret-value-xyz end', 'ses_a')).toBe(
+      'token *** end'
+    );
+    // Another session sees the value verbatim.
+    expect(manager.redactScoped('token session-a-secret-value-xyz end', 'ses_b')).toBe(
+      'token session-a-secret-value-xyz end'
+    );
+    // And so does the global surface.
+    expect(manager.redact('token session-a-secret-value-xyz end')).toBe(
+      'token session-a-secret-value-xyz end'
+    );
+  });
+
+  it('the floor: short and low-entropy values are never registered', () => {
+    const manager = new SecretManager();
+    for (const weak of ['1', 'en', 'true', '1234567', 'aaaaaaaa', 'abababab']) {
+      manager.registerSessionSecret('ses_a', weak);
+    }
+    expect(manager.redactScoped('value: true; other: 1234567; repeat: abababab', 'ses_a')).toBe(
+      'value: true; other: 1234567; repeat: abababab'
+    );
+  });
+
+  it('registration invalidates that scope cache: later text redacts', () => {
+    const manager = new SecretManager();
+    manager.registerSessionSecret('ses_a', 'first-secret-value-aaa');
+    // Warm the cache.
+    expect(manager.redactScoped('x first-secret-value-aaa', 'ses_a')).toBe('x ***');
+    manager.registerSessionSecret('ses_a', 'second-secret-value-bbb');
+    expect(manager.redactScoped('y second-secret-value-bbb', 'ses_a')).toBe('y ***');
+    // The first value still redacts too (longest-first overlap is intact).
+    expect(manager.redactScoped('x first-secret-value-aaa', 'ses_a')).toBe('x ***');
+  });
+
+  it('the global redaction is unchanged by session values', () => {
+    const manager = new SecretManager({ 'vault://k': 'global-secret-value-zzz' });
+    manager.registerSessionSecret('ses_a', 'session-a-secret-value-xyz');
+    expect(manager.redact('a global-secret-value-zzz')).toBe('a ***');
+    expect(manager.redact('a session-a-secret-value-xyz')).toBe('a session-a-secret-value-xyz');
+    // The scoped redaction sees BOTH.
+    expect(
+      manager.redactScoped('g global-secret-value-zzz s session-a-secret-value-xyz', 'ses_a')
+    ).toBe('g *** s ***');
+  });
+
+  it('clearing a session drops its values and caches', () => {
+    const manager = new SecretManager();
+    manager.registerSessionSecret('ses_a', 'session-a-secret-value-xyz');
+    manager.clearSessionSecrets('ses_a');
+    expect(manager.redactScoped('token session-a-secret-value-xyz', 'ses_a')).toBe(
+      'token session-a-secret-value-xyz'
+    );
+  });
+});
