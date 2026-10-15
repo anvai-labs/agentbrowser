@@ -53,9 +53,9 @@ test('generated catalog checks detect stale files across fixed profiles and bind
     await checkCatalogDocument({ write: true, file });
     await checkCatalogDocument({ file });
     const original = await readFile(file, 'utf8');
-    assert.match(original, /## unbound\/qa \(18 tools; \d+ result bytes\)/);
+    assert.match(original, /## unbound\/qa \(19 tools; \d+ result bytes\)/);
     assert.match(original, /## delegated\/qa \(16 tools; \d+ result bytes\)/);
-    assert.match(original, /## unbound\/audit \(17 tools; \d+ result bytes\)/);
+    assert.match(original, /## unbound\/audit \(18 tools; \d+ result bytes\)/);
     assert.match(original, /## delegated\/audit \(15 tools; \d+ result bytes\)/);
     assert.match(original, /## unbound\/application \(0 tools; \d+ result bytes\)/);
     assert.match(original, /## delegated\/application \(1 tool; \d+ result bytes\)/);
