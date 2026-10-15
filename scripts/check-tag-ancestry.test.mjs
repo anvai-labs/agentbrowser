@@ -188,6 +188,9 @@ test('every other release job depends on tag-guard, directly or transitively', (
     // success() — so `success() || x` or `always()` would run after a failed tag-guard. Only a
     // bare `success()` (equivalent to no status function) is allowed.
     const condition = /^ {4}if: (.+)$/m.exec(graph.get(id) ?? '')?.[1]?.trim();
+    // A block scalar (`if: >-` / `if: |`) hides the condition on the next lines; refuse it so
+    // the check below always sees the whole expression.
+    assert.doesNotMatch(condition ?? '', /^[|>]/, `job ${id} uses a multi-line if:`);
     if (condition !== undefined && /\b(always|cancelled|failure|success)\(\)/.test(condition)) {
       assert.match(
         condition.replace(/^\$\{\{\s*|\s*\}\}$/g, ''),
