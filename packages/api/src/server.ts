@@ -9,10 +9,14 @@ import {
   requireCdpAttachAdmission,
 } from './floor.js';
 import {
+  JournalConfigError,
   journalConfigFromEnvironment,
+  journalHistoryFromEnvironment,
+  journalHistoryWarnings,
   journalRuntimeQualified,
-  openServiceJournal,
+  openServiceJournalSet,
   SERVICE_JOURNAL_RETAIN_MS,
+  searchJournalNamespaces,
 } from './journal-config.js';
 import { operatorCsp, operatorHtml } from './operator-panel.js';
 import type { SessionPrincipal } from './session-authority.js';
@@ -26,11 +30,7 @@ import type { SessionPrincipal } from './session-authority.js';
  */
 
 import { createHash, randomBytes } from 'node:crypto';
-import type {
-  JournalFindOutcome,
-  TrustedEvidenceSourceRegistry,
-  TrustedVerifierRegistry,
-} from '@agentbrowser/control';
+import type { TrustedEvidenceSourceRegistry, TrustedVerifierRegistry } from '@agentbrowser/control';
 import type { StructuredLogger } from '@agentbrowser/core';
 import { InMemoryTracer, MetricsRegistry, type SecretManager } from '@agentbrowser/core';
 import type { BrowserEngine } from '@agentbrowser/engine';
@@ -575,16 +575,41 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   const horizonPassed = journalConfig !== undefined && journalConfig.acceptUntil <= Date.now();
   if (horizonPassed)
     console.warn(
-      '[agentbrowser] AGENTBROWSER_JOURNAL_ACCEPT_UNTIL has passed: starting WITHOUT the durable journal (durable execution is refused). Configure a new AGENTBROWSER_JOURNAL_NAMESPACE with a new horizon.'
+      "[agentbrowser] AGENTBROWSER_JOURNAL_ACCEPT_UNTIL has passed: durable execution is refused; the namespace's records stay readable and recoverable (recover-only) until its retainUntil. Configure a new AGENTBROWSER_JOURNAL_NAMESPACE with a new horizon, listing this one in AGENTBROWSER_JOURNAL_HISTORY_FILE."
     );
-  const serviceJournal =
-    journalConfig === undefined || horizonPassed
+  // T5 J3d (D7): namespaces the operator rotated away from, listed with every descriptor input.
+  // They open on the SAME store adapter (the store admits one server) and stay searchable and
+  // recoverable until retainUntil; they never take a new intent.
+  const journalHistory = journalConfig
+    ? await journalHistoryFromEnvironment(process.env, journalConfig)
+    : [];
+  if (!journalConfig && process.env.AGENTBROWSER_JOURNAL_HISTORY_FILE?.trim())
+    throw new JournalConfigError(
+      'AGENTBROWSER_JOURNAL_HISTORY_FILE requires the durable journal configuration (AGENTBROWSER_JOURNAL_DIR and the rest)'
+    );
+  // A configured journal always opens its set: the current namespace for durable work while its
+  // horizon holds, and recover-only once it has passed (review F1), plus every history namespace.
+  const journalSet =
+    journalConfig === undefined
       ? undefined
-      : await openServiceJournal(journalConfig);
+      : await openServiceJournalSet(journalConfig, journalHistory);
+  const serviceJournal = journalSet?.journal ? { journal: journalSet.journal } : undefined;
+  const historyJournals = (journalSet?.history ?? []).flatMap((state) =>
+    state.journal ? [{ namespaceId: state.namespaceId, journal: state.journal }] : []
+  );
+  // A history namespace the store refused is still configured history: it is UNREAD, never
+  // absent, in every lookup and recovery answer.
+  const refusedHistory = (journalSet?.history ?? []).flatMap((state) =>
+    state.journal ? [] : [state.namespaceId]
+  );
+  for (const warning of journalHistoryWarnings(journalSet?.history ?? []))
+    console.warn(`[agentbrowser] ${warning}`);
   let service: AgentBrowserService;
   try {
     service = new AgentBrowserService({
       ...(serviceJournal !== undefined ? { operationJournal: serviceJournal.journal } : {}),
+      ...(historyJournals.length > 0 ? { historyJournals } : {}),
+      ...(refusedHistory.length > 0 ? { refusedHistoryNamespaces: refusedHistory } : {}),
       cdpAttachAdmission: attachAdmission,
       extractMaxBytes,
       engine,
@@ -643,7 +668,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     });
   } catch (error) {
     // A service that never existed cannot close the journal it was given.
-    await serviceJournal?.close();
+    await journalSet?.close();
     throw error;
   }
 
@@ -652,7 +677,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       await service.shutdown();
     } finally {
       // The journal outlives every session's terminal write; closed last.
-      await serviceJournal?.close();
+      await journalSet?.close();
     }
   });
 
@@ -1030,6 +1055,29 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               qualified,
             },
             recoveryQualified: qualified && health === 'open',
+            ...(journalSet && journalSet.history.length > 0
+              ? {
+                  history: journalSet.history.map((state) => ({
+                    namespace: state.namespaceId,
+                    ...(state.current ? { current: true as const } : {}),
+                    // A refused namespace stays refused for this process; an opened one reports
+                    // open while its handle is healthy.
+                    state:
+                      state.journal === undefined
+                        ? ('refused' as const)
+                        : state.journal.health === 'open'
+                          ? ('open' as const)
+                          : ('unavailable' as const),
+                    ...(state.refusal !== undefined
+                      ? { reason: state.refusal }
+                      : state.journal !== undefined && state.journal.health !== 'open'
+                        ? { reason: state.journal.health }
+                        : {}),
+                    acceptUntil: new Date(state.acceptUntil).toISOString(),
+                    retainUntil: new Date(state.retainUntil).toISOString(),
+                  })),
+                }
+              : {}),
           };
         }
       );
@@ -1057,7 +1105,12 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           const { operationId } = request.params as { operationId: string };
           if (!CONTROL_OPERATION_ID.test(operationId))
             return journalRefusal(reply, 'INVALID_REQUEST', 'Invalid operation ID', 400);
-          if (!serviceJournal) {
+          // J3d: the current namespace (when open) and every open history namespace are searched.
+          const searched = [
+            ...(serviceJournal ? [serviceJournal.journal] : []),
+            ...historyJournals.map((entry) => entry.journal),
+          ];
+          if (searched.length === 0) {
             if (journalConfig)
               // Configured but not open (for example a passed accept horizon): records may exist
               // and be unreachable — history is unread, not absent.
@@ -1084,42 +1137,23 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               'Journal history is tenant-scoped; this credential names no tenant',
               403
             );
-          const journal = serviceJournal.journal;
-          let outcome: JournalFindOutcome;
-          try {
-            outcome = await journal.findByOperation({
-              tenantId: tenant,
-              operationId,
-              limit: 16,
-            });
-          } catch {
+          const search = await searchJournalNamespaces(searched, { tenantId: tenant, operationId });
+          const { entries, truncated, lastReason } = search;
+          const unreadNamespaces = [...search.unreadNamespaces, ...refusedHistory];
+          // Nothing could be read at all: the whole answer is unread, not absent.
+          if (search.unreadNamespaces.length === searched.length)
             return journalRefusal(
               reply,
               'JOURNAL_UNAVAILABLE',
-              'The journal could not answer; treat the history as unread, not absent',
+              `The journal refused this lookup (${lastReason}); treat the history as unread, not absent`,
               503,
               true
             );
-          }
-          if (outcome.kind !== 'found') {
-            const reason =
-              outcome.kind === 'definitely_not_read'
-                ? outcome.reason
-                : outcome.kind === 'uncertain'
-                  ? outcome.reason
-                  : 'unavailable';
-            return journalRefusal(
-              reply,
-              'JOURNAL_UNAVAILABLE',
-              `The journal refused this lookup (${reason}); treat the history as unread, not absent`,
-              503,
-              true
-            );
-          }
+          const found = entries.map((entry) => entry.record);
           // Projection: only derived classification, application identity and the departed
           // session's opaque identity cross the wire. Fingerprints, digests, actors, inputs and
           // evidence content never do.
-          const records = outcome.records.map((record) => ({
+          const records = found.map((record) => ({
             namespace: record.namespaceId,
             ...classifyJournalRecord(record),
             application: {
@@ -1135,8 +1169,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
           return {
             schemaVersion: 1 as const,
             operationId,
-            absent: records.length === 0 && !outcome.truncated,
-            truncated: outcome.truncated,
+            // Absence is claimed only when EVERY searched namespace answered.
+            absent: records.length === 0 && !truncated && unreadNamespaces.length === 0,
+            truncated,
+            ...(unreadNamespaces.length > 0 ? { unreadNamespaces } : {}),
             records,
           };
         }

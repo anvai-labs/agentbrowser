@@ -1657,6 +1657,27 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                     },
                   },
                   recoveryQualified: { type: 'boolean' },
+                  history: {
+                    type: 'array',
+                    maxItems: 17,
+                    description:
+                      'T5 J3d: namespaces rotated away from (AGENTBROWSER_JOURNAL_HISTORY_FILE), plus the current namespace once its accept horizon has passed (current: true, recover-only). open: searched by lookup and recoverable by the operator until retainUntil; refused: the store did not open it (reason), so its records are unread.',
+                    items: {
+                      type: 'object',
+                      required: ['namespace', 'state', 'acceptUntil', 'retainUntil'],
+                      properties: {
+                        namespace: { type: 'string' },
+                        current: {
+                          type: 'boolean',
+                          description: 'The configured current namespace, past its horizon.',
+                        },
+                        state: { type: 'string', enum: ['open', 'refused', 'unavailable'] },
+                        reason: { type: 'string' },
+                        acceptUntil: { type: 'string' },
+                        retainUntil: { type: 'string' },
+                      },
+                    },
+                  },
                 },
               }),
             },
@@ -1694,9 +1715,17 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                   absent: {
                     type: 'boolean',
                     description:
-                      'No record matched in the searched namespace; not proof of non-execution.',
+                      'No record matched in ANY searched namespace and every one answered; not proof of non-execution.',
                   },
                   truncated: { type: 'boolean' },
+                  unreadNamespaces: {
+                    type: 'array',
+                    minItems: 1,
+                    maxItems: 17,
+                    items: { type: 'string' },
+                    description:
+                      'T5 J3d: searched (or configured history) namespaces that could not be read this time; absent is then false — the history is partly unread, not absent.',
+                  },
                   records: {
                     type: 'array',
                     maxItems: 16,
@@ -1790,6 +1819,12 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                 type: 'object',
                 required: ['closed', 'truncated'],
                 properties: {
+                  unreadNamespaces: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description:
+                      'T5 J3d: namespaces that could not be searched; records found elsewhere were still acted on.',
+                  },
                   closed: { type: 'integer', minimum: 0 },
                   truncated: {
                     type: 'boolean',
@@ -1832,6 +1867,12 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                 type: 'object',
                 required: ['settled', 'truncated'],
                 properties: {
+                  unreadNamespaces: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description:
+                      'T5 J3d: namespaces that could not be searched; records found elsewhere were still acted on.',
+                  },
                   settled: { type: 'integer', minimum: 0 },
                   truncated: {
                     type: 'boolean',
@@ -1874,6 +1915,12 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
                 type: 'object',
                 required: ['reconciled', 'unresolved', 'truncated'],
                 properties: {
+                  unreadNamespaces: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description:
+                      'T5 J3d: namespaces that could not be searched; records found elsewhere were still acted on.',
+                  },
                   reconciled: { type: 'integer', minimum: 0 },
                   unresolved: {
                     type: 'integer',

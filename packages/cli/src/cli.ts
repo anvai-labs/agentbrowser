@@ -2381,6 +2381,10 @@ export function buildCli(deps: CliDependencies): Cli {
                 `runtime ${result.runtime.platform}/Node ${result.runtime.node} (qualified: ${result.runtime.qualified})`,
                 `recoveryQualified ${result.recoveryQualified} (advisory; never an exactly-once promise)`,
               ];
+              for (const entry of result.history ?? [])
+                lines.push(
+                  `history ${entry.namespace}: ${entry.state}${entry.reason ? ` (${entry.reason})` : ''}, retains until ${entry.retainUntil}`
+                );
               return lines;
             });
           })
@@ -2388,7 +2392,7 @@ export function buildCli(deps: CliDependencies): Cli {
       journal
         .command('operations <operationId>')
         .description(
-          'every historical record of one durable operation in the configured namespace, tenant-scoped; absence is never proof of non-execution'
+          'every historical record of one durable operation across the configured and history namespaces, tenant-scoped; absence is never proof of non-execution'
         )
         .action(
           action(async (ctx, operationId: string) => {
@@ -2401,10 +2405,14 @@ export function buildCli(deps: CliDependencies): Cli {
               ];
               for (const record of result.records)
                 lines.push(
-                  `  ${record.classification}${record.actionable ? ' (actionable)' : ''} ${record.application.adapter}/${record.application.resource} epoch ${record.session.epoch}`
+                  `  ${record.namespace}: ${record.classification}${record.actionable ? ' (actionable)' : ''} ${record.application.adapter}/${record.application.resource} epoch ${record.session.epoch}`
+                );
+              if (result.unreadNamespaces?.length)
+                lines.push(
+                  `  UNREAD namespaces: ${result.unreadNamespaces.join(', ')} — the history is partly unread, not absent`
                 );
               if (result.absent)
-                lines.push('  absent in the searched namespace (not proof of non-execution)');
+                lines.push('  absent in every searched namespace (not proof of non-execution)');
               return lines;
             });
           })
