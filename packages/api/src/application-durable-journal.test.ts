@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { FakeEngine } from '@agentbrowser/testkit';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   journalConfigFromEnvironment,
   openServiceJournal,
@@ -56,7 +56,7 @@ function storedRecords(directory: string): number {
   }
 }
 
-async function serviceWithJournal(prepared = journalEnvironment()) {
+async function serviceWithJournal(prepared = journalEnvironment(), effectDelayMs = 0) {
   const { directory, env } = prepared;
   const config = await journalConfigFromEnvironment(env);
   if (!config) throw new Error('expected configuration');
@@ -74,6 +74,7 @@ async function serviceWithJournal(prepared = journalEnvironment()) {
           add: {
             mode: 'write' as const,
             prepare: () => async () => {
+              if (effectDelayMs > 0) await new Promise((done) => setTimeout(done, effectDelayMs));
               effects += 1;
               return { status: 'committed' as const, value: effects };
             },
@@ -145,6 +146,54 @@ describe('service with an open durable journal', () => {
     expect(storedRecords(restarted.directory)).toBe(2);
   }, 60_000);
 
+  it('a graceful shutdown lets an in-flight durable write reach its terminal record', async () => {
+    const s = await serviceWithJournal(journalEnvironment(), 1_000);
+    const running = s.service.applicationExecute(
+      s.sessionId,
+      operator,
+      write('in-flight', 0, 'durable')
+    );
+    await new Promise((done) => setTimeout(done, 100));
+    await s.service.shutdown();
+    await s.opened.close();
+    await expect(running).resolves.toMatchObject({ status: 'committed' });
+    expect(s.effects()).toBe(1);
+    const database = new DatabaseSync(join(s.directory, 'journal.sqlite'), { readOnly: true });
+    try {
+      const row = database.prepare('SELECT revision FROM journal_record').get() as {
+        revision: number;
+      };
+      // rev 3 = terminal: no in-doubt record survives a graceful shutdown.
+      expect(Number(row.revision)).toBe(3);
+    } finally {
+      database.close();
+    }
+    // Draining refuses new controlled work.
+    await expect(
+      s.service.applicationExecute(s.sessionId, operator, write('late', 1, 'durable'))
+    ).rejects.toBeDefined();
+  }, 60_000);
+
+  it('stops advertising and refuses durable once the accept horizon passes', async () => {
+    const prepared = journalEnvironment();
+    const horizon = new Date(Date.now() + 1_500).toISOString();
+    const s = await serviceWithJournal({
+      directory: prepared.directory,
+      env: { ...prepared.env, AGENTBROWSER_JOURNAL_ACCEPT_UNTIL: horizon },
+    });
+    expect(await s.service.applicationDiscover(s.sessionId, operator)).toMatchObject({
+      writeExecution: { supportedRequirements: ['ephemeral', 'durable'] },
+    });
+    await new Promise((done) => setTimeout(done, 1_700));
+    expect(await s.service.applicationDiscover(s.sessionId, operator)).toMatchObject({
+      writeExecution: { supportedRequirements: ['ephemeral'] },
+    });
+    await expect(
+      s.service.applicationExecute(s.sessionId, operator, write('late', 0, 'durable'))
+    ).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
+    expect(s.effects()).toBe(0);
+  }, 60_000);
+
   it('keeps ephemeral writes out of the journal', async () => {
     const s = await serviceWithJournal();
     await s.service.applicationExecute(s.sessionId, operator, write('e1', 0));
@@ -205,6 +254,18 @@ describe('buildServer journal configuration', () => {
     setEnvironment({ ...env, AGENTBROWSER_JOURNAL_KEY_FILE: undefined });
     await expect(buildServer({ engine: new FakeEngine() })).rejects.toThrow(
       /AGENTBROWSER_JOURNAL_KEY_FILE/
+    );
+  });
+
+  it('starts without the journal, warning, when the accept horizon has passed', async () => {
+    const { env } = journalEnvironment();
+    setEnvironment({ ...env, AGENTBROWSER_JOURNAL_ACCEPT_UNTIL: '2001-01-01T00:00:00Z' });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    cleanup.push(() => warn.mockRestore());
+    const server = await buildServer({ engine: new FakeEngine() });
+    await server.close();
+    expect(warn.mock.calls.some(([line]) => /ACCEPT_UNTIL has passed/.test(String(line)))).toBe(
+      true
     );
   });
 

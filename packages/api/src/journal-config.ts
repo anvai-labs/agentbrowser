@@ -168,6 +168,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_MAX_RECORDS = 10_000;
 
 /**
+ * COMPATIBILITY: every value below is part of each deployed namespace's immutable descriptor.
+ * Changing one in a release makes existing namespaces refuse to open (`configuration`) until the
+ * operator configures a new namespace. Change them only with a CHANGELOG migration note.
+ *
  * Fixed bounds for the service's namespace. Record size, in-flight and timeout are the values the
  * SQLite qualification gates run with. `maxNamespaces` is a STORE-WIDE constant (every namespace
  * in a store must repeat the first one's value), so it never changes for an existing store; a
@@ -228,7 +232,7 @@ export async function openServiceJournal(
     });
   } catch {
     throw new JournalConfigError(
-      'The durable journal store did not start; check AGENTBROWSER_JOURNAL_DIR, AGENTBROWSER_JOURNAL_ANCHOR_DIR and the store layout'
+      'The durable journal store did not start: another process may hold it (one server per store), or AGENTBROWSER_JOURNAL_DIR / AGENTBROWSER_JOURNAL_ANCHOR_DIR or the store layout is refused (docs/spec/design/t5-operator-reconciliation.md). The journal needs Node 22.13 or later.'
     );
   }
   const namespace = serviceJournalNamespace(config);
@@ -237,7 +241,7 @@ export async function openServiceJournal(
     await adapter.dispose().catch(() => undefined);
     const reason = opened === undefined ? 'error' : `${opened.kind}: ${opened.reason}`;
     throw new JournalConfigError(
-      `The durable journal did not open (${reason}). An uninitialized store needs AGENTBROWSER_JOURNAL_INITIALIZE=1 once; "configuration" means this namespace exists with a different key, horizon, restore generation or bounds (configure a new AGENTBROWSER_JOURNAL_NAMESPACE instead of changing them); "ownership" means another process holds it; a refused layout follows docs/spec/design/t5-operator-reconciliation.md`
+      `The durable journal did not open (${reason}). An uninitialized store needs AGENTBROWSER_JOURNAL_INITIALIZE=1 once; "configuration" means this namespace exists with a different key, horizon, restore generation or bounds (configure a new AGENTBROWSER_JOURNAL_NAMESPACE instead of changing them), or the wall clock is behind the store's recorded time; "ownership" means another process holds it; a refused layout follows docs/spec/design/t5-operator-reconciliation.md`
     );
   }
   const journal = opened.journal;

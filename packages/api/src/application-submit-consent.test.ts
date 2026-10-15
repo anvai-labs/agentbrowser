@@ -1,13 +1,19 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import type {
   ApplicationAuthority,
   ApplicationRequest,
   EvidenceReviewSource,
+  OperationJournal,
 } from '@agentbrowser/control';
 import { ApprovalGate, SecretManager } from '@agentbrowser/core';
 import { FakeEngine } from '@agentbrowser/testkit';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { journalConfigFromEnvironment, openServiceJournal } from './journal-config.js';
 import {
   AgentBrowserService,
   type ServiceDependencies,
@@ -29,6 +35,8 @@ async function fixture(
     reviewed?: boolean;
     publicProvider?: boolean;
     maxTokens?: number;
+    /** T5 J-d: an opened durable journal; the request then asks for durable execution. */
+    journal?: OperationJournal;
   } = {}
 ) {
   const owner = createApplicationDraft({ id: 'consent' });
@@ -122,6 +130,7 @@ async function fixture(
   const service = new AgentBrowserService({
     engine,
     approvalGate: gate,
+    ...(options.journal ? { operationJournal: options.journal } : {}),
     secretManager: secrets,
     applicationAdapters: [
       {
@@ -161,6 +170,7 @@ async function fixture(
     operationId: 'submit-once',
     expectedVersion: 2,
     input: { intent: 'submit', expected },
+    ...(options.journal ? { executionRequirement: 'durable' as const } : {}),
   };
   const signal = new AbortController().signal;
   const generate = async (overrideAction?: Record<string, unknown>) => {
@@ -1131,4 +1141,66 @@ it('keeps finalized approval facts while a timed-out publisher cannot send its r
   await late.promise;
   expect(sent).not.toHaveBeenCalled();
   expect(f.owner.read().version).toBe(2);
+});
+
+describe('durable reviewed submission (T5 J-d, real journal store)', () => {
+  it('generates, approves and executes once, journaled', async () => {
+    const base = mkdtempSync(join(realpathSync(tmpdir()), 'consent-durable-'));
+    try {
+      mkdirSync(join(base, 'store'), { mode: 0o700 });
+      mkdirSync(join(base, 'anchor'), { mode: 0o700 });
+      writeFileSync(join(base, 'key'), `key-1:${'ab'.repeat(32)}\n`, { mode: 0o600 });
+      const config = await journalConfigFromEnvironment({
+        AGENTBROWSER_JOURNAL_DIR: join(base, 'store'),
+        AGENTBROWSER_JOURNAL_ANCHOR_DIR: join(base, 'anchor'),
+        AGENTBROWSER_JOURNAL_KEY_FILE: join(base, 'key'),
+        AGENTBROWSER_JOURNAL_RESTORE_GENERATION: 'generation-1',
+        AGENTBROWSER_JOURNAL_ACCEPT_UNTIL: '2099-01-01T00:00:00Z',
+        AGENTBROWSER_JOURNAL_INITIALIZE: '1',
+      });
+      if (!config) throw new Error('expected configuration');
+      const opened = await openServiceJournal(config);
+      try {
+        const f = await fixture({ journal: opened.journal });
+        const token = await f.generate();
+        expect(token.status).toBe('pending');
+        expect(
+          (token.action.parameters as { action: Record<string, unknown> }).action
+        ).toMatchObject({ executionRequirement: 'durable' });
+        await f.approve(token.tokenId);
+        await expect(f.execute(token.tokenId)).resolves.toMatchObject({ status: 'committed' });
+        expect(f.owner.submissionCount()).toBe(1);
+        const database = new DatabaseSync(join(base, 'store', 'journal.sqlite'), {
+          readOnly: true,
+        });
+        try {
+          const row = database.prepare('SELECT count(*) AS n FROM journal_record').get() as {
+            n: number;
+          };
+          expect(Number(row.n)).toBe(1);
+        } finally {
+          database.close();
+        }
+      } finally {
+        await opened.close();
+      }
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
+
+it('the internal submission review refuses durable without an open journal (J-d)', async () => {
+  const f = await fixture();
+  await expect(
+    f.run(async () =>
+      f.service.prepareApplicationSubmissionReviewInScope(
+        f.sessionId,
+        f.pageId,
+        { ...f.request, executionRequirement: 'durable' },
+        f.source()
+      )
+    )
+  ).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
+  expect(f.collect).not.toHaveBeenCalled();
 });

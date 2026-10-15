@@ -157,6 +157,9 @@ export class SessionAuthority {
   private readonly scope = new AsyncLocalStorage<Scope>();
   private readonly now: () => number;
   private readonly journal: OperationJournal | undefined;
+  /** Runs admitted and not yet settled; drained before shutdown closes the journal. */
+  private readonly inFlight = new Set<Promise<unknown>>();
+  private closing = false;
   private readonly serviceGeneration = randomBytes(16).toString('base64url');
 
   /** C4b (J-d): true only while an attached journal is open; never a configuration claim. */
@@ -291,12 +294,61 @@ export class SessionAuthority {
     return entry;
   }
 
-  async run<T>(
+  run<T>(
     sessionId: string,
     principal: SessionPrincipal,
     operation: { id?: string; fingerprint?: string; journal?: ApplicationJournalOperation },
     fn: () => Promise<T>,
     failed: () => boolean | 'rejected' = () => false,
+    publicationOptions?: SessionPublication<T>,
+    replayOptions?: OperationPublication,
+    assertReplay?: () => void
+  ): Promise<T | { replay: true; operation: unknown }> {
+    if (this.closing)
+      return Promise.reject(new ControlError('CONTROL_REQUIRED', 'Service is shutting down'));
+    const task = this.runAdmitted(
+      sessionId,
+      principal,
+      operation,
+      fn,
+      failed,
+      publicationOptions,
+      replayOptions,
+      assertReplay
+    );
+    this.inFlight.add(task);
+    const settle = () => this.inFlight.delete(task);
+    task.then(settle, settle);
+    return task;
+  }
+
+  /**
+   * C4b (J-d): stop admitting runs and wait, bounded, for in-flight ones to settle, so a journal
+   * closed afterwards has every terminal it can get. Returns false if the bound expired first.
+   */
+  async drain(timeoutMs: number): Promise<boolean> {
+    this.closing = true;
+    if (this.inFlight.size === 0) return true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), timeoutMs);
+    });
+    try {
+      return await Promise.race([
+        Promise.allSettled([...this.inFlight]).then(() => true as const),
+        expired,
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async runAdmitted<T>(
+    sessionId: string,
+    principal: SessionPrincipal,
+    operation: { id?: string; fingerprint?: string; journal?: ApplicationJournalOperation },
+    fn: () => Promise<T>,
+    failed: () => boolean | 'rejected',
     publicationOptions?: SessionPublication<T>,
     replayOptions?: OperationPublication,
     assertReplay?: () => void

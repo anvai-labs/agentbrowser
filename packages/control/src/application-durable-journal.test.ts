@@ -30,25 +30,49 @@ async function sessionFixture() {
 }
 
 describe('the journal intent carries the durable fingerprint label', () => {
-  it('a durable selection is retained under a different fingerprint than the same digest unlabeled', async () => {
+  it.each([
+    ['labeled v2-durable', { durable: true }, 'application-operation:v2-durable'],
+    ['labeled v1 without the flag', {}, 'application-operation:v1'],
+  ])('a journal intent is %s', async (_name, flag, algorithm) => {
     const f = await sessionFixture();
-    const run = (id: string, journal: Record<string, unknown>) =>
-      f.authority.run(
+    const seen: unknown[] = [];
+    const real = f.journal;
+    // Capture what the facade receives: the label is part of the keyed digest it computes.
+    const observed = Object.freeze({
+      get namespace() {
+        return real.namespace;
+      },
+      get health() {
+        return real.health;
+      },
+      get pending() {
+        return real.pending;
+      },
+      reserveIntent: (intent: unknown, signal?: AbortSignal) => {
+        seen.push(intent);
+        return real.reserveIntent(intent as never, signal);
+      },
+      markDispatch: real.markDispatch.bind(real),
+      commitTerminal: real.commitTerminal.bind(real),
+      lookup: real.lookup.bind(real),
+      close: real.close.bind(real),
+    });
+    const authority = new SessionAuthority({ now: f.memory.now, journal: observed as never });
+    authority.register('session', 'owner', new AbortController().signal);
+    await authority
+      .run(
         'session',
         operator,
-        { id, fingerprint: 'SAME-LIVE-DIGEST', journal: journal as never },
+        {
+          id: 'labeled',
+          fingerprint: 'LIVE-DIGEST',
+          journal: { version: 1, application, ...flag } as never,
+        },
         async () => 'done'
-      );
-    // A callback that never dispatches ends the operation as a known pre-dispatch failure; the
-    // admitted intents are what this compares.
-    await run('plain', { version: 1, application }).catch(() => undefined);
-    await run('durable', { version: 1, application, durable: true }).catch(() => undefined);
-    const [plain, durable] = f.stored();
-    expect(plain?.identity.key.operationId).toBe('plain');
-    expect(durable?.identity.key.operationId).toBe('durable');
-    expect(plain?.identity.fingerprint.digest).toMatch(/^[0-9a-f]{64}$/);
-    expect(durable?.identity.fingerprint.digest).toMatch(/^[0-9a-f]{64}$/);
-    expect(durable?.identity.fingerprint.digest).not.toBe(plain?.identity.fingerprint.digest);
+      )
+      .catch(() => undefined);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ liveFingerprint: { algorithm, digest: 'LIVE-DIGEST' } });
   });
 
   it.each([false, 'true', 1, null])(

@@ -556,8 +556,18 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   // T5 J-d: a configured durable journal opens before the service exists; any refusal aborts
   // startup (no ephemeral fallback for a configured journal). Unconfigured: nothing changes.
   const journalConfig = await journalConfigFromEnvironment(process.env);
+  // A namespace past its accept horizon cannot take new durable work. Refusing startup would take
+  // the whole (non-durable) service down with it, so start without the journal instead: durable
+  // is then neither advertised nor accepted, and the operator is told to rotate.
+  const horizonPassed = journalConfig !== undefined && journalConfig.acceptUntil <= Date.now();
+  if (horizonPassed)
+    console.warn(
+      '[agentbrowser] AGENTBROWSER_JOURNAL_ACCEPT_UNTIL has passed: starting WITHOUT the durable journal (durable execution is refused). Configure a new AGENTBROWSER_JOURNAL_NAMESPACE with a new horizon.'
+    );
   const serviceJournal =
-    journalConfig === undefined ? undefined : await openServiceJournal(journalConfig);
+    journalConfig === undefined || horizonPassed
+      ? undefined
+      : await openServiceJournal(journalConfig);
   let service: AgentBrowserService;
   try {
     service = new AgentBrowserService({

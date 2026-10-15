@@ -130,12 +130,21 @@ record, under a keyed fingerprint that never collides with an ephemeral one. Eph
   only while the journal is open and still accepting; otherwise `durable` is refused with
   `CONTROL_REQUIRED` before anything executes. There is no ephemeral fallback.
 - **Startup is all or nothing.** A partial configuration, an unreadable or group-readable key
-  file, an uninitialized store without `AGENTBROWSER_JOURNAL_INITIALIZE=1`, or a layout the store
-  refuses aborts startup.
+  file, an uninitialized store without `AGENTBROWSER_JOURNAL_INITIALIZE=1`, a layout the store
+  refuses, or a second server on the same store aborts startup. The journal needs Node 22.13 or
+  later. One exception: once `AGENTBROWSER_JOURNAL_ACCEPT_UNTIL` has passed, the server starts
+  **without** the journal and warns, rather than taking the whole service down. Durable is then
+  neither advertised nor accepted until you configure a new namespace.
+- **Shutdown drains.** A graceful stop refuses new controlled work and waits up to 30 seconds for
+  in-flight operations to write their terminal records before the journal closes. A crash or kill
+  leaves an in-flight durable write in doubt (`outcome_unknown`). That record stays in the
+  namespace and keeps it from retiring until it is reconciled (see the proposed recovery
+  design).
 - **One namespace, stable across restarts.** Every start reopens the configured namespace. It
   accepts new durable writes until `AGENTBROWSER_JOURNAL_ACCEPT_UNTIL`, after which durable stops
   being advertised, and it keeps its records 30 days beyond that. It holds at most
-  `AGENTBROWSER_JOURNAL_MAX_RECORDS` durable writes, and a store holds at most 64 namespaces.
+  `AGENTBROWSER_JOURNAL_MAX_RECORDS` durable writes over its lifetime (a total, not a concurrency
+  limit), and a store holds at most 64 namespaces.
   Full means refused, never evicted. Its key, horizon, restore generation and capacity are
   immutable: rotate by configuring a new namespace name.
 - **What this does not do yet.** Records survive a restart, but nothing reads them back across

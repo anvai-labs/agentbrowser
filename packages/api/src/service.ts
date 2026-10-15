@@ -633,6 +633,9 @@ export type PartialObservation = {
 };
 
 /** Optional observation enrichments the stack actually delivers. */
+/** Longest graceful shutdown waits for in-flight controlled runs to settle. */
+const SHUTDOWN_DRAIN_MS = 30_000;
+
 const DELIVERED_INCLUDES = new Set<string>(DELIVERED_OBSERVATION_INCLUDES);
 
 export class AgentBrowserService {
@@ -4805,6 +4808,9 @@ export class AgentBrowserService {
     this.shuttingDown = true;
     for (const transport of this.downloads.values())
       transport.revoke(new ServiceError('SESSION_NOT_FOUND', 'Service shutdown'));
+    // C4b (J-d): refuse new controlled runs and let in-flight ones reach their terminal record
+    // (bounded) before anything they depend on is torn down; the journal is closed after this.
+    await this.authority.drain(SHUTDOWN_DRAIN_MS);
     if (this.sweepTimer !== undefined) {
       clearInterval(this.sweepTimer);
     }
@@ -4910,6 +4916,9 @@ export class AgentBrowserService {
           operationId: selector.application.operationId,
           expectedVersion: selector.application.expectedVersion,
           input: action.input,
+          ...(selector.application.executionRequirement === 'durable'
+            ? { executionRequirement: 'durable' as const }
+            : {}),
         });
         application.assertCurrent();
         if (canonicalJson(application.action) !== canonicalJson(action))
