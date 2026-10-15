@@ -48,7 +48,9 @@ handling as operator keys). The admin credential:
   reload;
 - authorizes nothing else.
 
-Configuring the file enables reload; without it the endpoint does not exist.
+Configuring the file enables reload; without it the endpoint does not exist. Configuring it
+without `AGENTBROWSER_POLICY_FILE` (an environment-variable deployment, which has nothing to
+reload) aborts startup.
 
 **No signal.** `SIGHUP` keeps meaning shutdown; repurposing it would turn a terminal hangup into
 a reload and would not reach the server through the launcher. One HTTP trigger works the same on
@@ -70,6 +72,11 @@ keeps its ADR-024 meaning for compatibility.
 ### 3. New sessions get the new policy; live sessions only get stricter
 
 - Sessions created after the swap pin the new document.
+- **Creation and reload are serialized.** Session creation takes one snapshot of the current
+  document, makes every creation-time decision against that snapshot, and registers the session
+  in the live set under the same lock that a reload holds while it swaps the document and extends
+  live chains. A session created concurrently with a tightening reload is therefore either pinned
+  at the new document or carries it in its chain; it can never run on the old document alone.
 - Each live session carries a **chain**: its pinned document plus every document loaded since it
   was created (deduplicated by document identity). A per-call decision is allowed only if
   **every** document in the chain allows it. AND is order- and repeat-insensitive, so
@@ -79,8 +86,10 @@ keeps its ADR-024 meaning for compatibility.
 - **Approval modes compose by the same AND.** The approval mode is derived from two Authorizer
   questions (`act`, then `act.unattended`); asked of the chain, the result is "denied if any
   document denies, otherwise approval-required if any requires it".
-- **Limits take the minimum along the chain.** Each limit becomes a per-session effective value
-  (the minimum over the chain), applied from the session's next request or extraction.
+- **Limits take the minimum along the chain, over resolved values.** Each document's limit is
+  first resolved to its effective value (an omitted limit means the built-in default, for example
+  10 MiB for `maxResponseBytes`); the session's effective limit is the minimum of those resolved
+  values, applied from its next request or extraction. Skipping an omitted limit would relax.
   `maxResponseBytes` moves from a creation-time constant to that live value; `extractMaxBytes`
   moves from server-wide to per-session.
 - **The decision cache is re-keyed.** A session's memoized decisions are keyed on its chain
@@ -111,10 +120,12 @@ keeps its ADR-024 meaning for compatibility.
   chain. (A newly denied action is also refused by the chain decision itself; the binding
   additionally covers an action whose mode changed between required and allowed.)
 - **Session views:** `policyVersion` keeps reporting the session's **pinned** version, so
-  existing clients are unaffected; an additive `policyChain` field lists the chain's versions.
-  This is a protocol change (schema and OpenAPI), additive only.
-- `GET /v1/policy` reports the current document. The reload response reports the new document
-  identity, how many live sessions now carry it, and the creation-time-grant count above.
+  existing clients are unaffected; an additive `policyChain` field lists the chain's **document
+  identities** (a limits-only reload adds an entry whose `policyVersion` is unchanged). This is a
+  protocol change (schema and OpenAPI), additive only.
+- `GET /v1/policy` reports both the current `policyVersion` and the current document identity.
+  The reload response reports the new document identity, how many live sessions now carry it, and
+  the creation-time-grant count above.
 - Every reload (accepted, refused or no-op) is logged with the previous and new identities.
 
 ### 6. What does not change
