@@ -90,16 +90,20 @@ provenance. `winget` pushes with its own app token, not `GITHUB_TOKEN`. All 67 a
 references across the four workflows are pinned to the full commit SHA of their release
 (annotated tags dereferenced to the commit) with a `# vX.Y.Z` comment, which Dependabot's
 `github-actions` ecosystem keeps current. `scripts/release-workflow.test.mjs` (in
-`test:release`) refuses an unpinned reference, a top-level write, or a writer job other
-than `release`.
+`test:release`) discovers every workflow file and refuses an unpinned or non-line-form action
+reference, a top-level permissions block other than exactly `contents: read`, and any job-level
+permissions block that is not exactly on its allowlist (`release.yml` `release`: contents write;
+`npm-publish`: id-token write + contents read; `docs.yml` `deploy`: pages + id-token write).
+It checks SHA format offline; that a SHA is its tag's commit rests on review and Dependabot.
 
 **Skipped/canceled required checks (S1b, documented invariant, checked 2026-10-15).** GitHub
 reports a job skipped by its `if:` as *Success* to a required status check, and skips (does
 not fail) a job whose `needs:` dependency failed or was canceled. The required contexts on
-`develop`/`main` (Type Check, Lint, Test, Build, Docker, Benchmarks, Obscura, Bun compile +
+`develop`/`main` (Type Check, Lint, Test, Build, Docker, Benchmarks, Obscura (experimental), Bun compile +
 smoke, Journal SQLite gates, `build`, `deploy`) are safe under both rules:
-- the only `needs:` edges are `Build` → Type Check + Lint and `Journal SQLite gates` → Type
-  Check; when they skip, the failed upstream is itself required and still blocks;
+- the only `needs:` edges among the CI jobs are `Build` → Type Check + Lint and `Journal SQLite
+  gates` → Type Check; when they skip, the failed upstream is itself required and still blocks
+  (the docs workflow's `deploy` → `build` edge is covered below);
 - `deploy` (docs site) is required but skipped on every pull request by design, so it never
   blocks a PR; it is a publication step, not a test, and its `build` sibling runs on every PR;
 - pull requests run every workflow unfiltered (`paths-ignore`/`paths` apply to pushes only),
