@@ -50,8 +50,9 @@ connecting a runtime store. [C1b authority composition](../design/t5-journal-aut
 tracks intent/marker settlement through the existing ticket and dispatch helpers.
 [C2 application-owned pins and C3 terminal/replay](../design/t5-journal-application-terminal.md)
 merged as #299. [C4a shared control views](../design/t5-journal-control-views.md)
-now bound status/lifecycle disclosure by ACK. C4b runtime/transport selection IMPLEMENTED (protocol field +
-service normalization + capability check + discovery surface);
+now bound status/lifecycle disclosure by ACK. C4b runtime/transport selection PARTIAL (protocol field,
+capability check, explicit-ephemeral acceptance and REST discovery fixed 2026-10-15; the
+requirement is not yet in the operation fingerprint or review intent, nor offered by the CLI);
 enabling the durable store at runtime remains gated on F3 deployment;
 [J2a SQLite audit](../design/t5-journal-sqlite-audit.md) selects a built-in candidate
 without enabling it; [J2b qualification](../design/t5-journal-sqlite-qualification.md)

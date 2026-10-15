@@ -17,6 +17,39 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   and a path-filtered required check would strand unrelated ones (the T9 packet's invariant now
   says so).
 
+### Fixed — the T8 footprint gate measures the CLI's peak exactly
+
+- `scripts/footprint-gates.test.mjs` sampled RSS by forking `ps` every 10 ms; the CLI's
+  `--version` can exit before the first sample lands ("no RSS sample collected", seen on #474,
+  #475 and #484), and polling can also understate a peak reached just before exit. The CLI
+  one-shot is now measured exactly — `ru_maxrss` of the reaped child (wait4 rusage, via a
+  python3 helper) — and must exit 0. The MCP bridge's idle-after-handshake peak is still polled,
+  now reading `VmRSS` from /proc on Linux instead of forking `ps`. A stand-in allocating 40 MB and
+  exiting at once reads 51.4–51.6 MB on every run.
+- The bridge harness read stdout with one listener per request, all appending to one buffer, so a
+  response spanning two pipe chunks (a `tools/list` over 64 KiB) never parsed and timed out. It now
+  uses one shared line reader with a pending-request map.
+
+### Docs — release records and task-status reconciliation
+
+- Delivery records for 1.16.0, 1.16.1, 1.17.0, 1.17.1 and 1.18.0 (`docs/spec/evidence/`).
+- The task table and manifest match the 2026-10-15 reconciliation: T1 is active, T7 complete, the
+  Victor gate is aiserver1's gateway (not TLS), and C4b is partial. Stale "candidate" status lines
+  on three delivered evidence records are corrected, C3b cites #254, the T9 checkpoint names the
+  current protections, and the release guide no longer claims the upload permits clobbering.
+
+### Fixed — the execution requirement as shipped (T5 C4b, part 1)
+
+- An explicit `executionRequirement: 'ephemeral'` on `application execute` was refused as an
+  invalid request; the authority's request normalizer now accepts it as the default made
+  explicit and drops it behind its existing caller-data checks, so explicit and omitted requests
+  share one operation identity (the second is a replay, not a conflict). `durable` is refused
+  before any identity is reserved, and stays refused even with a durable store configured until
+  it is part of the operation identity; discovery advertises only `ephemeral` until then.
+- REST discovery (`GET …/application`) now publishes `writeExecution` (it was added only to the
+  service's return value, which REST does not send), and "nothing bound" stays `null` instead of
+  becoming `{writeExecution}`. `ApplicationDiscoverySchema` and OpenAPI document the field.
+
 ### Added — declared adapter output (T4)
 
 - `defineApplicationOperation` accepts an optional `parseOutput(value)`. A value that does not
