@@ -104,13 +104,25 @@ describe.each(['chromium', 'firefox', 'webkit'] as const)('%s', (browser) => {
     });
     try {
       const url = `http://127.0.0.1:${(fixture.address() as AddressInfo).port}/`;
-      const sessionId = (
-        await server.inject({ method: 'POST', url: '/v1/sessions', headers: owner, payload: {} })
-      ).json().sessionId as string;
+      const created = await server.inject({
+        method: 'POST',
+        url: '/v1/sessions',
+        headers: owner,
+        payload: {},
+      });
+      // A missing browser binary surfaces here as a launch failure, never as a 404 downstream.
+      expect([200, 201], created.body).toContain(created.statusCode);
+      // Pin the family: the qualification is only meaningful if the engine really drove `browser`.
+      expect(created.json().engine.name).toBe(`playwright-${browser}`);
+      const sessionId = created.json().sessionId as string;
       const path = `/v1/sessions/${sessionId}`;
-      const pageId = (
-        await server.inject({ method: 'POST', url: `${path}/pages`, headers: owner })
-      ).json().pageId as string;
+      const pageResponse = await server.inject({
+        method: 'POST',
+        url: `${path}/pages`,
+        headers: owner,
+      });
+      expect([200, 201], pageResponse.body).toContain(pageResponse.statusCode);
+      const pageId = pageResponse.json().pageId as string;
       const nav = await server.inject({
         method: 'POST',
         url: `${path}/pages/${pageId}/navigate`,
@@ -193,13 +205,25 @@ describe.each(['chromium', 'firefox', 'webkit'] as const)('%s', (browser) => {
     });
     try {
       const url = `http://127.0.0.1:${(fixture.address() as AddressInfo).port}/`;
-      const sessionId = (
-        await server.inject({ method: 'POST', url: '/v1/sessions', headers: owner, payload: {} })
-      ).json().sessionId as string;
+      const created = await server.inject({
+        method: 'POST',
+        url: '/v1/sessions',
+        headers: owner,
+        payload: {},
+      });
+      // A missing browser binary surfaces here as a launch failure, never as a 404 downstream.
+      expect([200, 201], created.body).toContain(created.statusCode);
+      // Pin the family: the qualification is only meaningful if the engine really drove `browser`.
+      expect(created.json().engine.name).toBe(`playwright-${browser}`);
+      const sessionId = created.json().sessionId as string;
       const path = `/v1/sessions/${sessionId}`;
-      const pageId = (
-        await server.inject({ method: 'POST', url: `${path}/pages`, headers: owner })
-      ).json().pageId as string;
+      const pageResponse = await server.inject({
+        method: 'POST',
+        url: `${path}/pages`,
+        headers: owner,
+      });
+      expect([200, 201], pageResponse.body).toContain(pageResponse.statusCode);
+      const pageId = pageResponse.json().pageId as string;
       await server.inject({
         method: 'POST',
         url: `${path}/pages/${pageId}/navigate`,
