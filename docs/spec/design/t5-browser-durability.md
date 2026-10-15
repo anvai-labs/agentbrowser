@@ -46,8 +46,10 @@ parity:
 ## B2: what does one record cover?
 
 **Accepted: one record per operation, the marker at the FIRST dispatch.** The intent is written
-before the operation starts; the first page dispatch commits the marker after B6's recheck; every
-later dispatch of the same operation awaits that marker and writes nothing new.
+before the operation starts. At the first page dispatch the marker is committed and fsynced, and
+only THEN does B6's recheck run, immediately before the effect — the same order the application
+path uses (its qualification guard runs after the marker is acknowledged). Every later dispatch of
+the same operation awaits that marker and writes nothing new.
 - **Later dispatches need a qualification.** B-dur-2 adds a browser dispatch qualification the
   operation captures once and the page guard presents on every dispatch of that operation (the
   guard has no per-call context today; the qualification rides the operation's scope).
@@ -60,28 +62,34 @@ later dispatch of the same operation awaits that marker and writes nothing new.
     **the report is returned as today** — never replaced by `JOURNAL_UNAVAILABLE`;
   - only an unknown outcome (the effect's result is lost: process loss, a thrown error after
     dispatch) stays `in_doubt` / `outcome_unknown`.
-- A known browser failure after dispatch is `failed` (dispatched), not `failed_before_dispatch`:
-  the effect boundary was crossed, whatever the engine then refused.
+- A known browser failure after the marker is `failed` (dispatched), not
+  `failed_before_dispatch`. **Conservative by construction:** `dispatched: true` means the marker
+  was crossed, not that an effect is proven. A recheck that fails after the marker, a token that
+  turned stale between the marker and its consumption, or a crash between the marker and the
+  effect all leave `dispatched: true` with no effect run — classified `failed` (known) or
+  `in_doubt` (crash), never claimed as completed.
 
 ## B3 and B6: what is revalidated after the storage wait, and how
 
-**Accepted (B3): owner-level checks before the first dispatch; (B6) they run asynchronously, and
-the remaining window is disclosed.** After the intent's fsync and before the first effect, the
-operation re-runs its owner's existing checks:
+**Accepted (B3): owner-level checks before the first effect; (B6) they run asynchronously, and
+the remaining window is disclosed.** After the marker's fsync and immediately before the first
+effect, the operation re-runs its owner's existing checks:
 - `act` / `plan` (first step) / `act` batch (first step): re-resolve the target ref (revision and
-  identity — the engine's own `STALE_TARGET` check), and the approval token's **currency without
-  consuming it**. The token is consumed only AFTER the marker is written, so a refused or failed
-  marker never burns it. The wire `act` has no navigation, so there is no navigation egress check
+  identity — the engine's own `STALE_TARGET` check), and the approval's **currency without
+  consuming it** (`ApprovalGate.validateApprovalToken` for a plain token; `getReviewedApproval` for
+  an `act.reviewed` approval). The approval is consumed only AFTER the marker and the recheck, so
+  a refused or failed marker never burns it. The wire `act` has no navigation, so there is no navigation egress check
   on `act`; a plan's `navigate` step keeps its existing egress preflight before its own dispatch.
 - `autofill` with a scope: the scoped preflight's pinned identities (URL, node and block
   identities, strategy readiness), re-observed. `autofill` **without** a scope has no pins; for
   it the recheck is the target fields' resolution only, and the evidence says so.
 - Later steps and fields are checked exactly as today, before their own dispatch.
 
-Any recheck failure ends the operation as `failed_before_dispatch`; nothing is dispatched.
-**Residual (B6):** a page change after the recheck and before the effect is still possible. That
-is the same window the non-durable path has today; durability adds the fsync before the recheck,
-not inside this window.
+A recheck failure ends the operation with no effect; since the marker is already written it is
+classified `failed` with `dispatched: true` (see B2's conservative note). **Residual (B6):** a page
+change after the recheck and before the effect is still possible. That is the same window the
+non-durable path has today: both storage waits (intent and marker) happen BEFORE the recheck, so
+durability adds nothing inside this window.
 
 ## B4: capacity
 
@@ -103,7 +111,11 @@ application slot: adapter `browser`, resource `act`, `plan` or `autofill`, and t
 identity as the binding generation. No store-format change, so older binaries still read the
 store, and lookup shows the kind through the existing projection. The adapter id `browser`
 becomes **reserved** (a real application adapter registering it is refused), so `reconcile`
-always refuses browser records — which D6 wants. Browser fingerprints get their own domain
+always refuses browser records — which D6 wants. **Upgrade note:** a deployment that already
+configures an application adapter with id `browser` is refused at startup after upgrading and
+must rename it; and an OLDER binary (which does not reserve the id) reading the same store with a
+real `browser` adapter could route reconcile of a browser record to it — run one binary version
+per store. Browser fingerprints get their own domain
 (`browser-operation:v1-durable`), so they can never collide with application identities.
 
 *Alternative recorded:* an explicit record-kind field (a new store formatVersion; older binaries

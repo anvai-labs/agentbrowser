@@ -296,8 +296,9 @@ order: D6 **after** J3, reusing J3's read path.
    (`journal-recovery-gates.test.ts`); `recoveryQualified` has shipped with J3b's status
    endpoint. Browser-operation classification remains B-dur.
 7. **B-dur:** revalidation hooks first, then journaled browser operations (D6). The open
-   implementation choices (trigger, one record per operation, what is revalidated, capacity) are
-   in [the B-dur addendum](t5-browser-durability.md), accepted by the owner on 2026-10-15.
+   implementation choices (trigger, one record per operation, what is revalidated and when,
+   capacity, the reserved `browser` identity, the asynchronous recheck) are in
+   [the B-dur addendum](t5-browser-durability.md), accepted by the owner on 2026-10-15.
 
 ## Out of scope
 

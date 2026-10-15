@@ -7,7 +7,7 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
-### Docs — browser-operation durability, the open choices (T5 B-dur, accepted)
+### Docs — browser-operation durability, the settled choices (T5 B-dur, accepted)
 
 - A design addendum settles the implementation choices D6 left open, accepted by the owner:
   browser operations are journaled only on request (`executionRequirement: 'durable'`, controlled
