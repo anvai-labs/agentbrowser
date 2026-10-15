@@ -78,7 +78,8 @@ The depth run is now committed and repeatable, rather than a one-off on the deve
   stays `suspected`.
 
 **First run** (development host, 2026-10-15, ZAP 2.17.0), archived in
-[`t7-zap-depth/`](t7-zap-depth/result.json):
+[`t7-zap-depth/`](t7-zap-depth/result.json), with the exact fixture source that produced it
+(`fixture-source.mjs`):
 
 | pluginId | Risk | Finding | Parameter |
 | --- | --- | --- | --- |
@@ -92,10 +93,18 @@ The depth run is now committed and repeatable, rather than a one-off on the deve
   two URLs.
 - `droppedOutOfScope: 0`.
 - All are `suspected`. A scanner alert is a claim until it is independently reproduced.
-- DOM-based XSS now reports its own plugin id, 40026. The 2026-10-03 record saw it under 40012.
+- **Correction to the 2026-10-03 record.** DOM-based XSS reports its own rule id, 40026, here and
+  in an independent re-run with the same image digest (the same ZAP 2.17.0). The earlier record's
+  "40012 as observed verbatim" for the DOM-based finding was most likely a transcription error. It
+  cannot be checked, because that run archived no raw JSON, which is why this record archives it.
+- **Not reproduced: "HTTP Only Site" (10106).** The earlier record listed it; neither run here
+  raised it. The plausible cause is the target: `host.docker.internal` then, loopback now. That
+  is unverified.
 - The CI-hosted run is available by dispatching the workflow; that is the owner's call, because
   it pulls a ~1.5 GB image.
 
 ## Remaining
 
+- The CI-hosted run: the workflow exists, but no dispatched run has been archived yet. A
+  constrained-mount run was not attempted.
 - Slice 4 (report templates) — on demand.

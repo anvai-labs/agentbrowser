@@ -21,6 +21,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
@@ -38,10 +40,11 @@ jobs:
         run: pnpm --filter @agentbrowser/audit... build
 
       # Digest-pinned (the image the 2026-10-03 recorded run used); host networking so ZAP and
-      # the fixture share 127.0.0.1. The API is keyless but bound to loopback only.
+      # the fixture share 127.0.0.1. The API is keyless but accepts loopback clients only. No --rm:
+      # the container's log must survive a crash for the failure step (the runner is ephemeral).
       - name: Start ZAP (daemon, loopback API)
         run: |
-          docker run -d --rm --network host --name zap \
+          docker run -d --network host --name zap \
             zaproxy/zap-stable@sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef \
             zap.sh -daemon -host 127.0.0.1 -port 8090 \
             -config api.disablekey=true \

@@ -30,7 +30,13 @@ const flag = (name, fallback) => {
 };
 const zapUrl = flag('--zap', 'http://127.0.0.1:8090').replace(/\/+$/, '');
 const outDir = flag('--out', 'zap-depth');
-const budgetMs = Number(flag('--budget-ms', '900000'));
+const budgetRaw = flag('--budget-ms', '900000');
+const budgetMs = Number(budgetRaw);
+// A non-numeric budget would never trip (NaN compares false) and 0 would fail at once.
+if (!/^\d+$/.test(budgetRaw ?? '') || !Number.isSafeInteger(budgetMs) || budgetMs < 10_000) {
+  console.error('--budget-ms must be an integer of at least 10000 milliseconds');
+  process.exit(2);
+}
 
 // ------------------------------------------------------------------ the vulnerable fixture
 // Reflects `name` unescaped and sends no security headers: the seeded findings.
