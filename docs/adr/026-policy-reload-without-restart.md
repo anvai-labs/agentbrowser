@@ -30,6 +30,9 @@ The file named by `AGENTBROWSER_POLICY_FILE` stays the only source of policy. Re
 - `SIGHUP` to the server process, or
 - `POST /v1/policy/reload`, authenticated with an **operator** key (never an agent grant).
 
+Windows has no `SIGHUP`, so the Windows bundle offers the endpoint only. Reloads are serialized:
+one in progress at a time, and a reload of an unchanged document (same hash) is a no-op.
+
 There is no file watcher: a watcher can observe a half-written file. Operators replace the file
 atomically (write a new file, then `rename` it into place) and then trigger.
 
@@ -44,23 +47,25 @@ leave it without a policy.
 
 - Sessions created after the swap are stamped with, and decided by, the new version.
 - Each live session keeps its pinned version **and** gains the new version as an additional
-  restriction: a decision is allowed only if **both** its pinned policy and the new policy allow
-  it. Tightenings (blocking a destination, removing a capability) therefore apply to running
+  restriction: a decision is allowed only if its pinned policy **and** the new policy allow it. Tightenings (blocking a destination, removing a capability) therefore apply to running
   agents immediately; loosenings apply only to sessions created afterwards.
 - Proving that one Cedar policy set is stricter than another is not decidable in general; the
   conjunction makes "never relax" true by construction instead.
-- A further reload composes: a live session is decided by its pinned version and every later
-  version (the server may collapse this to "pinned AND current" because each reload already
-  applied the previous conjunction).
+- A further reload composes: a live session is decided by its pinned version **and every version
+  loaded since it was created**, not just the latest one. Keeping only "pinned AND current" would
+  relax: with reloads A → B → C, a session pinned at A would lose a restriction that B added and C
+  dropped. Each live session therefore carries its ordered chain of versions (deduplicated by
+  hash); a decision is allowed only if every policy in the chain allows it. A session's chain only
+  grows, and it is released when the session ends.
 
 ### 4. Approvals and the query surface
 
 - Pending approvals minted under an older version are refused on use, as today: the operator
   re-approves under the current policy.
-- `GET /v1/policy` reports the current version; each session view reports its pinned version and
-  whether it is under dual evaluation. The reload response reports the new version and how many
-  live sessions are now dual-evaluated.
-- Every reload (accepted or refused) is logged with both versions.
+- `GET /v1/policy` reports the current version; each session view reports its version chain (pinned
+  first). The reload response reports the new version and how many live sessions now carry it as
+  an additional restriction.
+- Every reload (accepted or refused) is logged with the previous and the new version.
 
 ### 5. What does not change
 
@@ -72,10 +77,14 @@ environment-variable deployments (no policy file) have nothing to reload and are
 - Operators can tighten policy for running agents without restarting the service.
 - Loosening never reaches a live session; a session that needs the looser policy must be restarted
   by its owner, which is the conservative and auditable choice.
-- Memory: the server keeps each pinned version alive while any session references it (bounded by
-  live sessions; released when the last one closes).
-- Decision cost for dual-evaluated sessions roughly doubles until they end; the existing decision
-  cache (ADR-024 §8) keys on the version pair.
+- Memory: the server keeps each version alive while any live session's chain references it
+  (bounded by the distinct versions loaded during live sessions; released when the last
+  referencing session ends).
+- Decision cost for a live session grows with the number of reloads during its lifetime (one
+  evaluation per version in its chain); the decision cache (ADR-024 §8) would key on the chain.
+  An operator who reloads often should expect long sessions to cost more per decision; a cap on
+  chain length that refuses further reloads (rather than dropping a version) is an open question
+  for the implementation phase.
 
 ## Alternatives considered
 

@@ -490,15 +490,18 @@ accepted.
   `POST /v1/policy/reload` re-read `AGENTBROWSER_POLICY_FILE`. No file watcher.
 - **Swap:** full startup-grade validation into a new `CedarAuthorizer`; on any error keep the
   running one and report. Atomic replacement of the "current" authorizer reference.
-- **Live sessions:** a session records its pinned version; the authorizer for a live session is
-  `allow iff pinned allows AND current allows` (a composite `Authorizer`); pinned authorizers are
-  reference-counted and released when their last session ends.
-- **Surfaces:** `GET /v1/policy` and session views report pinned/current versions and
-  dual-evaluation; the reload response reports counts; logs carry both versions.
+- **Live sessions:** a session records its pinned version and every version loaded since; the
+  authorizer for a live session allows only if **every** version in its chain allows (a composite
+  `Authorizer`). Never collapse the chain to "pinned AND current" — that relaxes when a later
+  reload drops an intermediate restriction. Version authorizers are reference-counted and released
+  when their last session ends.
+- **Surfaces:** `GET /v1/policy` reports the current version and session views report their
+  version chain; the reload response reports counts; logs carry the previous and new versions.
 - **Tests first:** a tightening reload denies an in-flight session's next request; a loosening
   reload does not reach it but does reach a new session; an invalid file is refused and the old
   policy keeps deciding; an approval minted before the reload is refused after it; a second reload
-  composes; no policy file means reload is refused as not configured.
+  composes (A → B → C where B blocks and C does not: a session pinned at A stays blocked); no
+  policy file means reload is refused as not configured.
 
 ## Non-goals
 

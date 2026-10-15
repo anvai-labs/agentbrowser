@@ -11,7 +11,7 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 - ADR-026 (Proposed) and TD-BROWSER-15 phase 8 (Proposed) design an opt-in, operator-triggered
   reload of the Cedar policy file: validated before it is swapped in, never failing open; new
-  sessions get the new policy; live sessions are decided by their pinned policy AND the new one,
+  sessions get the new policy; live sessions are decided by their pinned policy AND every policy loaded since,
   so tightenings reach running agents and loosenings never do. Nothing is implemented.
 
 ### Added — a committed observation-overhead benchmark (F1)
