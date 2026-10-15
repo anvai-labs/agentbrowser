@@ -11,11 +11,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 - The release workflow's `tag-guard` job now fetches `main` and runs
   `scripts/check-tag-ancestry.mjs`: a tag whose commit is not reachable from `main` fails before
-  anything builds or publishes. Every building and publishing job already depends on `tag-guard`.
-  An unknown commit or a missing `main` ref fails closed. Checked against real history: the v1.16.0
-  and v1.17.1 tags pass, a develop-only commit is refused.
-- Tag immutability (no deletion or re-pointing of `v*` tags) is a repository ruleset the owner
-  applies; the gate above covers ancestry, which a ruleset cannot express.
+  anything builds or publishes, and every other release job depends on `tag-guard` (a test walks
+  the whole `needs` graph). An unknown commit, a missing `main` ref or a missing `git` fails
+  closed. Checked against real history: all 47 existing `v*` tags pass; a develop-only commit is
+  refused.
+- **Limit, stated plainly:** GitHub runs the `release.yml` *of the tagged commit*. A tag on an
+  older commit (whose workflow predates this gate), or on a branch that removed the step, skips the
+  check. The gate catches honest mistakes; the **guarantee** needs repository settings the owner
+  applies — a tag ruleset restricting who may create `v*` tags, and protection on the `npm`
+  environment (see the PR for the exact commands).
 
 ### Added — the handoff surfaces (TD-BROWSER-16 phase 7; the program complete)
 

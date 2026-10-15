@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { checkTagAncestry } from './check-tag-ancestry.mjs';
 
 /** A throwaway repository: main with two commits, develop with one commit main lacks. */
@@ -79,25 +80,114 @@ test('an unknown commit or a missing main ref fails closed, never as a pass', ()
   }
 });
 
-test('the release tag-guard fetches main and runs the ancestry check before anything builds', () => {
+const script = fileURLToPath(new URL('./check-tag-ancestry.mjs', import.meta.url));
+const runCli = (cwd, args, env = process.env) =>
+  spawnSync(process.execPath, [script, ...args], { cwd, encoding: 'utf8', env });
+
+test('the CLI the workflow runs exits 0 on main, 1 off main, 1 without --commit', () => {
+  const repo = repository();
+  try {
+    const onMain = runCli(repo.root, ['--commit', repo.tip, '--main-ref', 'main']);
+    assert.equal(onMain.status, 0, onMain.stderr);
+    assert.match(onMain.stdout, /is reachable from main/);
+    const offMain = runCli(repo.root, ['--commit', repo.developOnly, '--main-ref', 'main']);
+    assert.equal(offMain.status, 1);
+    assert.match(offMain.stderr, /is not reachable from main/);
+    assert.equal(runCli(repo.root, ['--main-ref', 'main']).status, 1);
+  } finally {
+    repo.cleanup();
+  }
+});
+
+test('a missing git binary (spawn status null) fails closed through the CLI', () => {
+  const repo = repository();
+  try {
+    const result = runCli(repo.root, ['--commit', repo.tip, '--main-ref', 'main'], {
+      ...process.env,
+      PATH: '',
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Cannot verify tag ancestry/);
+  } finally {
+    repo.cleanup();
+  }
+});
+
+/** Split release.yml into job blocks keyed by job id. */
+function jobs(workflow) {
+  const body = workflow.slice(workflow.indexOf('\njobs:\n') + '\njobs:\n'.length);
+  const map = new Map();
+  for (const block of body.split(/\n(?= {2}[\w-]+:\n)/)) {
+    const id = /^ {2}([\w-]+):\n/.exec(block)?.[1];
+    if (id) map.set(id, block);
+  }
+  return map;
+}
+
+/** `needs: a` and `needs: [a, b]` both parse to a list. */
+function needsOf(block) {
+  const raw = /^ {4}needs: (.+)$/m.exec(block)?.[1]?.trim();
+  if (raw === undefined) return [];
+  return raw.startsWith('[')
+    ? raw
+        .slice(1, -1)
+        .split(',')
+        .map((value) => value.trim())
+    : [raw];
+}
+
+test('the tag-guard step runs exactly the ancestry check, unconditionally, on full history', () => {
   const workflow = readFileSync(
     new URL('../.github/workflows/release.yml', import.meta.url),
     'utf8'
   );
-  const guard = workflow
-    .split(/\n(?= {2}[\w-]+:)/)
-    .find((block) => block.startsWith('  tag-guard:\n'));
+  const guard = jobs(workflow).get('tag-guard');
   assert.ok(guard, 'Missing tag-guard job');
   assert.match(guard, /fetch-depth: 0/, 'tag-guard needs history to compare against main');
-  assert.match(
+  assert.doesNotMatch(
     guard,
-    /refs\/heads\/main:refs\/remotes\/origin\/main/,
-    'tag-guard must fetch main explicitly'
+    /^ {4}(if|continue-on-error):/m,
+    'tag-guard job must be unconditional'
   );
-  assert.match(guard, /node scripts\/check-tag-ancestry\.mjs/);
-  // Every job that builds or publishes depends on tag-guard, directly or through binaries.
-  const binaries = workflow
-    .split(/\n(?= {2}[\w-]+:)/)
-    .find((block) => block.startsWith('  binaries:\n'));
-  assert.match(binaries ?? '', /^ {4}needs: tag-guard\s*$/m);
+  const step = guard.slice(guard.indexOf('- name: Verify the tag commit is on main'));
+  assert.ok(step.startsWith('- name: Verify the tag commit is on main'), 'Missing ancestry step');
+  assert.doesNotMatch(
+    step,
+    /^\s*(if|continue-on-error):/m,
+    'the ancestry step must not be skippable'
+  );
+  assert.doesNotMatch(step, /\|\|\s*true|;\s*true\b/, 'the ancestry step must not swallow failure');
+  const commands = step
+    .split('\n')
+    .slice(2)
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !line.startsWith('#'));
+  assert.deepEqual(commands, [
+    'git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main',
+    'node scripts/check-tag-ancestry.mjs --commit "$GITHUB_SHA" --main-ref origin/main',
+  ]);
+});
+
+test('every other release job depends on tag-guard, directly or transitively', () => {
+  const workflow = readFileSync(
+    new URL('../.github/workflows/release.yml', import.meta.url),
+    'utf8'
+  );
+  const graph = jobs(workflow);
+  assert.ok(graph.size > 5, 'Expected the release jobs');
+  const reaches = (id, seen = new Set()) => {
+    if (id === 'tag-guard') return true;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return needsOf(graph.get(id) ?? '').some((dependency) => reaches(dependency, seen));
+  };
+  for (const id of graph.keys()) {
+    if (id === 'tag-guard') continue;
+    assert.ok(reaches(id), `job ${id} does not depend on tag-guard`);
+    assert.doesNotMatch(
+      graph.get(id) ?? '',
+      /if:.*\b(always|cancelled|failure)\(\)/,
+      `job ${id} could run despite a failed tag-guard`
+    );
+  }
 });
