@@ -7,6 +7,22 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — output schemas for six more MCP tools (T0 M2, part 1)
+
+- `create`, `page_create`, `pages`, `close`, `pdf` and `events_replay` advertise an
+  `outputSchema` on the `2025-06-18` protocol, so structured-capable clients receive
+  `structuredContent` for them. New protocol schemas: `PageResponseSchema`,
+  `SessionCreatedResultSchema`, `PageListResultSchema`, `SessionClosedResultSchema` and
+  `SessionEventsPageResultSchema`; `pdf` shares `screenshot`'s `ArtifactRefSchema`. The schemas
+  stay open to additive fields. A full-stack test validates every tool's real result against its
+  schema.
+
+### Fixed — the documented session response no longer requires `engine.capabilities`
+
+- OpenAPI's `EngineInfo` (in every session response) marked `capabilities` required, but no
+  session response has ever carried it. It is now optional; capabilities come from
+  `GET /v1/engine`.
+
 ### Added — release tags must be cut from main (T9 S1a, R14)
 
 - The release workflow's `tag-guard` job now fetches `main` and runs

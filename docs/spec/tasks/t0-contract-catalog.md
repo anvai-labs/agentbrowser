@@ -72,7 +72,13 @@ both catalogs. T1 must measure selection savings rather than claim shrinking all
 
 1. Preserve the completed contract audit when reviewing this candidate. Autofill and
    plan are qualified here; migrate remaining wire envelopes under T2 with fixtures
-   rather than extending T0 with unqualified output schemas.
+   rather than extending T0 with unqualified output schemas. **2026-10-15 (M2, part 1):**
+   `create`, `page_create`, `pages`, `close`, `pdf` and `events_replay` now advertise output
+   schemas that are *qualified*: `packages/api/src/mcp-output-schemas.test.ts` validates each
+   tool's real result (MCP handler → SDK → REST → service) against its schema, and each schema
+   rejects `{}`. The qualification found that `SessionResponse.engine.capabilities` was
+   documented as required but never returned; it is now optional. Part 2 covers `policy`,
+   `cookies`, `cookie_handoff`, `snapshot`, `html` and `session`.
 2. Preserve the adversarial review resolution: autofill reports are validated before
    CLI success/output and the malformed-report case has a red-then-green regression.
 3. Continue dependency-ready increments. Installed Victor, Codex and Claude structured-

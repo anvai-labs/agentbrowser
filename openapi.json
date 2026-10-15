@@ -7415,8 +7415,7 @@
             "type": "object",
             "required": [
               "name",
-              "version",
-              "capabilities"
+              "version"
             ],
             "properties": {
               "name": {
@@ -7616,8 +7615,7 @@
         "type": "object",
         "required": [
           "name",
-          "version",
-          "capabilities"
+          "version"
         ],
         "properties": {
           "name": {

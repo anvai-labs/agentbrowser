@@ -27,6 +27,8 @@ import {
   NavigationStatusSchema,
   navigationFailureDetail,
   ObservationRequestSchema,
+  PageListResultSchema,
+  PageResponseSchema,
   PageStateSchema,
   PlanActionsSchema,
   PlanReportSchema,
@@ -37,6 +39,9 @@ import {
   parsePlanSteps,
   parseScreenshotRequest,
   ScreenshotRequestSchema,
+  SessionClosedResultSchema,
+  SessionCreatedResultSchema,
+  SessionEventsPageResultSchema,
   UsageError,
   validateWireAction,
   WireActionEnvelopeSchema,
@@ -293,6 +298,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         },
         required: ['tenantId'],
       },
+      outputSchema: SessionCreatedResultSchema,
       handler: async (args) => {
         if (typeof args.tenantId !== 'string' || args.tenantId.length === 0) {
           throw new UsageError('tenantId is required and must be a non-empty string.');
@@ -353,6 +359,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         properties: { sessionId: { type: 'string' }, url: { type: 'string' } },
         required: ['sessionId'],
       },
+      outputSchema: PageResponseSchema,
       handler: async (args) => {
         const sessionId = requireSessionId(args);
         const request = args.url === undefined ? undefined : { url: requireHttpUrl(args.url) };
@@ -406,6 +413,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         properties: { sessionId: { type: 'string' } },
         required: ['sessionId'],
       },
+      outputSchema: PageListResultSchema,
       handler: async (args) => {
         const sessionId = requireSessionId(args);
         if (!client.sessions.listPages)
@@ -620,6 +628,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         properties: { sessionId: { type: 'string' } },
         required: ['sessionId'],
       },
+      outputSchema: SessionClosedResultSchema,
       handler: async (args) => {
         if (typeof args.sessionId !== 'string' || args.sessionId.length === 0) {
           throw new UsageError('sessionId is required and must be a non-empty string.');
@@ -896,6 +905,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         },
         required: ['sessionId', 'pageId'],
       },
+      outputSchema: ArtifactRefSchema,
       handler: async (args) => {
         const [sessionId, pageId] = sessionAndPage(args);
         return await client.sessions.pdf(sessionId, pageId, {
@@ -994,6 +1004,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         },
         required: ['sessionId'],
       },
+      outputSchema: SessionEventsPageResultSchema,
       handler: async (args) => {
         const sessionId = requireSessionId(args);
         if (typeof client.sessions.events !== 'function')
