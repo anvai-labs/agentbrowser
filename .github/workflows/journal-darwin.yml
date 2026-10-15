@@ -1,8 +1,9 @@
 name: Journal SQLite gates (macOS)
 
 # T5 J-f: the journal manager/child/adapter qualification and the packaging gate on Darwin,
-# nightly and on pull requests that touch journal code. Not a required context: a path-filtered
-# required check would strand unrelated pull requests (see the T9 packet's invariant).
+# nightly (GitHub runs schedules on the default branch, main) and on pull requests that touch
+# journal code. Not a required context: a path-filtered required check would strand unrelated
+# pull requests (see the T9 packet's invariant).
 on:
   schedule:
     - cron: '17 7 * * *'
@@ -14,10 +15,22 @@ on:
       - 'packages/control/src/operation-journal*'
       - 'packages/control/src/session-journal*'
       - 'packages/control/src/application-journal*'
+      - 'packages/control/src/bounded-wait.ts'
+      - 'packages/control/src/trusted-callback.ts'
       - 'packages/control/package.json'
+      - 'packages/control/tsconfig.json'
       - 'scripts/journal-sqlite-*'
       - 'scripts/package-server.mjs'
+      - 'scripts/materialize-hoisted.mjs'
+      - 'scripts/prune-cedar-wasm.mjs'
+      # Pins Node, and with it the node:sqlite / SQLite build under test.
+      - '.tool-versions'
       - '.github/workflows/journal-darwin.yml'
+
+# Superseded runs on the same ref are cancelled (macOS minutes are the expensive ones).
+concurrency:
+  group: journal-darwin-${{ github.ref }}
+  cancel-in-progress: true
 
 # Least privilege (T9 S1c): nothing here writes.
 permissions:

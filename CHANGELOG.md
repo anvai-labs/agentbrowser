@@ -11,8 +11,9 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 - `.github/workflows/journal-darwin.yml` runs the journal manager/child/adapter qualification and
   the packaging gate (package the server for the runner's target, then prove the extracted
-  candidate resolves the storage child) on `macos-15`, nightly and on pull requests that touch
-  journal code. It is deliberately not a required check: it is path-filtered on pull requests,
+  candidate resolves the storage child) on `macos-15`, nightly on the default branch (`main`) and
+  on pull requests that touch journal code or its dependencies (including `.tool-versions`, which
+  pins Node and its SQLite). It is deliberately not a required check: it is path-filtered on pull requests,
   and a path-filtered required check would strand unrelated ones (the T9 packet's invariant now
   says so).
 
