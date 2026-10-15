@@ -20,6 +20,7 @@ import {
   closeJournalSqliteNamespace,
   commitJournalSqliteTerminal,
   ensureJournalSqliteRecordSchema,
+  findJournalSqliteRecordsByOperation,
   lookupJournalSqliteRecord,
   markJournalSqliteDispatch,
   openJournalSqliteRecords,
@@ -110,6 +111,19 @@ try {
         closeJournalSqliteNamespace(tx, namespaceId, ownerFence);
         return { kind: 'closed' };
       });
+    } else if (read && kind === 'findByOperation') {
+      const connection = readConnection();
+      outcome = findJournalSqliteRecordsByOperation(
+        {
+          get: get(connection),
+          all: (sql: string, ...parameters: unknown[]) =>
+            connection.prepare(sql).all(...(parameters as never[])) as Record<string, unknown>[],
+        },
+        namespaceId,
+        ownerFence,
+        value as Parameters<typeof findJournalSqliteRecordsByOperation>[3],
+        clock.now()
+      );
     } else if (read) {
       outcome = lookupJournalSqliteRecord(
         { get: get(readConnection()) },
@@ -232,7 +246,7 @@ try {
         maybeShutdown();
         return;
       }
-      const read = message.kind === 'lookup';
+      const read = message.kind === 'lookup' || message.kind === 'findByOperation';
       send({
         kind: 'outcome',
         correlationId: message.correlationId,
@@ -256,7 +270,7 @@ try {
         message.namespaceId,
         message.ownerFence,
         'value' in message ? message.value : undefined,
-        message.kind === 'lookup'
+        message.kind === 'lookup' || message.kind === 'findByOperation'
       );
     } catch {
       inFlight -= 1;

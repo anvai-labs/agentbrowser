@@ -10,6 +10,7 @@ import type {
   JournalIntent,
   JournalKey,
   JournalNamespace,
+  JournalOperationQuery,
   JournalRecord,
   JournalTerminal,
   JournalTerminalTransition,
@@ -22,9 +23,13 @@ const invalid = (): never => {
   throw new Error('Invalid journal metadata');
 };
 /** Shared detachment and exact encoded-byte budget, before domain validation. */
-export function journalData(input: unknown, maxBytes: number = limits.maxBytes): unknown {
-  const value = snapshotJsonData(input, { ...limits, maxBytes });
-  if (Buffer.byteLength(canonicalJson(value), 'utf8') > maxBytes) invalid();
+export function journalData(
+  input: unknown,
+  maxBytes: number = limits.maxBytes,
+  maxNodes: number = limits.maxNodes
+): unknown {
+  const value = snapshotJsonData(input, { ...limits, maxBytes, maxNodes });
+  if (canonicalJson(value, maxBytes).length > maxBytes) invalid();
   return value;
 }
 export function journalObject(
@@ -134,6 +139,15 @@ export function parseJournalNamespace(input: unknown): JournalNamespace {
   integer(b.maxInFlight, 1, 1024);
   integer(b.timeoutMs, 1, 60000);
   return deeplyFreezeSnapshot(v) as unknown as JournalNamespace;
+}
+/** J3a: the most records one historical lookup returns. */
+export const MAX_JOURNAL_FIND_LIMIT = 16;
+export function parseJournalOperationQuery(input: unknown): JournalOperationQuery {
+  const v = journalObject(journalData(input), ['tenantId', 'operationId', 'limit']);
+  text(v.tenantId);
+  identifier(v.operationId);
+  integer(v.limit, 1, MAX_JOURNAL_FIND_LIMIT);
+  return deeplyFreezeSnapshot(v) as unknown as JournalOperationQuery;
 }
 export function parseJournalKey(input: unknown): JournalKey {
   const v = journalData(input);

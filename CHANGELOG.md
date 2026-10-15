@@ -7,6 +7,16 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — journal `findByOperation` (T5 J3a)
+
+- The operation journal port can now find every record of one tenant's operation ID in a
+  namespace. The query is read-only, fenced, at most 16 records, in order, and reports
+  truncation.
+- It is implemented by the memory and SQLite adapters (a bounded scan, no schema change),
+  validated by the facade (an adapter cannot leak another tenant's records), and covered by the
+  shared conformance suite.
+- It is the read path for the accepted J3 historical lookup.
+
 ### Added — measured CI runner minutes (T9)
 
 - `scripts/runner-minutes.mjs` reports per-workflow medians from the GitHub API: wall time, job

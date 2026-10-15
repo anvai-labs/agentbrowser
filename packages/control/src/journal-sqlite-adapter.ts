@@ -232,6 +232,7 @@ export async function openJournalSqliteOperationJournalAdapter(
       markDispatch: (stamped: { value: unknown }) => call('markDispatch', stamped.value),
       commitTerminal: (stamped: { value: unknown }) => call('commitTerminal', stamped.value),
       lookup: (stamped: { value: unknown }) => call('lookup', stamped.value),
+      findByOperation: (stamped: { value: unknown }) => call('findByOperation', stamped.value),
       async close() {
         const correlationId = ++correlationSequence;
         const response = await callCorrelated({

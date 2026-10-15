@@ -194,6 +194,36 @@ describe('service with an open durable journal', () => {
     expect(s.effects()).toBe(0);
   }, 60_000);
 
+  it('the real adapter and child answer findByOperation for a durable write (J3a)', async () => {
+    const s = await serviceWithJournal();
+    await s.service.applicationExecute(s.sessionId, operator, write('find-me', 0, 'durable'));
+    await s.service.applicationExecute(s.sessionId, operator, write('other', 1, 'durable'));
+    const found = await s.opened.journal.findByOperation({
+      tenantId: 'owner',
+      operationId: 'find-me',
+      limit: 16,
+    });
+    expect(found).toMatchObject({
+      kind: 'found',
+      truncated: false,
+      records: [
+        {
+          identity: { key: { tenantId: 'owner', operationId: 'find-me' } },
+          revision: 3,
+          terminal: { status: 'completed' },
+        },
+      ],
+    });
+    if (found.kind === 'found') expect(found.records).toHaveLength(1);
+    expect(
+      await s.opened.journal.findByOperation({
+        tenantId: 'someone-else',
+        operationId: 'find-me',
+        limit: 16,
+      })
+    ).toEqual({ kind: 'found', records: [], truncated: false });
+  }, 60_000);
+
   it('keeps ephemeral writes out of the journal', async () => {
     const s = await serviceWithJournal();
     await s.service.applicationExecute(s.sessionId, operator, write('e1', 0));

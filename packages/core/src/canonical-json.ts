@@ -1,8 +1,8 @@
 import { ControlError } from './session-control.js';
 
 /** Serialize once, bounding output before allocation; never invoke data accessors. */
-export function canonicalJson(value: unknown): string {
-  let bytes = 65536;
+export function canonicalJson(value: unknown, budget = 65_536): string {
+  let bytes = budget;
   let nodes = 4096;
   const chunks: string[] = [];
   const charge = (count: number) => {
