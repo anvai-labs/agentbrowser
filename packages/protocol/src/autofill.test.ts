@@ -19,6 +19,15 @@ it.each([
 ])('refuses unsupported or unbounded payloads: %j', (request) => {
   expect(() => parseAutofillRequest(request)).toThrow();
 });
+it.each(['Chicago\nIL', 'Chicago\r', '\r\nChicago'])(
+  'refuses a line break in option.value (typed text would press Enter): %j',
+  (value) => {
+    const request = {
+      fields: [{ match: { label: 'City' }, strategy: 'react-select', option: { value } }],
+    };
+    expect(() => parseAutofillRequest(request)).toThrow(/line break/);
+  }
+);
 it.each([
   ['^Company.*name$', 'Company legal name', true],
   ['^Company.*name$', 'Prior Company legal name', false],
