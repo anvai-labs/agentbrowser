@@ -89,6 +89,9 @@ most 16) of matching records across the **searched namespaces** (see D7). Each i
 
 Recommended: opt-in history.
 
+- **When it applies.** The current namespace becomes a history namespace once its
+  `ACCEPT_UNTIL` passes: J-d then starts without it. Its records stay reachable only once the
+  operator lists it here.
 - **Configuration.** Each namespace an operator rotates away from can be listed in
   `AGENTBROWSER_JOURNAL_HISTORY`. Each entry records **every** descriptor input that is
   configurable or release-bound:
@@ -131,7 +134,7 @@ and the namespace fence. Nothing else gains access to another process's records.
   namespace can retire;
 - **continue**: steps 2 and 3.
 
-1. The operator asks to continue a rev 1 record.
+1. The operator asks to close or continue a rev 1 record.
 2. The recovery path commits a terminal `failed` on it: a known pre-dispatch failure, which is a
    legal rev 1 → rev 2 transition with `dispatched: false`.
    - **Why this is safe:** no live code can produce the dead process's key, and the exclusive
