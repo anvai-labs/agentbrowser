@@ -64,6 +64,9 @@ describe('exact-set multiselect (T6 W2)', () => {
     ['a duplicate value', chips({ values: ['a', 'a'], mode: 'exact' })],
     ['a line break', chips({ values: ['a\nb'], mode: 'exact' })],
     ['an empty label', chips({ values: [''], mode: 'exact' })],
+    ['a blank label', chips({ values: [' '], mode: 'exact' })],
+    ['a trailing space', chips({ values: ['Canada '], mode: 'exact' })],
+    ['a leading tab', chips({ values: ['\tCanada'], mode: 'exact' })],
     [
       'too many values',
       chips({ values: Array.from({ length: 33 }, (_, i) => `v${i}`), mode: 'exact' }),

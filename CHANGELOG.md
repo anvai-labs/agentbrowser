@@ -18,7 +18,7 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   rolled back by guesswork.
 - **Refusals.** Refused before any dispatch on a control that is not a proven multi-value widget,
   or whose membership is incomplete, duplicated, or has an extra chip without exactly one owned
-  remove control.
+  remove control. Values must be non-blank and trimmed.
 - Qualified against the real react-select 5.10.2.
 
 ### Added — durable application writes behind an opt-in journal (T5 C4b, J-d)

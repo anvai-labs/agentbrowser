@@ -28,3 +28,25 @@
   - a single-select is refused before dispatch.
 
 Still open: conditional and multi-stage mappings, and cross-engine qualification (W3).
+
+## Review round 1 (2026-10-15)
+
+- **Whitespace.** Chip labels are compared trimmed: membership capture and typeahead both trim.
+  `options.values` must therefore be non-blank and carry no surrounding whitespace, and anything
+  else is refused by the protocol before anything runs. Before this, `'Canada '` removed and
+  re-added a chip and under-reported the add, and `' '` removed a chip before failing.
+- **Every claimed guard is pinned by a unit test** that fails when the guard is mutated away:
+  - the multi-value check in verification;
+  - the remover visibility check;
+  - confirmation after each removal and after each add (effects only after confirmation);
+  - set size and member duplicates in verification;
+  - redaction of effect labels.
+- **OpenAPI.** `openapi.json` is regenerated for `options` and `effects`.
+- **Sensitivity.** `autofill-chip-label` is published without classification, because it equals
+  the remove control's accessible name, `Remove <label>`, which react-select 5.10.2 always sets.
+  A site that overrides `MultiValueRemove` with a different name could expose a chip label that a
+  sensitive combobox's withheld membership would hide. Recorded, not changed: chip text is
+  normally visible page content.
+- **Mapping.** `form-mapping` (`autofill-map`) still expresses only `value` and `option`, so exact
+  sets are request-only for now. W3 covers mappings.
+

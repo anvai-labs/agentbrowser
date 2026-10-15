@@ -823,12 +823,137 @@ describe('multi-step widget strategies', () => {
       });
     });
 
-    it('an extra member appearing afterwards fails exact verification', async () => {
+    it('refuses an extra chip whose remove control has no owned remover, before dispatch', async () => {
       const f = fixture([multi('ms_x', ['B', 'C'])]);
       const report = await runStrategy(exactField(['B']), f);
-      // C has no remove control: refused before dispatch; and B alone would not equal {B, C}.
-      expect(report.receipts[0]?.status).toBe('failed');
+      expect(report.receipts[0]).toMatchObject({
+        status: 'failed',
+        error: { code: 'ENGINE_UNSUPPORTED' },
+      });
       expect(f.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('refuses a hidden remove control before dispatch', async () => {
+      const hidden = { ...remover('rA', 'ms_x', 'A'), visible: false };
+      const f = fixture([multi('ms_x', ['A']), hidden]);
+      const report = await runStrategy(exactField([]), f);
+      expect(report.receipts[0]).toMatchObject({
+        status: 'failed',
+        error: { code: 'TARGET_NOT_VISIBLE' },
+      });
+      expect(f.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('records no removal effect when the click does not actually remove the chip', async () => {
+      const f = fixture([multi('ms_x', ['A']), remover('rA', 'ms_x', 'A')]);
+      f.act.mockImplementation(async (_request, onDispatch: () => void) => {
+        onDispatch();
+        f.dispatch(); // the click lands but the widget keeps the chip
+      });
+      const report = await runStrategy(exactField([]), { ...f, act: f.act });
+      expect(f.dispatch).toHaveBeenCalledTimes(1);
+      expect(report.receipts[0]?.status).toBe('uncertain');
+      expect(report.receipts[0]?.effects).toBeUndefined();
+    });
+
+    it('records no add effect when the chosen option never becomes a member', async () => {
+      const f = fixture([multi('ms_add', [])]);
+      f.act.mockImplementation(
+        async (request: { action: string; target?: { ref?: string } }, onDispatch: () => void) => {
+          onDispatch();
+          f.dispatch();
+          if (request.action === 'typeText')
+            f.replace([
+              multi('ms_add', []),
+              {
+                ...rsCombobox('ms_add'),
+                ref: 'opt_a',
+                role: 'option',
+                name: 'A',
+                value: undefined,
+                attributes: {
+                  ...ownedOption('opt_a', '', 'ms_add').attributes,
+                  tag: 'li',
+                  'autofill-node': 'opt_a',
+                  'autofill-block': 'ms-block',
+                },
+              },
+            ]);
+          // Clicking the option commits nothing: membership stays empty.
+          if (request.action === 'click' && request.target?.ref === 'opt_a')
+            f.replace([multi('ms_add', [])]);
+        }
+      );
+      const report = await runStrategy(exactField(['A']), { ...f, act: f.act });
+      expect(report.receipts[0]?.status).toBe('uncertain');
+      expect(report.receipts[0]?.effects).toBeUndefined();
+    });
+
+    const changesAfterRun = (finalElement: PageElement, exact: string[] = ['A']) => {
+      // Observations before verification (resolve, initial membership, the add loop) see the
+      // exact set; the verification observation sees `finalElement`.
+      const f = fixture([multi('ms_v', exact)]);
+      let calls = 0;
+      const observe = vi.fn(async () => {
+        calls += 1;
+        return { elements: [calls <= 2 + exact.length ? multi('ms_v', exact) : finalElement] };
+      });
+      return { ...f, observe };
+    };
+
+    it.each([
+      ['a missing member (size check)', multi('ms_v', ['A'])],
+      ['a duplicate that matches the size (duplicate check)', multi('ms_v', ['A', 'A'])],
+    ])('exact verification of {A, B} fails on %s', async (_name, finalElement) => {
+      const report = await runStrategy(
+        exactField(['A', 'B']),
+        changesAfterRun(finalElement as PageElement, ['A', 'B'])
+      );
+      expect(report.receipts[0]).toMatchObject({
+        status: 'failed',
+        verified: false,
+        error: { code: 'VALUE_MISMATCH' },
+      });
+    });
+
+    it.each([
+      ['an extra member', multi('ms_v', ['A', 'C'])],
+      ['a duplicated member', multi('ms_v', ['A', 'A'])],
+      [
+        'a control no longer proven multi-valued',
+        (() => {
+          const element = multi('ms_v', ['A']);
+          const { 'autofill-multi': _dropped, ...rest } = element.attributes ?? {};
+          return { ...element, attributes: rest };
+        })(),
+      ],
+    ])('exact verification fails on %s', async (_name, finalElement) => {
+      const report = await runStrategy(
+        exactField(['A']),
+        changesAfterRun(finalElement as PageElement)
+      );
+      expect(report.receipts[0]).toMatchObject({
+        status: 'failed',
+        verified: false,
+        error: { code: 'VALUE_MISMATCH' },
+      });
+    });
+
+    it('redacts effect labels through the port', async () => {
+      const f = fixture([multi('ms_r', ['SECRET-A', 'B']), remover('rA', 'ms_r', 'SECRET-A')]);
+      f.act.mockImplementation(
+        async (request: { action: string; target?: { ref?: string } }, onDispatch: () => void) => {
+          onDispatch();
+          f.dispatch();
+          if (request.target?.ref === 'rA') f.replace([multi('ms_r', ['B'])]);
+        }
+      );
+      const report = await runStrategy(exactField(['B']), {
+        ...f,
+        act: f.act,
+        redact: (value: string) => value.replace('SECRET-A', '[redacted]'),
+      });
+      expect(report.receipts[0]?.effects).toEqual({ removed: ['[redacted]'], added: [] });
     });
   });
 

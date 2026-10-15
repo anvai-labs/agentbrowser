@@ -219,6 +219,10 @@ export function parseAutofillRequest(input: unknown): AutofillRequest {
         throw new Error('options.values requires the explicit chip-multiselect strategy');
       if (field.options.values.some((value) => /[\r\n]/.test(value)))
         throw new Error('An autofill option value cannot contain a line break');
+      // Chip labels are compared trimmed (membership capture and typeahead both trim), so an
+      // untrimmed or blank value could never be confirmed: refused before anything runs.
+      if (field.options.values.some((value) => value.trim() !== value || value === ''))
+        throw new Error('options.values must be non-blank and carry no surrounding whitespace');
       if (new Set(field.options.values).size !== field.options.values.length)
         throw new Error('options.values must not repeat a value');
     }
