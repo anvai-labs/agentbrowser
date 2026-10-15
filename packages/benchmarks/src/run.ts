@@ -10,6 +10,8 @@
  *            fixture pages (ADR-010 gate data), plus an informational
  *            Obscura row when the pinned binary is present (spec §17.2)
  *   soak   - session churn with cleanup and RSS audit
+ *   observe - F1 observation overhead on the 120-element fixture (real Chromium), JSON out;
+ *            fails if any password value appears in an observation
  *   all    - everything; exits non-zero if any gate fails
  */
 
@@ -18,7 +20,12 @@ import { AgentBrowserService } from '@agentbrowser/api';
 import { createObscuraEngine } from '@agentbrowser/engine-obscura';
 import { PlaywrightChromiumEngine } from '@agentbrowser/engine-playwright';
 import { FakeEngine } from '@agentbrowser/testkit';
-import { comparativeReport, runCompactProjectionBenchmark, runRealBenchmarks } from './compare.js';
+import {
+  comparativeReport,
+  runCompactProjectionBenchmark,
+  runObservationOverheadBenchmark,
+  runRealBenchmarks,
+} from './compare.js';
 import type { BenchmarkResult } from './harness.js';
 import { evaluateTarget, sample, summarize } from './harness.js';
 import { runSoak, soakReport } from './soak.js';
@@ -168,8 +175,21 @@ if (command === 'soak' || command === 'all') {
   ok = (await soak(Number.isInteger(soakCycles) ? soakCycles : 1000)) && ok;
 }
 
-if (!['bench', 'tasks', 'soak', 'all', 'real'].includes(command)) {
-  console.error(`unknown command: ${command} (use bench | tasks | soak | real | all)`);
+if (command === 'observe') {
+  const iterations =
+    Number.isInteger(soakCycles) && process.argv[3] !== undefined ? soakCycles : 10;
+  const engine = new PlaywrightChromiumEngine();
+  try {
+    const result = await runObservationOverheadBenchmark({ engine, iterations });
+    console.log(JSON.stringify(result));
+    ok = !result.secretLeaked && result.elements >= 120 && ok;
+  } finally {
+    await engine.close();
+  }
+}
+
+if (!['bench', 'tasks', 'soak', 'all', 'real', 'observe'].includes(command)) {
+  console.error(`unknown command: ${command} (use bench | tasks | soak | real | observe | all)`);
   process.exit(2);
 }
 
