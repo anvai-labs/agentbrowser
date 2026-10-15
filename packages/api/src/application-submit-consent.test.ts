@@ -1204,3 +1204,61 @@ it('the internal submission review refuses durable without an open journal (J-d)
   ).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
   expect(f.collect).not.toHaveBeenCalled();
 });
+
+it.each([
+  ['another operation', { namespace: 'agentbrowser', operationId: 'another-op' }],
+  ['another namespace', { namespace: 'elsewhere', operationId: 'closed-op' }],
+  ['no link', undefined],
+] as const)(
+  'refuses an execute whose supersedes link differs from the consented one (%s) with no effect (J3c part 2)',
+  async (_name, other) => {
+    const f = await fixture({ publicProvider: true });
+    const link = { namespace: 'agentbrowser', operationId: 'closed-op' };
+    const body = reviewBody(f, 'continuation-submit');
+    const review = await f.service.applicationReview(f.sessionId, operator, {
+      ...body,
+      request: { ...body.request, supersedes: link },
+    });
+    // Approval resolves the gate-owned action back through the service's reconstruction, which
+    // must re-add the link or the action would no longer match.
+    await f.approve(review.tokenId);
+    await expect(
+      f.service.applicationExecute(f.sessionId, operator, {
+        ...body.request,
+        ...(other ? { supersedes: other } : {}),
+        approvalToken: review.tokenId,
+      })
+    ).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
+    expect(f.owner.submissionCount()).toBe(0);
+    // The link is not identity: the refusal is final for this operation ID, so a retry (even
+    // with the consented link) replays that failure — it never executes.
+    await expect(
+      f.service.applicationExecute(f.sessionId, operator, {
+        ...body.request,
+        supersedes: link,
+        approvalToken: review.tokenId,
+      })
+    ).resolves.toMatchObject({ replay: true, operation: { status: 'failed', dispatched: false } });
+    expect(f.owner.submissionCount()).toBe(0);
+  }
+);
+
+it('commits an execute carrying exactly the consented supersedes link (J3c part 2)', async () => {
+  const f = await fixture({ publicProvider: true });
+  const link = { namespace: 'agentbrowser', operationId: 'closed-op' };
+  const body = reviewBody(f, 'continuation-submit');
+  const review = await f.service.applicationReview(f.sessionId, operator, {
+    ...body,
+    request: { ...body.request, supersedes: link },
+  });
+  expect(review.status).toBe('pending');
+  await f.approve(review.tokenId);
+  await expect(
+    f.service.applicationExecute(f.sessionId, operator, {
+      ...body.request,
+      supersedes: link,
+      approvalToken: review.tokenId,
+    })
+  ).resolves.toMatchObject({ status: 'committed' });
+  expect(f.owner.submissionCount()).toBe(1);
+});

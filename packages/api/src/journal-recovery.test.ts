@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ApplicationAdapter } from '@agentbrowser/control';
 import { FakeEngine } from '@agentbrowser/testkit';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { journalConfigFromEnvironment, openServiceJournal } from './journal-config.js';
 import { AgentBrowserService, type ServiceDependencies } from './service.js';
 
@@ -61,17 +61,28 @@ async function fixtureWithHorizon(acceptUntil: number) {
   };
 }
 
-async function fixture(applicationAdapters: ServiceDependencies['applicationAdapters'] = []) {
+async function fixture(
+  applicationAdapters: ServiceDependencies['applicationAdapters'] = [],
+  extra: Partial<ServiceDependencies> = {}
+) {
   const { env } = journalEnvironment();
   const config = await journalConfigFromEnvironment(env);
   if (!config) throw new Error('expected configuration');
   const opened = await openServiceJournal(config);
   const journal = opened.journal;
-  const service = new AgentBrowserService({
-    engine: new FakeEngine(),
-    operationJournal: journal,
-    ...(applicationAdapters ? { applicationAdapters } : {}),
-  } satisfies Partial<ServiceDependencies> as ServiceDependencies);
+  let service: AgentBrowserService;
+  try {
+    service = new AgentBrowserService({
+      engine: new FakeEngine(),
+      operationJournal: journal,
+      ...(applicationAdapters ? { applicationAdapters } : {}),
+      ...extra,
+    } satisfies Partial<ServiceDependencies> as ServiceDependencies);
+  } catch (error) {
+    // A service that never existed cannot close the journal it was given.
+    await opened.close();
+    throw error;
+  }
   return {
     service,
     journal,
@@ -505,4 +516,103 @@ describe('journal reconcile over HTTP (J3c part 2)', () => {
       await bare.cleanup();
     }
   }, 120_000);
+});
+
+describe('journal reconcile hardening (J3c part 2, review round 1)', () => {
+  const intentFor = (operationId: string, adapterId: string, incarnation: string) => {
+    const intent = intentOf(operationId, incarnation);
+    return { ...intent, application: { ...intent.application, adapterId } };
+  };
+  const seedInDoubt = async (
+    journal: Awaited<ReturnType<typeof openServiceJournal>>['journal'],
+    operationId: string,
+    adapterId: string,
+    incarnation: string
+  ) => {
+    const reserved = await journal.reserveIntent(intentFor(operationId, adapterId, incarnation));
+    if (reserved.kind !== 'acknowledged') throw new Error('seed failed');
+    await journal.markDispatch({ identity: reserved.record.identity, expectedRevision: 1 });
+  };
+  const records = async (
+    journal: Awaited<ReturnType<typeof openServiceJournal>>['journal'],
+    operationId: string
+  ) => {
+    const found = await journal.findByOperation({ tenantId: 'owner', operationId, limit: 16 });
+    if (found.kind !== 'found') throw new Error('expected records');
+    return found.records.map((record) => record.terminal?.status ?? 'none').sort();
+  };
+  const plain = (id: string, reconcile?: ApplicationAdapter['reconcile']): ApplicationAdapter => ({
+    id,
+    authorize: () => true,
+    operations: {},
+    receipt: async () => ({}),
+    ...(reconcile ? { reconcile } : {}),
+  });
+
+  it('resolves every adapter before any write: one adapter lacking reconcile means nothing is written', async () => {
+    const asked = vi.fn(async () => ({ status: 'committed' as const }));
+    const f = await fixture([plain('capable', asked), plain('incapable')]);
+    cleanup.push(f.stop);
+    await seedInDoubt(f.journal, 'two-adapters', 'capable', 'a'.repeat(22));
+    await seedInDoubt(f.journal, 'two-adapters', 'incapable', 'b'.repeat(22));
+    await expect(
+      f.service.journalReconcileOperation('two-adapters', humanOperator)
+    ).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
+    expect(asked).not.toHaveBeenCalled();
+    expect(await records(f.journal, 'two-adapters')).toEqual(['none', 'none']);
+  }, 60_000);
+
+  it('bounds a reconcile that never settles: it counts as unresolved and the record stays in doubt', async () => {
+    const f = await fixture([plain('any-adapter', () => new Promise(() => {}))], {
+      journalReconcileTimeoutMs: 200,
+    });
+    cleanup.push(f.stop);
+    await seed(f.journal, 'hangs', 'in_doubt');
+    await expect(f.service.journalReconcileOperation('hangs', humanOperator)).resolves.toEqual({
+      reconciled: 0,
+      unresolved: 1,
+      truncated: false,
+    });
+    expect(await records(f.journal, 'hangs')).toEqual(['none']);
+  }, 60_000);
+
+  it.each([
+    ['an extra key', () => ({ status: 'committed', evidence: ['x'] })],
+    ['an inherited status', () => Object.create({ status: 'committed' })],
+    [
+      'a getter status',
+      () => Object.defineProperty({}, 'status', { enumerable: true, get: () => 'committed' }),
+    ],
+    ['a wrong case', () => ({ status: 'COMMITTED' })],
+    ['null', () => null],
+  ] as const)(
+    'reads the adapter answer strictly: %s resolves nothing',
+    async (_name, answer) => {
+      const f = await fixture([plain('any-adapter', async () => answer() as never)]);
+      cleanup.push(f.stop);
+      await seed(f.journal, `strict-${_name.replace(/\W+/g, '-')}`, 'in_doubt');
+      await expect(
+        f.service.journalReconcileOperation(`strict-${_name.replace(/\W+/g, '-')}`, humanOperator)
+      ).resolves.toEqual({ reconciled: 0, unresolved: 1, truncated: false });
+    },
+    60_000
+  );
+
+  it('refuses an adapter whose reconcile is not a function at construction', async () => {
+    await expect(
+      fixture([{ ...plain('any-adapter'), reconcile: 'yes' } as unknown as ApplicationAdapter])
+    ).rejects.toThrow(/non-function reconcile/);
+  });
+
+  it('captures reconcile once: replacing it on the adapter object later changes nothing', async () => {
+    const original = vi.fn(async () => ({ status: 'committed' as const }));
+    const adapter = plain('any-adapter', original);
+    const f = await fixture([adapter]);
+    cleanup.push(f.stop);
+    (adapter as { reconcile?: unknown }).reconcile = async () => ({ status: 'rejected' });
+    await seed(f.journal, 'captured', 'in_doubt');
+    await f.service.journalReconcileOperation('captured', humanOperator);
+    expect(original).toHaveBeenCalledTimes(1);
+    expect(await records(f.journal, 'captured')).toEqual(['completed']);
+  }, 60_000);
 });

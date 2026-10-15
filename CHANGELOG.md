@@ -11,12 +11,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 - A new operation may carry `supersedes: {namespace, operationId}` naming the closed operation it
   continues, on execute and review requests and via `application execute --supersedes <id>
-  --supersedes-namespace <ns>`. It is provenance only: consent covers it, the operation identity
-  does not include it.
+  --supersedes-namespace <ns>`. It is provenance only: consent covers it (a reviewed write
+  executed with a different link is refused), the operation identity does not include it, and it
+  is not journaled or receipted — a non-reviewed write's link leaves no durable trace. The server
+  does not verify the named operation.
 - `POST /v1/journal/operations/{operationId}/reconcile` (operator key only) asks the bound
   adapter's new opt-in `reconcile(identity)` what happened to each in-doubt record: `committed` or
-  `rejected` commit the matching terminal; `unknown` changes nothing. An adapter without
-  `reconcile` is refused with 409 `CONTROL_REQUIRED` — settle instead. Nothing is ever replayed.
+  `rejected` commit the matching terminal; `unknown`, a malformed answer, or a call slower than
+  10 s changes nothing. An adapter without `reconcile` is refused with 409 `CONTROL_REQUIRED`
+  before anything is written — settle instead. Nothing is ever replayed.
 
 ### Tests — recovery gates for application writes (T5 J4)
 

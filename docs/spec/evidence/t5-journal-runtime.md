@@ -336,6 +336,18 @@ The operator-only recovery writes, on a real store, through the service and over
   the same operation without the link replays. The new operation is revalidated from scratch
   like any other: current binding, payload, expected version and consent. CLI:
   `application execute --supersedes <id> --supersedes-namespace <ns>` (both or neither).
+- **What the link is NOT (review round 1).** It is not journaled, not in the receipt, response or
+  trace. For a reviewed write it lives in the approval gate's (in-memory) consented action, so
+  consent binds the exact link — a different link, namespace or none is refused with
+  `CONTROL_REQUIRED` and nothing executes; that refusal is final for the operation ID (the link
+  is not identity, so a retry replays the failure). For a **non-reviewed** write the link is
+  validated and then leaves no durable trace. The server does not verify that the named
+  operation exists or was closed: the link is the caller's provenance claim, which is why
+  operator consent (reviewed path) is where it carries weight. Persisting it is future work
+  (it needs a journal record field, i.e. a new format version).
+- The link is normalized like the request itself: a plain object, exactly two own enumerable
+  string data properties, no coercion, then detached into a frozen copy (nine hostile shapes
+  refused before any effect; caller mutation after execute cannot reach the recorded request).
 - **Reconcile (D3).** `ApplicationAdapter.reconcile(identity)` is an opt-in method; the service's
   `journalReconcileOperation` (POST `/v1/journal/operations/{operationId}/reconcile`,
   operator-only, lifecycle, own rate bucket) asks the bound adapter about each in-doubt record.
@@ -344,7 +356,13 @@ The operator-only recovery writes, on a real store, through the service and over
   `failed` with no evidence refs; `unknown`, or an adapter that throws, changes nothing and counts
   as unresolved (the record can still be settled). An adapter without `reconcile` refuses with
   409 `CONTROL_REQUIRED` — every adapter is resolved before any write, so the refusal never leaves
-  a partial result. Undispatched siblings are left for close; the effect is never replayed.
+  a partial result (pinned with two records under two adapters). Undispatched siblings are left
+  for close; the effect is never replayed.
+- **Hardening (review round 1).** Each adapter's `reconcile` is captured once at service
+  construction (a non-function `reconcile` refuses construction; replacing it later changes
+  nothing). Each call is bounded (10 s by default); a call that does not settle counts as
+  unresolved. The answer is read strictly — a plain object whose only own key is a data property
+  `status` — so extra keys, an inherited or getter `status`, or a wrong case resolve nothing.
 - **Tests.** Service level on a real store: committed, rejected, unknown, throwing adapter,
   no-reconcile refusal, API-key refusal before the adapter is asked, mixed-state composition.
   HTTP: operator 200, API key 403, resolved operation re-reads as 404, no-reconcile 409.
