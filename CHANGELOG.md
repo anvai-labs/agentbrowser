@@ -7,6 +7,23 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — output schemas for the last six MCP tools (T0 M2, part 2)
+
+- `policy`, `cookies`, `cookie_handoff`, `snapshot`, `html` and `session` advertise output
+  schemas (`PolicyToolResultSchema`, `CookieListResultSchema`, `CookieHandoffToolResultSchema`,
+  `PageSnapshotSchema`, `PageHtmlResultSchema`, `SessionInspectionResultSchema`), so every MCP
+  tool now does. `policy` and `cookie_handoff` keep an object root with their two result shapes
+  as alternatives. Qualified end to end, including a real cookie handoff (approval relay, operator
+  decision over HTTP, completion) and a handed-off session's view; a test fails if any tool lacks
+  a schema.
+
+### Fixed — `html` honours its byte cap; `cookie_handoff` reports an unsupported server as an error
+
+- `html`'s `maxBytes` now bounds the returned UTF-8: a cut inside a multibyte character backs off
+  to the character boundary instead of emitting U+FFFD, which overshot the cap by up to 2 bytes.
+- `cookie_handoff` against a client without the handoff surface returned an error envelope as a
+  successful result; it now fails as an error.
+
 ### Added — MCP request cancellation (T0/T8)
 
 - The MCP server honours `notifications/cancelled`: the in-flight `tools/call` it names is

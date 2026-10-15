@@ -17,6 +17,8 @@ import {
   AutofillReportSchema,
   AutofillRequestSchema,
   agentModeAllows,
+  CookieHandoffToolResultSchema,
+  CookieListResultSchema,
   createPlanReportParser,
   DEFAULT_AGENT_MODE,
   DELIVERED_ACTION_TYPES,
@@ -28,11 +30,14 @@ import {
   NavigationStatusSchema,
   navigationFailureDetail,
   ObservationRequestSchema,
+  PageHtmlResultSchema,
   PageListResultSchema,
   PageResponseSchema,
+  PageSnapshotSchema,
   PageStateSchema,
   PlanActionsSchema,
   PlanReportSchema,
+  PolicyToolResultSchema,
   parseAutofillReport,
   parseAutofillRequest,
   parseExtractMaxBytes,
@@ -43,6 +48,7 @@ import {
   SessionClosedResultSchema,
   SessionCreatedResultSchema,
   SessionEventsPageResultSchema,
+  SessionInspectionResultSchema,
   UsageError,
   validateWireAction,
   WireActionEnvelopeSchema,
@@ -398,6 +404,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
           target: { type: 'string', description: 'An IP literal or hostname; never resolved.' },
         },
       },
+      outputSchema: PolicyToolResultSchema,
       handler: async (args) => {
         const action = args.action;
         if (typeof action !== 'string') {
@@ -443,6 +450,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         properties: { sessionId: { type: 'string' } },
         required: ['sessionId'],
       },
+      outputSchema: CookieListResultSchema,
       handler: async (args) => {
         const sessionId = requireSessionId(args);
         const cookies = await client.sessions.cookies(sessionId);
@@ -468,6 +476,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         },
         required: ['sessionId', 'domains'],
       },
+      outputSchema: CookieHandoffToolResultSchema,
       handler: async (args) => {
         const sessionId = requireSessionId(args);
         if (
@@ -486,7 +495,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
             ...(approvalToken !== undefined ? { approvalToken } : {}),
           });
           if (result === undefined)
-            return errorResult('cookie_handoff requires a server with the handoff surface');
+            throw new UsageError('cookie_handoff requires a server with the handoff surface');
           return result;
         } catch (error) {
           const details = (error as { details?: unknown }).details as
@@ -534,6 +543,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         },
         required: ['sessionId', 'pageId'],
       },
+      outputSchema: PageSnapshotSchema,
       handler: async (args) => {
         const [sessionId, pageId] = sessionAndPage(args);
         // Round-6/F6: stringly-typed 'true' from an LLM client must never
@@ -861,6 +871,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         },
         required: ['sessionId', 'pageId'],
       },
+      outputSchema: PageHtmlResultSchema,
       handler: async (args) => {
         const [sessionId, pageId] = sessionAndPage(args);
         const maxBytes =
@@ -881,9 +892,10 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         }
 
         const full = Buffer.from(base64, 'base64');
-        // A byte cap can tear a trailing multibyte character; the replacement
-        // glyph marks the seam rather than silently emitting broken text.
-        const bounded = full.subarray(0, maxBytes);
+        // maxBytes bounds the returned UTF-8. A cut inside a multibyte character
+        // backs off to the character boundary: decoding a torn tail would emit
+        // U+FFFD (3 bytes) and overshoot the cap. `truncated` marks the cut.
+        const bounded = full.subarray(0, utf8Boundary(full, maxBytes));
         const truncated = full.length > maxBytes;
         return {
           sessionId,
@@ -969,6 +981,7 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
         properties: { sessionId: { type: 'string', minLength: 1 } },
         required: ['sessionId'],
       },
+      outputSchema: SessionInspectionResultSchema,
       handler: async (args) => {
         const sessionId = requireSessionId(args);
         if (!client.sessions.get || !client.sessions.listPages)
@@ -1377,4 +1390,13 @@ export function advertisedOutputSchema(schema: Record<string, unknown>): Record<
     type: 'object',
     anyOf: [result, TOOL_ERROR_ENVELOPE],
   };
+}
+
+/** The largest index <= limit that does not split a UTF-8 sequence in `bytes`. */
+export function utf8Boundary(bytes: Uint8Array, limit: number): number {
+  if (limit >= bytes.length) return bytes.length;
+  let cut = limit;
+  // Step back over continuation bytes (10xxxxxx) to the lead byte of the torn character.
+  while (cut > 0 && ((bytes[cut] ?? 0) & 0xc0) === 0x80) cut -= 1;
+  return cut;
 }
