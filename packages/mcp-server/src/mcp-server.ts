@@ -9,6 +9,7 @@
  * for notifications). Negotiated protocol state belongs to each server instance.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { AgentCapability, AgentMode } from '@agentbrowser/protocol';
 import {
   ActOutcomeSchema,
@@ -104,6 +105,16 @@ export interface McpServer {
   /** Handle one JSON-RPC message. Returns null for notifications. */
   handle(line: string): Promise<string | null>;
 }
+
+/**
+ * MCP cancellation: each tools/call runs inside its own abort scope; the SDK reads the scope's
+ * signal at the start of every HTTP request it makes for that call. Cleanup that must outlive a
+ * cancel (freeing what the call created) runs outside it via `requestScope.exit`.
+ */
+const requestScope = new AsyncLocalStorage<AbortSignal>();
+
+/** Test-only introspection: the number of tracked in-flight tools/call requests. */
+export const INFLIGHT_COUNT: unique symbol = Symbol('agentbrowser.mcp.inflightCount');
 
 const LEGACY_PROTOCOL_VERSION = '2024-11-05';
 const STRUCTURED_PROTOCOL_VERSION = '2025-06-18';
@@ -339,8 +350,9 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
           return { ...session, pageId: page.pageId };
         } catch (error) {
           // Provisioning owns this new session; do not strand its resources (or
-          // the exclusive operator attachment) when the first page fails.
-          await client.sessions.close(session.sessionId).catch(() => {});
+          // the exclusive operator attachment) when the first page fails — including when the
+          // call was cancelled: the close runs outside the cancelled call's abort scope.
+          await requestScope.exit(() => client.sessions.close(session.sessionId)).catch(() => {});
           throw error;
         }
       },
@@ -1030,7 +1042,11 @@ export function buildTools(client: McpClient, boundSessionId?: string): ToolDefi
  * Build the MCP server with its tool catalog.
  */
 export function buildMcpServer(deps: McpDependencies): McpServer {
-  const client = deps.createClient({ baseUrl: deps.baseUrl ?? 'http://localhost:5709' });
+  const inflight = new Map<string, AbortController>();
+  const client = deps.createClient({
+    baseUrl: deps.baseUrl ?? 'http://localhost:5709',
+    requestSignal: () => requestScope.getStore(),
+  });
   const serverInfo = deps.serverInfo ?? { name: 'agentbrowser', version: '1.0.0' };
 
   const mode = deps.mode ?? DEFAULT_AGENT_MODE;
@@ -1086,7 +1102,8 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
   // Per connection; pre-initialization calls retain the historical text-only behavior.
   let protocolVersion: string | undefined;
 
-  return {
+  const server = {
+    [INFLIGHT_COUNT]: () => inflight.size,
     async handle(line: string): Promise<string | null> {
       let message: {
         id?: string | number | null;
@@ -1106,113 +1123,136 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
 
       // Notifications carry no id and get no response.
       if (message.id === undefined || message.id === null) {
+        if (message.method === 'notifications/cancelled') {
+          // Stop the in-flight call; a cancel for a finished or unknown request is a benign race
+          // (MCP 2025-06-18 "Cancellation") and changes nothing. initialize is never tracked.
+          const requestId = message.params?.requestId;
+          if (typeof requestId === 'string' || typeof requestId === 'number')
+            inflight.get(JSON.stringify(requestId))?.abort();
+        }
         return null;
       }
 
-      try {
-        switch (message.method) {
-          case 'initialize':
-            if (protocolVersion !== undefined)
-              return error(message.id, -32600, 'Connection is already initialized');
-            protocolVersion =
-              message.params?.protocolVersion === LEGACY_PROTOCOL_VERSION ||
-              message.params?.protocolVersion === undefined
-                ? LEGACY_PROTOCOL_VERSION
-                : STRUCTURED_PROTOCOL_VERSION;
-            return ok(message.id, {
-              protocolVersion,
-              capabilities: { tools: {} },
-              serverInfo,
-            });
-
-          case 'ping':
-            return ok(message.id, {});
-
-          case 'tools/list':
-            return ok(message.id, {
-              tools: tools.map(({ name, description, inputSchema, outputSchema, annotations }) => ({
-                name,
-                description,
-                inputSchema,
-                ...(protocolVersion === STRUCTURED_PROTOCOL_VERSION
-                  ? {
-                      ...(outputSchema
-                        ? { outputSchema: advertisedOutputSchema(outputSchema) }
-                        : {}),
-                      ...(annotations ? { annotations } : {}),
-                    }
-                  : {}),
-              })),
-            });
-
-          case 'tools/call': {
-            const name = String(message.params?.name ?? '');
-            const tool = toolByName.get(name);
-            if (!tool) {
-              return error(message.id, -32602, `Unknown tool: ${name}`);
-            }
-
-            const args = (message.params?.arguments ?? {}) as Record<string, unknown>;
-            try {
-              if (
-                deps.sessionId &&
-                args.sessionId !== undefined &&
-                args.sessionId !== deps.sessionId
-              )
-                throw new UsageError('This MCP connection is bound to another session');
-              if (
-                deps.sessionId &&
-                (OPERATION_ID_TOOLS as readonly string[]).includes(name) &&
-                args.operationId === undefined
-              )
-                throw new UsageError(
-                  'operationId is required for a delegated mutation; choose it before dispatch so a lost response can be reconciled'
-                );
-              const structured =
-                protocolVersion === STRUCTURED_PROTOCOL_VERSION && !!tool.outputSchema;
-              const result = await tool.handler(
-                deps.sessionId ? { ...args, sessionId: deps.sessionId } : args
-              );
-              const navigationFailed = name === 'navigate' && isFailedNavigationResult(result);
-              return ok(message.id, textResult(result, structured, navigationFailed));
-            } catch (err) {
-              const navigationFailure =
-                name === 'navigate' ? navigationFailureDetail(err) : undefined;
-              if (navigationFailure !== undefined)
-                return ok(message.id, navigationErrorResult(navigationFailure));
-              const code = (err as { code?: string }).code;
-              // Allowlisted structured details only: error details can carry
-              // private content (e.g. terminal close facts render just an
-              // allowlisted subset in the text path). operationId is bounded
-              // and required for reconciliation; everything else stays in
-              // the redacted message text.
-              const operationId = (err as { details?: { operationId?: unknown } }).details
-                ?.operationId;
-              return ok(
-                message.id,
-                errorResult(
-                  formatToolError(err, !!deps.sessionId),
-                  typeof code === 'string'
-                    ? {
-                        code,
-                        message: formatErrorForUser(err),
-                        ...(typeof operationId === 'string' ? { operationId } : {}),
-                      }
-                    : undefined,
-                  protocolVersion === STRUCTURED_PROTOCOL_VERSION
-                )
-              );
-            }
-          }
-
-          default:
-            return error(message.id, -32601, `Method not found: ${message.method ?? ''}`);
+      if (message.method === 'tools/call') {
+        const key = JSON.stringify(message.id);
+        const controller = new AbortController();
+        inflight.set(key, controller);
+        try {
+          const request = { ...message, id: message.id };
+          const response = await requestScope.run(controller.signal, () => respond(request));
+          // The receiver sends no response for a cancelled request.
+          return controller.signal.aborted ? null : response;
+        } finally {
+          if (inflight.get(key) === controller) inflight.delete(key);
         }
-      } catch (err) {
-        return error(message.id, -32603, err instanceof Error ? err.message : 'Internal error');
       }
+      return respond({ ...message, id: message.id });
     },
   };
+  return server;
+
+  async function respond(message: {
+    id: string | number;
+    method?: string;
+    params?: Record<string, unknown>;
+  }): Promise<string | null> {
+    try {
+      switch (message.method) {
+        case 'initialize':
+          if (protocolVersion !== undefined)
+            return error(message.id, -32600, 'Connection is already initialized');
+          protocolVersion =
+            message.params?.protocolVersion === LEGACY_PROTOCOL_VERSION ||
+            message.params?.protocolVersion === undefined
+              ? LEGACY_PROTOCOL_VERSION
+              : STRUCTURED_PROTOCOL_VERSION;
+          return ok(message.id, {
+            protocolVersion,
+            capabilities: { tools: {} },
+            serverInfo,
+          });
+
+        case 'ping':
+          return ok(message.id, {});
+
+        case 'tools/list':
+          return ok(message.id, {
+            tools: tools.map(({ name, description, inputSchema, outputSchema, annotations }) => ({
+              name,
+              description,
+              inputSchema,
+              ...(protocolVersion === STRUCTURED_PROTOCOL_VERSION
+                ? {
+                    ...(outputSchema ? { outputSchema: advertisedOutputSchema(outputSchema) } : {}),
+                    ...(annotations ? { annotations } : {}),
+                  }
+                : {}),
+            })),
+          });
+
+        case 'tools/call': {
+          const name = String(message.params?.name ?? '');
+          const tool = toolByName.get(name);
+          if (!tool) {
+            return error(message.id, -32602, `Unknown tool: ${name}`);
+          }
+
+          const args = (message.params?.arguments ?? {}) as Record<string, unknown>;
+          try {
+            if (deps.sessionId && args.sessionId !== undefined && args.sessionId !== deps.sessionId)
+              throw new UsageError('This MCP connection is bound to another session');
+            if (
+              deps.sessionId &&
+              (OPERATION_ID_TOOLS as readonly string[]).includes(name) &&
+              args.operationId === undefined
+            )
+              throw new UsageError(
+                'operationId is required for a delegated mutation; choose it before dispatch so a lost response can be reconciled'
+              );
+            const structured =
+              protocolVersion === STRUCTURED_PROTOCOL_VERSION && !!tool.outputSchema;
+            const result = await tool.handler(
+              deps.sessionId ? { ...args, sessionId: deps.sessionId } : args
+            );
+            const navigationFailed = name === 'navigate' && isFailedNavigationResult(result);
+            return ok(message.id, textResult(result, structured, navigationFailed));
+          } catch (err) {
+            const navigationFailure =
+              name === 'navigate' ? navigationFailureDetail(err) : undefined;
+            if (navigationFailure !== undefined)
+              return ok(message.id, navigationErrorResult(navigationFailure));
+            const code = (err as { code?: string }).code;
+            // Allowlisted structured details only: error details can carry
+            // private content (e.g. terminal close facts render just an
+            // allowlisted subset in the text path). operationId is bounded
+            // and required for reconciliation; everything else stays in
+            // the redacted message text.
+            const operationId = (err as { details?: { operationId?: unknown } }).details
+              ?.operationId;
+            return ok(
+              message.id,
+              errorResult(
+                formatToolError(err, !!deps.sessionId),
+                typeof code === 'string'
+                  ? {
+                      code,
+                      message: formatErrorForUser(err),
+                      ...(typeof operationId === 'string' ? { operationId } : {}),
+                    }
+                  : undefined,
+                protocolVersion === STRUCTURED_PROTOCOL_VERSION
+              )
+            );
+          }
+        }
+
+        default:
+          return error(message.id, -32601, `Method not found: ${message.method ?? ''}`);
+      }
+    } catch (err) {
+      return error(message.id, -32603, err instanceof Error ? err.message : 'Internal error');
+    }
+  }
 }
 
 function requireHttpUrl(value: unknown): string {

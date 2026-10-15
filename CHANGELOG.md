@@ -19,6 +19,29 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   service's return value, which REST does not send), and "nothing bound" stays `null` instead of
   becoming `{writeExecution}`. `ApplicationDiscoverySchema` and OpenAPI document the field.
 
+### Added — declared adapter output (T4)
+
+- `defineApplicationOperation` accepts an optional `parseOutput(value)`. A value that does not
+  match is never reported as success, and neither the adapter output nor the parser's message
+  is echoed; a matching value is replaced by the parsed one.
+  - A mismatched **read** is refused like any invalid read result (`400 INVALID_REQUEST`,
+    `Invalid application output`).
+  - A mismatched **write** has already run: it is an internal adapter fault (`500 INTERNAL`), its
+    operation stays dispatched with `outcome_unknown`, and the same operation ID never executes
+    again.
+  - Rejected results skip the parser; operations without `parseOutput` are unchanged.
+
+### Added — MCP request cancellation (T0/T8)
+
+- The MCP server honours `notifications/cancelled`: the in-flight `tools/call` it names is
+  aborted down to its HTTP request, and no response is sent for it (MCP 2025-06-18). A cancel for
+  a finished or unknown request is ignored and re-runs nothing; `initialize` is never cancelled;
+  concurrent calls are independent. A cancelled `create` still frees the session it created: its
+  cleanup runs outside the cancelled call's scope.
+- SDK: `ClientOptions.requestSignal` (a hook read per request) lets a caller cancel. A cancelled
+  request fails with `CANCELLED` — not retryable, `operationId` attached, "outcome may be
+  unknown" — so a cancelled write is reconciled, never treated as success or replayed blindly.
+
 ### Added — output schemas for six more MCP tools (T0 M2, part 1)
 
 - `create`, `page_create`, `pages`, `close`, `pdf` and `events_replay` advertise an
