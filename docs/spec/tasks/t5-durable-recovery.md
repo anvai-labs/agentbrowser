@@ -50,12 +50,18 @@ connecting a runtime store. [C1b authority composition](../design/t5-journal-aut
 tracks intent/marker settlement through the existing ticket and dispatch helpers.
 [C2 application-owned pins and C3 terminal/replay](../design/t5-journal-application-terminal.md)
 merged as #299. [C4a shared control views](../design/t5-journal-control-views.md)
-now bound status/lifecycle disclosure by ACK. C4b runtime/transport selection PARTIAL (protocol field,
-capability check, explicit-ephemeral acceptance and REST discovery fixed 2026-10-15; the durable
-requirement is now part of the operation identity (`application-operation:v2-durable`) and the
-review intent, with the CLI's `--execution-requirement`; durable execution and reviews stay refused
-until J-d wires a durable journal, which must also label the journal intent's fingerprint domain);
-enabling the durable store at runtime remains gated on F3 deployment;
+now bound status/lifecycle disclosure by ACK. C4b runtime/transport selection DELIVERED
+2026-10-15. The protocol field, capability check, explicit-ephemeral acceptance and REST discovery
+were fixed (J-a). The durable requirement is part of the operation identity
+(`application-operation:v2-durable`) and of the review intent, with the CLI's
+`--execution-requirement` (J-b). J-d wires the qualified SQLite store into the service behind the
+trusted `AGENTBROWSER_JOURNAL_*` configuration ([evidence](../evidence/t5-journal-runtime.md)):
+- Only durable writes are journaled.
+- The journal intent labels its fingerprint domain.
+- Durable is advertised and accepted only while the journal is open and accepting.
+- The application authority refuses durable on its own when it cannot be journaled.
+
+F3 deployment, enabling the store on a given host, is an operator action.
 [J2a SQLite audit](../design/t5-journal-sqlite-audit.md) selects a built-in candidate
 without enabling it; [J2b qualification](../design/t5-journal-sqlite-qualification.md)
 loads the concrete ownership/anchor/crash/runtime gates.
