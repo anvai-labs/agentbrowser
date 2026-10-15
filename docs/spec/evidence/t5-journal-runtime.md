@@ -116,35 +116,40 @@ A full namespace or store refuses durable work, or startup; it never evicts.
 - Reading records back across a restart: historical lookup is J3, and recovery semantics and
   public durability are J4. Both are proposed and await the J-design document.
 - Automatic namespace rotation (today: the operator configures a new name and horizon).
-- Process-loss rows with the store wired through the service (J-e).
 
 ## J-e: process loss through the service (2026-10-15)
 
 `packages/api/src/journal-process-loss.test.ts` runs the compiled service in a child process,
 with the real SQLite journal and an application whose effect appends to an fsynced counter file.
-The child is **SIGKILLed** at each boundary of one durable write. The oracles are the store's
-`journal_record` rows (read-only) and the counter.
+The child holds at each boundary of one durable write, **reads the store itself while still
+alive**, reports the rows, and is then **SIGKILLed**. The parent asserts the reported rows, the
+rows read again after the kill (read-only), and the counter.
 
-| Killed | Stored record | Effects | Classification |
-| --- | --- | ---: | --- |
-| before the intent | none | 0 | `scoped_absent` |
-| after the dispatch marker, before the effect | rev 2, dispatched, no terminal | 0 | in doubt |
-| after the effect, before the terminal | rev 2, dispatched, no terminal | **1** | in doubt |
-| after the terminal, before the response | rev 3, `completed` | 1 | completed |
-| not killed | rev 3, `completed` | 1 | completed |
+| Killed | Stored record (an operator's later reading) | Effects |
+| --- | --- | ---: |
+| before the intent | none (`scoped_absent`) | 0 |
+| after the intent, before the dispatch marker (held in `prepare`) | rev 1, not dispatched (undispatched) | 0 |
+| after the dispatch marker, before the effect | rev 2, dispatched, no terminal (in doubt) | 0 |
+| after the effect, before the terminal | rev 2, dispatched, no terminal (in doubt) | **1** |
+| after the terminal, before the response | rev 3, `completed` | 1 |
+| not killed | rev 3, `completed` | 1 |
 
-- **After every kill,** a new process (no initialize) reopens the **same** namespace. The dead
-  owner's fence is cleared by the store's exclusive lock, so this works.
-- **Reopening replays nothing:** rows and the effect count are unchanged. The effect never runs
-  twice.
-- **"Before the intent" and "after the marker" both leave no effect.** They are distinguished by
-  the store: absent versus in doubt.
-- **Keys:** replacing the key material under the same key id (key loss), or keeping the material
-  under a new key id for the same namespace (rotation in place), refuses startup as a
-  `configuration` mismatch. No key material appears in the error, and the namespace and its rows
-  are untouched. Rotation is done by configuring a new namespace.
-- **Stability:** three consecutive runs pass, 7/7 each.
+- **Ordering is proven, not inferred.** The rows are read in-process at the hold point. The
+  ordering mutation "invoke the effect before the marker commits" fails both marker rows on every
+  run: 4 of 4. Reading only after the kill, the orphaned storage child sometimes flushed the
+  marker in time.
+- **Reopen.** After every kill, a new process (no initialize) reacquires the same namespace: the
+  new storage child takes the store's exclusive lock and clears the dead owner's fence on its
+  first commit. It builds the **full service with its adapters**, and the rows and effect count
+  stay unchanged. That is a regression guard against any future recovery that would run at
+  startup. Nothing executes today.
+- **Keys.** Replacing the key material under the same key id (key loss), or keeping the material
+  under a new key id for the same namespace (rotation in place), refuses startup with precisely
+  `definitely_not_opened: configuration`, the key-check descriptor mismatch. No key material
+  appears, and the rows are untouched. Rotation is done by configuring a new namespace.
+- **Stability:** 8/8, three runs in a row.
+- **Classification:** the second column is how J3 would classify each state. J3's
+  classification surface is not built yet; the test asserts the raw record state.
 
 Still not covered here (J4): a cursor from before a restart failing as session-not-found, and the
 operator classification surface (J3).
-

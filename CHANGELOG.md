@@ -10,11 +10,13 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 ### Tests — process loss through the service with the durable journal (T5 J-e)
 
 - The compiled service, with the real SQLite journal, is SIGKILLed before the intent, after the
-  marker, after the effect and after the terminal of a durable write.
-- Each case leaves the expected record (none / in doubt / in doubt / completed). The independent
-  effect counter never exceeds 1.
-- The next process reopens the same namespace and replays nothing.
-- Key loss and in-place key rotation are refused at startup without exposing key material.
+  intent, after the marker, after the effect and after the terminal of a durable write.
+- Each case leaves the expected record (none / undispatched / in doubt / in doubt / completed),
+  proven by a store read inside the process before the kill. The independent effect counter never
+  exceeds 1.
+- The next process reopens the same namespace, with the full service, and replays nothing.
+- Key loss and in-place key rotation are refused at startup as a configuration mismatch, without
+  exposing key material.
 
 ### Added — durable application writes behind an opt-in journal (T5 C4b, J-d)
 

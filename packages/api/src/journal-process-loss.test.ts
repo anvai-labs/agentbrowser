@@ -1,9 +1,10 @@
 /**
- * T5 J-e: process loss at every boundary of a durable application write, through the real
- * service with the real SQLite journal. A child process is SIGKILLed at the boundary; the store
- * (read-only) and an independent effect counter are the oracles; a new process then reopens the
- * same namespace. Nothing is replayed: there is no recovery path that re-executes (J3/J4 are
- * proposed), and the classification is what an operator would read.
+ * T5 J-e: process loss at each boundary of a durable application write, through the real
+ * service with the real SQLite journal. The child reads the store at the hold point while alive
+ * (so ordering is proven, not inferred from what flushed), then is SIGKILLed; the store
+ * (read-only) and an independent effect counter are the oracles; a new process then starts the
+ * full service on the same namespace. Nothing is replayed: no recovery path re-executes (J3/J4
+ * are proposed). The test asserts raw record state, not J3's classification.
  */
 import { fork } from 'node:child_process';
 import { once } from 'node:events';
@@ -51,25 +52,45 @@ function layout() {
   };
 }
 
-/** Runs the child to `phase`, then SIGKILLs it (or lets it finish for 'done'/'reopened'). */
+/**
+ * Runs the child to its hold point, then SIGKILLs it (or lets it finish for 'complete'/'reopen').
+ * A synchronous hold (prepare) signals through a file, because a blocked thread cannot flush IPC.
+ */
 async function runChild(
   args: { env: Record<string, string>; mode: string; counterFile: string; operationId: string },
   kill: boolean
 ) {
-  const child = fork(CHILD, [JSON.stringify(args)], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+  const signalFile = `${args.counterFile}.signal-${args.mode}`;
+  const child = fork(CHILD, [JSON.stringify({ ...args, signalFile })], {
+    stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+  });
   let stderr = '';
   child.stderr?.on('data', (chunk) => {
     stderr += chunk;
   });
+  const exited = once(child, 'exit');
+  const viaFile = (async () => {
+    for (;;) {
+      if (existsSync(signalFile)) {
+        try {
+          return [JSON.parse(readFileSync(signalFile, 'utf8'))];
+        } catch {
+          /* partially written; poll again */
+        }
+      }
+      await new Promise((done) => setTimeout(done, 20));
+    }
+  })();
   const [message] = (await Promise.race([
     once(child, 'message'),
-    once(child, 'exit').then(() => {
+    viaFile,
+    exited.then(() => {
       throw new Error(`child exited early: ${stderr.slice(-800)}`);
     }),
-  ])) as [{ phase: string; health?: string; namespace?: string }];
+  ])) as [{ phase: string; rows?: Row[]; health?: string; namespace?: string }];
   if (kill) child.kill('SIGKILL');
-  const [code, signal] = (await once(child, 'exit')) as [number | null, string | null];
-  return { message, code, signal };
+  const [code, signal] = (await exited) as [number | null, string | null];
+  return { message, code, signal, stderr };
 }
 
 type Row = { revision: number; dispatched: boolean; terminal?: { status: string } };
@@ -103,11 +124,16 @@ describe('process loss through the service (real store, SIGKILL)', () => {
   it.each([
     // [kill point, expected rows, effects]
     ['before-intent', [], 0],
+    ['before-marker', [{ revision: 1, dispatched: false, terminal: undefined }], 0],
     ['before-effect', [{ revision: 2, dispatched: true, terminal: undefined }], 0],
     ['after-effect', [{ revision: 2, dispatched: true, terminal: undefined }], 1],
-    ['after-terminal', [{ revision: 3, dispatched: true, terminal: { status: 'completed' } }], 1],
+    [
+      'after-terminal',
+      [{ revision: 3, dispatched: true, terminal: { status: 'completed', evidenceRefIds: [] } }],
+      1,
+    ],
   ] as const)(
-    'killed %s: the record classifies the loss, the effect ran at most once, and the next process reopens the namespace',
+    'killed %s: the store records the expected state, the effect ran at most once, and the next process reopens the namespace',
     async (mode, expected, expectedEffects) => {
       const l = layout();
       const killed = await runChild(
@@ -115,8 +141,11 @@ describe('process loss through the service (real store, SIGKILL)', () => {
         true
       );
       expect(killed.message.phase).toBe(mode);
+      // Read by the child itself at the hold point, before the kill: the ordering is proven
+      // while the process is alive, not inferred from what happened to be flushed afterwards.
+      if (mode !== 'before-intent') expect(killed.message.rows).toEqual(expected);
       expect(killed.signal).toBe('SIGKILL');
-      expect(rows(l.store)).toMatchObject(expected);
+      expect(rows(l.store)).toEqual(expected);
       expect(effects(l.counter)).toBe(expectedEffects);
 
       // The next process (no initialize) reacquires the dead owner's namespace.
@@ -131,8 +160,9 @@ describe('process loss through the service (real store, SIGKILL)', () => {
         namespace: 'agentbrowser',
       });
       expect(reopened.code).toBe(0);
-      // Reopening replays nothing: the record and the effect count are unchanged.
-      expect(rows(l.store)).toMatchObject(expected);
+      // Starting the full service (adapters registered) on the reopened namespace replays
+      // nothing: the record and the effect count are unchanged.
+      expect(rows(l.store)).toEqual(expected);
       expect(effects(l.counter)).toBe(expectedEffects);
     },
     120_000
