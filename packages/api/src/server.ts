@@ -553,8 +553,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       : sessionPolicyFactoryFor(policyLimiter, apiKeys === undefined, process.env);
   // Validated before the service exists: an invalid ceiling aborts startup.
   const artifactStore = artifactStoreFromEnvironment(process.env);
-  // T5 J-d: a configured durable journal opens before the service exists; any refusal aborts
-  // startup (no ephemeral fallback for a configured journal). Unconfigured: nothing changes.
+  // T5 J-d: a configured durable journal opens before the service exists, and any refusal to
+  // open it aborts startup. Durable work is never served ephemerally: with no open journal it is
+  // refused. Unconfigured: nothing changes.
   const journalConfig = await journalConfigFromEnvironment(process.env);
   // A namespace past its accept horizon cannot take new durable work. Refusing startup would take
   // the whole (non-durable) service down with it, so start without the journal instead: durable
