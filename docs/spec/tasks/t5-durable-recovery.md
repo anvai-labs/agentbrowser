@@ -60,7 +60,8 @@ loads the concrete ownership/anchor/crash/runtime gates.
 [J2b.1 owner/anchor evidence](../evidence/t5-journal-sqlite-owner.md) records the first
 storage primitive; the raw adapter, bounded child manager and all qualification gates
 are shipped; remaining: F3 authorization, C4b selection, and optional
-constrained-mount depth. J3/J4 remain proposed.
+constrained-mount depth. J3/J4 remain proposed. A macOS leg (`journal-darwin.yml`, 2026-10-15)
+runs the same qualification and packaging gates nightly on main and on journal-path pull requests.
 Browser durability waits for its existing target/policy/approval owners to support
 post-storage-wait revalidation. Do not advertise recovery from J0 or this design.
 
