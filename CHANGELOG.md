@@ -7,6 +7,12 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Docs — browser-operation durability, the open choices (T5 B-dur, proposed)
+
+- A design addendum states the four implementation choices D6 left open — when a browser
+  operation is journaled, what one record covers, what is revalidated after the storage wait,
+  and capacity — with a recommendation each, for owner sign-off before any code.
+
 ### Added — continue and reconcile for journaled operations (T5 J3c part 2)
 
 - A new operation may carry `supersedes: {namespace, operationId}` naming the closed operation it

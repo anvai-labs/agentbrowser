@@ -295,7 +295,9 @@ order: D6 **after** J3, reusing J3's read path.
    classification is the table below; the cursor-after-restart behaviour is pinned
    (`journal-recovery-gates.test.ts`); `recoveryQualified` has shipped with J3b's status
    endpoint. Browser-operation classification remains B-dur.
-7. **B-dur:** revalidation hooks first, then journaled browser operations (D6).
+7. **B-dur:** revalidation hooks first, then journaled browser operations (D6). The open
+   implementation choices (trigger, one record per operation, what is revalidated, capacity) are
+   in [the B-dur addendum](t5-browser-durability.md), proposed for owner sign-off.
 
 ## Out of scope
 
