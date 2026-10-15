@@ -72,11 +72,16 @@ keeps its ADR-024 meaning for compatibility.
 ### 3. New sessions get the new policy; live sessions only get stricter
 
 - Sessions created after the swap pin the new document.
-- **Creation and reload are serialized.** Session creation takes one snapshot of the current
-  document, makes every creation-time decision against that snapshot, and registers the session
-  in the live set under the same lock that a reload holds while it swaps the document and extends
-  live chains. A session created concurrently with a tightening reload is therefore either pinned
-  at the new document or carries it in its chain; it can never run on the old document alone.
+- **Creation catches up with any reload it raced.** Session creation snapshots the current
+  document and makes every creation-time decision against it; the slow part (launching the
+  browser) runs without any lock. Registration in the live set then happens under the short lock a
+  reload holds while it swaps the document and extends live chains. If the current document
+  identity differs from the creation snapshot at registration, the session appends every document
+  loaded since the snapshot to its chain **and re-checks its creation-time grants against them**;
+  if any of them denies a grant the session holds, creation fails (the browser is closed) and the
+  caller may retry. A session can therefore never run on the old document alone, and never holds
+  a creation-time grant that a document in its chain denies. Reloads never wait on browser
+  launches, and creations wait on a reload only for its swap.
 - Each live session carries a **chain**: its pinned document plus every document loaded since it
   was created (deduplicated by document identity). A per-call decision is allowed only if
   **every** document in the chain allows it. AND is order- and repeat-insensitive, so

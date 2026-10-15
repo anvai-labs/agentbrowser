@@ -497,9 +497,11 @@ accepted.
   document loaded since, deduplicated). A composite `Authorizer` allows only if every document in
   the chain allows; approval modes follow from the same two questions. Never collapse the chain
   to "pinned AND current".
-- **Ordering:** session creation snapshots the current document, decides creation-time grants
-  against it, and registers in the live set under the lock the reload holds while swapping and
-  extending chains.
+- **Ordering:** session creation snapshots the current document and decides creation-time grants
+  against it without a lock; registration takes the short lock a reload holds while swapping and
+  extending chains, and, if documents were loaded since the snapshot, appends them to the chain
+  and re-checks the creation-time grants against them, failing creation (browser closed,
+  retryable) if any would deny a held grant.
 - **Limits:** per-session effective limits = minimum over the chain of each document's
   default-resolved value; `maxResponseBytes` becomes a live per-session value and
   `extractMaxBytes` per-session.
@@ -521,7 +523,8 @@ accepted.
   roles aborts startup; an API or operator key cannot reload; the creation-time-grant count is
   reported; without the admin key file the endpoint does not exist; the admin key file without a
   policy file aborts startup; a session created concurrently with a tightening reload is either
-  pinned at the new document or carries it in its chain; a document that omits a limit after one
+  pinned at the new document or carries it in its chain, and holds no creation-time grant that the
+  new document denies (creation fails instead); a slow browser launch does not delay a reload; a document that omits a limit after one
   that set it higher lowers the live limit to the default.
 
 ## Non-goals
