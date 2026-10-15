@@ -20,6 +20,30 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   longer waits out the whole ~5 s snapshot envelope.
 - Recorded in `docs/spec/evidence/observation-120-baseline.md`.
 
+### Docs — proposed: policy reload without restart (ADR-026)
+
+- ADR-026 (Proposed) and TD-BROWSER-15 phase 8 (Proposed) design an opt-in reload of the Cedar
+  policy file through one endpoint guarded by a server-scope admin key held in a file (no signal:
+  `SIGHUP` stays shutdown). The new document is validated before the swap and never fails open.
+  New sessions get the new policy; live sessions are decided by their pinned policy AND every
+  policy loaded since, with limits taking the minimum, so per-call tightenings reach running
+  agents and loosenings never do. Creation-time grants are reported, not revoked. Nothing is
+  implemented.
+
+### Added — a committed provider-CLI qualification driver (T8 Q1)
+
+- `scripts/t8-harness-qualification.mjs` re-qualifies the MCP bridge through the installed Codex
+  and Claude Code CLIs against a scratch service and a loopback fixture.
+- Each provider is locked to the bridge: Codex's shell, exec and browser features are disabled,
+  Claude runs `--restricted --tools ""`, and any other tool fails the run. Credentials never
+  appear in a provider's argv.
+- Each verdict comes from an independent oracle: the fixture's request log or the service's
+  operation records, plus the event stream checked for the password value.
+- Both providers pass every exercisable dimension (2026-10-15). Provider-path cancellation is
+  recorded as not exercisable.
+- Recorded observation: screenshot bytes reach the model inline, as base64 text.
+- The T1 catalog footprint was re-measured after the output schemas.
+
 ### Added — the durable requirement is part of the operation identity (T5 C4b, part 2)
 
 - A `durable` application write now has its own operation identity: its fingerprint uses the
