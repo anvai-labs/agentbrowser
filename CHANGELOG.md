@@ -7,6 +7,19 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Changed — least-privilege workflows and SHA-pinned actions (T9 S1c)
+
+- Every workflow now defaults to `contents: read`; `ci.yml` previously inherited the repository
+  default. In `release.yml` only the `release` job (GitHub Release and asset upload) can write
+  contents; `npm-publish` keeps only its OIDC `id-token`.
+- All 67 action references in the four workflows are pinned to the full commit SHA of their
+  release, with a `# vX.Y.Z` comment for Dependabot. `scripts/release-workflow.test.mjs` checks
+  every workflow file: it refuses an unpinned reference, any top-level permissions other than
+  `contents: read`, and any job-level grant beyond an exact allowlist (`release`, `npm-publish`
+  and the docs `deploy` job).
+- The T9 packet records why skipped or canceled jobs cannot turn the required checks or the
+  release graph green.
+
 ### Changed — plans are capped at 100 steps (T0)
 
 - A plan now accepts at most **`MAX_PLAN_STEPS` = 100** steps (new protocol export, separate from the
