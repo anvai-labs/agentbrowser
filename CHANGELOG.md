@@ -55,7 +55,8 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   session — engine capability, lease validation, the ADR §3 transfer bounds (≤1000 cookies,
   ≤1 MiB — previously unenforced), the init script and the secret registration all now run BEFORE
   the mark. Operator input is canonicalized (case, whitespace, trailing dot). The RTC-removal
-  script moved to a shared core constant so the injector and the real-browser behavioral tests
+  script moved to a shared ENGINE-PACKAGE constant (@agentbrowser/engine — core is not a dependency of
+  engine-playwright) so the injector and the real-browser behavioral tests
   assert the same text. ADR §4's "baseline grants it to no one" corrected to the shipped default
   (capability grant covers it; the approval step is the unconditional part). floor.handoff.websocket
   is a real guard on a recorded fact. A racing mid-write export test, a foreign-policy-version

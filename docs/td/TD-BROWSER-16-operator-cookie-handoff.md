@@ -319,10 +319,10 @@ cookies — the per-domain evidence and freshness guard now use the fixed relati
 pre-mark-abortable check (engine capability, lease validation, the previously-unenforced ADR §3
 transfer bounds, init script, secret registration) moved BEFORE the mark so no refusal can brick
 a marked-but-empty session; operator domain input is canonicalized (case/whitespace/trailing
-dot); and the RTC-removal script became a shared core constant (`HANDOFF_RTC_REMOVAL_INIT_SCRIPT`)
+dot); and the RTC-removal script became a shared engine-package constant (`HANDOFF_RTC_REMOVAL_INIT_SCRIPT` in @agentbrowser/engine)
 so the real-browser behavioral tests exercise the exact shipped text. ADR §4's baseline sentence
-now states the shipped Cedar default; floor.handoff.websocket guards a recorded construction
-fact.)*
+now states the shipped Cedar default; floor.handoff.websocket guards a compile-time
+canary on the construction default (a field whoever adds a webSocketPolicy option must set honestly).)*
  `POST /v1/sessions/{sessionId}/cookies/handoff` under a
 per-session promise-chain lock, in the spec's order. Floors each carry their own `floor.handoff.*`
 rule id (login browser enabled+open via the new `LoginBrowserService.isOpen`; isolated
