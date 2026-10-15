@@ -251,3 +251,29 @@ store's committed rows (read-only) and per-instance effect counters.
   service generation, so there is no cross-process deduplication. The test pins that the two
   records carry two distinct service generations — two operations, not a replay. Idempotency
   across restarts is the application adapter's own responsibility; the journal never claims it.
+
+## J4: recovery gates for application writes (2026-10-15)
+
+- **Non-business write classification (the design's table, now the delivered rule):**
+
+| Write | Classification | Durable? |
+| --- | --- | --- |
+| Session provisioning, seeded cookies | service-owned setup; a restart ends the session | no |
+| Lifecycle teardown, spontaneous popup cleanup | service-owned cleanup | no |
+| Artifact publication | artifact-store durability, separate from business commitment | no |
+| `takeDownload` consumption | ephemeral, per session | no |
+| Application writes requesting `durable` | qualified durable work (J-d) | **yes** |
+
+- **Events and cursors are not recovered (D4).** `journal-recovery-gates.test.ts` restarts a
+  service on the same real store and then asks for the departed session's events with a
+  pre-restart cursor: the session no longer exists, so the request fails as session-not-found —
+  never a silent reset to zero, never a journal replay (the store's rows are unchanged by the
+  attempt). The event ledger stays per process and per session; there is no second event bus.
+- **`recoveryQualified` (D5)** shipped with J3b's `GET /v1/journal`: configured-and-open on the
+  qualified matrix (Node 24 on Linux or macOS), advisory only, no exactly-once promise. The
+  macOS journal leg qualifies the runtime nightly and on journal-path pull requests; Windows
+  remains unqualified.
+- **R08/R10 status:** R08's application-write portion is delivered (records survive, are
+  classifiable, closeable and settleable; the browser/autofill portion is explicitly B-dur and
+  NOT claimed). R10's durable-application-receipt portion is delivered by J-d/J3a/J3b/J3c-part-1.
+
