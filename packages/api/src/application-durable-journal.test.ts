@@ -39,6 +39,7 @@ function journalEnvironment() {
       AGENTBROWSER_JOURNAL_ANCHOR_DIR: anchorDirectory,
       AGENTBROWSER_JOURNAL_KEY_FILE: keyFile,
       AGENTBROWSER_JOURNAL_RESTORE_GENERATION: 'generation-1',
+      AGENTBROWSER_JOURNAL_ACCEPT_UNTIL: '2099-01-01T00:00:00Z',
       AGENTBROWSER_JOURNAL_INITIALIZE: '1',
     },
   };
@@ -55,8 +56,8 @@ function storedRecords(directory: string): number {
   }
 }
 
-async function serviceWithJournal() {
-  const { directory, env } = journalEnvironment();
+async function serviceWithJournal(prepared = journalEnvironment()) {
+  const { directory, env } = prepared;
   const config = await journalConfigFromEnvironment(env);
   if (!config) throw new Error('expected configuration');
   const opened: ServiceJournal = await openServiceJournal(config);
@@ -88,7 +89,7 @@ async function serviceWithJournal() {
     controlMode: 'delegated',
   });
   service.applicationBind(sessionId, operator, { adapter: 'owned-counter', resource: 'account' });
-  return { service, sessionId, opened, directory, effects: () => effects };
+  return { service, sessionId, opened, directory, env, effects: () => effects };
 }
 
 const write = (operationId: string, expectedVersion: number, requirement?: string) => ({
@@ -118,6 +119,30 @@ describe('service with an open durable journal', () => {
     ).resolves.toMatchObject({ replay: true });
     expect(s.effects()).toBe(1);
     expect(storedRecords(s.directory)).toBe(1);
+  }, 60_000);
+
+  it('keeps journaled records across a restart: the next start reopens the same namespace', async () => {
+    const prepared = journalEnvironment();
+    const s = await serviceWithJournal(prepared);
+    await s.service.applicationExecute(s.sessionId, operator, write('kept', 0, 'durable'));
+    await s.service.shutdown();
+    await s.opened.close();
+    expect(storedRecords(s.directory)).toBe(1);
+    const { AGENTBROWSER_JOURNAL_INITIALIZE: _first, ...later } = prepared.env;
+    const restarted = await serviceWithJournal({
+      directory: prepared.directory,
+      env: later as never,
+    });
+    expect(restarted.opened.journal.namespace.namespaceId).toBe(
+      s.opened.journal.namespace.namespaceId
+    );
+    expect(storedRecords(restarted.directory)).toBe(1);
+    await restarted.service.applicationExecute(
+      restarted.sessionId,
+      operator,
+      write('after-restart', 0, 'durable')
+    );
+    expect(storedRecords(restarted.directory)).toBe(2);
   }, 60_000);
 
   it('keeps ephemeral writes out of the journal', async () => {
@@ -156,6 +181,9 @@ describe('buildServer journal configuration', () => {
     'AGENTBROWSER_JOURNAL_ANCHOR_DIR',
     'AGENTBROWSER_JOURNAL_KEY_FILE',
     'AGENTBROWSER_JOURNAL_RESTORE_GENERATION',
+    'AGENTBROWSER_JOURNAL_ACCEPT_UNTIL',
+    'AGENTBROWSER_JOURNAL_NAMESPACE',
+    'AGENTBROWSER_JOURNAL_MAX_RECORDS',
     'AGENTBROWSER_JOURNAL_INITIALIZE',
   ] as const;
   const setEnvironment = (values: Partial<Record<(typeof names)[number], string>>) => {

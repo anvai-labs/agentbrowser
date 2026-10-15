@@ -120,7 +120,7 @@ See the [C3c design](spec/design/t6-public-application-review.md) and
 
 ### Durable application writes (T5 C4b)
 
-With the five `AGENTBROWSER_JOURNAL_*` variables configured (see [Configuration](#configuration)),
+With the `AGENTBROWSER_JOURNAL_*` variables configured (see [Configuration](#configuration)),
 an application write that requests `executionRequirement: "durable"` is journaled in the qualified
 SQLite store: the intent is committed before the effect, then a dispatch marker and a terminal
 record, under a keyed fingerprint that never collides with an ephemeral one. Ephemeral writes
@@ -132,10 +132,12 @@ record, under a keyed fingerprint that never collides with an ephemeral one. Eph
 - **Startup is all or nothing.** A partial configuration, an unreadable or group-readable key
   file, an uninitialized store without `AGENTBROWSER_JOURNAL_INITIALIZE=1`, or a layout the store
   refuses aborts startup.
-- **One namespace per process start.** Each start journals into a fresh namespace that accepts new
-  durable writes for 7 days (then durable stops being advertised until the next start) and keeps
-  its records 30 days more. A namespace holds at most 10,000 durable writes; a store holds at most
-  1,024 namespaces, a constant fixed when the store is created. Full means refused, never evicted.
+- **One namespace, stable across restarts.** Every start reopens the configured namespace. It
+  accepts new durable writes until `AGENTBROWSER_JOURNAL_ACCEPT_UNTIL`, after which durable stops
+  being advertised, and it keeps its records 30 days beyond that. It holds at most
+  `AGENTBROWSER_JOURNAL_MAX_RECORDS` durable writes, and a store holds at most 64 namespaces.
+  Full means refused, never evicted. Its key, horizon, restore generation and capacity are
+  immutable: rotate by configuring a new namespace name.
 - **What this does not do yet.** Records survive a restart, but nothing reads them back across
   one: historical lookup (J3) and recovery semantics (J4) are separate, proposed slices. A durable
   write's guarantee today is that its intent is on disk before its effect and its outcome is
@@ -312,10 +314,13 @@ and `ClientOptions.apiKey`; the SDK does not read these environment variables.
 | `AGENTBROWSER_CHROMIUM_ARGS` | service (Playwright engine) | **Security-relevant** (ADR-024 §4: trusted operator input that changes what the browser may do). Extra Chromium launch flags, space-separated, appended to **headed chromium launches only** — an engine-level escape hatch for Chromium policies the page stack cannot override (e.g. Local Network Access enforcement against a LAN-hosted console). The headless pool keeps stock launch defaults by design, firefox/webkit launches never receive the flags, and CDP attachment (operator attach or `cdpEndpoint`) cannot apply launch flags at all — the service logs a warning at engine construction if the variable is set in those cases. |
 | `AGENTBROWSER_LOGIN_BROWSER` | service entrypoint | **Trusted operator configuration** (ADR-025): `1` enables the operator login browser and adds the WebRTC IP-handling flag to the shared headless pool's launches. Requires `AGENTBROWSER_OPERATOR_KEYS_FILE` (startup refuses otherwise); hosted deployments refuse the open route. See [use your login safely](use-your-login-safely.md). |
 | `AGENTBROWSER_OPERATOR_KEYS_FILE` | service | **Trusted operator configuration** (ADR-025): a file of `key:tenant` lines authenticating the human operator on operator routes only (login browser, non-act approvals, leases). Exactly one tenant, no overlap with API keys, and API keys must be configured — violations abort startup. The key is never an environment variable value; only its file path is. |
-| `AGENTBROWSER_JOURNAL_DIR` | service | **Trusted operator configuration** (T5 C4b): an existing, private (`0700`), local directory for the durable operation journal's SQLite store. Set together with the three variables below or not at all; a partial set aborts startup. Without them, durable application execution is not offered and nothing changes. |
+| `AGENTBROWSER_JOURNAL_DIR` | service | **Trusted operator configuration** (T5 C4b): an existing, private (`0700`), local directory for the durable operation journal's SQLite store. Set together with the other required variables below (`_ANCHOR_DIR`, `_KEY_FILE`, `_RESTORE_GENERATION`, `_ACCEPT_UNTIL`) or not at all; a partial set aborts startup. Without them, durable application execution is not offered and nothing changes. |
 | `AGENTBROWSER_JOURNAL_ANCHOR_DIR` | service | **Trusted operator configuration**: a separate existing, private, local directory for the journal's commit anchor. A layout the store refuses aborts startup; follow the [operator reconciliation procedure](spec/design/t5-operator-reconciliation.md), never edit the files. |
 | `AGENTBROWSER_JOURNAL_KEY_FILE` | service | **Trusted operator configuration**: a file holding one `keyId:hex` line, the 32–64 byte journal fingerprint key, readable by its owner only (`chmod 600`; startup refuses otherwise on POSIX). The key is never an environment-variable value; only its file path is. Replacing the key under the same id is refused by the store. |
 | `AGENTBROWSER_JOURNAL_RESTORE_GENERATION` | service | **Trusted operator configuration**: the operator-managed restore generation (1–128 letters, digits, `_`, `-`). Change it only as part of a restore, per the reconciliation procedure. |
+| `AGENTBROWSER_JOURNAL_ACCEPT_UNTIL` | service | **Trusted operator configuration**: the ISO-8601 instant (with a time zone, e.g. `2027-01-01T00:00:00Z`) until which the namespace accepts new durable writes; records are kept 30 days beyond it. Immutable for a namespace: changing it under the same `AGENTBROWSER_JOURNAL_NAMESPACE` aborts startup. A passed instant aborts startup. |
+| `AGENTBROWSER_JOURNAL_NAMESPACE` | service | Optional (default `agentbrowser`): the journal namespace. Every start reopens it, so records survive restarts. To rotate (new horizon, key or capacity), configure a new name; the old namespace keeps its records until its retention ends. |
+| `AGENTBROWSER_JOURNAL_MAX_RECORDS` | service | Optional (default 10,000, at most 1,000,000): durable writes the namespace can hold before it refuses more. Immutable for a namespace. |
 | `AGENTBROWSER_JOURNAL_INITIALIZE` | service | `1` initializes an empty store on this start only; it never repairs an existing store. Remove it after the first successful start. |
 | `AGENTBROWSER_LOGIN_PROFILE_DIR` | service (login browser) | **Trusted operator configuration** (ADR-025): the login browser's persistent profile directory. Default: the OS private per-user state root (`XDG_STATE_HOME`/`~/.local/state`, `LOCALAPPDATA`), outside synced and backed-up paths — keep any override equally private; the directory is enforced owner-only (POSIX `0700`, Windows owner DACL) at every launch. |
 | `AGENTBROWSER_ARTIFACT_KEY` | service | HMAC key for the artifact download-token check (`?token=`); unset, a random per-process key is used. No route currently issues tokens, so artifact access is by session ownership and this key has no practical effect today. |

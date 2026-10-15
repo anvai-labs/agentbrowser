@@ -14,8 +14,8 @@
   - The key comes from a `0600` file holding one `keyId:hex` line (32–64 bytes); a group- or
     world-readable file is refused on POSIX.
   - Errors never echo key material.
-- **Startup.** `buildServer` opens the qualified SQLite adapter and one fresh namespace for the
-  process before the service exists.
+- **Startup.** `buildServer` opens the qualified SQLite adapter and the configured namespace
+  before the service exists.
   - Any refusal aborts startup, with no ephemeral fallback, and leaves no storage child running.
   - The journal is closed after `service.shutdown()`, and also if construction fails.
 - **Control layer.**
@@ -32,17 +32,27 @@
   - The internal path closes the J-b residual of an unapprovable pending durable review.
   - `durableJournalAvailable` is deprecated and has no effect.
 
-## Capacity defaults (`SERVICE_JOURNAL_BOUNDS`)
+## Namespace and capacity
+
+- **The namespace is stable across restarts,** as the delivered retention design requires
+  (tombstones grow with configured namespaces, not traffic). Its descriptor is derived only from
+  configuration:
+  - `AGENTBROWSER_JOURNAL_NAMESPACE` (default `agentbrowser`) and the key id;
+  - the restore generation;
+  - `AGENTBROWSER_JOURNAL_ACCEPT_UNTIL`, with retention 30 days beyond it;
+  - the bounds.
+- **Every start reopens the same namespace.** Records survive, which J3 needs.
+- **A changed immutable value under the same name is refused by the store** (`configuration`),
+  so startup aborts with a message that says to rotate by configuring a new name. A passed horizon
+  aborts startup before the store starts.
 
 | Bound | Value | Source |
 | --- | ---: | --- |
 | `maxRecordBytes` | 16,384 | as qualified |
 | `maxInFlight` | 8 | |
-| `timeoutMs` | 5,000 | as qualified (IPC plus a durable fsync per call) |
-| `maxRecords` | 10,000 per process start | at most about 160 MB reserved |
-| `maxNamespaces` | 1,024 | **store-wide constant**, fixed when the store is created |
-| Accept window | 7 days | per process start |
-| Retention | 30 days more | |
+| `timeoutMs` | 5,000 | as qualified |
+| `maxRecords` | 10,000 by default | `AGENTBROWSER_JOURNAL_MAX_RECORDS`, up to 1,000,000 |
+| `maxNamespaces` | 64 | **store-wide constant**; counts operator rotations, not starts |
 
 A full namespace or store refuses durable work, or startup; it never evicts.
 
@@ -54,13 +64,15 @@ A full namespace or store refuses durable work, or startup; it never evicts.
   - a durable write is journaled intent → dispatch → terminal around exactly one effect;
   - ephemeral writes do no journal I/O;
   - durable is refused without effect in four unavailable states and on a read.
-- `packages/api/src/journal-config.test.ts` (19, the last two with a **real store**):
+- `packages/api/src/journal-config.test.ts` (28, three with a **real store**):
   - configuration parsing and refusals;
-  - a fresh namespace per start;
+  - the same namespace reopened across starts, and a changed horizon refused;
+  - a passed horizon refused;
   - refusal of an uninitialized store without `_INITIALIZE`.
-- `packages/api/src/application-durable-journal.test.ts` (6, **real store**). The oracle is a
+- `packages/api/src/application-durable-journal.test.ts` (7, **real store**). The oracle is a
   read-only count of the store's `journal_record` rows:
   - durable is advertised, journaled once, and replayed without a second effect or record;
+  - records survive a restart, which reopens the same namespace;
   - ephemeral leaves zero rows;
   - durable and ephemeral writes under one operation ID conflict;
   - after the journal closes, durable is no longer advertised and is refused with no effect;
@@ -72,5 +84,5 @@ A full namespace or store refuses durable work, or startup; it never evicts.
 
 - Reading records back across a restart: historical lookup is J3, and recovery semantics and
   public durability are J4. Both are proposed and await the J-design document.
-- Rotating the namespace in process when the accept window ends (today: restart).
+- Automatic namespace rotation (today: the operator configures a new name and horizon).
 - Process-loss rows with the store wired through the service (J-e).

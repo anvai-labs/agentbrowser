@@ -9,13 +9,21 @@
  * - `AGENTBROWSER_JOURNAL_KEY_FILE`: one `keyId:hex` line holding the 32–64 byte fingerprint key.
  *   A file, never a variable, readable by its owner only.
  * - `AGENTBROWSER_JOURNAL_RESTORE_GENERATION`: the operator-managed restore generation.
+ * - `AGENTBROWSER_JOURNAL_ACCEPT_UNTIL`: the ISO-8601 instant until which the namespace accepts
+ *   new durable intents; records are retained 30 days beyond it.
+ * - `AGENTBROWSER_JOURNAL_NAMESPACE` (optional, default `agentbrowser`) and
+ *   `AGENTBROWSER_JOURNAL_MAX_RECORDS` (optional, default 10,000).
  * - `AGENTBROWSER_JOURNAL_INITIALIZE=1`: explicit first initialization of an empty store; never
  *   repairs an existing one.
+ *
+ * The namespace descriptor is derived entirely from this configuration, so every start reopens
+ * the SAME namespace and journaled records survive restarts. Its horizons and bounds are
+ * immutable: a changed value under the same namespace is refused by the store (startup aborts).
+ * Rotating means configuring a new namespace name with a new horizon.
  *
  * Any of them without the others is a startup refusal naming what is missing. Errors name
  * variables and positions, never key material.
  */
-import { randomUUID } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import {
@@ -33,6 +41,9 @@ export class JournalConfigError extends Error {
 }
 
 export interface ServiceJournalConfig {
+  readonly namespaceId: string;
+  readonly acceptUntil: number;
+  readonly maxRecords: number;
   readonly directory: string;
   readonly anchorDirectory: string;
   readonly restoreGeneration: string;
@@ -48,7 +59,10 @@ const REQUIRED = [
   'AGENTBROWSER_JOURNAL_ANCHOR_DIR',
   'AGENTBROWSER_JOURNAL_KEY_FILE',
   'AGENTBROWSER_JOURNAL_RESTORE_GENERATION',
+  'AGENTBROWSER_JOURNAL_ACCEPT_UNTIL',
 ] as const;
+const OPTIONAL = ['AGENTBROWSER_JOURNAL_NAMESPACE', 'AGENTBROWSER_JOURNAL_MAX_RECORDS'] as const;
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/;
 const IDENTIFIER = /^[A-Za-z0-9_-]{1,128}$/;
 const KEY_HEX = /^(?:[0-9a-fA-F]{2}){32,64}$/;
 
@@ -61,7 +75,7 @@ export async function journalConfigFromEnvironment(
     return raw === undefined || raw === '' ? undefined : raw;
   };
   const initializeRaw = value('AGENTBROWSER_JOURNAL_INITIALIZE');
-  const present = REQUIRED.filter((name) => value(name) !== undefined);
+  const present = [...REQUIRED, ...OPTIONAL].filter((name) => value(name) !== undefined);
   if (present.length === 0 && initializeRaw === undefined) return undefined;
   const missing = REQUIRED.filter((name) => value(name) === undefined);
   if (missing.length > 0)
@@ -85,8 +99,33 @@ export async function journalConfigFromEnvironment(
     throw new JournalConfigError(
       'Invalid configuration: AGENTBROWSER_JOURNAL_RESTORE_GENERATION must be 1-128 letters, digits, "_" or "-"'
     );
+  const acceptRaw = value('AGENTBROWSER_JOURNAL_ACCEPT_UNTIL') as string;
+  const acceptUntil = ISO_INSTANT.test(acceptRaw) ? Date.parse(acceptRaw) : Number.NaN;
+  if (!Number.isSafeInteger(acceptUntil) || acceptUntil <= 0)
+    throw new JournalConfigError(
+      'Invalid configuration: AGENTBROWSER_JOURNAL_ACCEPT_UNTIL must be an ISO-8601 instant with a time zone, e.g. 2027-01-01T00:00:00Z'
+    );
+  const namespaceId = value('AGENTBROWSER_JOURNAL_NAMESPACE') ?? 'agentbrowser';
+  if (!IDENTIFIER.test(namespaceId))
+    throw new JournalConfigError(
+      'Invalid configuration: AGENTBROWSER_JOURNAL_NAMESPACE must be 1-128 letters, digits, "_" or "-"'
+    );
+  const maxRecordsRaw = value('AGENTBROWSER_JOURNAL_MAX_RECORDS');
+  const maxRecords = maxRecordsRaw === undefined ? DEFAULT_MAX_RECORDS : Number(maxRecordsRaw);
+  if (
+    !/^\d+$/.test(maxRecordsRaw ?? String(DEFAULT_MAX_RECORDS)) ||
+    !Number.isSafeInteger(maxRecords) ||
+    maxRecords < 1 ||
+    maxRecords > 1_000_000
+  )
+    throw new JournalConfigError(
+      'Invalid configuration: AGENTBROWSER_JOURNAL_MAX_RECORDS must be an integer from 1 to 1000000'
+    );
   const { keyId, key } = await readKeyFile(value('AGENTBROWSER_JOURNAL_KEY_FILE') as string);
   return {
+    namespaceId,
+    acceptUntil,
+    maxRecords,
     directory,
     anchorDirectory,
     restoreGeneration,
@@ -126,32 +165,39 @@ async function readKeyFile(path: string): Promise<{ keyId: string; key: Uint8Arr
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+const DEFAULT_MAX_RECORDS = 10_000;
+
 /**
- * Deployment bounds for the service's namespace. Record size, in-flight and timeout are the
- * values the SQLite qualification gates run with. The others are operator capacity, and a full
- * namespace or store refuses durable work (or startup) instead of evicting accepted records:
- *
- * - `maxRecords`: durable writes one process start can journal (each reserves at most
- *   `maxRecordBytes`, so at most about 160 MB).
- * - `maxNamespaces`: a STORE-WIDE constant (every namespace in a store must repeat the first
- *   one's value), so it can never change for an existing store. Each process start opens one
- *   namespace, retired once settled and past retention; 1,024 allows about 27 starts a day
- *   within the 37-day namespace lifetime below.
+ * Fixed bounds for the service's namespace. Record size, in-flight and timeout are the values the
+ * SQLite qualification gates run with. `maxNamespaces` is a STORE-WIDE constant (every namespace
+ * in a store must repeat the first one's value), so it never changes for an existing store; a
+ * namespace is stable across restarts, so it counts operator rotations, not starts. A full
+ * namespace or store refuses durable work (or startup) instead of evicting accepted records.
  */
 export const SERVICE_JOURNAL_BOUNDS = Object.freeze({
   maxRecordBytes: 16_384,
-  maxRecords: 10_000,
-  maxNamespaces: 1_024,
+  maxNamespaces: 64,
   maxInFlight: 8,
   timeoutMs: 5_000,
 });
-/**
- * New durable intents are accepted for 7 days after startup (after that, durable is no longer
- * advertised or accepted until the next start); journaled records are retained 30 days more.
- */
-export const SERVICE_JOURNAL_ACCEPT_MS = 7 * DAY_MS;
+/** Journaled records are retained this long beyond the accept horizon. */
 export const SERVICE_JOURNAL_RETAIN_MS = 30 * DAY_MS;
 export const SERVICE_JOURNAL_FINALIZATION_MS = 60_000;
+
+/** The namespace descriptor, derived only from configuration so every start reopens it. */
+export function serviceJournalNamespace(config: ServiceJournalConfig): JournalNamespace {
+  return {
+    schemaVersion: 1,
+    namespaceId: config.namespaceId,
+    fingerprintVersion: 1,
+    fingerprintKeyId: config.keyId,
+    restoreGeneration: config.restoreGeneration,
+    acceptUntil: config.acceptUntil,
+    retainUntil: config.acceptUntil + SERVICE_JOURNAL_RETAIN_MS,
+    maxFinalizationMs: SERVICE_JOURNAL_FINALIZATION_MS,
+    bounds: { ...SERVICE_JOURNAL_BOUNDS, maxRecords: config.maxRecords },
+  };
+}
 
 export interface ServiceJournal {
   readonly journal: OperationJournal;
@@ -159,14 +205,19 @@ export interface ServiceJournal {
 }
 
 /**
- * Opens the configured store and one fresh namespace for this process. Any refusal stops startup
- * (there is no ephemeral fallback for a configured journal) and leaves no storage child running.
+ * Opens the configured store and the configured namespace (created on first use, reopened on
+ * every later start). Any refusal stops startup (there is no ephemeral fallback for a configured
+ * journal) and leaves no storage child running.
  */
 export async function openServiceJournal(
   config: ServiceJournalConfig,
   options: { now?: () => number } = {}
 ): Promise<ServiceJournal> {
   const now = options.now ?? Date.now;
+  if (config.acceptUntil <= now())
+    throw new JournalConfigError(
+      'AGENTBROWSER_JOURNAL_ACCEPT_UNTIL has passed: this namespace no longer accepts durable work; configure a new AGENTBROWSER_JOURNAL_NAMESPACE with a new horizon'
+    );
   let adapter: Awaited<ReturnType<typeof openJournalSqliteOperationJournalAdapter>>;
   try {
     adapter = await openJournalSqliteOperationJournalAdapter({
@@ -180,24 +231,13 @@ export async function openServiceJournal(
       'The durable journal store did not start; check AGENTBROWSER_JOURNAL_DIR, AGENTBROWSER_JOURNAL_ANCHOR_DIR and the store layout'
     );
   }
-  const acceptUntil = now() + SERVICE_JOURNAL_ACCEPT_MS;
-  const namespace: JournalNamespace = {
-    schemaVersion: 1,
-    namespaceId: `service-${randomUUID()}`,
-    fingerprintVersion: 1,
-    fingerprintKeyId: config.keyId,
-    restoreGeneration: config.restoreGeneration,
-    acceptUntil,
-    retainUntil: acceptUntil + SERVICE_JOURNAL_RETAIN_MS,
-    maxFinalizationMs: SERVICE_JOURNAL_FINALIZATION_MS,
-    bounds: SERVICE_JOURNAL_BOUNDS,
-  };
+  const namespace = serviceJournalNamespace(config);
   const opened = await openOperationJournal(adapter, namespace, config.key).catch(() => undefined);
   if (opened?.kind !== 'opened') {
     await adapter.dispose().catch(() => undefined);
     const reason = opened === undefined ? 'error' : `${opened.kind}: ${opened.reason}`;
     throw new JournalConfigError(
-      `The durable journal did not open (${reason}); an uninitialized store needs AGENTBROWSER_JOURNAL_INITIALIZE=1 once, and a refused layout follows docs/spec/design/t5-operator-reconciliation.md`
+      `The durable journal did not open (${reason}). An uninitialized store needs AGENTBROWSER_JOURNAL_INITIALIZE=1 once; "configuration" means this namespace exists with a different key, horizon, restore generation or bounds (configure a new AGENTBROWSER_JOURNAL_NAMESPACE instead of changing them); "ownership" means another process holds it; a refused layout follows docs/spec/design/t5-operator-reconciliation.md`
     );
   }
   const journal = opened.journal;

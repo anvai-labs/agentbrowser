@@ -37,6 +37,7 @@ function layout(options: { keyLine?: string; keyMode?: number } = {}) {
       AGENTBROWSER_JOURNAL_ANCHOR_DIR: anchorDirectory,
       AGENTBROWSER_JOURNAL_KEY_FILE: keyFile,
       AGENTBROWSER_JOURNAL_RESTORE_GENERATION: 'generation-1',
+      AGENTBROWSER_JOURNAL_ACCEPT_UNTIL: '2099-01-01T00:00:00Z',
     } as Record<string, string | undefined>,
   };
 }
@@ -55,6 +56,9 @@ describe('journalConfigFromEnvironment', () => {
       restoreGeneration: 'generation-1',
       keyId: 'key-2026-10',
       initialize: false,
+      namespaceId: 'agentbrowser',
+      acceptUntil: Date.parse('2099-01-01T00:00:00Z'),
+      maxRecords: 10_000,
     });
     expect(Buffer.from(config?.key ?? []).toString('hex')).toBe(KEY_HEX);
   });
@@ -64,6 +68,7 @@ describe('journalConfigFromEnvironment', () => {
     'AGENTBROWSER_JOURNAL_ANCHOR_DIR',
     'AGENTBROWSER_JOURNAL_KEY_FILE',
     'AGENTBROWSER_JOURNAL_RESTORE_GENERATION',
+    'AGENTBROWSER_JOURNAL_ACCEPT_UNTIL',
   ])('refuses a partial configuration missing %s, naming it', async (missing) => {
     const { env } = layout();
     env[missing] = undefined;
@@ -90,6 +95,26 @@ describe('journalConfigFromEnvironment', () => {
     await expect(
       journalConfigFromEnvironment({ ...env, AGENTBROWSER_JOURNAL_DIR: 'relative/store' })
     ).rejects.toThrow(/AGENTBROWSER_JOURNAL_DIR must be an absolute path/);
+  });
+
+  it.each([
+    ['AGENTBROWSER_JOURNAL_ACCEPT_UNTIL', '2027-01-01'],
+    ['AGENTBROWSER_JOURNAL_ACCEPT_UNTIL', 'tomorrow'],
+    ['AGENTBROWSER_JOURNAL_NAMESPACE', 'has space'],
+    ['AGENTBROWSER_JOURNAL_MAX_RECORDS', '0'],
+    ['AGENTBROWSER_JOURNAL_MAX_RECORDS', '1e4'],
+    ['AGENTBROWSER_JOURNAL_MAX_RECORDS', '1000001'],
+  ])('refuses %s=%s', async (name, bad) => {
+    const { env } = layout();
+    await expect(journalConfigFromEnvironment({ ...env, [name]: bad })).rejects.toThrow(
+      new RegExp(name)
+    );
+  });
+
+  it('an optional variable alone is still a partial configuration', async () => {
+    await expect(
+      journalConfigFromEnvironment({ AGENTBROWSER_JOURNAL_NAMESPACE: 'x' })
+    ).rejects.toThrow(/requires/);
   });
 
   it('refuses a malformed restore generation', async () => {
@@ -121,7 +146,7 @@ describe('journalConfigFromEnvironment', () => {
 });
 
 describe('openServiceJournal (real SQLite store)', () => {
-  it('opens an initialized store, gives each process its own namespace, and closes cleanly', async () => {
+  it('reopens the same namespace on every start, keeping its records, and refuses a changed descriptor', async () => {
     const { env } = layout();
     const first = await journalConfigFromEnvironment({
       ...env,
@@ -131,24 +156,45 @@ describe('openServiceJournal (real SQLite store)', () => {
     const opened = await openServiceJournal(first);
     try {
       expect(opened.journal.health).toBe('open');
-      expect(opened.journal.namespace.fingerprintKeyId).toBe('key-2026-10');
-      expect(opened.journal.namespace.acceptUntil).toBeGreaterThan(Date.now());
+      expect(opened.journal.namespace).toMatchObject({
+        namespaceId: 'agentbrowser',
+        fingerprintKeyId: 'key-2026-10',
+        acceptUntil: Date.parse('2099-01-01T00:00:00Z'),
+      });
     } finally {
       await opened.close();
     }
     expect(opened.journal.health).toBe('closed');
 
-    // A later start against the same store (no initialize) opens a fresh namespace.
+    // A later start with the same configuration (no initialize) reopens the same namespace.
     const again = await journalConfigFromEnvironment(env);
     if (!again) throw new Error('expected configuration');
     const reopened = await openServiceJournal(again);
     try {
       expect(reopened.journal.health).toBe('open');
-      expect(reopened.journal.namespace.namespaceId).not.toBe(opened.journal.namespace.namespaceId);
+      expect(reopened.journal.namespace.namespaceId).toBe('agentbrowser');
     } finally {
       await reopened.close();
     }
+
+    // Changing an immutable horizon under the same namespace is refused, not forked.
+    const changed = await journalConfigFromEnvironment({
+      ...env,
+      AGENTBROWSER_JOURNAL_ACCEPT_UNTIL: '2098-01-01T00:00:00Z',
+    });
+    if (!changed) throw new Error('expected configuration');
+    await expect(openServiceJournal(changed)).rejects.toThrow(/configuration/);
   }, 60_000);
+
+  it('refuses a namespace whose accept horizon has passed, before starting the store', async () => {
+    const { env } = layout();
+    const config = await journalConfigFromEnvironment({
+      ...env,
+      AGENTBROWSER_JOURNAL_ACCEPT_UNTIL: '2001-01-01T00:00:00Z',
+    });
+    if (!config) throw new Error('expected configuration');
+    await expect(openServiceJournal(config)).rejects.toThrow(/has passed/);
+  });
 
   it('refuses to start against an uninitialized store without AGENTBROWSER_JOURNAL_INITIALIZE', async () => {
     const { env } = layout();
