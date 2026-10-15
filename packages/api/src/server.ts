@@ -1059,6 +1059,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
               ? {
                   history: journalSet.history.map((state) => ({
                     namespace: state.namespaceId,
+                    ...(state.current ? { current: true as const } : {}),
                     // A refused namespace stays refused for this process; an opened one reports
                     // open while its handle is healthy.
                     state:

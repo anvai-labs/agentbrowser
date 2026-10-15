@@ -117,6 +117,8 @@ export const JournalStatusSchema = Type.Object(
         Type.Object(
           {
             namespace: Type.String({ maxLength: 128 }),
+            /** The configured current namespace, listed recover-only once its horizon passed. */
+            current: Type.Optional(Type.Literal(true)),
             state: Type.Union([
               Type.Literal('open'),
               Type.Literal('refused'),
@@ -128,7 +130,8 @@ export const JournalStatusSchema = Type.Object(
           },
           strict
         ),
-        { maxItems: 16 }
+        // 16 history entries plus the past-horizon current namespace.
+        { maxItems: 17 }
       )
     ),
   },

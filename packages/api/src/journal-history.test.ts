@@ -477,3 +477,27 @@ describe('review round 1 hardening (J3d)', () => {
     expect(warnings[1]).toMatch(/bad did not open \(x: y\)/);
   });
 });
+
+describe('past-horizon current namespace (review round 2)', () => {
+  it('is opened recover-only: a new intent never reaches the store', async () => {
+    const l = layout();
+    const seeded = await seedPastHorizon(l, 'ns-b', l.keyB);
+    // A restart: the same configuration, without the first-run INITIALIZE.
+    const set = await openServiceJournalSet({ ...seeded, initialize: false }, []);
+    try {
+      const current = set.history.find((state) => state.current);
+      expect(current?.namespaceId).toBe('ns-b');
+      const journal = current?.journal;
+      if (!journal) throw new Error('expected the recover-only journal');
+      const call = journal.reserveIntent({} as never);
+      // The wrapper answers without a store round trip: nothing is ever pending.
+      expect(journal.pending).toBe(0);
+      await expect(call).resolves.toEqual({
+        kind: 'definitely_not_written',
+        reason: 'admission_expired',
+      });
+    } finally {
+      await set.close();
+    }
+  }, 60_000);
+});

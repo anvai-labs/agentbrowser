@@ -298,7 +298,9 @@ describe('history namespaces over HTTP, review round 1 (J3d)', () => {
     // Durable work is not offered (no current health), but the namespace is listed recover-only.
     expect(status).not.toHaveProperty('health');
     expect(status.recoveryQualified).toBe(false);
-    expect(status.history).toEqual([expect.objectContaining({ namespace: 'ns-b', state: 'open' })]);
+    expect(status.history).toEqual([
+      expect.objectContaining({ namespace: 'ns-b', current: true, state: 'open' }),
+    ]);
     const before = await lookup(built, 'current-op');
     expect(before.statusCode, before.body).toBe(200);
     expect(before.json()).toMatchObject({
