@@ -156,6 +156,39 @@ tests.
     route; no agent surface can address the browser;
   - **no leakage:** a scan of all captured output finds no value.
 
+**Delivered (phase 4, #464):** `packages/engine-playwright/src/login-browser.ts` + operator
+routes. A pipe-connected persistent Chromium context — no debugging port, verified on Linux by
+matching the process's own LISTEN sockets through its fds (empty while open and during reads) —
+with the three login-wall-disabling Playwright defaults removed via `ignoreDefaultArgs` (the live
+argv is asserted to carry none of them and to carry the pipe flag). Profile security: POSIX `0700`
+with any wider mode refused; Windows via `icacls` — creation strips inheritance and grants the
+owner's SID `(OI)(CI)F`, verification parses the ACE lines (the pipe-glued filename header
+stripped first) and refuses any identity beyond every spelling of the owner plus the exempted
+SYSTEM/Administrators (no bare username: it would false-exempt `OTHERDOMAIN\sameuser`). icacls,
+not PowerShell's `Get-Acl`, because the runner could not load PS 5.1's Security module; the
+runner-observed posture after `/inheritance:r` is the ADR-tolerated owner + SYSTEM +
+Administrators, and the parse is what refuses anything wider. The profile root is
+`AGENTBROWSER_LOGIN_PROFILE_DIR` or the OS per-user state root (XDG_STATE_HOME/`~/.local/state`,
+`LOCALAPPDATA`) — the spec's "server data directory" intent, with synced-ness left to the
+operator's environment. Binary pinning records the executable path AND its file identity
+(size + mtime); a different path refuses `LOGIN_BINARY_CHANGED`, a same-path identity change (an
+in-place update) refuses `LOGIN_BINARY_DOWNGRADED`, and either refusal leaves the profile
+unlocked (the lock is acquired after every pre-launch check). The compared field is file
+identity, not the version string — the runner proved `chrome.exe --version` prints nothing on
+Windows (GUI-subsystem exe), which made a version-probe check fail open exactly where ADR-025's
+rationale is strongest; the recorded `chromiumVersion` stays as documentation. Lifecycle:
+open/close/read serialized; a live second owner or a hand-started Chrome (ProcessSingleton)
+refuses `LOGIN_PROFILE_IN_USE`, a stale lock is adopted, reads on a closed browser refuse
+`LOGIN_BROWSER_CLOSED`; partitioned (`partitionKey` OR `partitionKeyOpaque`) and expired cookies
+are skipped and counted. Operator-only routes `POST /v1/operator/login/{open,close,reset,read}`
+behind the human-operator actor with the seven `LOGIN_*` codes in the protocol (409/403/400,
+never 500); hosted and multi-tenant deployments refuse at boot; shutdown closes the browser.
+The Windows CI job runs this suite headless — via a TEST-side env knob the test file applies, not
+an engine env mode; the branded-chrome suite stays deferred to #465. Seven review rounds; every
+Windows behavior above is runner-proven, not claimed. Carried to phase 6 (acknowledged): the F12
+reset confirmation, raw values on the read route (tension with ADR-025 §2), the 1 MiB cookie
+size bound unenforced (count only), and 400/409 undocumented in the OpenAPI for the four routes.
+
 ### Phase 5: action review in marked sessions, and the lease
 
 - **Review.** In a session with `credentialSource: "operator"`:

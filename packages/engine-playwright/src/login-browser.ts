@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type BrowserContext, chromium } from 'playwright';
@@ -22,9 +22,11 @@ import { type BrowserContext, chromium } from 'playwright';
  *   refused. The Windows CI job runs this suite (headless env), which is
  *   where the win32 branches execute.
  *
- * Binary pinning: the resolved executable's identity is recorded at first
- * launch; a later launch refuses if the binary changed, and a recorded
- * version that moved BACKWARDS is a downgrade (refused).
+ * Binary pinning: the resolved executable's path AND file identity (size +
+ * mtime) are recorded at first launch; a later launch refuses if either
+ * changed. There is no version probe: chrome.exe --version prints nothing on
+ * Windows (GUI-subsystem exe, runner-proven), so a version string cannot be
+ * compared there — file identity catches every in-place replacement.
  *
  * Concurrency: open/close/read are serialized on an in-process lock, and a
  * stale `LOCK` file whose owner PID is gone is adopted; a live owner refuses
@@ -88,7 +90,15 @@ export interface LoginBrowserOptions {
 interface ProfilePin {
   /** The exact executable that last wrote the profile (pinned). */
   executable?: string;
-  /** Chromium's own version string at pin time, for the record. */
+  /**
+   * The pinned executable's file identity. The same path with a different
+   * identity = the binary was replaced in place (an update) → refused. This,
+   * not the version string, is the compared pin field: probing a version
+   * needs a subprocess whose stdout Windows' chrome.exe never writes.
+   */
+  executableSize?: number;
+  executableModifiedMs?: number;
+  /** Chromium's own version string at pin time, for the record (never compared). */
   chromiumVersion?: string;
   /** Monotonic launch counter; a later pin with a SMALLER count for the
    * same executable means the profile was restored from an older backup. */
@@ -132,7 +142,7 @@ export class LoginBrowser {
         'the login browser needs a display; run headed on a machine with one'
       );
     }
-    const executablePath = await this.resolvePinnedExecutable(pin);
+    const { path: executablePath, identity } = await this.resolvePinnedExecutable(pin);
     // The lock is acquired LAST: every refusal above must leave the profile
     // unlocked, or a transient mistake (a wider mode, a moved binary, no
     // display) wedges it for the process lifetime.
@@ -156,6 +166,9 @@ export class LoginBrowser {
     const chromiumVersion = this.context.browser()?.version();
     await this.writePin({
       ...(executablePath !== undefined ? { executable: executablePath } : {}),
+      ...(identity !== undefined
+        ? { executableSize: identity.size, executableModifiedMs: identity.modifiedMs }
+        : {}),
       ...(chromiumVersion !== undefined ? { chromiumVersion } : {}),
       launches: (pin.launches ?? 0) + 1,
     });
@@ -292,45 +305,36 @@ export class LoginBrowser {
     await writeFile(this.pinPath(), `${JSON.stringify(pin, null, 2)}\n`, { mode: 0o600 });
   }
 
-  private async resolvePinnedExecutable(pin: ProfilePin): Promise<string | undefined> {
+  private async resolvePinnedExecutable(
+    pin: ProfilePin
+  ): Promise<{ path: string | undefined; identity: ExecutableIdentity | undefined }> {
     const resolved = chromium.executablePath();
-    if (resolved === undefined) return undefined;
+    if (resolved === undefined) return { path: undefined, identity: undefined };
+    const identity = await executableIdentity(resolved);
     // First launch pins the binary; later launches must match it exactly.
-    if (pin.executable === undefined) return resolved;
+    if (pin.executable === undefined) return { path: resolved, identity };
     if (pin.executable !== resolved) {
       throw new LoginBrowserError(
         'LOGIN_BINARY_CHANGED',
         'the pinned browser binary changed since this profile was created; reset the profile to adopt the new binary'
       );
     }
-    // Same path, different recorded version: the binary was replaced in
-    // place (ADR-016 system-Chrome updates land this way). Versions are not
-    // ordered — the point is the profile no longer matches the binary.
-    if (pin.chromiumVersion !== undefined) {
-      const live = await this.liveChromiumVersion(resolved);
-      if (live !== undefined && live !== pin.chromiumVersion) {
-        throw new LoginBrowserError(
-          'LOGIN_BINARY_DOWNGRADED',
-          `the browser binary at the pinned path changed version (profile recorded ${pin.chromiumVersion}, now ${live}); reset the profile to adopt it`
-        );
-      }
+    // Same path, different file identity: the binary was replaced in place
+    // (ADR-016 system-Chrome updates land this way). Not a version-string
+    // comparison — chrome.exe --version is mute on Windows, which made the
+    // old probe fail open there (runner-proven); size+mtime catches every
+    // in-place replacement without a subprocess.
+    if (
+      pin.executableSize !== undefined &&
+      identity !== undefined &&
+      (identity.size !== pin.executableSize || identity.modifiedMs !== pin.executableModifiedMs)
+    ) {
+      throw new LoginBrowserError(
+        'LOGIN_BINARY_DOWNGRADED',
+        `the browser binary at the pinned path was replaced in place (recorded ${pin.executableSize} bytes, now ${identity.size}); reset the profile to adopt it`
+      );
     }
-    return resolved;
-  }
-
-  /** The binary's own version string, via `--version` (never launches). */
-  private async liveChromiumVersion(executable: string): Promise<string | undefined> {
-    try {
-      const { execFile } = await import('node:child_process');
-      const { promisify } = await import('node:util');
-      const { stdout } = await promisify(execFile)(executable, ['--version'], {
-        timeout: 10_000,
-      });
-      const match = /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/.exec(stdout);
-      return match?.[0];
-    } catch {
-      return undefined; // never block a launch on a version probe
-    }
+    return { path: resolved, identity };
   }
 
   // --- profile lock --------------------------------------------------------
@@ -368,6 +372,26 @@ export class LoginBrowser {
 
   private async releaseProfileLock(): Promise<void> {
     await rm(this.lockPath(), { force: true });
+  }
+}
+
+interface ExecutableIdentity {
+  size: number;
+  modifiedMs: number;
+}
+
+/**
+ * The executable's file identity: any in-place replacement (an update)
+ * changes the size, the mtime, or both. fs.stat only — no subprocess, so it
+ * works identically on Windows, where a `--version` probe cannot see
+ * anything (chrome.exe, a GUI-subsystem exe, prints no stdout there).
+ */
+async function executableIdentity(path: string): Promise<ExecutableIdentity | undefined> {
+  try {
+    const info = await stat(path);
+    return { size: info.size, modifiedMs: info.mtimeMs };
+  } catch {
+    return undefined; // never block a launch on the identity read
   }
 }
 

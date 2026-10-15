@@ -25,7 +25,10 @@ beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), 'login-browser-'));
 });
 afterAll(async () => {
-  await rm(dir, { recursive: true, force: true });
+  // maxRetries: Chromium's own lockfile can outlive close() briefly on
+  // Windows (EBUSY/EPERM on unlink); retry rather than fail the whole suite
+  // at teardown (round-7 runner fact).
+  await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 });
 });
 
 suite('the login browser', () => {
@@ -250,37 +253,54 @@ suite('the login browser', () => {
   it('the pin records the real executable; a changed binary refuses and reset adopts', async () => {
     const profile = join(dir, 'profile-reset');
     const browser = mk({ profileDir: profile });
-    await browser.open();
-    await browser.close();
-    // The pin carries the REAL executable and Chromium's version (review
-    // F2: the code never recorded one, making pinning a no-op).
-    const pinPath = join(profile, 'agentbrowser-pin.json');
-    const pin = JSON.parse(await readFile(pinPath, 'utf8')) as {
-      executable?: string;
-      chromiumVersion?: string;
-      launches: number;
-    };
-    expect(pin.executable).toBeTruthy();
-    expect(pin.chromiumVersion).toBeTruthy();
-    expect(pin.launches).toBe(1);
-    await browser.open();
-    await browser.close();
-    const pin2 = JSON.parse(await readFile(pinPath, 'utf8')) as typeof pin;
-    expect(pin2.launches).toBe(2);
-    await writeFile(pinPath, JSON.stringify({ ...pin2, executable: '/moved/chromium' }));
     const refused = mk({ profileDir: profile });
-    await expect(refused.open()).rejects.toMatchObject({ code: 'LOGIN_BINARY_CHANGED' });
-    // A same-path version change (in-place update) refuses DOWNGRADE — and
-    // leaves the profile UNLOCKED (the lock is acquired last).
-    const lockPath = join(profile, 'agentbrowser-lock');
-    await writeFile(pinPath, JSON.stringify({ ...pin2, chromiumVersion: '0.0.0.0' }));
-    const versionRefused = mk({ profileDir: profile });
-    await expect(versionRefused.open()).rejects.toMatchObject({
-      code: 'LOGIN_BINARY_DOWNGRADED',
-    });
-    expect(existsSync(lockPath)).toBe(false);
-    await refused.reset();
-    expect(existsSync(profile)).toBe(false);
+    const identityRefused = mk({ profileDir: profile });
+    try {
+      await browser.open();
+      await browser.close();
+      // The pin carries the REAL executable, its file identity, and
+      // Chromium's version (review F2: the code never recorded one, making
+      // pinning a no-op).
+      const pinPath = join(profile, 'agentbrowser-pin.json');
+      const pin = JSON.parse(await readFile(pinPath, 'utf8')) as {
+        executable?: string;
+        executableSize?: number;
+        executableModifiedMs?: number;
+        chromiumVersion?: string;
+        launches: number;
+      };
+      expect(pin.executable).toBeTruthy();
+      expect(pin.executableSize).toBeGreaterThan(0);
+      expect(typeof pin.executableModifiedMs).toBe('number');
+      expect(pin.chromiumVersion).toBeTruthy();
+      expect(pin.launches).toBe(1);
+      await browser.open();
+      await browser.close();
+      const pin2 = JSON.parse(await readFile(pinPath, 'utf8')) as typeof pin;
+      expect(pin2.launches).toBe(2);
+      await writeFile(pinPath, JSON.stringify({ ...pin2, executable: '/moved/chromium' }));
+      await expect(refused.open()).rejects.toMatchObject({ code: 'LOGIN_BINARY_CHANGED' });
+      // A same-path in-place replacement refuses DOWNGRADED — and leaves the
+      // profile UNLOCKED (the lock is acquired last). Tampering the RECORDED
+      // identity is symmetric to rewriting the binary: the compared property
+      // is recorded-vs-live file identity (size+mtime — a version probe is
+      // mute on Windows, runner-proven, which is why the pin does not use one).
+      const lockPath = join(profile, 'agentbrowser-lock');
+      await writeFile(pinPath, JSON.stringify({ ...pin2, executableSize: 1 }));
+      await expect(identityRefused.open()).rejects.toMatchObject({
+        code: 'LOGIN_BINARY_DOWNGRADED',
+      });
+      expect(existsSync(lockPath)).toBe(false);
+      await refused.reset();
+      expect(existsSync(profile)).toBe(false);
+    } finally {
+      // An unexpected successful open() must never leak a live Chromium into
+      // suite teardown (round-7 runner fact: it did, holding the lockfile
+      // into afterAll → EBUSY). Best-effort close of every instance.
+      for (const instance of [browser, refused, identityRefused]) {
+        await instance.close().catch(() => undefined);
+      }
+    }
   }, 240_000);
 });
 

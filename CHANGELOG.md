@@ -27,9 +27,13 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   The profile sits under `AGENTBROWSER_LOGIN_PROFILE_DIR` or, by default, the OS private
   per-user state root (`XDG_STATE_HOME`/`~/.local/state`, `LOCALAPPDATA` on Windows); whether
   that root is synced or backed up is the operator's environment, not a property claimed here.
-- **Binary pinning:** the resolved executable AND Chromium's own version are recorded in the
-  profile on first launch. A different path refuses `LOGIN_BINARY_CHANGED`; the same path with a
-  changed version (an in-place update) refuses `LOGIN_BINARY_DOWNGRADED`; either way reset adopts.
+- **Binary pinning:** the resolved executable, its file identity (size + mtime), and Chromium's own
+  version are recorded in the profile on first launch. A different path refuses
+  `LOGIN_BINARY_CHANGED`; the same path with a changed file identity (an in-place update) refuses
+  `LOGIN_BINARY_DOWNGRADED`; either way reset adopts. The compared field is file identity, not the
+  version string — `chrome.exe --version` prints nothing on Windows (GUI-subsystem exe,
+  runner-proven), which made a version-probe check silently fail open there; `fs.stat` has no such
+  platform gap. The recorded `chromiumVersion` stays as documentation, never compared.
   Launch-time refusals leave the profile unlocked — the lock is acquired after every pre-launch
   check, so a transient refusal never wedges the profile.
 - **Lifecycle:** `open`/`close`/`reset`/`readCookies` serialized on a profile lock — a live second
