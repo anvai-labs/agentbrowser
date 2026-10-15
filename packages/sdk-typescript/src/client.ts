@@ -69,6 +69,13 @@ export interface ClientOptions {
   headers?: Record<string, string>;
   /** Bearer API key; sent as Authorization on every request. */
   apiKey?: string;
+  /**
+   * Caller cancellation: read at the start of each request. An aborted signal abandons the
+   * request with `CANCELLED` (outcome may be unknown for a write; reconcile by operationId). A
+   * hook, not a signal, so one client can serve concurrent callers (the MCP server scopes it
+   * per tool call).
+   */
+  requestSignal?: () => AbortSignal | undefined;
 }
 
 // ADR-015 (B2/B7): the SDK mirrors the protocol's request types instead of
@@ -263,7 +270,8 @@ class HttpClient {
   constructor(
     private readonly baseUrl: string,
     private readonly timeoutMs: number,
-    private readonly headers: Record<string, string>
+    private readonly headers: Record<string, string>,
+    private readonly requestSignal?: () => AbortSignal | undefined
   ) {}
 
   async requestJson<T>(
@@ -290,8 +298,15 @@ class HttpClient {
         ? (init.operationId ?? this.headers['x-agentbrowser-operation-id'] ?? crypto.randomUUID())
         : undefined;
     const controller = new AbortController();
+    const callerSignal = this.requestSignal?.();
+    const cancelled = () => callerSignal?.aborted === true;
+    const cancel = () => controller.abort();
     const timeoutId = setTimeout(() => controller.abort(), init.timeoutMs ?? this.timeoutMs);
     try {
+      if (callerSignal !== undefined) {
+        if (callerSignal.aborted) throw new Error('cancelled before dispatch');
+        callerSignal.addEventListener('abort', cancel, { once: true });
+      }
       const response = await fetch(`${this.baseUrl}${path}`, {
         method: init.method ?? 'GET',
         headers: {
@@ -367,6 +382,16 @@ class HttpClient {
       }
       return result as T;
     } catch (error) {
+      if (cancelled()) {
+        // Caller cancellation: a write may already have run, so this is uncertain, never a
+        // success and never safe to replay blindly.
+        throw new AgentBrowserError(
+          'CANCELLED',
+          'Request cancelled; outcome may be unknown',
+          false,
+          operationId ? { operationId } : undefined
+        );
+      }
       if (controller.signal.aborted) {
         // A timed-out mutation may have run: never advertise blind retry safety.
         throw new AgentBrowserError(
@@ -386,6 +411,7 @@ class HttpClient {
       throw error;
     } finally {
       clearTimeout(timeoutId);
+      callerSignal?.removeEventListener('abort', cancel);
     }
   }
 }
@@ -903,7 +929,12 @@ export class AgentBrowserClient {
       ...options.headers,
     };
 
-    this.http = new HttpClient(this.baseUrl, this.timeout, this.customHeaders);
+    this.http = new HttpClient(
+      this.baseUrl,
+      this.timeout,
+      this.customHeaders,
+      options.requestSignal
+    );
     this.sessions = new SessionsClient(this.http);
   }
 

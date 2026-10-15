@@ -92,8 +92,9 @@ fail-fast and verified receipts included; approval policy resolved via
 Create-call-level timeout/reconnect/honest-failure behavior is
 qualified through the Codex path (2026-10-03, including the blackhole
 uncertainty case — see the availability record); cancellation was
-qualified at the CLI/service level (slice 1) and has no provider-path
-run; MCP client-internal reply correlation is provider-client
+qualified at the CLI/service level (slice 1); since 2026-10-15 the MCP server honours
+`notifications/cancelled` end to end (abort to the HTTP request, no response, benign races —
+`packages/mcp-server/src/cancellation.test.ts`), but no provider-path run exists yet; MCP client-internal reply correlation is provider-client
 semantics qualified at the manager/bridge level. Still open: the same
 treatment on Victor (TLS trust operator call) and Claude (additional
 coverage).
