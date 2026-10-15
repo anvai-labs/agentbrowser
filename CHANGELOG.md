@@ -7,6 +7,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — journal time never moves backwards within a process (T5 J-c)
+
+- The SQLite journal child takes its time from `createJournalClock()`:
+  `max(startWall + monotonicElapsed, wallNow, previousReading)`. A backward wall-clock step
+  mid-process can no longer move journal time backwards (no retention or admission horizon is
+  extended by it); a forward step is followed. The persisted high-water (the rule's third term,
+  applied in each transaction) still covers restarts and refuses a reopen below it. Each process
+  starts from its own wall sample; restart horizons never derive from the monotonic source.
+
 ### Added — MCP request cancellation (T0/T8)
 
 - The MCP server honours `notifications/cancelled`: the in-flight `tools/call` it names is

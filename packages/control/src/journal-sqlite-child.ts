@@ -11,6 +11,7 @@
  * for a live namespace inside one child is refused by the ownership fence.
  */
 import { DatabaseSync } from 'node:sqlite';
+import { createJournalClock } from './journal-clock.js';
 import {
   isJournalChildRequest,
   type JournalChildRequest,
@@ -39,6 +40,9 @@ try {
   const send = process.send.bind(process);
   const disconnect = process.disconnect.bind(process);
   const options = JSON.parse(process.argv[2] ?? '');
+  // T5 J-c: journal time never moves backwards within this process (the persisted high-water,
+  // applied in each transaction, covers restarts).
+  const clock = createJournalClock();
 
   const { openJournalSqliteStore } = await import('./journal-sqlite-store.js');
   const store = openJournalSqliteStore(options);
@@ -112,11 +116,11 @@ try {
         namespaceId,
         ownerFence,
         value as Parameters<typeof lookupJournalSqliteRecord>[3],
-        Date.now()
+        clock.now()
       );
     } else {
       outcome = store.mutate((tx: JournalSqliteTransaction) => {
-        const now = Date.now();
+        const now = clock.now();
         if (kind === 'reserveIntent')
           return reserveJournalSqliteIntent(
             tx,
@@ -175,7 +179,7 @@ try {
         | undefined;
       try {
         openOutcome = store.mutate((tx: JournalSqliteTransaction) => {
-          const result = openJournalSqliteRecords(tx, message.descriptor, Date.now());
+          const result = openJournalSqliteRecords(tx, message.descriptor, clock.now());
           return result.kind === 'opened'
             ? { kind: 'opened' as const, ownerFence: result.ownerFence }
             : { kind: 'refused' as const, reason: result.reason };
