@@ -1,12 +1,14 @@
 /**
  * T5 J-c: the journal's effective time within one process.
  *
- * `max(startWall + monotonicElapsed, wallNow, previousReading)`: a backward wall-clock step mid-process cannot
- * move journal time backwards (so no horizon is ever extended by it), while a forward step is
- * followed. The persisted high-water is the third term of the design's rule and is applied by the
- * record layer inside each transaction (`max(now, clock_high_water)`), which also refuses a
- * reopen below it. Restart horizons never derive from the monotonic source: each process starts
- * from its own wall sample (design t5-journal-sqlite-audit "Retention, time, keys").
+ * `now()` is `max(startWall + monotonicElapsed, wallNow, previousReading)`: a backward wall-clock
+ * step mid-process cannot move it backwards, a forward step is followed. It is used for CHECKS
+ * only (fencing, admission and retention horizons), which can therefore only become stricter.
+ *
+ * `wall()` is the plain wall reading, used for everything that PERSISTS or DELETES: the persisted
+ * high-water, namespace retirement and the reopen rollback check. Restart behaviour is therefore
+ * exactly what it was before this clock existed; no restart horizon or persisted value derives
+ * from the monotonic source (design t5-journal-sqlite-audit "Retention, time, keys").
  */
 export interface JournalClockSources {
   wall(): number;
@@ -14,8 +16,10 @@ export interface JournalClockSources {
 }
 
 export interface JournalClock {
-  /** Effective epoch milliseconds: never below any earlier reading of this clock. */
+  /** Effective epoch milliseconds for checks: never below any earlier reading. */
   now(): number;
+  /** Integer wall epoch milliseconds for persistence, retirement and rollback detection. */
+  wall(): number;
 }
 
 export function createJournalClock(
@@ -31,9 +35,12 @@ export function createJournalClock(
   let last = Number.NEGATIVE_INFINITY;
   return {
     now() {
-      const projected = startWall + Math.max(0, sources.monotonic() - startMonotonic);
+      const projected = startWall + (sources.monotonic() - startMonotonic);
       last = Math.max(last, Math.floor(Math.max(projected, sources.wall())));
       return last;
+    },
+    wall() {
+      return Math.floor(sources.wall());
     },
   };
 }

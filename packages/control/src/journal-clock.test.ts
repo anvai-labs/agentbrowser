@@ -57,10 +57,22 @@ describe('journal effective time (T5 J-c)', () => {
     }
   });
 
-  it('a monotonic source that goes backwards is clamped, never subtracted', () => {
-    let monotonic = 100;
-    const clock = createJournalClock({ wall: () => 1_000_000, monotonic: () => monotonic });
-    monotonic = 40;
-    expect(clock.now()).toBe(1_000_000);
+  it('readings are integers even from a fractional monotonic source', () => {
+    let monotonic = 0.25;
+    const clock = createJournalClock({ wall: () => 1_000_000.5, monotonic: () => monotonic });
+    monotonic = 7.9;
+    expect(Number.isInteger(clock.now())).toBe(true);
+    expect(clock.now()).toBe(1_000_008);
+    expect(clock.wall()).toBe(1_000_000);
+  });
+
+  it('wall() is the plain wall reading even when now() runs ahead of it', () => {
+    const s = sources();
+    const clock = createJournalClock(s.sources);
+    s.advance(5_000);
+    s.setWall(900_000);
+    expect(clock.now()).toBe(1_005_000);
+    // What persists after a backward step is the wall value, never the projection.
+    expect(clock.wall()).toBe(900_000);
   });
 });

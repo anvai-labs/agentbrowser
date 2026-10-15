@@ -120,14 +120,17 @@ try {
       );
     } else {
       outcome = store.mutate((tx: JournalSqliteTransaction) => {
+        // Checks use the effective time; what persists uses the wall reading.
         const now = clock.now();
+        const wall = clock.wall();
         if (kind === 'reserveIntent')
           return reserveJournalSqliteIntent(
             tx,
             namespaceId,
             ownerFence,
             value as Parameters<typeof reserveJournalSqliteIntent>[3],
-            now
+            now,
+            wall
           );
         if (kind === 'markDispatch')
           return markJournalSqliteDispatch(
@@ -135,7 +138,8 @@ try {
             namespaceId,
             ownerFence,
             value as Parameters<typeof markJournalSqliteDispatch>[3],
-            now
+            now,
+            wall
           );
         if (kind === 'commitTerminal')
           return commitJournalSqliteTerminal(
@@ -143,7 +147,8 @@ try {
             namespaceId,
             ownerFence,
             value as Parameters<typeof commitJournalSqliteTerminal>[3],
-            now
+            now,
+            wall
           );
         throw new Error('unreachable mutation kind');
       });
@@ -179,7 +184,7 @@ try {
         | undefined;
       try {
         openOutcome = store.mutate((tx: JournalSqliteTransaction) => {
-          const result = openJournalSqliteRecords(tx, message.descriptor, clock.now());
+          const result = openJournalSqliteRecords(tx, message.descriptor, clock.now(), clock.wall());
           return result.kind === 'opened'
             ? { kind: 'opened' as const, ownerFence: result.ownerFence }
             : { kind: 'refused' as const, reason: result.reason };

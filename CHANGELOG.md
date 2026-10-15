@@ -9,12 +9,12 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ### Added — journal time never moves backwards within a process (T5 J-c)
 
-- The SQLite journal child takes its time from `createJournalClock()`:
-  `max(startWall + monotonicElapsed, wallNow, previousReading)`. A backward wall-clock step
-  mid-process can no longer move journal time backwards (no retention or admission horizon is
-  extended by it); a forward step is followed. The persisted high-water (the rule's third term,
-  applied in each transaction) still covers restarts and refuses a reopen below it. Each process
-  starts from its own wall sample; restart horizons never derive from the monotonic source.
+- The SQLite journal child takes its time from `createJournalClock()`. Checks (fencing, admission
+  and retention horizons) use `max(startWall + monotonicElapsed, wallNow, previousReading)`, so a
+  backward wall-clock step mid-process can no longer extend a horizon; they can only become
+  stricter. Everything that persists or deletes (the high-water, namespace retirement, the reopen
+  rollback check) still uses the plain wall reading, so no persisted value derives from the
+  monotonic source and restart behaviour is unchanged.
 
 ### Added — MCP request cancellation (T0/T8)
 
