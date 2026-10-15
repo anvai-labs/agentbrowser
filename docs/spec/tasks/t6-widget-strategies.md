@@ -55,7 +55,8 @@ Chromium/stdio fixture retains one five-field bulk payload and adds query-only a
 incomplete-membership negative controls. This is synthetic markup qualification,
 not broad library/version or live-site acceptance. T6 remains active.
 **Real library (2026-10-15, W1):** both strategies are qualified against react-select 5.10.2
-on React 19.3.0 (pinned test-only devDependencies, bundled at test start) in real Chromium; the
+on React 19.3.0 with `classNamePrefix: 'select'` (pinned test-only devDependencies, bundled at
+test start) in real Chromium; the
 app's own committed state is the oracle (exact option, no submission), and a line break in
 `option.value` is refused before dispatch (`autofill-react-select-real.test.ts`).
 

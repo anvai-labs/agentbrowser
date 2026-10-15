@@ -12,14 +12,19 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - The `react-select` and `chip-multiselect` strategies are now tested against react-select 5.10.2
   on React 19.3.0 in real Chromium, not only markup that imitates it. The app reports its own
   committed state, which must show the exact option (`Chicago`, not `Chicago Heights`) and no form
-  submission. The libraries are pinned test-only devDependencies of `@agentbrowser/api`; the
-  shipped tarball and production dependencies are unchanged.
+  submission. The qualification uses react-select's `classNamePrefix: 'select'`: the strategies
+  read the committed selection from `select__*` class names (see `docs/bulk-autofill.md`), and on
+  react-select's default generated class names they fail closed rather than verify. The libraries
+  are pinned test-only devDependencies of `@agentbrowser/api`; the shipped tarball and production
+  dependencies are unchanged.
 
 ### Changed — `option.value` cannot contain a line break
 
-- An autofill `option.value` with `\n` or `\r` is refused (`INVALID_REQUEST`) before dispatch: the
-  custom strategies type the option text, and a typed line break is an Enter keypress that could
-  commit an unintended option or submit the form. It is refused rather than escaped.
+- An autofill `option.value` with `\n` or `\r` is refused (`INVALID_REQUEST`) before dispatch, for
+  every strategy: the custom strategies type the option text, and a typed line break is an Enter
+  keypress that could commit an unintended option or submit the form (native selects never type,
+  and no real option label contains one). It is refused rather than escaped; other control
+  characters are typed literally and stay allowed.
 
 ### Added — MCP request cancellation (T0/T8)
 

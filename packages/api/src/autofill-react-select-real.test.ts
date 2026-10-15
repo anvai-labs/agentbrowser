@@ -153,7 +153,8 @@ it('fills a real react-select single and multi select; the app state agrees and 
     // submitted the form (no stray Enter).
     expect(submissions).toBe(0);
 
-    // A line break in option.value would be typed as Enter: refused before any dispatch.
+    // An internal line break in option.value would be typed as Enter mid-query (a trailing one is
+    // trimmed before typing anyway): refused before any dispatch.
     const refused = await server.inject({
       method: 'POST',
       url: `${path}/pages/${pageId}/autofill`,
@@ -164,7 +165,7 @@ it('fills a real react-select single and multi select; the app state agrees and 
           {
             match: { role: 'combobox', label: 'Location (City)' },
             strategy: 'react-select',
-            option: { value: 'Boston\n' },
+            option: { value: 'Bos\nzz' },
           },
         ],
       },
