@@ -288,7 +288,8 @@ The operator-only recovery writes, on a real store, through the service and over
   starve the operator's writes), the store's refusal reason is surfaced on 503s, and the HTTP
   seeding harness cleans its environment, store handle and temp directory on failure paths
   (finally-verified).
-- **Tests.** `journal-recovery.test.ts`: five service-level cases plus the HTTP case (operator
-  closes, API key 403, re-close 409), seeding through the journal facade on a store the keyed
-  server reopens. **Not in this part:** continue with `supersedes` and the adapter `reconcile`
-  (J3c part 2).
+- **Tests.** `journal-recovery.test.ts`: the service-level cases plus the HTTP case (operator
+  closes, API key 403, an exhausted operation re-reads as 404), seeding through the journal
+  facade on a store the keyed server reopens; round 2 adds mixed-state composition, the
+  128-character-ID marker, settle-after-horizon, and the two-act 17-record close.
+  **Not in this part:** continue with `supersedes` and the adapter `reconcile` (J3c part 2).
