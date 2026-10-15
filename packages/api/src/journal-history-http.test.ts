@@ -48,7 +48,10 @@ function layout() {
   return { keyA, keyB, operatorKeys, historyFile, env };
 }
 
-async function server(env: Record<string, string | undefined>) {
+async function server(
+  env: Record<string, string | undefined>,
+  applicationAdapters?: import('@agentbrowser/control').ApplicationAdapter[]
+) {
   const names = Object.keys(env);
   const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
   for (const [name, value] of Object.entries(env)) {
@@ -66,6 +69,7 @@ async function server(env: Record<string, string | undefined>) {
   const built = await buildServer({
     engine: new FakeEngine(),
     apiKeys: new Map([[createHash('sha256').update(API_KEY).digest('hex'), 'owner']]),
+    ...(applicationAdapters ? { applicationAdapters } : {}),
   });
   cleanup.push(() => built.close());
   return { built, warn };
@@ -148,6 +152,47 @@ describe('history namespaces over HTTP (J3d)', () => {
     // The terminal was committed in the namespace that owns the record.
     expect((await lookup()).json()).toMatchObject({
       records: [{ namespace: 'ns-a', classification: 'settled_unknown', actionable: false }],
+    });
+  }, 60_000);
+
+  it('reconcile resolves a history record in the namespace that owns it', async () => {
+    const l = layout();
+    const template = await seedRotatedNamespace(l);
+    writeFileSync(
+      l.historyFile,
+      JSON.stringify({ schemaVersion: 1, namespaces: [{ ...template, keyFile: l.keyA }] }),
+      { mode: 0o600 }
+    );
+    const { built } = await server(
+      {
+        ...l.env('ns-b', l.keyB, '2099-01-01T00:00:00Z'),
+        AGENTBROWSER_JOURNAL_HISTORY_FILE: l.historyFile,
+        AGENTBROWSER_OPERATOR_KEYS_FILE: l.operatorKeys,
+      },
+      [
+        {
+          id: 'a',
+          authorize: () => true,
+          operations: {},
+          receipt: async () => ({}),
+          reconcile: async () => ({ status: 'committed' }),
+        },
+      ]
+    );
+    const reconciled = await built.inject({
+      method: 'POST',
+      url: '/v1/journal/operations/rotated-op/reconcile',
+      headers: operatorHeaders,
+    });
+    expect(reconciled.statusCode, reconciled.body).toBe(200);
+    expect(reconciled.json()).toEqual({ reconciled: 1, unresolved: 0, truncated: false });
+    const after = await built.inject({
+      method: 'GET',
+      url: '/v1/journal/operations/rotated-op',
+      headers: apiHeaders,
+    });
+    expect(after.json()).toMatchObject({
+      records: [{ namespace: 'ns-a', classification: 'completed', actionable: false }],
     });
   }, 60_000);
 
