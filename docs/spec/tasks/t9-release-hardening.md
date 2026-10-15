@@ -75,9 +75,12 @@ Promotion PR 234 and all eight main checks passed at
 `310e01d43982824caac2c63ed8d98355e17efdce`; the tag matches this commit and all twelve
 release jobs passed. Published artifacts and the local Homebrew upgrade passed
 acceptance. See the [1.9.1 delivery evidence](../evidence/release-1.9.1.md).
-The 1.9.1 candidate's tag ancestry and delivery are verified; a reusable ancestry
-gate, least-privilege publication review and measured runner-use improvements remain
-open. T9 stays active because every candidate needs fresh review, exact-head CI,
+The 1.9.1 candidate's tag ancestry and delivery are verified. The reusable ancestry
+gate now exists (2026-10-15): `scripts/check-tag-ancestry.mjs` runs in the release
+`tag-guard` job, which every building and publishing job depends on, and refuses any tag
+whose commit is not reachable from `main` (R14). Tag immutability is a repository ruleset
+the owner applies. Least-privilege publication review and measured runner-use
+improvements remain open. T9 stays active because every candidate needs fresh review, exact-head CI,
 promotion and publication evidence.
 
 ## Delivered checkpoint and remaining work

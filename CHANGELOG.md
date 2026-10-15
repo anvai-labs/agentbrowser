@@ -7,6 +7,16 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — release tags must be cut from main (T9 S1a, R14)
+
+- The release workflow's `tag-guard` job now fetches `main` and runs
+  `scripts/check-tag-ancestry.mjs`: a tag whose commit is not reachable from `main` fails before
+  anything builds or publishes. Every building and publishing job already depends on `tag-guard`.
+  An unknown commit or a missing `main` ref fails closed. Checked against real history: the v1.16.0
+  and v1.17.1 tags pass, a develop-only commit is refused.
+- Tag immutability (no deletion or re-pointing of `v*` tags) is a repository ruleset the owner
+  applies; the gate above covers ancestry, which a ruleset cannot express.
+
 ### Added — the handoff surfaces (TD-BROWSER-16 phase 7; the program complete)
 
 - **Protocol**: the `session.credential` capability joins the closed vocabulary and flows into
