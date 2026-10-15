@@ -94,10 +94,15 @@ qualified through the Codex path (2026-10-03, including the blackhole
 uncertainty case — see the availability record); cancellation was
 qualified at the CLI/service level (slice 1); since 2026-10-15 the MCP server honours
 `notifications/cancelled` end to end (abort to the HTTP request, no response, benign races —
-`packages/mcp-server/src/cancellation.test.ts`), but no provider-path run exists yet; MCP client-internal reply correlation is provider-client
-semantics qualified at the manager/bridge level. Still open: the same
-treatment on Victor (TLS trust operator call) and Claude (additional
-coverage). (Owner reconciliation 2026-10-15: the current blocker is aiserver1's gateway, which has no
+`packages/mcp-server/src/cancellation.test.ts`); a provider-path cancellation is not
+exercisable because neither CLI can cancel one in-flight call from a scripted run (recorded, not
+claimed). MCP client-internal reply correlation is provider-client
+semantics qualified at the manager/bridge level. **2026-10-15 (Q1):** both Codex 0.162.1 and
+Claude Code 2.1.300 were re-qualified through a committed driver
+(`scripts/t8-harness-qualification.mjs`). Covered: unbound tool-call fidelity, structured results,
+delegated navigate/act with operation IDs, image artifact references and password redaction.
+Every dimension is verified by the fixture server or the service's operation records, not by
+model claims (see the availability record). Still open: the same treatment on Victor. (Owner reconciliation 2026-10-15: the current blocker is aiserver1's gateway, which has no
 registered upstream, ahead of any TLS question.)
 Retain explicit limits until those named acceptance runs exist; no whole-milestone
 completion or release is implied by this source repair.

@@ -7,6 +7,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — a committed provider-CLI qualification driver (T8 Q1)
+
+- `scripts/t8-harness-qualification.mjs` re-qualifies the MCP bridge through the installed Codex
+  and Claude Code CLIs against a scratch service and a loopback fixture. Each verdict comes from an
+  independent oracle: the fixture's request log, the service's operation records, and the
+  provider's own event stream checked for password values and inline image bytes. Both providers
+  pass every exercisable dimension (2026-10-15). Provider-path cancellation is recorded as not
+  exercisable. The T1 catalog footprint was re-measured after the output schemas.
+
 ### Added — the durable requirement is part of the operation identity (T5 C4b, part 2)
 
 - A `durable` application write now has its own operation identity: its fingerprint uses the

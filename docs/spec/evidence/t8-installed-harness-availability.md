@@ -304,3 +304,49 @@ qualified at the manager/bridge level (the journal and service-side
 gates), not through a third-party client; this record qualifies what
 is observable through the provider: honest failure, recovery, and
 timeout-uncertainty surfacing.
+
+## 2026-10-15 update: re-qualified on 1.18.0-era develop through BOTH provider CLIs (Q1)
+
+The 1.14/1.15 runs had no committed driver. This one does:
+[`scripts/t8-harness-qualification.mjs`](../../../scripts/t8-harness-qualification.mjs). It builds
+nothing itself (run `pnpm -r build` first). It starts a keyed scratch service from this checkout on
+a loopback port with `AGENTBROWSER_ALLOW_LOOPBACK=1`, plus a loopback fixture whose form carries
+a random password value. It then drives each provider CLI with only the agentbrowser MCP server
+configured:
+
+- **Codex** 0.162.1 (ChatGPT auth): `codex exec --ephemeral --ignore-user-config --approve-for-me --json`.
+- **Claude Code** 2.1.300 (claude.ai auth): `claude -p --strict-mcp-config --allowedTools "mcp__agentbrowser__*"`,
+  so no shell, file or web tools are available.
+
+Every verdict comes from an **oracle that is independent of the model's narrative**:
+
+| Dimension | Oracle | Codex | Claude Code |
+| --- | --- | --- | --- |
+| Tool-call fidelity, unbound (create, navigate, snapshot, act, close) | The fixture server saw `/submit` with the exact random value the prompt named | PASS | PASS |
+| Structured results consumed | `structuredContent` is present in the provider's event stream | PASS | PASS |
+| Delegated navigate + act with caller-chosen operation IDs | The service's own operation records, read with the operator key: both `completed`, `dispatched: true`, epoch 2 | PASS | PASS |
+| Image reference privacy | The screenshot reached the model as an `art_…` artifact reference, with no inline PNG/JPEG bytes in the stream | PASS | PASS |
+| Password redaction across the bridge | The random password value never appears in the full event stream, in any of the three runs | PASS | PASS |
+| Cancellation through the provider | — | not exercisable | not exercisable |
+
+The tools each provider actually invoked are read from invocation events, not from the advertised
+list, and they were identical for both providers:
+- `act, close, create, navigate, snapshot` for the unbound run;
+- `act, navigate, observe` for the delegated run;
+- `close, create, navigate, observe, screenshot` for the screenshot run.
+
+**Cancellation:** neither CLI lets a scripted run cancel one in-flight tool call, so this is
+recorded as not exercisable through the provider rather than as a pass. The bridge side
+(`notifications/cancelled` aborts the HTTP request and no response is sent) is qualified end to
+end in `packages/mcp-server/src/cancellation.test.ts`.
+
+**HTML** is delivered inline and is deliberately not secret-redacted (ADR-020), so it is not a
+privacy dimension of this run.
+
+Run 2026-10-15T16:05Z–16:07Z on Linux x64 (WSL2), Node v24.21.0. The first attempt failed for a
+reason in the driver itself, not the product: a synchronous child spawn blocked the in-process
+fixture, so no page could load and the service correctly reported `TIMEOUT`/`outcome_unknown`.
+The committed driver spawns asynchronously. A Claude Code attempt that hit the account's usage
+limit was discarded, not counted.
+
+**Victor** remains gated on aiserver1's gateway (owner reconciliation 2026-10-15).
