@@ -7,6 +7,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — declared adapter output (T4)
+
+- `defineApplicationOperation` accepts an optional `parseOutput(value)`. A read or committed
+  value that does not match fails with a static `Invalid application output` (neither the
+  adapter output nor the parser's message is echoed) instead of being reported as success; a
+  matching value is replaced by the parsed one. A mismatched **write** has already run, so its
+  operation stays dispatched with `outcome_unknown` and the same operation ID never executes
+  again. Rejected results skip the parser; operations without `parseOutput` are unchanged.
+
 ### Changed — plans are capped at 100 steps (T0)
 
 - A plan now accepts at most **`MAX_PLAN_STEPS` = 100** steps (new protocol export, separate from the

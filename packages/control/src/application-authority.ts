@@ -74,24 +74,43 @@ export interface ApplicationOperation {
   prepare(input: unknown): (scope: ApplicationScope) => Promise<ApplicationResult>;
 }
 
-/** Type-check adapter input/output while keeping validation inside admission. */
+/**
+ * Type-check adapter input/output while keeping validation inside admission. An optional
+ * `parseOutput` validates (and may normalize) a read/committed value: a mismatch fails with a
+ * static `Invalid application output` and never reports success. For a write the effect has
+ * already run, so the operation stays dispatched; reconcile it by receipt, never by re-running.
+ */
 export function defineApplicationOperation<Input, Output>(operation: {
   mode: 'read' | 'write';
   review?: 'operator-submit';
   parse(input: unknown): Input;
   execute(input: Input, scope: ApplicationScope): Promise<ApplicationResult<Output>>;
+  parseOutput?(value: unknown): Output;
 }): ApplicationOperation {
   const mode = operation.mode;
   const review = operation.review;
   validateReviewDeclaration(mode, review);
   const parse = operation.parse.bind(operation);
   const execute = operation.execute.bind(operation);
+  const parseOutput = operation.parseOutput?.bind(operation);
   return Object.freeze({
     mode,
     ...(review !== undefined ? { review } : {}),
     prepare(input: unknown) {
       const parsed = parse(input);
-      return (scope: ApplicationScope) => execute(parsed, scope);
+      if (parseOutput === undefined) return (scope: ApplicationScope) => execute(parsed, scope);
+      return async (scope: ApplicationScope): Promise<ApplicationResult> => {
+        const result = await execute(parsed, scope);
+        if (result.status === 'rejected') return result;
+        let value: Output;
+        try {
+          value = parseOutput(result.value);
+        } catch {
+          // Static diagnostics: neither the adapter output nor the parser's message is echoed.
+          throw new ControlError('INVALID_REQUEST', 'Invalid application output');
+        }
+        return { status: result.status, value };
+      };
     },
   });
 }
