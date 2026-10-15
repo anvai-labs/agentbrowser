@@ -22,6 +22,7 @@ import {
 import {
   closeJournalSqliteNamespace,
   commitJournalSqliteTerminal,
+  findJournalSqliteRecordsByOperation,
   lookupJournalSqliteRecord,
   markJournalSqliteDispatch,
   observeJournalSqliteNamespace,
@@ -203,6 +204,7 @@ function adapterOverChild(
       markDispatch: (stamped: { value: unknown }) => call('markDispatch', stamped.value),
       commitTerminal: (stamped: { value: unknown }) => call('commitTerminal', stamped.value),
       lookup: (stamped: { value: unknown }) => call('lookup', stamped.value),
+      findByOperation: (stamped: { value: unknown }) => call('findByOperation', stamped.value),
       async close() {
         const correlationId = link.nextCorrelationId();
         const response = await link.callCorrelated({
@@ -472,6 +474,21 @@ function createDirectSqliteJournalFixture(startTime = 1_000): JournalConformance
                 request.namespaceId,
                 ownerFence,
                 stamped.value as Parameters<typeof lookupJournalSqliteRecord>[3],
+                clock
+              )
+            );
+          },
+          findByOperation(stamped: { namespaceId: string; ownerFence: string; value: unknown }) {
+            const refused = refusal();
+            if (refused) return envelope({ kind: 'definitely_not_read', reason: refused });
+            return envelope(
+              findJournalSqliteRecordsByOperation(
+                readerFacade as unknown as Parameters<
+                  typeof findJournalSqliteRecordsByOperation
+                >[0],
+                request.namespaceId,
+                ownerFence,
+                stamped.value as Parameters<typeof findJournalSqliteRecordsByOperation>[3],
                 clock
               )
             );

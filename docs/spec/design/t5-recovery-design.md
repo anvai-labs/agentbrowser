@@ -277,7 +277,8 @@ order: D6 **after** J3, reusing J3's read path.
 
 1. **J-e:** process-loss rows through the service, plus key rotation and key loss through
    retention.
-2. **J3a:** the `findByOperation` port (bounded scan), conformance, both fixtures.
+2. **J3a:** the `findByOperation` port (bounded scan), conformance, both fixtures. **Delivered
+   2026-10-15** ([evidence](../evidence/t5-journal-runtime.md#j3a-findbyoperation-2026-10-15)).
 3. **J3b:** the read-only lookup route for the operator or a tenant API key (D1), with REST, SDK and
    CLI parity, plus `GET /v1/journal` (D5).
 4. **J3c:** the recovery write path; close and continue (D2) with `supersedes`; operator

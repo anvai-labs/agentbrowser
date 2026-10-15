@@ -70,6 +70,7 @@ function fixture() {
     markDispatch: vi.fn(async () => stamp({ kind: 'conflict', reason: 'missing_intent' })),
     commitTerminal: vi.fn(async () => stamp({ kind: 'conflict', reason: 'missing_intent' })),
     lookup: vi.fn(async () => stamp({ kind: 'scoped_absent' })),
+    findByOperation: vi.fn(async () => stamp({ kind: 'found', records: [], truncated: false })),
     close: vi.fn(async () => ({ kind: 'closed' })),
   };
   const adapter = {
@@ -632,6 +633,35 @@ describe('journal concurrency and acknowledgment boundaries', () => {
         expectedRevision: 2,
         dispatched: true,
         terminal: { status: 'completed', evidenceRefIds: ['right-evidence'] },
+      })
+    ).toEqual({ kind: 'uncertain', reason: 'invalid_response' });
+  });
+
+  it.each([
+    ['another tenant', { tenantId: 'other-tenant' }, 16],
+    ['another operation ID', { operationId: 'other-op' }, 16],
+    ['more records than the limit', {}, 0],
+  ])('rejects a findByOperation answer carrying %s (J3a)', async (_name, keyChange, limitDelta) => {
+    const f = fixture();
+    const journal = await f.open();
+    const reserved = await journal.reserveIntent(intent());
+    if (reserved.kind !== 'acknowledged') throw new Error();
+    const record = {
+      ...reserved.record,
+      identity: {
+        ...reserved.record.identity,
+        key: { ...reserved.record.identity.key, ...keyChange },
+      },
+    };
+    f.raw.findByOperation.mockResolvedValueOnce(
+      f.stamp({ kind: 'found', records: [record, record], truncated: false }) as never
+    );
+    const key = reserved.record.identity.key;
+    expect(
+      await journal.findByOperation({
+        tenantId: key.tenantId,
+        operationId: key.operationId,
+        limit: limitDelta === 0 ? 1 : 16,
       })
     ).toEqual({ kind: 'uncertain', reason: 'invalid_response' });
   });

@@ -430,6 +430,49 @@ export function lookupJournalSqliteRecord(
   return current ? { kind: 'found', record: storedRecord(current) } : { kind: 'scoped_absent' };
 }
 
+export type JournalSqliteFindOutcome =
+  | {
+      readonly kind: 'found';
+      readonly records: readonly JournalRecord[];
+      readonly truncated: boolean;
+    }
+  | { readonly kind: 'definitely_not_read'; readonly reason: 'fenced' | 'expired' };
+
+/**
+ * J3a: every record of one tenant's operation ID in the namespace, in insertion order, at most
+ * `limit` (+1 read only to report truncation). A bounded scan over the stored identity: the
+ * tenant and operation ID live inside the identity JSON, and an index would be new DDL, which
+ * is a new formatVersion. The namespace is capped at maxRecords, which bounds the scan.
+ */
+export function findJournalSqliteRecordsByOperation(
+  reader: JournalSqliteReader & {
+    all(sql: string, ...parameters: unknown[]): Record<string, unknown>[];
+  },
+  namespaceId: string,
+  ownerFence: string,
+  query: { readonly tenantId: string; readonly operationId: string; readonly limit: number },
+  now: number
+): JournalSqliteFindOutcome {
+  const refused = fenceRefusal(reader, namespaceId, ownerFence, now);
+  if (refused) return { kind: 'definitely_not_read', reason: refused };
+  const rows = reader.all(
+    `SELECT record FROM journal_record
+     WHERE namespace_id = ?
+       AND json_extract(identity, '$.key.tenantId') = ?
+       AND json_extract(identity, '$.key.operationId') = ?
+     ORDER BY rowid LIMIT ?`,
+    namespaceId,
+    query.tenantId,
+    query.operationId,
+    query.limit + 1
+  );
+  return {
+    kind: 'found',
+    records: rows.slice(0, query.limit).map(storedRecord),
+    truncated: rows.length > query.limit,
+  };
+}
+
 /** Releases the fence; idempotent for an already-stolen or cleared fence. */
 export function closeJournalSqliteNamespace(
   transaction: JournalSqliteTransaction,

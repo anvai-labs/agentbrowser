@@ -32,6 +32,7 @@ try {
   const {
     closeJournalSqliteNamespace,
     commitJournalSqliteTerminal,
+    findJournalSqliteRecordsByOperation,
     lookupJournalSqliteRecord,
     markJournalSqliteDispatch,
     observeJournalSqliteNamespace,
@@ -163,7 +164,7 @@ try {
           candidate.namespaceId === message.namespaceId &&
           candidate.ownerFence === message.ownerFence
       );
-      const read = message.kind === 'lookup';
+      const read = message.kind === 'lookup' || message.kind === 'findByOperation';
       if (!handle || handle.closed) {
         if (message.kind === 'close') {
           // The memory oracle's close is idempotent even for a forgotten handle.
@@ -232,6 +233,19 @@ try {
         closeJournalSqliteNamespace(tx, namespaceId, ownerFence);
         return { kind: 'closed' };
       });
+    } else if (read && kind === 'findByOperation') {
+      const connection = readConnection();
+      outcome = findJournalSqliteRecordsByOperation(
+        {
+          get: get(connection),
+          all: (sql: string, ...parameters: unknown[]) =>
+            connection.prepare(sql).all(...(parameters as never[])) as Record<string, unknown>[],
+        },
+        namespaceId,
+        ownerFence,
+        value as Parameters<typeof findJournalSqliteRecordsByOperation>[3],
+        clock
+      );
     } else if (read) {
       outcome = lookupJournalSqliteRecord(
         { get: get(readConnection()) },

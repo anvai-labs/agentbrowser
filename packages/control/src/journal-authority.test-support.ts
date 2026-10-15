@@ -125,6 +125,7 @@ export function controllableAdapter(base: RawOperationJournalAdapter) {
         markDispatch: (value, abort) => invoke('markDispatch', value, abort),
         commitTerminal: (value, abort) => invoke('commitTerminal', value, abort),
         lookup: (value, abort) => invoke('lookup', value, abort),
+        findByOperation: (value, abort) => original.findByOperation(value, abort),
         close: (abort) => original.close(abort),
       };
       return { ...opened, handle };

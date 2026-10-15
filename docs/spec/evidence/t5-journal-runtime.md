@@ -153,3 +153,30 @@ rows read again after the kill (read-only), and the counter.
 
 Still not covered here (J4): a cursor from before a restart failing as session-not-found, and the
 operator classification surface (J3).
+
+## J3a: `findByOperation` (2026-10-15)
+
+The journal port gains a bounded, read-only, fenced query:
+`findByOperation({ tenantId, operationId, limit ≤ 16 })` returns
+`{ kind: 'found', records, truncated }`, or `definitely_not_read` / `uncertain`. It is the read
+path that J3's lookup route (J3b) and recovery writes (J3c) build on.
+
+- **Storage.** The SQLite adapter runs a bounded scan with `json_extract` over the stored
+  identity, tenant- and operation-scoped, in insertion order, reading `limit + 1` rows only to
+  report truncation. There is no DDL change, because an index would be a new `formatVersion`.
+  The namespace's `maxRecords` bounds the scan.
+- **Facade.** It validates the query (tenant 1–256 characters, operation-ID pattern, limit 1–16)
+  and refuses an invalid one before any I/O. It rejects an adapter answer that carries another
+  tenant's or operation's record, or more records than the limit, as `invalid_response`.
+- **Full identities.** Records keep their full identity, including the keyed fingerprint, for
+  J3c's writes. The future route strips the fingerprint.
+- **Tests.**
+  - Conformance runs on the memory fixture and both SQLite fixtures (the in-process one and the
+    child-process one): found across session incarnations and epochs, in order, excluding other
+    tenants and operation IDs; truncation; no cross-namespace disclosure; fence refusal; six
+    invalid queries refused.
+  - The facade test uses a lying adapter.
+  - The real compiled adapter and child are exercised through a durable write in the api tests.
+  - Each guard was mutated away and fails a test.
+  - Suites: control 832, api 1,541; journal qualification 32/32.
+
