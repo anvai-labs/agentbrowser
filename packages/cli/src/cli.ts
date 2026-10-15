@@ -43,6 +43,7 @@ import {
   INTERACTION_GUIDANCE,
   isAgentMode,
   isPassingOutcome,
+  listFormMappingStages,
   materializeAutofillMapping,
   navigationFailureDetail,
   ObservationRequestSchema,
@@ -2467,11 +2468,15 @@ export function buildCli(deps: CliDependencies): Cli {
         )
         .argument('<mappingJson>', 'reusable mapping JSON: inline, @file, or -')
         .argument('<valuesJson>', 'private values JSON: inline, @file, or -')
+        .argument(
+          '[stageId]',
+          'which stage of a staged mapping to materialize (T6 W3a); required when the mapping has stages'
+        )
         .addHelpText(
           'after',
           '\nEmits the prepared payload as JSON in every output mode. Preparation does not contact the service, inspect a page, or verify a form. Mapping URLs and labels must be safe to share; do not place private data or access tokens in them. Use stdin for at most one input. --operation-id is unused.'
         )
-        .action(async (mappingJson: string, valuesJson: string) => {
+        .action(async (mappingJson: string, valuesJson: string, stageId?: string) => {
           // Offline: action() would construct a client and read credentials.
           try {
             if (mappingJson === '-' && valuesJson === '-') {
@@ -2481,7 +2486,7 @@ export function buildCli(deps: CliDependencies): Cli {
             const values = await readCommandJson(prepareForm, valuesJson, 'form values');
             let prepared: AutofillRequest;
             try {
-              prepared = materializeAutofillMapping(mapping, values);
+              prepared = materializeAutofillMapping(mapping, values, stageId);
             } catch (error) {
               // The canonical materializer owns static, value-free diagnostics.
               throw new UsageError((error as Error).message);
@@ -2492,6 +2497,33 @@ export function buildCli(deps: CliDependencies): Cli {
             deps.err(formatError(error));
           }
         });
+      form
+        .command('stages <mappingJson>')
+        .description(
+          'list the stages of a mapping offline: id, scope URL and field count per stage (T6 W3a). Values are not needed and never read'
+        )
+        .action(async (mappingJson: string) => {
+          try {
+            const mapping = await readJsonArgument(mappingJson, 'form mapping');
+            const stages = listFormMappingStages(mapping);
+            if (stages === undefined) {
+              deps.out('single-stage mapping (no stages)');
+              return;
+            }
+            deps.out(
+              stages
+                .map(
+                  (stage: { id: string; url: string; fieldCount: number }) =>
+                    `${stage.id}  ${stage.url}  ${stage.fieldCount} field(s)`
+                )
+                .join('\n')
+            );
+          } catch (error) {
+            exitCode = 1;
+            deps.err(formatError(new UsageError((error as Error).message)));
+          }
+        });
+
       advertiseWireSchema(prepareForm, {
         input: {
           type: 'object',

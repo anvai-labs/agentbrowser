@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { parseAutofillRequest } from './autofill.js';
 import { materializeAutofillMapping } from './form-mapping.js';
 
@@ -175,4 +175,103 @@ it('sanitizes exceptions from reflective proxies at the local preparation bounda
   expect(() => materializeAutofillMapping(mapping(), value)).toThrow(
     'Invalid form preparation input'
   );
+});
+
+describe('staged mappings (T6 W3a)', () => {
+  const stageField = (label: string, valueKey: string) => ({
+    match: { label },
+    strategy: 'native-input',
+    input: 'value',
+    valueKey,
+  });
+  const staged = () => ({
+    schemaVersion: 1,
+    id: 'onboarding',
+    revision: 'r1',
+    stages: [
+      {
+        id: 'account',
+        scope: { url: 'https://example.test/signup/1' },
+        fields: [stageField('Full name', 'name'), stageField('Email', 'email')],
+      },
+      {
+        id: 'profile',
+        scope: { url: 'https://example.test/signup/2' },
+        fields: [stageField('Full name', 'name'), stageField('Bio', 'bio')],
+      },
+    ],
+  });
+  const values = { name: 'Ada', email: 'ada@example.test', bio: 'Engineer' };
+
+  it('materializes one chosen stage; values match the union across stages', () => {
+    const second = materializeAutofillMapping(staged(), values, 'profile');
+    expect(second.scope).toEqual({ url: 'https://example.test/signup/2' });
+    expect(
+      second.fields.map(
+        (field: { value?: string; option?: { value: string } }) =>
+          field.value ?? field.option?.value
+      )
+    ).toEqual(['Ada', 'Engineer']);
+    const first = materializeAutofillMapping(staged(), values, 'account');
+    expect(first.scope).toEqual({ url: 'https://example.test/signup/1' });
+  });
+
+  it('a single-stage mapping is unchanged and needs no stage argument', () => {
+    const single = {
+      schemaVersion: 1,
+      id: 'plain',
+      revision: 'r1',
+      scope: { url: 'https://example.test/form' },
+      fields: [stageField('Full name', 'name')],
+    };
+    expect(materializeAutofillMapping(single, { name: 'Ada' })).toMatchObject({
+      scope: { url: 'https://example.test/form' },
+    });
+  });
+
+  it.each([
+    ['a staged mapping without a stage argument', staged(), values, undefined],
+    ['an unknown stage', staged(), values, 'missing'],
+    ['values missing a union key', staged(), { name: 'Ada' }, 'account'],
+    ['values with an extra key', staged(), { ...values, extra: 'x' }, 'account'],
+  ])('refuses %s', (_name, mapping, valuesInput, stage) => {
+    expect(() =>
+      materializeAutofillMapping(mapping as never, valuesInput as never, stage)
+    ).toThrow();
+  });
+
+  it.each([
+    ['both fields and stages', () => ({ ...staged(), fields: [stageField('Full name', 'name')] })],
+    ['an empty stages array', () => ({ ...staged(), stages: [] })],
+    [
+      'duplicate stage ids',
+      () => ({ ...staged(), stages: [...staged().stages, ...staged().stages] }),
+    ],
+    [
+      'a bad stage id',
+      () => {
+        const m = staged();
+        m.stages[1].id = 'bad id';
+        return m;
+      },
+    ],
+    [
+      'two stages with the same scope URL',
+      () => {
+        const m = staged();
+        m.stages[1].scope = { ...m.stages[0].scope };
+        return m;
+      },
+    ],
+    [
+      'a stage field without a strategy',
+      () => {
+        const m = staged();
+        (m.stages[0].fields[0] as { strategy?: string }).strategy = undefined as never;
+        return m;
+      },
+    ],
+  ])('refuses a staged mapping with %s', (_name, build) => {
+    expect(() => materializeAutofillMapping(build() as never, values, 'account')).toThrow();
+  });
 });
