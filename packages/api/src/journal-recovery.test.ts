@@ -632,7 +632,10 @@ describe('reconcile construction checks (review nits)', () => {
       () => undefined,
       (error: unknown) => error
     );
-    expect(failure).toBeDefined();
     expect(failure).not.toBeInstanceOf(TypeError);
+    expect(failure).toMatchObject({
+      code: 'INVALID_REQUEST',
+      message: expect.stringMatching(/Invalid or duplicate application adapter/),
+    });
   });
 });

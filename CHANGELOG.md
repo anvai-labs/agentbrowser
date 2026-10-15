@@ -12,7 +12,8 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 - `journalReconcileTimeoutMs` outside 1..2147483647 (or not an integer) is refused at service
   construction; before, `setTimeout` fired at once and every reconcile counted as unresolved.
 - Adapter `reconcile` functions are captured only after the application authority has validated
-  the adapters, so a null or duplicate entry gets the authority's typed refusal.
+  the adapters, so a null entry gets the authority's typed `INVALID_REQUEST` refusal instead of a
+  `TypeError` (duplicates were already refused by the authority).
 - The lookup route's documented `operationId` pattern now matches the route's check exactly.
 - A journal test child no longer pipes output nobody reads (it could block on a full buffer), and
   its leftover debug logger is gone.
