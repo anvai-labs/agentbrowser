@@ -6,9 +6,9 @@
  *
  *   node --test scripts/footprint-gates.test.mjs
  *
- * Peak RSS is polled via `ps -o rss=` (KB, both macOS and Linux) at a 10 ms
- * interval while the process runs; polling can miss sub-10ms spikes, so the
- * limits carry headroom. First tightening pass 2026-10-02 (120 -> 75 MB),
+ * Peak RSS is sampled at a 10 ms interval while the process runs: on Linux from the
+ * kernel's high-water mark (`VmHWM` in /proc/<pid>/status, so no spike is missed), elsewhere
+ * via `ps -o rss=` (KB), which can miss sub-10ms spikes, so the limits carry headroom. First tightening pass 2026-10-02 (120 -> 75 MB),
  * once Linux CI numbers existed: across 7 linux-x64 CI samples that day
  * (bun 1.4.0 pinned) the CLI one-shot (`--version`) spanned 37.4-51.9 MB
  * and the idle bridge 47.4-52.0 MB — worst observed 51.9/52.0, so 75 MB
@@ -20,7 +20,7 @@
  */
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -33,7 +33,19 @@ const MCP_BIN = `${root}packages/mcp-server/dist-bin/agentbrowser-mcp`;
  */
 const LIMITS = { cliOneShot: 75, mcpBridgeIdle: 75 };
 
+/** Linux: the kernel's peak-RSS high-water mark (VmHWM, kB) — a microsecond read that reports
+ * the true peak so far, so a short-lived process cannot slip between samples. */
+const hwmKb = (pid) => {
+  try {
+    const match = /^VmHWM:\s+(\d+) kB$/m.exec(readFileSync(`/proc/${pid}/status`, 'utf8'));
+    return match ? Number(match[1]) : 0;
+  } catch {
+    return 0; // process gone
+  }
+};
+
 const rssKb = (pid) => {
+  if (process.platform === 'linux') return hwmKb(pid);
   try {
     const out = execFileSync('ps', ['-o', 'rss=', '-p', String(pid)], { encoding: 'utf8' });
     const kb = Number(out.trim());
@@ -47,6 +59,10 @@ const rssKb = (pid) => {
 async function peakRssMb(child, run) {
   let peakKb = 0;
   let stopped = false;
+  // First sample as soon as the process exists, before the first timer tick.
+  child.once('spawn', () => {
+    peakKb = Math.max(peakKb, rssKb(child.pid));
+  });
   const poll = (async () => {
     while (!stopped) {
       peakKb = Math.max(peakKb, rssKb(child.pid));
@@ -71,9 +87,14 @@ test('shipped artifacts exist after compile', () => {
 });
 
 test('CLI one-shot peak RSS stays within the gate', async () => {
-  const child = spawn(CLI_BIN, ['--version'], { stdio: ['ignore', 'pipe', 'ignore'] });
-  const peak = await peakRssMb(child, () => new Promise((resolve) => child.on('close', resolve)));
-  assert.ok(peak > 0, 'no RSS sample collected');
+  // `--version` exits in well under 100 ms; a run in which no sample landed before exit is a
+  // sampling miss, not a measurement, so it is retried (at most three runs).
+  let peak = 0;
+  for (let attempt = 0; attempt < 3 && peak === 0; attempt += 1) {
+    const child = spawn(CLI_BIN, ['--version'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    peak = await peakRssMb(child, () => new Promise((resolve) => child.on('close', resolve)));
+  }
+  assert.ok(peak > 0, 'no RSS sample collected in three runs');
   console.log(`footprint: CLI one-shot peak RSS ${peak} MB (gate ${LIMITS.cliOneShot})`);
   assert.ok(
     peak <= LIMITS.cliOneShot,

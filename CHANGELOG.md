@@ -7,6 +7,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed — the T8 footprint gate no longer flakes on fast processes
+
+- `scripts/footprint-gates.test.mjs` sampled RSS by forking `ps` every 10 ms; the CLI's
+  `--version` can exit before the first sample lands on a busy runner ("no RSS sample collected",
+  seen on #474, #475 and #484). On Linux it now reads the kernel's peak-RSS high-water mark
+  (`VmHWM` in `/proc/<pid>/status`, a microsecond read that reports the true peak so far), samples
+  once on spawn, and retries a run that collected no sample (at most three). Against a 1 ms
+  process (`/bin/true`) the old sampler missed 5 of 5 runs; the new one measured every run.
+
 ### Changed — least-privilege workflows and SHA-pinned actions (T9 S1c)
 
 - Every workflow now defaults to `contents: read`; `ci.yml` previously inherited the repository
