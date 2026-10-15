@@ -1136,7 +1136,9 @@ export function buildMcpServer(deps: McpDependencies): McpServer {
                 inputSchema,
                 ...(protocolVersion === STRUCTURED_PROTOCOL_VERSION
                   ? {
-                      ...(outputSchema ? { outputSchema } : {}),
+                      ...(outputSchema
+                        ? { outputSchema: advertisedOutputSchema(outputSchema) }
+                        : {}),
                       ...(annotations ? { annotations } : {}),
                     }
                   : {}),
@@ -1299,4 +1301,40 @@ function ok(id: string | number, result: unknown): string {
 
 function error(id: string | number | null, code: number, message: string): string {
   return JSON.stringify({ jsonrpc: '2.0', id, error: { code, message } });
+}
+
+/**
+ * The structured-error envelope every tool error carries on the structured protocol
+ * (`{error: {code, message, operationId?}}`; navigation failures add their reason).
+ */
+const TOOL_ERROR_ENVELOPE = {
+  type: 'object',
+  required: ['error'],
+  properties: {
+    error: {
+      type: 'object',
+      properties: {
+        code: { type: 'string' },
+        message: { type: 'string' },
+        operationId: { type: 'string' },
+      },
+    },
+  },
+} as const;
+
+/**
+ * The outputSchema a tool advertises: its result schema OR the structured-error envelope.
+ * MCP clients (the official TypeScript SDK among them) validate structuredContent against
+ * outputSchema even on isError results, so a success-only schema turns every structured error
+ * into a client-side -32602 and the agent never sees the error. The root stays an object (the
+ * MCP tool contract) and keeps the result schema's $id; the nested copy drops it so no
+ * validator sees the same $id twice.
+ */
+export function advertisedOutputSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  const { $id, ...result } = schema;
+  return {
+    ...($id !== undefined ? { $id } : {}),
+    type: 'object',
+    anyOf: [result, TOOL_ERROR_ENVELOPE],
+  };
 }

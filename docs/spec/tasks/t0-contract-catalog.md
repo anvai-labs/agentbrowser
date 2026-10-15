@@ -77,7 +77,11 @@ both catalogs. T1 must measure selection savings rather than claim shrinking all
    schemas that are *qualified*: `packages/api/src/mcp-output-schemas.test.ts` validates each
    tool's real result (MCP handler → SDK → REST → service) against its schema, and each schema
    rejects `{}`. The qualification found that `SessionResponse.engine.capabilities` was
-   documented as required but never returned; it is now optional. Part 2 covers `policy`,
+   documented as required but never returned; it is now optional. Review then showed that
+   MCP clients validate `structuredContent` against `outputSchema` on `isError` results too, so
+   success-only schemas broke every structured error (already true for the earlier schema'd
+   tools); advertised schemas now accept the error envelope (`anyOf`), qualified from the
+   client's side over JSON-RPC. Part 2 covers `policy`,
    `cookies`, `cookie_handoff`, `snapshot`, `html` and `session`.
 2. Preserve the adversarial review resolution: autofill reports are validated before
    CLI success/output and the malformed-report case has a red-then-green regression.
