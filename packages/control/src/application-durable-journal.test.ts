@@ -210,3 +210,57 @@ describe('ApplicationAuthority durable writes', () => {
     ).toThrow();
   });
 });
+
+describe('SessionAuthority.drain', () => {
+  const journalOperation = (id: string) => ({
+    id,
+    fingerprint: 'LIVE',
+    journal: { version: 1 as const, application },
+  });
+
+  it('refuses new journaled runs while draining, with its own reason', async () => {
+    const f = await sessionFixture();
+    await expect(f.authority.drain(1_000)).resolves.toBe(true);
+    const callback = vi.fn(async () => 'never');
+    await expect(
+      f.authority.run('session', operator, journalOperation('late'), callback)
+    ).rejects.toMatchObject({ code: 'CONTROL_REQUIRED', message: 'Service is shutting down' });
+    expect(callback).not.toHaveBeenCalled();
+    expect(f.controlled.calls.reserveIntent).toBe(0);
+  });
+
+  it('neither waits for nor refuses runs that are not journaled', async () => {
+    const f = await sessionFixture();
+    let release: () => void = () => {};
+    const held = f.authority.run(
+      'session',
+      operator,
+      {},
+      () => new Promise<string>((done) => (release = () => done('ok')))
+    );
+    const started = performance.now();
+    await expect(f.authority.drain(5_000)).resolves.toBe(true);
+    expect(performance.now() - started).toBeLessThan(1_000);
+    release();
+    await expect(held).resolves.toBe('ok');
+  });
+
+  it('waits for an in-flight journaled run, bounded', async () => {
+    const f = await sessionFixture();
+    let release: () => void = () => {};
+    let entered: () => void = () => {};
+    const inside = new Promise<void>((done) => (entered = done));
+    const running = f.authority
+      .run('session', operator, journalOperation('slow'), async () => {
+        entered();
+        await new Promise<void>((done) => (release = done));
+        return 'done';
+      })
+      .catch(() => undefined);
+    await inside;
+    await expect(f.authority.drain(50)).resolves.toBe(false);
+    release();
+    await running;
+    await expect(f.authority.drain(1_000)).resolves.toBe(true);
+  });
+});

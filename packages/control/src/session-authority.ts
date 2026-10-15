@@ -157,7 +157,7 @@ export class SessionAuthority {
   private readonly scope = new AsyncLocalStorage<Scope>();
   private readonly now: () => number;
   private readonly journal: OperationJournal | undefined;
-  /** Runs admitted and not yet settled; drained before shutdown closes the journal. */
+  /** Journaled runs admitted and not yet settled; drained before shutdown closes the journal. */
   private readonly inFlight = new Set<Promise<unknown>>();
   private closing = false;
   private readonly serviceGeneration = randomBytes(16).toString('base64url');
@@ -304,7 +304,11 @@ export class SessionAuthority {
     replayOptions?: OperationPublication,
     assertReplay?: () => void
   ): Promise<T | { replay: true; operation: unknown }> {
-    if (this.closing)
+    const journaled = operation.journal !== undefined;
+    // Only journaled runs are drained (and refused while draining): they are the ones whose
+    // terminal record a closing journal would otherwise lose. Everything else keeps today's
+    // immediate shutdown.
+    if (journaled && this.closing)
       return Promise.reject(new ControlError('CONTROL_REQUIRED', 'Service is shutting down'));
     const task = this.runAdmitted(
       sessionId,
@@ -316,6 +320,7 @@ export class SessionAuthority {
       replayOptions,
       assertReplay
     );
+    if (!journaled) return task;
     this.inFlight.add(task);
     const settle = () => this.inFlight.delete(task);
     task.then(settle, settle);
@@ -323,8 +328,9 @@ export class SessionAuthority {
   }
 
   /**
-   * C4b (J-d): stop admitting runs and wait, bounded, for in-flight ones to settle, so a journal
-   * closed afterwards has every terminal it can get. Returns false if the bound expired first.
+   * C4b (J-d): stop admitting journaled runs and wait, bounded, for in-flight journaled runs to
+   * settle, so a journal closed afterwards has every terminal it can get. Non-journaled runs are
+   * neither tracked nor refused. Returns false if the bound expired first.
    */
   async drain(timeoutMs: number): Promise<boolean> {
     this.closing = true;

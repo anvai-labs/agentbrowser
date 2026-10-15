@@ -135,8 +135,9 @@ record, under a keyed fingerprint that never collides with an ephemeral one. Eph
   later. One exception: once `AGENTBROWSER_JOURNAL_ACCEPT_UNTIL` has passed, the server starts
   **without** the journal and warns, rather than taking the whole service down. Durable is then
   neither advertised nor accepted until you configure a new namespace.
-- **Shutdown drains.** A graceful stop refuses new controlled work and waits up to 30 seconds for
-  in-flight operations to write their terminal records before the journal closes. A crash or kill
+- **Shutdown drains.** With the journal configured, a graceful stop refuses new durable work and
+  waits up to 30 seconds for in-flight durable operations to write their terminal records before
+  the journal closes. Other operations, and deployments without a journal, shut down as before. A crash or kill
   leaves an in-flight durable write in doubt (`outcome_unknown`). That record stays in the
   namespace and keeps it from retiring until it is reconciled (see the proposed recovery
   design).

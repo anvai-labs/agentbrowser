@@ -19,8 +19,10 @@
   before the service exists.
   - Any refusal aborts startup, with no ephemeral fallback, and leaves no storage child running.
   - The journal is closed after `service.shutdown()`, and also if construction fails.
-  - `shutdown()` first drains in-flight controlled runs: `SessionAuthority.drain`, bounded at 30 s,
-    refuses new runs. A graceful stop therefore leaves no in-doubt record.
+  - With a journal attached, `shutdown()` first drains in-flight **journaled** runs:
+    `SessionAuthority.drain`, bounded at 30 s, refuses new journaled runs. A graceful stop
+    therefore leaves no in-doubt record. Non-journaled runs are neither tracked nor refused, so
+    deployments without a journal shut down exactly as before.
   - A passed accept horizon starts the server without the journal, with a warning, instead of
     refusing startup.
 - **Control layer.**
@@ -68,7 +70,8 @@ A full namespace or store refuses durable work, or startup; it never evicts.
 
 ## Tests (all against the real SQLite store where named)
 
-- `packages/control/src/application-durable-journal.test.ts` (14):
+- `packages/control/src/application-durable-journal.test.ts` (17, three of them on `drain`: it
+  refuses with its own reason, never waits for non-journaled runs, and is bounded):
   - the journal intent the facade receives is labeled `application-operation:v2-durable` for a
     durable selection and `v1` without it (captured at the facade, so the label is pinned);
   - a malformed `durable` is refused before I/O;

@@ -168,10 +168,10 @@ describe('service with an open durable journal', () => {
     } finally {
       database.close();
     }
-    // Draining refuses new controlled work.
+    // Draining refuses new journaled work with its own reason.
     await expect(
       s.service.applicationExecute(s.sessionId, operator, write('late', 1, 'durable'))
-    ).rejects.toBeDefined();
+    ).rejects.toMatchObject({ code: 'CONTROL_REQUIRED' });
   }, 60_000);
 
   it('stops advertising and refuses durable once the accept horizon passes', async () => {

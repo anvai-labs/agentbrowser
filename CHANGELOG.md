@@ -24,8 +24,8 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   fallback. The application authority now also refuses `durable` itself whenever the write cannot
   be journaled; previously only the service-level refusal stood in the way.
 - **Reviewed writes.** Durable operator-reviewed writes are approvable end to end.
-- **Shutdown.** A graceful shutdown drains in-flight controlled work, bounded at 30 s, before the
-  journal closes. Once the accept horizon has passed, the server starts without the journal and
+- **Shutdown.** With a journal attached, a graceful shutdown drains in-flight durable work,
+  bounded at 30 s, before the journal closes. Nothing else waits. Once the accept horizon has passed, the server starts without the journal and
   warns, rather than refusing to start. The journal needs Node 22.13 or later.
 - **Deprecation.** `durableJournalAvailable` is deprecated and has no effect.
 - **Not yet.** Reading records back across a restart (J3) and recovery semantics (J4) remain

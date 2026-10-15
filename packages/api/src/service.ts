@@ -4808,9 +4808,10 @@ export class AgentBrowserService {
     this.shuttingDown = true;
     for (const transport of this.downloads.values())
       transport.revoke(new ServiceError('SESSION_NOT_FOUND', 'Service shutdown'));
-    // C4b (J-d): refuse new controlled runs and let in-flight ones reach their terminal record
-    // (bounded) before anything they depend on is torn down; the journal is closed after this.
-    await this.authority.drain(SHUTDOWN_DRAIN_MS);
+    // C4b (J-d): with a journal attached, refuse new journaled runs and let in-flight ones reach
+    // their terminal record (bounded) before anything they depend on is torn down; the journal is
+    // closed after this. Without a journal, shutdown is unchanged.
+    if (this.operationJournal !== undefined) await this.authority.drain(SHUTDOWN_DRAIN_MS);
     if (this.sweepTimer !== undefined) {
       clearInterval(this.sweepTimer);
     }

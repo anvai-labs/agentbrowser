@@ -73,8 +73,15 @@ it('preserves generic routing and refuses malformed reserved application actions
     { ...action(), expectedVersion: Number.MAX_SAFE_INTEGER + 1 },
     { ...action(), bindingGeneration: '' },
     { ...action(), extra: 'PRIVATE' },
+    // C4b: only a durable requirement is carried; anything else is refused, never dropped.
+    { ...action(), executionRequirement: 'ephemeral' },
+    { ...action(), executionRequirement: true },
   ])
     expect(() => selectApplicationReview(value)).toThrow('Evidence review unavailable');
+  expect(selectApplicationReview({ ...action(), executionRequirement: 'durable' })).toMatchObject({
+    executionRequirement: 'durable',
+  });
+  expect(selectApplicationReview(action())).not.toHaveProperty('executionRequirement');
   const getter = vi.fn(() => 'PRIVATE');
   expect(() =>
     selectApplicationReview(Object.defineProperty(action(), 'input', { get: getter }))
