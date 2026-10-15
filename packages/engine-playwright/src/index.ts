@@ -628,6 +628,9 @@ const MAX_FORM_CONTROLS = MAX_FORM_CONTROLS_PER_ROOT;
  * element the ARIA snapshot gave a value) pay the sensitivity probe; other
  * roles can hold nothing to withhold.
  */
+/** F2: concurrent per-element binding round trips in one observation. */
+const BIND_CONCURRENCY = 8;
+
 const VALUE_BEARING_ROLES = new Set([
   'textbox',
   'passwordbox',
@@ -3172,15 +3175,17 @@ class PlaywrightPage implements EnginePage {
     // reads (each was previously one sequential await), and on a
     // large/complex page (200+ elements) that serialized cost was the likely
     // cause of outright request timeouts, distinct from the ariaSnapshot
-    // budget above. Binding, snapshot capture, and staleness detection stay
-    // sequential and unchanged - only this trailing enrichment parallelizes.
+    // budget above. Binding runs with bounded concurrency (F2) and this trailing
+    // enrichment fully in parallel; per-element step order is unchanged.
     const boundElements: Array<{
       element: StoredElement;
       handle: ElementHandle;
       locator: Locator;
     }> = [];
     try {
-      for (const [index, element] of elements.entries()) {
+      // Locators and ordinals are resolved synchronously in document order (ordinals depend on
+      // it); only the per-element I/O below runs with bounded concurrency.
+      const plans = elements.map((element, index) => {
         const ref = element.ref ?? `e${this.revision}_${index}`;
         const key = JSON.stringify([element.role, element.name ?? '']);
         const ownerFrame = this.frameOfElement.get(element);
@@ -3202,53 +3207,81 @@ class PlaywrightPage implements EnginePage {
               : locatorRoot
                   .getByRole(element.role as never, { name: element.name ?? '', exact: true })
                   .nth(ordinal));
+        return { element, ref, ownerFrame, fallback, locator };
+      });
+      // F2: binding is one round trip per step per element (resolve, aria snapshot, identity
+      // check); run sequentially it dominated observation (~90% on a 120-element page). Each
+      // element's steps stay in order and every task settles before this phase ends, so a
+      // failure cannot leave a handle registered after the cleanup below has run.
+      const bound: Array<
+        { element: StoredElement; handle: ElementHandle; locator: Locator } | undefined
+      > = new Array(plans.length);
+      const bindOne = async (planIndex: number): Promise<void> => {
+        const plan = plans[planIndex];
+        if (plan === undefined) return;
+        const { element, ref, ownerFrame, fallback, locator } = plan;
         // Bind once to an actual node. An ordinal is never resolved anew at act time.
-        if (await locator.count()) {
-          const handle = fallback?.handle ?? (await locator.elementHandle());
-          if (handle) {
-            // Register the handle before more I/O so a capture failure releases it.
-            const binding: NodeBinding = {
-              handle,
-              locator,
-              snapshot: undefined,
-              documentSnapshot,
-              // frameOfElement tags only non-page scan roots, so the cast is
-              // sound; exactOptionalPropertyTypes demands the conditional.
-              ...(ownerFrame !== undefined
-                ? { frame: ownerFrame as import('playwright').Frame }
-                : {}),
-            };
-            this.bindings.set(ref, binding);
-            // A display:none input has no stable aria snapshot and may make
-            // the capture throw outright; hidden targets never consult the
-            // snapshot gate in resolve(), so degrade to document evidence.
-            // Form-control bindings degrade the same way: their div widgets
-            // re-render too often for per-element snapshots to be stable.
-            const captured =
-              element.fileInputIndex !== undefined || element.formControlIndex !== undefined
-                ? await snapshotBudget.capture(locator).catch(() => undefined)
-                : await snapshotBudget.capture(locator);
-            binding.snapshot = snapshotDigest(captured);
-            const prior = previous.get(ref);
-            if (
-              (previous.size > 0 &&
-                // Rounds 7+10: enrichment-minted refs (identified by mint
-                // index, not role string) are an opt-in overlay — a ref
-                // absent from the prior store only because the prior pass
-                // omitted the include must NOT count as a page change.
-                !isEnrichment(element) &&
-                !prior) ||
-              (prior &&
-                (!(await handle
-                  .evaluate((node, old) => node.isSameNode(old), prior.handle)
-                  .catch(() => false)) ||
-                  !sameSnapshotEvidence(prior, binding)))
-            )
-              changed = true;
-            boundElements.push({ element, handle, locator });
-          }
+        // elementHandles() resolves without waiting (as count() + elementHandle() did) in one
+        // round trip; an nth() locator yields at most one node.
+        let handle: ElementHandle | undefined;
+        if (fallback !== undefined) {
+          // A discovery fallback still requires its locator to match, as before.
+          if (!(await locator.count())) return;
+          handle = fallback.handle;
+        } else {
+          const [first, ...extra] = await locator.elementHandles();
+          for (const unused of extra) void unused.dispose().catch(() => {});
+          handle = first;
         }
-      }
+        if (!handle) return;
+        // Register the handle before more I/O so a capture failure releases it.
+        const binding: NodeBinding = {
+          handle,
+          locator,
+          snapshot: undefined,
+          documentSnapshot,
+          // frameOfElement tags only non-page scan roots, so the cast is
+          // sound; exactOptionalPropertyTypes demands the conditional.
+          ...(ownerFrame !== undefined ? { frame: ownerFrame as import('playwright').Frame } : {}),
+        };
+        this.bindings.set(ref, binding);
+        // A display:none input has no stable aria snapshot and may make
+        // the capture throw outright; hidden targets never consult the
+        // snapshot gate in resolve(), so degrade to document evidence.
+        // Form-control bindings degrade the same way: their div widgets
+        // re-render too often for per-element snapshots to be stable.
+        const captured =
+          element.fileInputIndex !== undefined || element.formControlIndex !== undefined
+            ? await snapshotBudget.capture(locator).catch(() => undefined)
+            : await snapshotBudget.capture(locator);
+        binding.snapshot = snapshotDigest(captured);
+        const prior = previous.get(ref);
+        if (
+          (previous.size > 0 &&
+            // Rounds 7+10: enrichment-minted refs (identified by mint
+            // index, not role string) are an opt-in overlay — a ref
+            // absent from the prior store only because the prior pass
+            // omitted the include must NOT count as a page change.
+            !isEnrichment(element) &&
+            !prior) ||
+          (prior &&
+            (!(await handle
+              .evaluate((node, old) => node.isSameNode(old), prior.handle)
+              .catch(() => false)) ||
+              !sameSnapshotEvidence(prior, binding)))
+        )
+          changed = true;
+        bound[planIndex] = { element, handle, locator };
+      };
+      let nextPlan = 0;
+      const outcomes = await Promise.allSettled(
+        Array.from({ length: Math.min(BIND_CONCURRENCY, plans.length) }, async () => {
+          while (nextPlan < plans.length) await bindOne(nextPlan++);
+        })
+      );
+      const failed = outcomes.find((outcome) => outcome.status === 'rejected');
+      if (failed !== undefined) throw (failed as PromiseRejectedResult).reason;
+      for (const entry of bound) if (entry !== undefined) boundElements.push(entry);
 
       // Parallel pass: independent per-element reads only. href capture
       // stays its own sequential sub-pass below (unchanged semantics: first

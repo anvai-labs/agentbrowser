@@ -28,3 +28,23 @@ identical host and toolchain. These numbers are therefore a snapshot, not a refe
 later runs against. **F2 must compare develop and its branch interleaved in one session** (A, B,
 A, B on the same host), and report the gain only beyond that run-to-run spread. The 1.15.2
 record's earlier figure (~1.0 s mean on a different host and build) is not comparable either.
+
+## F2: bounded-concurrency binding (2026-10-15)
+
+Profiling the observe path on this fixture showed the sequential per-element binding loop was
+~90% of each observation (1.07–1.34 s of 1.2–1.5 s): per element, `count()` + `elementHandle()`
+(~5.5 ms), the per-element aria snapshot (~3.7 ms) and the identity check, each an awaited round
+trip. The parallel enrichment pass (visibility, enabled, sensitivity) was only ~130 ms. F2 binds
+with bounded concurrency (8), resolves each node with one `elementHandles()` round trip, keeps
+every element's steps in order and its ordinal resolved in document order, and settles every task
+before cleanup.
+
+Interleaved A/B in one session (A = develop's engine, B = F2; 10 samples each; same host):
+
+| Pair | A mean ms | B mean ms | redacted passwords (A/B) | secret leaked (A/B) |
+| --- | ---: | ---: | --- | --- |
+| 1 | 1161.4 | 486.2 | 40 / 40 | no / no |
+| 2 | 1180.1 | 497.9 | 40 / 40 | no / no |
+| 3 | 1229.9 | 549.1 | 40 / 40 | no / no |
+
+About 2.3× faster, far outside the ~18% between-session drift, with identical redaction.

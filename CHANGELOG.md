@@ -7,6 +7,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Changed — observation is about 2.3× faster on element-heavy pages (F2)
+
+- The Playwright engine now binds observed elements to their nodes with bounded concurrency (8)
+  instead of one element at a time, and resolves each node in one round trip. Each element's steps
+  and its document-order ordinal are unchanged, and every binding settles before cleanup. On the
+  120-element benchmark an observation drops from ~1.2 s to ~0.5 s (interleaved A/B in one
+  session, recorded in `docs/spec/evidence/observation-120-baseline.md`), with identical password
+  redaction.
+
 ### Added — a committed observation-overhead benchmark (F1)
 
 - `node packages/benchmarks/dist/run.js observe [n]` observes a 120-element fixture (40 text, 40
