@@ -94,7 +94,7 @@ references across the four workflows are pinned to the full commit SHA of their 
 reference, a top-level permissions block other than exactly `contents: read`, and any job-level
 permissions block that is not exactly on its allowlist (`release.yml` `release`: contents write;
 `npm-publish`: id-token write + contents read; `docs.yml` `deploy`: pages + id-token write).
-It checks SHA format offline; that a SHA is its tag's commit rests on review and Dependabot.
+It reads YAML with anchored regexes, so it also refuses forms it cannot read reliably (a commented `jobs:` or job key, non-two-space job keys, or any `permissions:` line it did not attribute). It checks SHA format offline; that a SHA is its tag's commit rests on review and Dependabot.
 
 **Skipped/canceled required checks (S1b, documented invariant, checked 2026-10-15).** GitHub
 reports a job skipped by its `if:` as *Success* to a required status check, and skips (does

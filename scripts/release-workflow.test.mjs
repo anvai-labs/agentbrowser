@@ -128,7 +128,22 @@ test('every workflow defaults to read-only contents and grants no write at the t
 test('job-level permissions grant exactly the allowlisted scopes and nothing else writes', () => {
   const seen = [];
   for (const [name, text] of Object.entries(workflows)) {
-    for (const [id, body] of jobsOf(text)) {
+    // The regex reader must see the whole file: a plain `jobs:` line, jobs at two-space indent
+    // with bare keys, and every `permissions:` line accounted for (top level + allowlisted jobs).
+    assert.match(text, /^jobs:$/m, `${name}: jobs: must be a bare line (no trailing comment)`);
+    const jobs = jobsOf(text);
+    assert.ok(jobs.size > 0, `${name}: no jobs parsed (two-space job keys expected)`);
+    const keyLines = text
+      .slice(text.search(/^jobs:$/m))
+      .split('\n')
+      .filter((line) => /^\s+[^\s#-][^:]*:(?:\s|$)/.test(line) && /^ {1,3}\S/.test(line));
+    for (const line of keyLines)
+      assert.match(line, /^ {2}[A-Za-z0-9_-]+:$/, `${name}: job key not in the bare form: ${line}`);
+    const declared = (text.match(/^\s*permissions\s*:/gm) ?? []).length;
+    const recognised =
+      1 + [...jobs.values()].filter((body) => permissionsAt(body, 4) !== undefined).length;
+    assert.equal(declared, recognised, `${name}: a permissions block the reader does not see`);
+    for (const [id, body] of jobs) {
       const granted = permissionsAt(body, 4);
       const key = `${name}/${id}`;
       if (granted === undefined) continue;
