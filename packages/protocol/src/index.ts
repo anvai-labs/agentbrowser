@@ -15,6 +15,7 @@ export * from './event-replay.js';
 export * from './extraction.js';
 export * from './form-mapping.js';
 export * from './interaction-guidance.js';
+export * from './journal-lookup.js';
 export * from './mode-profile.js';
 export * from './navigation-failure.js';
 export * from './operator-approval.js';
