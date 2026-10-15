@@ -4,6 +4,7 @@ import {
   type CdpAttachAdmission,
   FLOOR_ATTACH_OPTIONS,
   FLOOR_OPERATOR_REQUIRED,
+  handoffFloor,
   requireCdpAttachAdmission,
   withMetadataFloor,
 } from './floor.js';
@@ -403,6 +404,29 @@ export interface ServiceDependencies {
   /** Trusted startup capability. Absent means disabled. */
   cdpAttachAdmission?: CdpAttachAdmission;
   /**
+   * TD-BROWSER-16 phase 6 (ADR-025 §3): the operator login browser, injected
+   * by the server (narrow structural type — no engine dependency here). The
+   * handoff floors on enabled+open and reads through it; absent means the
+   * login browser is disabled and every handoff refuses.
+   */
+  loginBrowser?: {
+    readonly isEnabled: boolean;
+    readonly isOpen: boolean;
+    read(): Promise<{
+      cookies: Array<{
+        name: string;
+        value: string;
+        domain: string;
+        path: string;
+        expires: number;
+        httpOnly: boolean;
+        secure: boolean;
+        sameSite: string;
+      }>;
+      skipped: { partitioned: number; expired: number };
+    }>;
+  };
+  /**
    * C4b: whether a qualified durable journal store is deployed. Defaults
    * to false (ephemeral-only). Trusted deployment configuration — never
    * settable from session or request input.
@@ -657,6 +681,22 @@ export class AgentBrowserService {
   private readonly sessionHostAllowlists = new Map<string, string[]>();
   /** The operator-granted action lease per marked session; one at a time. */
   private readonly actionLeases = new Map<string, ActiveActionLease>();
+  /** TD-BROWSER-16 phase 6: per-session floor inputs recorded at create. */
+  private readonly sessionHandoffFacts = new Map<
+    string,
+    {
+      allowedHosts: string[];
+      scopeAllowedHosts: string[];
+      pathRuleSuffixes: string[];
+      allowServiceWorkers: boolean;
+      cdpAttach: boolean;
+      controlMode?: 'delegated';
+    }
+  >();
+  /** TD-BROWSER-16 phase 6: serializes each session's handoff end to end. */
+  private readonly handoffLocks = new Map<string, Promise<unknown>>();
+  /** TD-BROWSER-16 phase 6: the operator login browser (server-injected). */
+  private readonly loginBrowser: NonNullable<ServiceDependencies['loginBrowser']> | undefined;
   private readonly actionRiskPolicy: ActionRiskPolicy;
   /** TD-BROWSER-15: operator decisions go through one seam; legacy until a policy file. */
   private readonly authorizer: Authorizer;
@@ -675,6 +715,7 @@ export class AgentBrowserService {
 
   constructor(deps: ServiceDependencies) {
     this.cdpAttachAdmission = deps.cdpAttachAdmission ?? 'disabled';
+    this.loginBrowser = deps.loginBrowser;
     this.extractMaxBytes = parseExtractMaxBytes(deps.extractMaxBytes ?? DEFAULT_EXTRACT_MAX_BYTES);
     const { evidenceReviewProvider, evidenceSourceRegistry, evidenceSourceRegistryProvider } = deps;
     if (evidenceReviewProvider !== undefined && typeof evidenceReviewProvider !== 'function')
@@ -855,6 +896,11 @@ export class AgentBrowserService {
     this.sessionCredentialSources.delete(sessionId);
     this.sessionHostAllowlists.delete(sessionId);
     this.actionLeases.delete(sessionId);
+    this.sessionHandoffFacts.delete(sessionId);
+    this.handoffLocks.delete(sessionId);
+    // TD-BROWSER-16 phase 2's release valve: handoff-registered values stop
+    // redacting once their session is gone.
+    this.secretManager.clearSessionSecrets(sessionId);
   }
 
   /**
@@ -1507,6 +1553,19 @@ export class AgentBrowserService {
           this.sessionCredentialSources.set(session.sessionId, 'operator');
         const allowlist = [...(request.allowedHosts ?? []), ...(request.scope?.allowedHosts ?? [])];
         if (allowlist.length > 0) this.sessionHostAllowlists.set(session.sessionId, allowlist);
+        // TD-BROWSER-16 phase 6: the handoff's floor inputs, recorded at
+        // create — the exact allowlist entries, the scope's path-rule
+        // suffixes, and the service-worker/attachment/control facts.
+        this.sessionHandoffFacts.set(session.sessionId, {
+          allowedHosts: [...(request.allowedHosts ?? [])],
+          scopeAllowedHosts: [...(request.scope?.allowedHosts ?? [])],
+          pathRuleSuffixes: (request.scope?.pathRules ?? [])
+            .map((rule) => rule.hostSuffix)
+            .filter((suffix) => suffix !== undefined),
+          allowServiceWorkers: request.allowServiceWorkers === true,
+          cdpAttach: request.cdpAttach === true,
+          ...(request.controlMode !== undefined ? { controlMode: request.controlMode } : {}),
+        });
 
         const finalInspection = this.coordinator.inspect(session.sessionId);
         if (!finalInspection || finalInspection.context !== context || context.signal.aborted) {
@@ -1685,16 +1744,24 @@ export class AgentBrowserService {
     };
   }
 
-  /** The decide for a non-act approval: single-use, human-operator decided. */
+  /**
+   * The decide for a non-act approval: single-use, human-operator decided.
+   * A cookie.handoff approval may carry an action lease (ADR-025 section 5),
+   * recorded with the decision and applied by the handoff itself once the
+   * session is marked — the session's allowlist bounds it then.
+   */
   async decideNonActApproval(
     sessionId: string,
     tokenId: string,
-    decision: 'approve' | 'deny'
+    decision: 'approve' | 'deny',
+    lease?: { hosts: string[]; expiresInMs: number; maxActions: number }
   ): Promise<{ kind: string; status: string }> {
     const token = await this.findNonActToken(sessionId, tokenId);
     if (token.status !== 'pending')
       throw new ServiceError('INVALID_REQUEST', 'Approval token is not pending');
-    await this.approvalGate.useApprovalTokenWithOutcome(tokenId, decision);
+    if (lease !== undefined && (token.kind !== 'cookie.handoff' || decision !== 'approve'))
+      throw new ServiceError('INVALID_REQUEST', 'Only a cookie.handoff approval carries a lease');
+    await this.approvalGate.useApprovalTokenWithOutcome(tokenId, decision, lease);
     return { kind: token.kind as string, status: decision === 'approve' ? 'approved' : 'denied' };
   }
 
@@ -1778,6 +1845,7 @@ export class AgentBrowserService {
     // unchanged); only a session that exists is asked about.
     const view = this.getSession(sessionId);
     if (view) this.requireCapability('cookie.export', view.tenantId);
+    this.refuseExportIfMarked(sessionId);
     try {
       return await this.coordinator.cookies(sessionId);
     } catch (error) {
@@ -1849,6 +1917,7 @@ export class AgentBrowserService {
    */
   async exportHtml(sessionId: string, pageId: string): Promise<ArtifactMetadata> {
     return this.traced('html.export', { sessionId, pageId }, async () => {
+      this.refuseExportIfMarked(sessionId);
       const raw = await this.readPageSource(sessionId, pageId, 'exportHtml');
       const html = raw.content ?? '';
       const metadata = this.putArtifact(
@@ -4189,6 +4258,7 @@ export class AgentBrowserService {
     filename: string
   ): Promise<ArtifactMetadata> {
     return this.traced('download.collect', { sessionId, pageId, filename }, async () => {
+      this.refuseExportIfMarked(sessionId);
       const page = this.requirePage(sessionId, pageId);
       this.coordinator.updateActivity(sessionId);
 
@@ -4912,6 +4982,21 @@ export class AgentBrowserService {
 
   // --- TD-BROWSER-16 phase 5: reviewed actions and the lease (ADR-025 §5) ---
 
+  /**
+   * TD-BROWSER-16 phase 6 (ADR-025 §3): cookie export, HTML export and
+   * download collection are refused in a marked session — the operator's
+   * credentials never leave through an artifact.
+   */
+  private refuseExportIfMarked(sessionId: string): void {
+    if (this.sessionCredentialSources.get(sessionId) === 'operator')
+      throw new ServiceError(
+        'HANDOFF_COOKIES_NOT_EXPORTABLE',
+        'this session holds operator credentials; cookies, HTML and downloads are not exportable',
+        false,
+        { credentialSource: 'operator' }
+      );
+  }
+
   /** True in a session where operator review semantics apply to acts. */
   private usesOperatorReview(sessionId: string): boolean {
     return (
@@ -5059,6 +5144,293 @@ export class AgentBrowserService {
   }
 
   /** The view projection of the session's live lease, with its derived remainder. */
+  // --- TD-BROWSER-16 phase 6: the cookie handoff (ADR-025 section 3) -------
+
+  /**
+   * ADR-025 section 3 step 6: remove WebRTC's peer connections from every
+   * frame of the marked session — it carries the operator's cookies, and a
+   * data channel must not leak the local network or real IP. Applied as an
+   * all-frames init script, so iframes and window.open popups inherit it.
+   */
+  private static readonly RTC_REMOVAL_INIT_SCRIPT =
+    '(() => { const remove = (name) => { try { delete window[name]; } catch {} ' +
+    'Object.defineProperty(window, name, { get: () => undefined, configurable: true }); }; ' +
+    "remove('RTCPeerConnection'); remove('webkitRTCPeerConnection'); })();";
+
+  private serializeHandoff<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
+    const run = (this.handoffLocks.get(sessionId) ?? Promise.resolve()).then(operation, operation);
+    this.handoffLocks.set(
+      sessionId,
+      run.catch(() => undefined)
+    );
+    return run;
+  }
+
+  /** The cookie's host with the scope dot stripped ('.example.com' -> 'example.com'). */
+  private static cookieHostOf(domain: string): string {
+    return domain.startsWith('.') ? domain.slice(1) : domain;
+  }
+
+  /** Whether a login cookie applies to one of the requested (exact-host) domains. */
+  private static cookieAppliesTo(cookieDomain: string, domains: string[]): boolean {
+    const host = AgentBrowserService.cookieHostOf(cookieDomain);
+    return domains.some((domain) => host === domain || covers(host, domain).ok);
+  }
+
+  /**
+   * TD-BROWSER-16 phase 6 (ADR-025 section 3): hand the operator's login
+   * cookies for the requested domains into this session, under one
+   * per-session lock. The full order is the TD's: floors -> per-domain policy
+   * -> approval (human operator, single use, bound to kind+session+domains+
+   * policy version) -> re-read freshness -> MARK -> lease -> secrets ->
+   * RTC-removal init script -> write -> audit. The mark precedes the write,
+   * so a racing cookie export is refused, never served unmarked cookies.
+   */
+  async handoffCookies(
+    sessionId: string,
+    request: import('@agentbrowser/protocol').CookieHandoffRequest
+  ): Promise<{
+    sessionId: string;
+    credentialSource: 'operator';
+    domains: string[];
+    counts: Record<string, number>;
+    lease?: { hosts: string[]; expiresAt: number; maxActions: number; remainingActions: number };
+  }> {
+    return this.serializeHandoff(sessionId, async () => {
+      const inspection = this.coordinator.inspect(sessionId);
+      if (inspection === undefined)
+        throw new ServiceError('SESSION_NOT_FOUND', 'Session not found');
+      const floor = (rule: string, message: string): ServiceError =>
+        new ServiceError(...handoffFloor(rule, message));
+
+      // --- step 1: floors ------------------------------------------------
+      const login = this.loginBrowser;
+      if (login?.isEnabled !== true || login.isOpen !== true)
+        throw floor('login-browser', 'the login browser must be enabled and open for a handoff');
+      const facts = this.sessionHandoffFacts.get(sessionId);
+      if (facts === undefined) throw floor('session', 'session floor facts are unavailable');
+      if (facts.cdpAttach || facts.controlMode === 'delegated')
+        throw floor(
+          'session',
+          'the handoff requires an isolated, non-delegated, locally-launched session'
+        );
+      // The service installs a metadata-floor policy chain on every session
+      // it creates; its absence would mean egress is NOT enforced.
+      if (!this.sessionPolicies.has(sessionId))
+        throw floor('egress', 'the session has no enforced egress policy');
+      if (facts.allowServiceWorkers)
+        throw floor('service-workers', 'the session must not allow service workers');
+      // WebSocket policy: the api never configures webSocketPolicy, so every
+      // session's upgrade requests are denied (code 1014) by construction.
+      // If an option to relax that ever appears, this floor must check it.
+      for (const page of this.pages.values()) {
+        if (page.sessionId !== sessionId) continue;
+        const url = page.enginePage.getUrl
+          ? await page.enginePage.getUrl()
+          : (await page.enginePage.observe({})).url;
+        if (url !== '' && url !== 'about:blank')
+          throw floor(
+            'navigation',
+            'the session must hold no committed navigation other than about:blank'
+          );
+      }
+      const domains = [...new Set(request.domains)].sort();
+      for (const domain of domains) {
+        const usable = usableHost(domain);
+        if (!usable.ok) throw floor('domains', `domain '${domain}' is not a usable host`);
+      }
+      const existing = await this.coordinator.cookies(sessionId);
+      for (const cookie of existing) {
+        if (AgentBrowserService.cookieAppliesTo(cookie.domain, domains))
+          throw floor(
+            'existing-cookies',
+            'the session already holds cookies for one of the requested domains'
+          );
+      }
+      const allowlistEntries = [...facts.allowedHosts, ...facts.scopeAllowedHosts];
+      for (const entry of allowlistEntries) {
+        const usable = usableHost(entry);
+        if (!usable.ok || !domains.some((domain) => entry === domain || covers(domain, entry).ok))
+          throw floor(
+            'allowlist',
+            `allowed-host entry '${entry}' does not lie within the requested domains`
+          );
+      }
+      for (const suffix of facts.pathRuleSuffixes) {
+        const usable = usableHost(suffix);
+        if (!usable.ok || !domains.some((domain) => suffix === domain || covers(domain, suffix).ok))
+          throw floor(
+            'allowlist',
+            `scope path-rule host suffix '${suffix}' does not lie within the requested domains`
+          );
+      }
+
+      // --- step 2: policy, one decision per domain ------------------------
+      const tenantId = inspection.context.metadata.tenantId;
+      const rulesMatched: string[] = [];
+      for (const domain of domains) {
+        const decision = this.authorizer.decide({
+          action: 'cookie.handoff',
+          context: { domain, ...(tenantId !== undefined ? { tenantId } : {}) },
+        });
+        if (!decision.allowed)
+          throw new ServiceError(
+            'POLICY_DENIED',
+            `Operator/session approval policy denies a cookie handoff for '${domain}'.`,
+            false,
+            { domain, policyDecision: decision }
+          );
+        if (decision.rulesMatched) rulesMatched.push(...decision.rulesMatched);
+      }
+
+      // --- steps 3-4: approval, then the fresh re-read ---------------------
+      const filterToDomains = (
+        cookies: Awaited<
+          ReturnType<NonNullable<ServiceDependencies['loginBrowser']>['read']>
+        >['cookies']
+      ) => cookies.filter((cookie) => AgentBrowserService.cookieAppliesTo(cookie.domain, domains));
+      const mint = async (
+        read: Awaited<ReturnType<NonNullable<ServiceDependencies['loginBrowser']>['read']>>
+      ) => {
+        // Per-domain counts are the operator's evidence AND the freshness
+        // baseline the retry compares against (ADR-025 s3 step 4: fail only
+        // when a domain that HAD cookies goes to none).
+        const counts: Record<string, number> = {
+          cookies: filterToDomains(read.cookies).length,
+          partitioned: read.skipped.partitioned,
+          expired: read.skipped.expired,
+        };
+        for (const domain of domains) {
+          const perDomain = read.cookies.filter(
+            (cookie) => AgentBrowserService.cookieHostOf(cookie.domain) === domain
+          ).length;
+          if (perDomain > 0) counts[domain] = perDomain;
+        }
+        const token = await this.approvalGate.generateApprovalToken({
+          sessionId,
+          kind: 'cookie.handoff',
+          action: { type: 'cookie.handoff' },
+          domains: [...domains],
+          counts,
+          policyVersion: this.policyVersion ?? 'legacy',
+        });
+        return { tokenId: token.tokenId, counts };
+      };
+
+      let decided: ApprovalToken | undefined;
+      if (request.approvalToken !== undefined) {
+        const token = await this.approvalGate.getToken(request.approvalToken);
+        if (
+          token !== undefined &&
+          token.sessionId === sessionId &&
+          token.kind === 'cookie.handoff' &&
+          token.status === 'used' &&
+          token.decidedOutcome === 'approve' &&
+          JSON.stringify(token.domains ?? []) === JSON.stringify(domains) &&
+          token.policyVersion === (this.policyVersion ?? 'legacy')
+        ) {
+          decided = token;
+        }
+        // An invalid/expired/mismatched token falls through to a fresh
+        // approval, exactly like the act path.
+      }
+
+      const loginRead = await login.read();
+      const loginCookies = filterToDomains(loginRead.cookies);
+      if (decided === undefined) {
+        if (loginCookies.length === 0)
+          throw floor('empty', 'the login browser holds no cookies for the requested domains');
+        const { tokenId, counts } = await mint(loginRead);
+        throw new ServiceError(
+          'APPROVAL_REQUIRED',
+          'The cookie handoff needs an explicit operator decision.',
+          false,
+          { tokenId, kind: 'cookie.handoff', sessionId, domains: [...domains], counts }
+        );
+      }
+
+      // Freshness (ADR-025 s3 step 4): the baseline is the MINT-TIME
+      // per-domain count on the operator's token — fail only when a domain
+      // that had cookies then has none now; count changes are fine.
+      const reRead = await login.read();
+      const reCookies = filterToDomains(reRead.cookies);
+      for (const [key, hadCount] of Object.entries(decided.counts ?? {})) {
+        if (!domains.includes(key) || typeof hadCount !== 'number' || hadCount <= 0) continue;
+        const still = reCookies.some(
+          (cookie) => AgentBrowserService.cookieHostOf(cookie.domain) === key
+        );
+        if (!still)
+          throw floor(
+            'freshness',
+            `cookies for '${key}' disappeared since the operator decision; start again`
+          );
+      }
+
+      // --- steps 5-8: mark, prepare, write, audit ---------------------------
+      this.markOperatorCredentialSource(sessionId);
+      if (decided.lease !== undefined) await this.grantActionLease(sessionId, decided.lease);
+      for (const cookie of reCookies) {
+        this.secretManager.registerSessionSecret(sessionId, cookie.value);
+      }
+      const engineSession = this.coordinator.get(sessionId)?.engineSession;
+      if (engineSession === undefined)
+        throw new ServiceError('SESSION_NOT_FOUND', 'Session not found');
+      if (engineSession.addInitScript === undefined || engineSession.addCookies === undefined)
+        throw new ServiceError(
+          'ENGINE_UNSUPPORTED',
+          'this engine cannot accept a live cookie handoff (no live-context cookie API)'
+        );
+      await engineSession.addInitScript(AgentBrowserService.RTC_REMOVAL_INIT_SCRIPT);
+      await engineSession.addCookies(
+        reCookies.map((cookie) => ({
+          name: cookie.name,
+          value: cookie.value,
+          domain: cookie.domain,
+          path: cookie.path,
+          ...(cookie.expires !== -1 ? { expires: cookie.expires } : {}),
+          httpOnly: cookie.httpOnly,
+          secure: cookie.secure,
+          sameSite:
+            cookie.sameSite === 'Strict' || cookie.sameSite === 'None' ? cookie.sameSite : 'Lax',
+        }))
+      );
+      const counts = {
+        cookies: reCookies.length,
+        partitioned: reRead.skipped.partitioned,
+        expired: reRead.skipped.expired,
+      };
+      // Audit: session, domains, counts, token id, lease and rule ids — never
+      // values, never cookie names.
+      this.logger?.info('handoff.completed', {
+        sessionId,
+        domains: [...domains],
+        counts,
+        tokenId: decided.tokenId,
+        ...(decided.lease !== undefined
+          ? { lease: { hosts: [...decided.lease.hosts], maxActions: decided.lease.maxActions } }
+          : {}),
+        rulesMatched: [...new Set(rulesMatched)],
+      });
+      const leaseView = this.projectActionLease(sessionId);
+      return {
+        sessionId,
+        credentialSource: 'operator',
+        domains: [...domains],
+        counts,
+        ...(leaseView !== undefined
+          ? {
+              lease: {
+                hosts: leaseView.actionLease.hosts,
+                expiresAt: leaseView.actionLease.expiresAt,
+                maxActions: leaseView.actionLease.maxActions,
+                remainingActions: leaseView.actionLease.remainingActions,
+              },
+            }
+          : {}),
+      };
+    });
+  }
+
   private projectActionLease(
     sessionId: string
   ):

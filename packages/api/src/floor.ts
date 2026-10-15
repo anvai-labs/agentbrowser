@@ -105,6 +105,14 @@ export const FLOOR_OPERATOR_REQUIRED = [
   Object.freeze({ rule: 'floor.delegated.operator' }),
 ] as const;
 
+/**
+ * TD-BROWSER-16 phase 6 (ADR-025 §3): the cookie-handoff floor refusals. Each
+ * names its exact rule id so an operator can see WHICH precondition failed;
+ * all are retryable=false — the operator fixes the condition and retries.
+ */
+export const handoffFloor = (rule: string, message: string) =>
+  ['FORBIDDEN', message, false, Object.freeze({ rule: `floor.handoff.${rule}` })] as const;
+
 /** Operator attachment cannot carry launch, cookie, delegated-control, download or policy options. */
 export const FLOOR_ATTACH_OPTIONS = [
   'INVALID_REQUEST',

@@ -148,6 +148,7 @@ export class CedarAuthorizer implements Authorizer {
         case 'cookie.seed':
         case 'cookie.export':
         case 'session.headed':
+        case 'cookie.handoff':
           return this.ask(request.action, contextFor(request));
       }
     } catch (error) {
@@ -266,6 +267,11 @@ const ENTITIES = [
 
 function contextFor(request: AuthorizationRequest): cedar.Context {
   switch (request.action) {
+    case 'cookie.handoff':
+      return {
+        domain: request.context.domain,
+        ...(request.context.tenantId !== undefined ? { tenantId: request.context.tenantId } : {}),
+      };
     case 'act':
     case 'act.unattended':
       return actContext(request.context);

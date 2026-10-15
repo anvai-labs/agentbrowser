@@ -56,6 +56,15 @@ export class LegacyAuthorizer implements Authorizer {
           reason: 'granted on request; no policy file is loaded',
           ruleMatched: 'env.capability.default',
         };
+      case 'cookie.handoff':
+        // TD-BROWSER-16 phase 6: no env rule speaks about handoffs; the
+        // floors, the per-session allowlist and the human operator's decision
+        // are the gates. A policy file can still deny per domain.
+        return {
+          allowed: true,
+          reason: 'no legacy rule denies a cookie handoff',
+          ruleMatched: 'env.handoff.default',
+        };
     }
   }
 

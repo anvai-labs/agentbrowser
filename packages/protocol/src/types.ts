@@ -36,6 +36,16 @@ export interface Viewport {
 }
 
 /**
+ * TD-BROWSER-16 phase 6 (ADR-025 §3): the cookie-handoff request body. Domains
+ * are exact hosts (registrable or below); the approval token comes from the
+ * human operator's decision on the cookie.handoff kind.
+ */
+export interface CookieHandoffRequest {
+  domains: string[];
+  approvalToken?: string;
+}
+
+/**
  * Session creation request
  */
 export interface SessionRequest {

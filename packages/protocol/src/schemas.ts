@@ -37,6 +37,7 @@ export const ErrorCodeEnum = Type.Union([
   Type.Literal('LOGIN_BINARY_CHANGED'),
   Type.Literal('LOGIN_BINARY_DOWNGRADED'),
   Type.Literal('LOGIN_HOSTED_OR_MULTI_TENANT'),
+  Type.Literal('HANDOFF_COOKIES_NOT_EXPORTABLE'),
   Type.Literal('RATE_LIMITED'),
   Type.Literal('SESSION_BUSY'),
   Type.Literal('CONTROL_REVOKED'),
@@ -185,6 +186,23 @@ export const SessionRequestSchema = Type.Object({
   policy: Type.Optional(SessionPolicySchema),
   snapshotTimeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 30000 })),
 });
+
+/**
+ * TD-BROWSER-16 phase 6 (ADR-025 §3): the cookie-handoff request. Domains are
+ * exact registrable-or-below hosts (validated against the phase-3 matcher at
+ * the service, not here — pattern checks alone would mislead); the approval
+ * token comes from the human operator's decision on the cookie.handoff kind.
+ */
+export const CookieHandoffRequestSchema = Type.Object(
+  {
+    domains: Type.Array(Type.String({ minLength: 1, maxLength: 253 }), {
+      minItems: 1,
+      maxItems: 16,
+    }),
+    approvalToken: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+  },
+  { additionalProperties: false }
+);
 
 // ============================================================================
 // Engine Capability Schemas

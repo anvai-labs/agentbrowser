@@ -59,6 +59,15 @@ export class LoginBrowserService {
     return this.enabled;
   }
 
+  /**
+   * TD-BROWSER-16 phase 6 (ADR-025 §3): the handoff floor requires the login
+   * browser ENABLED and OPEN — an operator must have signed in for anything
+   * to hand over. Disabled reports false (never throws).
+   */
+  get isOpen(): boolean {
+    return this.browser?.isOpen === true;
+  }
+
   async open(): Promise<{ open: true }> {
     this.assertEnabled();
     await this.requireBrowser().open();
@@ -77,7 +86,7 @@ export class LoginBrowserService {
     return { reset: true };
   }
 
-  async read(): Promise<ReturnType<LoginBrowser['readCookies']>> {
+  async read(): Promise<Awaited<ReturnType<LoginBrowser['readCookies']>>> {
     this.assertEnabled();
     return this.requireBrowser().readCookies();
   }

@@ -48,6 +48,10 @@ const CAPABILITY_ACTIONS = [
   'cookie.seed',
   'cookie.export',
   'session.headed',
+  // TD-BROWSER-16 phase 6: today's env has no handoff rule; a policy file
+  // can deny per domain (the env document grants, mirroring the legacy
+  // authorizer's env.handoff.default).
+  'cookie.handoff',
 ];
 
 const quoted = (values: readonly string[]) =>

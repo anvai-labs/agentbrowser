@@ -51,6 +51,7 @@ const EXPECTED: Array<['GET' | 'POST' | 'PUT' | 'DELETE', string, AgentCapabilit
   ['GET', '/v1/sessions/:sessionId/pages', 'page.observe'],
   ['POST', '/v1/sessions/:sessionId/pages', 'session.manage'],
   ['POST', '/v1/sessions/:sessionId/lease', null],
+  ['POST', '/v1/sessions/:sessionId/cookies/handoff', null],
   ['POST', '/v1/sessions/:sessionId/trace', null],
   ['DELETE', '/v1/sessions/:sessionId', null],
   ['GET', '/v1/sessions/:sessionId', 'session.control'],

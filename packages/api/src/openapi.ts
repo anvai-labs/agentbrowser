@@ -967,6 +967,71 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
         },
       },
 
+      '/v1/sessions/{sessionId}/cookies/handoff': {
+        post: {
+          operationId: 'handoffCookies',
+          summary: 'Hand the operator login cookies into this session',
+          description:
+            'TD-BROWSER-16 phase 6 (ADR-025 s3): floors (login browser open, isolated ' +
+            'non-delegated session, egress enforced, no service workers, about:blank only, ' +
+            'no existing cookies, the whole allowlist inside the requested domains), one ' +
+            'cookie.handoff policy decision per domain, then a human-operator approval ' +
+            'bound to (kind, session, sorted domains, policy version). The approved retry ' +
+            're-reads for freshness, MARKS the session credentialSource:operator, applies ' +
+            'any lease the decision carried, registers the values as session secrets, ' +
+            'removes WebRTC peer connections on every frame, and writes the cookies. ' +
+            'Cookie/HTML/download export are refused in the marked session afterwards.',
+          tags: ['sessions'],
+          parameters: [sessionIdParam],
+          requestBody: {
+            required: true,
+            content: json({
+              type: 'object',
+              additionalProperties: false,
+              required: ['domains'],
+              properties: {
+                domains: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  minItems: 1,
+                  maxItems: 16,
+                },
+                approvalToken: { type: 'string' },
+              },
+            }),
+          },
+          responses: {
+            '200': {
+              description:
+                'The completed handoff: the marked session, the domains, and the counts (never values).',
+              content: json({
+                type: 'object',
+                required: ['sessionId', 'credentialSource', 'domains', 'counts'],
+                properties: {
+                  sessionId: { type: 'string' },
+                  credentialSource: { type: 'string', enum: ['operator'] },
+                  domains: { type: 'array', items: { type: 'string' } },
+                  counts: { type: 'object', additionalProperties: { type: 'integer' } },
+                  lease: {
+                    type: 'object',
+                    properties: {
+                      hosts: { type: 'array', items: { type: 'string' } },
+                      expiresAt: { type: 'integer' },
+                      maxActions: { type: 'integer' },
+                      remainingActions: { type: 'integer' },
+                    },
+                  },
+                },
+              }),
+            },
+            '403': errorResponse(
+              'A floor refusal (floor.handoff.*), a policy denial, or APPROVAL_REQUIRED with the token to relay to the operator.'
+            ),
+            '404': NOT_FOUND,
+          },
+        },
+      },
+
       '/v1/sessions/{sessionId}/cookies': {
         get: {
           operationId: 'getSessionCookies',

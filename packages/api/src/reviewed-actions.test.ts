@@ -519,6 +519,8 @@ describe('the lease over HTTP (TD-BROWSER-16 phase 5)', () => {
         'POST /v1/sessions/:sessionId/pages/:pageId/autofill':
           'refused without a covering lease; each field write spends one leased unknown action',
         'POST /v1/sessions/:sessionId/application/execute': 'refused outright in a marked session',
+        'POST /v1/sessions/:sessionId/cookies/handoff':
+          'the marking route itself: floors, per-domain policy, human-operator approval; it MARKS the session',
         'POST /v1/sessions/:sessionId/pages/:pageId/navigate':
           'not restricted by phase 5; bounded by the session host policy',
         'POST /v1/sessions/:sessionId/pages/:pageId/download':

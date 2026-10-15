@@ -124,7 +124,12 @@ const extractMaxBytes =
   policyFilePath === undefined ? extractMaxBytesFromEnvironment(process.env) : undefined;
 const operatorCdp = operatorCdpFromEnvironment(process.env);
 const deploymentMode = deploymentModeFromEnvironment(process.env);
-const engine = new PlaywrightChromiumEngine(operatorCdp ? { operatorCdp } : {});
+const engine = new PlaywrightChromiumEngine({
+  ...(operatorCdp ? { operatorCdp } : {}),
+  // ADR-025 §3: while the login browser is enabled, the shared pool
+  // launches with the WebRTC IP-handling policy pinned (phase 6).
+  ...(loginBrowserEnabled ? { forceWebrtcIpHandlingPolicy: true } : {}),
+});
 if (operatorCdp)
   console.warn(
     '[agentbrowser] Operator CDP attachment configured (local authenticated admission required): dedicated profile required. Only initial explicit navigation URLs are checked; redirects, subresources, workers, clicks, forms, downloads and operator activity are outside network containment.'
