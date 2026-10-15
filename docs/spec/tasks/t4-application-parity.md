@@ -63,7 +63,13 @@ an independent UI/API parity oracle,
 a production evidence source and the remaining receipt-correlation acceptance. Durable
 service-restart claims depend on T5. If an external app cannot supply durable idempotency
 or receipts, advertise weaker observed outcomes and refuse automatic replay. No
-application-specific executor fork.
+application-specific executor fork. **A2 (2026-10-15):** the durable-restart claims are now
+qualified against a real store through the service
+([evidence](../evidence/t5-journal-runtime.md#a2-durable-restart-claims-2026-10-15)): records
+survive a graceful restart and stay readable through the new process; nothing replays; and a
+re-submitted operation ID is a NEW operation (identity includes the process's service
+generation), so the weaker outcome — the adapter owns idempotency, the journal never claims it —
+is what the product advertises.
 
 The [C2a draft-oracle candidate](../design/t6-draft-oracle.md) adds a named
 independent UI/API oracle for synthetic drafts, with separate path outcomes and a
