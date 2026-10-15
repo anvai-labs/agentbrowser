@@ -296,11 +296,22 @@ export class ApplicationAuthority {
   private readonly bindings = new WeakMap<SessionControl, Binding>();
   private readonly consentPolicy: ApplicationConsentPolicy | undefined;
   private readonly journalWrites: boolean;
+  private readonly durableWrites: boolean;
 
   constructor(
     private readonly authority: SessionAuthority,
     adapters: readonly ApplicationAdapter[] = [],
-    options: { consentPolicy?: ApplicationConsentPolicy; journalWrites?: boolean } = {}
+    options: {
+      consentPolicy?: ApplicationConsentPolicy;
+      /** Journal every write (qualification seam). */
+      journalWrites?: boolean;
+      /**
+       * C4b (J-d): journal writes that request `executionRequirement: 'durable'`, and only those.
+       * Without it `durable` is refused before any effect. The SessionAuthority's journal must
+       * also be open, or the intent is refused before the effect.
+       */
+      durableWrites?: boolean;
+    } = {}
   ) {
     const consentPolicy = options.consentPolicy;
     if (consentPolicy !== undefined && typeof consentPolicy !== 'function')
@@ -310,6 +321,10 @@ export class ApplicationAuthority {
     if (journalWrites !== undefined && typeof journalWrites !== 'boolean')
       throw new ControlError('INVALID_REQUEST', 'Invalid application journal selection');
     this.journalWrites = journalWrites ?? false;
+    const durableWrites = options.durableWrites;
+    if (durableWrites !== undefined && typeof durableWrites !== 'boolean')
+      throw new ControlError('INVALID_REQUEST', 'Invalid application journal selection');
+    this.durableWrites = durableWrites ?? false;
     for (const adapter of adapters) {
       try {
         const id = adapter.id;
@@ -568,8 +583,17 @@ export class ApplicationAuthority {
     const { request, serialized } = normalizeApplicationRequest(callerRequest);
     this.authority.assertPrincipal(sessionId, principal);
     const { binding, adapter, operation, write } = this.captureOperation(sessionId, request);
+    const durable = request.executionRequirement === 'durable';
+    // C4b (J-d): durability is a write-execution requirement that must actually be journaled.
+    // Refused here, before any identity, preparation or effect, when it cannot be.
+    if (durable && (!write || !this.durableWrites || !this.authority.journalOpen()))
+      throw new ControlError(
+        'CONTROL_REQUIRED',
+        'durable execution requires a durable journal wired to this runtime; this runtime supports ephemeral only'
+      );
+    const journaled = write && (this.journalWrites || durable);
     const replayOwner =
-      replay || (this.journalWrites && write)
+      replay || journaled
         ? { binding, adapter, scope: this.scope(sessionId, binding, request) }
         : undefined;
     const protectedWrite = operation.review === 'operator-submit';
@@ -584,7 +608,7 @@ export class ApplicationAuthority {
         ? {
             id: request.operationId,
             fingerprint,
-            ...(this.journalWrites
+            ...(journaled
               ? {
                   journal: {
                     version: 1 as const,
@@ -593,6 +617,7 @@ export class ApplicationAuthority {
                       resourceId: binding.resource,
                       bindingGeneration: binding.generation,
                     },
+                    ...(durable ? { durable: true as const } : {}),
                   },
                 }
               : {}),
@@ -686,7 +711,7 @@ export class ApplicationAuthority {
           ? this.authority.dispatchInScope(
               sessionId,
               () => execute(scope),
-              this.journalWrites
+              journaled
                 ? this.authority.captureApplicationDispatchInScope(sessionId, assertDispatch)
                 : undefined
             )
@@ -705,7 +730,7 @@ export class ApplicationAuthority {
               this.publishApplication(sessionId, replayOwner, value, context, replay.publish),
           }
         : undefined,
-      this.journalWrites && write && replayOwner
+      journaled && replayOwner
         ? () => this.applicationAccess(sessionId, replayOwner, () => {}).assertAuthority()
         : undefined
     );
