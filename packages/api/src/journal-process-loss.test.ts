@@ -95,27 +95,46 @@ async function runChild(
 
 type Row = { revision: number; dispatched: boolean; terminal?: { status: string } };
 function rows(store: string): Row[] {
-  const database = new DatabaseSync(join(store, 'journal.sqlite'), { readOnly: true });
-  try {
-    return (
-      database.prepare('SELECT revision, record FROM journal_record').all() as Array<{
-        revision: number;
-        record: string;
-      }>
-    ).map((row) => {
-      const record = JSON.parse(row.record) as {
-        dispatched: boolean;
-        terminal?: { status: string };
-      };
-      return {
-        revision: Number(row.revision),
-        dispatched: record.dispatched,
-        terminal: record.terminal,
-      };
-    });
-  } finally {
-    database.close();
+  // Right after a SIGKILL the orphaned storage child can still hold the store's lock; it exits
+  // when it notices its parent is gone. A locked read is a wait, never a failure.
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    let database: DatabaseSync | undefined;
+    try {
+      database = new DatabaseSync(join(store, 'journal.sqlite'), { readOnly: true });
+      return readRows(database);
+    } catch (error) {
+      if (!isLockError(error) || Date.now() > deadline) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+    } finally {
+      database?.close();
+    }
   }
+}
+// node:sqlite surfaces SQLITE_BUSY (errcode 5) as ERR_SQLITE_ERROR with this message; the
+// message is kept as a belt in case the code shape changes again.
+const isLockError = (error: unknown): boolean =>
+  error !== null &&
+  typeof error === 'object' &&
+  ((error as { errcode?: unknown }).errcode === 5 ||
+    /database is locked/i.test(String((error as Error).message ?? '')));
+function readRows(database: DatabaseSync): Row[] {
+  return (
+    database.prepare('SELECT revision, record FROM journal_record').all() as Array<{
+      revision: number;
+      record: string;
+    }>
+  ).map((row) => {
+    const record = JSON.parse(row.record) as {
+      dispatched: boolean;
+      terminal?: { status: string };
+    };
+    return {
+      revision: Number(row.revision),
+      dispatched: record.dispatched,
+      terminal: record.terminal,
+    };
+  });
 }
 const effects = (counter: string) =>
   existsSync(counter) ? readFileSync(counter, 'utf8').length : 0;
