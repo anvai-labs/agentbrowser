@@ -19,7 +19,9 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   older commit (whose workflow predates this gate), or on a branch that removed the step, skips the
   check. The gate catches honest mistakes; the **guarantee** needs repository settings the owner
   applies — a tag ruleset restricting who may create `v*` tags, and protection on the `npm`
-  environment (see the PR for the exact commands).
+  environment (see the PR for the exact commands). Admins keep the ruleset bypass, so an admin
+  tagging an older commit by mistake still skips the gate; the environment reviewer is the last
+  manual check there.
 
 ### Added — the handoff surfaces (TD-BROWSER-16 phase 7; the program complete)
 

@@ -184,10 +184,16 @@ test('every other release job depends on tag-guard, directly or transitively', (
   for (const id of graph.keys()) {
     if (id === 'tag-guard') continue;
     assert.ok(reaches(id), `job ${id} does not depend on tag-guard`);
-    assert.doesNotMatch(
-      graph.get(id) ?? '',
-      /if:.*\b(always|cancelled|failure)\(\)/,
-      `job ${id} could run despite a failed tag-guard`
-    );
+    // A job-level `if:` that mentions any status function replaces GitHub's implicit
+    // success() — so `success() || x` or `always()` would run after a failed tag-guard. Only a
+    // bare `success()` (equivalent to no status function) is allowed.
+    const condition = /^ {4}if: (.+)$/m.exec(graph.get(id) ?? '')?.[1]?.trim();
+    if (condition !== undefined && /\b(always|cancelled|failure|success)\(\)/.test(condition)) {
+      assert.match(
+        condition.replace(/^\$\{\{\s*|\s*\}\}$/g, ''),
+        /^success\(\)$/,
+        `job ${id} could run despite a failed tag-guard: if: ${condition}`
+      );
+    }
   }
 });
