@@ -7,6 +7,22 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Docs — proposed: T5 recovery design (J3, J4, browser-operation durability)
+
+- `docs/spec/design/t5-recovery-design.md` (Proposed, awaiting the owner's sign-off) refines J3
+  and J4 on top of the wired journal. It has seven decision points:
+  - D1: operator-only historical lookup;
+  - D2: close or continue only never-dispatched records, closed as marked pre-dispatch failures;
+  - D3: an unknown outcome is resolved only by an opt-in, typed adapter `reconcile` bound to the
+    original operation, never by replay; the operator may also settle it as unknown;
+  - D4: events and cursors are not recovered;
+  - D5: recovery status for operators on the qualified matrix;
+  - D6: browser operations journaled for classification only, which narrows R08;
+  - D7: opt-in history namespaces after rotation, with full-descriptor entries and a stated
+    retention deadline.
+- It states what records do not hold (no times), what a new recovery write path needs, and that
+  the lookup is a bounded scan with no new DDL. Nothing is implemented.
+
 ### Added — durable application writes behind an opt-in journal (T5 C4b, J-d)
 
 - **Configuration.** Trusted variables open the qualified SQLite journal at startup:
