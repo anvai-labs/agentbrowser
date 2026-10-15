@@ -51,8 +51,10 @@ tracks intent/marker settlement through the existing ticket and dispatch helpers
 [C2 application-owned pins and C3 terminal/replay](../design/t5-journal-application-terminal.md)
 merged as #299. [C4a shared control views](../design/t5-journal-control-views.md)
 now bound status/lifecycle disclosure by ACK. C4b runtime/transport selection PARTIAL (protocol field,
-capability check, explicit-ephemeral acceptance and REST discovery fixed 2026-10-15; the
-requirement is not yet in the operation fingerprint or review intent, nor offered by the CLI);
+capability check, explicit-ephemeral acceptance and REST discovery fixed 2026-10-15; the durable
+requirement is now part of the operation identity (`application-operation:v2-durable`) and the
+review intent, with the CLI's `--execution-requirement`; durable execution and reviews stay refused
+until J-d wires a durable journal, which must also label the journal intent's fingerprint domain);
 enabling the durable store at runtime remains gated on F3 deployment;
 [J2a SQLite audit](../design/t5-journal-sqlite-audit.md) selects a built-in candidate
 without enabling it; [J2b qualification](../design/t5-journal-sqlite-qualification.md)
@@ -60,7 +62,8 @@ loads the concrete ownership/anchor/crash/runtime gates.
 [J2b.1 owner/anchor evidence](../evidence/t5-journal-sqlite-owner.md) records the first
 storage primitive; the raw adapter, bounded child manager and all qualification gates
 are shipped; remaining: F3 authorization, C4b selection, and optional
-constrained-mount depth. J3/J4 remain proposed.
+constrained-mount depth. J3/J4 remain proposed. A macOS leg (`journal-darwin.yml`, 2026-10-15)
+runs the same qualification and packaging gates nightly on main and on journal-path pull requests.
 Browser durability waits for its existing target/policy/approval owners to support
 post-storage-wait revalidation. Do not advertise recovery from J0 or this design.
 

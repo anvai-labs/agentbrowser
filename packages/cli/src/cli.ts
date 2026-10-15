@@ -1055,6 +1055,10 @@ export function buildCli(deps: CliDependencies): Cli {
           '--approval-token <token>',
           'consume existing operator consent for this exact operation; does not grant approval'
         )
+        .option(
+          '--execution-requirement <requirement>',
+          'ephemeral (default) or durable; durable is part of the operation identity and is refused unless the runtime has a durable journal'
+        )
         .action(
           action(
             async (
@@ -1062,8 +1066,19 @@ export function buildCli(deps: CliDependencies): Cli {
               sessionId: string,
               operation: string,
               inputJson: string | undefined,
-              options: { expectedVersion?: string; approvalToken?: string }
+              options: {
+                expectedVersion?: string;
+                approvalToken?: string;
+                executionRequirement?: string;
+              }
             ) => {
+              const requirement = options.executionRequirement;
+              if (
+                requirement !== undefined &&
+                requirement !== 'ephemeral' &&
+                requirement !== 'durable'
+              )
+                throw new UsageError('--execution-requirement must be ephemeral or durable');
               if (!ctx.client.sessions.applicationExecute)
                 throw new UsageError('Client does not support the application surface');
               const input =
@@ -1084,6 +1099,7 @@ export function buildCli(deps: CliDependencies): Cli {
                 ...(options.approvalToken !== undefined
                   ? { approvalToken: options.approvalToken }
                   : {}),
+                ...(requirement !== undefined ? { executionRequirement: requirement } : {}),
               });
               const lines =
                 'replay' in result

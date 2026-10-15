@@ -73,8 +73,8 @@ export const ApplicationExecuteRequestSchema = Type.Object(
     expectedVersion: Type.Optional(Type.Integer({ minimum: 0 })),
     approvalToken: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
     // C4b: missing normalizes to 'ephemeral' at the application control
-    // boundary; 'durable' requires a qualified durable journal store and
-    // refuses typed when the runtime cannot satisfy it.
+    // boundary; 'durable' is its own operation identity and is refused typed
+    // (CONTROL_REQUIRED) until a durable journal is wired to execution.
     executionRequirement: Type.Optional(ExecutionRequirementSchema),
   },
   strict
@@ -97,6 +97,7 @@ export const ApplicationReviewRequestSchema = Type.Object(
         input: Type.Unknown(),
         operationId: ID_SCHEMA,
         expectedVersion: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+        executionRequirement: Type.Optional(ExecutionRequirementSchema),
       },
       strict
     ),

@@ -119,6 +119,41 @@ export function defineApplicationOperation<Input, Output>(operation: {
   });
 }
 
+/**
+ * The operation identity of an application write: domain-separated SHA-256 over the binding,
+ * operation, expected version (and, for an operator-submit write, its approval token) and the
+ * canonical input. Duplicate IDs replay only when this matches exactly.
+ */
+export function applicationOperationFingerprint(
+  binding: ApplicationBinding & { generation: string; tenant: string },
+  request: Pick<
+    ApplicationRequest,
+    'operation' | 'expectedVersion' | 'approvalToken' | 'executionRequirement'
+  >,
+  serializedInput: string,
+  protectedWrite: boolean
+): string {
+  // Durable writes hash under their own domain (and name the requirement), so consent and replay
+  // can never cross requirements. Ephemeral keeps the v1 domain and body byte for byte.
+  const durable = request.executionRequirement === 'durable';
+  return createHash('sha256')
+    .update(durable ? 'application-operation:v2-durable\0' : 'application-operation:v1\0')
+    .update(
+      canonicalJson({
+        ...binding,
+        operation: request.operation,
+        expectedVersion: request.expectedVersion,
+        ...(protectedWrite && request.approvalToken !== undefined
+          ? { approvalToken: request.approvalToken }
+          : {}),
+        ...(durable ? { executionRequirement: 'durable' } : {}),
+      })
+    )
+    .update('\0')
+    .update(serializedInput)
+    .digest('hex');
+}
+
 export interface ApplicationAdapter {
   readonly id: string;
   authorize(scope: { tenant: string; resource: string }): boolean;
@@ -135,6 +170,8 @@ export interface ApplicationRequest {
   operationId?: string | undefined;
   expectedVersion?: number | undefined;
   approvalToken?: string | undefined;
+  /** C4b: 'ephemeral' (the default) is dropped at normalization; only 'durable' is carried. */
+  executionRequirement?: 'ephemeral' | 'durable' | undefined;
 }
 
 export interface PreparedApplicationOperationReview {
@@ -192,9 +229,14 @@ function normalizeApplicationRequest(request: ApplicationRequest): {
     const expectedVersion = own.expectedVersion?.value;
     const approvalToken = own.approvalToken?.value;
     // C4b: 'ephemeral' is the default made explicit and is dropped here, so explicit and omitted
-    // requests share one canonical identity. Any other requirement (including 'durable' until it
-    // is part of the operation identity) is refused, so nothing can silently run as ephemeral.
-    if (own.executionRequirement !== undefined && own.executionRequirement.value !== 'ephemeral')
+    // requests share one canonical identity. 'durable' is carried into the operation identity
+    // (its own fingerprint domain) and the review intent; anything else is refused.
+    const executionRequirement: unknown = own.executionRequirement?.value;
+    if (
+      executionRequirement !== undefined &&
+      executionRequirement !== 'ephemeral' &&
+      executionRequirement !== 'durable'
+    )
       throw new Error();
     if (
       typeof operation !== 'string' ||
@@ -220,6 +262,7 @@ function normalizeApplicationRequest(request: ApplicationRequest): {
         ...(operationId !== undefined ? { operationId } : {}),
         ...(expectedVersion !== undefined ? { expectedVersion } : {}),
         ...(approvalToken !== undefined ? { approvalToken } : {}),
+        ...(executionRequirement === 'durable' ? { executionRequirement } : {}),
       }),
       serialized,
     };
@@ -474,6 +517,9 @@ export class ApplicationAuthority {
         operation: request.operation,
         operationId: request.operationId,
         expectedVersion: request.expectedVersion,
+        ...(request.executionRequirement === 'durable'
+          ? { executionRequirement: request.executionRequirement }
+          : {}),
         input: request.input,
       }) as Readonly<Record<string, unknown>>;
       canonicalJson(action);
@@ -528,21 +574,7 @@ export class ApplicationAuthority {
         : undefined;
     const protectedWrite = operation.review === 'operator-submit';
     const fingerprint = write
-      ? createHash('sha256')
-          .update('application-operation:v1\0')
-          .update(
-            canonicalJson({
-              ...binding,
-              operation: request.operation,
-              expectedVersion: request.expectedVersion,
-              ...(protectedWrite && request.approvalToken !== undefined
-                ? { approvalToken: request.approvalToken }
-                : {}),
-            })
-          )
-          .update('\0')
-          .update(serialized)
-          .digest('hex')
+      ? applicationOperationFingerprint(binding, request, serialized, protectedWrite)
       : undefined;
     let rejected = false;
     return this.authority.run(
