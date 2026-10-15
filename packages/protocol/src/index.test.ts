@@ -31,6 +31,7 @@ describe('protocol barrel exports', () => {
     expect(protocol.validateWireAction).toBeTypeOf('function');
     expect(protocol.validateWireActionBatch).toBeTypeOf('function');
     expect(protocol.MAX_BATCH_STEPS).toBe(20);
+    expect(protocol.MAX_PLAN_STEPS).toBe(100);
   });
 
   it('exposes the error taxonomy and helpers', () => {

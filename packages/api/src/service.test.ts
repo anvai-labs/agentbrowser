@@ -123,6 +123,28 @@ describe('AgentBrowserService', () => {
       expect(result.results.every((r) => r.ok)).toBe(true);
     });
 
+    it('refuses a plan over MAX_PLAN_STEPS before executing any step (embedders and outcomes included)', async () => {
+      const session = await service.createSession({ tenantId: 't1' });
+      const pageId = (await service.createPage(session.sessionId)).pageId;
+      await service.navigate(session.sessionId, pageId, { url: 'https://example.com/' });
+      const obs = (await service.observe(session.sessionId, pageId, {
+        mode: 'interactive',
+      })) as unknown as { elements: Array<{ ref: string }> };
+      const ref = obs.elements[0].ref;
+      const act = vi.spyOn(service, 'act');
+      await expect(
+        service.executePlan(
+          session.sessionId,
+          pageId,
+          Array.from({ length: 101 }, () => ({ action: 'click' as const, target: { ref } }))
+        )
+      ).rejects.toMatchObject({
+        code: 'INVALID_REQUEST',
+        message: expect.stringContaining('A plan accepts at most 100 steps; got 101'),
+      });
+      expect(act).not.toHaveBeenCalled();
+    });
+
     it('carries per-step evidence in plan results for an upload step', async () => {
       const session = await service.createSession({ tenantId: 't1' });
       const pageId = (await service.createPage(session.sessionId)).pageId;

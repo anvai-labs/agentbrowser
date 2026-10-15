@@ -35,6 +35,54 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   session response has ever carried it. It is now optional; capabilities come from
   `GET /v1/engine`.
 
+### Changed — least-privilege workflows and SHA-pinned actions (T9 S1c)
+
+- Every workflow now defaults to `contents: read`; `ci.yml` previously inherited the repository
+  default. In `release.yml` only the `release` job (GitHub Release and asset upload) can write
+  contents; `npm-publish` keeps only its OIDC `id-token`.
+- All 67 action references in the four workflows are pinned to the full commit SHA of their
+  release, with a `# vX.Y.Z` comment for Dependabot. `scripts/release-workflow.test.mjs` checks
+  every workflow file: it refuses an unpinned reference, any top-level permissions other than
+  `contents: read`, and any job-level grant beyond an exact allowlist (`release`, `npm-publish`
+  and the docs `deploy` job).
+- The T9 packet records why skipped or canceled jobs cannot turn the required checks or the
+  release graph green.
+
+### Changed — plans are capped at 100 steps (T0)
+
+- A plan now accepts at most **`MAX_PLAN_STEPS` = 100** steps (new protocol export, separate from the
+  20-step `act` batch cap). The cap is enforced in `AgentBrowserService.executePlan` itself, so no
+  caller bypasses it, and on every surface before dispatch: REST `/plan` answers
+  `400 INVALID_REQUEST` naming the limit; `/outcomes` (an outcome run's `actions` carry the same
+  `maxItems`) answers `400 INVALID_REQUEST` with its usual generic message; the MCP `plan` tool advertises `maxItems` and refuses locally; the CLI `plan` command refuses
+  locally; the SDK receives the server's refusal. Nothing executes for an over-limit plan. Split
+  longer work into several plans. Plan *reports* are unaffected.
+
+### Added — confirmed vs suspected findings, and a role-access fixture (T7)
+
+- **Scanner alerts are labelled.** Every `ScannerFinding` now carries `status: 'suspected'`;
+  ZAP's own confidence is kept as `scannerConfidence` (information only — ZAP's "Confirmed" maps
+  to `confirmed-by-scanner-user`, still suspected here).
+- **`confirmFinding(finding, evidence)`** is the only way to reach `confirmed`, including for the
+  role-access probe below. It requires a reproduction record (the `independent-reproduction`
+  method label, a full ISO-8601 date-time with offset, a bounded observation) and a cleanup
+  record; a required but unperformed cleanup refuses with `CLEANUP_INCOMPLETE`, and a scanner
+  confidence label is refused as evidence. The record is an **attestation** the caller vouches
+  for: the function checks its shape, not that the reproduction happened.
+- **Role/business-logic fixture.** `checkRoleAccess` reads each fixture resource as every
+  non-owner identity, read-only (GET, redirects never followed, bodies read up to 1 MiB, 15 s
+  timeout) and host-scope-checked for every resource before any request; path, method, time and
+  budget limits stay with the caller. A non-owner that receives the owner's private marker is a
+  `broken-access-control` finding confirmed through `confirmFinding`, the detecting read being
+  the reproduction; a success status without the marker is not a finding. The marker never
+  appears in a finding: a fixture whose URL contains it is refused, as are unknown (including
+  prototype-key) owners and empty markers. A failing owner control invalidates the fixture rather
+  than passing. The tests drive a vulnerable/fixed invoice pair plus a fixed app that answers 200.
+- **SARIF.** Results carry `kind: review` (suspected) or `kind: fail` (confirmed) and a
+  `properties.status`. Per SARIF 2.1.0 §3.27.10 a suspected result has `level: none`, with the
+  scanner's risk in `properties.risk` and the rule's `defaultConfiguration`; confirmed results keep
+  the risk level and add their evidence description. Role-access findings get their own run.
+
 ## [1.18.0] — 2026-10-15
 
 ### Fixed — the login browser's no-disabling-flags test now actually checks (TD-BROWSER-16 phase 4)

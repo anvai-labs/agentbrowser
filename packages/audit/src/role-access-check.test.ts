@@ -1,0 +1,299 @@
+import { createServer, type Server } from 'node:http';
+import { afterEach, describe, expect, it } from 'vitest';
+import { checkRoleAccess, type RoleAccessCheckOptions } from './role-access-check.js';
+
+const servers: Server[] = [];
+afterEach(async () => {
+  await Promise.all(
+    servers.splice(0).map(
+      (server) =>
+        new Promise<void>((done) => {
+          server.closeAllConnections();
+          server.close(() => done());
+        })
+    )
+  );
+});
+
+/** A role/business-logic fixture pair: invoices owned by alice or bob, addressed by id.
+ * vulnerable: any authenticated identity reads any invoice (IDOR).
+ * fixed: only the owner reads an invoice; others get 404 (no existence oracle).
+ * Every request's identity headers are recorded for the no-leak gate. */
+async function startInvoiceFixture(mode: 'vulnerable' | 'fixed' | 'forbidden-200' | 'redirect') {
+  const invoices: Record<string, { owner: string; marker: string }> = {
+    '1001': { owner: 'alice', marker: 'ALICE-PRIVATE-7f3a' },
+    '2002': { owner: 'bob', marker: 'BOB-PRIVATE-91c4' },
+  };
+  const seen: Array<{ path: string; identity: string | undefined; headers: string[] }> = [];
+  const server = createServer((request, response) => {
+    const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+    const identity = request.headers['x-test-identity'] as string | undefined;
+    seen.push({
+      path: url.pathname,
+      identity,
+      headers: Object.keys(request.headers).filter((name) => name.startsWith('x-test-')),
+    });
+    const match = /^\/invoices\/(\d+)$/.exec(url.pathname);
+    const invoice = match ? invoices[match[1] ?? ''] : undefined;
+    if (identity === undefined) {
+      response.writeHead(401).end();
+      return;
+    }
+    if (mode === 'redirect') {
+      response.writeHead(302, { location: 'http://elsewhere.example/login' }).end();
+      return;
+    }
+    if (invoice !== undefined && mode === 'forbidden-200' && invoice.owner !== identity) {
+      // A fixed app that answers 200 with a generic page: success status, no private data.
+      response.writeHead(200, { 'content-type': 'text/html' });
+      response.end('<h1>Forbidden</h1><p>You cannot view this invoice.</p>');
+      return;
+    }
+    if (invoice === undefined || (mode === 'fixed' && invoice.owner !== identity)) {
+      response.writeHead(404).end();
+      return;
+    }
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ id: match?.[1], owner: invoice.owner, note: invoice.marker }));
+  });
+  servers.push(server);
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+  const address = server.address();
+  if (address === null || typeof address === 'string') throw new Error('no port');
+  return { port: address.port, seen };
+}
+
+const options = (port: number): RoleAccessCheckOptions => ({
+  allowedHosts: [`127.0.0.1:${port}`],
+  identities: {
+    alice: { 'x-test-identity': 'alice' },
+    bob: { 'x-test-identity': 'bob' },
+  },
+  resources: [
+    { url: `http://127.0.0.1:${port}/invoices/1001`, owner: 'alice', marker: 'ALICE-PRIVATE-7f3a' },
+    { url: `http://127.0.0.1:${port}/invoices/2002`, owner: 'bob', marker: 'BOB-PRIVATE-91c4' },
+  ],
+  now: () => new Date('2026-10-15T10:00:00.000Z'),
+});
+
+describe('role/business-logic fixture pair (T7 slice 3)', () => {
+  it('vulnerable: each cross-identity read is a CONFIRMED broken-access-control finding with evidence', async () => {
+    const fixture = await startInvoiceFixture('vulnerable');
+    const result = await checkRoleAccess(options(fixture.port));
+    expect(result.findings).toHaveLength(2);
+    for (const finding of result.findings) {
+      expect(finding.status).toBe('confirmed');
+      expect(finding.risk).toBe('high');
+      // Independent evidence: the non-owner received the owner's private marker.
+      expect(finding.evidence.method).toBe('independent-reproduction');
+      expect(finding.evidence.observation).toMatch(/owner's private marker/);
+      // Read-only probe: nothing to clean up, and that is recorded explicitly.
+      expect(finding.evidence.cleanup).toEqual({
+        required: false,
+        performed: false,
+        note: 'read-only GET probe; no state created',
+      });
+    }
+    expect(result.findings.map((finding) => `${finding.actor}->${finding.owner}`).sort()).toEqual([
+      'alice->bob',
+      'bob->alice',
+    ]);
+    // The finding never carries the private marker itself.
+    expect(JSON.stringify(result.findings)).not.toMatch(/PRIVATE-/);
+  });
+
+  it('fixed: the same check finds nothing, and the owner controls still pass', async () => {
+    const fixture = await startInvoiceFixture('fixed');
+    const result = await checkRoleAccess(options(fixture.port));
+    expect(result.findings).toEqual([]);
+    expect(result.ownerControls).toEqual({ passed: 2 });
+  });
+
+  it('fixed with a 200 "forbidden" page: a success status without the marker is not a finding', async () => {
+    const fixture = await startInvoiceFixture('forbidden-200');
+    const result = await checkRoleAccess(options(fixture.port));
+    expect(result.findings).toEqual([]);
+    expect(result.ownerControls).toEqual({ passed: 2 });
+  });
+
+  it('an owner read that succeeds without its marker invalidates the fixture', async () => {
+    const fixture = await startInvoiceFixture('vulnerable');
+    const scoped = options(fixture.port);
+    await expect(
+      checkRoleAccess({
+        ...scoped,
+        resources: [
+          {
+            url: `http://127.0.0.1:${fixture.port}/invoices/1001`,
+            owner: 'alice',
+            marker: 'NOT-THERE',
+          },
+        ],
+      })
+    ).rejects.toThrow(/FIXTURE_INVALID/);
+  });
+
+  it('a redirect is never followed: the owner control fails closed and no other host is contacted', async () => {
+    const fixture = await startInvoiceFixture('redirect');
+    const requested: string[] = [];
+    const recording: typeof fetch = (input, init) => {
+      requested.push(String(input));
+      return fetch(input, init);
+    };
+    await expect(
+      checkRoleAccess({ ...options(fixture.port), fetchImpl: recording })
+    ).rejects.toThrow(/FIXTURE_INVALID.*status 302/);
+    expect(requested.every((url) => url.startsWith(`http://127.0.0.1:${fixture.port}/`))).toBe(
+      true
+    );
+  });
+
+  it('identities do not leak: every request carries exactly one identity, the intended one', async () => {
+    const fixture = await startInvoiceFixture('vulnerable');
+    await checkRoleAccess(options(fixture.port));
+    for (const request of fixture.seen) {
+      expect(request.headers).toEqual(['x-test-identity']);
+      expect(['alice', 'bob']).toContain(request.identity);
+    }
+    // Owner control + one cross read per resource.
+    expect(fixture.seen).toHaveLength(4);
+  });
+
+  it('a resource outside the allowed hosts is refused before any request, even after in-scope ones', async () => {
+    const fixture = await startInvoiceFixture('vulnerable');
+    const scoped = options(fixture.port);
+    await expect(
+      checkRoleAccess({
+        ...scoped,
+        resources: [
+          ...scoped.resources,
+          { url: 'http://elsewhere.example/invoices/1', owner: 'alice', marker: 'X-1' },
+        ],
+      })
+    ).rejects.toThrow(/SCOPE_HOST_DENIED/);
+    expect(fixture.seen).toHaveLength(0);
+  });
+
+  it('a suffix scope entry matches only subdomains on a label boundary', async () => {
+    const fixture = await startInvoiceFixture('vulnerable');
+    const scoped = options(fixture.port);
+    for (const url of ['http://evilexample.test/x', 'http://example.test/x']) {
+      await expect(
+        checkRoleAccess({
+          ...scoped,
+          allowedHosts: ['.example.test'],
+          resources: [{ url, owner: 'alice', marker: 'X-1' }],
+        })
+      ).rejects.toThrow(/SCOPE_HOST_DENIED/);
+    }
+    expect(fixture.seen).toHaveLength(0);
+  });
+
+  it('refuses fixture mistakes before any request: prototype-key owners and markers in the URL', async () => {
+    const fixture = await startInvoiceFixture('vulnerable');
+    const scoped = options(fixture.port);
+    const base = `http://127.0.0.1:${fixture.port}`;
+    for (const resource of [
+      { url: `${base}/invoices/1001`, owner: 'constructor', marker: 'ALICE-PRIVATE-7f3a' },
+      { url: `${base}/invoices/1001`, owner: 'toString', marker: 'ALICE-PRIVATE-7f3a' },
+      { url: `${base}/doc/ALICE-PRIVATE-7f3a`, owner: 'alice', marker: 'ALICE-PRIVATE-7f3a' },
+      // Percent-encoded marker, with a malformed escape elsewhere that defeats whole-URL decoding.
+      {
+        url: `${base}/doc/%41LICE-PRIVATE-7f3a?x=%ZZ`,
+        owner: 'alice',
+        marker: 'ALICE-PRIVATE-7f3a',
+      },
+      { url: `${base}/invoices/1001`, owner: 'alice', marker: '' },
+    ]) {
+      const error = await checkRoleAccess({ ...scoped, resources: [resource] }).catch(
+        (caught: Error) => caught
+      );
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(/^FIXTURE_INVALID/);
+      // The refusal never echoes the private marker.
+      if (resource.marker !== '') expect((error as Error).message).not.toContain(resource.marker);
+    }
+    expect(fixture.seen).toHaveLength(0);
+  });
+
+  it('an owner that cannot read its own resource invalidates the fixture instead of passing', async () => {
+    const fixture = await startInvoiceFixture('fixed');
+    await expect(
+      checkRoleAccess({
+        ...options(fixture.port),
+        resources: [
+          { url: `http://127.0.0.1:${fixture.port}/invoices/1001`, owner: 'bob', marker: 'B' },
+        ],
+      })
+    ).rejects.toThrow(/FIXTURE_INVALID/);
+  });
+
+  it('response handling is bounded: a marker past 1 MiB is not read, slow reads time out, refused bodies are released', async () => {
+    const { createServer: create } = await import('node:http');
+    let refusedBodyClosed = false;
+    const server = create((request, response) => {
+      const identity = request.headers['x-test-identity'];
+      if (request.url === '/big') {
+        if (identity === 'alice') {
+          response.end('ALICE-BIG-MARKER');
+          return;
+        }
+        // A non-owner gets 1.1 MiB of padding and only then the marker.
+        response.write('x'.repeat(1_153_434));
+        response.end('ALICE-BIG-MARKER');
+        return;
+      }
+      if (request.url === '/slow') {
+        if (identity === 'alice') response.end('ALICE-SLOW-MARKER');
+        // bob's read never answers.
+        return;
+      }
+      // /refused: owner OK; non-owner gets a 403 whose body streams forever.
+      if (identity === 'alice') {
+        response.end('ALICE-REFUSED-MARKER');
+        return;
+      }
+      response.on('close', () => {
+        refusedBodyClosed = true;
+      });
+      response.writeHead(403);
+      const timer = setInterval(() => response.write('.'), 5);
+      response.on('close', () => clearInterval(timer));
+    });
+    servers.push(server);
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+    const address = server.address();
+    if (address === null || typeof address === 'string') throw new Error('no port');
+    const base = `http://127.0.0.1:${address.port}`;
+    const identities = {
+      alice: { 'x-test-identity': 'alice' },
+      bob: { 'x-test-identity': 'bob' },
+    };
+    const allowedHosts = [`127.0.0.1:${address.port}`];
+
+    const big = await checkRoleAccess({
+      allowedHosts,
+      identities,
+      resources: [{ url: `${base}/big`, owner: 'alice', marker: 'ALICE-BIG-MARKER' }],
+    });
+    expect(big.findings).toEqual([]);
+
+    await expect(
+      checkRoleAccess({
+        allowedHosts,
+        identities,
+        timeoutMs: 200,
+        resources: [{ url: `${base}/slow`, owner: 'alice', marker: 'ALICE-SLOW-MARKER' }],
+      })
+    ).rejects.toThrow(/timeout|abort/i);
+
+    const refused = await checkRoleAccess({
+      allowedHosts,
+      identities,
+      resources: [{ url: `${base}/refused`, owner: 'alice', marker: 'ALICE-REFUSED-MARKER' }],
+    });
+    expect(refused.findings).toEqual([]);
+    await new Promise((settle) => setTimeout(settle, 100));
+    expect(refusedBodyClosed).toBe(true);
+  });
+});

@@ -24,7 +24,7 @@ declared files and budgets without contacting a service.
 | [T4](t4-application-parity.md) | Active | REST/SDK/CLI shipped; synthetic UI/API parity, C3c public consent, trusted native-read composition (#259), binding UI (#261), receipt UX (#262) qualified; production gates remain (requires authorized live targets) | T2 |
 | [T5](t5-durable-recovery.md) | Active | FULL CI-gated adversarial matrix (32 distinct rows): process-loss, anchor, quota, privacy, read-only-FS, disk-full — all CI-blocking. Operator reconciliation procedure DELIVERED. C4b execution-requirement protocol field + capability check + discovery IMPLEMENTED. Remaining: F3 deployment (launch durable store), historical recovery (J3/J4, proposed) | T2 |
 | [T6](t6-widget-strategies.md) | Active | Mapping, uploads, native/app witnesses, C3c synthetic submission, E0a/E0b eligibility, N0 document read, first E0c listing-capture slice delivered; remaining gates owned by the consuming workflow (E0c/E1 private policy, live workflow qualification) | T2 |
-| [T7](t7-audit-security.md) | **Complete** | ALL slices delivered: 2a scope enforcement (primitive + surface, 24 real-Chromium gates), 1a visual audit adapter, 1b accessibility adapter (axe-core, page-scripts-never-executed), 3 ZAP scanner-regression adapter + real-ZAP recorded run (2.17.0), 4 SARIF 2.1.0 report adapter, shared finding-baseline store — 36/36 gates, 24 total audit suite | T3; T4 additionally for application-security parity |
+| [T7](t7-audit-security.md) | **Complete** | ALL slices delivered: 2a scope enforcement (primitive + surface, 12 real-Chromium gates plus 14 policy unit tests), 1a visual audit adapter, 1b accessibility adapter (axe-core, page-scripts-never-executed), 3 ZAP scanner-regression adapter + real-ZAP recorded run (2.17.0), 4 SARIF 2.1.0 report adapter, shared finding-baseline store — 36/36 gates; audit suite 53 tests after the 2026-10-15 labelling and role-access work | T3; T4 additionally for application-security parity |
 | [T8](t8-harness-qualification.md) | Active | Codex-path qualification COMPLETE (tool-call, slice-2 dimensions, cursor choreography, resilience, real-ZAP run — 2026-10-02/03); Claude-path cursor choreography COMPLETE (2026-10-04); Victor remains gated on the TLS trust decision | T0; profile/full-run slices also require T1/T3 |
 | [T9](t9-release-hardening.md) | Recurring | Branch protection and release process exist; promotion evidence exists for all delivered slices; next release checkpoint (1.16.0 or later) requires fresh promotion evidence for the accumulated develop stack | T0; each release also requires its changed tasks' acceptance |
 
@@ -46,7 +46,8 @@ Delivered this session (2026-10-02..05, 14 merged PRs #356–#372):
 - **T7 scope enforcement** — `EngagementScopePolicy` (hosts/paths/methods/
   identity-bindings/expiry/budget) as the outermost restrict-only layer;
   service surface (`policy.scope` / MCP `scope` / CLI `--scope-file`);
-  24 real-Chromium gates. ALL slice-2a gates green.
+  12 real-Chromium gates plus 14 policy unit tests (corrected 2026-10-15; earlier
+  records said 24). ALL slice-2a gates green.
 - **T7 audit adapters** — visual (pixelmatch), accessibility (axe-core in a
   Node DOM, page scripts never executed), scanner-regression (OWASP ZAP),
   shared finding-baseline store, SARIF 2.1.0 report adapter — 36/36 gates.

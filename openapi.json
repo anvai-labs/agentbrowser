@@ -2725,6 +2725,7 @@
                 ],
                 "properties": {
                   "actions": {
+                    "maxItems": 100,
                     "type": "array",
                     "items": {
                       "$ref": "#/components/schemas/PlanStep"
@@ -9503,6 +9504,7 @@
         "properties": {
           "actions": {
             "minItems": 1,
+            "maxItems": 100,
             "type": "array",
             "items": {
               "type": "object",
