@@ -178,7 +178,8 @@ account/mode switches for stale-memory leakage." Its two halves are covered in
   the only test that catches an operator check ignoring the tenant.)
 
 **Operator-mediated account/mode switches** (existing): a mode change on re-delegation
-mints a new cursor and binding generation and retires the old token ("issues non-secret
-run cursors that isolate service, binding and mode memory"). An account switch inside a
+mints a new cursor and binding generation ("issues non-secret run cursors that isolate
+service, binding and mode memory") and retires the old token ("binds a trusted mode to the
+bearer grant…"). An account switch inside a
 live grant is page/document-revision state by the packet's own rule; across grants it is
 the takeover-then-re-delegate choreography above.
