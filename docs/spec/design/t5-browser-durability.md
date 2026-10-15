@@ -1,6 +1,7 @@
 # T5 B-dur: browser-operation durability, the open choices
 
-Status: PROPOSED (design only; awaits owner sign-off). Refines D6 of the
+Status: ACCEPTED by the owner on 2026-10-16 — B1 opt-in per request, B2 one record per
+operation, B3 owner-level checks, B4 shared capacity, each as recommended. Refines D6 of the
 [accepted recovery design](t5-recovery-design.md#browser-operation-durability-d6), which settled
 **what** (journal `act`, `plan` and `autofill` for classification only, never recovered) but not
 **how**. Implementing D6 as written meets four facts in the code that the accepted text does not
