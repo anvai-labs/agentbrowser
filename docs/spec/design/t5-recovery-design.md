@@ -280,7 +280,8 @@ order: D6 **after** J3, reusing J3's read path.
 2. **J3a:** the `findByOperation` port (bounded scan), conformance, both fixtures. **Delivered
    2026-10-15** ([evidence](../evidence/t5-journal-runtime.md#j3a-findbyoperation-2026-10-15)).
 3. **J3b:** the read-only lookup route for the operator or a tenant API key (D1), with REST, SDK and
-   CLI parity, plus `GET /v1/journal` (D5).
+   CLI parity, plus `GET /v1/journal` (D5). **Delivered 2026-10-15**
+   ([evidence](../evidence/t5-journal-runtime.md#j3b-the-lookup-route-2026-10-15)).
 4. **J3c:** the recovery write path; close and continue (D2) with `supersedes`; operator
    settlement; the opt-in adapter `reconcile` (D3).
 5. **J3d:** history namespaces (D7) with full-descriptor entries and the retention-deadline
