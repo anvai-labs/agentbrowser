@@ -176,13 +176,17 @@ in-place update) refuses `LOGIN_BINARY_DOWNGRADED`, and either refusal leaves th
 unlocked (the lock is acquired after every pre-launch check). The compared field is file
 identity, not the version string — the runner proved `chrome.exe --version` prints nothing on
 Windows (GUI-subsystem exe), which made a version-probe check fail open exactly where ADR-025's
-rationale is strongest; the recorded `chromiumVersion` stays as documentation. Lifecycle:
+rationale is strongest; the recorded `chromiumVersion` stays as documentation. (Residual,
+exotic: a replacement preserving BOTH size and mtime would evade the check — practically
+negligible, and every observable direction of the check fails closed.) Lifecycle:
 open/close/read serialized; a live second owner or a hand-started Chrome (ProcessSingleton)
 refuses `LOGIN_PROFILE_IN_USE`, a stale lock is adopted, reads on a closed browser refuse
 `LOGIN_BROWSER_CLOSED`; partitioned (`partitionKey` OR `partitionKeyOpaque`) and expired cookies
 are skipped and counted. Operator-only routes `POST /v1/operator/login/{open,close,reset,read}`
 behind the human-operator actor with the seven `LOGIN_*` codes in the protocol (409/403/400,
-never 500); hosted and multi-tenant deployments refuse at boot; shutdown closes the browser.
+never 500); a hosted deployment refuses at the open route with a typed 400, and the service never
+constructs without operator keys — which are single-tenant, so multi-tenant deployments never
+boot with one; shutdown closes the browser.
 The Windows CI job runs this suite headless — via a TEST-side env knob the test file applies, not
 an engine env mode; the branded-chrome suite stays deferred to #465. Seven review rounds; every
 Windows behavior above is runner-proven, not claimed. Carried to phase 6 (acknowledged): the F12
