@@ -62,8 +62,40 @@ recorded runs: archive the fixture source and the sanitized raw alert
 JSON with the record, so the finding table is independently
 re-verifiable rather than transcribed.
 
+## Repeatable recorded run — 2026-10-15
+
+The depth run is now committed and repeatable, rather than a one-off on the development host.
+
+- **Driver:** [`scripts/zap-depth-run.mjs`](../../../scripts/zap-depth-run.mjs), which contains its
+  own vulnerable fixture.
+- **Workflow:** [`zap-depth.yml`](../../../.github/workflows/zap-depth.yml), dispatch-only.
+- **Scanner:** the same digest-pinned `zaproxy/zap-stable` image, run as a daemon on the host
+  network with its keyless API bound to loopback.
+- **Setup:** the driver primes ZAP's sites tree (the setup step the adapter deliberately does not
+  automate), runs `ZapClient.scan`, and archives three files: `result.json`, `raw-alerts.json`
+  (sanitized: no headers or bodies) and the fixture source. That follows the norm above.
+- **Exit:** 0 only if the seeded reflected XSS (40012, high, `name`) is found and every finding
+  stays `suspected`.
+
+**First run** (development host, 2026-10-15, ZAP 2.17.0), archived in
+[`t7-zap-depth/`](t7-zap-depth/result.json):
+
+| pluginId | Risk | Finding | Parameter |
+| --- | --- | --- | --- |
+| 40012 | high | Cross Site Scripting (Reflected): **the seeded vulnerability** | `name` |
+| 40026 | high | Cross Site Scripting (DOM Based) | `name` |
+| 10020 | medium | Missing Anti-clickjacking Header | `x-frame-options` |
+| 10038 | medium | Content Security Policy (CSP) Header Not Set | |
+| 10021 | low | X-Content-Type-Options Header Missing | `x-content-type-options` |
+
+- There are 8 findings in total: the three header findings appear once for each of the fixture's
+  two URLs.
+- `droppedOutOfScope: 0`.
+- All are `suspected`. A scanner alert is a claim until it is independently reproduced.
+- DOM-based XSS now reports its own plugin id, 40026. The 2026-10-03 record saw it under 40012.
+- The CI-hosted run is available by dispatching the workflow; that is the owner's call, because
+  it pulls a ~1.5 GB image.
+
 ## Remaining
 
 - Slice 4 (report templates) — on demand.
-- The recorded run above used the development host's docker; a
-  constrained-mount / CI-hosted ZAP run remains optional depth.

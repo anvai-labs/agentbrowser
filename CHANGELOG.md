@@ -7,6 +7,16 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — a repeatable real-ZAP recorded run (T7 depth)
+
+- `scripts/zap-depth-run.mjs` runs the ZAP adapter against a real OWASP ZAP daemon and its own
+  deliberately vulnerable fixture. It archives the result, sanitized raw alerts and the fixture
+  source, and fails unless the seeded reflected XSS is found and every finding stays
+  `suspected`.
+- The dispatch-only `zap-depth.yml` workflow runs it in CI with the digest-pinned ZAP image.
+- First run (2026-10-15, ZAP 2.17.0): the seeded XSS plus four header and DOM findings, archived
+  under `docs/spec/evidence/t7-zap-depth/`.
+
 ### Changed — observation is faster on element-heavy pages (F2)
 
 - The Playwright engine now binds observed elements to their nodes with bounded concurrency (8),

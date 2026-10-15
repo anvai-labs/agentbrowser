@@ -21,7 +21,9 @@ the read-only `checkRoleAccess` probe) and the confirmed/suspected rule (every
 scanner alert is `suspected`; `confirmFinding` requires an independent
 reproduction plus a cleanup record; SARIF maps suspected to `kind: review` and
 confirmed to `kind: fail`). R03/R13 carry their qualified scope in the review
-table. The packet's delivery scope is COMPLETE. Repository: agentbrowser.
+table. The ZAP depth run is now repeatable: a committed driver and a dispatch-only workflow
+(`zap-depth.yml`, digest-pinned ZAP, archived sanitized alerts). Its first recorded run is in the
+evidence record. The packet's delivery scope is COMPLETE. Repository: agentbrowser.
 Depends on: T3; security parity also T4.
 Inputs: core, selected audit/appsec/bounty mode, security, contracts, quality-ci.
 

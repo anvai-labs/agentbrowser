@@ -1,0 +1,65 @@
+name: ZAP depth (recorded run)
+
+# T7 depth: run the ZAP adapter against a REAL OWASP ZAP daemon and a local, deliberately
+# vulnerable fixture, and archive a re-verifiable record. Dispatch only: it pulls a ~1.5 GB
+# image and runs an active scan, so it is never part of PR CI.
+on:
+  workflow_dispatch:
+    inputs:
+      budget-ms:
+        description: Active-scan poll budget in milliseconds.
+        required: false
+        default: '900000'
+
+permissions:
+  contents: read
+
+jobs:
+  zap-depth:
+    name: Real ZAP recorded run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: '.tool-versions'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the audit adapter
+        run: pnpm --filter @agentbrowser/audit... build
+
+      # Digest-pinned (the image the 2026-10-03 recorded run used); host networking so ZAP and
+      # the fixture share 127.0.0.1. The API is keyless but bound to loopback only.
+      - name: Start ZAP (daemon, loopback API)
+        run: |
+          docker run -d --rm --network host --name zap \
+            zaproxy/zap-stable@sha256:781a2bdaea47324e7bab583e2263f21d257b0aee61ed51521a5be45f5f5081ef \
+            zap.sh -daemon -host 127.0.0.1 -port 8090 \
+            -config api.disablekey=true \
+            -config api.addrs.addr.name=127.0.0.1 -config api.addrs.addr.regex=false
+
+      - name: Recorded run
+        env:
+          BUDGET_MS: ${{ inputs.budget-ms }}
+        run: node scripts/zap-depth-run.mjs --zap http://127.0.0.1:8090 --out zap-depth --budget-ms "$BUDGET_MS"
+
+      - name: ZAP log on failure
+        if: failure()
+        run: docker logs zap 2>&1 | tail -200
+
+      - name: Archive the record
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: zap-depth-${{ github.run_id }}
+          path: zap-depth/
+          if-no-files-found: warn
