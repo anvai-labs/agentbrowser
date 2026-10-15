@@ -303,7 +303,7 @@ describe('staged mappings (T6 W3a)', () => {
     expect(unknown.err.join('\n')).toMatch(/Unknown form mapping stage/);
   });
 
-  it('lists stages offline without values', async () => {
+  it('lists stages offline without values, and honors --json with the advertised shape', async () => {
     const { cli, out } = harness();
     expect(await cli.run(['form', 'stages', stagedMapping])).toBe(0);
     expect(out.join('\n')).toBe(
@@ -312,5 +312,13 @@ describe('staged mappings (T6 W3a)', () => {
         'profile  https://example.test/signup/2  2 field(s)',
       ].join('\n')
     );
+    const json = harness();
+    expect(await json.cli.run(['--json', 'form', 'stages', stagedMapping])).toBe(0);
+    expect(JSON.parse(json.out.join('\n'))).toEqual({
+      stages: [
+        { id: 'account', url: 'https://example.test/signup/1', fieldCount: 2 },
+        { id: 'profile', url: 'https://example.test/signup/2', fieldCount: 2 },
+      ],
+    });
   });
 });

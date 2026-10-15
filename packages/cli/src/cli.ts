@@ -2507,7 +2507,12 @@ export function buildCli(deps: CliDependencies): Cli {
             const mapping = await readCommandJson(stagesCommand, mappingJson, 'form mapping');
             const stages = listFormMappingStages(mapping);
             if (stages === undefined) {
-              deps.out('single-stage mapping (no stages)');
+              deps.out(program.opts().json ? '{"stages":[]}' : 'single-stage mapping (no stages)');
+              return;
+            }
+            // The global --json flag is honored (the advertised output contract is this shape).
+            if (program.opts().json) {
+              deps.out(JSON.stringify({ stages }, null, 2));
               return;
             }
             deps.out(
