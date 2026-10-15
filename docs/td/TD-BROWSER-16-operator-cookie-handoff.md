@@ -224,6 +224,37 @@ size bound unenforced (count only), and 400/409 undocumented in the OpenAPI for 
   - `application.execute` is refused;
   - the write-path checklist passes.
 
+**Delivered (phase 5, #466):** `credentialSource` enters the code as a **service-level** marking —
+a `ServiceSessionRequest` field plus an internal `markOperatorCredentialSource` (what phase 6's
+handoff calls). The wire create route refuses `credentialSource` **by name**: the request
+validator deliberately passes unknown keys through (for the flat policy fields), and review round 1
+proved the first cut therefore forwarded an agent-supplied marker — an API-key create with
+`credentialSource: "operator"` got 201 and made the session lease-eligible. The session view
+reports the marking read-only. The override lives in `checkApproval` ahead of the allow
+early-return: a policy `deny` stands above everything (pinned by test after review round 1 — a
+deny-authorizer mutation had passed green); in a marked session an `unknown` effect first tries
+the lease (one count per action on a covered host), and otherwise high-risk AND unknown route to
+the delegated reviewed branch — whose request now stamps `kind: 'act.reviewed'`, overriding any
+per-rule/Cedar allow. That stamping exposed one REAL latent phase-1 bug, fixed:
+`ApprovalGate.allocate` spread the binding after the storage `kind`, so every kind-stamped
+reviewed approval threw `Invalid token kind` (nothing stamped a kind on the reviewed path before).
+A second suspected latent bug — `getApprovalKind` mis-routing `'act.reviewed'` to the non-act
+decide path — was claimed in the first cut of this note and RETRACTED after review: `getToken`
+returns confirmation records only, so `getApprovalKind` cannot see an act.reviewed token at all;
+the exclusion added for it is defense in depth, and the counterfactual failure mode is
+`INVALID_TOKEN`, not a burn. The view schema gained the optional kind (strict parse had rejected
+it). The lease: `POST /v1/sessions/{sessionId}/lease`, human-operator key only (an API-key
+operator gets the FORBIDDEN floor), bounds `≤16 hosts / ≤4 h / ≤500 actions`, every host a usable
+host within the session's own allowlist (request + engagement scope; **no allowlist ⇒ no lease**,
+fail closed); coverage and validation use the phase-3 matcher (`covers`/`usableHost`);
+`lease.granted` / `lease.exhausted` audit events fire once per exhaustion actually observed; the
+view shows `actionLease` + `actionLeaseRemainingMs` (named to not collide with the pre-existing
+idle `lease`). Lease-shaped input on the agent create-route is inert (passes through, parses to
+nothing — asserted by view absence). `autofill` refuses at entry without a covering lease and its
+field writes spend leased counts through the normal act path; `application.execute` refuses
+outright; the checklist test enumerates mutating routes from the live fastify router so an
+undeclared page-writing route fails CI. 14 tests; workspace green.
+
 ### Phase 6: the handoff operation
 
 **Route:** `POST /v1/sessions/{sessionId}/cookies/handoff` `{ domains, approvalToken? }`. It runs

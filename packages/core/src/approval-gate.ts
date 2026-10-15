@@ -196,7 +196,7 @@ export class ApprovalGate {
   }
 
   private async allocate(
-    binding: Pick<ApprovalToken, 'sessionId' | 'actionFingerprint'>,
+    binding: Pick<ApprovalToken, 'sessionId' | 'actionFingerprint' | 'kind'>,
     review?: { action: Record<string, unknown>; contextFingerprint: string }
   ): Promise<StoredApproval> {
     this.assertOpen();
@@ -224,10 +224,19 @@ export class ApprovalGate {
     };
     const record: StoredApproval = review
       ? {
-          kind: 'reviewed',
+          // Spread binding FIRST: its `kind` is the approval kind (e.g.
+          // act.reviewed) and must not overwrite the storage kind, or every
+          // kind-stamped reviewed approval throws 'Invalid token kind'.
           ...binding,
+          kind: 'reviewed',
           contextFingerprint: review.contextFingerprint,
-          token: { ...lifecycle, action: review.action },
+          token: {
+            ...lifecycle,
+            action: review.action,
+            // The view's kind is the non-act union; 'act' means unstamped and
+            // stays absent (snapshotBinding omits it in that case anyway).
+            ...(binding.kind !== undefined && binding.kind !== 'act' ? { kind: binding.kind } : {}),
+          },
         }
       : { kind: 'confirmation', token: { ...lifecycle, ...binding } };
     this.tokens.set(tokenId, record);

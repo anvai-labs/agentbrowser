@@ -1303,6 +1303,15 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             'INVALID_REQUEST',
             'CDP endpoints are trusted startup configuration, never session input.'
           );
+        // TD-BROWSER-16 (ADR-025 §5): the credential-source marking is set by
+        // the operator side (the handoff) or an embedder — an agent marking
+        // its own session would forge the trust indicator phase 6 builds on.
+        // The wire passes unknown keys through, so refuse it BY NAME here.
+        if ('credentialSource' in (body as object))
+          throw new ServiceError(
+            'INVALID_REQUEST',
+            'credentialSource is server-assigned (the cookie handoff), never session input.'
+          );
         if (validated.value.cdpAttach === true) {
           const address = fastify.server.address();
           if (
@@ -1500,6 +1509,49 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
             checked.value.decision
           );
           return responseDraft(disclosure.view, 200, { assertCurrent: disclosure.assertCurrent });
+        },
+        { operatorRoute: true }
+      );
+
+      // TD-BROWSER-16 phase 5 (ADR-025 §5): the operator-granted action
+      // lease. Human operator only — an agent (or an API-key operator, which
+      // an agent may hold) can never request, extend or widen one; no
+      // agent-facing schema accepts lease fields.
+      on(
+        'POST',
+        '/sessions/:sessionId/lease',
+        async (request) => {
+          const { sessionId } = params(request, 'sessionId');
+          // The human operator only (inline form: the `on` wrapper passes a
+          // reduced request, like the approval routes above).
+          if (request.principal?.actor !== 'human-operator')
+            throw new ServiceError(...FLOOR_OPERATOR_REQUIRED);
+          requireOwnership(sessionId, tenantOf(request));
+          const body = (request.body ?? {}) as {
+            hosts?: unknown;
+            expiresInMs?: unknown;
+            maxActions?: unknown;
+          };
+          if (
+            !Array.isArray(body.hosts) ||
+            body.hosts.length === 0 ||
+            body.hosts.length > 16 ||
+            !body.hosts.every((host) => typeof host === 'string') ||
+            typeof body.expiresInMs !== 'number' ||
+            typeof body.maxActions !== 'number'
+          )
+            throw new ServiceError(
+              'INVALID_REQUEST',
+              'A lease grant is { hosts: string[], expiresInMs, maxActions }'
+            );
+          return responseDraft(
+            await service.grantActionLease(sessionId, {
+              hosts: body.hosts as string[],
+              expiresInMs: body.expiresInMs,
+              maxActions: body.maxActions,
+            }),
+            201
+          );
         },
         { operatorRoute: true }
       );

@@ -398,6 +398,56 @@ export function buildOpenApiDocument(options: { serverUrl?: string } = {}): obje
       ...controlPaths,
       ...approvalPaths,
       ...applicationPaths,
+      '/v1/sessions/{sessionId}/lease': {
+        post: {
+          operationId: 'grantActionLease',
+          summary: 'Grant the session action lease (human operator only)',
+          description:
+            'TD-BROWSER-16 (ADR-025 s5): grants the operator action lease for a session ' +
+            'holding operator credentials. Human-operator key only - an agent (or an ' +
+            'API-key operator) can never request, extend or widen one, and no agent-facing ' +
+            'schema accepts lease fields. Every host must lie within the session host ' +
+            'allowlist; at most 4h and 500 actions.',
+          tags: ['sessions'],
+          parameters: [sessionIdParam],
+          requestBody: {
+            required: true,
+            content: json({
+              type: 'object',
+              additionalProperties: false,
+              required: ['hosts', 'expiresInMs', 'maxActions'],
+              properties: {
+                hosts: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 16 },
+                expiresInMs: { type: 'integer', minimum: 1 },
+                maxActions: { type: 'integer', minimum: 1 },
+              },
+            }),
+          },
+          responses: {
+            '201': {
+              description: 'The granted lease with its remaining count.',
+              content: json({
+                type: 'object',
+                additionalProperties: false,
+                required: ['hosts', 'grantedAt', 'expiresAt', 'maxActions', 'remainingActions'],
+                properties: {
+                  hosts: { type: 'array', items: { type: 'string' } },
+                  grantedAt: { type: 'integer' },
+                  expiresAt: { type: 'integer' },
+                  maxActions: { type: 'integer' },
+                  remainingActions: { type: 'integer' },
+                },
+              }),
+            },
+            '400': errorResponse(
+              'Invalid grant: shape, bounds, or hosts outside the session allowlist.'
+            ),
+            '401': errorResponse('Authentication required.'),
+            '403': errorResponse('Human operator required.'),
+            '404': NOT_FOUND,
+          },
+        },
+      },
       '/openapi.json': {
         get: {
           operationId: 'getOpenApiDocument',

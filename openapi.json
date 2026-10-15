@@ -1186,6 +1186,141 @@
         }
       }
     },
+    "/v1/sessions/{sessionId}/lease": {
+      "post": {
+        "operationId": "grantActionLease",
+        "summary": "Grant the session action lease (human operator only)",
+        "description": "TD-BROWSER-16 (ADR-025 s5): grants the operator action lease for a session holding operator credentials. Human-operator key only - an agent (or an API-key operator) can never request, extend or widen one, and no agent-facing schema accepts lease fields. Every host must lie within the session host allowlist; at most 4h and 500 actions.",
+        "tags": [
+          "sessions"
+        ],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Session identifier returned by createSession.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "hosts",
+                  "expiresInMs",
+                  "maxActions"
+                ],
+                "properties": {
+                  "hosts": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "maxItems": 16
+                  },
+                  "expiresInMs": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "maxActions": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The granted lease with its remaining count.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "hosts",
+                    "grantedAt",
+                    "expiresAt",
+                    "maxActions",
+                    "remainingActions"
+                  ],
+                  "properties": {
+                    "hosts": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "grantedAt": {
+                      "type": "integer"
+                    },
+                    "expiresAt": {
+                      "type": "integer"
+                    },
+                    "maxActions": {
+                      "type": "integer"
+                    },
+                    "remainingActions": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid grant: shape, bounds, or hosts outside the session allowlist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Human operator required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The session or page does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/openapi.json": {
       "get": {
         "operationId": "getOpenApiDocument",
@@ -5798,6 +5933,18 @@
           "approvedAt": {
             "minimum": 0,
             "type": "integer"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "const": "act.reviewed",
+                "type": "string"
+              },
+              {
+                "const": "cookie.handoff",
+                "type": "string"
+              }
+            ]
           },
           "action": {
             "type": "object",
@@ -11282,6 +11429,55 @@
             ]
           },
           "leaseRemainingMs": {
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          },
+          "credentialSource": {
+            "const": "operator",
+            "type": "string"
+          },
+          "actionLease": {
+            "type": "object",
+            "required": [
+              "hosts",
+              "grantedAt",
+              "expiresAt",
+              "maxActions",
+              "remainingActions"
+            ],
+            "properties": {
+              "hosts": {
+                "minItems": 1,
+                "maxItems": 16,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "grantedAt": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "expiresAt": {
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "maxActions": {
+                "minimum": 1,
+                "maximum": 500,
+                "type": "integer"
+              },
+              "remainingActions": {
+                "minimum": 0,
+                "maximum": 500,
+                "type": "integer"
+              }
+            }
+          },
+          "actionLeaseRemainingMs": {
             "minimum": 0,
             "maximum": 9007199254740991,
             "type": "integer"

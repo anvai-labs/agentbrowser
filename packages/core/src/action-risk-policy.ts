@@ -17,6 +17,14 @@ export interface ActionRiskPolicyOptions {
   unknownRisk?: 'allow' | 'required';
 }
 const HIGH_RISK = new Set(['transaction', 'account-security', 'external-message', 'destructive']);
+/**
+ * TD-BROWSER-16 phase 5 (ADR-025 §5): high-risk effects always need an
+ * act.reviewed decision in a credentialSource:"operator" session, whatever
+ * any rule or lease says. Exported so the api layer enforces against the
+ * same set that classifies.
+ */
+export const isHighRiskEffect = (effect: ActionEffectType | 'unknown'): boolean =>
+  HIGH_RISK.has(effect);
 const READ_ACTIONS = new Set(['hover', 'scroll', 'wait']);
 const rank = { allow: 0, required: 1, deny: 2 };
 const RULE_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
