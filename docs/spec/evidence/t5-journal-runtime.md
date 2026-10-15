@@ -194,3 +194,18 @@ path that J3's lookup route (J3b) and recovery writes (J3c) build on.
   - Each guard was mutated away and fails a test.
   - Suites: control 834, api 1,562 (CI reports the same on the PR head); journal qualification 32/32.
 
+## A2: durable restart claims (2026-10-15)
+
+`packages/api/src/application-durable-restart.test.ts` runs two service processes, one after the
+other, on the same real store (the second reopens the namespace J-d style). The oracles are the
+store's committed rows (read-only) and per-process effect counters.
+
+- **Survival.** A completed durable write (rev 3) is still the store's only row after the restart,
+  and the new process reads it through its own journal handle (`findByOperation`).
+- **No replay.** The second process starts with zero effects and executes nothing on its own.
+- **The weaker, advertised outcome.** Re-submitting the SAME operation ID under the new process
+  commits a second record and runs the effect again: operation identity includes the process's
+  service generation, so there is no cross-process deduplication. The test pins that the two
+  records carry two distinct service generations — two operations, not a replay. Idempotency
+  across restarts is the application adapter's own responsibility; the journal never claims it.
+
