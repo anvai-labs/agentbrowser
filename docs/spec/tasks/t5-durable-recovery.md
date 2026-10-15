@@ -53,8 +53,8 @@ merged as #299. [C4a shared control views](../design/t5-journal-control-views.md
 now bound status/lifecycle disclosure by ACK. C4b runtime/transport selection PARTIAL (protocol field,
 capability check, explicit-ephemeral acceptance and REST discovery fixed 2026-10-15; the durable
 requirement is now part of the operation identity (`application-operation:v2-durable`) and the
-review intent, with the CLI's `--execution-requirement`; execution stays refused until J-d wires
-a durable journal);
+review intent, with the CLI's `--execution-requirement`; durable execution and reviews stay refused
+until J-d wires a durable journal, which must also label the journal intent's fingerprint domain);
 enabling the durable store at runtime remains gated on F3 deployment;
 [J2a SQLite audit](../design/t5-journal-sqlite-audit.md) selects a built-in candidate
 without enabling it; [J2b qualification](../design/t5-journal-sqlite-qualification.md)

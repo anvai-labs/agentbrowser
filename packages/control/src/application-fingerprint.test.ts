@@ -3,6 +3,7 @@
  * from develop's inline formula BEFORE durable existed, so they can never drift; durable uses its
  * own domain, so consent and replay can never cross requirements.
  */
+import { createHash } from 'node:crypto';
 import { canonicalJson } from '@agentbrowser/core';
 import { describe, expect, it } from 'vitest';
 import { applicationOperationFingerprint } from './application-authority.js';
@@ -60,7 +61,16 @@ describe('application operation fingerprint', () => {
       canonicalJson(1),
       false
     );
-    expect(durable).toMatch(/^[0-9a-f]{64}$/);
     expect(durable).not.toBe(ephemeral);
+    // Pinned: the v2-durable domain AND the requirement in the body (either alone would still
+    // separate the identities, so each is pinned by this golden).
+    expect(durable).toBe(
+      createHash('sha256')
+        .update('application-operation:v2-durable\0')
+        .update(canonicalJson({ ...binding, ...request, executionRequirement: 'durable' }))
+        .update('\0')
+        .update(canonicalJson(1))
+        .digest('hex')
+    );
   });
 });

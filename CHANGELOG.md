@@ -14,10 +14,13 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   never cross requirements. Ephemeral fingerprints are unchanged byte for byte (pinned to golden
   hashes captured before this change). The operator review intent names a durable requirement;
   an ephemeral intent, explicit or omitted, is unchanged.
-- `application reviews` accept `request.executionRequirement`; the CLI's `application execute`
-  takes `--execution-requirement ephemeral|durable`.
-- Durable execution itself stays refused (`CONTROL_REQUIRED`) until a durable journal is wired to
-  the runtime (J-d), even with `durableJournalAvailable` set: the flag alone proves nothing.
+- `application reviews` accept `request.executionRequirement` (an explicit `ephemeral` is the
+  default); the CLI's `application execute` takes `--execution-requirement ephemeral|durable`.
+- Durable execution, and a durable review (which could never be executed), stay refused
+  (`403 CONTROL_REQUIRED`, nothing reserved) until a durable journal is wired to the runtime
+  (J-d), even with `durableJournalAvailable` set: that option currently has no effect.
+- Known for J-d: the journal intent still labels every live fingerprint
+  `application-operation:v1`; it must carry the durable domain once durable writes run.
 
 ### Docs — release records and task-status reconciliation
 

@@ -437,9 +437,9 @@ export interface ServiceDependencies {
     }>;
   };
   /**
-   * C4b: whether a qualified durable journal store is deployed. Defaults
-   * to false (ephemeral-only). Trusted deployment configuration — never
-   * settable from session or request input.
+   * C4b: reserved for J-d. Currently has NO effect: durable execution and durable reviews are
+   * refused until a durable journal is wired to execution, and a boolean alone proves nothing
+   * about durability. Trusted deployment configuration — never settable from request input.
    */
   durableJournalAvailable?: boolean;
   /** Operator-owned maximum complete extraction response bytes. */
@@ -2707,6 +2707,14 @@ export class AgentBrowserService {
     const validated = validateApplicationReview(input);
     if (!validated.ok)
       throw new ServiceError('INVALID_REQUEST', 'Invalid application review request');
+    // A durable review could never be executed (durable execution is refused until J-d), so it
+    // is refused here with the same typed reason rather than reaching evidence selection.
+    if (validated.value.request.executionRequirement === 'durable')
+      throw new ServiceError(
+        'CONTROL_REQUIRED',
+        'durable execution requires a durable journal wired to this runtime; this runtime supports ephemeral only',
+        false
+      );
     const result = await this.authority.run(
       sessionId,
       principal,
@@ -2742,6 +2750,14 @@ export class AgentBrowserService {
     const validated = validateApplicationReview(input);
     if (!validated.ok)
       throw new ServiceError('INVALID_REQUEST', 'Invalid application review request');
+    // A durable review could never be executed (durable execution is refused until J-d), so it
+    // is refused here with the same typed reason rather than reaching evidence selection.
+    if (validated.value.request.executionRequirement === 'durable')
+      throw new ServiceError(
+        'CONTROL_REQUIRED',
+        'durable execution requires a durable journal wired to this runtime; this runtime supports ephemeral only',
+        false
+      );
     const body = validated.value;
     const context = this.reviewContext(sessionId);
     const originalPage = this.prepareNativeFormReadInScope(sessionId, body.pageId);
