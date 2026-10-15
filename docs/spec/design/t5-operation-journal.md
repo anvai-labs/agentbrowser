@@ -140,6 +140,22 @@ restored backups must fail closed. Do not store credentials, form values, approv
 tokens, resumes or entire reports in journal metadata. Encryption and keyed hashes
 complement filesystem isolation; they do not grant authority.
 
+Delivered retention (SQLite adapter and memory oracle, conformance-pinned): capacity
+is reclaimed only at the point of need — when a new namespace would otherwise be
+refused at the `maxNamespaces` ceiling. A namespace is retired then only if it is
+released (no active fence), past `retainUntil` (judged by the larger of the clock and
+its persisted high-water) and settled (every record carries a terminal fact): its
+records are deleted, its reservation zeroed and its high-water raised to the
+effective time. Its row remains as a tombstone that never reopens — `expired` going
+forward, `configuration` after a clock rollback below the raised high-water or for any
+other descriptor — so purged IDs never become acceptable again, and the store-wide
+ceiling still applies. A namespace holding an in-doubt record is never retired and
+keeps its capacity until reconciliation; there is no startup purge, so a skewed clock
+at child start deletes nothing. Retirement trusts the wall clock as far as horizon
+expiry already does. Tombstones grow with configured namespaces, not traffic (a
+namespace is stable across restarts). Quarantine/reconciliation stays as specified in
+[t5-operator-reconciliation](t5-operator-reconciliation.md).
+
 ## J3: authorized historical lookup and explicit continuation
 
 Require current authentication and explicit authorization for the original tenant and

@@ -7,6 +7,18 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Fixed — operation journal retention (not yet wired into the service)
+
+- **Settled, expired namespaces release capacity when it is needed.** Expired namespaces used to
+  count toward `maxNamespaces` forever, so a store that had ever held that many refused new ones
+  permanently. Now, when a new namespace would be refused at the ceiling, every namespace that is
+  released, past `retainUntil` (larger of the clock and its persisted high-water) and settled
+  (all records terminal) is retired: records deleted, reservation zeroed, high-water raised. The
+  row stays as a tombstone that never reopens — `expired` forward, `configuration` after a clock
+  rollback or for any other descriptor — so purged operation IDs are never admitted again
+  ([t5-journal-contract](docs/spec/design/t5-journal-contract.md)). Namespaces with an in-doubt
+  record or an active fence are never retired. No startup purge, no DDL change (`formatVersion` 1).
+
 ### Added — reviewed actions and the lease (TD-BROWSER-16 phase 5, ADR-025 §5)
 
 - **Marked sessions** (`credentialSource: "operator"`): the marking is **server-side only** — a
