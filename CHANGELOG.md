@@ -7,6 +7,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — a committed observation-overhead benchmark (F1)
+
+- `node packages/benchmarks/dist/run.js observe [n]` observes a 120-element fixture (40 text, 40
+  password, 40 buttons) through the service on real Chromium and prints latency (mean/p50/p95/max);
+  it fails unless all 40 password fields are observed redacted and no password value appears.
+  A baseline snapshot is recorded in `docs/spec/evidence/observation-120-baseline.md`; runs drift
+  ~18% between sessions on the same host, so comparisons (F2) must interleave both builds in one
+  session.
+
 ### Added — journal time never moves backwards within a process (T5 J-c)
 
 - The SQLite journal child takes its time from `createJournalClock()`. Checks (fencing, admission
