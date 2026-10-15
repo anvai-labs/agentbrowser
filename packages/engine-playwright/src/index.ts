@@ -630,6 +630,11 @@ const MAX_FORM_CONTROLS = MAX_FORM_CONTROLS_PER_ROOT;
  */
 /** F2: concurrent per-element binding round trips in one observation. */
 const BIND_CONCURRENCY = 8;
+/**
+ * Longest a single element's aria capture may wait. Captures of a just-resolved node take a few
+ * milliseconds; this only bounds the miss where the node changed between resolve and capture.
+ */
+const ELEMENT_CAPTURE_SLICE_MS = 500;
 
 const VALUE_BEARING_ROLES = new Set([
   'textbox',
@@ -3250,10 +3255,14 @@ class PlaywrightPage implements EnginePage {
         // snapshot gate in resolve(), so degrade to document evidence.
         // Form-control bindings degrade the same way: their div widgets
         // re-render too often for per-element snapshots to be stable.
+        // The node was just resolved, so a healthy capture is fast; one that cannot find its
+        // node (the page renamed or replaced it since) must not wait out the whole envelope.
+        // Bounded to a short slice, it degrades to document evidence like any capture miss,
+        // and the evidence comparison below then reports the page change.
         const captured =
           element.fileInputIndex !== undefined || element.formControlIndex !== undefined
-            ? await snapshotBudget.capture(locator).catch(() => undefined)
-            : await snapshotBudget.capture(locator);
+            ? await snapshotBudget.capture(locator, ELEMENT_CAPTURE_SLICE_MS).catch(() => undefined)
+            : await snapshotBudget.capture(locator, ELEMENT_CAPTURE_SLICE_MS);
         binding.snapshot = snapshotDigest(captured);
         const prior = previous.get(ref);
         if (

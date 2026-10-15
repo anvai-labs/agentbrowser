@@ -7,14 +7,18 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
-### Changed — observation is about 2.3× faster on element-heavy pages (F2)
+### Changed — observation is faster on element-heavy pages (F2)
 
-- The Playwright engine now binds observed elements to their nodes with bounded concurrency (8)
-  instead of one element at a time, and resolves each node in one round trip. Each element's steps
-  and its document-order ordinal are unchanged, and every binding settles before cleanup. On the
-  120-element benchmark an observation drops from ~1.2 s to ~0.5 s (interleaved A/B in one
-  session, recorded in `docs/spec/evidence/observation-120-baseline.md`), with identical password
-  redaction.
+- The Playwright engine now binds observed elements to their nodes with bounded concurrency (8),
+  instead of one at a time, and resolves each node in one round trip. Each element's steps and its
+  document-order ordinal are unchanged, and every binding settles before cleanup.
+- On the 120-element benchmark an observation drops from ~1.2 s to ~0.5 s in **Chromium** (about
+  2.3×, from an interleaved A/B in one session), with identical password redaction. The review
+  measured about 1.8× in Firefox and 1.1× in WebKit.
+- An element's aria capture is bounded to a 500 ms slice. A node renamed between being resolved
+  and being captured therefore degrades to document evidence and reports a page change; it no
+  longer waits out the whole ~5 s snapshot envelope.
+- Recorded in `docs/spec/evidence/observation-120-baseline.md`.
 
 ### Added — a committed observation-overhead benchmark (F1)
 

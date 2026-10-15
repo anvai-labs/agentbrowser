@@ -48,3 +48,18 @@ Interleaved A/B in one session (A = develop's engine, B = F2; 10 samples each; s
 | 3 | 1229.9 | 549.1 | 40 / 40 | no / no |
 
 About 2.3× faster, far outside the ~18% between-session drift, with identical redaction.
+
+**Review follow-up (same PR).**
+
+*Other engines.* The independent review reproduced the Chromium gain at 2.2–2.7×. It measured
+Firefox 6059 → 3332 ms (about 1.8×) and WebKit 1966 → 1719 ms (about 1.1×), with no regression on a
+5-element page in any engine.
+
+*A capture race the concurrency exposed.* Under concurrency, a node could be renamed between
+`elementHandles()` and its aria capture, and that capture then waited out the whole 5 s envelope.
+`application-parity` failed 12 of 15 times on two cores.
+
+Each element's capture is now bounded to 500 ms (`ELEMENT_CAPTURE_SLICE_MS`). After the fix that
+test passes 15 of 15, and `observe-capture-slice.test.ts` pins the bound: an element renamed every
+millisecond. That test takes 5,030 ms without the slice and stays under 2.5 s with it.
+
