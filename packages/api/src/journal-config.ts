@@ -15,6 +15,10 @@
  *   `AGENTBROWSER_JOURNAL_MAX_RECORDS` (optional, default 10,000).
  * - `AGENTBROWSER_JOURNAL_INITIALIZE=1`: explicit first initialization of an empty store; never
  *   repairs an existing one.
+ * - `AGENTBROWSER_JOURNAL_HISTORY_FILE` (optional, T5 J3d / D7): an owner-only JSON file listing
+ *   namespaces the operator rotated away from, each with EVERY descriptor input (recorded, never
+ *   read from the running release) and its original key file, so lookup and the operator's
+ *   close/settle/reconcile still reach their records until `retainUntil`.
  *
  * The namespace descriptor is derived entirely from this configuration, so every start reopens
  * the SAME namespace and journaled records survive restarts. Its horizons and bounds are
@@ -28,6 +32,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import {
   type JournalNamespace,
+  type JournalRecord,
   type OperationJournal,
   openJournalSqliteOperationJournalAdapter,
   openOperationJournal,
@@ -135,9 +140,11 @@ export async function journalConfigFromEnvironment(
   };
 }
 
-async function readKeyFile(path: string): Promise<{ keyId: string; key: Uint8Array }> {
-  const invalid = (detail: string) =>
-    new JournalConfigError(`Invalid AGENTBROWSER_JOURNAL_KEY_FILE: ${detail}`);
+async function readKeyFile(
+  path: string,
+  label = 'AGENTBROWSER_JOURNAL_KEY_FILE'
+): Promise<{ keyId: string; key: Uint8Array }> {
+  const invalid = (detail: string) => new JournalConfigError(`Invalid ${label}: ${detail}`);
   let text: string;
   try {
     if (process.platform !== 'win32' && ((await stat(path)).mode & 0o077) !== 0)
@@ -229,8 +236,95 @@ export async function openServiceJournal(
   config: ServiceJournalConfig,
   options: { now?: () => number } = {}
 ): Promise<ServiceJournal> {
+  const set = await openServiceJournalSet(config, [], options);
+  if (!set.journal) {
+    await set.close();
+    throw new JournalConfigError('The durable journal did not open');
+  }
+  return { journal: set.journal, close: set.close };
+}
+
+/** One namespace this process rotated away from, as the operator recorded it (D7). */
+export interface ServiceJournalHistoryEntry {
+  readonly namespaceId: string;
+  readonly acceptUntil: number;
+  readonly retainMs: number;
+  readonly finalizationMs: number;
+  readonly restoreGeneration: string;
+  readonly maxRecords: number;
+  readonly bounds: {
+    readonly maxRecordBytes: number;
+    readonly maxNamespaces: number;
+    readonly maxInFlight: number;
+    readonly timeoutMs: number;
+  };
+  readonly keyId: string;
+  readonly key: Uint8Array;
+}
+
+export interface ServiceJournalHistoryState {
+  readonly namespaceId: string;
+  readonly acceptUntil: number;
+  readonly retainUntil: number;
+  /** The open handle; undefined when the store refused the namespace (see `refusal`). */
+  readonly journal?: OperationJournal;
+  /** Why the namespace did not open, e.g. `definitely_not_opened: expired` or `...: configuration`. */
+  readonly refusal?: string;
+}
+
+export interface ServiceJournalSet {
+  /** The current namespace's journal; undefined once its accept horizon has passed. */
+  readonly journal?: OperationJournal;
+  readonly history: readonly ServiceJournalHistoryState[];
+  close(): Promise<void>;
+}
+
+/** Rebuilds a history namespace's exact original descriptor from its recorded entry. */
+export function historyJournalNamespace(entry: ServiceJournalHistoryEntry): JournalNamespace {
+  return {
+    schemaVersion: 1,
+    namespaceId: entry.namespaceId,
+    fingerprintVersion: 1,
+    fingerprintKeyId: entry.keyId,
+    restoreGeneration: entry.restoreGeneration,
+    acceptUntil: entry.acceptUntil,
+    retainUntil: entry.acceptUntil + entry.retainMs,
+    maxFinalizationMs: entry.finalizationMs,
+    bounds: { ...entry.bounds, maxRecords: entry.maxRecords },
+  };
+}
+
+/**
+ * The history entry an operator records for the CURRENT namespace before rotating away from it:
+ * every descriptor input except the key, plus the place for the key file path. Non-secret.
+ */
+export function serviceJournalHistoryTemplate(config: ServiceJournalConfig) {
+  return {
+    namespace: config.namespaceId,
+    acceptUntil: new Date(config.acceptUntil).toISOString(),
+    restoreGeneration: config.restoreGeneration,
+    maxRecords: config.maxRecords,
+    retainMs: SERVICE_JOURNAL_RETAIN_MS,
+    finalizationMs: SERVICE_JOURNAL_FINALIZATION_MS,
+    bounds: { ...SERVICE_JOURNAL_BOUNDS },
+    keyFile: '<absolute path to the key file this namespace was created with>',
+  };
+}
+
+/**
+ * Opens the store once and, on that one adapter (the store admits one server), the current
+ * namespace (while its horizon has not passed) and every history namespace. A history namespace
+ * the store refuses is reported, never fatal: a typo in history must not take durable writes away
+ * from the current namespace. A refusal of the CURRENT namespace aborts startup as before.
+ */
+export async function openServiceJournalSet(
+  config: ServiceJournalConfig,
+  history: readonly ServiceJournalHistoryEntry[],
+  options: { now?: () => number } = {}
+): Promise<ServiceJournalSet> {
   const now = options.now ?? Date.now;
-  if (config.acceptUntil <= now())
+  const currentOpen = config.acceptUntil > now();
+  if (!currentOpen && history.length === 0)
     throw new JournalConfigError(
       'AGENTBROWSER_JOURNAL_ACCEPT_UNTIL has passed: this namespace no longer accepts durable work; configure a new AGENTBROWSER_JOURNAL_NAMESPACE with a new horizon'
     );
@@ -247,25 +341,222 @@ export async function openServiceJournal(
       'The durable journal store did not start: another process may hold it (one server per store), or AGENTBROWSER_JOURNAL_DIR / AGENTBROWSER_JOURNAL_ANCHOR_DIR or the store layout is refused (docs/spec/design/t5-operator-reconciliation.md). The journal needs Node 22.13 or later.'
     );
   }
-  const namespace = serviceJournalNamespace(config);
-  const opened = await openOperationJournal(adapter, namespace, config.key).catch(() => undefined);
-  if (opened?.kind !== 'opened') {
+  const opened: OperationJournal[] = [];
+  const closeAll = async () => {
+    for (const journal of opened) await journal.close().catch(() => undefined);
     await adapter.dispose().catch(() => undefined);
-    const reason = opened === undefined ? 'error' : `${opened.kind}: ${opened.reason}`;
-    throw new JournalConfigError(
-      `The durable journal did not open (${reason}). An uninitialized store needs AGENTBROWSER_JOURNAL_INITIALIZE=1 once; "configuration" means this namespace exists with a different key, horizon, restore generation or bounds (configure a new AGENTBROWSER_JOURNAL_NAMESPACE instead of changing them), or the wall clock is behind the store's recorded time; "ownership" means another process holds it; a refused layout follows docs/spec/design/t5-operator-reconciliation.md`
-    );
+  };
+  let journal: OperationJournal | undefined;
+  if (currentOpen) {
+    const current = await openOperationJournal(
+      adapter,
+      serviceJournalNamespace(config),
+      config.key
+    ).catch(() => undefined);
+    if (current?.kind !== 'opened') {
+      await closeAll();
+      const reason = current === undefined ? 'error' : `${current.kind}: ${current.reason}`;
+      throw new JournalConfigError(
+        `The durable journal did not open (${reason}). An uninitialized store needs AGENTBROWSER_JOURNAL_INITIALIZE=1 once; "configuration" means this namespace exists with a different key, horizon, restore generation or bounds (configure a new AGENTBROWSER_JOURNAL_NAMESPACE instead of changing them), or the wall clock is behind the store's recorded time; "ownership" means another process holds it; a refused layout follows docs/spec/design/t5-operator-reconciliation.md`
+      );
+    }
+    journal = current.journal;
+    opened.push(journal);
   }
-  const journal = opened.journal;
+  const states: ServiceJournalHistoryState[] = [];
+  for (const entry of history) {
+    const namespace = historyJournalNamespace(entry);
+    const result = await openOperationJournal(adapter, namespace, entry.key).catch(() => undefined);
+    const base = {
+      namespaceId: entry.namespaceId,
+      acceptUntil: namespace.acceptUntil,
+      retainUntil: namespace.retainUntil,
+    };
+    if (result?.kind === 'opened') {
+      opened.push(result.journal);
+      states.push({ ...base, journal: result.journal });
+    } else {
+      states.push({
+        ...base,
+        refusal: result === undefined ? 'error' : `${result.kind}: ${result.reason}`,
+      });
+    }
+  }
   let closing: Promise<void> | undefined;
   return {
-    journal,
+    ...(journal ? { journal } : {}),
+    history: states,
     close: () => {
-      closing ??= (async () => {
-        await journal.close().catch(() => undefined);
-        await adapter.dispose().catch(() => undefined);
-      })();
+      closing ??= closeAll();
       return closing;
     },
   };
+}
+
+const HISTORY_ENTRY_KEYS = [
+  'namespace',
+  'acceptUntil',
+  'keyFile',
+  'restoreGeneration',
+  'maxRecords',
+  'retainMs',
+  'finalizationMs',
+  'bounds',
+].sort();
+const BOUNDS_KEYS = ['maxInFlight', 'maxNamespaces', 'maxRecordBytes', 'timeoutMs'];
+
+/**
+ * Reads `AGENTBROWSER_JOURNAL_HISTORY_FILE`: `[]` when unset. The file is owner-only JSON
+ * `{"schemaVersion":1,"namespaces":[entry,...]}` (at most 16), every entry strict. A history
+ * namespace can never be the current one, and names are unique. Errors name positions, never
+ * key material.
+ */
+export async function journalHistoryFromEnvironment(
+  env: JournalEnvironment = process.env,
+  current?: ServiceJournalConfig
+): Promise<ServiceJournalHistoryEntry[]> {
+  const path = env.AGENTBROWSER_JOURNAL_HISTORY_FILE?.trim();
+  if (path === undefined || path === '') return [];
+  const invalid = (detail: string) =>
+    new JournalConfigError(`Invalid AGENTBROWSER_JOURNAL_HISTORY_FILE: ${detail}`);
+  if (!isAbsolute(path)) throw invalid('the path must be absolute');
+  let text: string;
+  try {
+    if (process.platform !== 'win32' && ((await stat(path)).mode & 0o077) !== 0)
+      throw invalid('the file must be readable by its owner only (chmod 600)');
+    text = await readFile(path, 'utf8');
+  } catch (error) {
+    if (error instanceof JournalConfigError) throw error;
+    throw invalid('the file cannot be read');
+  }
+  if (text.length > 65_536) throw invalid('the file is larger than 64 KiB');
+  let document: unknown;
+  try {
+    document = JSON.parse(text);
+  } catch {
+    throw invalid('the file is not JSON');
+  }
+  const plain = (value: unknown): value is Record<string, unknown> =>
+    !!value && typeof value === 'object' && !Array.isArray(value);
+  const exactKeys = (value: Record<string, unknown>, keys: string[]) =>
+    JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort());
+  if (!plain(document) || !exactKeys(document, ['schemaVersion', 'namespaces']))
+    throw invalid('expected {"schemaVersion":1,"namespaces":[...]}');
+  if (document.schemaVersion !== 1) throw invalid('schemaVersion must be 1');
+  const list = document.namespaces;
+  if (!Array.isArray(list) || list.length > 16)
+    throw invalid('namespaces must be an array of at most 16 entries');
+  const entries: ServiceJournalHistoryEntry[] = [];
+  const seen = new Set<string>(current ? [current.namespaceId] : []);
+  for (const [index, raw] of list.entries()) {
+    const at = (detail: string) => invalid(`namespaces[${index}]: ${detail}`);
+    if (!plain(raw) || !exactKeys(raw, HISTORY_ENTRY_KEYS))
+      throw at(`expected exactly ${HISTORY_ENTRY_KEYS.join(', ')}`);
+    const name = raw.namespace;
+    if (typeof name !== 'string' || !IDENTIFIER.test(name))
+      throw at('namespace must be 1-128 letters, digits, "_" or "-"');
+    if (seen.has(name)) throw at('the namespace is the current one or is listed twice');
+    seen.add(name);
+    const acceptUntil =
+      typeof raw.acceptUntil === 'string' && ISO_INSTANT.test(raw.acceptUntil)
+        ? Date.parse(raw.acceptUntil)
+        : Number.NaN;
+    if (!Number.isSafeInteger(acceptUntil) || acceptUntil <= 0)
+      throw at('acceptUntil must be an ISO-8601 instant with a time zone');
+    if (typeof raw.restoreGeneration !== 'string' || !IDENTIFIER.test(raw.restoreGeneration))
+      throw at('restoreGeneration must be 1-128 letters, digits, "_" or "-"');
+    const positive = (value: unknown, max: number) =>
+      typeof value === 'number' && Number.isSafeInteger(value) && value >= 1 && value <= max;
+    if (!positive(raw.maxRecords, 1_000_000))
+      throw at('maxRecords must be an integer from 1 to 1000000');
+    if (!positive(raw.retainMs, Number.MAX_SAFE_INTEGER))
+      throw at('retainMs must be a positive integer');
+    if (!positive(raw.finalizationMs, Number.MAX_SAFE_INTEGER))
+      throw at('finalizationMs must be a positive integer');
+    const bounds = raw.bounds;
+    if (
+      !plain(bounds) ||
+      !exactKeys(bounds, BOUNDS_KEYS) ||
+      !BOUNDS_KEYS.every((key) => positive(bounds[key], Number.MAX_SAFE_INTEGER))
+    )
+      throw at(`bounds must hold exactly ${BOUNDS_KEYS.join(', ')} as positive integers`);
+    if (typeof raw.keyFile !== 'string' || !isAbsolute(raw.keyFile))
+      throw at('keyFile must be an absolute path');
+    const { keyId, key } = await readKeyFile(
+      raw.keyFile,
+      `AGENTBROWSER_JOURNAL_HISTORY_FILE namespaces[${index}].keyFile`
+    );
+    entries.push({
+      namespaceId: name,
+      acceptUntil,
+      retainMs: raw.retainMs as number,
+      finalizationMs: raw.finalizationMs as number,
+      restoreGeneration: raw.restoreGeneration,
+      maxRecords: raw.maxRecords as number,
+      bounds: {
+        maxRecordBytes: bounds.maxRecordBytes as number,
+        maxNamespaces: bounds.maxNamespaces as number,
+        maxInFlight: bounds.maxInFlight as number,
+        timeoutMs: bounds.timeoutMs as number,
+      },
+      keyId,
+      key,
+    });
+  }
+  return entries;
+}
+
+/**
+ * J3d: one bounded search across the current and history namespaces. Each record keeps the
+ * journal that returned it (recovery writes commit to their owner). A namespace that cannot be
+ * read is named in `unreadNamespaces`, so callers never mistake partial history for absence. The
+ * page bound (16) holds across namespaces; `truncated` reports more.
+ */
+export async function searchJournalNamespaces(
+  journals: readonly OperationJournal[],
+  query: { tenantId: string; operationId: string; actionableOnly?: boolean }
+): Promise<{
+  entries: Array<{ record: JournalRecord; journal: OperationJournal }>;
+  truncated: boolean;
+  unreadNamespaces: string[];
+  lastReason: string;
+}> {
+  const entries: Array<{ record: JournalRecord; journal: OperationJournal }> = [];
+  const unreadNamespaces: string[] = [];
+  let truncated = false;
+  let lastReason = 'unavailable';
+  for (const journal of journals) {
+    if (journal.health !== 'open') {
+      unreadNamespaces.push(journal.namespace.namespaceId);
+      lastReason = journal.health;
+      continue;
+    }
+    let outcome: Awaited<ReturnType<OperationJournal['findByOperation']>>;
+    try {
+      outcome = await journal.findByOperation({
+        tenantId: query.tenantId,
+        operationId: query.operationId,
+        limit: 16,
+        ...(query.actionableOnly ? { actionableOnly: true } : {}),
+      });
+    } catch {
+      unreadNamespaces.push(journal.namespace.namespaceId);
+      continue;
+    }
+    if (outcome.kind !== 'found') {
+      lastReason =
+        outcome.kind === 'definitely_not_read' || outcome.kind === 'uncertain'
+          ? outcome.reason
+          : 'unavailable';
+      unreadNamespaces.push(journal.namespace.namespaceId);
+      continue;
+    }
+    for (const record of outcome.records) entries.push({ record, journal });
+    truncated ||= outcome.truncated;
+  }
+  if (entries.length > 16) {
+    entries.length = 16;
+    truncated = true;
+  }
+  return { entries, truncated, unreadNamespaces, lastReason };
 }

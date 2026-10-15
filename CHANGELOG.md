@@ -21,6 +21,17 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
   10 s changes nothing. An adapter without `reconcile` is refused with 409 `CONTROL_REQUIRED`
   before anything is written — settle instead. Nothing is ever replayed.
 
+### Added — journal history namespaces after rotation (T5 J3d)
+
+- `AGENTBROWSER_JOURNAL_HISTORY_FILE` lists namespaces you rotated away from, each with its
+  original descriptor inputs and key file. They open on the same store, stay searchable by
+  lookup and recoverable by the operator (close, settle, reconcile commit in the namespace that
+  owns the record) until `retainUntil`, and never accept new writes.
+- `GET /v1/journal` lists them (`history`, with `refused` and the store's reason for a wrong
+  entry, which never stops the current namespace). Lookups report any namespace they could not
+  read in `unreadNamespaces`, and are never `absent` while one is unread.
+- The server warns at startup within 7 days of a history namespace's `retainUntil`.
+
 ### Tests — recovery gates for application writes (T5 J4)
 
 - A service restarted on the same real store refuses a pre-restart event cursor as

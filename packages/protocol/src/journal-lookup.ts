@@ -65,6 +65,13 @@ export const JournalLookupResultSchema = Type.Object(
      */
     absent: Type.Boolean(),
     truncated: Type.Boolean(),
+    /**
+     * J3d: searched namespaces that could not be read this time. Present only when some were
+     * unreadable; `absent` is then always false (the history is partly unread, not absent).
+     */
+    unreadNamespaces: Type.Optional(
+      Type.Array(Type.String({ maxLength: 128 }), { minItems: 1, maxItems: 17 })
+    ),
     records: Type.Array(JournalHistoricalRecordSchema, { maxItems: 16 }),
   },
   { ...strict, $id: 'urn:agentbrowser:journal-lookup:v1' }
@@ -101,6 +108,25 @@ export const JournalStatusSchema = Type.Object(
      * qualified runtime. Advisory only; there is no exactly-once promise.
      */
     recoveryQualified: Type.Boolean(),
+    /**
+     * J3d (D7): the namespaces rotated away from and listed in AGENTBROWSER_JOURNAL_HISTORY_FILE:
+     * open (searched and recoverable until retainUntil) or refused (with the store's reason).
+     */
+    history: Type.Optional(
+      Type.Array(
+        Type.Object(
+          {
+            namespace: Type.String({ maxLength: 128 }),
+            state: Type.Union([Type.Literal('open'), Type.Literal('refused')]),
+            reason: Type.Optional(Type.String({ maxLength: 128 })),
+            acceptUntil: Type.String({ maxLength: 40 }),
+            retainUntil: Type.String({ maxLength: 40 }),
+          },
+          strict
+        ),
+        { maxItems: 16 }
+      )
+    ),
   },
   { ...strict, $id: 'urn:agentbrowser:journal-status:v1' }
 );

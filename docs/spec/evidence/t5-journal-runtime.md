@@ -370,3 +370,40 @@ The operator-only recovery writes, on a real store, through the service and over
   REST commit, replay without the link, four malformed shapes refused before execution; CLI
   forwarding and the both-or-neither rule.
 
+## J3d: history namespaces (2026-10-15)
+
+- **Configuration.** `AGENTBROWSER_JOURNAL_HISTORY_FILE` names an owner-only JSON file
+  (`{"schemaVersion":1,"namespaces":[...]}`, at most 16 entries, at most 64 KiB). Each strict
+  entry records EVERY descriptor input — name, `acceptUntil`, restore generation, `maxRecords`,
+  and the release constants (`retainMs`, `finalizationMs`, `bounds`) as recorded, never read from
+  the running release — plus the ORIGINAL key file (same rules as the current key file). The
+  entry rebuilds the exact original descriptor: a test round-trips the current namespace's
+  template and asserts `historyJournalNamespace(entry)` equals `serviceJournalNamespace(config)`.
+  Nine malformed shapes are refused (relative path, group-readable, not JSON, unknown key, the
+  current namespace, a duplicate, more than 16, a relative key file, incomplete bounds).
+- **One adapter.** The store admits one server, so `openServiceJournalSet` opens the store once
+  and, on that adapter, the current namespace (while its horizon has not passed) and every
+  history namespace. A history namespace the store refuses is REPORTED (status
+  `history[].state: "refused"` with the store's reason, plus a startup warning), never fatal to
+  the current namespace. History alone (the current horizon also passed) still opens.
+- **Search and recover.** One helper (`searchJournalNamespaces`) serves lookup and recovery: it
+  searches every namespace, keeps each record with the journal that returned it (so close,
+  settle — and reconcile — commit in the namespace that OWNS the record), holds the 16-record
+  bound across namespaces, and names every namespace it could not read. A refused history entry
+  is also unread. Absence is claimed only when EVERY namespace answered: lookup otherwise returns
+  `absent: false` with `unreadNamespaces`, and recovery returns 503 rather than 404.
+- **Never new intents.** A history namespace is past its horizon; the store refuses admission
+  (pinned).
+- **Deadline.** The server warns at startup for an open history namespace within 7 days of
+  `retainUntil`. **Residual:** counting open records per history namespace needs a scan port
+  (new port method across memory, SQLite and the child) and is not offered; the warning is by
+  deadline proximity only.
+- **Tests.** Config: template round-trip, nine refusals. Real store: rotation (A seeded in doubt,
+  horizon passes, B current with A as history — A's record found, A refuses new intents, B does
+  not see it), a wrong key reported per namespace with B unaffected, history-only startup.
+  Stub journals: merge with owners and `actionableOnly` forwarded, refused/throwing/unhealthy
+  namespaces named (the unhealthy one never asked), the cross-namespace page bound. HTTP:
+  status lists A; lookup finds A's record tagged `ns-a`; the operator settles it and the
+  terminal lands in `ns-a`; a refused entry makes lookup partial (`unreadNamespaces: ["ns-a"]`)
+  and recovery 503; a history file without the journal configuration aborts startup.
+

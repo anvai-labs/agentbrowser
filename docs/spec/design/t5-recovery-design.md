@@ -288,7 +288,10 @@ order: D6 **after** J3, reusing J3's read path.
    (continue with `supersedes`, and the opt-in adapter `reconcile`)
    ([evidence](../evidence/t5-journal-runtime.md#j3c-part-2-continue-and-reconcile-2026-10-15)).
 5. **J3d:** history namespaces (D7) with full-descriptor entries and the retention-deadline
-   warning.
+   warning. **Delivered 2026-10-15**
+   ([evidence](../evidence/t5-journal-runtime.md#j3d-history-namespaces-2026-10-15)); the
+   warning is by deadline proximity — counting open records per namespace needs a scan port and
+   is recorded as a residual.
 6. **J4:** the classification table in the docs, the cursor-after-restart test (D4), and
    `recoveryQualified` (D5). Closes R08 for application writes and the durable part of R10.
    **Delivered 2026-10-15** for the application-write matrix: the non-business write
