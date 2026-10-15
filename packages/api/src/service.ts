@@ -1,4 +1,8 @@
-import { isNavigationFailureReason, sessionLeaseRemainingMs } from '@agentbrowser/protocol';
+import {
+  isNavigationFailureReason,
+  MAX_PLAN_STEPS,
+  sessionLeaseRemainingMs,
+} from '@agentbrowser/protocol';
 import {
   attachRequestHasOptions,
   type CdpAttachAdmission,
@@ -2088,6 +2092,13 @@ export class AgentBrowserService {
     pageId: string,
     steps: ServiceActRequest[]
   ): Promise<PlanReport & { mode: 'stable' | 'verified'; newRevision: number }> {
+    // T0 aggregate input limit, enforced here as well as on every surface so that outcome runs
+    // and embedders cannot bypass it. Nothing executes for an over-limit plan.
+    if (steps.length > MAX_PLAN_STEPS)
+      throw new ServiceError(
+        'INVALID_REQUEST',
+        `A plan accepts at most ${MAX_PLAN_STEPS} steps; got ${steps.length}. Split it into several plans.`
+      );
     const results: PlanReport['results'] = [];
     const churnKey = this.churnKey(sessionId, pageId);
     const finalRevision = (): number => this.pages.get(pageId)?.revision ?? 0;
