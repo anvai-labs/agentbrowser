@@ -7,6 +7,20 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Added — exact chip sets with removal for `chip-multiselect` (T6 W2)
+
+- An autofill field can set `options: { values: [...], mode: 'exact' }`, with
+  `strategy: 'chip-multiselect'`. The control's committed membership must end exactly that set.
+- **How it writes.** Extra chips are removed one at a time, through the remove control the engine
+  ties to that combobox and chip label, and each removal is confirmed. Missing values are added
+  through the existing typeahead.
+- **Receipts.** A receipt reports `effects: { removed, added }`, including on failure. Nothing is
+  rolled back by guesswork.
+- **Refusals.** Refused before any dispatch on a control that is not a proven multi-value widget,
+  or whose membership is incomplete, duplicated, or has an extra chip without exactly one owned
+  remove control. Values must be non-blank and trimmed.
+- Qualified against the real react-select 5.10.2.
+
 ### Tests — process loss through the service with the durable journal (T5 J-e)
 
 - The compiled service, with the real SQLite journal, is SIGKILLed before the intent, after the
