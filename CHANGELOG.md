@@ -7,6 +7,15 @@ built by `.github/workflows/release.yml` (binaries + server tarballs on GitHub R
 
 ## [Unreleased]
 
+### Tests — the durable-restart claims qualified (T4 A2)
+
+- Two service instances (fresh authorities and storage children) run one after the other on the
+  same real journal store; the first stops gracefully. A completed
+  durable write survives the graceful restart and stays readable through the new process's own
+  journal handle; nothing replays; and re-submitting the same operation ID commits a NEW record
+  with a new service generation — the advertised weaker outcome, with idempotency remaining the
+  adapter's responsibility.
+
 ### Added — journal `findByOperation` (T5 J3a)
 
 - The operation journal port can now find every record of one tenant's operation ID in a
